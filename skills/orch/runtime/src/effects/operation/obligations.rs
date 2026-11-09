@@ -1939,6 +1939,7 @@ mod tests {
             exclude_account: None,
             watch: None,
             close: None,
+            cycle: None,
             notice: None,
             phase: None,
             obligations: Some(set.record.clone()),

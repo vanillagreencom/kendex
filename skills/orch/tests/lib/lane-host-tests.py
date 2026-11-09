@@ -310,8 +310,8 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         started = self.run_host("start", "--item", "TEST-1", **env)
         self.assertEqual((started.returncode, started.stdout), (0, b"sandbox-started item=TEST-1\n"))
         closed = self.run_host("close", "--item", "TEST-1", **env)
-        self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/fleet/archive/repo/TEST-1/tmp-stub.tgz\n"))
-        self.assertTrue((self.root / "calls").read_text().endswith("delete --item TEST-1\n"))
+        self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/srv/archive/TEST-1\n"))
+        self.assertTrue((self.root / "calls").read_text().endswith("close --item TEST-1 \n"))
     def test_unavailable_provider(self):
         # ORCH_LANE_HOST can name a removed file, a file without execute
         # permission, or a directory. None is a provider lacking a status verb.
@@ -507,7 +507,9 @@ class LaneHostCallersTests(unittest.TestCase):
             targets = []
             for caller in (p for p in scripts.rglob("*") if p.is_file()):
                 enclosing = None
-                for line in caller.read_text(errors="replace").splitlines():
+                # A call continued over lines is one call, its arguments
+                # on the lines after the name.
+                for line in caller.read_text(errors="replace").replace("\\\n", " ").splitlines():
                     enclosing = self.FUNCTION.match(line).group(1) if self.FUNCTION.match(line) else enclosing
                     call = calls.search(line)
                     if call and not line.lstrip().startswith("#") and enclosing != function:
@@ -537,14 +539,13 @@ class LaneHostCallersTests(unittest.TestCase):
             wrapper.update((path, word) for path, _, word, function in self.sites(scripts)
                            if self.target(scripts, path, word, function) == "wrapper")
         # Members the extractor must reach, or it is the extractor that broke.
-        for member in (("lane-mail", '"$ORCH_SCRIPTS/lane-host"'), ("lane-close", '"$LANE_HOST"'),
+        for member in (("lane-mail", '"$ORCH_SCRIPTS/lane-host"'),
                        ("lib/lane-gitfile.sh", '"$1"'), ("lanes", '"$SCRIPT_DIR/lane-host"')):
             self.assertIn(member, wrapper, "the site extractor no longer reaches a known wrapper call")
 
     def test_a_direct_provider_call_is_named(self):
         # A row naming None plants a line that needs no provider slot.
         rows = [("lane-mail", '  "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
-                ("lane-close", '  "$host" touch --item "$ITEM"\n', "lane-close"),
                 ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" cat --item "$ITEM" /remote\n', "lanes"),
                 ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh"),
                 ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),

@@ -12,7 +12,7 @@
 # The authoritative contract — attention kinds, output format, exit
 # codes, env — is print_usage below: run with --help.
 # Stdout is the whole-text attention protocol consumed by orch's watch
-# (`orch-runtime watch`) and lane-close: PR number, head prefix, kind, and
+# (`orch-runtime watch`) and its close's park: PR number, head prefix, kind, and
 # detail separated by literal tabs. The detail includes the queue annotation.
 # Preserve these payloads.
 # Global refusals use diagnostic records on stderr, followed by explanation.
@@ -136,7 +136,7 @@ are a global failure.
 Consumers: orch's workflows treat this as the single state reducer for
 multi-PR watching (the orch runtime's verify-review operation remains the
 single-PR review gate with its on-timeout policy; the orch runtime's watch
-consumes this reducer, and lane-close reads its silence before a park); harness
+consumes this reducer, and its close reads its silence before a park); harness
 wake-up mechanisms (a monitor loop, cron, a scheduler) call it rather than
 re-deriving state keys per session.
 USAGE

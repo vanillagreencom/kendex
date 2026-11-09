@@ -1951,3 +1951,56 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
         }
     }
 }
+
+/// A copy of `sleep` named `name` under `dir`, so a pane holds a process the
+/// kernel names as a harness; written by a child shell (support's reason).
+pub fn named_sleep(dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    let out = std::process::Command::new("sh")
+        .args([
+            "-c",
+            "cp \"$(command -v sleep)\" \"$1\" && chmod 755 \"$1\"",
+            "_",
+        ])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    path
+}
+
+/// The identity of the pane's process once its shell has exec'd `name`.
+pub fn await_named(server: &Server, pane: &str, name: &str) -> Identity {
+    let pid = server.pane_pid(pane);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+        if comm.trim() == name {
+            return Identity {
+                pid,
+                start: start_of(pid),
+            };
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the pane never exec'd {name}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+/// Wait until the pane draws `needle`, bounded.
+pub fn await_drawn(server: &Server, pane: &str, needle: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let cap = tmux(&server.socket, &["capture-pane", "-p", "-t", pane]);
+        if String::from_utf8_lossy(&cap.stdout).contains(needle) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{needle:?} was never drawn"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}

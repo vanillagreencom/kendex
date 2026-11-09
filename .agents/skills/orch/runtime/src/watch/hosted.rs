@@ -15,11 +15,12 @@
 //! naming no host is the `local` kind, whose line the dispatcher answers for
 //! it, and asks nothing.
 //!
-//! The one close: `lane-close --state-dir
-//! [DIR] [ITEM]` is the irreversible step's owner and writes the lane
-//! record; the watch says it asked by a marker it creates exclusively under
-//! its own state directory before the program starts, beside the wall
-//! relaunch markers. An answer that closed nothing removes the marker; a
+//! The one close: the close verb (`orch-runtime --state-dir DIR op --fleet`
+//! over a `close-lane` request, from the scripts directory the pass
+//! carries) is the irreversible step's owner and writes the lane record;
+//! the watch says it asked by a marker it creates exclusively under its own
+//! state directory before the verb starts, beside the wall relaunch
+//! markers. An answer that closed nothing removes the marker; a
 //! close that answered `closed` keeps it until the next pass reads the lane
 //! record out of flight. A marker standing beside a lane still in flight is
 //! a close whose end this runtime did not see: nothing is closed again, the
@@ -64,12 +65,18 @@ const TAG: &str = "lanes";
 /// The bound on one provider read: an ssh round trip behind the
 /// dispatcher's own busy wait (`ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS`, 30 s).
 const READ_BOUND: Duration = Duration::from_secs(120);
-/// The bound on `lane-close`: a host close archives the lane's records and
-/// removes its worktree before it answers.
+/// The bound on the provider's close: a host close archives the lane's
+/// records and removes its worktree before it answers.
 const CLOSE_BOUND: Duration = Duration::from_secs(900);
-/// The two programs, under the scripts directory the pass carries.
+/// The bound on the close verb: its provider reads, each under
+/// [`READ_BOUND`], the tracker's verdict and the mailbox, then the
+/// provider's close under [`CLOSE_BOUND`].
+const CLOSE_VERB_BOUND: Duration = Duration::from_secs(1800);
+/// The programs, under the scripts directory the pass carries: the
+/// provider dispatcher and the runtime's own entry, which the close verb
+/// runs through as its own process.
 pub const LANE_HOST: &str = "lane-host";
-pub const LANE_CLOSE: &str = "lane-close";
+pub const ORCH_RUNTIME: &str = "orch-runtime";
 /// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
 pub const PREPARE_ROW: &str = "lane-prepare";
@@ -143,6 +150,19 @@ pub struct Capabilities {
     /// names none. The accounts judge admits a `cloud-session` host's
     /// account only with repository access.
     pub launch: Option<Launch>,
+    /// How a kind's lane is stopped (`stop=`); `None` where the line names
+    /// none, which no close has an arm for.
+    pub stop: Option<StopKind>,
+}
+
+/// How a kind's lane is stopped (`stop=`): its window's harness through this
+/// host's process table, the provider's `stop` verb, or nothing this machine
+/// can reach (a cloud session, which the operator archives).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopKind {
+    Window,
+    Verb,
+    None,
 }
 
 /// How a kind launches a lane (`launch=`).
@@ -162,6 +182,7 @@ impl Capabilities {
         status: Status::Pane,
         pane: PaneKind::Local,
         launch: Some(Launch::Window),
+        stop: Some(StopKind::Window),
     };
 
     /// One tab-separated `key=value` line; `pane` absent reads `local`, an
@@ -173,6 +194,7 @@ impl Capabilities {
         let mut status = None;
         let mut pane = PaneKind::Local;
         let mut launch = None;
+        let mut stop = None;
         for field in line.trim_end_matches('\n').split('\t') {
             let Some((key, value)) = field.split_once('=') else {
                 return Err(format!("capability-invalid field={field}"));
@@ -212,6 +234,14 @@ impl Capabilities {
                         _ => return Err(invalid()),
                     });
                 }
+                "stop" => {
+                    stop = Some(match value {
+                        "window" => StopKind::Window,
+                        "verb" => StopKind::Verb,
+                        "none" => StopKind::None,
+                        _ => return Err(invalid()),
+                    });
+                }
                 _ => {}
             }
         }
@@ -221,6 +251,7 @@ impl Capabilities {
                 status,
                 pane,
                 launch,
+                stop,
             }),
             (None, _) => Err("capability-invalid key=files value=missing".to_owned()),
             (_, None) => Err("capability-invalid key=status value=missing".to_owned()),
@@ -435,6 +466,48 @@ pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String>
 /// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
 /// have signalled the harness or not (`stop-unanswered`).
 pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(), Asked> {
+    let code = match stop_answer(scripts, host, item, harness)? {
+        HostStopped::Stopped { .. } => return Ok(()),
+        HostStopped::WorktreeRemoved => WORKTREE_REMOVED,
+        HostStopped::Refused { status } => status,
+        HostStopped::Unparsed => 0,
+    };
+    Err(Asked::Failed(format!("stop-failed exit={code}")))
+}
+
+/// What the provider's stop answered: the harness stopped, the count of
+/// processes it signalled; the item's
+/// worktree gone (status 4 beside `stop-worktree-removed item=ITEM` on its
+/// stderr), which only a provider finding the harness by that directory
+/// answers, a status 4 without the line being the provider's own 4; any
+/// other non-zero status, the dispatcher's cap refusal
+/// ([`LANE_HOST_BUSY_EXIT`]) among them; or exit 0 without the confirming
+/// line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostStopped {
+    Stopped { processes: u32 },
+    WorktreeRemoved,
+    Refused { status: i32 },
+    Unparsed,
+}
+
+/// The status a provider answers on any verb for an item whose worktree
+/// its own close-out removed.
+const WORKTREE_REMOVED: i32 = 4;
+
+/// The dispatcher's refusal at its per-home cap on provider calls
+/// (`lib/lane-host-slots.sh`): nothing ran.
+pub const LANE_HOST_BUSY_EXIT: i32 = 69;
+
+/// `lane-host stop --item ITEM --harness H`, its answer read as a
+/// [`HostStopped`]; a stop that never started or gave no answer is `call`'s
+/// `Asked`.
+pub fn stop_answer(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    harness: &str,
+) -> Result<HostStopped, Asked> {
     let out = call(
         scripts,
         host,
@@ -443,19 +516,191 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
         READ_BOUND,
         "stop",
     )?;
+    let code = exit_code(&out);
+    let stderr = host::stderr_text(&out);
+    if code == WORKTREE_REMOVED
+        && stderr
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .any(|w| w[0] == "stop-worktree-removed" && w[1] == format!("item={item}"))
+    {
+        return Ok(HostStopped::WorktreeRemoved);
+    }
+    if code != 0 {
+        return Ok(HostStopped::Refused { status: code });
+    }
     let text = host::stdout_text(&out);
-    let confirmed = out.status.success()
-        && text
-            .strip_prefix(&format!("stopped item={item} processes="))
-            .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()));
-    if confirmed {
+    let processes = text
+        .strip_prefix(&format!("stopped item={item} processes="))
+        .filter(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|count| count.parse().ok());
+    match processes {
+        Some(processes) => Ok(HostStopped::Stopped { processes }),
+        None => Ok(HostStopped::Unparsed),
+    }
+}
+
+/// What the provider's `send` types into the harness it hosts.
+#[derive(Debug, Clone, Copy)]
+pub enum Input<'a> {
+    /// `--key KEY`: one key, `C-c` among them.
+    Key(&'a str),
+    /// `--file FILE`: the text a file holds, the provider's input contract.
+    File(&'a Path),
+}
+
+/// `lane-host send --item ITEM --key KEY | --file FILE`: the provider's own
+/// input to its pane, confirmed by exit 0; any other answer is its cause.
+pub fn send(scripts: &Path, host: &str, item: &str, input: Input<'_>) -> Result<(), String> {
+    let file;
+    let (flag, value) = match input {
+        Input::Key(key) => ("--key", key),
+        Input::File(path) => {
+            file = path.display().to_string();
+            ("--file", file.as_str())
+        }
+    };
+    let out = lane_host(
+        scripts,
+        host,
+        "send",
+        &["send", "--item", item, flag, value],
+    )?;
+    if out.status.success() {
         Ok(())
     } else {
-        Err(Asked::Failed(format!(
-            "stop-failed exit={}",
-            exit_code(&out)
-        )))
+        Err(cause_of("send", &out))
     }
+}
+
+/// What the provider's close answered: the archive line its close printed
+/// (`kept=PATH`, `kept=none` where it printed none, or `closed=absent
+/// item=ITEM` from a host that no longer holds the item), or its refusal
+/// (exit 3, `close-refused path=` naming the checkout it kept).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HostClosed {
+    Closed { line: String },
+    Refused { path: String },
+}
+
+/// `lane-host close --item ITEM [--merged]` under the close's bound, read by
+/// `call`'s three values: a close that never started or answered a status is
+/// `Asked::Failed` with the cause (`lane-host-busy step=close` at the cap),
+/// one with no answer `Asked::Unknown`, which its caller never asks again.
+pub fn close(scripts: &Path, host: &str, item: &str, merged: bool) -> Result<HostClosed, Asked> {
+    let mut args = vec!["close", "--item", item];
+    if merged {
+        args.push("--merged");
+    }
+    let out = call(scripts, host, "close", &args, CLOSE_BOUND, "host-close")?;
+    let text = host::stdout_text(&out);
+    let stderr = host::stderr_text(&out);
+    match exit_code(&out) {
+        0 => {
+            let absent = format!("closed=absent item={item}");
+            let line = text
+                .lines()
+                .find(|l| l.starts_with("kept=") || *l == absent)
+                .map_or_else(|| "kept=none".to_owned(), str::to_owned);
+            Ok(HostClosed::Closed { line })
+        }
+        3 => Ok(HostClosed::Refused {
+            path: stderr
+                .lines()
+                .chain(text.lines())
+                .find_map(|l| {
+                    l.split_once("close-refused path=")
+                        .map(|(_, p)| p.to_owned())
+                })
+                .unwrap_or_else(|| "unknown".to_owned()),
+        }),
+        code if code == LANE_HOST_BUSY_EXIT => {
+            Err(Asked::Failed("lane-host-busy step=close".to_owned()))
+        }
+        _ => Err(Asked::Failed(format!(
+            "host-close-failed {}",
+            cause_of("close", &out)
+        ))),
+    }
+}
+
+/// `lane-host stop-sandbox [--check] --item ITEM`: the check confirmed by
+/// `sandbox-stoppable item=ITEM`, the stop by `sandbox-stopped item=ITEM`.
+/// A refusal is `Asked::Failed` with `exit=N` (2 the absent-verb status of a
+/// provider without the pair), `cause=answer-unparsed` or
+/// `lane-host-busy step=`.
+pub fn stop_sandbox(scripts: &Path, host: &str, item: &str, check: bool) -> Result<(), Asked> {
+    let mut args = vec!["stop-sandbox"];
+    if check {
+        args.push("--check");
+    }
+    args.extend(["--item", item]);
+    let (step, word) = if check {
+        ("stop-sandbox-check", "sandbox-stoppable")
+    } else {
+        ("stop-sandbox", "sandbox-stopped")
+    };
+    let out = call(scripts, host, "stop-sandbox", &args, READ_BOUND, step)?;
+    match exit_code(&out) {
+        0 => {}
+        code if code == LANE_HOST_BUSY_EXIT => {
+            return Err(Asked::Failed(format!("lane-host-busy step={step}")));
+        }
+        code => return Err(Asked::Failed(format!("exit={code}"))),
+    }
+    if host::stdout_text(&out) == format!("{word} item={item}") {
+        Ok(())
+    } else {
+        Err(Asked::Failed("cause=answer-unparsed".to_owned()))
+    }
+}
+
+/// `lane-host start --item ITEM`, confirmed by `sandbox-started item=ITEM`,
+/// which a provider answers for a sandbox already up as for a stopped one.
+/// A refusal is `Asked::Failed` with `exit=N`, `cause=answer-unparsed` or
+/// `lane-host-busy step=start`.
+pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
+    let out = call(
+        scripts,
+        host,
+        "start",
+        &["start", "--item", item],
+        PREPARE_BOUND,
+        "start",
+    )?;
+    match exit_code(&out) {
+        0 => {}
+        code if code == LANE_HOST_BUSY_EXIT => {
+            return Err(Asked::Failed("lane-host-busy step=start".to_owned()));
+        }
+        code => return Err(Asked::Failed(format!("exit={code}"))),
+    }
+    if host::stdout_text(&out) == format!("sandbox-started item={item}") {
+        Ok(())
+    } else {
+        Err(Asked::Failed("cause=answer-unparsed".to_owned()))
+    }
+}
+
+/// Whether the provider's `list` names a sandbox for `item`: a row whose
+/// first field ends in `/ITEM`, in any case, outside an `available` row.
+/// `Err` is a list that failed or was capped (`lane-host-busy step=list`).
+pub fn lists_item(scripts: &Path, host: &str, item: &str) -> std::result::Result<bool, String> {
+    let out = lane_host(scripts, host, "list", &["list"])?;
+    let code = exit_code(&out);
+    if code == LANE_HOST_BUSY_EXIT {
+        return Err("lane-host-busy step=list".to_owned());
+    }
+    if code != 0 {
+        return Err(cause_of("list", &out));
+    }
+    let suffix = format!("/{}", item.to_ascii_lowercase());
+    Ok(host::stdout_text(&out).lines().any(|row| {
+        let mut fields = row.split('\t');
+        let name = fields.next().unwrap_or("").to_ascii_lowercase();
+        fields.next() != Some("available") && name.ends_with(&suffix)
+    }))
 }
 
 // --- the launch's calls --------------------------------------------------------
@@ -667,43 +912,72 @@ fn call(
 
 // --- the one close ------------------------------------------------------------
 
-/// How `lane-close` answered.
+/// How the close verb answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Closed {
-    /// Exit 0: the lane closed; `line` is the `kept=` or `closed=absent`
-    /// line it printed, `kept=none` without one.
+    /// The lane closed, its harness ended with its sandbox kept, or its
+    /// sandbox parked; `line` is the provider's `kept=` or `closed=absent`
+    /// line, else `kept=` the item's own archive, `kept=none` with neither,
+    /// and `kept=sandbox` for a sandbox kept.
     Closed { line: String },
-    /// Exit 3: the close refused the lane; `path` the checkout its
+    /// The provider refused its close; `path` the checkout its
     /// `close-refused path=` line names, `unknown` without one.
     Refused { path: String },
-    /// A tracker quota receipt on the output: nothing closed, asked again
-    /// once the hold ends.
+    /// The tracker's quota hold refused the verdict the close needs:
+    /// nothing closed, asked again once the hold ends.
     Deferred,
-    /// Any other exit, its status and the output's first line, or a close
-    /// that never started, the start's failure.
+    /// The verb refused, its effect failed or stood open with a cause, or
+    /// it never started or printed no answer it could be read by: its key
+    /// or cause.
     Failed { cause: String },
-    /// No answer: the close started and its bound passed, or a signal ended
-    /// it, so it may have happened. Its marker stands for the next pass,
-    /// which leaves the lane to the operator.
+    /// No answer: the verb started and its bound passed, or a signal ended
+    /// it, or the provider's close gave none, so it may have happened. Its
+    /// marker stands for the next pass, which leaves the lane to the
+    /// operator.
     Unanswered { cause: String },
 }
 
-/// `lane-close --state-dir [DIR] [ITEM]` through the one runner, both
-/// streams read as one (`2>&1`), since the program's refusal lines land on
-/// either.
+/// The close verb's request for `lane` at `reason`: a lane read exited on
+/// two passes keeps its sandbox; a finished lane's delivery is the merge
+/// the GitHub duty read last for its item (`merged`, `REPO#N ...`).
+fn close_request(pass: &Pass, lane: &Lane, reason: &str) -> Value {
+    let mut request = serde_json::json!({"op": "close-lane", "item": lane.item});
+    if reason == KEEP_REASON {
+        request["mode"] = Value::from("keep-sandbox");
+    }
+    let merged = pass
+        .baseline
+        .get(MERGED_ROW, &lane.item)
+        .and_then(|row| row.split(' ').next_back())
+        .and_then(|key| key.rsplit_once('#'))
+        .and_then(|(repo, number)| Some((repo, number.parse::<u64>().ok()?)));
+    if reason == "finished"
+        && let Some((repo, pr)) = merged
+    {
+        request["delivery"] = serde_json::json!({"pr": {"pr": pr, "repo": repo}});
+    }
+    request
+}
+
+/// The reason the watch asks a close that keeps the sandbox.
+pub const KEEP_REASON: &str = "exited-twice";
+
+/// The close verb through the runtime's entry, `--state-dir DIR op --fleet
+/// --request FILE`, under its bound: the reply it printed, read by its word.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the lane duty's one irreversible call, `lane-close` from the scripts directory the pass carries through the one runner under the duty's tag, its marker written first"
+    reason = "the lane duty's one irreversible call, the close verb through the runtime's entry from the scripts directory the pass carries, through the one runner under the duty's tag, its marker written first"
 )]
-fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
+fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
     let dir = state_dir.display().to_string();
+    let file = request.display().to_string();
     let out = match host::run_tagged(
         TAG,
-        LANE_CLOSE,
-        &scripts.join(LANE_CLOSE),
+        ORCH_RUNTIME,
+        &scripts.join(ORCH_RUNTIME),
         "close",
-        &["--state-dir", &dir, item],
-        CLOSE_BOUND,
+        &["--state-dir", &dir, "op", "--fleet", "--request", &file],
+        CLOSE_VERB_BOUND,
     ) {
         Ok(out) => out,
         // A close that never started closed nothing.
@@ -718,46 +992,118 @@ fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
             };
         }
     };
-    let text = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    if !out.status.success() && Quota::of_stderr(&text).is_some() {
-        return Closed::Deferred;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
+        return match out.status.code() {
+            Some(rc) => Closed::Failed {
+                cause: format!("exit={rc} {}", first_line(&stderr))
+                    .trim_end()
+                    .to_owned(),
+            },
+            None => Closed::Unanswered {
+                cause: format!("{} {}", out.status, first_line(&stderr))
+                    .trim_end()
+                    .to_owned(),
+            },
+        };
+    };
+    closed_of(&reply)
+}
+
+/// The close verb's reply by its word: a refusal by its key (the tracker's
+/// quota hold the one deferral), an answer by the record it left and the
+/// provider's close it observed.
+fn closed_of(reply: &Value) -> Closed {
+    let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").to_owned();
+    if reply.get("ok") != Some(&Value::Bool(true)) {
+        let refusal = reply.get("refusal");
+        let key = text(refusal.and_then(|r| r.get("key")));
+        let fields: Vec<(String, String)> = refusal
+            .and_then(|r| r.get("fields"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|pair| {
+                Some((
+                    pair.get(0)?.as_str()?.to_owned(),
+                    pair.get(1)?.as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+        if key == "tracker-read-failed" && fields.iter().any(|(k, v)| k == "cause" && v == "quota")
+        {
+            return Closed::Deferred;
+        }
+        let mut cause = format!(
+            "refused key={}",
+            if key.is_empty() { "unread" } else { &key }
+        );
+        for (k, v) in fields {
+            cause.push_str(&format!(" {k}={v}"));
+        }
+        return Closed::Failed { cause };
     }
-    match out.status.code() {
-        Some(0) => {
-            // A host that no longer held the item ran no archive pass, so
-            // its `closed=absent` line stands in the `kept=` line's place.
-            let absent = format!("closed=absent item={item}");
-            let line = text
-                .lines()
-                .find(|l| l.starts_with("kept=") || *l == absent)
-                .map_or_else(|| "kept=none".to_owned(), str::to_owned);
+    let result = reply.get("result");
+    let observation = result.and_then(|r| r.get("observation"));
+    let seen = |key: &str| text(observation.and_then(|o| o.get(key)));
+    let host_close = seen("host_close");
+    match text(result.and_then(|r| r.get("word"))).as_str() {
+        // The harness ended with its sandbox kept.
+        "stopped" => Closed::Closed {
+            line: "kept=sandbox".to_owned(),
+        },
+        "closed" | "parked" => {
+            let archive = seen("archive");
+            let line = if host_close.starts_with("kept=") || host_close.starts_with("closed=absent")
+            {
+                host_close
+            } else if !archive.is_empty() {
+                format!("kept={archive}")
+            } else {
+                "kept=none".to_owned()
+            };
             Closed::Closed { line }
         }
-        Some(3) => {
-            let path = text
-                .lines()
-                .find_map(|l| {
-                    l.split_once("close-refused path=")
-                        .map(|(_, p)| p.to_owned())
-                })
-                .unwrap_or_else(|| "unknown".to_owned());
-            Closed::Refused { path }
-        }
-        Some(rc) => Closed::Failed {
-            cause: format!("exit={rc} {}", first_line(&text))
+        "unconfirmed" if host_close == "refused" => Closed::Refused {
+            path: Some(seen("path"))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| "unknown".to_owned()),
+        },
+        "unconfirmed" if host_close == "unanswered" => Closed::Unanswered {
+            cause: format!("host-close-unanswered {}", seen("cause"))
                 .trim_end()
                 .to_owned(),
         },
-        None => Closed::Unanswered {
-            cause: format!("{} {}", out.status, first_line(&text))
-                .trim_end()
-                .to_owned(),
+        word => Closed::Failed {
+            cause: format!(
+                "word={} cause={}",
+                if word.is_empty() { "unread" } else { word },
+                seen("cause")
+            ),
         },
     }
+}
+
+/// Where the close's request is written for the verb to read: beside the
+/// markers, under a name no marker carries.
+fn close_request_path(watch_state_dir: &Path, item: &str) -> PathBuf {
+    let marker = close_marker_path(watch_state_dir, item);
+    let name = marker
+        .file_name()
+        .map(|n| {
+            n.to_string_lossy()
+                .replacen("lane-close.", "close-request.", 1)
+        })
+        .unwrap_or_default();
+    watch_state_dir.join(format!("{name}.json"))
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the close request, the watch's own file under its state directory, written for the verb to read and removed once it answered"
+)]
+fn write_request(path: &Path, request: &Value) -> Result<(), String> {
+    std::fs::write(path, request.to_string()).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// The marker a close writes before it runs: `lane-close.<item>` under the
@@ -797,7 +1143,7 @@ enum Written {
 /// whose end was not read.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the close marker, the watch's own file under its state directory, created exclusively before `lane-close` starts so a close whose end this runtime does not see is never asked again"
+    reason = "the close marker, the watch's own file under its state directory, created exclusively before the close verb starts so a close whose end this runtime does not see is never asked again"
 )]
 fn write_marker(path: &Path, marker: &CloseMarker) -> Result<Written, String> {
     if let Some(dir) = path.parent() {
@@ -821,7 +1167,7 @@ fn write_marker(path: &Path, marker: &CloseMarker) -> Result<Written, String> {
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the close marker's removal once `lane-close` answered, the watch's own file"
+    reason = "the close marker's removal once the close verb answered, and the close request's, the watch's own files"
 )]
 fn remove_marker(path: &Path) -> Result<(), String> {
     match std::fs::remove_file(path) {
@@ -876,7 +1222,7 @@ fn close_markers(dir: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// The markers read against the fleet record at the start of every pass
 /// a marker whose item no in-flight lane carries with the
-/// launch it recorded is a close whose record `lane-close` wrote (or a lane
+/// launch it recorded is a close whose record the close verb wrote (or a lane
 /// launched afresh), and leaves; a marker beside its in-flight lane is a
 /// close this runtime did not see end, named as the operator's lane as the
 /// pass's failure and never closed again; a directory or a marker that
@@ -949,10 +1295,10 @@ fn unconfirmed(item: &str, marker: &Path) -> String {
 }
 
 /// The one close: the marker created
-/// exclusively before `lane-close` runs; an answer that closed nothing
+/// exclusively before the close verb runs; an answer that closed nothing
 /// (refused, deferred, failed) removes it, since nothing irreversible
 /// happened and the next pass may ask again; a close that answered `closed`
-/// keeps it until the next pass reads the lane record `lane-close` wrote
+/// keeps it until the next pass reads the lane record the verb wrote
 /// and finds the lane out of flight (`prune_close_markers`), so a record
 /// that still reads open is the operator's lane, never a second close; so
 /// does a close that gave no answer.
@@ -984,9 +1330,25 @@ fn close_once(pass: &Pass, lane: &Lane, reason: &str, out: &mut Produced) -> Opt
             return None;
         }
     }
-    let closed = run_close(pass.scripts, pass.state_dir, item);
+    let dir = watch_state_dir(pass.claim_store);
+    let request = close_request_path(dir, item);
+    let closed = match write_request(&request, &close_request(pass, lane, reason)) {
+        Ok(()) => run_close(pass.scripts, pass.state_dir, &request),
+        Err(cause) => Closed::Failed {
+            cause: format!("request-unwritten {cause}"),
+        },
+    };
+    if let Err(cause) = remove_marker(&request) {
+        fail(
+            out,
+            format!(
+                "state-write-failed path={} cause={cause}",
+                request.display()
+            ),
+        );
+    }
     match closed {
-        // The lane record `lane-close` wrote confirms the close on the next
+        // The lane record the close verb wrote confirms the close on the next
         // pass's read; the marker stands until then, and stands for a close
         // that may have happened with no answer.
         Closed::Closed { .. } | Closed::Unanswered { .. } => {}
@@ -1575,16 +1937,11 @@ pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// `cat`; a file the
 /// host has not, confirmed by `touch`, is the worktree the lane's own
 /// close-out removed.
-pub fn worktree(pass: &Pass, lane: &Lane) -> Answer<()> {
+pub fn worktree(scripts: &Path, lane: &Lane) -> Answer<()> {
     let Some(root) = root_of(lane) else {
         return Answer::Gone;
     };
-    match fetch(
-        pass.scripts,
-        host_of(lane),
-        &lane.item,
-        &format!("{root}/.git"),
-    ) {
+    match fetch(scripts, host_of(lane), &lane.item, &format!("{root}/.git")) {
         Answer::Live(_) => Answer::Live(()),
         Answer::Gone => Answer::Gone,
         Answer::Unreadable { cause } => Answer::Unreadable { cause },
@@ -1665,6 +2022,26 @@ fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<St
         ),
         None => Answer::Gone,
     })
+}
+
+/// The state directory a hosted checkout's own files name and the clone
+/// its `.git` names, on its host ([`configured_state_dir`]); `None` is a
+/// worktree the host no longer has.
+pub(crate) fn state_dir_on_host(
+    scripts: &Path,
+    lane: &Lane,
+    root: &str,
+) -> Result<Option<(PathBuf, PathBuf)>, String> {
+    let Some(dir) = configured_state_dir(scripts, lane, root)? else {
+        return Ok(None);
+    };
+    let clone = match fetch(scripts, host_of(lane), &lane.item, &format!("{root}/.git")) {
+        Answer::Live(gitfile) => marker::git_dirs_of(&gitfile)
+            .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(root)),
+        Answer::Gone | Answer::Unreadable { .. } => PathBuf::from(root),
+    };
+    Ok(Some((dir, clone)))
 }
 
 /// The host path of the state directory a hosted checkout's settings files
@@ -1773,10 +2150,14 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 /// `lane-exited` or `lane-idle` line: a lane whose item the GitHub duty read
 /// merged and whose worktree the host no longer has is closed through the
 /// one close; one whose worktree stands is inside its merge close-out or
-/// resumed and is left. A failed close un-reports the notification row, so
-/// the next pass asks again; a deferred one keeps `close-pending` for the
-/// retry; a close that ended clears it. `row` and `key` are the notification
-/// row and the key it reported under.
+/// resumed and is left. A lane its provider's status verb read exited on
+/// two passes (`lane-exited`) whose item has no merge is closed with its
+/// sandbox kept: the attempt ends and its record stops charging a slot,
+/// the sandbox standing for a relaunch; a host whose status read fails
+/// reads no exit and keeps the slot. A failed close un-reports the
+/// notification row, so the next pass asks again; a deferred one keeps
+/// `close-pending` for the retry; a close that ended clears it. `row` and
+/// `key` are the notification row and the key it reported under.
 pub fn close_finished(
     lane: &Lane,
     pass: &Pass,
@@ -1789,33 +2170,40 @@ pub fn close_finished(
     let Ok(caps) = hosts.of(lane) else {
         return;
     };
-    if host_of(lane) == "local" || caps.files != Files::Verb {
+    if host_of(lane) == "local" {
         return;
     }
-    if pass
+    let merged = pass
         .baseline
         .get(MERGED_ROW, &lane.item)
-        .is_none_or(str::is_empty)
-    {
-        return;
-    }
-    match worktree(pass, lane) {
-        Answer::Live(()) => return,
-        Answer::Gone => {}
-        Answer::Unreadable { cause } => {
-            fail(
-                out,
-                format!("worktree-read-failed item={} cause={cause}", lane.item),
-            );
+        .is_some_and(|row| !row.is_empty());
+    let reason = if merged {
+        if caps.files != Files::Verb {
             return;
         }
-    }
+        match worktree(pass.scripts, lane) {
+            Answer::Live(()) => return,
+            Answer::Gone => {}
+            Answer::Unreadable { cause } => {
+                fail(
+                    out,
+                    format!("worktree-read-failed item={} cause={cause}", lane.item),
+                );
+                return;
+            }
+        }
+        "finished"
+    } else if row == "lane-exited" && caps.status == Status::Verb {
+        KEEP_REASON
+    } else {
+        return;
+    };
     let pending = format!("{row}|{key}");
-    if tracker_held(pass, lane) {
+    if reason == "finished" && tracker_held(pass, lane) {
         out.changes.push(set(CLOSE_PENDING_ROW, &name, pending));
         return;
     }
-    let Some(closed) = close_once(pass, lane, "finished", out) else {
+    let Some(closed) = close_once(pass, lane, reason, out) else {
         return;
     };
     say_closed(&lane.item, &closed, out);
@@ -1922,6 +2310,7 @@ mod tests {
                 status: Status::Verb,
                 pane: PaneKind::Local,
                 launch: Some(Launch::Ssh),
+                stop: Some(StopKind::Verb),
             }
         );
         let cloud =

@@ -19,7 +19,7 @@
 //! record and needs no comparison.
 //!
 //! The wall's record and route: the reset the banner names is read by the
-//! grammar (`lib/usage-reset.sh`) and the line is `usage-limit-passed` once
+//! grammar ([`reset`] below) and the line is `usage-limit-passed` once
 //! the clock passes it; the account wall record and the lane record's own wall
 //! are written through `ops::wall`; the wall relaunch is the walled lane's
 //! close and its `launch-lane` on the account the walk picked, applied by the
@@ -38,7 +38,7 @@
 //! `status=none` kind (a cloud session) by its pull request alone; a hosted
 //! lane's status file and records are read through the provider, and a merged
 //! hosted lane whose worktree the host no longer has is closed through
-//! `lane-close` at its `lane-exited` or `lane-idle` line.
+//! `close-lane` at its `lane-exited` or `lane-idle` line.
 
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -344,6 +344,10 @@ pub struct Inputs<'a> {
     /// A Pi lane's rows; `None` for every other harness.
     pub rows: Option<&'a Reading<LaneVerdict>>,
     pub harness: Option<Harness>,
+    /// Whether the account the lane spends was read as having room: the
+    /// close's wall lift passes `Some(true)`, which judges a usage banner
+    /// past; the watch reads none and reports every wall.
+    pub account_room: Option<bool>,
 }
 
 /// The classifier, in the rung order: the window (where the pane is this
@@ -415,7 +419,7 @@ pub fn classify(inputs: &Inputs) -> LaneState {
             cause: "harness-unrecorded".to_owned(),
         };
     };
-    match observe::judge(screen, harness, process, None) {
+    match observe::judge(screen, harness, process, inputs.account_room) {
         State::Idle => LaneState::Idle {
             capacity: harness == Harness::Codex
                 && observe::codex_capacity_refused(&observe::below_last_turn(screen)),
@@ -568,7 +572,12 @@ impl HostRead {
 /// up, which the pane is judged with: the provider's own where its kind
 /// captures it, else the local pane, whose own foreground is the transport
 /// shell and proves nothing of the harness either way.
-fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<'a> {
+fn read_lane<'a>(
+    lane: &'a Lane,
+    readers: &Readers,
+    host: HostRead,
+    account_room: Option<bool>,
+) -> Observed<'a> {
     let name = lane_name(lane);
     let harness = lane.harness.as_deref().and_then(Harness::parse);
     let identity = identity_of(lane);
@@ -641,6 +650,7 @@ fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<
             screen: Some(&screen),
             rows: rows_reading.as_ref(),
             harness,
+            account_room,
         });
         return Observed {
             lane,
@@ -676,6 +686,7 @@ fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<
         screen: screen.as_ref(),
         rows: rows_reading.as_ref(),
         harness,
+        account_room,
     });
     Observed {
         lane,
@@ -730,7 +741,7 @@ pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
         Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
     let readers = Readers::kernel();
-    let observed = read_lane(lane, &readers, host);
+    let observed = read_lane(lane, &readers, host, None);
     let mut said = Produced::default();
     let (counters, stage) = lane_counts(lane, files, &settings.state_dir, &scripts, &mut said);
     let mut reply = json!({
@@ -751,6 +762,44 @@ pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
         reply.extend(state);
     }
     Ok(reply)
+}
+
+/// One lane judged as the observation duty judges it, for the close: its
+/// host read first where its kind declares a status verb or its own pane,
+/// then its recorded pane; a host whose capability line cannot be read
+/// leaves it unjudged with the cause. The provider's status and capture
+/// reads both answered where `answered` says so.
+pub(crate) struct Judged {
+    pub state: LaneState,
+    /// Whether a verb host's status and capture reads both answered, the
+    /// proof a merged-and-gone unjudged lane closes on there.
+    pub answered: bool,
+}
+
+pub(crate) fn judge(settings: &Settings, lane: &Lane, account_room: Option<bool>) -> Judged {
+    let scripts = super::overseer::scripts_dir(&settings.roots.project);
+    let hosts = Hosts::read(&scripts, [lane]);
+    let (host, answered) = match hosts.of(lane) {
+        Err(cause) => (
+            HostRead {
+                status: Some(Err(cause)),
+                screen: None,
+                rows: None,
+            },
+            false,
+        ),
+        Ok(caps) => {
+            let read = HostRead::of(&scripts, lane, caps);
+            let answered =
+                !matches!(read.status, Some(Err(_))) && !matches!(read.screen, Some(Err(_)));
+            (read, answered)
+        }
+    };
+    let readers = Readers::kernel();
+    Judged {
+        state: read_lane(lane, &readers, host, account_room).state,
+        answered,
+    }
 }
 
 /// The non-blank lines of `block`, the last `cap` of them.
@@ -884,7 +933,14 @@ pub fn observe(pass: &Pass) -> Produced {
         .collect();
     let observed: Vec<Observed> = lanes
         .iter()
-        .map(|(lane, caps)| read_lane(lane, pass.readers, HostRead::of(pass.scripts, lane, *caps)))
+        .map(|(lane, caps)| {
+            read_lane(
+                lane,
+                pass.readers,
+                HostRead::of(pass.scripts, lane, *caps),
+                None,
+            )
+        })
         .collect();
     let mut walls = Vec::new();
     for obs in &observed {
@@ -1976,7 +2032,7 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
         }
         Files::Verb => match hosted::status_file(pass.scripts, lane) {
             Answer::Live(_) => Answer::Live(()),
-            Answer::Gone => match hosted::worktree(pass, lane) {
+            Answer::Gone => match hosted::worktree(pass.scripts, lane) {
                 // The worktree the lane's own close-out removed writes no
                 // status file: the merged check's lane, not a stalled one.
                 Answer::Gone => return,
@@ -2505,7 +2561,7 @@ fn shared_cause_key(a: &Value, b: &Value) -> bool {
     cause_keys(b).iter().any(|k| keys.contains(k))
 }
 
-/// The reset clause a usage-limit banner states (`lib/usage-reset.sh`): what
+/// The reset clause a usage-limit banner states: what
 /// shape it comes in and what instant it names given the moment the banner was
 /// first seen. The three tails in order, dated (`resets Sep 6, 4pm`, Codex's
 /// `Try again at Sep 6th, 2026 4:30 PM`), weekday (`resets Thursday 4am`) and
@@ -2735,6 +2791,17 @@ pub mod reset {
             }
         }
         None
+    }
+
+    /// Whether a line of `text` states a reset clause the grammar matches,
+    /// keyed or not (`USAGE_RESET_ANY_RE`): a clause [`key`] answers `None`
+    /// for, a clock with neither minutes nor a meridiem, still names a reset.
+    pub fn clause(text: &str) -> bool {
+        text.lines().any(|line| {
+            after_leads(line)
+                .iter()
+                .any(|r| dated(r).is_some() || weekday(r).is_some() || clock(r).is_some())
+        })
     }
 
     /// The key of the first line of `text` that states a reset in a shape

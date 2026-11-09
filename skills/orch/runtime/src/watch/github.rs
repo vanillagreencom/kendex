@@ -666,7 +666,7 @@ pub(super) fn terminal_github(gh: &Gh, lanes: &[Lane]) -> BTreeMap<String, Resul
     out
 }
 
-fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
+pub(super) fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
     let (Some(number), Some(repo)) = (lane.item.strip_prefix("issue-"), lane.repo.as_deref())
     else {
         return Err(refused("tracker-item-unread", &[("item", &lane.item)]));

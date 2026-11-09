@@ -294,10 +294,100 @@ pub struct CloseOwnedResources {
     pub terminal: Option<Terminal>,
     #[serde(default)]
     pub no_landing: Option<NoLanding>,
+    /// The lane judged ended while its item stays open (`CloseGround::Ended`):
+    /// it closes done with the item's files kept, whatever the harness reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended: Option<Ended>,
+    /// The harness, tracker and repository a close names for a record that
+    /// carries none: each fills only an empty field, and one that
+    /// contradicts the record refuses `record-invalid`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<CloseIdentity>,
+    /// The merge cycle the close records on the lane when it confirms
+    /// (`ops::cycle`), with the fleet-log rows it prints.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<state::CycleRow>,
+}
+
+/// The reading an ended close rests on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Ended {
+    pub source: String,
+}
+
+/// The identity fields a close supplies for a record that left them empty.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CloseIdentity {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracker: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+}
+
+/// The close verb (`effects::close`): one lane ended by what its record and
+/// its host say, its harness stopped by its recorded identity and through
+/// its provider, its item's files archived and removed where its tracker
+/// ended it, its sandbox closed, kept or parked, its record moved, and the
+/// merge cycle the delivery names written with the close.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CloseLane {
+    pub item: String,
+    #[serde(default)]
+    pub mode: CloseMode,
+    #[serde(default, flatten)]
+    pub identity: CloseIdentity,
+    /// The merge the lane delivered, where the caller read it (the watch's
+    /// merged index, the overseer's direct push): the cycle the close
+    /// records, and the delivery a merged-and-gone close rests on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery: Option<Delivery>,
+}
+
+/// What the close does: end the lane (`close`), end its harness and keep
+/// its sandbox (`keep-sandbox`), park its merge wait (`park`), print the
+/// tracker's verdict alone (`terminal-state`), or close only where that
+/// verdict is terminal (`if-terminal`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CloseMode {
+    #[default]
+    Close,
+    KeepSandbox,
+    Park(ParkWait),
+    TerminalState,
+    IfTerminal,
+}
+
+/// The pull request a park waits on: the lane's own, a dependency, or both;
+/// a dependency in another repository names it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParkWait {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_pr: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until_repo: Option<String>,
+}
+
+/// A lane's delivery: its merged pull request, or a direct push's commit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Delivery {
+    Pr {
+        pr: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
+    },
+    Commit {
+        commit: String,
+    },
 }
 
 /// Record a hosted lane parked: its clean merge wait ended with its disk
-/// kept, as `lane-close --park` records it after the sandbox stop. The
+/// kept, as `close-lane`'s park records it after the sandbox stop. The
 /// sandbox stop itself is the host adapter's, so the lane
 /// must already read `stopped`; a local lane has no sandbox to park.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1194,6 +1284,21 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
         pid: lane.launch.as_ref().and_then(|l| l.pid).unwrap_or(0),
         cause: cause.to_owned(),
     };
+    let grounds = [
+        r.terminal.is_some(),
+        r.no_landing.is_some(),
+        r.ended.is_some(),
+    ];
+    if grounds.iter().filter(|g| **g).count() > 1 {
+        return Err(Error::CloseGroundAmbiguous {
+            item: lane.item.clone(),
+        });
+    }
+    if let Some(ended) = &r.ended {
+        return Ok(CloseGround::Ended {
+            source: ended.source.clone(),
+        });
+    }
     match (&r.terminal, &r.no_landing) {
         (Some(_), Some(_)) => Err(Error::CloseGroundAmbiguous {
             item: lane.item.clone(),
@@ -1267,15 +1372,93 @@ pub(super) fn close_owned_resources(
             });
         }
     }
+    let lane = match &r.identity {
+        Some(identity) => fill_identity(path, doc, &lane, identity)?,
+        None => lane,
+    };
     let ground = close_ground(&lane, r, host)?;
     let mut intent = new_intent(EffectOp::CloseOwnedResources, &r.item, env)?;
     intent.lane_since = lane.session_since.clone();
     intent.close = Some(ground);
+    intent.cycle = r.cycle.clone();
     push_intent(path, doc, &intent)?;
     Ok(CloseRequested {
         lane,
         effect: Effect::Persisted { intent },
     })
+}
+
+/// The lane record with each identity field the close names written where
+/// the record leaves it empty; a value the record already carries wins, and
+/// a different one refuses `record-invalid field= recorded= option=`, since
+/// the caller and the record disagree about which lane this is.
+fn fill_identity(
+    path: &Path,
+    doc: &mut Document,
+    lane: &Lane,
+    identity: &CloseIdentity,
+) -> Result<Lane> {
+    let fills = identity_fills(lane, identity)?;
+    if fills.is_empty() {
+        return Ok(lane.clone());
+    }
+    let lanes = lanes(path, doc)?;
+    let index = lanes
+        .iter()
+        .position(|l| l.item == lane.item)
+        .ok_or_else(|| Error::LaneMissing {
+            item: lane.item.clone(),
+        })?;
+    let record = lane_doc_mut(path, doc, index)?;
+    for (field, value) in fills {
+        state::set(record, field, Value::from(value));
+    }
+    lane_at(path, doc, index)
+}
+
+/// The identity fields a close writes onto `lane`: each named field the
+/// record leaves empty; a named value the record contradicts refuses
+/// `record-invalid field= recorded= option=`.
+pub fn identity_fills(
+    lane: &Lane,
+    identity: &CloseIdentity,
+) -> Result<Vec<(&'static str, String)>> {
+    let fields = [
+        (
+            "harness",
+            lane.harness.as_deref(),
+            identity.harness.as_deref(),
+        ),
+        (
+            "tracker",
+            lane.tracker.as_deref(),
+            identity.tracker.as_deref(),
+        ),
+        ("repo", lane.repo.as_deref(), identity.repo.as_deref()),
+    ];
+    let mut fills = Vec::new();
+    for (field, recorded, option) in fields {
+        match (
+            recorded.filter(|v| !v.is_empty()),
+            option.filter(|v| !v.is_empty()),
+        ) {
+            (Some(recorded), Some(option)) if recorded != option => {
+                return Err(agent_runtime::Error::refused(
+                    "record-invalid",
+                    &[
+                        ("item", &lane.item),
+                        ("field", field),
+                        ("recorded", recorded),
+                        ("option", option),
+                    ],
+                )
+                .into());
+            }
+            (None, Some(option)) => fills.push((field, option.to_owned())),
+            (Some(_) | None, _) => {}
+        }
+    }
+    Ok(fills)
 }
 
 /// A reservation's term must be a stamp after the clock.
@@ -1305,7 +1488,7 @@ pub(super) fn park_lane(
     no_open_intent(&intents(path, doc)?, &r.item)?;
     let lane = &lanes[index];
     // A park stops a hosted sandbox with its disk kept; a local lane has
-    // none, as `lane-close --park` refuses it.
+    // none, as `close-lane`'s park refuses it.
     if lane.host.is_none() || lane.kind.as_deref() == Some("local") {
         return Err(Error::ParkRefused {
             item: r.item.clone(),
@@ -1420,7 +1603,7 @@ pub(super) fn release_lane(
 /// The lane an intent targets, as it stands, or the reading that its record
 /// moved under the intent: the lane is gone, moved under the intent's keys
 /// ([`lane_moved`]), or closed under a launch intent, which an earlier
-/// `lane-close` does from any status.
+/// close does from any status.
 pub(super) enum IntentTarget {
     Current { index: usize },
     Moved { observed: Option<LaneStatus> },
@@ -1590,6 +1773,58 @@ pub(super) fn record_launch_outcome(
     Ok(())
 }
 
+/// The cloud session's close row a cloud lane's close writes beside its own:
+/// the session and account the record names, `none` where it names none,
+/// and the last directive's send result, credit and the CLI's words where
+/// the record carries one, so the session the operator archives stays named
+/// once the record is done.
+fn cloud_close_row(lane: &Document, item: &str, at: &str) -> Option<Value> {
+    if lane.get("kind").and_then(Value::as_str) != Some(super::CLOUD_KIND) {
+        return None;
+    }
+    let word = |key: &str| {
+        lane.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("none")
+            .to_owned()
+    };
+    let mut text = format!(
+        "cloud lane closed; session={} account={}",
+        word("session_id"),
+        word("account")
+    );
+    if let Some(send) = lane.get("directive_send").filter(|v| v.is_object()) {
+        let field = |v: Option<&Value>| match v {
+            Some(Value::String(s)) => s.clone(),
+            None | Some(Value::Null) => "none".to_owned(),
+            Some(other) => other.to_string(),
+        };
+        let credit = match send.get("credit").filter(|v| v.is_object()) {
+            Some(credit) => format!(
+                "credit={} locked={}",
+                field(credit.get("remaining_dollars")),
+                field(credit.get("locked_reason"))
+            ),
+            None => "credit=unread".to_owned(),
+        };
+        // Each run of white space is one space, as jq's `gsub("\\s+"; " ")`.
+        let mut collapsed = String::new();
+        for c in field(send.get("text")).chars() {
+            if !c.is_whitespace() {
+                collapsed.push(c);
+            } else if !collapsed.ends_with(' ') {
+                collapsed.push(' ');
+            }
+        }
+        let cli: String = collapsed.chars().take(300).collect();
+        text.push_str(&format!(
+            " send={} {credit} cli={cli}",
+            field(send.get("result"))
+        ));
+    }
+    Some(json!({"at": at, "kind": "close", "item": item, "text": text}))
+}
+
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
 /// the lane done and drops the PR identities and the reservation a close
@@ -1624,7 +1859,10 @@ pub(super) fn record_close_outcome(
                     row["reason"] = json!(reason);
                     row["source"] = json!(source);
                 }
-                Some(CloseGround::Exited | CloseGround::Terminal { .. }) | None => {
+                Some(
+                    CloseGround::Exited | CloseGround::Terminal { .. } | CloseGround::Ended { .. },
+                )
+                | None => {
                     state::set(lane, "status", LaneStatus::Done.word());
                     state::delete(lane, "pending_pr");
                     state::delete(lane, "parked");
@@ -1649,13 +1887,28 @@ pub(super) fn record_close_outcome(
                         state::set(lane, "kept_mail", mail);
                     }
                     row["text"] = json!(format!("lane closed; intent {}", intent.id));
-                    if let Some(CloseGround::Terminal { verdict, source }) = &intent.close {
-                        row["verdict"] = serde_json::to_value(verdict)?;
-                        row["source"] = json!(source);
+                    match &intent.close {
+                        Some(CloseGround::Terminal { verdict, source }) => {
+                            row["verdict"] = serde_json::to_value(verdict)?;
+                            row["source"] = json!(source);
+                        }
+                        Some(CloseGround::Ended { source }) => {
+                            row["disposition"] = json!("ended");
+                            row["source"] = json!(source);
+                        }
+                        Some(CloseGround::Exited | CloseGround::NoLanding { .. }) | None => {}
                     }
                 }
             }
-            state::array_mut(path, doc, "fleet_log")?.push(row);
+            let cloud = cloud_close_row(lane, &intent.target, at);
+            let cycle = intent.cycle.as_ref().map(|c| c.rows(&intent.target, at));
+            if let Some(cycle_row) = &intent.cycle {
+                state::set(lane, "cycle", cycle_row.cycle.clone());
+            }
+            let log = state::array_mut(path, doc, "fleet_log")?;
+            log.push(row);
+            log.extend(cloud);
+            log.extend(cycle.into_iter().flatten());
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed | Outcome::Unconfirmed | Outcome::NotStarted => {}
@@ -2960,6 +3213,9 @@ mod tests {
                 source: "overseer".into(),
                 interrupt: false,
             }),
+            ended: None,
+            identity: None,
+            cycle: None,
         });
         let err = apply_on(&path, &both, &env(), LOCK, &kernel(4)).unwrap_err();
         assert_eq!(err.key(), "close-ground-ambiguous");
@@ -2975,6 +3231,9 @@ mod tests {
                 source: "linear".into(),
             }),
             no_landing: None,
+            ended: None,
+            identity: None,
+            cycle: None,
         });
         let Report::CloseOwnedResources(c) = apply_on(&path, &terminal, &env(), LOCK, &kernel(4))
             .unwrap()
@@ -3040,6 +3299,9 @@ mod tests {
                 source: "linear".into(),
             }),
             no_landing: None,
+            ended: None,
+            identity: None,
+            cycle: None,
         });
         let id = intend(&path, &terminal);
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -3085,6 +3347,9 @@ mod tests {
                 source: "overseer".into(),
                 interrupt: false,
             }),
+            ended: None,
+            identity: None,
+            cycle: None,
         });
         let unread = |_: &Identity| Reading::Unreadable {
             cause: "stat-unreadable",
@@ -3138,7 +3403,7 @@ mod tests {
         assert_eq!(l.admission.occupancy, 0);
     }
 
-    /// `park-lane` records the park `lane-close --park` writes after the
+    /// `park-lane` records the park `close-lane` writes after the
     /// sandbox stop: on a stopped hosted lane, `parked {head, repo, at, pr?,
     /// until_pr?, until_repo?}` with `pending_pr` dropped and the status
     /// parked; a local lane refuses `park-refused reason=local`; a running

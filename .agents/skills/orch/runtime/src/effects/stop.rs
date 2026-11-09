@@ -24,7 +24,8 @@ use super::operation::{
 };
 use super::{Run, Target, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Intent, Lane};
+use crate::state::{CloseGround, Intent, Lane, TerminalVerdict};
+use crate::watch::hosted::{Asked, HostClosed};
 
 /// `stale` is what the reconcile of the same request already read stale,
 /// counted no second time here.
@@ -43,6 +44,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         lane: &lane,
         target: harness.map(|h| Target::new(run.settings, h)),
         ground: intent.close.as_ref(),
+        cycle: intent.cycle.as_ref().map(|row| &row.cycle),
     };
     // A lane whose stamp or launch keys are not the intent's is a moved lane
     // (the one judgement the store applies too): before any signal the close
@@ -141,6 +143,8 @@ struct Close<'a> {
     lane: &'a Lane,
     target: Option<Target>,
     ground: Option<&'a CloseGround>,
+    /// The merge cycle this close records on the lane when it confirms.
+    cycle: Option<&'a Value>,
 }
 
 impl Close<'_> {
@@ -154,6 +158,33 @@ impl Close<'_> {
 
     fn no_landing(&self) -> bool {
         matches!(self.ground, Some(CloseGround::NoLanding { .. }))
+    }
+
+    /// Whether the provider's close takes `--merged`, which lets it cut the
+    /// item's archive: only for an item its tracker ended completed, where
+    /// the record's cycle carries the merge or `worktree merged` shows the
+    /// branch merged. A merge that read cannot judge is noted
+    /// `merged-unjudged`, and the close keeps the whole archive.
+    fn merged(&self, operation: &Operation, observation: &mut Value) -> bool {
+        if !matches!(
+            self.ground,
+            Some(CloseGround::Terminal {
+                verdict: TerminalVerdict::Completed,
+                ..
+            })
+        ) {
+            return false;
+        }
+        if record_merged(self.lane) || self.cycle.is_some_and(cycle_merged) {
+            return true;
+        }
+        match operation.worktree_merged(self.item) {
+            Ok(merged) => merged,
+            Err(cause) => {
+                observation["merged"] = json!(format!("merged-unjudged {cause}"));
+                false
+            }
+        }
     }
 
     /// Whether the disposition stops the harness mid-turn, asking no idle
@@ -283,6 +314,44 @@ impl Close<'_> {
             observation["validate"] = json!("stop-failed");
             observation["cause"] = json!(cause);
             return Ok(self.hold(operation, observation));
+        }
+        // The item's files leave before the provider's close, so a close
+        // that stops past this point repeats whole, the removal included.
+        if self.ground.is_some_and(CloseGround::ends_item) {
+            match operation.close_out_files(self.item)? {
+                Ok(archive) => {
+                    observation["item_files"] = json!("removed");
+                    if let Some(archive) = archive {
+                        observation["archive"] = json!(archive.display().to_string());
+                    }
+                }
+                Err(cause) => {
+                    observation["item_files"] = json!("failed");
+                    observation["cause"] = json!(cause);
+                    return Ok(self.hold(operation, observation));
+                }
+            }
+        }
+        if provider_closes(self.ground, self.lane) {
+            let merged = self.merged(&operation, &mut observation);
+            match operation.host_close(self.lane, merged)? {
+                Ok(HostClosed::Closed { line }) => observation["host_close"] = json!(line),
+                Ok(HostClosed::Refused { path }) => {
+                    observation["host_close"] = json!("refused");
+                    observation["path"] = json!(path);
+                    return Ok(self.hold(operation, observation));
+                }
+                Err(Asked::Failed(cause)) => {
+                    observation["host_close"] = json!("failed");
+                    observation["cause"] = json!(cause);
+                    return Ok(self.hold(operation, observation));
+                }
+                Err(Asked::Unknown(cause)) => {
+                    observation["host_close"] = json!("unanswered");
+                    observation["cause"] = json!(cause);
+                    return Ok(self.hold(operation, observation));
+                }
+            }
         }
         let window = operation.close_lane_window()?;
         observation["window"] = json!(window.word());
@@ -436,6 +505,52 @@ impl Close<'_> {
     }
 }
 
+/// Whether the lane's sandbox is a provider's, which the provider's own
+/// close ends: a record naming a host that is not the cloud kind.
+fn provider_hosted(lane: &Lane) -> bool {
+    lane.host.as_deref().is_some_and(|h| !h.is_empty())
+        && lane.kind.as_deref() != Some(crate::ops::CLOUD_KIND)
+}
+
+/// Whether a close on `ground` owes a close-out only its finish discharges:
+/// the item's files on the tracker's terminal verdict, the provider's close
+/// of a hosted sandbox on any ground but `no-landing`. Neither leaves a
+/// handle the reconcile can read, and both are safe to ask again (the
+/// archive of no files writes nothing, a provider that no longer holds the
+/// item answers `closed=absent`), so the reconcile of such a close never
+/// confirms it and its repeat runs the close again.
+fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
+    ground.is_some_and(CloseGround::ends_item) || provider_closes(ground, lane)
+}
+
+/// Whether the provider's close ends the lane's sandbox on `ground`: a
+/// hosted lane's close on any ground but `no-landing`, which keeps it, and
+/// a host-absent close, which has none to close.
+fn provider_closes(ground: Option<&CloseGround>, lane: &Lane) -> bool {
+    provider_hosted(lane)
+        && !matches!(ground, Some(CloseGround::NoLanding { .. }))
+        && !ground.is_some_and(CloseGround::host_absent)
+}
+
+/// Whether the record's cycle carries a delivery.
+pub(super) fn record_merged(lane: &Lane) -> bool {
+    lane.extra.get("cycle").is_some_and(cycle_merged)
+}
+
+/// Whether a cycle object carries a delivery: a merged pull request, or a
+/// direct push whose merged stamp was read.
+fn cycle_merged(cycle: &Value) -> bool {
+    cycle.get("pr").is_some_and(Value::is_number)
+        || (cycle
+            .get("commit")
+            .and_then(Value::as_str)
+            .is_some_and(|c| !c.is_empty())
+            && cycle
+                .pointer("/stamps/merged")
+                .and_then(Value::as_str)
+                .is_some_and(|m| !m.is_empty()))
+}
+
 /// `observation` with the pane the set records under the harness role.
 fn with_pane(operation: &Operation, mut observation: Value) -> Value {
     observation["pane"] = json!(operation.harness_pane_id());
@@ -529,7 +644,8 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     };
     // The close judged once what stands beside the process and the pane is
     // read: a validation stop owed holds; the wake is read through the one
-    // identity reader and discharged where gone.
+    // identity reader and discharged where gone; a close-out the ground owes
+    // holds last.
     let settled = |mut operation: Operation, mut observation: Value| -> Result<EffectOutcome> {
         if operation.owes_validation() {
             observation["validate"] = json!("stop-failed");
@@ -547,6 +663,10 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
                 observation["cause"] = json!(cause);
                 return Ok(hold(operation, observation));
             }
+        }
+        if owes_close_out(intent.close.as_ref(), &lane) {
+            observation["close_out"] = json!("owed");
+            return Ok(hold(operation, observation));
         }
         let mut outcome =
             operation.settle(Word::Confirmed, reconcile_observation(&item, observation));

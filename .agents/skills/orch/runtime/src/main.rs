@@ -138,6 +138,26 @@ enum Verb {
         #[command(subcommand)]
         op: LaneOp,
     },
+    /// Close a Linear container once its last child is Done or Canceled:
+    /// one stdout line, `closed ID`, `deferred [ID...]` or `held ID RESET`,
+    /// the diagnostics on stderr, a refusal `container-close: KEY ...` on
+    /// stderr at exit 1 (2 for a malformed parent id).
+    ContainerClose {
+        /// A checkout of the repository: the shared main checkout it is a
+        /// worktree of holds the closers' one lock.
+        checkout: PathBuf,
+        /// The container's item id; one that leads with `-` is a malformed
+        /// id, refused as such, never a flag.
+        #[arg(allow_hyphen_values = true)]
+        parent: String,
+    },
+    /// The merge cycles the fleet record holds, printed as text lines: the
+    /// per-class totals, or a running lane's stage rows. No fleet record
+    /// prints nothing.
+    Cycle {
+        #[command(subcommand)]
+        op: CycleOp,
+    },
     /// Judge the recorded controller's own marks: the context reading handed
     /// in, its account at the headroom trigger, the rate to its wall, and its
     /// process's memory against its cgroup cap where a mark is set. The reply
@@ -536,6 +556,22 @@ enum LaneOp {
     Status {
         /// The lane's item key.
         #[arg(long)]
+        item: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum CycleOp {
+    /// One `rollup class=` row per class with a record, in the target
+    /// table's order then `unclassified`, and each recorded stage's
+    /// `stage item=` row; nothing is written.
+    Report,
+    /// The `rollup class=` rows, each appended to the fleet log as a
+    /// `cycle` row under its class.
+    Rollup,
+    /// A running lane's `stage item=` rows, by start, read without a cycle.
+    Stages {
+        /// The lane's item key.
         item: String,
     },
 }
@@ -1191,6 +1227,19 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &path, r, &settings, &env, locking,
                 )?)?);
             }
+            // A lane's close reads its record, its tracker and its host
+            // first, stops a hosted harness through its provider, then makes
+            // its one close transition.
+            if let Request::CloseLane(r) = &request {
+                return Ok(serde_json::to_value(effects::close_lane(
+                    &path,
+                    r,
+                    &settings,
+                    &env,
+                    locking,
+                    &schedule::SystemClock,
+                )?)?);
+            }
             // An adoption reads the pane first and makes its one transition
             // on what it read.
             if let Request::AdoptController(r) = &request {
@@ -1411,6 +1460,45 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let settings = resolve_settings(&flags)?;
             watch::lanes::status(&settings, &item)?
+        }
+        Verb::ContainerClose { checkout, parent } => {
+            let settings = resolve_settings(&flags)?;
+            let answer =
+                ops::accept::container_close(&settings.reads.tracker_cli, &checkout, &parent);
+            let mut err = std::io::stderr().lock();
+            match answer {
+                Ok(closed) => {
+                    for note in &closed.notes {
+                        let _ = writeln!(err, "{note}");
+                    }
+                    let _ = writeln!(std::io::stdout().lock(), "{}", closed.answer.line());
+                    std::process::exit(0);
+                }
+                Err(refused) => {
+                    for note in &refused.notes {
+                        let _ = writeln!(err, "{note}");
+                    }
+                    let _ = writeln!(err, "{}", refused.line());
+                    std::process::exit(refused.exit);
+                }
+            }
+        }
+        Verb::Cycle { op } => {
+            let settings = resolve_settings(&flags)?;
+            let fleet = state::fleet_path(&settings.state_dir);
+            let lines = match &op {
+                CycleOp::Report => ops::cycle::rollup(&fleet, true)?,
+                CycleOp::Rollup => {
+                    ops::cycle::rollup_logged(&fleet, locking, &settings.store, &system_env()?)?
+                }
+                CycleOp::Stages { item } => ops::cycle::stages(&settings, &fleet, item)?,
+            };
+            // The text the report and the overseer's reads take, a line each.
+            let mut out = std::io::stdout().lock();
+            for line in &lines {
+                let _ = writeln!(out, "{line}");
+            }
+            std::process::exit(0);
         }
         Verb::Marks {
             target,

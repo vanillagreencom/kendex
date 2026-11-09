@@ -132,6 +132,7 @@ def SCHEMA: {
   "PullRequest": {
     "id": ["S", false], "number": ["S", false], "state": ["S", false], "body": ["S", false],
     "createdAt": ["S", false], "mergedAt": ["S", false], "headRefName": ["S", false],
+    "headRefOid": ["S", false], "mergeStateStatus": ["S", false], "isInMergeQueue": ["S", false],
     "author": ["Actor", false], "headRepository": ["Repository", false],
     "mergeCommit": ["Commit", false], "mergeQueueEntry": ["MergeQueueEntry", false],
     "autoMergeRequest": ["AutoMergeRequest", false],

@@ -91,6 +91,14 @@ elif [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
     echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
     exit 1
   fi
+elif [ "${1:-}" = pr ] && [ "${2:-}" = list ]; then
+  # The container close's lookup of a child's merged pull request, answered
+  # from the map's `pr list` entry; with none it fails as a request does.
+  reply=$(jq -c '."pr list" // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  if [ -z "$reply" ]; then
+    echo "gh-fake: no pr list answer" >&2
+    exit 1
+  fi
 elif [ "${1:-}" = pr ] && [ "${2:-}" = ready ]; then
   reply=$(jq -c --arg k "pr ready ${3:-}" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then

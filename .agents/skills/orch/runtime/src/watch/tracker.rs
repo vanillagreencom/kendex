@@ -40,9 +40,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, Replied, Resolved};
-use crate::ops::{self, CloseOwnedResources, Env, Request, Terminal};
+use crate::ops::{self, CloseOwnedResources, Delivery, Env, Request, Terminal};
 use crate::settings::Settings;
-use crate::state::{self, FleetState, Lane, LaneStatus, Locking, Owner, TerminalVerdict};
+use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, Locking, Owner, TerminalVerdict};
 use crate::verify::wire::Nullable;
 use crate::watch::{Body, Change, Event, Produced, Tick};
 
@@ -208,6 +208,27 @@ impl Quota {
             .filter(|v| v.get("code").and_then(|c| c.as_str()) == Some("RATELIMITED"))
             .filter_map(|v| serde_json::from_value::<Quota>(v.get("quota")?.clone()).ok())
             .find(Quota::well_formed)
+    }
+
+    /// The two resets the last quota receipt on `text` names, the requests
+    /// window's (`requests_reset`) and the hold's (`quota.reset`), each
+    /// `unavailable` where the line names none; `None` where no line is a
+    /// receipt.
+    pub fn receipt_resets(text: &str) -> Option<(String, String)> {
+        let line = text
+            .lines()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .find(|v| v.get("code").and_then(|c| c.as_str()) == Some("RATELIMITED"))?;
+        let word = |v: Option<&serde_json::Value>| {
+            v.and_then(|v| v.as_str())
+                .unwrap_or("unavailable")
+                .to_owned()
+        };
+        Some((
+            word(line.get("requests_reset")),
+            word(line.pointer("/quota/reset")),
+        ))
     }
 
     /// Whether the receipt still holds tracker reads at `now`.
@@ -453,7 +474,7 @@ fn tracker_of(lane: &Lane) -> &str {
     }
 }
 
-/// What the tracker says of a lane's item (`lane-close --terminal-state`).
+/// What the tracker says of a lane's item (`close-lane`'s `terminal-state`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalState {
     Completed,
@@ -461,8 +482,144 @@ pub enum TerminalState {
     Open,
 }
 
+/// One lane's item judged for the close (`close-lane`): its retained pull
+/// request waits first where `waits` (a parked record, a `pending_pr`, a
+/// parked status naming none), an open one holding the item open; then its
+/// tracker, `tracker` and `repo` the identity the close resolved. A linear
+/// item Done with an unchecked Done-when box reads open where `boxes`. `Err`
+/// is the cause word of a read that did not answer, as the tracker
+/// refusal names it.
+pub(crate) fn lane_verdict(
+    settings: &Settings,
+    lane: &Lane,
+    tracker: &str,
+    repo: Option<&str>,
+    waits: bool,
+) -> std::result::Result<TerminalState, String> {
+    let gh = github::handle(Path::new("gh"));
+    let mut boxes = false;
+    if waits {
+        let record = lane
+            .extra
+            .get("parked")
+            .filter(|v| !v.is_null())
+            .or_else(|| lane.extra.get("pending_pr").filter(|v| !v.is_null()));
+        if record.is_none() && lane.status == LaneStatus::Parked {
+            return Err("parked-record-invalid".to_owned());
+        }
+        if let Some(record) = record {
+            boxes = true;
+            for (wait_repo, number) in pull_waits(record)? {
+                let pull = gh
+                    .object::<crate::verify::wire::Pull>(
+                        "terminal",
+                        &format!("repos/{wait_repo}/pulls/{number}"),
+                    )
+                    .map_err(|_| "pr-read-failed".to_owned())?
+                    .ok_or_else(|| "pr-read-failed".to_owned())?;
+                match pull.state.as_str() {
+                    "open" => return Ok(TerminalState::Open),
+                    "closed" => {}
+                    _ => return Err("pr-state-invalid".to_owned()),
+                }
+            }
+        }
+        boxes |= matches!(lane.status, LaneStatus::Parked | LaneStatus::Stopped);
+    }
+    match tracker {
+        "linear" => {
+            let linear = Linear {
+                cli: &settings.reads.tracker_cli,
+            };
+            let reply: BulkReply = match linear.json(
+                "terminal",
+                &["issues", "bulk-get", &lane.item, "--format=raw"],
+            ) {
+                Ok(Answered::Value(reply)) => reply,
+                // The quota hold is its own cause: a caller defers on it.
+                Ok(Answered::Quota(_)) => return Err("quota".to_owned()),
+                Err(_) => return Err("read-failed".to_owned()),
+            };
+            let Some(node) = reply
+                .issues
+                .nodes
+                .into_iter()
+                .find(|n| n.identifier == lane.item)
+            else {
+                return Err("read-failed".to_owned());
+            };
+            match node.state.kind.as_str() {
+                "" => Err("no-state-type".to_owned()),
+                "canceled" => Ok(TerminalState::Canceled),
+                "completed" if boxes => {
+                    let description = match node.description {
+                        Nullable::Present(d) => d,
+                        Nullable::Absent | Nullable::Null => String::new(),
+                    };
+                    match all_boxes_checked(&linear, &description) {
+                        Ok(true) => Ok(TerminalState::Completed),
+                        Ok(false) => Ok(TerminalState::Open),
+                        Err(_) => Err("checklist-unparsed".to_owned()),
+                    }
+                }
+                "completed" => Ok(TerminalState::Completed),
+                _ => Ok(TerminalState::Open),
+            }
+        }
+        "github" => {
+            if !lane.item.starts_with("issue-") {
+                return Err("key-not-issue".to_owned());
+            }
+            let Some(repo) = repo.filter(|r| !r.is_empty()) else {
+                return Err("repo-missing".to_owned());
+            };
+            let with_repo = Lane {
+                repo: Some(repo.to_owned()),
+                ..lane.clone()
+            };
+            github::terminal_of(&gh, &with_repo).map_err(|_| "read-failed".to_owned())
+        }
+        "" if lane.item.starts_with("issue-") => Err("key-ambiguous".to_owned()),
+        _ => Err("tracker-unknown".to_owned()),
+    }
+}
+
+/// The pull requests a retained wait names, `(repo, number)` each once: the
+/// lane's own and a dependency, the dependency in its own repository where
+/// the record names one. A record naming none, or a number or repository of
+/// the wrong shape, is `parked-record-invalid`.
+fn pull_waits(record: &serde_json::Value) -> std::result::Result<Vec<(String, u64)>, String> {
+    let invalid = || "parked-record-invalid".to_owned();
+    let repo = record
+        .get("repo")
+        .and_then(serde_json::Value::as_str)
+        .filter(|r| !r.is_empty())
+        .ok_or_else(invalid)?;
+    let until_repo = match record.get("until_repo") {
+        None | Some(serde_json::Value::Null) => repo,
+        Some(v) => v.as_str().filter(|r| !r.is_empty()).ok_or_else(invalid)?,
+    };
+    let mut waits = Vec::new();
+    for (wait_repo, key) in [(repo, "pr"), (until_repo, "until_pr")] {
+        match record.get(key) {
+            None | Some(serde_json::Value::Null) => {}
+            Some(v) => {
+                let number = v.as_u64().filter(|n| *n > 0).ok_or_else(invalid)?;
+                let wait = (wait_repo.to_owned(), number);
+                if !waits.contains(&wait) {
+                    waits.push(wait);
+                }
+            }
+        }
+    }
+    if waits.is_empty() {
+        return Err(invalid());
+    }
+    Ok(waits)
+}
+
 impl TerminalState {
-    fn verdict(self) -> Option<TerminalVerdict> {
+    pub(crate) fn verdict(self) -> Option<TerminalVerdict> {
         match self {
             TerminalState::Completed => Some(TerminalVerdict::Completed),
             TerminalState::Canceled => Some(TerminalVerdict::Canceled),
@@ -470,7 +627,7 @@ impl TerminalState {
         }
     }
 
-    fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             TerminalState::Completed => "completed",
             TerminalState::Canceled => "canceled",
@@ -790,8 +947,8 @@ fn read_tracker(
             .values()
             .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
     );
-    // The lane items' terminal states, one batch (`lane-close
-    // --terminal-state`), for every parked or stopped linear-tracked lane.
+    // The lane items' terminal states, one batch (`close-lane`'s
+    // `terminal-state`), for every parked or stopped linear-tracked lane.
     let lane_items: Vec<&str> = fleet
         .lanes
         .iter()
@@ -1315,9 +1472,6 @@ fn close_terminal_lanes(
             });
             continue;
         };
-        // Before the close removes the lane-side state the cycle is read
-        // from, and whether or not a refused close is held.
-        record_cycle(ctx, tick, lane, &mut produced);
         let key = format!(
             "{}|{}",
             state.word(),
@@ -1326,6 +1480,10 @@ fn close_terminal_lanes(
         if tick.baseline.get(TERMINAL_CLOSE_ROW, &lane.item) == Some(key.as_str()) {
             continue;
         }
+        // Read before the close removes the lane-side state it is read
+        // from, and carried by the close's own request.
+        let cycle = cycle_of(ctx, tick, lane);
+        let lines = cycle.as_ref().map(|c| c.lines.clone()).unwrap_or_default();
         let env = Env {
             now_secs: tick.wall,
             now_nanos: u128::from(tick.wall) * 1_000_000_000 + i as u128,
@@ -1333,16 +1491,19 @@ fn close_terminal_lanes(
             owner: ctx.owner.clone(),
         };
         let closed =
-            close_one(ctx, tick, &env, &lane.item, verdict).and_then(|closed| match closed {
-                Closed::Confirmed => Ok(true),
-                Closed::Open => Ok(false),
-                Closed::Failed(cause) => Err(Error::Runtime(agent_runtime::Error::refused(
-                    "close-failed",
-                    &[("cause", &cause)],
-                ))),
-            });
+            close_one(ctx, tick, &env, &lane.item, verdict, cycle).and_then(
+                |closed| match closed {
+                    Closed::Confirmed => Ok(true),
+                    Closed::Open => Ok(false),
+                    Closed::Failed(cause) => Err(Error::Runtime(agent_runtime::Error::refused(
+                        "close-failed",
+                        &[("cause", &cause)],
+                    ))),
+                },
+            );
         match closed {
             Ok(true) => {
+                produced.events.extend(lines.into_iter().map(Event::Tail));
                 produced.events.push(Event::LaneClosed {
                     item: lane.item.clone(),
                 });
@@ -1390,31 +1551,20 @@ fn close_terminal_lanes(
     Ok(produced)
 }
 
-/// The bound on one cycle record: the merged pull request's timeline and
-/// the merge's class, each read through `gh`.
-const CYCLE_TIMEOUT: Duration = Duration::from_secs(300);
-
-/// An ended lane's merge cycle, recorded by `oversee-cycle record` for the
-/// first of the item's merged pull requests that is the lane's own: the
-/// parked or pending pull request its record names, else one in its
-/// repository. The merges are the merged index's current read for the lane
-/// ([`github::merged_keys`]), made before every terminal close whatever
-/// `merged` row stands: the item often ends at the merge, this duty runs
-/// before the GitHub duty on the shared cadence, and a row an earlier pass
-/// wrote can name an earlier pull request only. A merge its record's
-/// `cycle` already names is not recorded again. The recorder writes the
-/// record and the fleet log itself, and its printed line is said as it
-/// printed it. A refusal, a run that did not start or gave no answer, and a
-/// merge read that failed are each said once on stderr with the cause, and
-/// the close goes on, as a GitHub refusal holds none of this duty's work.
-/// While the close is held or left open, the next pass reads the record's
-/// `cycle` and records again only where none stands; once the close ends
-/// the lane, nothing records it, and the stderr line is the report.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the terminal-lanes step's one recorder run per ended lane with a merge: `oversee-cycle` from the scripts directory through the one runner under the duty's tag, from the project checkout it reads the merge's class in"
-)]
-fn record_cycle(ctx: &Context, tick: &Tick, lane: &Lane, produced: &mut Produced) {
+/// An ended lane's merge cycle (`ops::cycle`), for the first of the item's
+/// merged pull requests that is the lane's own: the parked or pending pull
+/// request its record names, else one in its repository. The merges are the
+/// merged index's current read for the lane ([`github::merged_keys`]), made
+/// before every terminal close whatever `merged` row stands: the item often
+/// ends at the merge, this duty runs before the GitHub duty on the shared
+/// cadence, and a row an earlier pass wrote can name an earlier pull request
+/// only. A merge its record's `cycle` already names is not recorded again.
+/// The row rides the close's request and is written with the close when it
+/// confirms, its lines said then. A refusal and a merge read that failed are
+/// each said once on stderr with the cause, as are the recorder's notes, and
+/// the close goes on with no cycle, as a GitHub refusal holds none of this
+/// duty's work.
+fn cycle_of(ctx: &Context, tick: &Tick, lane: &Lane) -> Option<CycleRow> {
     let gh = github::handle(&ctx.gh);
     let since_iso = ctx.since.map(clock::iso_utc);
     let merged = match github::merged_keys(
@@ -1433,7 +1583,7 @@ fn record_cycle(ctx: &Context, tick: &Tick, lane: &Lane, produced: &mut Produced
                 "lane-close-failed item={} step=cycle cause=merged-unread {e}",
                 lane.item
             );
-            return;
+            return None;
         }
     };
     let repo_of = |v: &serde_json::Value| {
@@ -1465,77 +1615,43 @@ fn record_cycle(ctx: &Context, tick: &Tick, lane: &Lane, produced: &mut Produced
         };
         mine.then_some((key_repo, number))
     });
-    let Some((key_repo, number)) = own else {
-        return;
-    };
+    let (key_repo, number) = own?;
     if cycle_pr.is_some() && cycle_pr == number.parse().ok() {
-        return;
+        return None;
     }
-    let project = &ctx.settings.roots.project;
-    let state_dir = ctx
-        .fleet
-        .parent()
-        .unwrap_or(Path::new("."))
-        .display()
-        .to_string();
     let item = lane.item.as_str();
-    let answer = host::run_tagged_in(
-        TAG,
-        "oversee-cycle",
-        &super::overseer::scripts_dir(project).join("oversee-cycle"),
-        "record",
-        &[
-            "--state-dir",
-            &state_dir,
-            "record",
-            "--pr",
-            number,
-            "--repo",
-            key_repo,
-            item,
-        ],
-        host::Place {
-            cwd: Some(project),
-            env: &[],
-        },
-        CYCLE_TIMEOUT,
-    );
     let mut stderr = std::io::stderr();
-    match answer {
-        Ok(out) => {
-            let _ = stderr.write_all(&out.stderr);
-            match (out.status.success(), out.status.code()) {
-                (true, _) => produced.events.extend(
-                    host::stdout_text(&out)
-                        .lines()
-                        .filter(|l| !l.is_empty())
-                        .map(|l| Event::Tail(l.to_owned())),
-                ),
-                (false, Some(code)) => {
-                    let _ = writeln!(
-                        stderr,
-                        "lane-close-failed item={item} step=cycle exit={code}"
-                    );
-                }
-                (false, None) => {
-                    let _ = writeln!(
-                        stderr,
-                        "lane-close-failed item={item} step=cycle cause=unanswered"
-                    );
-                }
+    let Ok(pr) = number.parse::<u64>() else {
+        let _ = writeln!(
+            stderr,
+            "lane-close-failed item={item} step=cycle cause=pr-unparsed key={key_repo}#{number}"
+        );
+        return None;
+    };
+    let delivery = Delivery::Pr {
+        pr,
+        repo: Some(key_repo.to_owned()),
+    };
+    match ops::cycle::recorded(
+        &ctx.settings,
+        &ctx.gh,
+        &ctx.fleet,
+        lane,
+        &delivery,
+        tick.wall,
+    ) {
+        Ok(row) => {
+            for note in &row.notes {
+                let _ = writeln!(stderr, "{note}");
             }
+            Some(row)
         }
-        Err(agent_runtime::Error::NotStarted { .. }) => {
+        Err(cause) => {
             let _ = writeln!(
                 stderr,
-                "lane-close-failed item={item} step=cycle cause=not-started"
+                "lane-close-failed item={item} step=cycle cause={cause}"
             );
-        }
-        Err(e) => {
-            let _ = writeln!(
-                stderr,
-                "lane-close-failed item={item} step=cycle cause=unanswered {e}"
-            );
+            None
         }
     }
 }
@@ -1562,6 +1678,7 @@ fn close_one(
     env: &Env,
     item: &str,
     verdict: TerminalVerdict,
+    cycle: Option<CycleRow>,
 ) -> Result<Closed> {
     let request = Request::CloseOwnedResources(CloseOwnedResources {
         item: item.to_owned(),
@@ -1570,6 +1687,9 @@ fn close_one(
             source: "tracker".to_owned(),
         }),
         no_landing: None,
+        ended: None,
+        identity: None,
+        cycle,
     });
     let host = ops::Host::kernel(ctx.settings.lane_cap);
     let applied = ops::apply_on(&ctx.fleet, &request, env, ctx.locking, &host)?;

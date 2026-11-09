@@ -765,7 +765,10 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     let relaunch = intent.selection.as_ref().is_some_and(|s| s.relaunch);
     let mut outcome = match surface {
         Surface::Local(fleet) => local_launch(run, operation, r, fleet, &route)?,
-        Surface::Hosted(provider) => hosted_launch(run, operation, r, provider, relaunch)?,
+        Surface::Hosted(provider) => {
+            let parked = relaunch && parked_last(&lane);
+            hosted_launch(run, operation, r, provider, relaunch, parked)?
+        }
         Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
     };
     outcome.annotate("route", json!(route.word()));
@@ -952,12 +955,25 @@ fn local_launch(
 /// A hosted lane: the provider's `create` (and `wait`), the launch record
 /// verified on the host, then the fleet window running the ssh client
 /// whose one typed line starts the harness under the provider's prefix.
+/// Whether the lane's last pause is a park: its sandbox was stopped with its
+/// disk kept, and no launch has brought it back for certain since.
+fn parked_last(lane: &Lane) -> bool {
+    lane.extra
+        .get("pauses")
+        .and_then(Value::as_array)
+        .and_then(|pauses| pauses.last())
+        .and_then(|pause| pause.get("cause"))
+        .and_then(Value::as_str)
+        == Some("parked")
+}
+
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
     r: &LaunchLane,
     provider: &str,
     relaunch: bool,
+    parked: bool,
 ) -> Result<EffectOutcome> {
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
@@ -1004,6 +1020,16 @@ fn hosted_launch(
         Ok(text) => text.map(|text| unattended(&text)),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
+    // A parked lane's sandbox is stopped with its disk kept: the provider's
+    // start brings it back before `create --relaunch` resumes the harness on
+    // that disk. A provider answers `sandbox-started` for a sandbox already
+    // up, so a relaunch after a start that failed asks it again.
+    if parked
+        && let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
+            hosted::start(&scripts, provider, &r.item)
+    {
+        return failed(operation, &format!("host-start-failed {cause}"));
+    }
     operation.record_phase(Phase::Preparing {
         step: HOST_CREATE.to_owned(),
         at: provider.to_owned(),

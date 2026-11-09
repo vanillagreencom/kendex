@@ -1523,7 +1523,7 @@ fn every_event_renders_to_its_recorded_bytes() {
 
 // The hosted close through `watch run`.
 /// The watch over a stalled cloud lane, started with the `lane-host` and
-/// `lane-close` fixtures under the project's scripts directory and the
+/// runtime-entry fixtures under the project's scripts directory and the
 /// `gh` fixture first on `PATH`, `extra` on its environment.
 fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Child {
     let mut command = watch_run_command(dir, &["--interval", "1"]);
@@ -1535,8 +1535,9 @@ fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::C
 
 /// Through `watch run` over a cloud lane whose pull request stood still
 /// past the stall bound and whose directive went unanswered past the cloud
-/// stall bound, `lane-close --state-dir [DIR] CC-1` is asked once with the
-/// close marker written before it; the fixture ends the runtime before it
+/// stall bound, the close verb (`close-lane CC-1` through the runtime's
+/// entry) is asked once with the close marker written before it; the
+/// fixture ends the runtime before it
 /// answers, and the next run finds the marker beside the open lane, asks
 /// nothing, and says `lane-close-unconfirmed` as the duty's failure.
 #[test]
@@ -1551,16 +1552,18 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     let scripts = state_dir.join(".agents/skills/orch/scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     link_fixture("lane-host/lane-host", &scripts.join("lane-host"));
-    link_fixture("lane-close/lane-close", &scripts.join("lane-close"));
+    link_fixture("runtime-close/orch-runtime", &scripts.join("orch-runtime"));
     std::fs::write(
         scripts.join("lane-host.json"),
         json!({"capabilities": {"stdout": "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none"}})
             .to_string(),
     )
     .unwrap();
+    let closed = json!({"protocol": "orch-runtime-v1", "ok": true, "result": {"item": "CC-1",
+        "word": "closed", "observation": {"item_files": "removed", "archive": "/archive/CC-1"}}});
     std::fs::write(
-        scripts.join("lane-close.json"),
-        json!({"exit": 0, "stdout": "kept=/archive/CC-1\n"}).to_string(),
+        scripts.join("orch-runtime.json"),
+        json!({"exit": 0, "stdout": format!("{closed}\n")}).to_string(),
     )
     .unwrap();
     // The `gh` the entry's credential ladder and the lane duty share: the
@@ -1611,13 +1614,13 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
         ),
     });
     baseline.store(&paths.baseline).unwrap();
-    let close_log = scripts.join("lane-close.log");
+    let close_log = scripts.join("orch-runtime.log");
     let marker = orch_runtime::watch::hosted::close_marker_path(
         orch_runtime::watch::lanes::watch_state_dir(&settings_in(&state_dir, 20).claim_store),
         "CC-1",
     );
     // Run 1: the fixture ends the runtime before it answers.
-    let child = spawn_hosted_watch_run(&state_dir, &[("LANE_CLOSE_KILL_PARENT", "1")]);
+    let child = spawn_hosted_watch_run(&state_dir, &[("RUNTIME_CLOSE_KILL_PARENT", "1")]);
     let cut = bounded_output(
         child,
         secs(30),
@@ -1636,8 +1639,9 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     assert_eq!(
         calls(&close_log),
         vec![format!(
-            "--state-dir {} CC-1",
-            state_dir.join("tmp").display()
+            "--state-dir {} op --fleet --request {}",
+            state_dir.join("tmp").display(),
+            r#"{"item":"CC-1","op":"close-lane"}"#
         )],
         "one close asked: {}",
         stderr(&cut)

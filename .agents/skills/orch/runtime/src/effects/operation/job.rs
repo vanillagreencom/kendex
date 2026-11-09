@@ -153,6 +153,7 @@ impl Op {
             | Request::VerifyPr(_)
             | Request::VerifyReview(_)
             | Request::ApproveHead(_)
+            | Request::CloseLane(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)

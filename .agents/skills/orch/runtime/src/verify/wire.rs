@@ -1297,6 +1297,66 @@ pub(super) struct ClassicReviews {
     pub(super) required_approving_review_count: u64,
 }
 
+// --- graphql: the park's pull request ------------------------------------------
+
+/// The park's one read of a pull request (`repository.pullRequest`, GraphQL
+/// `PullRequest`): its state, head, auto-merge arm, merge state and queue
+/// membership.
+#[derive(Debug, Deserialize)]
+pub struct ParkPullAnswer {
+    pub data: ParkPullData,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ParkPullData {
+    pub repository: Nullable<ParkRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ParkRepository {
+    #[serde(rename = "pullRequest")]
+    pub pull_request: Nullable<ParkPull>,
+}
+
+/// `PullRequest`: `state` (`PullRequestState!`: OPEN, CLOSED, MERGED),
+/// `headRefOid` (`GitObjectID!`), `headRefName` (`String!`),
+/// `autoMergeRequest` (`AutoMergeRequest`, null where none is armed),
+/// `mergeStateStatus` (`MergeStateStatus!`, CLEAN where every required check
+/// is green on the head and nothing else blocks), `isInMergeQueue`
+/// (`Boolean!`) and `mergeQueueEntry` (`MergeQueueEntry`, null outside it).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkPull {
+    pub state: String,
+    pub head_ref_oid: String,
+    pub head_ref_name: String,
+    pub auto_merge_request: Nullable<ParkAutoMerge>,
+    pub merge_state_status: String,
+    pub is_in_merge_queue: bool,
+    pub merge_queue_entry: Nullable<ParkQueueEntry>,
+}
+
+/// `AutoMergeRequest`: `enabledAt` (`DateTime`, nullable).
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkAutoMerge {
+    #[allow(
+        dead_code,
+        reason = "the arm is read by its presence; the field is the one the query selects"
+    )]
+    pub enabled_at: Nullable<String>,
+}
+
+/// `MergeQueueEntry`: `position` (`Int!`).
+#[derive(Debug, Deserialize)]
+pub struct ParkQueueEntry {
+    #[allow(
+        dead_code,
+        reason = "the entry is read by its presence; the field is the one the query selects"
+    )]
+    pub position: u64,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};

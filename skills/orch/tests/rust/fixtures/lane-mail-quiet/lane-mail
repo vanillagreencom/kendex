@@ -4,8 +4,9 @@
 # it is unset, so a close reads a lane with or without an unanswered ask
 # without a mailbox; `notice` takes an owner notice and sends it nowhere, the
 # file's first line appended to the log beside the call. Every call is
-# appended to $LANE_MAIL_LOG when set.
-[ -z "${LANE_MAIL_LOG:-}" ] || printf '%s\n' "$*" >> "$LANE_MAIL_LOG"
+# appended to $LANE_MAIL_LOG when set, led by `ORCH_LANE_HOST=<host> ` where
+# the caller set one, so a row proves which host a hosted read ran under.
+[ -z "${LANE_MAIL_LOG:-}" ] || printf '%s\n' "${ORCH_LANE_HOST:+ORCH_LANE_HOST=$ORCH_LANE_HOST }$*" >> "$LANE_MAIL_LOG"
 case "${1:-}" in
   pending)
     [ -z "${LANE_MAIL_ASKS:-}" ] || printf '%s\n' "$LANE_MAIL_ASKS" ;;

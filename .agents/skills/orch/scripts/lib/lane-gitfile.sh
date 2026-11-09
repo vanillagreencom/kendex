@@ -35,12 +35,11 @@ lane_gitfile_common_dir() { # GITFILE_CONTENT
 }
 
 # ---------------------------------------------------------------------------
-# A hosted lane's files, read through lane-host: the probe oversee-report,
-# oversee-cycle and lane-close read a hosted worktree's `.git` and its item's
-# workflow state through, so each answers a gone worktree the same way. Each
-# takes the lane-host CLI path. ORCH_LANE_HOST is the caller's to set:
-# oversee-report and lane-close put the lane record's host in front of each
-# call.
+# A hosted lane's files, read through lane-host: the probe oversee-report
+# reads a hosted worktree's `.git` and its item's workflow state through, so
+# each read answers a gone worktree the same way. Each takes the lane-host
+# CLI path. ORCH_LANE_HOST is the caller's to set: oversee-report puts the
+# lane record's host in front of each call.
 # ---------------------------------------------------------------------------
 
 # lane_host_fetch LANE_HOST_CLI ITEM PATH DEST ERRF: read PATH into DEST from
@@ -86,7 +85,7 @@ lane_host_fetch() {
 # lane_hosted_clone LANE_HOST_CLI ITEM ROOT SCRATCH ERRF — the clone a hosted
 # worktree at ROOT belongs to, read from its `.git` into SCRATCH, as
 # LANE_HOSTED_CLONE. 0 read; 1 the worktree is gone, which
-# ../../workflows/merge-pr.md § 5 leaves behind a merged lane until lane-close
+# ../../workflows/merge-pr.md § 5 leaves behind a merged lane until its close
 # runs; 2 the read failed, ERRF saying why; 3 the file names no linked
 # worktree, LANE_HOSTED_GITLINE holding the line it read, empty for an empty
 # file; 4 lane-host refused a call at its per-home cap. A root that is itself

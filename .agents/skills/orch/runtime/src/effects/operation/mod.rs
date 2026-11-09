@@ -75,7 +75,10 @@ pub(in crate::effects) use host::{
     WorktreeRelease, adopt_controller, default_home, fixed_file, fixed_id_file, heal_controller,
     owner,
 };
-pub(in crate::effects) use host::{server_home, session_owner};
+pub(in crate::effects) use host::{
+    apply_request, pending_ask, pick_account, poll_until, server_home, session_owner,
+    stop_released_prepare,
+};
 pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
 pub(crate) use obligations::{JobHandle, SidecarRead};
 pub(in crate::effects) use window::{
@@ -91,8 +94,7 @@ use crate::ops::{
 };
 use crate::schedule::Clock;
 use crate::state::{
-    self, CloseGround, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase,
-    Role,
+    self, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
 };
 
 pub(in crate::effects) struct Operation<'a> {
@@ -310,12 +312,12 @@ impl<'a> Operation<'a> {
     }
 
     /// A close about to run owes the lane's local worktree, the record's
-    /// `mail_root` (`lane-close`: a local lane's mail root is its worktree),
+    /// `mail_root` (a local lane's mail root is its worktree),
     /// to its own release or keep: acquired before the
     /// first signal. A hosted lane's worktree is its host's,
     /// except a `claude-cloud` lane's, whose `mail_root` is the item's
     /// worktree on this machine (the `lanes` row of the schema), the one
-    /// worktree `lane-close` removes for a hosted lane; a record naming
+    /// worktree the close removes for a hosted lane; a record naming
     /// none owes nothing.
     pub(in crate::effects) fn owe_worktree(&mut self, lane: &state::Lane) -> Result<()> {
         if lane.host.is_some() && lane.kind.as_deref() != Some(CLOUD_KIND) {
@@ -637,36 +639,10 @@ pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Re
             if !r.intent.open() {
                 receipt::remove(&run.receipt_path(&r.intent.id));
                 job::remove_files(&run.settings.state_dir, &r.intent.id);
-                close_out(run, &r.intent)?;
             }
         }
     }
     Ok(applied)
-}
-
-/// An item's close-out once its lane's close on the tracker's terminal
-/// verdict stands recorded: the item's files, its lane status file among
-/// them, leave the state directory after their archive stands; its mailbox
-/// stays. A close on any other ground, or one the record moved under, ends
-/// the lane and leaves the item's files, which a relaunch resumes into.
-fn close_out(run: &Run, intent: &Intent) -> Result<()> {
-    let terminal = intent.op == EffectOp::CloseOwnedResources
-        && intent.outcome == Outcome::Confirmed
-        && intent.reconciled.is_none()
-        && matches!(intent.close, Some(CloseGround::Terminal { .. }));
-    if !terminal {
-        return Ok(());
-    }
-    crate::archive::close_out(
-        &run.settings.archive_root,
-        &run.settings.roots.project,
-        &run.settings.state_dir,
-        &intent.target,
-        &[],
-        run.locking,
-        run.env.now_secs,
-    )?;
-    Ok(())
 }
 
 /// The wire record of an effect's outcome: the word,

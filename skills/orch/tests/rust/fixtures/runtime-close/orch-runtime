@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# The fake runtime entry for the watch's close rows (`tests/rust/watch_observe.rs`,
+# `watch_core.rs`): the `orch-runtime` the watch runs the close verb through
+# from the project's scripts directory. Every call appends one line to
+# `orch-runtime.log` beside the path this was invoked as (the rows link the
+# fixture into their world as `orch-runtime`): its argv with the `--request`
+# file's JSON, compact with its keys sorted, in the path's place, so a row
+# reads the close request the watch made and counts the closes it asked. It
+# answers from `orch-runtime.json` beside, `{exit?, stdout?, stderr?,
+# signal?}`, or a map of those by the request's item where a row closes two
+# lanes: the planted reply on stdout as the runtime prints it (a
+# `close-lane` answer, or a refusal with a non-zero status), the status 0
+# when absent. With RUNTIME_CLOSE_KILL_PARENT set it ends its parent, the
+# runtime that asked, with KILL after logging and before answering: the
+# crash between the ask and its answer. A planted `signal` ends this close by
+# that signal after logging, an end with no status: the answer the runner
+# reads when its bound kills a close. Bash 3.2.
+set -u
+here="$(dirname "${BASH_SOURCE[0]}")"
+line=""
+item=""
+while [ $# -gt 0 ]; do
+  if [ "$1" = --request ] && [ $# -gt 1 ]; then
+    request="$(jq -cS '.' -- "$2" 2>/dev/null)" || request="request-unreadable"
+    item="$(jq -r '.item // empty' -- "$2" 2>/dev/null)" || item=""
+    line="$line --request $request"
+    shift 2
+    continue
+  fi
+  line="$line $1"
+  shift
+done
+printf '%s\n' "${line# }" >> "$here/orch-runtime.log"
+if [ -n "${RUNTIME_CLOSE_KILL_PARENT:-}" ]; then
+  kill -KILL -- "$PPID"
+  exit 137
+fi
+reply="$(jq -c --arg item "$item" '.[$item] // .' -- "$here/orch-runtime.json" 2>/dev/null)" || reply='{}'
+signal="$(jq -r '.signal // empty' <<<"$reply")"
+[ -z "$signal" ] || kill -"$signal" $$
+jq -rj '.stderr // empty' <<<"$reply" >&2
+jq -rj '.stdout // empty' <<<"$reply"
+exit "$(jq -r '.exit // 0' <<<"$reply")"

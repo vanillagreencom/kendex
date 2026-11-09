@@ -59,6 +59,8 @@ case "$1" in
     if [[ "$4" == --file ]]; then
       cat -- "$5" >> "$LANE_HOST_STUB_SENT_FILE"
       [[ -z "${LANE_HOST_STUB_AFTER_FILE:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_FILE" "$LANE_HOST_STUB_CAPTURE_FILE"
+      # With _SEND_ENDS the text sent ends the harness the status file reports.
+      [[ -z "${LANE_HOST_STUB_SEND_ENDS:-}" ]] || printf 'exited\n' > "$LANE_HOST_STUB_HARNESS_STATE_FILE"
     elif [[ "$4" == --key ]]; then
       printf '%s\n' "$5" >> "${LANE_HOST_STUB_SENT_KEY_FILE:-$LANE_HOST_STUB_SENT_FILE}"
       [[ -z "${LANE_HOST_STUB_AFTER_KEY:-}" ]] || cp -- "$LANE_HOST_STUB_AFTER_KEY" "$LANE_HOST_STUB_CAPTURE_FILE"
@@ -69,8 +71,31 @@ case "$1" in
     printf '%s\n' "$LANE_HOST_STUB_VIEWER_LINE"
     exit 0 ;;
   create) [[ "${LANE_HOST_STUB_CREATE_OWNED:-}" != "$3" ]] || exit 75 ;;
+  # A close that succeeds prints the archive line the shipped provider
+  # prints, LANE_HOST_STUB_CLOSE_LINE in its place when set (empty: none).
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
-    || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
+    || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; }
+    line="${LANE_HOST_STUB_CLOSE_LINE-kept=/srv/archive/$3}"
+    [ -z "$line" ] || printf '%s\n' "$line"
+    exit 0 ;;
+  # The shipped provider's list rows: TEST-1 hosted, else LANE_HOST_STUB_LIST
+  # as given, empty for none; _LIST_STATUS fails it.
+  list)
+    [[ "${LANE_HOST_STUB_LIST_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_LIST_STATUS"
+    rows="${LANE_HOST_STUB_LIST-$(printf 'owner/repo/TEST-1\thosted\t-\tlane.example')}"
+    [ -z "$rows" ] || printf '%s\n' "$rows"
+    exit 0 ;;
+  # The sandbox pair's stop and its check, confirmed by their lines;
+  # _SANDBOX_STATUS fails both, 2 the absent-verb answer of a provider
+  # without the pair, and _SANDBOX_STOP_STATUS the stop alone.
+  stop-sandbox)
+    [[ "${LANE_HOST_STUB_SANDBOX_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_SANDBOX_STATUS"
+    if [[ "${2:-}" == --check ]]; then printf 'sandbox-stoppable item=%s\n' "$4"
+    else
+      [[ "${LANE_HOST_STUB_SANDBOX_STOP_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_SANDBOX_STOP_STATUS"
+      printf 'sandbox-stopped item=%s\n' "$3"
+    fi
+    exit 0 ;;
   cat)
     if [[ "${LANE_HOST_STUB_CAT_STATUS:-0}" -ne 0 \
        && "${LANE_HOST_STUB_CAT_ITEM:-$3}" == "$3" \
@@ -89,8 +114,17 @@ case "$1" in
       harness_state="$(cat -- "$LANE_HOST_STUB_HARNESS_STATE_FILE")" || exit $?; fi
     printf '%s\n' "$harness_state"
     exit 0 ;;
+  # A stop confirms with the shipped provider's line, LANE_HOST_STUB_STOP_LINE
+  # in its place when set; _STOP_STATUS fails it with _STOP_ERROR on stderr.
+  # With _STOP_ENDS the harness the status file reports ends with the stop.
   stop)
-    [[ "${LANE_HOST_STUB_STOP_STATUS:-0}" == 0 ]] || exit "$LANE_HOST_STUB_STOP_STATUS" ;;
+    if [[ "${LANE_HOST_STUB_STOP_STATUS:-0}" != 0 ]]; then
+      [ -z "${LANE_HOST_STUB_STOP_ERROR:-}" ] || printf '%s\n' "$LANE_HOST_STUB_STOP_ERROR" >&2
+      exit "$LANE_HOST_STUB_STOP_STATUS"
+    fi
+    [ -z "${LANE_HOST_STUB_STOP_ENDS:-}" ] || printf 'exited\n' > "$LANE_HOST_STUB_HARNESS_STATE_FILE"
+    printf '%s\n' "${LANE_HOST_STUB_STOP_LINE-stopped item=$3 processes=1}"
+    exit 0 ;;
   put)
     [[ "${LANE_HOST_STUB_PUT_STATUS:-0}" -eq 0 ]] \
       || { printf 'lane-host-fixture: put-failed path=%s\n' "$4" >&2; exit "$LANE_HOST_STUB_PUT_STATUS"; }
@@ -261,20 +295,6 @@ READ_MANY
     [[ "${LANE_HOST_STUB_START_STATUS:-0}" -eq 0 ]] \
       || { printf 'lane-host-fixture: start-failed item=%s\n' "$3" >&2; exit "$LANE_HOST_STUB_START_STATUS"; }
     printf '%s\n' "${LANE_HOST_STUB_START_OUT-sandbox-started item=$3}" ;;
-  # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
-  # LANE_HOST_STUB_CLOSE_ABSENT is a host that no longer held the item,
-  # answering as the protocol states.
-  # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once
-  # the close has run, so the watch's next row commit fails.
-  close)
-    if [[ -n "${LANE_HOST_STUB_CLOSE_ABSENT:-}" ]]; then printf 'closed=absent item=%s\n' "$3"
-    elif [[ -z "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]]; then
-      printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
-    fi
-    [[ -z "${LANE_HOST_STUB_CLOSE_JAM:-}" ]] || chmod 555 "$OVERSEE_WATCH_STATE_DIR"
-    printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
-    ;;
-  list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;
   # LANE_HOST_STUB_ACCOUNTS names a FILE holding the whole answer verbatim, so
   # a caller writes the protocol's own tabs rather than a spelling this stub
   # would have to translate. Unset, the provider holds no credential at all,

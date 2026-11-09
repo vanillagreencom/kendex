@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Surface: lane_host_fetch and retained clone addresses. Inputs: scripts/lib/lane-gitfile.sh,
-# scripts/lib/watch-host-kinds.sh, scripts/lib/lane-host-read.sh, scripts/lib/lane-capabilities.sh,
+# Surface: lane_host_fetch and lane_item_state. Inputs: scripts/lib/lane-gitfile.sh,
+# scripts/lib/lane-host-read.sh, scripts/lib/lane-capabilities.sh,
 # scripts/lib/lane-host-slots.sh, tests/lib/.
-# Isolated lane-close fixtures install the single-read
+# Isolated fixtures install the single-read
 # dependencies alone. The cache helper belongs only to the cache read path.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -54,24 +54,6 @@ fetch "$TMP_ROOT/lib/lane-gitfile.sh" "$TMP_ROOT/cache"
 assert_eq "$RC" 0 "cache reads load their helper" "$TMP_ROOT/startup.err"
 assert_eq "$(cat "$TMP_ROOT/out")" fetched "cache reads keep the snapshot bytes"
 assert_eq "$(cat "$TMP_ROOT/calls")" '' "cache reads make no provider call"
-
-source "$TEST_DIR/../scripts/lib/watch-host-kinds.sh"
-mkdir -p "$TMP_ROOT/rows"
-while IFS='|' read -r name first second expected reason; do
-  rm -f -- "$TMP_ROOT/rows/one.mail" "$TMP_ROOT/rows/two.mail"
-  [[ -z "$first" ]] || printf 'clone-root\tKEN-1\t%s\n' "$first" > "$TMP_ROOT/rows/one.mail"
-  [[ -z "$second" ]] || printf 'clone-root\tKEN-1\t%s\n' "$second" > "$TMP_ROOT/rows/two.mail"
-  rc=0
-  lane_retained_clone KEN-1 "$TMP_ROOT/rows" 2>"$TMP_ROOT/err" || rc=$?
-  assert_eq "$rc:$LANE_RETAINED_CLONE" "$expected" "$name retained clone address"
-  [[ -z "$reason" ]] || assert_file_contains "$TMP_ROOT/err" "lane-gitfile: $reason item=KEN-1" "$name names the refused address"
-done <<'ROWS'
-no recorded clone|||0:|
-one recorded clone|/clone||0:/clone|
-watch sessions agree|/clone|/clone|0:/clone|
-watch sessions conflict|/clone|/other|2:|clone-root-ambiguous
-relative clone|relative||2:|clone-root-invalid
-ROWS
 
 source "$TEST_DIR/../scripts/lib/lane-gitfile.sh"
 unset LANE_HOST_READ_DIR

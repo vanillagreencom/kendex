@@ -5370,8 +5370,8 @@ fn a_later_close_that_releases_clears_an_earlier_closes_kept() {
 }
 
 /// A `claude-cloud` lane records `host: claude-cloud` with its `mail_root`
-/// the item's worktree on this machine, the one worktree the released
-/// `lane-close` removes for a hosted lane, so its close owes that worktree
+/// the item's worktree on this machine, the one worktree a hosted lane's
+/// close removes here, so its close owes that worktree
 /// and releases it through the package like a local lane's; a worktree
 /// standing after a done close with no `kept` would read as released to the
 /// retention duty.
@@ -5561,6 +5561,22 @@ fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
         let mut fleet = runner.fleet();
         fleet["lanes"] = json!([row]);
         runner.write_fleet(&fleet);
+        if fields.get("host").is_some() {
+            // The hosted lane's sandbox is its provider's to close, through
+            // the `lane-host` the project's scripts directory holds.
+            let scripts = runner.state_dir().join(".agents/skills/orch/scripts");
+            std::fs::create_dir_all(&scripts).unwrap();
+            std::os::unix::fs::symlink(
+                fixtures().join("lane-host/lane-host"),
+                scripts.join("lane-host"),
+            )
+            .unwrap();
+            std::fs::write(
+                scripts.join("lane-host.json"),
+                json!({"close --item KEN-N": {"stdout": "kept=none\n"}}).to_string(),
+            )
+            .unwrap();
+        }
         let report = effect_report(&runner.op_fleet(&terminal_close("KEN-N")));
         assert_eq!(report["intent"]["outcome"], "confirmed", "{name}: {report}");
         assert!(
@@ -6309,6 +6325,74 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
         world.calls()
     );
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
+/// A relaunch of a lane whose last pause is its park brings its stopped
+/// sandbox back through the provider's start before `create --relaunch`;
+/// a start the provider refuses, or answers without its `sandbox-started`
+/// line, fails the launch with no create asked.
+#[test]
+fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
+    for (case, start, outcome) in [
+        (
+            "started",
+            json!({"stdout": "sandbox-started item=KEN-H\n"}),
+            "confirmed",
+        ),
+        ("refused", json!({"exit": 1}), "failed"),
+        ("unparsed", json!({"stdout": "started\n"}), "failed"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let mut fleet = world.runner.fleet();
+        let mut prior = lane("KEN-H", "parked", &world.runner, Value::Null);
+        prior["host"] = json!(PROVIDER_PATH);
+        prior["kind"] = json!("ssh");
+        prior["launched_at"] = json!("2026-01-29T15:20:00Z");
+        prior["parked"] =
+            json!({"repo": "o/r", "pr": 7, "head": "h2", "at": "2026-01-29T15:40:00Z"});
+        fleet["lanes"] = json!([prior]);
+        world.runner.write_fleet(&fleet);
+        let account = world.runner.state_dir().display().to_string();
+        let host = world.host();
+        let mut answers: Value = serde_json::from_str(
+            &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
+        )
+        .unwrap();
+        answers["start --item KEN-H"] = start;
+        answers[format!(
+            "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+        )] = json!({"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")});
+        std::fs::write(
+            world.scripts.join("lane-host.json"),
+            serde_json::to_string(&answers).unwrap(),
+        )
+        .unwrap();
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], outcome, "{case}: {report}");
+        let calls = world.calls();
+        let at = |verb: &str| {
+            calls
+                .iter()
+                .position(|c| c.contains(&format!(" {verb} --item KEN-H")))
+        };
+        assert!(at("start").is_some(), "{case}: {calls:?}");
+        match outcome {
+            "confirmed" => assert!(at("start") < at("create"), "{case}: {calls:?}"),
+            _ => {
+                assert_eq!(at("create"), None, "{case}: no create: {calls:?}");
+                assert!(
+                    report["intent"]["observation"]["cause"]
+                        .as_str()
+                        .is_some_and(|c| c.starts_with("host-start-failed ")),
+                    "{case}: {report}"
+                );
+            }
+        }
+        effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
 }
 
 /// An accountless Claude lane runs under the operator's own config dir,
@@ -7832,7 +7916,7 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
 }
 
 /// A lane bound to no obligation leaves its cycle's lineage unknown.
-/// Through the real `launch-lane` and the real `oversee-cycle`: a launch
+/// Through the real `launch-lane` and the real `close-lane`: a launch
 /// naming the item's obligation records it; the item's next phase naming
 /// none keeps it, and one naming another is refused `obligation-conflict`
 /// with nothing written; a record that binds none takes the obligation a
@@ -7902,42 +7986,42 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let answer = reply(&runner.op_fleet(&half));
     assert_eq!(answer["refusal"]["key"], "request-invalid", "{answer}");
     assert_eq!(runner.fleet(), before, "a half-named parent writes nothing");
-    // The cycle recorder over the record the launch wrote: a direct push
-    // whose push log is unread still records its cycle.
-    let checkout = dir.path().join("checkout");
-    std::fs::create_dir_all(&checkout).unwrap();
-    for args in [
-        &["init", "-q"][..],
-        &["commit", "-q", "--allow-empty", "-m", "work"][..],
-    ] {
-        let out = program("git")
-            .arg("-C")
-            .arg(&checkout)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    // The close verb over the record the launch wrote, left stopped as a
+    // kept sandbox leaves it, its delivery a direct push in the project's
+    // checkout (the state directory) whose push log is unread: the cycle
+    // the close records reads the launch's binding.
+    let relaunched = effect_report(&runner.op_fleet(&launch_request("KEN-O", runner.state_dir())));
+    assert_eq!(relaunched["intent"]["outcome"], "confirmed", "{relaunched}");
+    let mut fleet = runner.fleet();
+    for lane in fleet["lanes"].as_array_mut().unwrap() {
+        if lane["item"] == "KEN-O" {
+            lane["status"] = json!("stopped");
+            lane["launch"] = Value::Null;
+        }
     }
+    runner.write_fleet(&fleet);
+    let state = runner.state_dir().display().to_string();
+    let out = program("git")
+        .args(["-C", &state, "commit", "-q", "--allow-empty", "-m", "work"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git commit: {}", stderr(&out));
     let head = program("git")
-        .arg("-C")
-        .arg(&checkout)
-        .args(["rev-parse", "HEAD"])
+        .args(["-C", &state, "rev-parse", "HEAD"])
         .output()
         .unwrap();
     let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
-    let scripts = installed_scripts(dir.path());
-    let mut command = program("bash");
-    runner.apply_env(&mut command);
-    let out = command
-        .arg(scripts.join("oversee-cycle"))
-        .arg("--state-dir")
-        .arg(runner.state_dir())
-        .args(["record", "--commit", &head, "KEN-O"])
-        .current_dir(&checkout)
-        .output()
+    let answer = reply(&runner.op_fleet(
+        &json!({"op": "close-lane", "item": "KEN-O", "delivery": {"commit": {"commit": head}}}),
+    ));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    let lane = runner.fleet()["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["item"] == "KEN-O")
+        .cloned()
         .unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    let lane = runner.fleet()["lanes"][0].clone();
     assert_eq!(
         lane["cycle"]["obligation"], obligation,
         "the cycle reads the launch's binding: {lane}"

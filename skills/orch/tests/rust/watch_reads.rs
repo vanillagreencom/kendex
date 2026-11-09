@@ -1200,12 +1200,16 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
 
 /// The orch, github and mailbox packages' scripts installed where the watch
 /// runs its steps from (`<project>/.agents/skills/orch/scripts`), the
-/// shipped `oversee-cycle` and `lane-host` each behind a wrapper of its name
-/// that starts it under the test child's isolation: the world's `gh`
-/// fixture first on `PATH`, a fixture token, the scratch home its call slots
-/// count under and git's ceiling at the temporary root, so no checkout above
-/// the world is read and no real `gh` is reached; `ORCH_LANE_HOST` passes
-/// as its caller set it.
+/// shipped scripts the in-process cycle recorder starts (the github skill's
+/// `github.sh`, orch's `lane-host`) each behind a wrapper of its name that
+/// starts it under the test child's isolation: the world's `gh` fixture
+/// first on `PATH`, a fixture token, the scratch home its call slots count
+/// under and git's ceiling at the temporary root, so no checkout above the
+/// world is read and no real `gh` is reached; `ORCH_LANE_HOST` passes as its
+/// caller set it. The recorder's own `git` reads run in this process, so
+/// the world's root holds a `.git` file git refuses (`invalid gitfile
+/// format`), which ends its discovery there: no repository above the world
+/// is read, fetched or written.
 fn installed_cycle_recorder(world: &World) -> PathBuf {
     let skills = world.dir.path().join(".agents/skills");
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1220,14 +1224,25 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
     }
+    std::fs::write(
+        world.dir.path().join(".git"),
+        "not a repository: git's discovery ends at the world\n",
+    )
+    .unwrap();
     let scripts = skills.join("orch/scripts");
     let root = std::env::temp_dir();
     let home = root.join("isolated-home");
     std::fs::create_dir_all(&home).unwrap();
-    for name in ["oversee-cycle", "lane-host"] {
-        let shipped = scripts.join(format!("{name}.shipped"));
-        std::fs::rename(scripts.join(name), &shipped).unwrap();
-        let wrapper = scripts.join(name);
+    for wrapped in [
+        skills.join("github/scripts/github.sh"),
+        scripts.join("lane-host"),
+    ] {
+        let shipped = wrapped.with_file_name(format!(
+            "{}.shipped",
+            wrapped.file_name().unwrap().to_string_lossy()
+        ));
+        std::fs::rename(&wrapped, &shipped).unwrap();
+        let wrapper = wrapped;
         write_executable(
             &wrapper,
             format!(
@@ -1309,16 +1324,16 @@ fn timeline_seven() -> Value {
     }}}}})
 }
 
-/// Through the real tracker duty, the real `oversee-cycle` and the real
+/// Through the real tracker duty, its cycle recorder and the real
 /// `pr-timeline` over the `gh` fixture's GraphQL answer, and for a hosted
 /// lane the real `lane-host` to the fixture provider, a table of cases:
 ///
 /// - a hosted parked lane whose item ended at its merge, read ended before
 ///   the GitHub duty (which runs after the tracker on the shared cadence)
 ///   has written any `merged` row: the merge read finds its pull request,
-///   the cycle is recorded before the close, its line said and then
-///   `lane-closed`, the record carrying it and the fleet log its row, and
-///   the next pass asks nothing;
+///   the cycle is read before the close and written with it, its line said
+///   and then `lane-closed`, the record carrying it and the fleet log its
+///   row, and the next pass asks nothing;
 /// - an earlier pull request's `merged` row standing, written by the
 ///   GitHub duty's pass before the merge that ended the item: the current
 ///   merge read finds the lane's own, and the row hides nothing;

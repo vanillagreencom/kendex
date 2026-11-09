@@ -548,7 +548,7 @@ impl Record for ItemState {
     }
 }
 
-/// A lane record's `status` word, as `open-terminal`, `lane-close` and
+/// A lane record's `status` word, as `open-terminal`, `close-lane` and
 /// `oversee-watch` read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -953,6 +953,56 @@ pub enum CloseGround {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interrupt: bool,
     },
+    /// The close judged the lane ended while its item stays open: its merge
+    /// cycle stands and its worktree is gone, or its host kind declares no
+    /// stop this machine can make (a cloud session). The lane ends done
+    /// whatever its harness reads, the item's files kept. `source` names the
+    /// reading; [`HOST_ABSENT`] is the one that ends an item its tracker
+    /// ended, whose sandbox its provider no longer holds: its files leave
+    /// and no provider close is asked.
+    Ended { source: String },
+}
+
+/// The [`CloseGround::Ended`] source of a terminal close whose provider
+/// lists no sandbox for the item.
+pub const HOST_ABSENT: &str = "host-absent";
+
+impl CloseGround {
+    /// Whether the ground is a terminal close of a sandbox its provider no
+    /// longer holds.
+    pub fn host_absent(&self) -> bool {
+        matches!(self, CloseGround::Ended { source } if source == HOST_ABSENT)
+    }
+
+    /// Whether the close ends the item: the tracker's terminal verdict, or
+    /// a terminal close of an absent sandbox. Its files leave with it.
+    pub fn ends_item(&self) -> bool {
+        matches!(self, CloseGround::Terminal { .. }) || self.host_absent()
+    }
+}
+
+/// A merge cycle a close records on its lane when it confirms: the cycle
+/// object (`lanes[].cycle`) and the lines the recorder printed, each joining
+/// the fleet log as a `cycle` row in the same write.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CycleRow {
+    pub cycle: Value,
+    pub lines: Vec<String>,
+    /// What the recorder could not read, in its own lines
+    /// (`oversee-cycle: class-unread cause=`, `rounds-unread`,
+    /// `merged-unread`, `negative-interval`), for the close's answer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+impl CycleRow {
+    /// The fleet-log rows of the lines, stamped `at`.
+    pub fn rows(&self, item: &str, at: &str) -> Vec<Value> {
+        self.lines
+            .iter()
+            .map(|text| serde_json::json!({"at": at, "kind": "cycle", "item": item, "text": text}))
+            .collect()
+    }
 }
 
 /// The harness, account, model and effort a launch was asked for. The
@@ -1274,6 +1324,9 @@ pub struct Intent {
     /// as done.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close: Option<CloseGround>,
+    /// The merge cycle a close writes on its lane when it confirms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cycle: Option<CycleRow>,
     /// The failure the detached job's outcome announced:
     /// the fleet-log row and the owner notice,
     /// sent once per intent and recorded here so a repeated

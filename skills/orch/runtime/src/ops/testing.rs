@@ -230,6 +230,9 @@ pub(super) fn close(item: &str) -> Request {
         item: item.into(),
         terminal: None,
         no_landing: None,
+        ended: None,
+        identity: None,
+        cycle: None,
     })
 }
 

@@ -29,6 +29,7 @@ pub mod approve;
 pub mod artifact;
 mod controller;
 pub mod copilot_wait;
+pub mod cycle;
 mod item;
 mod lane;
 pub mod mail;
@@ -74,9 +75,10 @@ pub use item::{PruneRound, RoundField, RoundPruned, prune_round};
 pub(crate) use admission::origin_slug;
 pub(crate) use item::job_ended;
 pub use lane::{
-    AdoptSession, CloseOwnedResources, CloseRequested, LaneAdopted, LaneLaunched, LaneParked,
-    LaneReleased, LaneReserved, LaunchLane, NoLanding, ParkLane, PhaseRecorded, RecordPhase,
-    ReleaseLane, ReserveLane, Terminal, lane_moved,
+    AdoptSession, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, CloseRequested,
+    Delivery, Ended, LaneAdopted, LaneLaunched, LaneParked, LaneReleased, LaneReserved, LaunchLane,
+    NoLanding, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
+    identity_fills, lane_moved,
 };
 pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
@@ -238,6 +240,10 @@ pub enum Request {
     /// reads and the request come before its writes.
     VerifyReview(VerifyReview),
     ApproveHead(approve::ApproveHead),
+    /// End one lane through its record, its host and its tracker;
+    /// `effects::close` runs it, since its reads and its provider calls
+    /// come before the close transition it makes.
+    CloseLane(Box<CloseLane>),
     ReconcileRound(ReconcileRound),
     RecordHandoff(Box<RecordHandoff>),
     ResumeHandoff(ResumeHandoff),
@@ -297,6 +303,7 @@ impl Request {
             Request::VerifyPr(_) => "verify-pr",
             Request::VerifyReview(_) => "verify-review",
             Request::ApproveHead(_) => "approve-head",
+            Request::CloseLane(_) => "close-lane",
             Request::ReconcileRound(_) => "reconcile-round",
             Request::RecordHandoff(_) => "record-handoff",
             Request::ResumeHandoff(_) => "resume-handoff",
@@ -336,6 +343,7 @@ impl Request {
             | Request::PruneRound(_)
             | Request::RecordQaDecision(_) => Kind::Item,
             Request::LaunchLane(_)
+            | Request::CloseLane(_)
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
             | Request::StartController(_)
@@ -507,6 +515,7 @@ fn reread_on_record_changed(request: &Request) -> bool {
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
         | Request::ApproveHead(_)
+        | Request::CloseLane(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -668,6 +677,7 @@ pub fn item_transition(
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
+        | Request::CloseLane(_)
         | Request::PruneRecords(_) => Err(kind_error(request, path, Kind::Item)),
     }
 }
@@ -684,6 +694,7 @@ pub fn fleet_transition(
 ) -> Result<Report> {
     let host = || host.ok_or(Error::OpNotTransition { op: request.name() });
     match request {
+        Request::CloseLane(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::LaunchLane(r) => Ok(Report::LaunchLane(Box::new(lane::launch_lane(
             path,
             doc,
@@ -907,6 +918,7 @@ fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         exclude_account: None,
         watch: None,
         close: None,
+        cycle: None,
         phase: None,
         obligations: None,
         observation: None,
@@ -1613,7 +1625,7 @@ mod tests {
                     assert_eq!(intents[1].outcome, Outcome::Confirmed);
                 },
             },
-            // A `lane-close` moved the lane to done under an open launch
+            // A close moved the lane to done under an open launch
             // intent. The launch's outcome reconciles the intent as
             // `intent-stale` with the observed status and leaves the lane as
             // that writer left it.

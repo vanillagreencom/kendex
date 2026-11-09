@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Surface: the stored provider reply in lane_capabilities_read.
 # Inputs: scripts/lib/lane-capabilities.sh, scripts/lib/lane-claims.sh,
-# scripts/lane-host, scripts/lane-close,
+# scripts/lane-host,
 # scripts/oversee-report, scripts/lib/*.sh, git-context,
 # skills/mailbox/scripts/* and skills/github/scripts/lib/*.
 set -euo pipefail
@@ -213,17 +213,14 @@ chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/empty" "$TMP_ROOT/bin/tracker" "$TMP_
 caller_run() { # CALLER
   local command=()
   case "$1" in
-    watch)
-      command=("$BASH" -c 'set -euo pipefail; SCRIPT_DIR="$1"; source "$SCRIPT_DIR/lib/lane-capabilities.sh"; source "$SCRIPT_DIR/lib/watch-host-kinds.sh"; HOSTED=(); ROOTS=(); host_route KEN-1 "$2" /remote; printf "%s\n" "$LANE_CAPABILITIES" "${HOSTED[@]+${HOSTED[@]}}"' watch "$SCRIPTS" "$PROVIDER") ;;
     lane-mail)
       command=("$SCRIPTS/../../mailbox/scripts/lane-mail" send --item KEN-1 --directive --file "$TMP_ROOT/directive" --state-dir "$TMP_ROOT/fleet") ;;
-    lane-close)
-      command=("$SCRIPTS/lane-close" --state-dir "$TMP_ROOT/fleet" --keep-sandbox KEN-1) ;;
     oversee-report)
       command=("$SCRIPTS/oversee-report" render --state "$TMP_ROOT/fleet/workflow-state-oversee.json" --repo owner/repo) ;;
   esac
   RC=0
   (cd "$TMP_ROOT/repo" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
+    AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-$HOME/.cache/kendex/agent-runtime}" \
     CAPABILITY_CALLS="$TMP_ROOT/calls" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" ORCH_LANE_HOST="$PROVIDER" \
     WORKTREE_CLI="$TMP_ROOT/bin/mail" \
     ORCH_STATE_DIR="$TMP_ROOT/fleet" OVERSEE_REPORT_GITHUB="$TMP_ROOT/bin/empty" \
@@ -231,13 +228,12 @@ caller_run() { # CALLER
     "${command[@]}") > "$TMP_ROOT/out" 2> "$TMP_ROOT/err" || RC=$?
   CALLS="$(wc -l < "$TMP_ROOT/calls")"; CALLS="${CALLS//[[:space:]]/}"
 }
-for caller in watch lane-mail lane-close oversee-report; do
+for caller in lane-mail oversee-report; do
   rm -rf -- "$TMP_ROOT/state"
   : > "$TMP_ROOT/calls"
   caps="$SSH"; status=running; want=0
   case "$caller" in
     lane-mail) want=2 ;;
-    lane-close) status=parked ;;
     oversee-report) caps="${SSH/channel=mailbox/channel=task}"; caps="${caps/files=verb/files=none}" ;;
   esac
   write_provider "$caps" 0 ''

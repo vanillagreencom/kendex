@@ -409,6 +409,156 @@ pub(in crate::effects) fn fixed_file(
     session::fixed_file(harness, home, cwd, id)
 }
 
+/// The oldest unanswered ask the lane's mailbox holds, read through the
+/// mailbox CLI (`lane-mail pending --item ITEM --root ROOT [--host]`), whose
+/// lines are JSON rows; only a row of kind `ask` counts. A hosted lane's
+/// mailbox is read under `ORCH_LANE_HOST` set to the record's host, never the
+/// caller's. `Err` is a read that did not answer: a mailbox program that is
+/// absent, failed or printed a row that is not JSON, or a lane with no
+/// recorded root; the dispatcher's cap refusal leads with `lane-host-busy`.
+pub(in crate::effects) fn pending_ask(
+    cli: &Path,
+    lane: &Lane,
+) -> std::result::Result<Option<String>, String> {
+    let Some(root) = lane.mail_root.as_deref() else {
+        return Err("mail-root-unrecorded".to_owned());
+    };
+    let hosted = lane.host.as_deref().filter(|h| !h.is_empty());
+    let mut args = vec!["pending", "--item", lane.item.as_str(), "--root", root];
+    if hosted.is_some() {
+        args.push("--host");
+    }
+    let env: Vec<(&str, &std::ffi::OsStr)> = hosted
+        .map(|h| ("ORCH_LANE_HOST", std::ffi::OsStr::new(h)))
+        .into_iter()
+        .collect();
+    let output = host::run_tagged_in(
+        "close",
+        "lane-mail",
+        cli,
+        "pending",
+        &args,
+        host::Place {
+            cwd: None,
+            env: &env,
+        },
+        CLI_TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        let code = output.status.code().unwrap_or(-1);
+        let busy = if code == crate::watch::hosted::LANE_HOST_BUSY_EXIT {
+            "lane-host-busy step=mail-read "
+        } else {
+            ""
+        };
+        return Err(format!(
+            "{busy}status={code} {}",
+            host::stderr_text(&output).trim()
+        ));
+    }
+    for line in host::stdout_text(&output).lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let row: Value = serde_json::from_str(line).map_err(|e| format!("row-unparsed: {e}"))?;
+        if row.get("kind").and_then(Value::as_str) == Some("ask") {
+            return Ok(Some(
+                row.get("id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(None)
+}
+
+/// The close verb's transitions, its one close and its park record, applied
+/// as the command applies a request: with the kernel's readers under the
+/// settings' lane cap.
+pub(in crate::effects) fn apply_request(
+    path: &Path,
+    request: &ops::Request,
+    settings: &Settings,
+    env: &ops::Env,
+    locking: Locking,
+) -> Result<Applied> {
+    let host = ops::Host::kernel(settings.lane_cap);
+    ops::apply_on(path, request, env, locking, &host)
+}
+
+/// The accounts judge over this fleet's charges for one request, read with
+/// the kernel's readers (`lanes pick` in process).
+pub(in crate::effects) fn pick_account(
+    settings: &Settings,
+    path: &Path,
+    request: &ops::accounts::PickRequest,
+    now: u64,
+) -> ops::accounts::PickAnswer {
+    let host = ops::Host::kernel(settings.lane_cap);
+    ops::accounts::pick_fleet(settings, path, &host, request, now)
+}
+
+/// `check` read on the one clock until it answers or `bound` passes,
+/// `poll` between reads: `None` at the bound.
+pub(in crate::effects) fn poll_until<T>(
+    clock: &dyn crate::schedule::Clock,
+    bound: Duration,
+    poll: Duration,
+    mut check: impl FnMut() -> Option<T>,
+) -> Option<T> {
+    let deadline = clock.now() + bound;
+    loop {
+        if let Some(answer) = check() {
+            return Some(answer);
+        }
+        if clock.now() >= deadline {
+            return None;
+        }
+        clock.sleep(poll);
+    }
+}
+
+/// A released preparing record's background launch job (`prepare.pid`, the
+/// `open-terminal` run the released launcher started leading its own
+/// process group): where that pid still runs a command naming
+/// `open-terminal`, every member of its group is read by identity now and
+/// stopped by that identity, so no reused pid is signalled; a pid that runs
+/// anything else, or whose command cannot be read, is left. `Err` is a group
+/// with no member left to stop (the pid leads none), a table that could not
+/// be read, or a member that would not stop.
+pub(in crate::effects) fn stop_released_prepare(
+    pid: u32,
+    grace: Duration,
+) -> std::result::Result<(), String> {
+    let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+        return Ok(());
+    };
+    if !String::from_utf8_lossy(&cmdline).contains("open-terminal") {
+        return Ok(());
+    }
+    let rows = process::table().map_err(|e| format!("table-unread {}", e.cause))?;
+    let members: Vec<Identity> = rows
+        .iter()
+        .filter(|row| row.pgrp == pid)
+        .filter_map(|row| match process::identity(row.pid) {
+            Reading::Live(identity) => Some(identity),
+            Reading::Gone | Reading::Unreadable { .. } => None,
+        })
+        .collect();
+    if members.is_empty() {
+        return Err("group-absent".to_owned());
+    }
+    match process::stop_identities(&members, grace) {
+        Ok(Stop::Stopped { .. } | Stop::AlreadyGone) => Ok(()),
+        Ok(Stop::IdentityStale) => Err("identity-stale".to_owned()),
+        Ok(Stop::Timeout { pid }) => Err(format!("timeout pid={pid}")),
+        Ok(Stop::Unreadable { pid, cause, .. }) => Err(format!("unreadable pid={pid} {cause}")),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Whether `pane_id` on `server` is one tmux may name: `%` then digits.
 fn is_pane_id(id: &str) -> bool {
     id.strip_prefix('%')
@@ -1294,8 +1444,7 @@ impl Operation<'_> {
 
     /// The oldest unanswered ask the lane's mailbox holds, read through the
     /// mailbox CLI (`lane-mail pending --item ITEM --root ROOT [--host]`),
-    /// whose lines are JSON rows; only a row of kind `ask` counts, as
-    /// `lane-close` reads them. `Err` is a read that did not answer: a
+    /// whose lines are JSON rows; only a row of kind `ask` counts. `Err` is a read that did not answer: a
     /// mailbox program that is absent, failed or printed a row that is not
     /// JSON, or a lane with no recorded root. A required gate refuses on it
     /// rather than reading nothing.
@@ -1303,50 +1452,12 @@ impl Operation<'_> {
         &self,
         lane: &Lane,
     ) -> std::result::Result<Option<String>, String> {
-        let Some(root) = lane.mail_root.as_deref() else {
-            return Err("mail-root-unrecorded".to_owned());
-        };
-        let mut args = vec!["pending", "--item", lane.item.as_str(), "--root", root];
-        if lane.host.is_some() {
-            args.push("--host");
-        }
-        let output = host::run_tagged(
-            "close",
-            "lane-mail",
-            &self.run.settings.lane_mail_cli,
-            "pending",
-            &args,
-            CLI_TIMEOUT,
-        )
-        .map_err(|e| e.to_string())?;
-        if !output.status.success() {
-            return Err(format!(
-                "status={} {}",
-                output.status.code().unwrap_or(-1),
-                host::stderr_text(&output).trim()
-            ));
-        }
-        for line in host::stdout_text(&output).lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let row: Value =
-                serde_json::from_str(line).map_err(|e| format!("row-unparsed: {e}"))?;
-            if row.get("kind").and_then(Value::as_str) == Some("ask") {
-                return Ok(Some(
-                    row.get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_owned(),
-                ));
-            }
-        }
-        Ok(None)
+        pending_ask(&self.run.settings.lane_mail_cli, lane)
     }
 
     /// End every validation run in a local lane's worktree through orch's
-    /// own runner (`dev-validate-run --stop --worktree ROOT`), as `lane-close`
-    /// does before the window closes, and discharge the validation obligation
+    /// own runner (`dev-validate-run --stop --worktree ROOT`) before the
+    /// window closes, and discharge the validation obligation
     /// by the runner's answer. A hosted lane's runs are its host's; a worktree
     /// that is gone has none. The inner `Err` names why the stop did not
     /// confirm, the obligation standing.
@@ -1450,6 +1561,77 @@ impl Operation<'_> {
             end: WorktreeEnd::from(&release),
         })?;
         Ok(Some(release))
+    }
+
+    /// The item's files out of the state directory once their archive
+    /// stands (`archive::close_out`), the close of an item its tracker
+    /// ended, before the provider's close: a removal that fails is the
+    /// cause, and nothing past it runs.
+    pub(in crate::effects) fn close_out_files(
+        &mut self,
+        item: &str,
+    ) -> Result<std::result::Result<Option<PathBuf>, String>> {
+        self.signal()?;
+        let settings = self.run.settings;
+        Ok(crate::archive::close_out(
+            &settings.archive_root,
+            &settings.roots.project,
+            &settings.state_dir,
+            item,
+            &[],
+            self.run.locking,
+            self.run.env.now_secs,
+        )
+        .map(|closed| closed.archive)
+        .map_err(|e| format!("{}: {e}", e.key())))
+    }
+
+    /// The provider's close of a hosted lane's sandbox (`lane-host close
+    /// --item ITEM [--merged]`), signalled before it runs: what it answered,
+    /// or `Err` with the cause of a close that refused at the dispatcher or
+    /// gave no answer.
+    pub(in crate::effects) fn host_close(
+        &mut self,
+        lane: &Lane,
+        merged: bool,
+    ) -> Result<std::result::Result<crate::watch::hosted::HostClosed, crate::watch::hosted::Asked>>
+    {
+        self.signal()?;
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        Ok(crate::watch::hosted::close(
+            &scripts,
+            crate::watch::hosted::host_of(lane),
+            &lane.item,
+            merged,
+        ))
+    }
+
+    /// Whether `worktree merged ITEM`, asked from the project checkout,
+    /// shows the item's branch merged: `Ok(true)` on 0, `Ok(false)` on 1,
+    /// `Err` with the status on any other answer.
+    pub(in crate::effects) fn worktree_merged(
+        &self,
+        item: &str,
+    ) -> std::result::Result<bool, String> {
+        let out = host::run_tagged_in(
+            "close",
+            "worktree",
+            &self.run.settings.worktree_cli,
+            "merged",
+            &["merged", item],
+            host::Place {
+                cwd: Some(&self.run.settings.roots.project),
+                env: &[],
+            },
+            CLI_TIMEOUT,
+        )
+        .map_err(|e| format!("cause={e}"))?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            Some(code) => Err(format!("status={code}")),
+            None => Err(format!("status={}", out.status)),
+        }
     }
 
     /// The worktree under a lane that moved belongs to the session that now
@@ -2029,7 +2211,7 @@ fn git_lines(
 }
 
 /// Run orch's own validation runner's stop for the worktree `root`
-/// (`dev-validate-run --stop --worktree ROOT`), as `lane-close` orders it.
+/// (`dev-validate-run --stop --worktree ROOT`).
 /// The caller gates and signals; this only runs the runner and reads its
 /// answer.
 fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(), String> {

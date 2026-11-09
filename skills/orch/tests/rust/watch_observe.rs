@@ -5,7 +5,7 @@
 //! through the one request, the stray sweep, the reset the banner names, the
 //! account and lane wall records, the wall relaunch through the route,
 //! `lane-long`'s counters, the mark line's payload, and the hosted readings
-//! over the `lane-host`, `lane-close` and `gh` fixtures linked into a row's
+//! over the `lane-host`, runtime-entry and `gh` fixtures linked into a row's
 //! world. The rows drive the duties directly with the readers the
 //! production duty injects, applying each pass's changes to the baseline as
 //! the runner's commit would.
@@ -159,23 +159,6 @@ fn lane_rows(path: &Path) -> Reading<LaneVerdict> {
     rows::lane_verdict(path)
 }
 
-/// A copy of `sleep` named `name` under `dir`, so a pane holds a process the
-/// kernel names as a harness; written by a child shell (support's reason).
-fn named_sleep(dir: &Path, name: &str) -> PathBuf {
-    let path = dir.join(name);
-    let out = std::process::Command::new("sh")
-        .args([
-            "-c",
-            "cp \"$(command -v sleep)\" \"$1\" && chmod 755 \"$1\"",
-            "_",
-        ])
-        .arg(&path)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    path
-}
-
 /// The lane record of `item` whose window is `name`, launched in `pane` on
 /// `server`, holding `identity` where the launch recorded one. Its status
 /// file is written under the mail root, so the lane has started.
@@ -241,42 +224,6 @@ impl Fleet {
         let path = self.path();
         let snapshot = state::load(&path).unwrap().expect("the fleet stands");
         FleetState::view(&path, &snapshot.doc).unwrap()
-    }
-}
-
-/// The identity of the pane's process once its shell has exec'd `name`.
-fn await_named(server: &Server, pane: &str, name: &str) -> Identity {
-    let pid = server.pane_pid(pane);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
-        if comm.trim() == name {
-            return Identity {
-                pid,
-                start: start_of(pid),
-            };
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "the pane never exec'd {name}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-}
-
-/// Wait until the pane draws `needle`, bounded.
-fn await_drawn(server: &Server, pane: &str, needle: &str) {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    loop {
-        let cap = tmux(&server.socket, &["capture-pane", "-p", "-t", pane]);
-        if String::from_utf8_lossy(&cap.stdout).contains(needle) {
-            return;
-        }
-        assert!(
-            std::time::Instant::now() < deadline,
-            "{needle:?} was never drawn"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 
@@ -2984,8 +2931,9 @@ const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatu
 /// A provider path, the host a hosted record names.
 const PROVIDER: &str = "/w/provider";
 
-/// A row's world for the hosted reads: the `lane-host`, `lane-close` and
-/// `gh` fixtures linked under one scripts directory, their planted answers
+/// A row's world for the hosted reads: the `lane-host`, runtime-entry
+/// (`orch-runtime`, the close verb's) and `gh` fixtures linked under one
+/// scripts directory, their planted answers
 /// and logs beside them, as the production runner finds them from the
 /// pass's scripts directory and the `gh` path the pass carries.
 struct HostedWorld {
@@ -2998,7 +2946,7 @@ impl HostedWorld {
         std::fs::create_dir_all(&scripts).unwrap();
         for (fixture, name) in [
             ("lane-host/lane-host", "lane-host"),
-            ("lane-close/lane-close", "lane-close"),
+            ("runtime-close/orch-runtime", "orch-runtime"),
             ("gh/gh", "gh"),
         ] {
             std::os::unix::fs::symlink(fixtures().join(fixture), scripts.join(name)).unwrap();
@@ -3037,9 +2985,9 @@ impl HostedWorld {
         self.plant_host(&answers);
     }
 
-    /// The one `lane-close` answer.
+    /// The one answer the runtime entry gives the close verb.
     fn plant_close(&self, answer: Value) {
-        std::fs::write(self.scripts.join("lane-close.json"), answer.to_string()).unwrap();
+        std::fs::write(self.scripts.join("orch-runtime.json"), answer.to_string()).unwrap();
     }
 
     /// The `gh api` answers, by path.
@@ -3060,7 +3008,7 @@ impl HostedWorld {
     }
 
     fn close_log(&self) -> Vec<String> {
-        self.log("lane-close.log")
+        self.log("orch-runtime.log")
     }
 }
 
@@ -3071,6 +3019,50 @@ fn answer(exit: i32, stdout: &str) -> Value {
 
 fn ok(stdout: &str) -> Value {
     answer(0, stdout)
+}
+
+/// The close verb's answer as the runtime prints it: its word and what its
+/// effect observed.
+fn verb_reply(item: &str, word: &str, observation: Value) -> Value {
+    let reply = json!({"protocol": "orch-runtime-v1", "ok": true,
+        "result": {"item": item, "word": word, "observation": observation}});
+    ok(&format!("{reply}\n"))
+}
+
+/// A close that ended the lane, its item's archive on the observation.
+fn closed_reply(item: &str, archive: &str) -> Value {
+    verb_reply(
+        item,
+        "closed",
+        json!({"item_files": "removed", "archive": archive}),
+    )
+}
+
+/// A close the provider refused, the checkout it kept named.
+fn refused_reply(item: &str, path: &str) -> Value {
+    verb_reply(
+        item,
+        "unconfirmed",
+        json!({"host_close": "refused", "path": path}),
+    )
+}
+
+/// The verb's refusal on the tracker's quota hold, as the runtime exits
+/// with it.
+fn quota_reply(item: &str) -> Value {
+    let reply = json!({"protocol": "orch-runtime-v1", "ok": false, "refusal": {
+        "key": "tracker-read-failed",
+        "fields": [["item", item], ["tracker", "linear"], ["source", "derived"], ["cause", "quota"]]}});
+    json!({"exit": 1, "stdout": format!("{reply}\n")})
+}
+
+/// The close request's line in the runtime entry's log: the argv with the
+/// request's JSON, its keys sorted, in the file's place.
+fn close_call(state_dir: &Path, request: &str) -> String {
+    format!(
+        "--state-dir {} op --fleet --request {request}",
+        state_dir.display()
+    )
 }
 
 /// `gh api repos/O/R/pulls?head=O:B&state=open`'s one open pull request.
@@ -3101,12 +3093,6 @@ fn hosted_lane(item: &str, window: &str, root: &str) -> Value {
         "item": item, "window": window, "harness": "claude", "host": PROVIDER, "kind": "ssh",
         "mail_root": root, "status": "running",
     })
-}
-
-/// The tracker's quota receipt line, holding until `reset`.
-fn quota_receipt(reset: u64) -> String {
-    json!({"code": "RATELIMITED", "quota": {"limit": "requests", "status": "future", "reset": clock::iso_utc(reset), "reset_epoch": reset}})
-        .to_string()
 }
 
 fn stalled_lines(produced: &Produced) -> Vec<String> {
@@ -3215,12 +3201,12 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
 }
 
 /// A stalled cloud lane's directive at or after the stall's `since` and
-/// `ORCH_CLOUD_STALL_MINUTES` old closes the lane once through `lane-close
-/// --state-dir [DIR] [ITEM]`, the marker created before the ask and gone
-/// after its answer: `lane-closed` with the archive line, then
-/// `cloud-stall-closed` with the directive's age. Exit 3 is
-/// `lane-close-refused` with the path, the lane kept and the stall said; a
-/// quota receipt defers it with no line; a standing hold asks nothing; a
+/// `ORCH_CLOUD_STALL_MINUTES` old closes the lane once through the close
+/// verb (`close-lane ITEM` through the runtime's entry), the marker created
+/// before the ask and gone after its answer: `lane-closed` with the archive
+/// line, then `cloud-stall-closed` with the directive's age. The provider's
+/// refusal is `lane-close-refused` with the path, the lane kept and the
+/// stall said; the verb's quota refusal defers it with no line; a standing hold asks nothing; a
 /// standing marker beside the open lane asks nothing and is the pass's
 /// failure; a marker of an earlier launch is pruned and the close proceeds.
 #[test]
@@ -3239,7 +3225,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     world.plant_gh(json!({
         "repos/o/r/pulls?head=o:cc-1&state=open": open_pull("aaa111", "", Some(true)),
     }));
-    world.plant_close(ok("kept=/archive/CC-1\n"));
+    world.plant_close(closed_reply("CC-1", "/archive/CC-1"));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
@@ -3250,7 +3236,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     });
     let marker =
         hosted::close_marker_path(lanes::watch_state_dir(&driver.settings.claim_store), "CC-1");
-    let close = format!("--state-dir {} CC-1", driver.state_dir.display());
+    let close = close_call(&driver.state_dir, r#"{"item":"CC-1","op":"close-lane"}"#);
     let closed = driver.pass(&state);
     assert_eq!(
         lines(&closed),
@@ -3282,7 +3268,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         1,
         "no second close beside the marker"
     );
-    // The record `lane-close` wrote: the lane out of flight, the marker leaves.
+    // The record the close verb wrote: the lane out of flight, the marker leaves.
     let mut stopped = lane.clone();
     stopped["status"] = json!("stopped");
     fleet.set_lanes(vec![stopped]);
@@ -3303,7 +3289,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         identity: "CC-1".into(),
         value: format!("aaa111|{}|{}||", digest(""), driver.now - 3700),
     });
-    world.plant_close(json!({"exit": 3, "stdout": "lane-close: close-refused path=/w/cc-1\n"}));
+    world.plant_close(refused_reply("CC-1", "/w/cc-1"));
     let refused = driver.pass(&state);
     assert_eq!(
         lines(&refused),
@@ -3320,7 +3306,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         "an answer that closed nothing takes its marker"
     );
     // The tracker's quota refusal on the answer: deferred, no line.
-    world.plant_close(json!({"exit": 1, "stderr": format!("{}\n", quota_receipt(now + 7200))}));
+    world.plant_close(quota_reply("CC-1"));
     let deferred = driver.pass(&state);
     assert!(lines(&deferred).is_empty(), "{:?}", lines(&deferred));
     assert_eq!(deferred.failed, None);
@@ -3346,7 +3332,7 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         json!({"item": "CC-1", "reason": "cloud-stall", "at": now, "launch": launch}).to_string(),
     )
     .unwrap();
-    world.plant_close(ok("kept=/archive/CC-1\n"));
+    world.plant_close(closed_reply("CC-1", "/archive/CC-1"));
     let standing = driver.pass(&state);
     assert!(
         standing
@@ -3416,12 +3402,12 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     // nothing: no marker stands, and once it can run the next pass closes.
     use std::os::unix::fs::PermissionsExt;
     std::fs::remove_file(&marker).unwrap();
-    world.plant_close(ok("kept=/archive/CC-1\n"));
-    let close = world.scripts.join("lane-close");
+    world.plant_close(closed_reply("CC-1", "/archive/CC-1"));
+    let close = world.scripts.join("orch-runtime");
     std::fs::remove_file(&close).unwrap();
     // Copied by a child, never opened for writing here (ETXTBSY).
     let copied = program("cp")
-        .arg(fixtures().join("lane-close/lane-close"))
+        .arg(fixtures().join("runtime-close/orch-runtime"))
         .arg(&close)
         .output()
         .unwrap();
@@ -3786,9 +3772,11 @@ fn no_handoff(item: &str) -> Vec<(String, Value)> {
 /// stands is a close-out still running. A hosted lane the provider's status
 /// verb reads exited is `lane-exited` on the second pass; one whose item
 /// the GitHub duty read merged and whose `.git` the host has not is closed
-/// through `lane-close` then, `lane-closed` with its archive line under it;
-/// one whose worktree stands, and one with no merged row, are not; the next
-/// pass says nothing.
+/// through the close verb then, its request naming the merge as the
+/// delivery, `lane-closed` with its archive line under it; one whose
+/// worktree stands is not; one with no merged row is closed with its
+/// sandbox kept (`keep-sandbox`, `kept=sandbox`); the next pass, the closed
+/// records read stopped, says nothing.
 #[test]
 fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited_and_a_standing_one_is_not()
  {
@@ -3820,7 +3808,10 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
         .map(|(argv, answer)| (argv.to_owned(), answer)),
     );
     world.plant_host_owned(&answers);
-    world.plant_close(ok("kept=/archive/KEN-1\n"));
+    world.plant_close(json!({
+        "KEN-1": verb_reply("KEN-1", "closed", json!({"host_close": "kept=/archive/KEN-1"})),
+        "KEN-3": verb_reply("KEN-3", "stopped", json!({"identity": "none"})),
+    }));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     for (item, key) in [("KEN-1", "o/r#7"), ("KEN-2", "o/r#8")] {
@@ -3842,12 +3833,23 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
             "kept=/archive/KEN-1",
             "EVENT lane-exited gh-2",
             "EVENT lane-exited gh-3",
+            "EVENT lane-closed KEN-3",
+            "kept=sandbox",
         ]
     );
     assert_eq!(second.failed, None);
     assert_eq!(
         world.close_log(),
-        vec![format!("--state-dir {} KEN-1", driver.state_dir.display())]
+        vec![
+            close_call(
+                &driver.state_dir,
+                r#"{"delivery":{"pr":{"pr":7,"repo":"o/r"}},"item":"KEN-1","op":"close-lane"}"#
+            ),
+            close_call(
+                &driver.state_dir,
+                r#"{"item":"KEN-3","mode":"keep-sandbox","op":"close-lane"}"#
+            ),
+        ]
     );
     let marker = hosted::close_marker_path(
         lanes::watch_state_dir(&driver.settings.claim_store),
@@ -3857,14 +3859,16 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
         std::fs::metadata(&marker).is_ok(),
         "the close's marker stands"
     );
-    // The record `lane-close` wrote, read on the next pass: the marker leaves.
+    // The record the close verb wrote, read on the next pass: the marker leaves.
     let mut closed = one;
     closed["status"] = json!("stopped");
-    fleet.set_lanes(vec![closed, two, three]);
+    let mut kept = three;
+    kept["status"] = json!("stopped");
+    fleet.set_lanes(vec![closed, two, kept]);
     let third = driver.pass(&fleet.read());
     assert!(event_lines(&third).is_empty(), "{:?}", lines(&third));
     assert_eq!(third.failed, None);
-    assert_eq!(world.close_log().len(), 1);
+    assert_eq!(world.close_log().len(), 2);
     assert!(std::fs::metadata(&marker).is_err());
 }
 
@@ -3892,7 +3896,7 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
         .map(|(argv, answer)| (argv.to_owned(), answer)),
     );
     world.plant_host_owned(&answers);
-    world.plant_close(json!({"exit": 1, "stderr": format!("{}\n", quota_receipt(1_800_007_200))}));
+    world.plant_close(quota_reply("KEN-1"));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.baseline.apply(Change::Set {
@@ -3911,7 +3915,11 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
         Some(format!("lane-exited|{pane_key}").as_str())
     );
     assert_eq!(world.close_log().len(), 1);
-    world.plant_close(ok("kept=/archive/KEN-1\n"));
+    world.plant_close(verb_reply(
+        "KEN-1",
+        "closed",
+        json!({"host_close": "kept=/archive/KEN-1"}),
+    ));
     let third = driver.pass(&state);
     assert_eq!(
         lines(&third),
@@ -4252,6 +4260,9 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
+        // The relaunch runs the real runtime through its entry, in the
+        // close stand-in's place.
+        std::fs::remove_file(world.scripts.join("orch-runtime")).unwrap();
         std::os::unix::fs::symlink(binary(), world.scripts.join("orch-runtime")).unwrap();
         if hosted {
             // The launch finds its provider under the checkout's package.
@@ -5160,7 +5171,11 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
 /// A hosted lane with no recorded pane keys its exit row on the empty pane
 /// key, which an absent row must not read as, so the row standing is the
 /// first pass's record: the lane the provider reads exited is `lane-exited`
-/// on the second pass alone, and a third says nothing.
+/// on the second pass alone, its item unmerged, and that pass closes it
+/// through the close verb with its sandbox kept (`keep-sandbox`), the
+/// record then read stopped and its marker gone; a third pass says
+/// nothing. A host whose status read fails reads no exit and asks no close,
+/// so the lane keeps its slot.
 #[test]
 fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pass() {
     let dir = tempfile::tempdir().unwrap();
@@ -5168,21 +5183,70 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     let fleet = Fleet::new(&server);
     let mut four = hosted_lane("KEN-4", "gh-4", "/remote/KEN-4");
     four["harness"] = json!("codex");
-    fleet.set_lanes(vec![four]);
+    fleet.set_lanes(vec![four.clone()]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
         (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
         ("status --item KEN-4 --harness codex", ok("exited\n")),
     ]);
+    world.plant_close(verb_reply("KEN-4", "stopped", json!({"identity": "none"})));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
-    let passes: Vec<Vec<String>> = (0..3).map(|_| event_lines(&driver.pass(&state))).collect();
+    let first = driver.pass(&state);
+    assert_eq!(event_lines(&first), Vec::<String>::new());
+    let second = driver.pass(&state);
     assert_eq!(
-        passes,
-        vec![vec![], vec!["EVENT lane-exited gh-4".to_owned()], vec![]]
+        lines(&second),
+        vec![
+            "EVENT lane-exited gh-4",
+            "EVENT lane-closed KEN-4",
+            "kept=sandbox"
+        ]
     );
+    assert_eq!(
+        world.close_log(),
+        vec![close_call(
+            &driver.state_dir,
+            r#"{"item":"KEN-4","mode":"keep-sandbox","op":"close-lane"}"#
+        )]
+    );
+    let mut stopped = four.clone();
+    stopped["status"] = json!("stopped");
+    fleet.set_lanes(vec![stopped]);
+    let third = driver.pass(&fleet.read());
+    assert_eq!(event_lines(&third), Vec::<String>::new());
+    assert_eq!(third.failed, None);
+    assert_eq!(world.close_log().len(), 1);
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    fleet.set_lanes(vec![four]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        (
+            "status --item KEN-4 --harness codex",
+            json!({"exit": 1, "stderr": "provider down\n"}),
+        ),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    for _ in 0..3 {
+        let pass = driver.pass(&state);
+        assert!(
+            !event_lines(&pass)
+                .iter()
+                .any(|l| l.starts_with("EVENT lane-exited ")),
+            "{:?}",
+            lines(&pass)
+        );
+    }
+    assert!(world.close_log().is_empty(), "an unread host asks no close");
 }
 
 /// A `copilot` the launch rows start, at rest: it writes the session the

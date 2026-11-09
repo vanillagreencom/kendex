@@ -52,6 +52,7 @@
 
 #![deny(clippy::wildcard_enum_match_arm)]
 
+mod close;
 mod launch;
 #[allow(
     clippy::disallowed_methods,
@@ -61,6 +62,7 @@ mod operation;
 mod stop;
 mod transfer;
 
+pub use close::{Closed, Word as CloseWord, close_lane};
 pub(crate) use operation::Recorded;
 pub use operation::job::{JobStarted, NoticeUnmarked};
 pub(crate) use operation::job::{
@@ -148,6 +150,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
         | Request::ApproveHead(_)
+        | Request::CloseLane(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -353,6 +356,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::VerifyPr(_)
                     | Request::VerifyReview(_)
                     | Request::ApproveHead(_)
+                    | Request::CloseLane(_)
                     | Request::ReconcileRound(_)
                     | Request::RecordHandoff(_)
                     | Request::ResumeHandoff(_)
@@ -411,6 +415,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
         | Request::ApproveHead(_)
+        | Request::CloseLane(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -534,6 +539,9 @@ fn stop_route_open(applied: &Applied) -> bool {
         // that stop again.
         || read("validate").as_deref() == Some("stop-failed")
         || read("wake").as_deref() == Some("live")
+        // The item's files or the provider's close the close's ground owes,
+        // which only the close itself discharges.
+        || read("close_out").as_deref() == Some("owed")
 }
 
 /// A close asked for over an open launch intent. The launch
