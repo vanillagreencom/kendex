@@ -1093,6 +1093,12 @@ fn a_global_source_verb_runs_outside_every_project_and_a_scoped_one_refuses() {
     // would climb into whatever holds the temporary directory.
     let elsewhere = home.join("elsewhere");
     fs::create_dir_all(&elsewhere).unwrap();
+    // A personal scope with no manifest subscribes to the default catalog,
+    // which a refresh downloads; one subscribing to nothing keeps the rows
+    // off the network.
+    let personal = kendex_core::env::Env::host_rooted(&home).global_manifest_file();
+    fs::create_dir_all(personal.parent().unwrap()).unwrap();
+    fs::write(&personal, "schema = 7\n").unwrap();
     for (args, passes) in [
         (&["--global", "source", "refresh"][..], true),
         (&["source", "refresh", "--global"], true),
