@@ -83,10 +83,10 @@ Mint the round through the runtime. A hosted lane's `orch-runtime` is built by t
 
 `[DEV_ROUND_ID]` is the reply's `.result.report.round_id`. The one write mints the token, supersedes the open dev stage and opens the new one ([workflow-state.md](../schemas/workflow-state.md) `stages`).
 
-Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune: write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, then run it:
 
 ```bash
-.agents/skills/orch/scripts/round-prune [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
 ```
 
 ```bash
@@ -123,7 +123,7 @@ Validation admission: .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_
 [For each near_ceiling line read from workflow state: "Near-ceiling: [LINE]"]
 </delegation_format>
 
-`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `orch-runtime dev-return --text write`, whose Apple gate reads them. `Validation admission:` is the exact command the dev agent runs before each `dev-validate-run` start; the dev workflow does not depend on orch for it. The start under the admitted id is the runtime's one verb, `orch-runtime validate start`: `dev-validate-run --worktree [WORKTREE_PATH] --run-id [RUN_ID]` hands it the admitted directory, and the verb resolves the mode from the project's declaration, records the run's proof and job on the admitted `validate` entry before the launch, launches the run's job and prints the started line the dev skill parses. The job closes the entry with the sentinel's word and sends the lane its end notice, through the mailbox's outbound directive route, when the run ends.
+`[LABELS]` is the item's labels from § 1's read, comma-separated, or `none` when it carries none. The dev agent passes them to `orch-runtime dev-return --text write`, whose Apple gate reads them. `Validation admission:` is the exact command the dev agent runs before each validation start; the dev workflow does not depend on orch for it. The start under the admitted id is the runtime's: `orch-runtime validate entry --worktree [WORKTREE_PATH] --run-id [RUN_ID]` starts the admitted directory as `orch-runtime validate start` does, resolving the mode from the project's declaration, recording the run's proof and job on the admitted `validate` entry before the launch, launching the run's job and printing the started line the dev skill parses. The job closes the entry with the sentinel's word and sends the lane its end notice, through the mailbox's outbound directive route, when the run ends.
 
 **GitHub items** replace the `Issue:` line with `GitHub Issue: [OWNER/REPO]#[N]`. `Artifact Key:` stays `[ISSUE_ID]`, never `OWNER/REPO#N`.
 
@@ -191,7 +191,11 @@ git -C "[WORKTREE_PATH]" status --porcelain
 
 `HEAD` must differ from `pre_delegate_sha`, or, where it did not move, the round's proof must be complete for `HEAD`'s tree: `.agents/skills/orch/scripts/orch-runtime read-proof --item [ISSUE_ID] --need round --tree "$(git -C "[WORKTREE_PATH]" rev-parse "HEAD^{tree}")"`, the runtime's proof reader over the round's `validate` entries, must answer `complete` in `.result.proof`. `status --porcelain` must be empty, and the Linear validation (Linear only) must report `.all_ok`. `--include-children-of` expands the audit-created sub-issues worked in this session. Bundle-expanded children follow the linear skill's `validate-completion` contract. Dev-implement § Issue state records verified branch-box ticks and Evidence through a description-only update while each child stays In Progress. Validation reads that persisted checklist, whether or not it has post-merge boxes. The session root stays In Progress or In Review before merge. Carry qualified started children into submit-pr's child `Closes` lines and merge-pr's post-merge completion step. GitHub and ad-hoc rounds skip tracker validation: B is the new commit plus the clean worktree.
 
-A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `orch-runtime round --text recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `orch-runtime round --text recover` replaces the round, reconcile its admitted runs: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` and run it with Close The Round's Stages' command, so a lost or stopped run is a closed stage before the round is replaced.
+A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `orch-runtime round --text recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `orch-runtime round --text recover` replaces the round, reconcile its admitted runs: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` and run it with Close The Round's Stages' command, so a lost or stopped run is a closed stage before the round is replaced. On its `redelegate` line the printed round id is already `dev_round_id`: apply the cleanup condition to that round's prune with § 2's request file, then take the rest of the `redelegate` row of [Round Closure](../references/skill-rules.md#round-closure):
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
+```
 
 `orch-runtime dev-return --text check` sets the round entry's kind and records its validation time for every `reason` but `missing` and `invalid`. A retry or escalation keeps that time. The stage ends are the runtime's, closed in Close The Round's Stages below.
 
@@ -215,7 +219,7 @@ The runtime is the one writer of a stage's end ([workflow-state.md](../schemas/w
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
 ```
 
-The runtime reads each open `validate` entry's run directory, and the job it started by the identity the entry records, and closes the entry with the word the run supports: an ended run with its sentinel's verdict, `pass`, `fail` or `no-verdict`; an admitted directory never created, a refused or never attempted start, or a run `validate stop` ended, `stopped`; a run whose job or child is gone without its sentinel, or that never recorded one, `lost`. A run whose job or child still runs stays open and is reported `live`, or `live-unit` under a user manager; one the runtime could not read stays open and is reported `unreadable` with the cause. The reply's `runs` rows name each. A run the runtime started carries its mode on the entry's `proof`; read `dev-validate-run --record --run-dir [RUN_DIR]` for a closed run's timing when the round's report needs it. The reconcile first sends the end notice a closed run still owes its lane.
+The runtime reads each open `validate` entry's run directory, and the job it started by the identity the entry records, and closes the entry with the word the run supports: an ended run with its sentinel's verdict, `pass`, `fail` or `no-verdict`; an admitted directory never created, a refused or never attempted start, or a run `validate stop` ended, `stopped`; a run whose job or child is gone without its sentinel, or that never recorded one, `lost`. A run whose job or child still runs stays open and is reported `live`, or `live-unit` under a user manager; one the runtime could not read stays open and is reported `unreadable` with the cause. The reply's `runs` rows name each. A run the runtime started carries its mode on the entry's `proof`; read `orch-runtime validate entry --record --run-dir [RUN_DIR]` for a closed run's timing when the round's report needs it. The reconcile first sends the end notice a closed run still owes its lane.
 
 Then the round's own entry, with the same command over `{"op": "accept-result", "round_id": "[DEV_ROUND_ID]", "outcome": "[WORD]", "summary_file": "[WORKTREE_PATH]/tmp/completion-summary-[ISSUE_ID].md", "attachments": [SCREENSHOTS]}`, `[SCREENSHOTS]` the artifact's `screenshots` list as `orch-runtime dev-return --text check` echoed it (`[]` where it echoed none): `pass` on the accept row, `fail` on a final retry. `outcome` is required; a request without it is refused `request-invalid`.
 
@@ -225,7 +229,7 @@ The request names no `authorization`: this close is the lane's own acceptance of
 
 ### Store Proposed Rules
 
-Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet.
+Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet. It is this file's one write through the `workflow-state` store: no runtime state verb appends to an array without repeating a value it holds.
 
 ```bash
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile rule tmp/proposed-rule-[ISSUE_ID].json '.pr_comment_review.proposed_rules = (((.pr_comment_review.proposed_rules // []) + [$rule[0]]) | unique)'
@@ -263,7 +267,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 
 ### Validation status
 
-A run's cost stands in two records. `orch-runtime dev-return --text check` records each schema-valid receipt's validation seconds in `validate_rounds` before its verdict routes the round; the round's `validate` entry on `stages` is the runtime's, with the run's `start`, `end` and `proof` (`schemas/workflow-state.md` `stages`). `worktree-push` records a restack's validation after a successful push, in `validate_rounds` and `stages` together.
+A run's cost stands in two records. `orch-runtime dev-return --text check` records each schema-valid receipt's validation seconds in `validate_rounds` before its verdict routes the round; the round's `validate` entry on `stages` is the runtime's, with the run's `start`, `end` and `proof` (`schemas/workflow-state.md` `stages`). `record-push` records a restack's validation after a successful push, in `validate_rounds` and `stages` together.
 
 A lane under an overseer rewrites its status file's validation line from `.validate_rounds`, per [oversee.md § 3 Lane directive](oversee.md#lane-directive). It then lists each `.restack_skips` entry's condition and paths, which [merge-pr-restack.md](merge-pr-restack.md) step 2 writes.
 

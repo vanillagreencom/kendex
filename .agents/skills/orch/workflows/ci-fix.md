@@ -77,10 +77,10 @@ Stamp the round as separate tool calls immediately before delegating. Apply the 
 .agents/skills/orch/scripts/orch-runtime state new-round-id --item [ISSUE_ID] /ci_round_id
 ```
 
-Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune, recorded under the CI token: write `tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "ci"}`, then run it:
 
 ```bash
-.agents/skills/orch/scripts/round-prune --ci [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request tmp/prune-round-[ISSUE_ID].json
 ```
 
 ```bash
@@ -167,7 +167,7 @@ Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under the `off` gate
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 - `unreadable` → re-run the call once. If it repeats, take the `timeout` route's stop.
 
-For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
+For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
 
 - A red local run is the fix's failure; report it and stop.
 - A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. For a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.
@@ -183,7 +183,7 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-pr-request-[STATE_KEY].json"
 ```
 
-On `status=complete` with `verdict=fail`, a transient runner failure is rerun once per head before the result goes anywhere, as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
+On `status=complete` with `verdict=fail`, a transient runner failure on the pull request's head is rerun once per head before the result goes anywhere. A merge group's run is never rerun: a same-head re-queue under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge)'s re-queue rule takes its place. Read and record the pull request's rerun as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head does, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'

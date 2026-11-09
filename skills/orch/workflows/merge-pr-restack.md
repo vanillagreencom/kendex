@@ -12,11 +12,13 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    [MAIN_REPO_ROOT]/.agents/skills/worktree/scripts/worktree path [ISSUE]
    ```
 
+   Write `[WT_PATH]/tmp/restack-live-round-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "check-live-round", "worktree": "[WT_PATH]"}`, then run it:
+
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --check-live-round --worktree [WT_PATH] --issue [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-live-round-[ISSUE].json
    ```
 
-   It pushes nothing. Exit 0 is the only answer that permits the restack; any other exit hands back, and the command says which it was (`worktree-push --help`). `worktree create [ISSUE] --reuse` rebases outside this check too, and carries no live-round refusal of its own.
+   It pushes nothing. Exit 0 is the only answer that permits the restack. Exit 3 names the fix round in flight as the reply's `live_round`, a round whose record stands in the worktree with no receipt beside it, and a refusal exits 1 with its keyed line on stderr; any other exit hands back too. `worktree create [ISSUE] --reuse` rebases outside this check too, and carries no live-round refusal of its own.
 
    The restack takes [SKILL.md § The Cycle](../SKILL.md#the-cycle), Rules reload after a rebase. Then start the guarded restack:
 
@@ -38,55 +40,55 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
      PR_ORDER=pr-order=review-first
    fi
    [[ "$PR_ORDER" != pr-order=push-first ]] || RESTACK_MODE_ARGS=(--base origin/[BASE_BRANCH])
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --resolve-mode --worktree [WT_PATH] ${RESTACK_MODE_ARGS[@]+"${RESTACK_MODE_ARGS[@]}"}
    ```
 
    A non-zero exit from `resolve-base-branch`, `--resolve-mode`, or the `--record` read below hands back with that command's stderr and pushes nothing.
 
-   For the `ci` mode, record the pending run through the existing runner:
+   For the `ci` mode, record the pending run through the runtime's validation entry:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack
    ```
 
-   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. The restack's starts, this one and the range run below, carry no `--run-id`: a restack runs outside a round's admission, so the script resolves the mode and records the run itself, the route [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) names for a delegation with no admission. Successful CI admission records CI pending without a local command and returns at once. A refusal runs the range command and records its cause on start's `ci-fallback=` line; `dev-validate-run --help` lists those causes. Read the result through the existing `--record` owner before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. `dev-validate-run --help` owns candidate selection under `--last-pass`:
+   `validate-mode=ci` runs that command with `--validate-mode ci`. Its `--restack` flag skips selector preview and scoped suites. The restack's starts, this one and the range run below, carry no `--run-id`: a restack runs outside a round's admission, so the entry records the run itself, the route [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) names for a delegation with no admission. Successful CI admission records CI pending without a local command and returns at once. A refusal runs the range command and records its cause on the start record's `ci-fallback=` line, which `--record` reports. Read the result through `--record` before step 3. `validate-mode=full` means the project sets no `DEV_VALIDATE_RANGE_CMD`. Both `full` and `range` first ask whether the restacked head can skip its range re-test. The check takes the worktree's newest passing run as its candidate, and retests where a later run there did not pass:
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]
    ```
 
-   Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over the version field commit-guards reads and changelog entries in the files it left conflicted (`version-only`), which `restack-skip --help` states. It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
+   Exit 0 prints `restack=skip condition=[CONDITION] ... head=[HEAD] paths=[PATHS]`: the restacked tree is that run's tree merged with the base's new commits, a merge that conflicted nowhere (`no-conflict`) or only over the version field commit-guards reads and changelog entries in the files it left conflicted (`version-only`). It starts no run. Record the skip in workflow state, with `[CONDITION]` the line's `condition=` value, `[VALIDATED_HEAD]` its `validated-head=` value and `[PATHS]` its `paths=` value, then go to step 3:
 
    ```bash
    jq -n --arg head [HEAD] --arg condition [CONDITION] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}' > tmp/restack-skip-[ISSUE].json
    .agents/skills/orch/scripts/orch-runtime state upsert --item [ISSUE] /restack_skips --key head tmp/restack-skip-[ISSUE].json
    ```
 
-   A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence, and no more: a later run at that tree which did not pass voids the skip's proof with every other proof of the tree, so step 3's read answers `missing` and the restack hands back. Step 3 asks the runtime for that proof before either caller can admit the queue or merge. Any other skip exit under `full` goes to step 3 with no run. Any other exit under `range`, whatever it prints, runs the range command over the branch as it now sits on the base, started without `--run-id` and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness:
+   A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence, and no more: a later run at that tree which did not pass voids the skip's proof with every other proof of the tree, so step 3's read answers `missing` and the restack hands back. Step 3 asks the runtime for that proof before either caller can admit the queue or merge. Any other skip exit under `full` goes to step 3 with no run. Any other exit under `range`, whatever it prints, runs the range command over the branch as it sits on the base after the restack, started without `--run-id` and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]
    ```
 
    Bind `[RUN_DIR]` to the run's `run-dir=` line and read its head and times after it ends:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/dev-validate-run --record --run-dir [RUN_DIR]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime validate entry --record --run-dir [RUN_DIR]
    ```
 
-   `worktree-push` reads the newest finished run for the pre-push restacked head through `dev-validate-run --record` after a successful push. It records the restack stage and validation minutes once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
+   After a confirmed push, step 3's push records the newest finished, timed run for the pre-push restacked head as the item's restack `validate` stage, with the run's proof and outcome, and adds its seconds to `validate_rounds`, once per run directory. A skipped re-test adds no stage for an earlier head's run. A failed range run reaches no push and records no restack stage.
 
    A start refused as `run-live` ran nothing and is no result: take [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate)'s route for that refusal, then start the range run again.
 
    A `validate-mode=ci` record with `verdict=pending` goes on to step 3. It is no CI pass. For local runs, only `validate=pass` goes on to step 3. Any other result, `FAILING`, `no-verdict`, `state=timeout` or `state=lost`, pushes nothing and hands back with the verdict and the run's log path, as a fix round's red verdict ends its workflow with no second validation run. The PR stays unarmed from step 1, and this cycle never reaches step 4.
 
-3. Push through the guarded owner:
+3. Push through the guarded owner. Write `[WT_PATH]/tmp/restack-push-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "branch", "worktree": "[WT_PATH]"}`, then run it:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --worktree [WT_PATH] --issue [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-push-[ISSUE].json
    ```
 
-   This step is not skippable and no other push replaces it: the restack in step 2 rewrote every branch commit, and this command is the only thing that reconciles the SHAs workflow state recorded before it. A non-zero exit hands back, because republishing `Fixed in <sha>` replies or a closing comment over unreconciled SHAs publishes commits the branch no longer has. What it reconciles from and what its summary lines mean are in `worktree-push --help`.
+   This step is not skippable and no other push replaces it: the restack in step 2 rewrote every branch commit, and this request is the only thing that reconciles the SHAs workflow state recorded before it. It reconciles the rebase map the restack left before the push, then the hop the push itself wrote, and the reply's `reconciled` rows name each map read with the recorded commits it moved. The reply's `push` carries the worktree skill's own answer, its exit and its output. Where the push confirmed a restacked head, the reply's `stage` names the run directory it recorded, `none` where no run qualified, or `unrecorded` with its cause, and the push's verdict stands either way. Exit 0 is a confirmed push. A push that failed exits with its own status, a refusal exits 1, and 75 means the push's answer was lost: its `push_attempt` stays `attempted`, and the next request settles it from the remote before it pushes again. Any non-zero exit hands back, because republishing `Fixed in <sha>` replies or a closing comment over unreconciled SHAs publishes commits the branch does not have.
 
    A `ci` record needs no local head comparison after the push. Its proof is the exact published head, including any head the push rebased. After a local range run, compare the pushed head with the `head=` value of that run's record; after a skip, with the `head=` value of the skip line:
 
@@ -94,15 +96,15 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    git -C [WT_PATH] rev-parse HEAD
    ```
 
-   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's mode read and skip check again on it, recording a new skip for that head. Where range mode does not skip, run its range command and record read. The proof read below uses this resulting head. Route a non-passing result as step 2 does. After a pass, bind `[RUN_DIR]` to this second run and record its timing through the same owner:
+   A different head means the push rebased the branch again, onto a base that moved during the run, and pushed a head no run validated. The PR is still unarmed from step 1, so that head cannot enter the queue. Run step 2's mode read and skip check again on it, recording a new skip for that head. Where range mode does not skip, run its range command and record read. The proof read below uses this resulting head. Route a non-passing result as step 2 does. After a pass, bind `[RUN_DIR]` to this second run and record its stage through the same owner: write `[WT_PATH]/tmp/restack-stage-[ISSUE].json` with the harness file tool as `{"op": "record-push", "mode": "record-restack-validation", "worktree": "[WT_PATH]", "run_dir": "[RUN_DIR]"}`, then run it:
 
    ```bash
-   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --record-restack-validation [RUN_DIR] --worktree [WT_PATH] --issue [ISSUE]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-stage-[ISSUE].json
    ```
 
-   This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip takes the proof read below with no second push, and a base that moves again returns through the next `queue-watch` verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
+   This request publishes nothing and reads no rebase map. Its stage write is advisory: the reply's `stage` names the run directory, or `unrecorded cause=no-run` where that run is unfinished or validated another head, and it exits 0 either way. A pass or a skip takes the proof read below with no second push, and a base that moves again returns through the next `queue-watch` verdict. The worktree skill's `--no-rebase` push flag cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
-   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. Where one stands, ask the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence; the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. This read starts no validation:
+   **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head, and keep step 2's `[BASE_BRANCH]`. Read the current head's recorded skip. Where one stands, ask the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence; the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. This read starts no validation, and the block prints the reader's reply:
 
    ```bash
    if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/orch-runtime state get --item [STATE_KEY] /restack_skips)"; then
@@ -115,11 +117,12 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
      PREPARED_TREE="$(git -C [WORKTREE_PATH] rev-parse "[PREPARED_HEAD]^{tree}")"
      PREPARED_BASE="$(git -C [WORKTREE_PATH] merge-base [PREPARED_HEAD] origin/[BASE_BRANCH])"
      RESTACK_PROOF="$(.agents/skills/orch/scripts/orch-runtime read-proof --item [STATE_KEY] --need restack --tree "$PREPARED_TREE" --head [PREPARED_HEAD] --base "$PREPARED_BASE")" || exit $?
-     jq -e '.result.proof != "missing"' <<<"$RESTACK_PROOF" >/dev/null || exit 1
+     printf '%s\n' "$RESTACK_PROOF"
+     [[ "$(jq -r '.result.proof' <<<"$RESTACK_PROOF")" != missing ]] || exit 1
    fi
    ```
 
-   A nonzero exit hands back with the proof result and keeps the PR unarmed. This includes submission's steps 1-3 route, before creation or update can arm the queue. Keep the reader's answer, its `proof` word and the rows it names, with the merge decision. A `pending` answer stays pending until the existing exact-head CI wait or queue proves it.
+   A nonzero exit hands back with the printed reply and keeps the PR unarmed. This includes submission's steps 1-3 route, before creation or update can arm the queue. Keep the reader's reply, its `proof` word and the rows it names, with the merge decision. A `missing` reply names in `lacks` the tree and the narrowest mode the project declares. A `pending` answer stays pending until the existing exact-head CI wait or queue proves it.
 
 4. The head changed. Re-confirm the gate mode, then return to `merge-pr.md` § 5 step 1 to read the new exact head, repeat its proof read, wait for CI and take the merge route again.
 

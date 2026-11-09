@@ -280,10 +280,10 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
 ```
 
-Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune: write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, then run it:
 
 ```bash
-.agents/skills/orch/scripts/round-prune [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
 ```
 
 ```bash
@@ -292,14 +292,14 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 
 Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states.
 
-Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
+Persist this group's slice of the `fix set`: write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`. Copy `[ITEM_TEXT]` from the delegation under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding — a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md); it is a backstop and not the judgement — a reach it accepts has been recorded, not approved.
 
 Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
 
 When the list is non-empty, pass those exact repository-relative paths to the writer as one blank-separated `--adds` value, and render the same list after `Adds:` in the delegation — one path is `Adds: tools/one-helper.sh`, several are `Adds: tools/one-helper.sh skills/x/scripts/check`. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one — check for that before you write the line.
 
 ```bash
-.agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
+.agents/skills/orch/scripts/orch-runtime round --text stamp --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --source pr-comments --pr-open [PR_OPEN] --finding-occurrences-file [WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
 A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4 with `[SOURCE]` bound to `pr-comments`. A nonzero exit names a usage or environment failure. Report it and stop.
@@ -345,7 +345,7 @@ Recommendation: "[RECOMMENDATION]"
 ```
 
 ```bash
-.agents/skills/orch/scripts/dev-artifact-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
+.agents/skills/orch/scripts/orch-runtime dev-return --text check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID_FROM_PREVIOUS_COMMAND] --expect-items-from-round
 ```
 
 ```bash
@@ -353,7 +353,7 @@ git -C "[WORKTREE_PATH]" status --porcelain
 git -C "[WORKTREE_PATH]" log -1 --oneline
 ```
 
-Apply the fix-round acceptance in [`dev-fix.md` § 2](dev-fix.md), which is canonical: the stalled-round route stated ahead of its A×B table, with its `reconcile-round` call before `round-recover` replaces the round, then the table itself, including exact-commit binding on accept, the stage close it runs through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages), `reconcile-round` first and then the round's entry with `pass` on accept or `fail` on a final retry, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
+Apply the fix-round acceptance in [`dev-fix.md` § 2](dev-fix.md), which is canonical: the stalled-round route stated ahead of its A×B table, with its `reconcile-round` call before `orch-runtime round --text recover` replaces the round and its prune on a `redelegate` line, then the table itself, including exact-commit binding on accept, the stage close it runs through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages), `reconcile-round` first and then the round's entry with `pass` on accept or `fail` on a final retry, the bounded git re-read on `accept` with B failing, the report-only tail-reconciliation nudge on `wait` with B passing, and the never-accept `retry` row, which never re-runs the fix. On accept: applied items are marked for reply, items the agent skipped go to the skipped list with their reason, and blocked items become issue candidates in § 6.2.
 
 **Verify before the push.** Every accepted fix round gets one focused pass over its diff, `[PRE_SHA]...HEAD`, by [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review)'s rule for a fix diff no reviewer has seen, whatever `REVIEW_MAX_EXTERNAL_ROUNDS` reads. Its panel is that section's scoped panel over this diff: the reviewers whose domains it touches, and the domain reviewers § 2 routed the applied items to, whose defect classes the round fixed. A panel holding every `first_panel` reviewer carries that section's `domain_reasons`, or the runtime refuses it as `panel-copy`:
 
@@ -371,7 +371,7 @@ Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/
 git -C "[WORKTREE_PATH]" push origin HEAD
 ```
 
-With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, publish through `.agents/skills/orch/scripts/worktree-push --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]` in place of that command, routing its exit code and `sha-reconcile:` line by `worktree-push --help`, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
+With workflow state `pr_order` reading `open-first-returned` or `push-first-returned`, publish through `record-push` in place of that command: write `[WORKTREE_PATH]/tmp/triage-push-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "branch", "worktree": "[WORKTREE_PATH]"}`, run it with `.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/triage-push-[ISSUE_ID].json`, and route its exit and reply as [merge-pr-restack.md](merge-pr-restack.md) step 3 does, so [submit-pr.md](submit-pr.md) § 2 step 1 pushes next and GitHub receives one combined head. That push may rebase this round's fix commits, whose SHAs come from the dev return and sit in no record it rewrites: resolve each through workflow state's `.rebase_map`, following the chain until no key matches, before § 6.3's `Fixed in` reply and § 8's `pr_comment_review.fixes` entry use it, and a chain ending in `dropped` puts no SHA in the reply and the `dropped:[COMMIT_SHA]` marker in the entry.
 
 **A round ends with the description matching its head.** The PR body describes the commits actually on the PR head and names every issue § 6.2 filed this round; nothing else regenerates it after round one, so rebuild it per [`submit-pr.md` § 2](submit-pr.md) step 3 and post it with `pr-edit-body` until both hold.
 

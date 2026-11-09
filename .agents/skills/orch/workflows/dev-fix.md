@@ -62,10 +62,10 @@ Before stamping or delegating the round, check its base:
 ```
 
 - Exit 0 keeps the current validation route, including the later `restack-skip` check.
-- Exit 4 first unarms any open PR through [merge-pr-restack.md](merge-pr-restack.md#unarm-at-a-stop) step 1, then asks the live-round owner from that workflow's step 2:
+- Exit 4 first unarms any open PR through [merge-pr-restack.md](merge-pr-restack.md#unarm-at-a-stop) step 1, then asks the live-round owner from that workflow's step 2: write `[WORKTREE_PATH]/tmp/live-round-[ISSUE_ID].json` with the harness file tool as `{"op": "record-push", "mode": "check-live-round", "worktree": "[WORKTREE_PATH]"}`, then run it:
 
   ```bash
-  .agents/skills/orch/scripts/worktree-push --check-live-round --worktree [WORKTREE_PATH] --issue [ISSUE_ID]
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/live-round-[ISSUE_ID].json
   ```
 
   Only exit 0 permits `worktree create [ISSUE_ID] --restack` before validation. Any other exit stops before rebasing. Finish or recover a live round before retrying the gate. Resolve conflicts and run `worktree restack continue [ISSUE_ID]` until complete. Apply [Rules reload after a rebase](../SKILL.md#the-cycle), then run the gate again. Only exit 0 from `base-freshness` permits stamping the round on the rebased HEAD and validating its fixes.
@@ -117,17 +117,17 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
    .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
    ```
 
-   Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
+   Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune: write `[WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "dev"}`, then run it:
 
    ```bash
-   .agents/skills/orch/scripts/round-prune [ISSUE_ID]
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
    ```
 
    ```bash
    .agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
    ```
 
-   Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states. The start under the admitted id is `orch-runtime validate start`, which the fix round reaches through `dev-validate-run --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`: a round that names its base takes the narrowest mode the project declares, `ci` where `DEV_VALIDATE_CI_CONTEXT` is declared and the base requires it, else `range` where `DEV_VALIDATE_RANGE_CMD` is declared, else the whole battery; a `--validate-mode full` on a project declaring a narrower mode is refused without a cause, and the mode is on the admitted entry's `proof`.
+   Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states. The start under the admitted id is `orch-runtime validate start`'s, which the fix round reaches through `orch-runtime validate entry --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`: a round that names its base takes the narrowest mode the project declares, `ci` where `DEV_VALIDATE_CI_CONTEXT` is declared and the base requires it, else `range` where `DEV_VALIDATE_RANGE_CMD` is declared, else the whole battery; a `--validate-mode full` on a project declaring a narrower mode is refused without a cause, and the mode is on the admitted entry's `proof`.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. Copy `[ITEM_TEXT]` under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md); it is a backstop and not the judgement: a reach it accepts has been recorded, not approved.
 
@@ -212,7 +212,11 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
 
    `B = pass` when the worktree is clean and the reported fix commit resolves in the log, or when the round applied nothing and made no commit.
 
-   A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `orch-runtime round --text recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `orch-runtime round --text recover` replaces the round, reconcile its admitted runs as [dev-start.md § 3](dev-start.md#3-accept-the-round) does: `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` through the stage-close command, so a lost or stopped run is a closed stage before the round is replaced.
+   A round that meets the Stalled round conditions of [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure) goes to `orch-runtime round --text recover` whatever B reads, and its agent is never nudged or re-messaged; the table below covers every other round. Before `orch-runtime round --text recover` replaces the round, reconcile its admitted runs as [dev-start.md § 3](dev-start.md#3-accept-the-round) does: `{"op": "reconcile-round", "round_id": "[DEV_ROUND_ID]"}` through the stage-close command, so a lost or stopped run is a closed stage before the round is replaced. On its `redelegate` line the printed round id is already `dev_round_id`: apply the cleanup condition to that round's prune with step 4's request file, then take the rest of the `redelegate` row of [Round Closure](../references/skill-rules.md#round-closure):
+
+   ```bash
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/prune-round-[ISSUE_ID].json
+   ```
 
    `orch-runtime dev-return --text check` sets the round entry's kind and records its validation time before B or its reason routes the round; the stage ends close through [dev-start.md § Close The Round's Stages](dev-start.md#close-the-rounds-stages).
 

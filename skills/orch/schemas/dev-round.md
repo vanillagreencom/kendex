@@ -1,6 +1,6 @@
 # Dev round schema
 
-The on-disk record of a fix round's delegated items, starting commit and allowed protected additions. The orchestrator writes it with `dev-round-write` after minting the round token and before sending the delegation. Read it when writing a fix round, checking its receipt, or recovering a respawned agent's item set.
+The on-disk record of a fix round's delegated items, starting commit and allowed protected additions. The orchestrator writes it with `orch-runtime round --text stamp` after minting the round token and before sending the delegation. Read it when writing a fix round, checking its receipt, or recovering a respawned agent's item set.
 
 For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
@@ -8,7 +8,7 @@ For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
 The record is `[WORKTREE_PATH]/tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` and carries `"round_id": ROUND_ID`. A reader requires a regular file, never a symlink, whose internal token, issue and schema match what it was called with.
 
-The record sits inside the delegated worktree, so it is trusted the way every other instruction to that agent is: the orchestrator writes it before delegating, and the delegated agent is trusted not to edit it. Immutability is enforced against a second `dev-round-write` invocation, not against the agent holding the worktree.
+The record sits inside the delegated worktree, so it is trusted the way every other instruction to that agent is: the orchestrator writes it before delegating, and the delegated agent is trusted not to edit it. Immutability is enforced against a second stamp of the round, not against the agent holding the worktree.
 
 `[ISSUE_ID]` is the normalized workflow-state key. Dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
@@ -39,14 +39,14 @@ Optional `finding_occurrences` stores the `result` of the pre-stamp `orch-runtim
 | `round_id` | Yes | `--round-id` | Per-delegation token; equals the filename token and the round's `dev_round_id` |
 | `issue` | Yes | `--issue` | Normalized workflow-state key |
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after. Readers refuse anything else, since it reaches `git diff` as a revision argument |
-| `delegated_at` | Yes | captured from the clock | Epoch second the round's first `dev-round-write` invocation started. An identical retry keeps it: identity compares every other field |
+| `delegated_at` | Yes | captured from the clock | Epoch second the round's first stamp started. An identical retry keeps it: identity compares every other field |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
 | `source` | Yes | `--source NAME` | The delegation's `Source:` value; null when the flag is absent |
-| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation. Defaults to `false`; readers treat an absent field as `false` and refuse a non-boolean value. A recorded fact, not the owner of the validation mode: a run the runtime starts takes its mode from the round's admitted `validate` entry (`proof`), which `orch-runtime validate start` resolves from the project's declaration. `dev-artifact-check` reads this field only for a receipt whose run has no such entry, an ad-hoc run or a foreground record: such a `fix` receipt may record `ci` only where this is `true` or `pr-order` resolves `push-first`, and `ci` holds only for the current HEAD. Acceptance completes the local edits; required CI remains pending until submit's exact-head wait |
+| `pr_open` | Yes for new records | `--pr-open true\|false` | Whether the pull request was open at delegation. Defaults to `false`; readers treat an absent field as `false` and refuse a non-boolean value. A recorded fact, not the owner of the validation mode: a run the runtime starts takes its mode from the round's admitted `validate` entry (`proof`), which `orch-runtime validate start` resolves from the project's declaration. `orch-runtime dev-return --text check` reads this field only for a receipt whose run has no such entry, an ad-hoc run or a foreground record: such a `fix` receipt may record `ci` only where this is `true` or `pr-order` resolves `push-first`, and `ci` holds only for the current HEAD. Acceptance completes the local edits; required CI remains pending until submit's exact-head wait |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action or fixture that reaches the finding |
 
-`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
+`--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `orch-runtime round --text stamp --help` is the flag reference.
 
 ## Item text
 
@@ -58,15 +58,15 @@ The item's keys are its location, the text after the second `|` on the first lin
 
 An item that prescribes a mechanism tells the delegate to measure it first and report a mismatch instead of complying.
 
-What the writer refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and a few literal values; `dev-round-write --help` lists them. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated.
+What the writer refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and the literal values `copilot thread`, `the finding`, `a name containing a quote` and `an empty pi_coding_agent_dir`, each in any case, all refused `reach-refused`. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated.
 
 The `Adds:` delegation line and `--adds` carry the same blank-separated path list. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. The writer rejects absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. The reader refuses a recorded path beginning with `-` or carrying a space, tab, newline, carriage return, form feed or vertical tab. Omit the line and the flag when no additions are allowed.
 
-The record is immutable per round: `dev-round-write --help` carries the contract. Mint a new round and never fall back to an unbound item list. While the active round's record, the one whose token equals workflow state `dev_round_id`, has no matching `dev-return` receipt, `worktree-push` refuses to push and `worktree-push --check-live-round` refuses the restack: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
+The record is immutable per round: a second stamp of the round with any other field changed refuses `record-conflict`, and an identical retry stands. Mint a new round and never fall back to an unbound item list. While the active round's record, the one whose token equals workflow state `dev_round_id`, has no matching `dev-return` receipt, `record-push` refuses to push as `live-round`, and its `check-live-round` mode answers exit 3, which refuses the restack: a rebase moves the branch off the commit that round is working from. Two things end that: the receipt landing, or a fresh `dev_round_id` whose token names no stamped record.
 
 ## Declared cuts
 
-A reviewer or the orchestrator chooses a cut to bring the branch back to the Done-when. `dev-artifact-check --expect-items-from-round` checks its receipt against the round record.
+A reviewer or the orchestrator chooses a cut to bring the branch back to the Done-when. `orch-runtime dev-return --text check --expect-items-from-round` checks its receipt against the round record.
 
 A cut round's items name work rather than a finding, so a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes, `the finding` among them.
 
@@ -74,8 +74,8 @@ A cut round's items name work rather than a finding, so a cut item's reach is th
 
 ## Readers
 
-- `dev-artifact-check --expect-items-from-round` derives the expected items and additions from the record; its gates and refusal reasons are that script's `--help`.
-- `dev-return-write --kind fix` reads `base_sha` and `delegated_at`, and names a validation run only when it started at a HEAD that contains that base, or records that base as the one a rebase left off the branch, no earlier than that time.
+- `orch-runtime dev-return --text check --expect-items-from-round` derives the expected items and additions from the record; its reasons and refusals are [artifact-checks.md § Receipt check answers](../references/artifact-checks.md#receipt-check-answers).
+- `orch-runtime dev-return --text write --kind fix` reads `base_sha` and binds the receipt's validation run by its tree: the run validated the receipt's commit tree, and its HEAD contains that base, records it as the one a rebase left off the branch, or contains the commit the rebase map carries it to, or the base's own tree is the run's. It refuses any other run as `run-off-round`.
 - A respawned dev agent reads `items[]` to recover the item numbers, texts and reaches.
 - The tail-reconciliation nudge points at the record.
 
@@ -85,9 +85,9 @@ The record is input, never receipt: it proves what was delegated, not that anyth
 
 The gate checks additions only. Git rename detection keeps moves and renames outside it.
 
-`base_sha` records the round's starting tree: a file already there is not this round's, so a later round does not re-refuse an addition an earlier one authorized. When a rebase orphans that commit, `dev-artifact-check` projects only its comparison value through the worktree-private ordered `kendex-rebase-map`, using `scripts/lib/rebase-map.sh`. The complete map must prove a commit in `HEAD` ancestry. The gate then compares that rewritten starting tree, which already contains upstream additions, against `HEAD`. It changes neither the original round record nor the map. A missing, unresolved, malformed, incomplete, dropped or unrelated projection refuses with `reason: "additions_unattributable"` and empty `files`.
+`base_sha` records the round's starting tree: a file already there is not this round's, so a later round does not re-refuse an addition an earlier one authorized. When a rebase orphans that commit, the receipt check projects only its comparison value through the worktree-private ordered `kendex-rebase-map`, read whole by the runtime's one map reader. The complete map must prove a commit in `HEAD` ancestry. The gate then compares that rewritten starting tree, which already contains upstream additions, against `HEAD`. It changes neither the original round record nor the map. A missing, unresolved, malformed, incomplete, dropped or unrelated projection refuses with `reason: "additions_unattributable"` and empty `files`.
 
-That refusal is not a deferral. A fresh round starts at the current `HEAD`, which already carries the prior round's additions. Without proved correspondence, settle those additions by reading the original round's own commits against the scope below. The orchestrator then mints a fresh round, names each deliberate path in `Adds:`, and cuts the rest before delegating it. That line authorizes those existing paths; the fresh round's gate cannot re-derive them. Map correspondence alone proves no validation result: the writer still binds the actual run to the original base and delegation time under [dev-return.md](dev-return.md).
+That refusal is not a deferral. A fresh round starts at the current `HEAD`, which already carries the prior round's additions. Without proved correspondence, settle those additions by reading the original round's own commits against the scope below. The orchestrator then mints a fresh round, names each deliberate path in `Adds:`, and cuts the rest before delegating it. That line authorizes those existing paths; the fresh round's gate cannot re-derive them. Map correspondence alone proves no validation result: the writer still binds the actual run to the original base and the receipt's tree under [dev-return.md](dev-return.md).
 
 Protected additions are:
 
@@ -100,3 +100,22 @@ Protected additions are:
 - files below a `test/`, `tests/`, or `__tests__/` path component whose basename before the first extension contains lowercase `helper`, `test-util`, or `test_util`, including suffix forms and dotfiles.
 
 `unapproved_additions` returns every refused protected path in `files`.
+
+## Stamp refusals
+
+`orch-runtime round --text stamp` writes nothing on a refusal. It exits 2 with one `dev-round-write: KEY CAUSE` line on stderr; without `--text` the reply is `ok: false` with the key, exit 1.
+
+| Key | Meaning |
+|-----|---------|
+| `invalid-id` | The issue, round id or `--source` is empty, carries `..`, or holds a character outside `A-Za-z0-9._-` |
+| `not-directory` | The worktree cannot be read as a directory |
+| `invalid-json` | The `--items-file` is not one JSON value |
+| `invalid-items` | The items are not a non-empty list with unique numbers and non-empty text |
+| `reach-refused` | An item's reach is one of the shapes § Item text lists |
+| `invalid-adds` | The `--adds` value names no path, or a path is not repository-relative under § Item text's rules, or repeats |
+| `findings-input` | The `--finding-occurrences-file` is no `{prior, classes}` object with `prior` `none` or `unknown` |
+| `git-failed` | Git could not name the worktree's HEAD commit |
+| `record-conflict` | A record for this round stands with other content |
+| `record-symlink` | The record path is a symlink |
+| `artifact-write` | The record could not be written |
+| `artifact-cleanup` | The record was written and its scratch file could not be removed |
