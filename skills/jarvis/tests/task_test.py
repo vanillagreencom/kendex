@@ -182,6 +182,24 @@ class TaskContract(unittest.TestCase):
         windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
         self.assertEqual(windows, [self.terminal["window"]])
 
+    def test_launch_runs_in_its_created_pane(self):
+        # The process tmux creates for a task window is the one the native
+        # launch runs under: no second pane process.
+        created = self.root / "created-pane-pids"
+        real = shlex.quote(shutil.which("tmux"))
+        wrapper = self.bin / "tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + 'if [[ " $* " == *" new-window "* ]]; then\n  created="$(' + real + ' "$@")"\n'
+            + "  printf '%s\\n' \"$created\"\n"
+            + "  " + real + " -S \"$2\" display-message -p -t \"${created##*$'\\t'}\" '#{pane_pid}' >> "
+            + shlex.quote(str(created)) + "\n  exit\nfi\nexec " + real + ' "$@"\n')
+        wrapper.chmod(0o755)
+        record = self.launch("codex")
+        self.acknowledgement(record)
+        wrapper.unlink()
+        pane = self.tmux("display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_pid}").stdout.split()
+        self.assertEqual(created.read_text().split(), pane)
+
     def test_launch_directory_contract(self):
         selected = self.root / "project 'quoted' $folder#{pid};"
         selected.mkdir()
@@ -917,6 +935,9 @@ while True: signal.pause()
              "test_terminal_interrupt_preserves_native_lifetime"),
             ("browser-endpoint", "task.py", (('child_env.append("JARVIS_BROWSER_PORT=0")',
                 'child_env.append("JARVIS_BROWSER_PORT=9222")'),), "test_launch_contract"),
+            ("created-pane", "task.py", (('self.tmux("wait-for", "-S", channel, socket=terminal["server"])',
+                'self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_cwd, *launch, socket=terminal["server"])'),),
+             "test_launch_runs_in_its_created_pane"),
         )
         self.regression_controls(rows)
 
