@@ -832,8 +832,9 @@ fn keep_what_kept_records_require(
 /// One Pi package's removal: the op that takes its registrations and its
 /// payload together, bound to the package tree as it sits (a move binds to
 /// `TreeIs`, as every rename source does), and its `APPEND_SYSTEM.md` block
-/// as an edit composed with that file's others. `None` where nothing of it
-/// is on disk to take and only the record goes. An error is something the
+/// as an edit composed with that file's others. `None` where neither its
+/// registration nor its package directory is on disk; a leftover block is
+/// still planned as an edit. An error is something the
 /// plan could not read — the scope's Pi root, its settings.json, its append
 /// file or the package's own entries — and plans no part of the removal.
 fn pi_removal(
