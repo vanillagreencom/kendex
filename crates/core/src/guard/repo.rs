@@ -17,11 +17,28 @@ use super::guard_err;
 /// Matched as a phrase rather than by exit status: 128 is git's catch-all,
 /// and a dubious-ownership refusal or a broken config carries it too.
 ///
+/// The parenthesis is part of the phrase. git's discovery ends with
+/// `not a git repository (or any of the parent directories): .git`, or
+/// `(or any parent up to mount point …)`, where it found nothing
+/// (setup.c). A `.git` file naming a git directory that is gone, the
+/// linked worktree whose main checkout was moved or deleted, ends with
+/// `not a git repository: <that directory>` instead, recorded under git
+/// 2.43 with `LC_ALL=C`: a repository is there and could not be read.
+///
 /// Which is why the children below are run under `LC_ALL=C`. git translates
 /// its diagnostics, so under another locale these phrases match nothing and
 /// every "there is no repository here" becomes "could not tell" — a report
 /// nobody can act on, in every scope, for anyone not working in English.
-const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree"];
+const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository (or any ", "not a working tree"];
+
+/// Whether git's complaint, under [`english`], says there is no repository
+/// at the directory it ran in. Anything else it complains of is a check
+/// that could not be taken.
+pub(crate) fn says_no_repository(complaint: &str) -> bool {
+    NOT_A_REPOSITORY
+        .iter()
+        .any(|phrase| complaint.contains(phrase))
+}
 
 /// One repository, resolved: the worktree that invoked us and the common
 /// dir every linked worktree shares. Both canonical, because paths are
@@ -241,12 +258,13 @@ impl Repo {
     /// keeps `common_dir` outside every checkout, so the directory above it
     /// is not the main work tree at all.
     ///
-    /// A `worktree` line git did not write, or a path that will not
-    /// resolve, is an error — a caller telling somebody where to point a
-    /// command must not name a directory nobody has.
+    /// A first record git did not write, a bare repository, which has no
+    /// main work tree, or a path that will not resolve, is an error — a
+    /// caller telling somebody where to point a command must not name a
+    /// directory nobody has, nor one that is not a checkout.
     pub fn main_checkout(&self) -> Result<PathBuf> {
         let output = english(Hardened::git(
-            &["worktree", "list", "--porcelain"],
+            &["worktree", "list", "--porcelain", "-z"],
             Some(&self.worktree),
         ))
         .run()?;
@@ -260,19 +278,38 @@ impl Repo {
                 ),
             ));
         }
-        // The first record's `worktree` line, as bytes: a checkout whose
-        // name is not UTF-8 is a name `path_from` keeps and a lossy
-        // conversion would destroy.
-        let first = output
+        // The first record, read whole. git-worktree(1) § Porcelain Format:
+        // a record is one attribute per field, its first always `worktree
+        // <path>`, a boolean such as `bare` a label alone present only when
+        // true, and an empty field ends it. `-z` (git 2.36) ends each field
+        // with NUL; without it git writes a path holding a newline
+        // unquoted, so `<dir>/app\nsuffix` would read as `<dir>/app`,
+        // recorded under git 2.43 with `LC_ALL=C`. A bare repository's
+        // record names the repository itself and carries `bare`, also
+        // recorded under git 2.43: that is a git directory, not a checkout.
+        let mut record = output
             .stdout
-            .split(|byte| *byte == b'\n')
-            .find_map(|line| line.strip_prefix(b"worktree "))
+            .split(|byte| *byte == 0)
+            .take_while(|field| !field.is_empty());
+        let first = record
+            .next()
+            .and_then(|field| field.strip_prefix(b"worktree "))
             .ok_or_else(|| {
                 guard_err(
                     "hooks",
                     format!("git listed no work tree for {}", self.worktree.display()),
                 )
             })?;
+        if record.any(|field| field == b"bare") {
+            return Err(guard_err(
+                "hooks",
+                format!(
+                    "{} has no main checkout: its repository is the bare repository {}",
+                    self.worktree.display(),
+                    path_from(first.to_vec(), "worktree list")?.display()
+                ),
+            ));
+        }
         let main = path_from(first.to_vec(), "worktree list")?;
         main.canonicalize().map_err(|e| CoreError::io(&main, e))
     }
@@ -313,10 +350,7 @@ impl Repo {
         // store — and every one of those is a check that could not be
         // taken. Calling them "nothing here" would read as a pass.
         let complaint = String::from_utf8_lossy(&output.stderr);
-        match NOT_A_REPOSITORY
-            .iter()
-            .any(|phrase| complaint.contains(phrase))
-        {
+        match says_no_repository(&complaint) {
             true => Ok(None),
             false => Err(guard_err(
                 "hooks",
