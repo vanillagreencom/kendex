@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Pins scripts/install-gitleaks: it installs the archive its platform maps to
 # only when the archive matches the pinned SHA-256, leaves a current install
-# alone, and refuses an unpinned platform, a failed download or a dash-led DIR;
+# alone, rides out a release outage of minutes but not one past its window,
+# and refuses an unpinned platform, a failed download or a dash-led DIR;
 # -h/--help and a dash-led DIR create and download nothing. The release
-# server is a fake curl serving a fixture archive; the rows that install run a
+# server is a fake curl serving a fixture archive on a virtual clock, so the
+# retry window passes without sleeping; the rows that install run a
 # disposable copy of the script whose pins name that archive's digest.
 set -euo pipefail
 
@@ -41,23 +43,49 @@ else
 fi
 FIXTURE_SHA="${FIXTURE_SHA%% *}"
 
-# The fakes: curl copies the fixture archive to its -o path and logs the URL,
-# or exits CURL_FAIL; uname answers UNAME_S and UNAME_M.
+# The fakes: curl logs the URL, then answers each attempt by its virtual
+# second: 504 before OUTAGE_SECS, then CURL_STATUS (200 by default, which
+# copies the fixture archive to its -o path). Each attempt is logged to
+# TRY_LOG as "SECOND STATUS". Its retries follow curl's own, per
+# `curl --manual` (curl 8.5.0) on --retry, --retry-delay and --retry-max-time
+# and a recorded run of that curl against a local 504 server: only 408, 429,
+# 500, 502, 503 and 504 retry; the wait is --retry-delay, else 1 s doubling up
+# to 600; the max time is checked after an attempt, before its wait; -f exits
+# 22 and -w names the last attempt's status. uname answers UNAME_S and UNAME_M.
 FAKE_BIN="$TMP_ROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -eu
-out="" url=""
+out="" url="" write="" retries=0 delay=0 max=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out=$2; shift ;;
+    -w) write=$2; shift ;;
+    --retry) retries=$2; shift ;;
+    --retry-delay) delay=$2; shift ;;
+    --retry-max-time) max=$2; shift ;;
     https://*) url=$1 ;;
   esac
   shift
 done
 printf '%s\n' "$url" >>"$CURL_LOG"
-[ "${CURL_FAIL:-0}" -eq 0 ] || exit "$CURL_FAIL"
+t=0 backoff=1
+while :; do
+  if [ "$t" -lt "${OUTAGE_SECS:-0}" ]; then code=504; else code=${CURL_STATUS:-200}; fi
+  printf '%s %s\n' "$t" "$code" >>"$TRY_LOG"
+  case "$code" in 408 | 429 | 500 | 502 | 503 | 504) ;; *) break ;; esac
+  [ "$retries" -gt 0 ] && { [ "$max" -eq 0 ] || [ "$t" -lt "$max" ]; } || break
+  retries=$((retries - 1))
+  if [ "$delay" -gt 0 ]; then
+    t=$((t + delay))
+  else
+    t=$((t + backoff)) backoff=$((backoff * 2 > 600 ? 600 : backoff * 2))
+  fi
+done
+var='%{http_code}'
+printf '%s' "${write//"$var"/$code}"
+[ "$code" = 200 ] || exit 22
 cp -- "$FIXTURE" "$out"
 SH
 cat >"$FAKE_BIN/uname" <<'SH'
@@ -91,13 +119,18 @@ LINUX_PIN=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 DARWIN_ARM_PIN=b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
 
 CURL_LOG="$TMP_ROOT/curl.log"
-run() { # DIR [NAME=VALUE...] — the exit status and the first stable line
-  local dir=$1 rc=0 out
+TRY_LOG="$TMP_ROOT/tries.log"
+OUT_LOG="$TMP_ROOT/out.log"
+run() { # DIR [NAME=VALUE...] — the exit status and the first stable line; the whole output in OUT_LOG
+  local dir=$1 rc=0
   shift
   : >"$CURL_LOG"
-  out="$(env PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" FIXTURE="$TMP_ROOT/fixture.tar.gz" UNAME_S=Linux UNAME_M=x86_64 "$@" "$SCRIPT" "$dir" 2>&1)" || rc=$?
-  printf 'rc=%s %s' "$rc" "$(printf '%s\n' "$out" | awk '/^install-gitleaks: / && !seen { print; seen=1 }')"
+  : >"$TRY_LOG"
+  env PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" TRY_LOG="$TRY_LOG" FIXTURE="$TMP_ROOT/fixture.tar.gz" UNAME_S=Linux UNAME_M=x86_64 "$@" "$SCRIPT" "$dir" >"$OUT_LOG" 2>&1 || rc=$?
+  printf 'rc=%s %s' "$rc" "$(awk '/^install-gitleaks: / && !seen { print; seen=1 }' "$OUT_LOG")"
 }
+# last_try: the virtual second of the last download attempt.
+last_try() { awk 'END { print $1 }' "$TRY_LOG"; }
 
 echo "=== a pinned archive installs once ==="
 copy pinned "$LINUX_PIN" "$FIXTURE_SHA" "$DARWIN_ARM_PIN" "$FIXTURE_SHA"
@@ -135,10 +168,26 @@ assert_eq "an operating system with no pin is refused" \
   "rc=1 install-gitleaks: platform=FreeBSD" "$(run "$D" UNAME_S=FreeBSD)"
 assert_eq "an architecture with no pin is refused" \
   "rc=1 install-gitleaks: platform=riscv64" "$(run "$D" UNAME_M=riscv64)"
-D="$TMP_ROOT/offline"
-assert_eq "a failed download is refused" \
-  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_FAIL=22)"
+D="$TMP_ROOT/missing"
+assert_eq "a release answering 404 is refused" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_STATUS=404)"
+assert_eq "after one attempt, without waiting out the window" "0 404" "$(cat "$TRY_LOG")"
 assert_eq "an empty directory argument is a usage error" "rc=2 install-gitleaks: usage=1" "$(run "")"
+
+echo "=== a release outage ==="
+# Two minutes of 504s: far past the old 7 s of retries, within a few minutes.
+SCRIPT="$PINNED"
+D="$TMP_ROOT/outage"
+assert_eq "an outage of two minutes is ridden out and the binary installed" \
+  "rc=0 install-gitleaks: installed=8.30.1:$D/gitleaks" "$(run "$D" OUTAGE_SECS=120)"
+D="$TMP_ROOT/down"
+assert_eq "an outage past the window is refused" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" OUTAGE_SECS=100000)"
+# last_status: 504 when the explanation under the first line names that status.
+last_status() { awk '!/^install-gitleaks: / && /(^|[^0-9])504([^0-9]|$)/ { print "504"; exit }' "$OUT_LOG"; }
+assert_eq "naming the last status" "504" "$(last_status)"
+assert_eq "and leaves no binary" "absent" "$([ -e "$D/gitleaks" ] && echo present || echo absent)"
+assert_eq "giving up within ten minutes" "yes" "$([ "$(last_try)" -le 600 ] && echo yes || echo no)"
 
 echo "=== help and a dash-led DIR touch nothing ==="
 # in_cwd DIR ARG: run ARG from an empty working directory DIR, then report the
@@ -175,6 +224,16 @@ in_cwd "$TMP_ROOT/no-dash-cwd" -gitleaks >/dev/null
 assert_eq "control: without the dash-led refusal the DIR is created and the release fetched" \
   "-gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
   "$(ls -A -- "$TMP_ROOT/no-dash-cwd") $(cat -- "$CURL_LOG")"
+copy old-retry "$LINUX_PIN" "$FIXTURE_SHA" '--retry "$RETRY_SECS" --retry-delay 10 --retry-max-time "$RETRY_SECS"' '--retry 3'
+assert_eq "control: the old curl --retry 3 fails a two-minute outage" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
+copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '--retry-max-time "$RETRY_SECS"' '--retry-max-time 0'
+run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=100000 >/dev/null
+assert_eq "control: without the max time a long outage retries past ten minutes" \
+  "no" "$([ "$(last_try)" -le 600 ] && echo yes || echo no)"
+copy no-status "$LINUX_PIN" "$FIXTURE_SHA" 'last HTTP status ${code:-000}' 'last HTTP status unread'
+run "$TMP_ROOT/no-status-dir" OUTAGE_SECS=100000 >/dev/null
+assert_eq "control: an explanation without the status does not name 504" "" "$(last_status)"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
