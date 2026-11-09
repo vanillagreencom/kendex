@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PackageMeta_Serialize, Scope } from "@/bindings";
 import { commands } from "@/bindings";
-import { retainedReads } from "./editor-cache";
 import type { PackageRef } from "./nav";
 import {
   ensurePackage,
@@ -10,6 +9,7 @@ import {
   readPackage,
   usePackageReads,
 } from "./package-reads";
+import { retainedReads } from "./retained-reads";
 
 vi.mock("@/bindings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/bindings")>()),

@@ -29,8 +29,8 @@ import {
   readError,
   readPlace,
   recordedRead,
-  retainedReads,
 } from "./editor-cache";
+import { retainedReads } from "./retained-reads";
 import { useSettingsStore } from "./settings";
 
 export { openInventory } from "./editor-cache";

@@ -28,8 +28,8 @@ import {
 import { READ_LANDED, READ_PENDING, readOf, readOrder } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { settled } from "@/lib/settled";
-import { retainedReads } from "./editor-cache";
 import type { PackageRef } from "./nav";
+import { retainedReads } from "./retained-reads";
 
 /** What the page's reads answer about besides the address: the commit
  *  installed at the page's place, and how many writes have landed there.

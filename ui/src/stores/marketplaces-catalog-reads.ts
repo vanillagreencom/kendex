@@ -17,8 +17,21 @@ import {
   readErrorKey,
   without,
 } from "./marketplaces-shared";
+import { retainedReads } from "./retained-reads";
 
 type SetReads = (fn: (state: CatalogCaches) => Partial<CatalogCaches>) => void;
+
+/** `read`, as one that may fetch: core opens a repository nobody subscribes
+ *  to from the network when its store does not hold it, and the summary
+ *  always refreshes it (`browse::open`, `browse::summary`). That fetch can
+ *  be the one a never-fetched subscription under the same spelling was
+ *  waiting for, so a package page kept from before it would go on saying
+ *  its source is not downloaded. A subscription's catalog is read from the
+ *  store alone. */
+const fetching = <T>(catalog: Catalog, read: () => Promise<T>) =>
+  catalog.by === "repo"
+    ? () => read().finally(() => retainedReads.moved())
+    : read;
 
 export function catalogReads(set: SetReads) {
   // Partial arrivals re-run consumers' effects. Share each outstanding read
@@ -62,20 +75,29 @@ export function catalogReads(set: SetReads) {
   return {
     loadPackages: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return readOnce("packages", key, readErrorKey(key, "packages"), () =>
-        commands.marketplacePackages(catalog),
+      return readOnce(
+        "packages",
+        key,
+        readErrorKey(key, "packages"),
+        fetching(catalog, () => commands.marketplacePackages(catalog)),
       );
     },
     loadSummary: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return readOnce("summaries", key, readErrorKey(key, "summary"), () =>
-        commands.marketplaceSummary(catalog),
+      return readOnce(
+        "summaries",
+        key,
+        readErrorKey(key, "summary"),
+        fetching(catalog, () => commands.marketplaceSummary(catalog)),
       );
     },
     loadAbout: (catalog: Catalog) => {
       const key = catalogKey(catalog);
-      return readOnce("about", key, readErrorKey(key, "about"), () =>
-        commands.marketplaceAbout(catalog),
+      return readOnce(
+        "about",
+        key,
+        readErrorKey(key, "about"),
+        fetching(catalog, () => commands.marketplaceAbout(catalog)),
       );
     },
     loadCatalogBundles: (catalog: Catalog) => {
@@ -83,13 +105,18 @@ export function catalogReads(set: SetReads) {
         "catalogBundles",
         catalogKey(catalog),
         catalogBundlesErrorKey(catalog),
-        () => commands.marketplaceBundles(catalog),
+        fetching(catalog, () => commands.marketplaceBundles(catalog)),
       );
     },
     loadBundle: (catalog: Catalog, name: string, destination: Scope | null) => {
       const key = bundleKey(catalog, name, destination);
-      return readOnce("bundles", key, key, () =>
-        commands.marketplaceBundle(catalog, name, destination),
+      return readOnce(
+        "bundles",
+        key,
+        key,
+        fetching(catalog, () =>
+          commands.marketplaceBundle(catalog, name, destination),
+        ),
       );
     },
   };

@@ -29,6 +29,7 @@ import { UPDATES_CHECKING } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled, writingRepo } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
+import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { usePackageReads } from "@/stores/package-reads";
 import { useScanStore } from "@/stores/scan";
@@ -62,6 +63,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     updatesOverview: vi.fn(),
     updatesRefresh: vi.fn(),
     scanMachine: vi.fn(),
+    marketplaceSummary: vi.fn(),
   },
 }));
 
@@ -519,8 +521,9 @@ describe("the package page after an update started from its Projects tab", () =>
 // Leaving a package and coming back to its Files tab draws what the first
 // visit read, and asks for none of it again while nothing has changed. Once
 // something may have — the window came back, a write ran, whatever it
-// answered, a fetch moved mirrors, the installed commit moved — the return
-// reads the package and its place again and draws what is there now.
+// answered, a fetch moved mirrors, the installed commit moved — the Files
+// tab reads the package and its place again as it opens, whether the page
+// was left or stood, and draws what is there now.
 describe("coming back to the package page", () => {
   /** The page as the app holds it: mounted while the reader is on it, gone
    *  while they are anywhere else. */
@@ -534,7 +537,6 @@ describe("coming back to the package page", () => {
     "packageFiles",
     "packageReadme",
     "packageVersions",
-    "packageFile",
   ] as const;
   const PlaceReads = [
     "getManifest",
@@ -561,18 +563,73 @@ describe("coming back to the package page", () => {
     return host.textContent ?? "";
   };
 
+  /** Where the reader goes between the two visits: off the page, which
+   *  unmounts it, or to its Overview, which keeps the page and its inputs
+   *  standing and unmounts the Files tab alone. */
+  const leave = async (host: HTMLElement, to: "page" | "tab") => {
+    if (to === "tab") await openTab(host, OVERVIEW_TAB);
+    else
+      await act(async () => {
+        useNavStore.setState({ page: "library" });
+      });
+  };
+
+  /** The scan a rescan asks for, held unanswered until the case lets it go,
+   *  so a read behind a later write queues behind it. */
+  let releaseScan = () => {};
+  const holdScan = () => {
+    vi.mocked(commands.scanMachine).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          releaseScan = () => resolve(nothing);
+        }),
+    );
+  };
+
   const rows: {
     name: string;
+    /** Run before the first visit. */
+    before?: () => Promise<void>;
     act: (write: { landed: boolean }) => Promise<void>;
+    leaves?: "page" | "tab";
+    /** What the pane opens on: the package's README, or with none its
+     *  first file, which the pane reads itself. */
+    opens?: "readme" | "first file";
     reads: "none" | "package" | "package and place";
   }[] = [
     { name: "nothing changed", act: async () => {}, reads: "none" },
+    {
+      name: "nothing changed, on a package with no README",
+      act: async () => {},
+      opens: "first file",
+      reads: "none",
+    },
     {
       name: "the window came back over an edit",
       act: async (write) => {
         write.landed = true;
         await useScanStore.getState().refresh();
       },
+      reads: "package and place",
+    },
+    {
+      name: "the window came back over an edit, on a package with no README",
+      act: async (write) => {
+        write.landed = true;
+        await useScanStore.getState().refresh();
+      },
+      opens: "first file",
+      reads: "package and place",
+    },
+    {
+      // The page stands through it, and the installed commit and the
+      // landed writes it reads on do not move: the tab asks as it opens.
+      name: "the window came back over an edit while the page stayed open",
+      act: async (write) => {
+        write.landed = true;
+        await useScanStore.getState().refresh();
+      },
+      leaves: "tab",
       reads: "package and place",
     },
     {
@@ -586,13 +643,20 @@ describe("coming back to the package page", () => {
       reads: "package and place",
     },
     {
-      name: "a write ran and failed",
+      // The read behind this write waits out the rescan already running,
+      // which began before the first visit, so no scan request falls
+      // between the visits: only the write's own end says what was kept is
+      // gone.
+      name: "a write ran and failed while a rescan was running",
+      before: async () => {
+        holdScan();
+        await writingRepo(async () => {});
+      },
       act: async (write) => {
         await writingRepo(async () => {
           write.landed = true;
           throw new Error("the write stopped");
         }).catch(() => undefined);
-        await rescansSettled();
       },
       reads: "package and place",
     },
@@ -617,6 +681,21 @@ describe("coming back to the package page", () => {
       reads: "package and place",
     },
     {
+      // Opening a repository nobody subscribes to fetches it, and that can
+      // be the fetch this package's subscription was waiting for.
+      name: "a repository page was opened",
+      act: async (write) => {
+        vi.mocked(commands.marketplaceSummary).mockImplementationOnce(() => {
+          write.landed = true;
+          return Promise.resolve({ status: "error", error: "offline" });
+        });
+        await useMarketplacesStore
+          .getState()
+          .loadSummary({ by: "repo", repo: "o/r" });
+      },
+      reads: "package and place",
+    },
+    {
       name: "the installed commit moved",
       act: async (write) => {
         write.landed = true;
@@ -625,112 +704,148 @@ describe("coming back to the package page", () => {
       reads: "package",
     },
   ];
-  expect(rows).toHaveLength(7);
 
-  it.each(rows)("$name", async (row) => {
-    const write = engineWrites();
-    vi.mocked(commands.updatesOverview).mockImplementation(() =>
-      Promise.resolve({
-        status: "ok",
-        data: {
-          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+  // A loop rather than `it.each`, whose titles cut a row's name short.
+  for (const row of rows)
+    it(row.name, async () => {
+      const write = engineWrites();
+      const firstFile = row.opens === "first file";
+      if (firstFile)
+        vi.mocked(commands.packageReadme).mockResolvedValue({
+          status: "ok",
+          data: null,
+        });
+      vi.mocked(commands.updatesOverview).mockImplementation(() =>
+        Promise.resolve({
+          status: "ok",
+          data: {
+            rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+            warnings: [],
+            unreadable: [],
+            lastFetched: null,
+          },
+        }),
+      );
+      useScanStore.setState({
+        result: {
+          harnesses: [],
+          items: [INSTALLED],
+          missingProjects: [],
+          readProjects: [],
           warnings: [],
-          unreadable: [],
-          lastFetched: null,
         },
-      }),
-    );
-    useScanStore.setState({
-      result: {
-        harnesses: [],
-        items: [INSTALLED],
-        missingProjects: [],
-        readProjects: [],
-        warnings: [],
-      },
-    });
-    useNavStore.setState({
-      page: "library",
-      packageRef: {
-        kind: "skill",
-        name: "gh",
-        scope: VG,
-        identity: "recorded",
-      },
-      packageView: null,
-    });
-    const host = mount(<Shell />);
-    const first = await visit(host);
-    // The pane opens on the README the page already read.
-    expect(first).toContain("READS-BEFORE");
-    expect(vi.mocked(commands.packageReadme)).toHaveBeenCalledTimes(1);
+      });
+      useNavStore.setState({
+        page: "library",
+        packageRef: {
+          kind: "skill",
+          name: "gh",
+          scope: VG,
+          identity: "recorded",
+        },
+        packageView: null,
+      });
+      const host = mount(<Shell />);
+      await act(async () => {
+        await row.before?.();
+      });
+      const first = await visit(host);
+      // The pane opens on the README the page already read, or reads the
+      // first file where there is none.
+      expect(first).toContain(firstFile ? "PANE-BEFORE" : "READS-BEFORE");
+      expect(vi.mocked(commands.packageReadme)).toHaveBeenCalledTimes(1);
 
-    await act(async () => {
-      useNavStore.setState({ page: "library" });
-    });
-    await act(async () => {
-      await row.act(write);
-    });
-    vi.clearAllMocks();
-    const back = await visit(host);
-
-    const moved = row.reads !== "none";
-    expect(
-      {
-        files: back.includes(moved ? "AFTER.md" : "BEFORE.md"),
-        readme: back.includes(moved ? "READS-AFTER" : "READS-BEFORE"),
-        // Each of the four once, and no file: the pane's README is the
-        // page's own.
+      await leave(host, row.leaves ?? "page");
+      await act(async () => {
+        await row.act(write);
+      });
+      vi.clearAllMocks();
+      const back = await visit(host);
+      const moved = row.reads !== "none";
+      const now = moved ? "AFTER" : "BEFORE";
+      const counts = {
         package: asked(PackageReads),
+        file: asked(["packageFile"]),
         place: asked(PlaceReads) > 0,
-      },
-      row.name,
-    ).toEqual({
-      files: true,
-      readme: true,
-      package: moved ? 4 : 0,
-      place: row.reads === "package and place",
+      };
+      await act(async () => {
+        releaseScan();
+        await rescansSettled();
+      });
+
+      expect(
+        {
+          files: back.includes(`${now}.md`),
+          pane: back.includes(firstFile ? `PANE-${now}` : `READS-${now}`),
+          ...counts,
+        },
+        row.name,
+      ).toEqual({
+        files: true,
+        pane: true,
+        // Each of the four once; the pane's README is the page's own, and a
+        // file it read is asked again only once the package was.
+        package: moved ? 4 : 0,
+        file: firstFile && moved ? 1 : 0,
+        place: row.reads === "package and place",
+      });
     });
-  });
 
   // A read that failed is that attempt's answer, drawn as it failed, and
-  // the next visit asks again rather than keeping the failure.
-  it("asks again for a read that failed on the last visit", async () => {
-    engineWrites();
-    vi.mocked(commands.packageFiles).mockResolvedValueOnce({
-      status: "error",
-      error: "REFUSED-BY-CORE",
-    });
-    useNavStore.setState({
-      page: "library",
-      packageRef: {
-        kind: "skill",
-        name: "gh",
-        scope: VG,
-        identity: "recorded",
-      },
-      packageView: null,
-    });
-    useScanStore.setState({
-      result: {
-        harnesses: [],
-        items: [INSTALLED],
-        missingProjects: [],
-        readProjects: [],
-        warnings: [],
-      },
-    });
-    const host = mount(<Shell />);
-    expect(await visit(host)).toContain("REFUSED-BY-CORE");
-    await act(async () => {
-      useNavStore.setState({ page: "library" });
-    });
-    vi.clearAllMocks();
+  // the next visit asks again rather than keeping the failure. Failing for
+  // the whole first visit: the Files tab asks again as it opens, too.
+  it.each([
+    { name: "the file list", fails: "packageFiles", shows: "BEFORE.md" },
+    { name: "the pane's file", fails: "packageFile", shows: "PANE-BEFORE" },
+  ] as const)(
+    "asks again for $name when its read failed on the last visit",
+    async (row) => {
+      engineWrites();
+      // With no README the pane opens on the first file and reads it.
+      vi.mocked(commands.packageReadme).mockResolvedValue({
+        status: "ok",
+        data: null,
+      });
+      vi.mocked(commands[row.fails]).mockResolvedValue({
+        status: "error",
+        error: "REFUSED-BY-CORE",
+      });
+      useNavStore.setState({
+        page: "library",
+        packageRef: {
+          kind: "skill",
+          name: "gh",
+          scope: VG,
+          identity: "recorded",
+        },
+        packageView: null,
+      });
+      useScanStore.setState({
+        result: {
+          harnesses: [],
+          items: [INSTALLED],
+          missingProjects: [],
+          readProjects: [],
+          warnings: [],
+        },
+      });
+      const host = mount(<Shell />);
+      expect(await visit(host)).toContain("REFUSED-BY-CORE");
+      await act(async () => {
+        useNavStore.setState({ page: "library" });
+      });
+      engineWrites();
+      vi.mocked(commands.packageReadme).mockResolvedValue({
+        status: "ok",
+        data: null,
+      });
+      vi.clearAllMocks();
 
-    const back = await visit(host);
+      const back = await visit(host);
 
-    expect(back).toContain("BEFORE.md");
-    expect(back).not.toContain("REFUSED-BY-CORE");
-    expect(vi.mocked(commands.packageFiles)).toHaveBeenCalledTimes(1);
-  });
+      expect(back).toContain(row.shows);
+      expect(back).not.toContain("REFUSED-BY-CORE");
+      expect(vi.mocked(commands[row.fails])).toHaveBeenCalledTimes(1);
+    },
+  );
 });

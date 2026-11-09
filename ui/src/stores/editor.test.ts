@@ -19,7 +19,7 @@ import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
 import { placeRead } from "@/test/settings-read";
 import { openInventory, useEditorStore } from "./editor";
-import { retainedReads } from "./editor-cache";
+import { retainedReads } from "./retained-reads";
 
 // The real module comes through, with only the commands stubbed: the
 // constants it exports are the numbers the code under test writes into a

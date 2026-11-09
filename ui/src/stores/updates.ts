@@ -22,8 +22,8 @@ import {
   updatablePlaces,
 } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
-import { retainedReads } from "./editor-cache";
 import { useProblemsStore } from "./problems";
+import { retainedReads } from "./retained-reads";
 import {
   type ApplyOutcome,
   applyRow,

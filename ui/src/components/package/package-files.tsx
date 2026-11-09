@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { PackageFile } from "@/bindings";
+import { useLayoutEffect, useState } from "react";
+import type { ItemSource, PackageFile } from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
 import { packageFileEntries } from "@/components/files/package-file-rows";
 import { DotSpinner } from "@/components/loading";
@@ -22,8 +22,11 @@ export function PackageFiles({
   reference,
   files,
   read,
+  readme,
+  readmeRead,
   retryRunning,
   onRetry,
+  ensure,
 }: {
   /** The page's whole address, which the preview's reads are kept under. */
   reference: PackageRef;
@@ -33,13 +36,21 @@ export function PackageFiles({
    *  on its way leaves the same empty list as a landed one, and only a
    *  landed read may say the package ships no files. */
   read: SourceRead;
+  /** The README the page read, which the preview opens on, and how that
+   *  read went. */
+  readme: ItemSource | null;
+  readmeRead: SourceRead;
   /** Whether the page's reads are out again. The note stays put while they
    *  run — it is still the last answer — so the button is what says the
    *  page is doing something about it. */
   retryRunning: boolean;
   onRetry: () => void;
+  /** The page's reads, asked again unless what is held is still current.
+   *  Run as the tab opens, before paint; `use-package-data.ts` says why. */
+  ensure: () => void;
 }) {
   const [chosen, setChosen] = useState<string | null>(null);
+  useLayoutEffect(ensure, [ensure]);
 
   const note = packageFilesNote(read);
   switch (note?.is) {
@@ -90,7 +101,13 @@ export function PackageFiles({
       onSelect={setChosen}
       label={FILE_TREE_LABEL}
     >
-      <FilePreview reference={reference} path={chosen} />
+      <FilePreview
+        reference={reference}
+        path={chosen}
+        readme={readme}
+        readmeRead={readmeRead}
+        first={files[0].path}
+      />
     </FileBrowser>
   );
 }

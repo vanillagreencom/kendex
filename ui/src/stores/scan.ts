@@ -2,7 +2,7 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ScanResult } from "@/bindings";
 import { settled } from "@/lib/settled";
-import { retainedReads } from "./editor-cache";
+import { retainedReads } from "./retained-reads";
 
 interface ScanState {
   result: ScanResult | null;

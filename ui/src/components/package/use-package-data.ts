@@ -67,6 +67,7 @@ export function usePackageData(ref: PackageRef | null): {
   versions: VersionRow[];
   reads: PackageReads;
   load: () => void;
+  ensure: () => void;
 } {
   const commit = useUpdatesStore((s) =>
     ref === null
@@ -87,12 +88,17 @@ export function usePackageData(ref: PackageRef | null): {
     if (ref) readPackage(ref, { commit, written }, "kept");
   }, [ref, commit, written]);
 
+  // Run again by the Files tab as it opens: these inputs move with the
+  // installed commit and the writes landed at the place, and a refocus or a
+  // fetch moves neither, while the tab draws file bytes either can change.
+  const ensure = useCallback(() => {
+    if (ref) ensurePackage(ref, { commit, written });
+  }, [ref, commit, written]);
+
   // Before paint: an answer that stopped being current is replaced before
   // the page is drawn from it, so for no frame does a kept record or
   // timeline stand under the Update it would enable.
-  useLayoutEffect(() => {
-    if (ref) ensurePackage(ref, { commit, written });
-  }, [ref, commit, written]);
+  useLayoutEffect(ensure, [ensure]);
 
   return {
     meta: held?.meta ?? null,
@@ -101,6 +107,7 @@ export function usePackageData(ref: PackageRef | null): {
     versions: held?.versions ?? NO_VERSIONS,
     reads: held?.reads ?? PACKAGE_UNREAD,
     load,
+    ensure,
   };
 }
 

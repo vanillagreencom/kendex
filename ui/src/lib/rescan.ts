@@ -64,7 +64,7 @@
 // reason the registry writes above rescan at all.
 import { useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
-import { retainedReads } from "@/stores/editor-cache";
+import { retainedReads } from "@/stores/retained-reads";
 import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";

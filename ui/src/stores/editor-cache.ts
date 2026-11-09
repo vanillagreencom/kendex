@@ -7,28 +7,13 @@ import {
   type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
-import { invalidations } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
+import { retainedReads } from "./retained-reads";
 
 // The editor's scope-keyed caches: what is read per place, how it is
 // written, and how the open place's answer is found. Split out from the
 // store so there is one module to look at when asking whether a value can
 // belong to the wrong place: the store only calls these.
-
-/** When a read kept past the page that asked for it stops being the answer:
- *  a place's manifest and settings here, and a package's own reads in
- *  `package-reads.ts`. Each kept answer is stamped with [since] as its read
- *  began, and is reused only while nothing has moved this since.
- *
- *  Moved wherever something may have changed what those reads answer: every
- *  request to read the machine again (`scan.ts`, which a window focus and
- *  every rescan behind a write go through), the end of a write that reaches
- *  `repo_effects` (`rescan.ts` [`writingRepo`]) or the updates store's write
- *  hold, and the end of a mirror fetch. A read begun before or during one of
- *  those is never current after it, so a write's own read-back stays a view
- *  of the moment and the next demand asks again. No clock: an answer is as
- *  good after an hour of nothing happening as after a second. */
-export const retainedReads = invalidations();
 
 /** The inventory of the place the editor is open at, and no other. A
  *  lookup rather than a field, so the answer is either this place's or
