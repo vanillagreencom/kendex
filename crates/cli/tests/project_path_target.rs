@@ -1273,9 +1273,10 @@ fn verify_reads_an_unregistered_project_without_listing_it() {
     }));
 }
 
-/// A next step printed about a named project names it, so a reader in
-/// another project does not write the one they are in. A walked run
-/// leaves it out: the bare verb already runs there.
+/// A package a named project lists and has not recorded is printed with
+/// the project its apply writes, so a reader in another project does not
+/// write the one they are in. A walked run leaves it out: the bare verb
+/// already runs there.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn verify_names_the_project_it_was_given_in_its_next_steps() {
