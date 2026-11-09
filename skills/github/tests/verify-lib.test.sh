@@ -23,9 +23,11 @@
 #   test     `.tests.rust`, the same
 #   issues   every issue type in order, joined by `,`; `-` for none
 # verify_prs also exercises real Git fetch/merge and owned-resource teardown.
-# Inputs: skills/github/scripts/lib/verify-lib.sh skills/github/tests/lib/mutant-copy.sh
+# Each world's GitHub URLs are rewritten to local bare repositories; GH_REPO
+# selects fixture/base, and the fork-origin world points origin elsewhere.
+# Inputs: skills/github/scripts/lib/verify-lib.sh skills/github/scripts/lib/gh-repo.sh,
+# skills/github/scripts/git-https-auth skills/github/tests/lib/mutant-copy.sh
 # The control runs only individually-clean-joint-conflict against a detached-HEAD mutant.
-# bash-runtime: 3.2
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -192,13 +194,19 @@ git_configure() {
 make_world() {
   FIXTURE="$TMP_ROOT/$1"
   export FIXTURE
-  mkdir -p "$FIXTURE/bin" "$FIXTURE/scratch" "$FIXTURE/gh-verify-old"
-  printf 'unrelated\n' >"$FIXTURE/gh-verify-old/sentinel"
-  touch -t 200001010000 "$FIXTURE/gh-verify-old"
+  # An aged gh-verify-* directory inside the TMPDIR verify_prs acquires from,
+  # the one an age sweep or an over-wide release reaches.
+  mkdir -p "$FIXTURE/bin" "$FIXTURE/scratch/gh-verify-old"
+  printf 'unrelated\n' >"$FIXTURE/scratch/gh-verify-old/sentinel"
+  touch -t 200001010000 "$FIXTURE/scratch/gh-verify-old"
+  # A second spelling of the scratch directory, for the spelling world.
+  ln -s scratch "$FIXTURE/alias"
   "$REAL_GIT" init --bare --initial-branch=main "$FIXTURE/origin" >/dev/null
   git_configure "$FIXTURE/origin"
   "$REAL_GIT" clone --quiet "$FIXTURE/origin" "$FIXTURE/repo" 2>"$FIXTURE/clone.log"
   git_configure "$FIXTURE/repo"
+  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/origin.insteadOf" https://github.com/fixture/base.git
+  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin https://github.com/fixture/base.git
   printf 'base\n' >"$FIXTURE/repo/common"
   printf 'base\n' >"$FIXTURE/repo/left"
   printf 'base\n' >"$FIXTURE/repo/right"
@@ -231,7 +239,17 @@ make_world() {
 #!/bin/bash
 set -euo pipefail
 args=("$@")
-[[ "${1:-}" != -C ]] || shift 2
+dir=""
+if [[ "${1:-}" == -C ]]; then dir="$2"; shift 2; fi
+# Git's answer for the checkout: the spelling world prints the alias spelling,
+# as Git for Windows prints C:/... for an MSYS /tmp/... path.
+if [[ "$MODE" == spelling || "$MODE" == identity-failure ]] \
+  && { [[ "${1:-}" == worktree && "${2:-}" == list ]] \
+    || [[ "$dir" == */worktree && "${1:-}" == rev-parse && "${2:-}" == --show-toplevel ]]; }; then
+  [[ "$MODE" != identity-failure || "${1:-}" != rev-parse ]] || exit 77
+  "$REAL_GIT" "${args[@]}" | F="$FIXTURE/scratch/" T="$FIXTURE/alias/" perl -pe 's/\Q$ENV{F}\E/$ENV{T}/g'
+  exit 0
+fi
 if [[ "${1:-}" == branch && "${2:-}" == verify/* ]]; then
   printf '%s\n' "$2" >"$FIXTURE/branch"
   if [[ "$MODE" == collision ]]; then
@@ -270,9 +288,15 @@ printf 'ran\n' >"$FIXTURE/verifier-ran"
 "$REAL_GIT" merge-base --is-ancestor "$SECOND_TIP" HEAD
 "$REAL_GIT" symbolic-ref HEAD >"$FIXTURE/attached"
 "$REAL_GIT" rev-parse HEAD >"$FIXTURE/verified-head"
-[[ "$(cat left)" == one && "$(cat right)" == two ]]
+[[ "$(cat left)" == one && "$(cat right)" == two && ! -e fork-only ]]
 VERIFY
-  chmod +x "$FIXTURE/bin/git" "$FIXTURE/bin/mktemp"
+  # Every world sets GH_REPO, so the repository resolver never asks gh.
+  cat >"$FIXTURE/bin/gh" <<'GH'
+#!/bin/bash
+printf '%s\n' "$*" >>"$FIXTURE/gh-called"
+exit 97
+GH
+  chmod +x "$FIXTURE/bin/git" "$FIXTURE/bin/mktemp" "$FIXTURE/bin/gh"
 }
 
 verify_world() {
@@ -281,8 +305,11 @@ verify_world() {
   (
     cd -- "$FIXTURE/repo"
     export MODE="$1" TMPDIR="$FIXTURE/scratch" PATH="$FIXTURE/bin:$PATH"
-    # The child keeps the caller's environment; only test boundaries above
-    # replace Git and scratch acquisition.
+    # The child keeps the caller's environment, except for the repository
+    # selection and git-https-auth's credential routing, which its own suite
+    # covers; only test boundaries above replace Git and scratch acquisition.
+    export GH_REPO=fixture/base KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never
+    unset ORCH_GH_READ_TOKEN_FILE
     export GH_VERIFY_CMD='"$BASH" "$FIXTURE/verify.sh"'
     "$BASH" "$LIB" verify_prs 1 "$second"
   ) >"$FIXTURE/result.json" 2>"$FIXTURE/stderr" || VERIFY_STATUS=$?
@@ -301,10 +328,21 @@ assert_preserved() {
   assert_eq "$("$REAL_GIT" -C "$FIXTURE/repo" symbolic-ref --short HEAD)" main 'original checkout remains attached'
   assert_eq "$("$REAL_GIT" -C "$FIXTURE/repo" rev-parse unrelated)" "$BASE_TIP" 'unrelated branch tip preserved'
   assert_eq "$(cat "$FIXTURE/unrelated/sentinel")" keep 'unrelated checkout content preserved'
-  assert_eq "$(cat "$FIXTURE/gh-verify-old/sentinel")" unrelated 'old unrelated directory preserved'
+  assert_eq "$(cat "$FIXTURE/scratch/gh-verify-old/sentinel")" unrelated 'old unrelated directory preserved'
+  local asked=false
+  [[ ! -e "$FIXTURE/gh-called" ]] || asked=true
+  assert_eq "$asked" false 'GH_REPO selects the repository without asking gh'
   local registered=false
   [[ "$inventory" != *"worktree $FIXTURE/unrelated"* ]] || registered=true
   assert_eq "$registered" true 'unrelated checkout stays registered'
+}
+
+# The scratch TMPDIR still exists and holds the aged sentinel alone: `find`
+# on a missing directory prints nothing, which an empty check would pass.
+assert_scratch_only_sentinel() { # label
+  local entries
+  entries="$(cd -- "$FIXTURE/scratch" && find . -mindepth 1 -print | LC_ALL=C sort | tr '\n' ' ')" || entries=missing
+  assert_eq "$entries" './gh-verify-old ./gh-verify-old/sentinel ' "$1"
 }
 
 assert_released() {
@@ -321,6 +359,7 @@ assert_released() {
   inventory="$("$REAL_GIT" -C "$FIXTURE/repo" worktree list --porcelain)"
   [[ "$inventory" != *"worktree $root/worktree"* ]] || present=true
   assert_eq "$present" false 'acquired checkout registration released'
+  assert_scratch_only_sentinel 'only the acquired scratch released'
 }
 
 joint_conflict() {
@@ -361,6 +400,34 @@ if [[ "$CASE" == all ]]; then
   assert_released
   assert_preserved
 
+  # origin is a fork holding its own default branch and PR refs; the PR numbers
+  # belong to the repository GH_REPO selects, so its heads and baseline are
+  # the ones verified.
+  make_world fork-origin success
+  "$REAL_GIT" clone --quiet --bare "$FIXTURE/origin" "$FIXTURE/fork"
+  "$REAL_GIT" clone --quiet "$FIXTURE/fork" "$FIXTURE/fork-work" 2>>"$FIXTURE/clone.log"
+  git_configure "$FIXTURE/fork-work"
+  printf 'fork\n' >"$FIXTURE/fork-work/fork-only"
+  "$REAL_GIT" -C "$FIXTURE/fork-work" add fork-only
+  "$REAL_GIT" -C "$FIXTURE/fork-work" commit --quiet -m fork
+  "$REAL_GIT" -C "$FIXTURE/fork-work" push --quiet origin HEAD:main HEAD:refs/pull/1/head HEAD:refs/pull/2/head
+  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/fork.insteadOf" https://github.com/fixture/fork.git
+  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin https://github.com/fixture/fork.git
+  "$REAL_GIT" -C "$FIXTURE/repo" fetch --quiet origin
+  verify_world normal
+  assert_eq "$VERIFY_STATUS" 0 'fork origin exits zero'
+  assert_json '.merge.success and .can_batch_merge and .builds.custom.success and [.prs[].number] == [1,2]' 'heads and baseline come from the selected repository, not origin'
+  assert_released
+  assert_preserved
+
+  # Git names the checkout with a spelling the shell did not produce.
+  make_world spelling success
+  verify_world spelling
+  assert_eq "$VERIFY_STATUS" 0 'differing spelling exits zero'
+  assert_json '.can_batch_merge' 'differing spelling verifies the batch'
+  assert_released
+  assert_preserved
+
   make_world pr-fetch-failure success
   verify_world normal 99
   assert_eq "$VERIFY_STATUS" 0 'fetch failure preserves JSON exit convention'
@@ -368,7 +435,7 @@ if [[ "$CASE" == all ]]; then
   assert_released
   assert_preserved
 
-  for mode in scratch-fail scratch-print-fail collision add-before add-after inventory-failure remove-failure branch-delete-failure; do
+  for mode in scratch-fail scratch-print-fail collision add-before add-after inventory-failure identity-failure remove-failure branch-delete-failure; do
     make_world "$mode" success
     verify_world "$mode"
     assert_eq "$VERIFY_STATUS" 1 "$mode exits nonzero"
@@ -380,13 +447,13 @@ if [[ "$CASE" == all ]]; then
       collision)
         assert_json '.can_batch_merge == false and [.issues[].type] == ["worktree_failed"]' 'collision reports acquisition failure'
         assert_eq "$("$REAL_GIT" -C "$FIXTURE/repo" rev-parse "$(cat "$FIXTURE/branch")")" "$FIRST_TIP" 'colliding branch retains its original tip'
-        assert_eq "$(find "$FIXTURE/scratch" -mindepth 1 -print)" '' 'collision releases only acquired scratch'
+        assert_scratch_only_sentinel 'collision releases only acquired scratch'
         ;;
       add-*)
         assert_json '.can_batch_merge == false and [.issues[].type] == ["worktree_failed"]' "$mode reports add failure"
         assert_released
         ;;
-      inventory-failure|remove-failure)
+      inventory-failure|identity-failure|remove-failure)
         root="$(cat "$FIXTURE/root")"
         assert_eq "$("$REAL_GIT" -C "$root/worktree" symbolic-ref --short HEAD)" "$(cat "$FIXTURE/branch")" "$mode retains owned checkout and branch"
         assert_eq "$(cat "$root/worktree/left")" one "$mode retains checkout contents"
@@ -395,7 +462,7 @@ if [[ "$CASE" == all ]]; then
         ;;
       branch-delete-failure)
         assert_eq "$("$REAL_GIT" -C "$FIXTURE/repo" rev-parse "$(cat "$FIXTURE/branch")")" "$(cat "$FIXTURE/verified-head")" 'failed branch deletion retains acquired ref'
-        assert_eq "$(find "$FIXTURE/scratch" -mindepth 1 -print)" '' 'branch deletion failure releases safe scratch'
+        assert_scratch_only_sentinel 'branch deletion failure releases safe scratch'
         ;;
     esac
     assert_preserved
@@ -405,8 +472,8 @@ if [[ "$CASE" == all ]]; then
   # scratch. Retain the fetch, then plant the original detachment defect.
   source "$TEST_DIR/lib/mutant-copy.sh"
   mutant="$(mutant_copy_edit "$TMP_ROOT/detach-control" \
-    '        if ! git fetch --quiet origin "refs/pull/$pr_num/head" 2>/dev/null; then' \
-    '        if ! { git fetch --quiet origin "refs/pull/$pr_num/head" && git checkout --detach FETCH_HEAD; } 2>/dev/null; then' \
+    '        if ! "$GIT_AUTH" fetch --quiet "$repo_url" "refs/pull/$pr_num/head" 2>/dev/null; then' \
+    '        if ! { "$GIT_AUTH" fetch --quiet "$repo_url" "refs/pull/$pr_num/head" && git checkout --detach FETCH_HEAD; } 2>/dev/null; then' \
     lib/verify-lib.sh)"
   control_status=0
   "$BASH" "$0" individually-clean-joint-conflict "$mutant" "$TMP_ROOT/control-result" >"$TMP_ROOT/control.log" 2>&1 || control_status=$?
