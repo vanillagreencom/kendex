@@ -585,6 +585,8 @@ split_run_blocks "$WORKFLOW" "$TMP/preparation-blocks"
 for block in "$TMP/preparation-blocks"/*.sh; do
   shard="$(one_shard "$(cat "${block%.sh}.cond")")"
   case "$shard" in guards-tools|guards-tools-tail) ;; *) continue ;; esac
+  # The macOS Jarvis step on guards-tools runs no tools suite.
+  grep -qF 'tools/tests/' "$block" || continue
   for platform in Linux macOS; do
     for defect in none missing late swallowed; do
       awk -v defect="$defect" '
@@ -1579,33 +1581,63 @@ check "must-fail: the old linear roster loses its unresolved suite" \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
 
 # Linux rest releases Jarvis to its shard; macOS rest keeps the family, mixed
-# and unresolved suites alike, because macOS runs no jarvis leg. Releasing on
-# both loses every Jarvis suite on macOS; releasing on neither runs each twice
-# on Linux.
-jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="--battery skills/$x/tests" ;;'
+# and unresolved suites alike, because macOS runs no jarvis leg, less the two
+# suites the macOS guards-hooks and guards-tools legs run by path. Releasing
+# on both loses the rest of the family on macOS; releasing on neither runs
+# each suite twice on Linux; a macOS rest blind to those paths runs the two
+# twice there. A deleted path step returns its suite to macOS rest.
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
+jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
+jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh | sort)"
 (cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.sh) > "$TMP/jarvis-suites"
 grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
   bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
-while IFS='|' read -r os major fault replacement; do
-  NEEDLE="$jarvis_arm" REPLACEMENT="$replacement" \
-    awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
-    "$WORKFLOW" > "$TMP/jarvis-$fault.yml" || { bad "jarvis $fault control changed no workflow owner"; continue; }
+jarvis_universe() { # OS ; the eligible Jarvis suites, unresolved ones included, into os-universe
   cp "$TMP/jarvis-suites" "$TMP/jarvis-eligible"
-  if [[ "$os" == macos-latest ]]; then
+  if [[ "$1" == macos-latest ]]; then
     "$ROOT/tools/macos-test-contracts" --filter <"$TMP/jarvis-suites" >"$TMP/jarvis-eligible" || exit 1
   fi
   sort -u "$TMP/jarvis-eligible" <(grep '^skills/jarvis/' "$TMP/unknown-paths") > "$TMP/os-universe"
-  os_claims "$TMP/jarvis-$fault.yml" "$os" "$major" > "$TMP/jarvis-$fault-claims"
+}
+while IFS='|' read -r os major fault target expected replacement; do
+  case "$target" in arm) needle="$jarvis_arm" ;; skip) needle="$jarvis_skip" ;; esac
+  mutant="$TMP/jarvis-$target-$fault.yml"
+  NEEDLE="$needle" REPLACEMENT="$replacement" \
+    awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+    "$WORKFLOW" > "$mutant" || { bad "jarvis $target $fault control changed no workflow owner"; continue; }
+  jarvis_universe "$os"
+  os_claims "$mutant" "$os" "$major" > "$TMP/jarvis-claims"
   case "$fault" in
-    lost) got="$(comm -23 "$TMP/os-universe" "$TMP/jarvis-$fault-claims")" ;;
-    duplicated) got="$(uniq -d "$TMP/jarvis-$fault-claims")" ;;
+    lost) got="$(comm -23 "$TMP/os-universe" "$TMP/jarvis-claims")" ;;
+    duplicated) got="$(uniq -d "$TMP/jarvis-claims")" ;;
   esac
-  check "must-fail: a Jarvis rest arm with its native condition changed leaves every Jarvis suite $fault on $os" \
-    "$(cat "$TMP/os-universe")" "$got"
+  case "$expected" in
+    family) want="$(cat "$TMP/os-universe")" ;;
+    unmoved) want="$(comm -23 "$TMP/os-universe" <(printf '%s\n' "$jarvis_moved"))" ;;
+    moved) want="$jarvis_moved" ;;
+  esac
+  [[ -n "$want" ]] || bad "the jarvis $target $fault control expects no suite, so it proves nothing"
+  check "must-fail: a Jarvis rest $target changed leaves the $expected Jarvis suites $fault on $os" \
+    "$want" "$got"
 done <<'ROWS'
-macos-latest|3|lost|              jarvis) needle="--battery skills/$x/tests" ;;
-ubuntu-latest|4|duplicated|              jarvis) needle="" ;;
+macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.sh" ;;
+ubuntu-latest|4|duplicated|arm|family|              jarvis) needle="" ;;
+macos-latest|3|duplicated|skip|moved|                unclaimed+=("$t")
 ROWS
+jarvis_universe macos-latest
+for step in 'Jarvis session suite on macOS' 'Jarvis succession suite on macOS'; do
+  mutant="$TMP/jarvis-step-removed.yml"
+  awk -v owner="      - name: $step" '
+    $0 == owner { drop = 1; hits++; next }
+    drop && substr($0, 1, 8) == "      - " { drop = 0 }
+    drop { next }
+    { print }
+    END { exit hits != 1 }
+  ' "$WORKFLOW" > "$mutant" || { bad "the step '$step' is no longer one step in the workflow"; continue; }
+  os_claims "$mutant" macos-latest 3 > "$TMP/jarvis-claims"
+  check "a deleted '$step' step returns its suite to macOS rest, once" \
+    "$(cat "$TMP/os-universe")" "$(cat "$TMP/jarvis-claims")"
+done
 cp "$TMP/unknown-paths" "$TMP/os-universe"
 
 sed 's/want_shard rest; break;/:; break;/' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set"
