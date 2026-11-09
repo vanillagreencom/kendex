@@ -289,9 +289,7 @@ pub enum CoreError {
     #[error("plan is stale: {path} changed since the plan was computed — re-plan and retry")]
     PlanStale { path: PathBuf },
 
-    #[error(
-        "source '{name}' has not been downloaded yet — the source refresh verb, run in the place that subscribes to it, downloads it"
-    )]
+    #[error("source '{name}' has not been downloaded yet — refresh it first")]
     SourcePending { name: String },
 
     #[error("source '{name}' is disabled")]

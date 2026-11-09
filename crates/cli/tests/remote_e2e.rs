@@ -950,51 +950,79 @@ fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
     assert!(!proj.join("kendex.toml").exists());
 }
 
-/// The default catalog's fixture offering its one skill as a bundle.
+/// The upstream at `upstream` offering its one skill `skill` as the
+/// `starter` bundle.
 #[allow(clippy::unwrap_used)]
-fn offer_bundle(home: &Path) {
-    let upstream = home.join("git/vanillagreencom/kendex");
+fn offer_bundle(upstream: &Path, skill: &str) {
     fs::write(
         upstream.join("kendex.toml"),
-        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"gh\"]\n",
+        format!("[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"{skill}\"]\n"),
     )
     .unwrap();
-    git(&upstream, &["add", "."]);
-    git(&upstream, &["commit", "--quiet", "-m", "bundle"]);
+    git(upstream, &["add", "."]);
+    git(upstream, &["commit", "--quiet", "-m", "bundle"]);
 }
 
 /// A first add on a home that never downloaded the repository it names
 /// downloads it: nothing on disk declares that repository until the add
-/// lands, and the personal scope holds no package and no manifest.
+/// lands, and the personal scope holds no package and no manifest. The
+/// `owner/tools` row names a repository the personal scope does not
+/// subscribe to, so a retry that downloads the personal default instead
+/// installs nothing; the default catalog's row is the reported spelling,
+/// whose alias the personal seed also declares.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_first_add_of_a_bundle_downloads_the_repository_it_names() {
-    let tmp = fixture();
-    let home = test_util::rooted(&tmp);
-    let proj = home.join("proj");
-    offer_bundle(&home);
-    let env = kendex_core::env::Env::host_rooted(&home)
-        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
-    assert!(!env.global_manifest_file().exists());
+    // Whether the row serves its own catalog beside the default one, which
+    // the add must then leave undownloaded.
+    for (repo, skill, own_catalog) in [
+        ("owner/tools", "tools", true),
+        ("vanillagreencom/kendex", "gh", false),
+    ] {
+        let tmp = fixture();
+        let home = test_util::rooted(&tmp);
+        let proj = home.join("proj");
+        if own_catalog {
+            named_catalog(&home, skill);
+        }
+        offer_bundle(&home.join("git").join(repo), skill);
+        let env = kendex_core::env::Env::host_rooted(&home)
+            .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+        assert!(!env.global_manifest_file().exists());
 
-    let output = kendex(
-        &home,
-        &proj,
-        &[
-            "add",
-            "vanillagreencom/kendex",
-            "--bundle",
-            "starter",
-            "--harness",
-            "claude",
-            "-y",
-        ],
-    );
+        let output = kendex(
+            &home,
+            &proj,
+            &[
+                "add",
+                repo,
+                "--bundle",
+                "starter",
+                "--harness",
+                "claude",
+                "-y",
+            ],
+        );
 
-    assert!(output.status.success(), "{}", said(&output));
-    assert!(proj.join(".claude/skills/gh/SKILL.md").exists());
-    let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
-    assert!(manifest.contains("[bundles.starter]"), "{manifest}");
+        assert!(output.status.success(), "{repo}: {}", said(&output));
+        assert!(
+            proj.join(".claude/skills")
+                .join(skill)
+                .join("SKILL.md")
+                .exists(),
+            "{repo}: {}",
+            said(&output)
+        );
+        let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
+        assert!(manifest.contains("[bundles.starter]"), "{repo}: {manifest}");
+        if own_catalog {
+            assert_eq!(
+                kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None),
+                None,
+                "{repo}: the add downloaded the default catalog, which it never names"
+            );
+        }
+    }
 }
 
 /// The personal scope reads as subscribed to the default catalog before

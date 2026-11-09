@@ -439,7 +439,7 @@ fn a_hook_record_whose_source_cannot_be_read_names_the_cause() {
         (
             "re-pointed at a repository never downloaded",
             "repo = \"owner/absent\"\n",
-            "source 'cat' has not been downloaded yet — the source refresh verb, run in the place that subscribes to it, downloads it",
+            "source 'cat' has not been downloaded yet — refresh it first",
         ),
         (
             "re-pointed at another repository that holds the commit",
