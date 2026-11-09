@@ -1201,3 +1201,128 @@ fn a_listing_reads_the_named_project_and_registers_nothing() {
         registered(&home)
     );
 }
+
+/// Verification reads an unregistered target even when the caller and
+/// personal scope have drift. Scope filters still select rows.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_reads_an_unregistered_project_without_listing_it() {
+    use kendex_core::{apply, attest, engine, env::Env, model::Scope};
+
+    let (_tmp, home, catalog, _) = world();
+    let project = home.join("dev/target");
+    let caller = home.join("dev/caller");
+    declare(&project, &catalog);
+    declare(&caller, &catalog);
+    declare_globally(&home, &catalog);
+    let target = Scope::Project {
+        root: project.clone(),
+    };
+    let walked = Scope::Project {
+        root: caller.clone(),
+    };
+    let env = Env::host_rooted(&home);
+    for scope in [&target, &walked, &Scope::Global] {
+        let report = engine::plan_apply(&env, scope, &engine::PlanOptions::current()).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+    }
+    assert!(registered(&home).is_empty());
+    write(&installed(&caller), "Personal caller edit.\n");
+    write(&installed(&home), "Personal global edit.\n");
+
+    let path = project.to_str().unwrap();
+    for (flags, all) in [(vec![], true), (vec!["--scope", "project"], false)] {
+        let mut args = vec!["verify", "deploy", "--project-path", path, "--json"];
+        args.extend(flags);
+        let output = kendex(&home, &caller, &args);
+        let document: attest::Document = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.success(), !all, "{args:?}: {}", said(&output));
+        assert_eq!(document.clean, !all, "{args:?}");
+        let row = document
+            .rows
+            .iter()
+            .find(|row| row.kind == "skill" && row.name == "deploy" && row.scope == target)
+            .unwrap();
+        assert_eq!(row.state, attest::State::Ok);
+        assert!(document.rows.iter().all(|row| row.scope != walked));
+        assert_eq!(
+            document.rows.iter().any(|row| {
+                row.kind == "skill"
+                    && row.name == "deploy"
+                    && row.scope == Scope::Global
+                    && row.state == attest::State::Failed
+            }),
+            all
+        );
+        assert!(registered(&home).is_empty());
+    }
+
+    // Omitting the target checks the caller's edited installation.
+    let output = kendex(
+        &home,
+        &caller,
+        &["verify", "deploy", "--scope", "project", "--json"],
+    );
+    let document: attest::Document = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(!output.status.success());
+    assert!(document.rows.iter().any(|row| {
+        row.kind == "skill"
+            && row.name == "deploy"
+            && row.scope == walked
+            && row.state == attest::State::Failed
+    }));
+}
+
+/// A package a named project lists and has not recorded is printed with
+/// the project its apply writes, so a reader in another project does not
+/// write the one they are in. A walked run leaves it out: the bare verb
+/// already runs there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_names_the_project_it_was_given_in_its_next_steps() {
+    use kendex_core::{apply, engine, env::Env, model::Scope};
+
+    let (_tmp, home, catalog, _) = world();
+    let project = home.join("dev/target");
+    let caller = home.join("dev/caller");
+    let env = Env::host_rooted(&home);
+    for root in [&project, &caller] {
+        declare(root, &catalog);
+        let scope = Scope::Project { root: root.clone() };
+        let report = engine::plan_apply(&env, &scope, &engine::PlanOptions::current()).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+    }
+    write(
+        &catalog.join("skills/extra/SKILL.md"),
+        "---\nname: extra\ndescription: the extra skill\n---\nBody.\n",
+    );
+    for root in [&project, &caller] {
+        write(
+            &root.join("kendex.toml"),
+            &format!(
+                "{}\n[skills.extra]\nsource = \"cat\"\n",
+                manifest_text(&catalog)
+            ),
+        );
+    }
+
+    let named = format!("project={}", project.display());
+    let path = project.to_str().unwrap();
+    for (args, names) in [
+        (
+            vec!["verify", "--scope", "project", "--project-path", path],
+            true,
+        ),
+        (vec!["verify", "--scope", "project"], false),
+    ] {
+        let output = kendex(&home, &caller, &args);
+        assert!(!output.status.success(), "{args:?}: {}", said(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let gap = stderr
+            .lines()
+            .find(|line| line.contains("skill extra"))
+            .unwrap_or_else(|| panic!("{args:?}: no gap row: {}", said(&output)));
+        assert_eq!(gap.contains(&named), names, "{args:?}: {gap}");
+        assert_eq!(gap.contains("project="), names, "{args:?}: {gap}");
+    }
+}

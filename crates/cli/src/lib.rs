@@ -118,6 +118,9 @@ enum Command {
         scope: Option<String>,
         #[command(flatten)]
         output: commands::verify::Output,
+        /// The project this run reads, by path, instead of the one it was typed in
+        #[arg(long, value_name = "PATH")]
+        project_path: Option<std::path::PathBuf>,
         /// Also fail on warnings: a path an installed agent declares as tracked output that the project ignores
         #[arg(long)]
         strict: bool,
@@ -595,6 +598,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             global,
             scope,
             output,
+            project_path,
             strict,
         } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
@@ -602,6 +606,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 &env,
                 names,
                 filter,
+                project_path.as_deref(),
                 output,
                 commands::verify::Warnings::strict(strict),
             );
