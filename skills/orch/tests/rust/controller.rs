@@ -995,15 +995,21 @@ fn harness_held(server: &Server, runner: &Runner) -> String {
     pane
 }
 
-/// A recorded controller with no identity whose pane its shell holds alone
-/// has ended: a start replaces the record, a dead-cause transfer proceeds
-/// with the predecessor proven `harness-gone`, and a live-cause transfer
-/// refuses `predecessor-not-live`, since an ended controller is the dead
-/// recovery's. The same record over a pane the harness still holds refuses
-/// the start `overseer-live` and the dead transfer
-/// `predecessor-identity-missing`, as an unknown stop.
+/// A pane whose process exited, which its server keeps dead.
+fn kept_dead(server: &Server, runner: &Runner) -> String {
+    server.open_kept_dead("overseer", runner.state_dir())
+}
+
+/// A recorded controller with no identity whose pane its shell holds alone,
+/// or whose pane its server keeps dead, has ended: a start replaces the
+/// record and closes the predecessor's window, a dead-cause transfer
+/// proceeds with the predecessor proven `harness-gone` or `pane-dead`, and
+/// a live-cause transfer refuses `predecessor-not-live`, since an ended
+/// controller is the dead recovery's. The same record over a pane the
+/// harness still holds refuses the start `overseer-live` and the dead
+/// transfer `predecessor-identity-missing`, as an unknown stop.
 #[test]
-fn a_recorded_controller_whose_pane_holds_only_its_shell_is_replaced_and_one_holding_a_harness_is_not()
+fn a_recorded_controller_whose_pane_holds_only_its_shell_or_is_kept_dead_is_replaced_and_one_holding_a_harness_is_not()
  {
     struct Row {
         name: &'static str,
@@ -1056,6 +1062,30 @@ fn a_recorded_controller_whose_pane_holds_only_its_shell_is_replaced_and_one_hol
             note: "predecessor-not-live",
             retired_by: None,
         },
+        Row {
+            name: "start over the kept dead pane",
+            pane: kept_dead,
+            mode: "start",
+            outcome: "confirmed",
+            note: "successor-confirmed",
+            retired_by: Some("pane-dead"),
+        },
+        Row {
+            name: "dead transfer over the kept dead pane",
+            pane: kept_dead,
+            mode: "dead",
+            outcome: "confirmed",
+            note: "successor-confirmed",
+            retired_by: Some("pane-dead"),
+        },
+        Row {
+            name: "live transfer over the kept dead pane",
+            pane: kept_dead,
+            mode: "live",
+            outcome: "failed",
+            note: "predecessor-not-live",
+            retired_by: None,
+        },
     ];
     for row in rows {
         let dir = tempfile::tempdir().unwrap();
@@ -1092,6 +1122,11 @@ fn a_recorded_controller_whose_pane_holds_only_its_shell_is_replaced_and_one_hol
                 assert_eq!(intent["observation"]["retired_by"], by, "{}", row.name);
                 assert_eq!(overseer["generation"], 4, "{}", row.name);
                 assert_ne!(overseer["pane"], json!(pane), "{}: replaced", row.name);
+                assert!(
+                    !server.panes().contains(&pane),
+                    "{}: the predecessor's window closed",
+                    row.name
+                );
             }
             None => {
                 assert_eq!(overseer["generation"], 3, "{}", row.name);

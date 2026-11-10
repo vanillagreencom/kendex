@@ -1169,7 +1169,9 @@ fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it
 /// that answers one verb its own way: a `new-window` tmux refuses is
 /// `tmux-refused`, no window opened; one that opens the window and then
 /// gives no answer within the bound is `launch-window-unanswered`, naming
-/// the session and the window, which stands.
+/// the session and the window, which stands. A server whose
+/// `after-new-window` hook fails makes tmux exit non-zero after the window
+/// opened and its pane printed: `tmux-refused`, the window closed.
 #[test]
 fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswered() {
     let real = std::env::var_os("PATH")
@@ -1179,18 +1181,24 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
                 .find(|p| p.is_file())
         })
         .expect("tmux on PATH");
-    // (what the shim does on new-window, the refusal, whether the window stands)
-    for (answer, key, stands) in [
-        ("echo refused >&2; exit 1", "tmux-refused", false),
+    // (what the shim does on new-window, the server's after-new-window hook,
+    // the refusal, whether the window stands)
+    for (answer, hook, key, stands) in [
+        ("echo refused >&2; exit 1", None, "tmux-refused", false),
         (
             "\"$real\" \"$@\" >/dev/null; exec sleep 30",
+            None,
             "launch-window-unanswered",
             true,
         ),
+        (":", Some("run-shell 'exit 1'"), "tmux-refused", false),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let pane = PrivatePane::start(&root);
+        if let Some(hook) = hook {
+            pane.tmux(&["set-hook", "-g", "after-new-window", hook]);
+        }
         let shims = root.join("answering-tmux");
         std::fs::create_dir(&shims).unwrap();
         write_executable(

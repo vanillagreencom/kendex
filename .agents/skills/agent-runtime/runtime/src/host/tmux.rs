@@ -34,6 +34,29 @@ pub struct PaneFields {
     pub command: String,
 }
 
+/// A pane read by its exact id: its process running, or exited with the
+/// pane kept by its server (`remain-on-exit`), which leaves no process to
+/// read and a window to close.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaneState {
+    Running(PaneFields),
+    Dead(Pane),
+}
+
+/// The cause [`pane_fields`] answers for a pane its server keeps after its
+/// process exited: the pane stands with no process to read.
+pub const PANE_DEAD: &str = "pane-dead";
+
+/// A `new-window` that did not answer with its window. `opened` is the pane
+/// tmux printed before the failure, a window that stands until the caller
+/// closes it; `None` where it printed none, so a window may stand that
+/// nothing names.
+#[derive(Debug)]
+pub struct WindowFailed {
+    pub error: Error,
+    pub opened: Option<Box<Pane>>,
+}
+
 /// What an exact close did. A caller that drops it has not learned whether
 /// the target stands.
 #[must_use]
@@ -274,14 +297,32 @@ pub fn inherited(server: &Server, session: &str, name: &str) -> Result<Option<St
 /// into it with [`send_line`]: a fresh window sits at its shell until then.
 /// The session name is read with the id, so a session whose name carries a
 /// blank is still read whole: the format puts it last.
-pub fn new_window(server: &Server, session: &str, name: &str, cwd: &Path) -> Result<Pane> {
-    confirm(server)?;
+///
+/// tmux prints the `-P` line once the window exists and runs the server's
+/// `after-new-window` hooks after it: a hook's own output follows on later
+/// lines, and a hook that fails turns the answer into a failure that still
+/// printed the window. So the pane is read from the first line whatever the
+/// exit, and a failure carries it as `opened`, a window the caller closes.
+pub fn new_window(
+    server: &Server,
+    session: &str,
+    name: &str,
+    cwd: &Path,
+) -> std::result::Result<Pane, WindowFailed> {
+    let unopened = |error| WindowFailed {
+        error,
+        opened: None,
+    };
+    confirm(server).map_err(unopened)?;
+    let socket = server.socket.display().to_string();
     let target = format!("={session}:");
     let cwd_display = cwd.display().to_string();
-    let out = tmux(
-        Some(&server.socket),
+    let output = run_with(
+        "tmux",
         "new-window",
         &[
+            "-S",
+            &socket,
             "new-window",
             "-d",
             "-P",
@@ -294,21 +335,59 @@ pub fn new_window(server: &Server, session: &str, name: &str, cwd: &Path) -> Res
             "-c",
             &cwd_display,
         ],
-    )?;
-    let mut parts = out.splitn(3, ' ');
-    let (Some(id), Some(window), Some(session_name)) = (parts.next(), parts.next(), parts.next())
-    else {
-        return Err(Error::External {
+        &[],
+        None,
+        TIMEOUT,
+    )
+    .map_err(unopened)?;
+    if output.status.code().is_none() {
+        return Err(unopened(Error::External {
+            program: "tmux",
+            operation: "new-window",
+            cause: "signal".to_owned(),
+        }));
+    }
+    let out = stdout_text(&output);
+    let printed = out
+        .lines()
+        .next()
+        .and_then(|line| printed_pane(server, line));
+    match (output.status.success(), printed) {
+        (true, Some(pane)) => Ok(pane),
+        (true, None) => Err(unopened(Error::External {
             program: "tmux",
             operation: "new-window",
             cause: format!("unreadable new-window answer {out:?}"),
-        });
+        })),
+        (false, opened) => Err(WindowFailed {
+            error: Error::refused(
+                "tmux-refused",
+                &[
+                    ("operation", "new-window"),
+                    ("cause", &stderr_text(&output)),
+                ],
+            ),
+            opened: opened.map(Box::new),
+        }),
+    }
+}
+
+/// The pane a `new-window -P` line names, `%N @N session`. The ids are
+/// checked by their sigils, since a caller closes the window by the id read
+/// here and tmux takes a bare word as a window's name.
+fn printed_pane(server: &Server, line: &str) -> Option<Pane> {
+    let mut parts = line.splitn(3, ' ');
+    let (Some(id), Some(window), Some(session)) = (parts.next(), parts.next(), parts.next()) else {
+        return None;
     };
-    Ok(Pane {
+    if !id.starts_with('%') || !window.starts_with('@') {
+        return None;
+    }
+    Some(Pane {
         server: server.clone(),
         id: id.to_owned(),
         window: window.to_owned(),
-        session: session_name.to_owned(),
+        session: session.to_owned(),
     })
 }
 
@@ -318,14 +397,28 @@ fn names_missing_target(stderr: &str) -> bool {
     stderr.starts_with("can't find pane") || stderr.starts_with("can't find window")
 }
 
+/// The pane `id` names on the server where its process runs: [`pane_state`]
+/// with a pane kept dead answered unreadable, [`PANE_DEAD`], since a reader
+/// of the fields reads the process.
+pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
+    match pane_state(server, id) {
+        Reading::Live(PaneState::Running(fields)) => Reading::Live(fields),
+        Reading::Live(PaneState::Dead(_)) => Reading::Unreadable { cause: PANE_DEAD },
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    }
+}
+
 /// The pane `id` names on the server, read by that exact id: the pane with
 /// its window, session, process and foreground command. The server is
 /// confirmed first, since a pane id repeats on every server; a server that
 /// does not answer, or is not the recorded one, leaves the pane unreadable.
 /// tmux answers `display-message -t` on a missing pane with an empty
 /// expansion, or on older servers with an error naming the pane: both are
-/// `Gone`. Any other failure is `Unreadable`.
-pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
+/// `Gone`. Any other failure is `Unreadable`. A pane whose process exited
+/// and which the server keeps prints `pane_dead` 1 and no pid: it is
+/// `Dead`, with the window it stands in.
+pub fn pane_state(server: &Server, id: &str) -> Reading<PaneState> {
     if let Err(e) = confirm(server) {
         return Reading::Unreadable { cause: e.key() };
     }
@@ -340,7 +433,7 @@ pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
             "-p",
             "-t",
             id,
-            "#{pane_id}\t#{pane_pid}\t#{window_id}\t#{pane_current_command}\t#{session_name}",
+            "#{pane_id}\t#{pane_pid}\t#{window_id}\t#{pane_current_command}\t#{pane_dead}\t#{session_name}",
         ],
         &[],
         None,
@@ -363,40 +456,49 @@ pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
         };
     }
     let text = stdout_text(&output);
-    let mut parts = text.splitn(5, '\t');
-    let (Some(pane), Some(pid), Some(window), Some(command), Some(session)) = (
+    let unparsed = Reading::Unreadable {
+        cause: "pane-fields-unparsed",
+    };
+    let mut parts = text.splitn(6, '\t');
+    let (Some(pane), Some(pid), Some(window), Some(command), Some(dead), Some(session)) = (
+        parts.next(),
         parts.next(),
         parts.next(),
         parts.next(),
         parts.next(),
         parts.next(),
     ) else {
-        return Reading::Unreadable {
-            cause: "pane-fields-unparsed",
-        };
+        return unparsed;
     };
     if pane.is_empty() {
         return Reading::Gone;
     }
-    let Ok(pid) = pid.parse() else {
-        return Reading::Unreadable {
-            cause: "pane-fields-unparsed",
-        };
+    let pid = match dead {
+        "1" => None,
+        "0" => match pid.parse() {
+            Ok(pid) => Some(pid),
+            Err(_) => return unparsed,
+        },
+        _ => return unparsed,
     };
     if pane != id {
         return Reading::Unreadable {
             cause: "pane-id-mismatch",
         };
     }
-    Reading::Live(PaneFields {
-        pane: Pane {
-            server: server.clone(),
-            id: pane.to_owned(),
-            window: window.to_owned(),
-            session: session.to_owned(),
-        },
-        pid,
-        command: command.to_owned(),
+    let pane = Pane {
+        server: server.clone(),
+        id: pane.to_owned(),
+        window: window.to_owned(),
+        session: session.to_owned(),
+    };
+    Reading::Live(match pid {
+        Some(pid) => PaneState::Running(PaneFields {
+            pane,
+            pid,
+            command: command.to_owned(),
+        }),
+        None => PaneState::Dead(pane),
     })
 }
 
@@ -726,11 +828,12 @@ mod tests {
         }
     }
 
-    /// A pane the live server does not have reads gone, by its exact id;
-    /// once the server is gone, the same read is unreadable with the cause,
-    /// never an absence.
+    /// A pane the live server does not have reads gone, by its exact id; a
+    /// pane the server keeps after its process exited reads dead, with its
+    /// window, and its fields unreadable `pane-dead`; once the server is
+    /// gone, the same read is unreadable with the cause, never an absence.
     #[test]
-    fn a_missing_pane_reads_gone_and_a_dead_server_reads_unreadable() {
+    fn a_missing_pane_reads_gone_a_kept_dead_one_dead_and_a_dead_server_unreadable() {
         let dir = tempfile::tempdir().unwrap();
         let private = Private::start(dir.path());
         let server = private.0.clone();
@@ -741,6 +844,52 @@ mod tests {
         assert_eq!(first.pane.session, "t");
         assert!(first.pid > 0);
         assert_eq!(pane_fields(&server, "%999"), Reading::Gone);
+        let opened = tmux(
+            Some(&server.socket),
+            "new-window",
+            &[
+                "new-window",
+                "-d",
+                "-P",
+                "-F",
+                "#{pane_id} #{window_id}",
+                "read line; exit 3",
+            ],
+        )
+        .expect("a window");
+        let (dead, window) = opened.split_once(' ').expect("the pane and its window");
+        tmux(
+            Some(&server.socket),
+            "remain-on-exit",
+            &["set-option", "-w", "-t", dead, "remain-on-exit", "on"],
+        )
+        .expect("the window keeps its pane");
+        tmux(
+            Some(&server.socket),
+            "send-keys",
+            &["send-keys", "-t", dead, "Enter"],
+        )
+        .expect("the line ends the pane's process");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while tmux(
+            Some(&server.socket),
+            "pane-dead",
+            &["display-message", "-p", "-t", dead, "#{pane_dead}"],
+        )
+        .expect("the pane reads")
+            != "1"
+        {
+            assert!(std::time::Instant::now() < deadline, "the pane never died");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let Reading::Live(PaneState::Dead(kept)) = pane_state(&server, dead) else {
+            panic!("the kept pane reads dead");
+        };
+        assert_eq!((kept.id.as_str(), kept.window.as_str()), (dead, window));
+        assert_eq!(
+            pane_fields(&server, dead),
+            Reading::Unreadable { cause: PANE_DEAD }
+        );
         kill_server(&server).unwrap();
         assert_eq!(
             pane_fields(&server, "%0"),
@@ -754,6 +903,33 @@ mod tests {
                 cause: "server-gone".to_owned()
             }
         );
+    }
+
+    /// A server hook that prints on `new-window` appends its line after the
+    /// `-P` answer and tmux still exits zero: the pane is the first line's,
+    /// its session name the session's alone.
+    #[test]
+    fn a_hook_printing_after_new_window_leaves_the_pane_read_from_the_first_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let private = Private::start(dir.path());
+        let server = &private.0;
+        tmux(
+            Some(&server.socket),
+            "set-hook",
+            &[
+                "set-hook",
+                "-g",
+                "after-new-window",
+                "run-shell 'echo extra'",
+            ],
+        )
+        .expect("the hook");
+        let pane = new_window(server, "t", "w", dir.path()).expect("the window opens");
+        assert_eq!(pane.session, "t");
+        let Reading::Live(fields) = pane_fields(server, &pane.id) else {
+            panic!("the window's pane is live");
+        };
+        assert_eq!(fields.pane, pane);
     }
 
     /// An exact close takes the named pane alone: its sibling in the same

@@ -1894,7 +1894,8 @@ fn kill_harness(server: &Server, pane: &str, identity: &Identity) {
 /// A controller whose end a reading proves is said on the first pass
 /// (`passes=1`) whatever `ORCH_OVERSEER_DEAD_PASSES` reads: the exit record
 /// or the end row over a pane its shell holds alone, such a pane whose
-/// recorded harness was killed, and the pane gone from the recorded server.
+/// recorded harness was killed, the pane gone from the recorded server, and
+/// the pane that server keeps dead after its process exited.
 /// The owner's alert follows on
 /// the duty's next run, which the line asks for at once, under its own
 /// notice file, and nothing after; the alert says whether anything replaces
@@ -1960,6 +1961,23 @@ fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_
             name: "the pane gone from the recorded server",
             source: "pane",
             plant: |dir, server| overseer_at(server, "%99", "@99", dir),
+        },
+        Case {
+            name: "the pane the recorded server keeps dead",
+            source: "pane",
+            plant: |dir, server| {
+                let pane = server.open_kept_dead("overseer", dir);
+                let window = String::from_utf8_lossy(
+                    &support::tmux(
+                        &server.socket,
+                        &["display-message", "-p", "-t", &pane, "#{window_id}"],
+                    )
+                    .stdout,
+                )
+                .trim()
+                .to_owned();
+                overseer_at(server, &pane, &window, dir)
+            },
         },
     ];
     for case in cases {

@@ -562,6 +562,33 @@ impl Server {
         self.open_window(name, cwd, "exec sleep 600")
     }
 
+    /// Open a window whose process exits once the window keeps its pane
+    /// (`remain-on-exit`), as a harness's pane stands after it ended on a
+    /// server that keeps such panes: the pane dead, its window standing.
+    /// Returns the pane id once tmux reads it dead, bounded.
+    pub fn open_kept_dead(&self, name: &str, cwd: &Path) -> String {
+        let pane = self.open_window(name, cwd, "read line; exit 3");
+        let kept = tmux(
+            &self.socket,
+            &["set-option", "-w", "-t", &pane, "remain-on-exit", "on"],
+        );
+        assert!(kept.status.success(), "remain-on-exit: {}", stderr(&kept));
+        let enter = tmux(&self.socket, &["send-keys", "-t", &pane, "Enter"]);
+        assert!(enter.status.success(), "send-keys: {}", stderr(&enter));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let dead = tmux(
+                &self.socket,
+                &["display-message", "-p", "-t", &pane, "#{pane_dead}"],
+            );
+            if String::from_utf8_lossy(&dead.stdout).trim() == "1" {
+                return pane;
+            }
+            assert!(Instant::now() < deadline, "the pane never died");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     /// Split a second pane into `pane`'s window, holding a process that is
     /// no harness, as an `after-new-window` hook that splits the fresh
     /// window would leave it. Returns the new pane's id.

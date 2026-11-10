@@ -1510,7 +1510,8 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
     }
     // `None` is the pane id gone from the very server the record names,
-    // confirmed by pid and start: no session runs in a pane that is gone.
+    // confirmed by pid and start, or kept there dead after its process
+    // exited: no session runs in a pane that is gone or dead.
     let (reads, pane_pid) =
         match (pass.readers.pane)(record.server, record.server_start, &record.pane) {
             Reading::Live(fields) => {
@@ -1531,7 +1532,10 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
                     Some(fields.pid),
                 )
             }
-            Reading::Gone => (None, None),
+            Reading::Gone
+            | Reading::Unreadable {
+                cause: host::tmux::PANE_DEAD,
+            } => (None, None),
             Reading::Unreadable { cause } => {
                 return judged(
                     Verdict::Unreadable {

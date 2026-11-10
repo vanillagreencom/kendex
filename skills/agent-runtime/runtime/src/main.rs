@@ -774,17 +774,42 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 Some(_) | None => None,
             };
             let launched_at = clock::now();
-            // A `new-window` that started and gave no answer may have opened
-            // the window, and names no pane a record could hold: the refusal
-            // says so, with the session and the window's name to find it by.
             let pane = match tmux::new_window(&server, &session, &window_name, &intent.cwd) {
                 Ok(pane) => pane,
-                Err(
-                    e @ Error::External {
-                        operation: "new-window",
-                        ..
-                    },
-                ) => {
+                // A `new-window` that failed after its window opened named
+                // the pane, which holds only its shell and no record names:
+                // it is closed by its exact id, as a failed record write
+                // closes it below.
+                Err(tmux::WindowFailed {
+                    error,
+                    opened: Some(pane),
+                }) => {
+                    return Err(match tmux::kill_window(&pane) {
+                        Close::Closed | Close::AlreadyGone => error,
+                        Close::Unreadable { cause } => Error::refused(
+                            "launch-window-unclosed",
+                            &[
+                                ("cause", error.key()),
+                                ("close", &cause),
+                                ("session", &pane.session),
+                                ("window", &pane.window),
+                                ("pane", &pane.id),
+                            ],
+                        ),
+                    });
+                }
+                // A `new-window` that started and gave no answer may have
+                // opened the window, and names no pane a record could hold:
+                // the refusal says so, with the session and the window's name
+                // to find it by.
+                Err(tmux::WindowFailed {
+                    error:
+                        e @ Error::External {
+                            operation: "new-window",
+                            ..
+                        },
+                    opened: None,
+                }) => {
                     return Err(Error::refused(
                         "launch-window-unanswered",
                         &[
@@ -794,7 +819,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         ],
                     ));
                 }
-                Err(e) => return Err(e),
+                Err(tmux::WindowFailed {
+                    error,
+                    opened: None,
+                }) => return Err(error),
             };
             let rec = LaunchRecord {
                 harness: intent.harness,

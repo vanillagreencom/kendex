@@ -267,7 +267,8 @@ impl Operation<'_> {
     /// line, which registers the pane by its receipt and `exec`s the harness.
     /// The `window-opened` phase written after the line is typed carries the
     /// receipt as standing until it is read. A window
-    /// whose line could not be typed has its one pane closed again by exact
+    /// whose line could not be typed, or whose `new-window` failed after
+    /// printing its pane, has its one pane closed again by exact
     /// id and that close discharged by its own answer.
     pub(in crate::effects) fn open_window(
         &mut self,
@@ -300,10 +301,19 @@ impl Operation<'_> {
         self.record_phase(Phase::Opening {
             opening: asked.clone(),
         })?;
-        let pane = match tmux::new_window(server, session, name, &command.cwd) {
-            Ok(pane) => pane,
-            Err(refusal) => {
-                return Ok(Err(OpenRefusal::Unanswered { refusal }));
+        // A failure that printed its pane opened a window nothing will type
+        // into: it is recorded as any opened pane is, then closed below.
+        let (pane, failed) = match tmux::new_window(server, session, name, &command.cwd) {
+            Ok(pane) => (pane, None),
+            Err(tmux::WindowFailed {
+                error,
+                opened: Some(pane),
+            }) => (*pane, Some(error)),
+            Err(tmux::WindowFailed {
+                error,
+                opened: None,
+            }) => {
+                return Ok(Err(OpenRefusal::Unanswered { refusal: error }));
             }
         };
         self.obligations.replace(
@@ -326,23 +336,28 @@ impl Operation<'_> {
                 ..asked
             },
         })?;
-        let line = receipt::launch_line(&receipt_path, &self.intent_id, command);
-        if let Err(refusal) = tmux::send_line(&pane, &line) {
-            // An unsuccessful send reply does not prove the line never ran:
-            // the host may have delivered the paste and Enter before it
-            // returned the error, so the line could have written the receipt
-            // and exec'd the harness. The pane, standing since `new-window`
-            // was recorded, is closed by its token; then the receipt is read,
-            // not assumed absent, so a receipt that stands discharges itself
-            // and leaves its registered pid an obligation the close did not
-            // settle.
-            if let Ok(token) = self.standing_pane(pane.clone()) {
-                let _ = self.close_pane(token)?;
+        let refusal = match failed {
+            Some(error) => error,
+            None => {
+                let line = receipt::launch_line(&receipt_path, &self.intent_id, command);
+                match tmux::send_line(&pane, &line) {
+                    Ok(()) => return Ok(Ok(pane)),
+                    Err(refusal) => refusal,
+                }
             }
-            self.read_receipt()?;
-            return Ok(Err(OpenRefusal::LineUnsent { refusal }));
+        };
+        // The pane, standing since it was recorded, is closed by its token;
+        // then the receipt is read, not assumed absent: an unsuccessful send
+        // reply does not prove the line never ran, since the host may have
+        // delivered the paste and Enter before it returned the error, so the
+        // line could have written the receipt and exec'd the harness. A
+        // receipt that stands discharges itself and leaves its registered
+        // pid an obligation the close did not settle.
+        if let Ok(token) = self.standing_pane(pane.clone()) {
+            let _ = self.close_pane(token)?;
         }
-        Ok(Ok(pane))
+        self.read_receipt()?;
+        Ok(Err(OpenRefusal::LineUnsent { refusal }))
     }
 
     /// Read the pane's receipt where it still stands: a

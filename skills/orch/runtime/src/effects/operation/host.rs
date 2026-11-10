@@ -227,10 +227,14 @@ pub(in crate::effects) fn unanswering(server: u64, process_start: Option<&str>) 
     }
 }
 
-/// The pane `id` on a server that answered, by its exact id.
+/// The pane `id` on a server that answered, by its exact id. A pane the
+/// server keeps after its process exited still stands, with a window to
+/// close; a reader of its process reads it `pane-dead`.
 pub(super) fn observe_fields(server: &Server, id: &str) -> Observed<Pane> {
-    match tmux::pane_fields(server, id) {
-        Reading::Live(fields) => Observed::Present(fields.pane),
+    match tmux::pane_state(server, id) {
+        Reading::Live(
+            tmux::PaneState::Running(tmux::PaneFields { pane, .. }) | tmux::PaneState::Dead(pane),
+        ) => Observed::Present(pane),
         Reading::Gone => Observed::Gone { cause: "pane-gone" },
         Reading::Unreadable { cause } => Observed::Unobservable { cause },
     }
@@ -309,7 +313,8 @@ fn overseer_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
 /// The proof for a predecessor whose record carries no identity:
 /// `exit.run.generation` equal to the record's generation, else the recorded
 /// pane read gone by exact id on the server the record names at its recorded
-/// pid and start, or read there holding no harness by the names of `target`,
+/// pid and start, kept there dead after its process exited, or read there
+/// holding no harness by the names of `target`,
 /// the recorded harness. Another server on that socket, no server, or a
 /// record naming no server, start or pane proves nothing; with no recorded
 /// harness a listed pane stands, since nothing names what would run in it.
@@ -343,11 +348,14 @@ pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target
     };
     match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
-            match tmux::pane_fields(&answering, &pane) {
-                Reading::Live(fields) => match target {
+            match tmux::pane_state(&answering, &pane) {
+                Reading::Live(tmux::PaneState::Running(fields)) => match target {
                     Some(target) => standing_or_gone(fields.pid, target),
                     None => Proof::Standing { pid: fields.pid },
                 },
+                // The server keeps the pane after its process exited: no
+                // session runs in it.
+                Reading::Live(tmux::PaneState::Dead(_)) => Proof::Proven { by: "pane-dead" },
                 Reading::Gone => Proof::Proven { by: "pane-gone" },
                 Reading::Unreadable { cause } => Proof::Unreadable { cause },
             }

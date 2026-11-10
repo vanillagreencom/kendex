@@ -763,6 +763,32 @@ fn a_crash_inside_new_window_leaves_a_stray_that_is_never_adopted() {
     assert_eq!(server.panes(), panes, "the stray stands untouched");
 }
 
+/// A server whose `after-new-window` hook fails makes tmux exit non-zero
+/// after the launch's window opened and its pane was printed: the launch
+/// fails with tmux's refusal, the window closed by its exact id and
+/// nothing left standing on the server.
+#[test]
+fn a_new_window_whose_hook_fails_after_the_window_opened_leaves_no_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("tmux.conf");
+    std::fs::write(
+        &config,
+        "set-hook -g after-new-window 'run-shell \"exit 1\"'\n",
+    )
+    .unwrap();
+    let server = Server::start_with_config(dir.path(), "fleet", &config);
+    let panes = server.panes();
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-1", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["note"], "launch-line-unsent");
+    assert_eq!(observation["refusal"], "tmux-refused");
+    assert_eq!(report["lane"]["status"], "stopped", "{report}");
+    assert_eq!(server.panes(), panes, "the window is closed");
+}
+
 /// A close whose recorded pid runs under another start, with no pane
 /// recorded. The first reconcile reading is `unconfirmed` with `identity:
 /// stale`; a second, independent reading confirms the close, and the live
