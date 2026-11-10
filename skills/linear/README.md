@@ -36,7 +36,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_TEAM` | Team target for creates and writes that do not address an issue, and the one team whose issues `linear.sh` creates or changes; [SKILL.md § Team Target](SKILL.md#team-target) |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
 | `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of; under a declared label taxonomy, the agent labels it declares |
-| `LINEAR_REQUIRE_REACH` | Enforces the `Reached by:` and `Symptom:` lines at create. At create, on `issues update --description` or `--description-file`, and on `issues bulk-update --description`, refuses a `Post-merge:` Done-when box with an invalid release trigger or Deadline. The same writes refuse a body that does not open with nonempty quoted `> **Story:**` then `> **Why this matters:**` blocks after an optional `**Name, what you do:**` owner action line. A header line over 500 characters prints a `linear: advisory=issue-header-length` line on stderr, and the write proceeds. `issues update` judges a body equal to the stored one apart from a leading owner action line on that line's length alone. Authors and reviewers judge the prose; on when unset, off when empty |
+| `LINEAR_REQUIRE_REACH` | Require the issue opening and reach/symptom fields; on when unset, off when empty. [SKILL.md § Issue Creation Routing](SKILL.md#issue-creation-routing) owns the requirements. |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a rate-limited call, or of a query or attachment download answered 5xx or not at all, doubling after |
 | `LINEAR_JOURNAL_DIR` | Explicit absolute directory for a bounded observation session; unset or empty keeps collection off. See [request journal](references/request-journal.md). |
@@ -48,9 +48,9 @@ Set application credentials in `.env.local` unless `KENDEX_ENV_FILE` names anoth
 
 On a host with the real client pair, run `scripts/linear.sh auth-mint`. It prints `access_token` and `expires_at` (epoch seconds) as JSON and writes no files. The fleet publishes the token as `LINEAR_APP_TOKEN` to its secret store and replaces it before expiry. Keep one minting host.
 
-Without `LINEAR_APP_TOKEN`, the client pair keeps its minted token in a private per-user cache file, located and reused as [references/authentication.md § Client-pair token store](references/authentication.md#client-pair-token-store) describes. Token files an earlier version left under a checkout's `.cache/linear/oauth/` are stale; delete them.
+Client-pair token storage: [references/authentication.md § Client-pair token store](references/authentication.md#client-pair-token-store). Delete stale token files an earlier version left under a checkout's `.cache/linear/oauth/`.
 
-`KENDEX_USER_EMAIL` is kendex's own setting, not this skill's: the app's Customize tab writes it to the private env file (`.env.local` unless `KENDEX_ENV_FILE` names another), never to `kendex.settings.toml`. Use the address your Linear account signs in with; it is matched whole and without regard to case. Empty or absent assigns nobody. A worktree whose `WORKTREE_SYMLINKS` lists `.env.local` links that file to its main checkout, and a hosted lane receives a copy of the checkout's `.env.local` each time it is created, so a value set there reaches every lane of that checkout. A value exported only in the shell that starts the lanes does not: a local lane's tmux pane takes its environment from the tmux server, not from that shell.
+Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The app's Customize tab writes it to the private env file, never to `kendex.settings.toml`. Matching ignores case and uses the whole address. Empty or absent assigns nobody.
 
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
 

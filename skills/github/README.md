@@ -31,23 +31,9 @@ Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess star
 
 Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in `.env.local`. A value set in the parent process wins over project files.
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `GH_TOKEN` / `GITHUB_TOKEN` | Pre-resolved token from the parent process | `gh` auth |
-| `GH_BOT_TOKEN` | Bot account token, literal or `op://vault/item/field` | `GH_TOKEN` / `GITHUB_TOKEN`, then `gh` auth |
-| `GH_BOT_USERNAME` | Bot login used when filtering reviews and comments | `review-bot[bot]` |
-| `GH_ISSUE_PATTERN` | Regex extracting an issue id from a branch name | `[A-Z]+-[0-9]+` |
-| `GH_VERIFY_CMD` | Build and test command for `pr-cross-check --verify` | `verify.sh` in the project root, else auto-detect |
-| `KENDEX_GITHUB_OP_TIMEOUT` | Seconds allowed for `op read` | `10` |
-| `KENDEX_GITHUB_AUTH_TIMEOUT` | Seconds allowed for the `pr-view` auth preflight | `10` |
-| `KENDEX_GITHUB_PR_VIEW_TIMEOUT` | Seconds allowed for `gh pr view` | `30` |
-| `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention | `900` |
-| `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never` or `always` for `git-https-auth` | `auto` |
-| `ORCH_GH_READ_TOKEN_FILE` | When set, `git-https-auth` gives HTTPS github.com targets gh's credential helper and clears an inherited `http.https://github.com/.extraheader` on every call it sends there | unset |
+Authenticate `gh`, or supply `GH_TOKEN` / `GITHUB_TOKEN`. Set `GH_BOT_TOKEN` for a separate bot account, as a literal token or an `op://vault/item/field` reference.
 
-The three timeouts are read to one decimal place; `0` means no bound, and a finer figure is refused rather than rounded.
-
-Auto-detect builds and tests a Rust workspace on its `agent` Cargo profile when the root manifest declares `[profile.agent]` and `python3` with `tomllib` is on the host; otherwise it keeps `--release`.
+Choose the review bot login, issue-id pattern and verification command in [kendex.settings.toml.example](kendex.settings.toml.example). That file also declares the command timeouts and watcher wait. Use `github.sh --help`, `pr-watch.sh --help` and `git-https-auth --help` for command behavior and defaults. The HTTPS helper's help covers `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` and the credential boundary selected by `ORCH_GH_READ_TOKEN_FILE`.
 
 ## Licence
 

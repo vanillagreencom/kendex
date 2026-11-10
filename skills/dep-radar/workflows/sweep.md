@@ -12,7 +12,7 @@ Run when performing a dependency sweep. Read the [operating policy](../SKILL.md#
 
 ## Phase 1: detect
 
-Read `docs/dep-radar/last-seen.json` (create if absent) and run each surface's upstream check. If nothing moved since last-seen, update `checked_at`, write a one-line report, and stop.
+Read `tmp/dep-radar/last-seen.json` (create if absent) and run each surface's upstream check. If nothing moved since last-seen, update `checked_at`, write a one-line report, and stop.
 
 ## Phase 2: research
 
@@ -30,6 +30,6 @@ A blocker mid-apply or a failed verification stops the surface and makes it a re
 
 ## Phase 5: report
 
-Update `docs/dep-radar/last-seen.json` with each checked surface's observed version and `checked_at`. Commit that state and any Phase 0 inventory changes through the repository's existing review and merge route.
+Update `tmp/dep-radar/last-seen.json` with each checked surface's observed version and `checked_at`. Keep these observations uncommitted. Submit any Phase 0 declarative inventory changes through the repository's existing review and merge route.
 
 Write `tmp/dep-radar/report-<YYYY-MM-DD>.md`: auto-applied bumps with PR links; blocked bumps with exact error output; the owner-decision tier; new capabilities unlocked. Attach the report to the work item the run serves and cite it in the PR description or handoff. With no work item, give the owner the report through the current session. Do not commit dated reports under `docs/dep-radar/`. Each awaiting-decision item names the capability, what it unlocks, estimated effort and risk, and a recommendation.

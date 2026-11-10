@@ -79,6 +79,8 @@ A linked worktree carries its own `kendex-local.toml`, so a bare `kendex apply` 
 
 `cd crates/app && ../../ui/node_modules/.bin/tauri build --no-sign` is the default local bundle command. It bundles deb and rpm anywhere; the AppImage step needs FUSE2 for linuxdeploy.
 
+Keep the desktop binary `kendex-app` off `PATH` when packaging it beside the `kendex` CLI. Linux desktop entries use `StartupWMClass=kendex-app` to match its window.
+
 For a signed local bundle, use a dedicated signing env file with mode `600`. It holds only `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as `op://` references. It is neither `.env.local` nor the file `KENDEX_ENV_FILE` names. No skill script loads this dedicated file. Keep it outside the repository. If it must sit inside, it must already be git-ignored.
 
 From `crates/app`, run this command with the signing env file's absolute path:
@@ -93,4 +95,24 @@ The command inside each installer comes from an overlay under `crates/app/releas
 
 ## Release
 
-Cutting a release is the app-deploy skill, `.agents/skills/app-deploy/SKILL.md`; the package-manager recipes are `packaging/README.md`.
+Cutting a release follows [.agents/skills/app-deploy/SKILL.md](.agents/skills/app-deploy/SKILL.md). Version choice and notes follow the [release standard](changelog.d/README.md#release-standard). Install-channel choice and caveats are in [packaging/README.md](packaging/README.md).
+
+### Recipe pins
+
+After publishing the release, update the versions and checksums in the stable [Arch recipes](packaging/arch/) and [Homebrew recipes](packaging/homebrew/). Read their declarations for the files each pins. Use the release's checksums or hash its downloaded files; the source-based stable Arch recipe pins the tag's source tarball. Regenerate each changed Arch `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` in its package directory. `tools/check-aur-sync` checks agreement with the PKGBUILD before publication. Keep each Linux CLI checksum equal in the Homebrew formula and binary Arch recipe. Git-tracking Arch recipes compute their version at build time and need no release checksum bump.
+
+Keep an all-zero checksum for a new target until its first release fills it. Publish a recipe carrying that placeholder only with the release bump that fills it. Never send the placeholder to the tap or AUR ahead of that release.
+
+Land the pin bump on `main` only after publication. Homebrew checks placeholders but does not wait for release downloads; an early bump offers users an unavailable release. The AUR publisher defers a package while a pinned download is absent or has a different checksum. A stable draft's publication dispatches the main AUR publisher. The release workflow dispatches it explicitly for a candidate because `GITHUB_TOKEN` publication starts no release-event workflow.
+
+### Publishers
+
+Edit recipes in this repository. The publishers overwrite direct edits in the AUR or tap. Nix consumers fetch their pinned flake revision directly and need no publication step.
+
+Read [publish-aur.yml](.github/workflows/publish-aur.yml), [publish-homebrew.yml](.github/workflows/publish-homebrew.yml) and each tool's header for triggers, dispatch inputs, file sets and diagnostics. Preview without credentials with `tools/publish-aur --dry-run [package...]` or `tools/publish-homebrew --dry-run`. Publication and AUR key checks use the main-only `kendex` environment. A plain dry run uses no environment and keeps its selected branch.
+
+The AUR publisher defers a whole package with a placeholder, absent download or checksum mismatch. It fails on an unreachable host, unexpected HTTP status, unreadable recipe or missing named companion file. Git-source packages have no download deferral. A new AUR package is a first publication, not a failure. The weekly drift check compares only publishable packages; a deferred package may still differ. Homebrew defers each placeholder recipe independently; if both are deferred it pushes nothing.
+
+Store `AUR_SSH_PRIVATE_KEY` only in the `kendex` environment. It belongs to the maintaining AUR account `vanillagreen`: RSA 4096, fingerprint `SHA256:t8gSJ7RLCH3fyWUrv+wJqzDOyeXkGdhrDuyfVuu19Do`. Update this fingerprint on rotation. A real run proves the key before cloning; use the workflow's `check_key` dispatch for that proof alone. Locally, `tools/publish-aur --check-key KEYFILE` must identify the maintaining account. Set `AUR_SSH_KNOWN_HOSTS` to the `aur.archlinux.org` host key line only after checking the fingerprints on the Arch wiki's AUR page. A real run fails by name when either value is absent. `AUR_COMMIT_NAME` and `AUR_COMMIT_EMAIL` may override the author; their defaults belong to `tools/publish-aur::publish_one`.
+
+The Homebrew tap disables deploy keys. Give the fleet GitHub App contents-write permission on `vanillagreencom/homebrew-kendex` and store `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` only in the `kendex` environment. The publisher mints an installation token for that tap alone. Either missing secret fails before cloning.

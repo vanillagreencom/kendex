@@ -89,9 +89,7 @@ These are optional and available only to `SLACK_OWNERS`. An empty command settin
 
 Only configured command lines run. Failed commands show their cause without their output; unknown commands do not run. A command lost after acknowledgement is not recovered: type it again. `/report` avoids duplicate delivery only when Slack resends the same request id; stable ids on resends are an assumption, not a guarantee from Slack.
 
-Command output is bounded before it is read in full. A reply discloses a cut as `output cut at N bytes`. Successful stdout that exceeds the bound is withheld in full (`secret-check-incomplete`), because discarded output cannot pass whole-output secret checking. Stderr stays in the relay's local log. `slack --help` gives the capture bound and scoring diagnostics.
-
-On Linux, commands prefer themselves as OOM victims before starting; macOS keeps command support without this scoring. A real scoring failure refuses that command, not the relay. The installed service keeps surviving processes after an OOM kill. Neither measure guarantees relay survival or isolates command memory. A killed command reports its signal, not an inferred OOM cause or victim.
+Oversized command output can be cut or withheld in full. The reply names the cut or refusal. A failed command names its cause; a killed command reports its signal without claiming an OOM cause or victim. See `slack --help` for bounds and diagnostics, [the journal schema](schemas/journal.md) for relay records, and this package's `DEVELOPMENT.md` for maintainer details.
 
 To enable them on an app:
 
