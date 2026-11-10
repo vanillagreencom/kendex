@@ -384,7 +384,9 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// predate a carrier the catalog gained, which only that read sees. That
 /// refusal names what the read could not account for, since the read is
 /// of each catalog where it sits now, which an apply at the recorded
-/// revisions does not see.
+/// revisions does not see. Where no reading roots an installation and the
+/// read was short, the name test [`recorded_edges`] decides, since that
+/// read cannot see a carrier the record does not hold.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -409,13 +411,20 @@ fn kept_removed(
     let mut decisions = BTreeMap::new();
     roots(Facts::Recorded(&captured)).decide(&mut decisions);
     roots(Facts::Read(&read)).decide(&mut decisions);
+    let named = unread
+        .is_some()
+        .then(|| recorded_edges(lock, names, options));
     let mut kept = BTreeSet::new();
     for (key, decision) in decisions {
         match decision {
             Reach::Rooted => {
                 kept.insert(key);
             }
-            Reach::Unrooted => {}
+            Reach::Unrooted => {
+                if named.as_ref().is_some_and(|named| named.contains(&key)) {
+                    kept.insert(key);
+                }
+            }
             // Read whole, the catalogs decide: had they rooted it, the
             // root would have won.
             Reach::Missing(Unread::Held(_)) if unread.is_none() => {}
@@ -442,6 +451,33 @@ fn kept_removed(
         }
     }
     Ok(kept)
+}
+
+/// The selected installations whose record names an edge from something
+/// not going away: a requirer not named for removal, or a set not being
+/// uninstalled. A short read cannot see a carrier declared since the last
+/// readable apply, or a hold that kept a record whose installation went
+/// unread, so where no reading roots an installation this name test keeps
+/// the removal rather than lose it.
+fn recorded_edges(
+    lock: &Lock,
+    names: &[String],
+    options: &PlanOptions,
+) -> BTreeSet<(ItemKind, String)> {
+    lock.entries
+        .values()
+        .filter(|entry| {
+            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+        })
+        .filter(|entry| {
+            entry.reasons.iter().any(|reason| match reason {
+                Reason::Requested => false,
+                Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
+                Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
+            })
+        })
+        .map(|entry| (entry.kind, entry.name.clone()))
+        .collect()
 }
 
 fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::CoreError {

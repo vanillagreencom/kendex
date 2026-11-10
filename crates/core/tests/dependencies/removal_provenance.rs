@@ -38,6 +38,13 @@ const EXPLICIT_LEAVES: Row = Row {
     kind: None,
     suppressed: false,
 };
+const SAME_NAME_OTHER_KIND: Row = Row {
+    name: "same name different kind stays",
+    declarations: "[bundles.crew]\nsource = \"cat\"\nharnesses = [\"codex\"]\n[skills.judge]\nsource = \"cat\"\n",
+    removing: &["crew", "guards"],
+    kind: None,
+    suppressed: false,
+};
 
 fn rows() -> Vec<Row> {
     vec![
@@ -79,13 +86,7 @@ fn rows() -> Vec<Row> {
             suppressed: true,
         },
         EXPLICIT_LEAVES,
-        Row {
-            name: "same name different kind stays",
-            declarations: "[bundles.crew]\nsource = \"cat\"\nharnesses = [\"codex\"]\n[skills.judge]\nsource = \"cat\"\n",
-            removing: &["crew", "guards"],
-            kind: None,
-            suppressed: false,
-        },
+        SAME_NAME_OTHER_KIND,
     ]
 }
 
@@ -137,8 +138,13 @@ fn world(row: &Row) -> Fixture {
     f
 }
 
-fn expected(row: &Row) -> BTreeSet<(ItemKind, String)> {
-    let mut expected = if row.suppressed {
+fn expected(row: &Row, offline: bool) -> BTreeSet<(ItemKind, String)> {
+    // Offline no reading roots guards here and the skill judge's catalog
+    // reads short, so main's name test decides: the record's edge from
+    // the judge hook, which this removal does not name, keeps the
+    // suppression.
+    let suppressed = row.suppressed || (offline && row.name == SAME_NAME_OTHER_KIND.name);
+    let mut expected = if suppressed {
         BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
     } else {
         BTreeSet::new()
@@ -168,6 +174,11 @@ fn removed(f: &Fixture, names: &[&str], kind: Option<ItemKind>) -> BTreeSet<(Ite
         .collect::<Vec<_>>();
     let report = ops::remove(&f.env, &f.scope, &names, kind, false).unwrap();
     apply::execute(&f.env, &report.plan).unwrap();
+    suppressed(f)
+}
+
+/// The manifest's suppressions, one pair per kind and name.
+fn suppressed(f: &Fixture) -> BTreeSet<(ItemKind, String)> {
     manifest_of(f)
         .suppressed
         .into_iter()
@@ -184,7 +195,7 @@ fn check(row: &Row, offline: bool) {
     }
     assert_eq!(
         removed(&f, row.removing, row.kind),
-        expected(row),
+        expected(row, offline),
         "{} offline={offline}",
         row.name
     );
@@ -260,7 +271,7 @@ fn legacy_missing_ancestry_refuses_offline_until_a_readable_apply_records_it() {
             }
             assert_eq!(
                 removed(&f, row.removing, row.kind),
-                expected(&row),
+                expected(&row, offline),
                 "{} offline={offline}",
                 row.name
             );
@@ -301,7 +312,14 @@ fn captured_empty_is_proven_unrooted_and_a_missing_row_is_unknown() {
         if empty {
             let report = result.unwrap();
             apply::execute(&f.env, &report.plan).unwrap();
-            assert!(manifest_of(&f).suppressed.is_empty());
+            // The empty capture roots nothing and the catalog is
+            // unreadable, so main's name test decides: the record's edge
+            // from the judge hook, which this removal does not name,
+            // keeps the suppression.
+            assert_eq!(
+                suppressed(&f),
+                BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
+            );
         } else {
             assert!(matches!(
                 result,
@@ -610,8 +628,14 @@ fn a_rebound_catalog_or_removed_target_tool_cannot_root_recorded_ancestry() {
             )
             .unwrap();
             apply::execute(&f.env, &report.plan).unwrap();
-            assert!(
-                manifest_of(&f).suppressed.is_empty(),
+            // Neither reading roots guards and the read is short (the
+            // catalog missing at its path, or online without a rebind,
+            // a set no tool here can hold the hook for), so main's name
+            // test decides: the record's edge from the judge hook, which
+            // this removal does not name, keeps the suppression.
+            assert_eq!(
+                suppressed(&f),
+                BTreeSet::from([(ItemKind::Skill, "guards".to_owned())]),
                 "rebound={rebound} offline={offline}"
             );
         }
@@ -2093,5 +2117,81 @@ fn a_removal_resting_on_a_held_record_names_the_hold_and_the_step_that_ends_it()
             apply_now(&f);
             assert!(!lock_of(&f).entries.contains_key(row.gone), "{case}");
         }
+    }
+}
+
+/// dev requires github, declared from a second catalog. The person swaps
+/// dev for x, which requires github too, and the readable apply cannot
+/// read github's catalog: github, held because its source went unread,
+/// keeps its dev reason, and nothing marks its record held.
+#[allow(clippy::unwrap_used)]
+fn github_held_by_an_unread_source() -> Fixture {
+    let f = fixture("");
+    let other = f.source.with_file_name("other");
+    skill(&other, "github", "");
+    skill(&f.source, "x", "dependencies:\n  required: [github]\n");
+    fs::write(
+        f.project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.dev]\nsource = \"cat\"\n\n[skills.github]\nsource = \"other\"\n",
+            source_path(&f.source),
+            source_path(&other)
+        ),
+    )
+    .unwrap();
+    apply_now(&f);
+    edit_manifest(&f, |manifest| {
+        manifest.skills.remove("dev");
+        manifest
+            .skills
+            .insert("x".into(), manifest::ItemDecl::from_source("cat"));
+    });
+    let hidden = other.with_file_name("other-offline");
+    fs::rename(&other, &hidden).unwrap();
+    apply_now(&f);
+    fs::rename(&hidden, &other).unwrap();
+    let github = &lock_of(&f).entries["skill:github:claude"];
+    assert!(github.reasons.contains(&required_by("cat", "dev")));
+    assert!(!github.held_reading());
+    f
+}
+
+/// No reading roots the item and no catalog reads: the record cannot see
+/// a carrier declared since the last readable apply, or one a hold kept
+/// from it while the item's own source went unread. An edge the record
+/// names from something that stays keeps the removal, so the catalogs'
+/// return cannot put the item back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_offline_removal_no_reading_roots_keeps_an_edge_from_what_stays() {
+    type Unrooted = (&'static str, fn() -> Fixture);
+    let rows: [Unrooted; 2] = [
+        (
+            "hold behind an unread source",
+            github_held_by_an_unread_source,
+        ),
+        (
+            "carrier declared since the last readable apply",
+            declaration_swapped_for_a_set,
+        ),
+    ];
+    for (name, world) in rows {
+        let f = world();
+        let moved = hide_catalogs(&f);
+        let kept = removed(&f, &["github"], Some(ItemKind::Skill));
+        back(moved);
+        assert_eq!(
+            kept,
+            BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
+            "{name}"
+        );
+        apply_now(&f);
+        assert!(
+            !lock_of(&f)
+                .entries
+                .values()
+                .any(|entry| entry.kind == ItemKind::Skill && entry.name == "github"),
+            "{name}"
+        );
     }
 }
