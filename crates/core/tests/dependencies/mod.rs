@@ -291,11 +291,11 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
 /// nothing, so a choice of it is a finding and the declarations read
 /// incomplete rather than the choice dropping unsaid. One whose file will
 /// not read at all is not weighed: what it offers is unknown, so no choice
-/// of it is reported as unoffered, as on main.
+/// of it is reported as unoffered, and the declaration stays incomplete.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_chosen_extra_is_weighed_against_what_the_skill_offers() {
-    use kendex_core::engine::DeclarationStatus::{Complete, Incomplete};
+    use kendex_core::engine::DeclarationStatus::Incomplete;
     let rows: [(&str, &[u8], bool, kendex_core::engine::DeclarationStatus); 3] = [
         (
             "frontmatter reads",
@@ -313,7 +313,7 @@ fn a_chosen_extra_is_weighed_against_what_the_skill_offers() {
             "file not text",
             b"---\nname: dev\ndescription: the dev skill\ndependencies:\n  optional: [extra]\n---\nBody \xFF\xFE.\n",
             false,
-            Complete,
+            Incomplete,
         ),
     ];
     for (case, bytes, unoffered, expected) in rows {
