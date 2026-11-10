@@ -256,7 +256,7 @@ assert_eq "$home_answer_rc reason=$LANE_TRUST_REASON $(lane_codex_trusted "$HOME
 
 # The transcript store belongs to the ACCOUNT. The harness creates what is
 # missing under the home it is given, so a store absent when the home is built
-# would be created inside the private home, where open-terminal's relaunch scan
+# would be created inside the private home, where the relaunch scan
 # never looks: that scan reads `<account>/sessions`, and a rollout written
 # anywhere else is a resume that starts a fresh thread. The account's own is
 # made first, so the link loop links it like any other name.
@@ -562,7 +562,7 @@ done <<'ROWS'
 history.jsonl|--resume
 ROWS
 
-# Removing only the managed policy reproduces the old setting-free launch:
+# Removing only the managed policy gives a setting-free launch:
 # the actual adapter still reads tokens, but cannot establish a window.
 MUTANT_MANAGED="$(mutant_scripts lane-launch-managed lib/lane-launch.sh)/lib/lane-launch.sh" || exit 1
 mutate_file "$MUTANT_MANAGED" 'compaction="$(launch_choice_compaction claude "")" || return 1' \
@@ -722,7 +722,7 @@ assert_eq "$(compaction_child "$MUTANT_LITERAL" prefix "codex -c model_auto_comp
 #
 # The launch choice table's two halves, pinned against each other:
 # lib/overseer-launch.sh's ol_launch_flags WRITES a session's flags with
-# launch_choice_write, and open-terminal READS a launch's choices back with
+# launch_choice_write, and a launcher READS a launch's choices back with
 # launch_choice_value and launch_choice_effort. A word one half writes that
 # the other cannot find is a launch whose model and effort the launch gate
 # never sees. Each row is written and read back here, every harness the
@@ -761,7 +761,7 @@ assert_eq "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(mi
   ";|;|;|;|;" \
   "control: those words spelt as ones no row names read back neither choice"
 
-# The same table's effort spellings, which open-terminal prints in its
+# The same table's effort spellings, which a launcher prints in its
 # launch-effort-missing refusal and whose EMPTINESS is that launcher's whole
 # answer to "is this launch asked for an effort at all". An accessor that handed
 # back the `-` sentinel would print it in that refusal and ask a harness with no

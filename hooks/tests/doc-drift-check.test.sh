@@ -29,14 +29,14 @@ observe() { # HOOK -> "rc=N out=<stdout> err=<stderr>"
 echo "=== doc-drift-check: retired stub ==="
 assert_eq "$(observe "$HOOK")" "rc=0 out= err=" "a stop passes silently"
 
-legacy_rc=0
-legacy_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
-  2>"$TMP_ROOT/writer-err")" || legacy_rc=$?
-assert_eq "rc=$legacy_rc out=$legacy_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
-  "control: the old payload writer fails the silent stop observation"
+piped_rc=0
+piped_out="$( { printf '%s' "$PAYLOAD" | bash "$HOOK" 2>"$TMP_ROOT/err"; } \
+  2>"$TMP_ROOT/writer-err")" || piped_rc=$?
+assert_eq "rc=$piped_rc out=$piped_out err=$(cat "$TMP_ROOT/err")" "rc=1 out= err=" \
+  "control: a writer piping the whole payload fails the silent stop observation"
 assert_eq "$(case "$(cat "$TMP_ROOT/writer-err")" in
   (*'printf: write error: Broken pipe'*) echo broken-pipe ;; (*) echo missing ;; esac)" broken-pipe \
-  "control: the old writer reports its broken pipe"
+  "control: that writer reports its broken pipe"
 
 PLANTED="$TMP_ROOT/doc-drift-check.sh"
 sed 's/^exit 0$/echo held; echo held >\&2; exit 2/' "$HOOK" >"$PLANTED"

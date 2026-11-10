@@ -868,14 +868,14 @@ wake_mutant account-headroom \
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
 expect 2 "lane-mail-check: headroom=50 bucket=five_hour mark=3" \
-  "control: the old account field reports 50 for the binding bucket at 2"
+  "control: the headroom_pct field reports 50 for the binding bucket at 2"
 control_status=0
 (
   FAIL=0
   binding_refusal
   [ "$FAIL" -eq 0 ]
 ) > "$TMP_ROOT/binding-headroom.control.log" || control_status=$?
-assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects the old field read"
+assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects the headroom_pct field read"
 
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
@@ -3327,7 +3327,7 @@ install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 printf 'Step: waiting\n' > "$LANE/tmp/lane-status-KEN-104.md"
 stop
 assert_eq "RC=$RC keys=$(hook_keys)" "RC=2 keys=account=unlisted;idle=KEN-104" \
-  "control: the old mail-only judge holds a no-send turn that updated its status"
+  "control: a mail-only judge holds a no-send turn that updated its status"
 
 # Ignoring update time restores the content-only rule. The same text can be
 # written again when the wait continues, and must still report that turn.

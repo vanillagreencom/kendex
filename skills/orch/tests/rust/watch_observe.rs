@@ -1258,7 +1258,7 @@ fn a_codex_capacity_refusal_is_model_capacity_once() {
 /// `usage-limit` with the harness's own message under it; no rows at all
 /// settles nothing.
 #[test]
-fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
+fn a_pi_lane_is_judged_from_its_rows_as_the_released_watch_judged_it() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
@@ -1334,7 +1334,7 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
 /// is `idle-after-return <lane> cause=<word>` once, with the pane's tail
 /// under it; an error that is no limit carries `cause=error`. The ordinary
 /// end `stop` is
-/// `a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it`.
+/// `a_pi_lane_is_judged_from_its_rows_as_the_released_watch_judged_it`.
 #[test]
 fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
     let dir = tempfile::tempdir().unwrap();

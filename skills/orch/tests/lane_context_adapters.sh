@@ -542,10 +542,10 @@ if section pre-panel; then
   # six-argument form before its attached panel, which keeps the reserve.
   claude_line claude-opus-5-5 300000 > "$T/panel-transcript"
   for form in five six; do
-    legacy=(claude s1 "$T/panel-transcript" "$PANEL_BOX" "$T")
-    [ "$form" = five ] || legacy+=("")
+    positional=(claude s1 "$T/panel-transcript" "$PANEL_BOX" "$T")
+    [ "$form" = five ] || positional+=("")
     rc=0
-    out=$(panel_run "${legacy[@]}") || rc=$?
+    out=$(panel_run "${positional[@]}") || rc=$?
     assert_eq "rc=$rc verdict=$out" "rc=0 verdict=due" \
       "unflagged $form-argument pre-panel 300000 of 1000000: due" "$T/panel.err"
   done
@@ -637,11 +637,11 @@ if section codex-alternate; then
     esac
     args=(--reading)
     case "$operation" in
-      legacy-five | legacy-six) ;;
+      positional-five | positional-six) ;;
       *) args+=("--$operation") ;;
     esac
     args+=(codex s1 "$transcript" "$PANEL_BOX" "$T")
-    [[ "$operation" != legacy-six ]] || args+=("")
+    [[ "$operation" != positional-six ]] || args+=("")
     rc=0
     out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$PANEL_HOME/codex" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
       ORCH_COMPACTION_OVERRIDES="$overrides" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS="$reserve" \
@@ -670,8 +670,8 @@ sol-successor|gpt-6.1-sol|283010|475000|attached-launch|known|150000|0:alternate
 sol-plain-reading|gpt-6.1-sol|319607|475000|attached-launch|known|150000|0:alternate-review
 sol-before-cap|gpt-6.1-sol|399999|475000|attached-launch|known|150000|0:alternate-review
 sol-at-cap|gpt-6.1-sol|400000|475000|attached-launch|known|150000|0:due
-luna-legacy-five|gpt-6-luna|84140|258400|legacy-five|known|150000|0:due
-luna-legacy-six|gpt-6-luna|84140|258400|legacy-six|known|150000|0:due
+luna-positional-five|gpt-6-luna|84140|258400|positional-five|known|150000|0:due
+luna-positional-six|gpt-6-luna|84140|258400|positional-six|known|150000|0:due
 luna-checkpoint|gpt-6-luna|84140|258400|checkpoint|known|150000|0:room
 luna-checkpoint-equal|gpt-6-luna|232560|258400|checkpoint|known|150000|0:room
 luna-checkpoint-due|gpt-6-luna|232561|258400|checkpoint|known|150000|0:due

@@ -1400,7 +1400,7 @@ cmd_prune() {
     # open keeps that state for a later resume, and only the item's close-out
     # takes it. The worktree a state names is the linked one git-context
     # lane-worktree resolves from its worktree and branch fields, as
-    # round-prune reads it, never the main checkout. A state past the
+    # the `prune-round` request reads it, never the main checkout. A state past the
     # retention that names no such worktree is an item nothing resumes, one a
     # close-out never reached, and it ages out with its files.
     local recent wt branch

@@ -1857,7 +1857,7 @@ mod tests {
     /// The run capture: the digits after `/actions/runs/`,
     /// wherever the link puts them.
     #[test]
-    fn a_run_is_read_out_of_an_actions_link_as_the_legacy_read_it() {
+    fn a_run_is_read_out_of_an_actions_link() {
         let rows = [
             ("https://github.com/o/r/actions/runs/700/job/4", Some(700)),
             ("https://github.com/o/r/actions/runs/700", Some(700)),

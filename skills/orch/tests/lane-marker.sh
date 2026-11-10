@@ -70,7 +70,7 @@ assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
 assert_eq "$(mark KEN-1)" "rc=0 first=- marker=root box=made" \
   "a second launch of the same item leaves both standing"
 
-# SSH create writes native launch fields. A later local open-terminal call
+# SSH create writes native launch fields. A later local launch
 # supplies no fields, so the owner must remove the predecessor's record.
 new_tree launch-fields
 LAUNCH_JSON='{"model":"claude-fable-5-1","identity_file":"/srv/clone/.git/lane-host-pid"}'

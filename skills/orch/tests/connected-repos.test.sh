@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Tests for `orch_connected_repos` in lib/gh-repo.sh, the one reader of
 # ORCH_CONNECTED_REPOS: oversee-watch and oversee-report append what it prints
-# after their --repo values, and open-terminal's overseer_bind matches a launch
-# checkout's origin against it. It prints each listed OWNER/REPO lowercased,
+# after their --repo values, and a launch matches its checkout's origin
+# against it. It prints each listed OWNER/REPO lowercased,
 # one per line, skipping one an argument names in any casing and one an
 # earlier entry repeats, and returns 1 when orch-env cannot read the setting.
 #

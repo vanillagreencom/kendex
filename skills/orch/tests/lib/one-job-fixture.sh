@@ -151,7 +151,7 @@ one_job_stage_gh() { # NUMBER BODY_FILE
   local body
   body="$(cat -- "$2")"
   gh_stub_answer 'pr-list' ''
-  # The admission's open pull requests of the repository (decision 165), the
+  # The admission's open pull requests of the repository, the
   # REST list the runtime pages: none.
   gh_stub_answer 'api-repos/owner/repo/pulls?state=open&per_page=100&page=1' '[]'
   gh_stub_answer "issue-view:number,title,body,url,labels,state" \

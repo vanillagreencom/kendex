@@ -1,4 +1,4 @@
-//! The `read-proof` verb (U6b, step6-map § A2): one item's validate stages
+//! The `read-proof` verb: one item's validate stages
 //! and recorded restack skips read through `ops::proof`, the one reader,
 //! under the project's declaration from the settings. The read records
 //! nothing. The one process it may start is `git rev-parse` in the item's

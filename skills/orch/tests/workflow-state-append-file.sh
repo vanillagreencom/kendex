@@ -388,7 +388,7 @@ finding_case() { # STATE_BIN MODE TAG
     replay) jq '.records[1].source.identity=.records[0].source.identity' "$batch" > "$batch.new"; mv "$batch.new" "$batch" ;;
     unbound) jq 'del(.records[1].source.identity)' "$batch" > "$batch.new"; mv "$batch.new" "$batch" ;;
     request-unbound) printf '[{"kind":"review","location":"TBD"}]\n' > "$requests" ;;
-    legacy) "$bin" --state-dir "$sd" update KEN-F 'del(.finding_occurrences)' ;;
+    older-format) "$bin" --state-dir "$sd" update KEN-F 'del(.finding_occurrences)' ;;
     gap) printf '{"records":[],"unknown":true}\n' > "$batch.gap"
       "$bin" --state-dir "$sd" findings record KEN-F "$batch.gap" ;;
     validation|other-check)
@@ -414,7 +414,7 @@ distinct|none	1	1
 owner|none	2	2
 replay|none	1	1	[{"round_id":"R1","artifact":"tmp/review-a.json","identity":["native","inline","N1"]}]
 unbound|unknown	1	1
-legacy|unknown	2	2
+older-format|unknown	2	2
 gap|unknown	2	2
 request-unbound|unknown		0
 validation|none	2	2

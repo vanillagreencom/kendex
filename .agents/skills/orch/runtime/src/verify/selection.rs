@@ -1,101 +1,88 @@
-//! The selection stage (decision 107 (2)): which members of the validated
-//! `Evidence` the verdict considers and which runs its correlation reads.
-//! `select` is a pure function `Evidence → Selection`, a port of the whole
-//! legacy `scope_current_run` (HEAD `ci-run-correlation.sh:123-209`), of
-//! the required-definition walk and bound required-job membership of
-//! `required_contexts` (`:345-363, 420-508`, `:108-120`) and of the failed
-//! required workflow's placeholders (`ci-wait:908-911, 1023`); the
-//! classification stage (`judge`) reads the selected members only.
+//! The selection stage: which members of the validated `Evidence` the
+//! verdict considers and which runs its correlation reads. `select` is a
+//! pure function `Evidence → Selection`: the rollup's reduction, the
+//! required-definition walk and bound required-job membership, and a failed
+//! required workflow's placeholders; the classification stage (`judge`)
+//! reads the selected members only.
 //!
-//! The port, in the legacy's order:
+//! The stage, in order:
 //!
-//! 1. The rollup (`eliminate_duplicates`): what `gh pr checks` printed to
-//!    the legacy, gh's reduction of the head's check runs and statuses
-//!    transcribed (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:95-119`): the
+//! 1. The rollup (`eliminate_duplicates`): gh's reduction of the head's
+//!    check runs and statuses, as `gh pr checks` prints it, transcribed
+//!    (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:95-119`): the
 //!    contexts sorted by `StartedAt`, newest first, then one per status
 //!    context and one per slash-joined `name/workflow/event` string, the
 //!    first in that order kept. The contexts are the commit's check runs
 //!    and status contexts (GraphQL `StatusCheckRollup.contexts`, "A list
 //!    of status contexts and check runs for this commit"), the `filter=all`
 //!    read and the combined status here. Every check run was validated
-//!    before this reduction (`evidence`). correction (decisions 117 (3),
-//!    122 (1)): gh's `sort.Slice` documents no order among equal starts
-//!    ("The sort is not guaranteed to be stable: equal elements may be
-//!    reversed from their original order"), and its input was GitHub's one
-//!    union connection of check runs and statuses in an order no
-//!    documentation fixes (gh `api/query_builder.go:284`, `checks.go:290`),
-//!    so the legacy's answer on contexts started alike was order-dependent,
-//!    not a rule to preserve. The port reads nothing to import that order;
-//!    it fixes the tie over its own validated evidence: among equal starts
-//!    the member with the later position in the port's evidence listing
-//!    sorts first, then the higher check-run id. That listing, the
-//!    correction's domain, is the `filter=all` read's members in the order
-//!    the endpoint listed them, then the combined status's contexts in
-//!    their listed order; every member carries its position in it
-//!    (`Context::order`). Three legacy picks consume that one order, each
-//!    as the legacy did: gh's deduplication keeps the first of it (step
-//!    1), the run-status pick (step 5) and the run-less deduplication
-//!    (step 6) keep the last of it. A check run GitHub
-//!    listed for the head and gh's rule dropped is not read again here;
-//!    the bound-job list of step 7 is the suite's own listing, apart from
-//!    this rollup, as the legacy read it (decision 114 (1)).
-//! 2. Placement (lib `:137-139`), from the two reads the legacy made of an
-//!    entry: the run its link names (`runid`, `:81-84`; the link is the
-//!    check run's `details_url`, gh `aggregate.go:51`) and the workflow
-//!    name its suite's run carries (`workflow`, `gh pr checks`'s
-//!    `checkSuite.workflowRun.workflow.name`). A linked entry with a
-//!    workflow name is a job of that run under that name; a linked entry
-//!    with none is a run status; an unlinked entry is run-less. The
-//!    association the evidence read (`Association`) travels with the
-//!    member and is read by the classification alone.
-//! 3. Run rank per workflow name (`:140-160`): a run's jobs grouped by run
-//!    under the workflow name the rollup showed, so two workflow files
-//!    sharing a name are one group (decision 110 (2); grouping by
-//!    `workflow_id` is a candidate correction, not taken); ranked by
-//!    `[last job start, run id]` when every run of the group is settled and
-//!    dated, else by `["", run id]`.
-//! 4. Selected runs (`:161-170`): a required workflow's bound runs are kept
-//!    whatever their rank; the pick is the top-ranked substantive run, or
-//!    the top-ranked run when every run is all-skipped. Jobs of other runs
-//!    are dropped.
-//! 5. Run statuses (`:173-204`): the latest per name by run id (jq's
-//!    `max_by` keeps the last maximal entry, so among equal run ids the
+//!    before this reduction (`evidence`). gh's `sort.Slice` documents no
+//!    order among equal starts ("The sort is not guaranteed to be stable:
+//!    equal elements may be reversed from their original order"), and its
+//!    input is GitHub's one union connection of check runs and statuses in
+//!    an order no documentation fixes (gh `api/query_builder.go:284`,
+//!    `checks.go:290`), so gh's answer on contexts started alike is
+//!    order-dependent. The stage reads nothing to import that order; it
+//!    fixes the tie over its own validated evidence: among equal starts the
+//!    member with the later position in the evidence listing sorts first,
+//!    then the higher check-run id. That listing is the `filter=all` read's
+//!    members in the order the endpoint listed them, then the combined
+//!    status's contexts in their listed order; every member carries its
+//!    position in it (`Context::order`). Three picks consume that one
+//!    order: gh's deduplication keeps the first of it (step 1), the
+//!    run-status pick (step 5) and the run-less deduplication (step 6)
+//!    keep the last of it. A check run GitHub listed for the head and gh's
+//!    rule dropped is not read again here; the bound-job list of step 7 is
+//!    the suite's own listing, apart from this rollup.
+//! 2. Placement, from two reads of an entry: the run its link names
+//!    (`runid`; the link is the check run's `details_url`, gh
+//!    `aggregate.go:51`) and the workflow name its suite's run carries
+//!    (`workflow`, `gh pr checks`'s `checkSuite.workflowRun.workflow.name`).
+//!    A linked entry with a workflow name is a job of that run under that
+//!    name; a linked entry with none is a run status; an unlinked entry is
+//!    run-less. The association the evidence read (`Association`) travels
+//!    with the member and is read by the classification alone.
+//! 3. Run rank per workflow name: a run's jobs grouped by run under the
+//!    workflow name the rollup showed, so two workflow files sharing a name
+//!    are one group; ranked by `[last job start, run id]` when every run of
+//!    the group is settled and dated, else by `["", run id]`.
+//! 4. Selected runs: a required workflow's bound runs are kept whatever
+//!    their rank; the pick is the top-ranked substantive run, or the
+//!    top-ranked run when every run is all-skipped. Jobs of other runs are
+//!    dropped.
+//! 5. Run statuses: the latest per name by run id (among equal run ids the
 //!    later entry of step 1's order wins: the earlier-listed member among
 //!    equal starts); an aggregate (run-level link) whose run ranks below a
 //!    selected run of its source group with no failed job is rewritten
 //!    `expected`, pending, while that newer run publishes its own.
-//! 6. Run-less members (`:205`): deduplicated by name, the latest start
-//!    winning, the later entry of step 1's order on an equal start (the
-//!    earlier-listed member).
-//! 7. The required-definition walk (`:363, 420-508`, `walk` and `bind`):
-//!    the definitions in their sorted order, each bound to the candidates
-//!    whose proof names the definition's repository (by the looked-up id),
-//!    path and pinned sha, no candidate claimed by an earlier definition;
-//!    the current execution per workflow among them. The first definition
-//!    that is not ready ends the walk: unresolved (no proven candidate, an
-//!    unproven one, no current execution, one unfinished, one without a
-//!    suite, a bound run with no linked job, an ambiguous source) holds the
-//!    requirement `expected`, the one member the legacy reported before it
-//!    scoped anything (`ci-wait:899-906`); a current execution concluded
-//!    outside success, neutral and skipped fails, and the failed runs
-//!    replace the rollup as the legacy's placeholders did
-//!    (`ci-wait:908-911`), one entry per failed run named alike, which the
-//!    scoping then reduces to the greatest run id (`ci-wait:1023`, lib
-//!    `:173-175`). A bound run's jobs are the legacy's suite read
-//!    (`:489-495`): the suite's check runs as GitHub listed them under its
-//!    default `filter=latest`, each by `name` and `html_url`, the server's
-//!    selection consumed and never re-derived (`bound_jobs`, decision 117
-//!    (1)).
-//! 8. The considered set and the correlation's runs (`ci-wait:744-755`,
-//!    lib `:108-120`): under a required set that names anything, each
-//!    named context's members or `expected`, every member whose link is a
-//!    bound job's link by equality (the rollup's `details_url` or status
-//!    target against the suite read's `html_url`, `:112`, unequal where
-//!    GitHub's two URLs differ), each bound job whose link the scoped
-//!    rollup lacks as `expected` (`missing_required`, `:114-120`); the runs
-//!    are the bound runs and the runs of every workflow a named context's
-//!    member ran in. Otherwise every member and every run (the legacy
-//!    `all_checks`).
+//! 6. Run-less members: deduplicated by name, the latest start winning, the
+//!    later entry of step 1's order on an equal start (the earlier-listed
+//!    member).
+//! 7. The required-definition walk (`walk` and `bind`): the definitions in
+//!    their sorted order, each bound to the candidates whose proof names
+//!    the definition's repository (by the looked-up id), path and pinned
+//!    sha, no candidate claimed by an earlier definition; the current
+//!    execution per workflow among them. The first definition that is not
+//!    ready ends the walk: unresolved (no proven candidate, an unproven
+//!    one, no current execution, one unfinished, one without a suite, a
+//!    bound run with no linked job, an ambiguous source) holds the
+//!    requirement `expected`, the one member reported, before anything is
+//!    scoped; a current execution concluded outside success, neutral and
+//!    skipped fails, and the failed runs replace the rollup as placeholders,
+//!    one entry per failed run named alike, which the scoping then reduces
+//!    to the greatest run id. A bound run's jobs are the suite's check runs
+//!    as GitHub listed them under its default `filter=latest`, each by
+//!    `name` and `html_url`, the server's selection consumed and never
+//!    re-derived (`bound_jobs`).
+//! 8. The considered set and the correlation's runs: under a required set
+//!    that names anything, each named context's members or `expected`,
+//!    every member whose link is a bound job's link by equality (the
+//!    rollup's `details_url` or status target against the suite read's
+//!    `html_url`, unequal where GitHub's two URLs differ), each bound job
+//!    whose link the scoped rollup lacks as `expected`
+//!    (`missing_required`); the runs are the bound runs and the runs of
+//!    every workflow a named context's member ran in. Otherwise every
+//!    member and every run.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,7 +97,7 @@ use super::{Bucket, CheckReport, Source};
 pub(super) struct Member {
     pub(super) report: CheckReport,
     pub(super) association: Association,
-    /// The run the member's link names, held or not (the legacy `runid`).
+    /// The run the member's link names, held or not.
     pub(super) linked: Option<u64>,
 }
 
@@ -152,8 +139,7 @@ pub(super) struct Selection<'a> {
     pub(super) absence: Option<AbsenceFacts>,
 }
 
-/// The current execution among one workflow's runs: the legacy
-/// `latest_workflow_attempt` (lib `:76-80`). The newest run by id is
+/// The current execution among one workflow's runs. The newest run by id is
 /// current unless a re-run (attempt above 1) of an older run started after
 /// it; among those the latest start wins, then the id. An old run
 /// finishing later never replaces a newer run.
@@ -167,7 +153,7 @@ pub(super) fn current_execution<'a>(group: &[&'a RunEvidence]) -> Option<&'a Run
 }
 
 /// One workflow's runs each, keyed by `workflow_id`: the Actions-run
-/// grouping of the legacy's run lists (lib `:470`, `ci-wait:764`).
+/// grouping of the head's runs.
 pub(super) fn by_workflow<'a>(runs: &[&'a RunEvidence]) -> BTreeMap<u64, Vec<&'a RunEvidence>> {
     let mut groups: BTreeMap<u64, Vec<&'a RunEvidence>> = BTreeMap::new();
     for run in runs {
@@ -176,7 +162,7 @@ pub(super) fn by_workflow<'a>(runs: &[&'a RunEvidence]) -> BTreeMap<u64, Vec<&'a
     groups
 }
 
-/// A member's place in the legacy's three lists.
+/// A member's place: a job, a run status, or run-less.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Place<'a> {
     /// A linked entry whose suite's run has a workflow name, under that
@@ -201,10 +187,10 @@ struct Entry<'a> {
     source: Source,
     state: &'static str,
     bucket: Bucket,
-    /// The legacy `startedAt`, `""` where unknown.
+    /// The check run's `startedAt`, `""` where unknown.
     started: &'a str,
     place: Place<'a>,
-    /// The legacy `link`: a check run's `details_url` or a status's
+    /// A check run's `details_url` or a status's
     /// target, matched by equality against a bound job's `html_url`.
     link: Option<&'a str>,
     association: Association,
@@ -232,7 +218,7 @@ impl Entry<'_> {
     }
 }
 
-/// The legacy's placement of an entry from its two reads (lib `:137-139`).
+/// The placement of an entry from its two reads.
 fn place<'a>(linked: Option<u64>, workflow: &'a str, run_level: bool) -> Place<'a> {
     match linked {
         None => Place::Runless,
@@ -241,7 +227,7 @@ fn place<'a>(linked: Option<u64>, workflow: &'a str, run_level: bool) -> Place<'
     }
 }
 
-/// One run's jobs with the legacy's per-run facts (lib `:144-152`).
+/// One run's jobs with its per-run facts.
 #[derive(Debug)]
 struct RunGroup {
     run: u64,
@@ -255,8 +241,8 @@ struct RunGroup {
 /// How one required definition binds to the head's runs.
 #[derive(Debug)]
 enum Binding<'a> {
-    /// Nothing proven yet, or evidence the legacy read as pending or
-    /// unreadable: the requirement is not met and the walk ends.
+    /// Nothing proven yet, or evidence that reads pending or unreadable:
+    /// the requirement is not met and the walk ends.
     Unresolved,
     /// A current execution concluded outside success, neutral and skipped.
     Failed(Vec<&'a RunEvidence>),
@@ -268,40 +254,26 @@ enum Binding<'a> {
     },
 }
 
-/// A bound run with its jobs as the legacy's suite read carried them
-/// (lib `:495`, `map({name, link: .html_url})`): each check run's name and
-/// page, the page matched by equality against the rollup's link for
-/// membership (`:112`) and for `missing_required` (`:119`).
+/// A bound run with its jobs as the suite read carries them: each check
+/// run's name and page, the page matched by equality against the rollup's
+/// link for membership and for `missing_required`.
 #[derive(Debug)]
 struct BoundRun<'a> {
     run: &'a RunEvidence,
     jobs: Vec<(&'a str, &'a str)>,
 }
 
-/// The suite's check runs the legacy's suite read returned for a bound run
-/// (lib `:489-496`):
-///
-/// ```bash
-/// if ! checks=$(gh api "repos/$path/check-suites/$suite/check-runs?per_page=100" --paginate --slurp 2>/dev/null) \
-///     || ! checks=$(jq -ce '
-///         [.[].check_runs[]] as $checks
-///         | if length > 0 and all(.[]; (.check_runs | type) == "array" and .total_count == ($checks | length))
-///              and all($checks[]; (.name | type) == "string" and (.name | length) > 0
-///                      and (.html_url | type) == "string" and (.html_url | length) > 0)
-///           then $checks | map({name, link: .html_url})
-///           else error("incomplete workflow checks") end' <<<"$checks" 2>/dev/null); then
-/// ```
-///
-/// The read names no `filter`, so GitHub answered its default, `latest`:
-/// "Filters check runs by their completed_at timestamp. latest returns the
-/// most recent check runs." (rest/checks/runs, the same words on "List
-/// check runs in a check suite"). The evidence stage made that read for
-/// the run's suite (`RequiredEvidence::suite_jobs`), and its answer is
-/// consumed here as the server gave it: which check run of a repeated name
-/// it returns is GitHub's selection, never re-derived from `completed_at`
-/// (decision 117 (1)). A member without a page is the legacy's `error`,
-/// unreadable; a run with no job is its `pending` (`:500-503`); either
-/// leaves the definition unresolved.
+/// The suite's check runs for a bound run: the evidence stage's read of
+/// `repos/{repo}/check-suites/{suite}/check-runs`, every page, each run
+/// with a non-empty `name` and `html_url` and the count equal to
+/// `total_count` (`RequiredEvidence::suite_jobs`). The read names no
+/// `filter`, so GitHub answered its default, `latest`: "Filters check runs
+/// by their completed_at timestamp. latest returns the most recent check
+/// runs." (rest/checks/runs, the same words on "List check runs in a check
+/// suite"). Its answer is consumed here as the server gave it: which check
+/// run of a repeated name it returns is GitHub's selection, never
+/// re-derived from `completed_at`. A member without a page is unreadable
+/// and a run with no job pending; either leaves the definition unresolved.
 fn bound_jobs<'a>(
     run: &RunEvidence,
     required: &'a RequiredEvidence,
@@ -342,10 +314,10 @@ impl Context<'_> {
     /// run's; none for a status, whose query reads no start,
     /// `api/query_builder.go:288-294`, and Go decodes a null as its zero
     /// time, which `After` orders before every date, as `None` orders
-    /// here), then the port's tie among equal starts (the module header's
-    /// correction): the later position in the port's evidence listing,
-    /// then the higher check-run id (decision 117 (3)'s second key, which
-    /// two members at one position would reach). `position` is the
+    /// here), then the tie among equal starts (the module header's tie
+    /// rule): the later position in the evidence listing, then the
+    /// higher check-run id, which two members at one position would reach.
+    /// `position` is the
     /// member's index in that listing: the `filter=all` members as the
     /// endpoint listed them, then the combined status's contexts.
     fn order(&self, position: usize) -> (Option<&str>, usize, u64) {
@@ -356,8 +328,7 @@ impl Context<'_> {
     }
 }
 
-/// The rollup the legacy read, gh's reduction of the head's contexts
-/// transcribed (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:95-119`):
+/// The rollup, gh's reduction of the head's contexts transcribed (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:95-119`):
 ///
 /// ```go
 /// // eliminateDuplicates filters a set of checks to only the most recent ones if the set includes repeated runs
@@ -390,12 +361,11 @@ impl Context<'_> {
 ///
 /// Go's `sort.Slice` is documented unstable ("equal elements may be
 /// reversed from their original order"), so gh's order among contexts
-/// started alike was whatever its input order and its sort left: not a
-/// rule the legacy stated. The port's order among them is `Context::order`
-/// over each member's position in the port's evidence listing (the module
-/// header's correction, decisions 117 (3) and 122 (1)). The key is gh's
-/// slash-joined string, so `build/CI` under workflow `tests` and `build`
-/// under `CI/tests` collide here as in gh (decision 117 (2)). A status's
+/// started alike is whatever its input order and its sort leave, no rule.
+/// The order among them here is `Context::order` over each member's
+/// position in the evidence listing (the module header's tie rule). The key
+/// is gh's slash-joined string, so `build/CI` under workflow `tests` and
+/// `build` under `CI/tests` collide here as in gh. A status's
 /// `Context` is its context; the combined status is already one per
 /// context (`evidence`), so that branch drops nothing.
 fn eliminate_duplicates(evidence: &Evidence) -> Vec<Context<'_>> {
@@ -427,7 +397,7 @@ fn eliminate_duplicates(evidence: &Evidence) -> Vec<Context<'_>> {
     unique
 }
 
-/// The walk over the definitions in their sorted order (lib `:363-508`):
+/// The walk over the definitions in their sorted order:
 /// the first unresolved or failed definition ends it.
 fn walk<'a>(required: &'a RequiredEvidence, evidence: &'a Evidence) -> Walk<'a> {
     let mut claimed: BTreeSet<u64> = BTreeSet::new();
@@ -448,14 +418,13 @@ fn walk<'a>(required: &'a RequiredEvidence, evidence: &'a Evidence) -> Walk<'a> 
     Walk::Ready(bound)
 }
 
-/// One definition's binding (lib `:380-504`): every candidate proven, the
+/// One definition's binding: every candidate proven, the
 /// one repository among the proofs' whose id is the definition's, the
 /// candidates whose file is the definition's path at its pinned sha in
 /// that repository and claimed by no earlier definition, then the current
-/// execution per workflow among them, judged as the legacy judged
-/// (`:469-475`): none or unfinished pends, a missing suite is unreadable,
-/// a failed conclusion fails, else the run's suite listing is its jobs
-/// (`:487-504`, `bound_jobs`), a run with none pending.
+/// execution per workflow among them, judged: none or unfinished pends, a
+/// missing suite is unreadable, a failed conclusion fails, else the run's
+/// suite listing is its jobs (`bound_jobs`), a run with none pending.
 fn bind<'a>(
     workflow: &RequiredWorkflowEvidence,
     required: &'a RequiredEvidence,
@@ -632,8 +601,7 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         .map(|b| b.run.id())
         .chain(failed_runs.iter().map(|r| r.id()))
         .collect();
-    // The bound jobs, `unique` as the legacy's `missing_required` left
-    // them (lib `:120`).
+    // The bound jobs, each once, as `missing_required` reports them.
     let bound_jobs: BTreeSet<(&str, &str)> =
         bound.iter().flat_map(|b| b.jobs.iter().copied()).collect();
     let bound_links: BTreeSet<&str> = bound_jobs.iter().map(|(_, link)| *link).collect();
@@ -774,8 +742,8 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         },
         Some(req) if !failed_runs.is_empty() => {
             // The placeholders are run statuses named alike; the scoping
-            // keeps the greatest run id (lib `:173-175`). The correlation
-            // still reads every failed run (`ci-wait:749`).
+            // keeps the greatest run id. The correlation still reads every
+            // failed run.
             let kept = failed_runs
                 .iter()
                 .max_by_key(|r| r.id())

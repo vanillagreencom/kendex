@@ -3,7 +3,7 @@
 # kernel records the harness's own process name for it: stub-confirm's
 # composer and session rows, with the hangup tmux sends on a pane or window
 # kill ignored, so the process survives its pane's close as a harness whose
-# pane was killed under it does (R-U4g2 C1, the receipted survivor). It
+# pane was killed under it does: a receipted survivor. It
 # launches no model and reaches no account; a row that started it ends it by
 # pid.
 trap '' HUP

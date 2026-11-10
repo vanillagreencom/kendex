@@ -10,8 +10,6 @@
 # `lane_binding` and the `wall_verdict` that classifies it from here, so the two
 # cannot come to different conclusions about one account on one usage reading,
 # nor can one of them know a verdict the other has no arm for.
-# oversee-watch reads `lane_binding` too, for the reset a walled launch waits
-# on, once `lanes pick` has judged the wall; it judges no wall of its own.
 #
 # Sourced, never run.
 
@@ -160,7 +158,7 @@ def lane_binding($model):
 #
 # A model wall alone answers "may this launch run", which is the right question
 # for a lane picked to run ONE model: an account whose Opus window is spent is
-# still free for a Sonnet lane, and open-terminal picks on that. It is not the
+# still free for a Sonnet lane, and a lane launch picks on that. It is not the
 # whole question for a caller whose own next judgement reads the binding bucket.
 # The overseer is that caller: it succeeds itself on headroom_pct, the worst of
 # every window, so a successor opened on an account whose binding bucket is a

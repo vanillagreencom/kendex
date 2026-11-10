@@ -464,9 +464,9 @@ jobs:
   # flock, setsid or timeout at all, and carries sha256sum only in recent
   # releases (26 has /sbin/sha256sum; the runner image's own release decides),
   # so none of the four is a BSD difference to fix at a site — a script that
-  # must run without one carries its own fallback there (open-terminal falls
-  # back to nohup, workflow-state and lanes to a mkdir mutex, release-digests'
-  # to shasum). Each of the four is
+  # must run without one carries its own fallback there (workflow-state and
+  # lanes fall back to a mkdir mutex, release-digests to shasum). Each of the
+  # four is
   # linked in on its own, never through a package's gnubin directory, so
   # nothing else in coreutils or util-linux shadows a BSD tool. What needs one
   # of the four and has no fallback, such as the worktree lifecycle suite,

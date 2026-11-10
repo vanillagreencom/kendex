@@ -4418,7 +4418,7 @@ fn worktree_fixture(dir: &Path) -> (PathBuf, PathBuf) {
 
 /// A repository under `dir` with one linked worktree on branch `lane` as
 /// the shipped cloud launcher makes a `claude-cloud` lane's
-/// (`open-terminal` runs `worktree create <id> --no-checkout`), set up as
+/// (it runs `worktree create <id> --no-checkout`), set up as
 /// the package's `setup_app_worktree` does for a no-checkout create:
 /// `extensions.worktreeConfig` on the repository, the index read from
 /// `HEAD`, no file written, and the mark `kendex-worktree.checkoutMode
@@ -5431,8 +5431,8 @@ fn a_claude_cloud_lanes_claim_worktree_holding_a_draft_is_kept_dirty() {
     assert!(draft.exists(), "the draft under the claim was deleted");
 }
 
-/// A `claude-cloud` lane on `wt`, its local worktree, as `open-terminal`
-/// records it: `host` and `kind` the cloud word.
+/// A `claude-cloud` lane on `wt`, its local worktree, as the released
+/// launcher records it: `host` and `kind` the cloud word.
 fn cloud_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
     let mut lane = worktree_lane(item, runner, wt);
     lane["host"] = json!("claude-cloud");

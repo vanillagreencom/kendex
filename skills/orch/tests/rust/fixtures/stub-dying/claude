@@ -3,8 +3,8 @@
 # composer, then exits: the harness that dies before its first draw, while
 # the pane still shows the shell's echo of the launch line. It prints that
 # echo itself, as a fish prompt draws it (`❯ ` then the line), so the row
-# proves the composer rule on a host whose pane shell draws no such prompt
-# (decision 69). A launch of it must never confirm (decision 60). Named
+# proves the composer rule on a host whose pane shell draws no such prompt.
+# A launch of it must never confirm. Named
 # `claude` and run by bash directly so the kernel records the harness's
 # process name for it.
 printf '\xe2\x9d\xaf cd %s && exec env CLAUDE_CONFIG_DIR=%s claude --session-id 0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c\n' "$PWD" "${CLAUDE_CONFIG_DIR:-}"

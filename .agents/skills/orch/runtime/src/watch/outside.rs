@@ -31,8 +31,7 @@ struct Permission {
     permission: String,
 }
 
-/// One listed item: its number, kind, login and head (`-` for an issue),
-/// the line the legacy's jq printed.
+/// One listed item: its number, kind, login and head (`-` for an issue).
 struct Listed {
     number: u64,
     kind: &'static str,
@@ -242,8 +241,8 @@ fn list_failed(repo: &str, list: &str, cause: &str) -> crate::error::Error {
 mod tests {
     use super::*;
 
-    /// The fleet reading of an author's own fields and the line validation,
-    /// on the legacy suite's shapes (`oversee_watch_outside.sh`): a bot, an
+    /// The fleet reading of an author's own fields and the line validation:
+    /// a bot, an
     /// owner, a member and a collaborator are fleet; a contributor, a
     /// first-time contributor, none and a deleted account are not; a
     /// pull request needs a 40-hex head and an issue `-`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The question-tool words of every harness row, for a suite whose --cmd rows
 # judge some other gate and must first clear the question-tool one. Read from
-# lib/lane-launch.sh, the table open-terminal judges against, so no suite holds
+# lib/lane-launch.sh, the table a launcher judges against, so no suite holds
 # a second copy of the words. Appended to a `true` template they run nothing:
 # each row's harness finds its own run among them, and the rest are inert.
 # open-terminal-question-tool.sh is the suite that judges that gate itself.

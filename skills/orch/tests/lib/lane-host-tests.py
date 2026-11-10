@@ -348,7 +348,7 @@ while [[ "${HOLD_VERB:-}" == "$1" && ! -f "$RELEASE" ]]; do sleep 0.05; done
         declared = self.SSH.decode().strip().replace("pool=plan", "pool=cloud-credit")
         return [("provider-pane", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("pane=local", "pane=verb")}, 0,
                  (declared.replace("pane=local", "pane=verb") + "\n").encode(), b""),
-                ("provider-legacy", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("\tpane=local", "")}, 0,
+                ("provider-paneless", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("\tpane=local", "")}, 0,
                  (declared.replace("\tpane=local", "") + "\n").encode(), b""),
                 ("pane-invalid", {**stub, "LANE_HOST_STUB_CAPABILITIES": declared.replace("pane=local", "pane=remote")},
                  1, b"", b"lane-host: capability-invalid key=pane value=remote\n"),

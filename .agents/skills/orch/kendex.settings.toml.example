@@ -324,7 +324,7 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # The tmux session every lane window opens in. Which session a launch uses
 # with this unset, and its refusals: references/lane-directive.md § Tmux session.
-# With it set, open-terminal --wake and the orch runtime need no $TMUX: run
+# With it set, the orch runtime needs no $TMUX: run
 # from outside tmux they reach that session on your own tmux server.
 # ORCH_TMUX_SESSION = "kendex"
 

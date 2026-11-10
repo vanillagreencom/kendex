@@ -255,7 +255,7 @@ done <<'ROWS'
 0|empty
 ROWS
 
-# A bare expression with no bindings still works — the old call shape.
+# A bare expression with no bindings works.
 "$WS" --state-dir "$sd" update KEN-1 '.cycles = 4' >/dev/null
 cycles="$("$WS" --state-dir "$sd" get KEN-1 .cycles)"
 [[ "$cycles" == "4" ]] && pass "an update with no bindings behaves as before" \

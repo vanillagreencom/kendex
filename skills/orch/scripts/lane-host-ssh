@@ -929,8 +929,8 @@ def stop(row, item, harness):
     recorded harness has exited or whose pid a later process holds, is
     stopped by the item's worktree: an item whose worktree is no longer a
     directory exits 4, and
-    lane-close reads that status as a stop its host close makes
-    unnecessary."""
+    the runtime's hosted stop (`HostStopped::WorktreeRemoved`) reads that
+    status as a stop its host close makes unnecessary."""
     owned(row, item, "stop")
     result = remote(row, '''lib="$2/.agents/skills/orch/scripts/lib/lane-state.sh"
 if ! test -r "$lib"; then
@@ -966,8 +966,8 @@ esac''', harness, row["clone"], item, IDENTITY_FILE, str(STOP_BY_DIRECTORY), acc
 def stop_by_worktree(row, item, harness):
     """Stop the named harness only when its process belongs to the item worktree.
 
-    It runs the clone library's lane_stop_owned, which a library from before
-    identities were recorded holds under the same name and arguments."""
+    It runs the clone library's lane_stop_owned, which every clone library
+    holds under the same name and arguments."""
     path = owned_worktree(row, item, "stop")
     result = remote(row, '''if ! test -d "$1"; then
   printf 'lane-host-ssh: stop-worktree-removed item=%s\n' "$4" >&2

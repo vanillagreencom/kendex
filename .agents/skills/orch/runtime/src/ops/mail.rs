@@ -1,8 +1,7 @@
-//! The mail duty's record types (step5-map § A7, § A8; step6-map § A6;
-//! decisions 31, 121 Q1, Q2, 182): the session-channel send's receipt the
+//! The mail duty's record types: the session-channel send's receipt the
 //! mailbox hands back, the one operation that writes `lanes[].directive_send`
 //! in its two stages, and the duty's own memory of a mailbox. The mailbox
-//! writes no orch state (decision 31): `lane-mail` prints the receipt on
+//! writes no orch state: `lane-mail` prints the receipt on
 //! stderr, and the `send` verb (`crate::send`) applies
 //! [`record_directive_send`] before and after the one irreversible send.
 
@@ -24,9 +23,9 @@ pub enum Word {
 }
 
 /// The account's cloud credit as `lanes list` read it at the send, or the
-/// word `unread` (the legacy `lm_send_record`'s two forms). The dollars
-/// stay the number the listing printed, `0` or `12.5`, so the close row
-/// that prints them reads as the legacy's.
+/// word `unread` (the two forms the mailbox's `lm_send_record` writes). The
+/// dollars stay the number the listing printed, `0` or `12.5`, so the close
+/// row that prints them reads as the released record's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Credit {
@@ -37,7 +36,7 @@ pub enum Credit {
     Unread(Word),
 }
 
-/// How a session send ended, the three words the legacy record carries.
+/// How a session send ended, the three words the released record carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SendResult {
@@ -70,9 +69,8 @@ pub const OWED: &str = "owed";
 /// says a send is out and a repeat is refused rather than queued twice;
 /// `settled` is the receipt stamped over it; `failed` is the operator's
 /// mark through the `op` entry for an owed send no receipt settles (the
-/// watch's `directive-send-unsettled` line; decision 184 (5)). A send made
-/// under a `key` (the validation end notice's `validate-<run_id>`, decision
-/// 188 (d)) carries it from the owed write through every settle, so a
+/// watch's `directive-send-unsettled` line). A send made under a `key` (the
+/// validation end notice's `validate-<run_id>`) carries it from the owed write through every settle, so a
 /// replay of that notice reads whether this send was its own.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "lowercase")]
@@ -105,7 +103,7 @@ pub struct RecordDirectiveSend {
 
 /// What the write answered: the `directive_send` object as the lane now
 /// holds it, and, for a keyed owed write that found this key's send on the
-/// lane already, what it found and left standing (decision 193 (a)); a
+/// lane already, what it found and left standing; a
 /// stage this write made carries no `found`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DirectiveSendRecorded {
@@ -117,7 +115,7 @@ pub struct DirectiveSendRecorded {
 
 /// What the lane's `directive_send` says of the send under the owed write's
 /// key: the write's one read of it, made where the write decides, inside
-/// the store's lock (decision 193 (a)), so two walkers of one notice read
+/// the store's lock, so two walkers of one notice read
 /// one record and the later never writes a second owed stage over a send
 /// the earlier settled. No record, or a record of a send under another key,
 /// is this notice's first call and reads as nothing found.
@@ -149,8 +147,8 @@ impl KeyedSend {
     }
 }
 
-/// The characters of the text the record keeps, the legacy
-/// `.text | .[0:300]`.
+/// The characters of the text the record keeps, as the released record's
+/// `.text | .[0:300]` cut it.
 const TEXT_CHARS: usize = 300;
 
 /// Whether a lane object's `directive_send` stands at the owed stage; read
@@ -194,13 +192,13 @@ fn keyed(mut record: Value, key: Option<String>) -> Value {
 /// lane's send is the mailbox's own, repeatable under its delivery id) and
 /// only where no send stands owed (`directive-send-owed`: the earlier send's
 /// receipt settles first, or the directive would be queued twice). An owed
-/// write made under a `key` first reads the lane's record under that key
-/// (decision 193 (a)): a send of this key already on the lane, owed,
+/// write made under a `key` first reads the lane's record under that key:
+/// a send of this key already on the lane, owed,
 /// settled or unreadable, is answered as [`KeyedSend`] with nothing
 /// written, so the caller's replay learns its own send's standing from the
 /// one record the write judges, under the one lock; a write under no key
 /// reads no key. The
-/// settled stage, `{at, result, text, credit}` as the legacy wrote it, is
+/// settled stage, `{at, result, text, credit}` as the released record holds it, is
 /// written only over an owed record (`directive-send-unowed`: a record
 /// replaced under the send takes no stale receipt), and so is the failed
 /// stage, `{at, result: failed, text, credit: unread, owner: operator}`
@@ -300,9 +298,9 @@ pub fn record_directive_send(
 }
 
 /// The mail duty's memory of one mailbox: the envelope line it has
-/// announced through and the id the box opened with, the legacy `.mail`
-/// `lane-mail` row (step5-map A7). It is the watch's own cursor, never the
-/// box's: the controller session's handler acknowledges the box (Q2).
+/// announced through and the id the box opened with, the released watch's
+/// `.mail` `lane-mail` row. It is the watch's own cursor, never the box's:
+/// the controller session's handler acknowledges the box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailCursor {
     pub announced: u64,
@@ -311,7 +309,7 @@ pub struct MailCursor {
 
 impl MailCursor {
     /// The row's value, `<announced> <first>`; a row that is not that reads
-    /// as nothing announced, as the legacy read a row short of its count.
+    /// as nothing announced, as a row short of its count reads.
     pub fn parse(row: Option<&str>) -> MailCursor {
         let (announced, first) = row
             .and_then(|r| r.split_once(' '))
@@ -370,9 +368,9 @@ mod tests {
         }
     }
 
-    /// Decision 31's two stages on the lane: `owed` holds the directive's
+    /// The two stages on the lane: `owed` holds the directive's
     /// words and names its receipt by the request's stamp, the receipt
-    /// replaces it with the legacy shape, the epoch
+    /// replaces it with the released shape, the epoch
     /// second the request's, the words cut at 300 characters, every other
     /// field of the lane as it was; the operator's mark settles an owed
     /// record `failed` with the cause as its words, the credit unread and
@@ -381,10 +379,11 @@ mod tests {
     /// operator's mark over a lane not owed refuses `directive-send-unowed`,
     /// a mailbox lane refuses `lane-channel`, a lane the fleet does not
     /// record refuses `lane-missing`, and every refusal writes nothing.
-    /// Defect: a send queued twice because its record said nothing was out,
-    /// a stale receipt stamped over a replaced record, an operator's mark
-    /// overwriting a receipt's, or the record written under another shape
-    /// than `lane-close` and `cloud-stall-closed` read.
+    /// The failures it holds off: a send queued twice because its record
+    /// said nothing was out, a stale receipt stamped over a replaced record,
+    /// an operator's mark overwriting a receipt's, or the record written
+    /// under another shape than the lane close and the `cloud-stall-closed`
+    /// reading read.
     #[test]
     fn a_send_is_owed_then_settled_and_each_stage_refuses_out_of_order() {
         let path = Path::new("/w/workflow-state-oversee.json");

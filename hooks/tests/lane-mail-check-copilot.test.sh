@@ -681,10 +681,10 @@ for child_arm in deliver usage start; do
   case "$child_arm" in
     start)
       assert_eq "$(stdout_field '.additionalContext' | grep -c '^lane-mail-check: context-reader=missing' || :)" 1 \
-        'control: the old start arm reports a missing reader under the Claude home' ;;
+        'control: the mutant start arm reports a missing reader under the Claude home' ;;
     *)
       assert_eq "$([ "$CHILD_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
-        "control: the old $child_arm arm fails the unchanged-mail assertion" ;;
+        "control: the mutant $child_arm arm fails the unchanged-mail assertion" ;;
   esac
 done
 for child_arm in deliver stop usage start; do

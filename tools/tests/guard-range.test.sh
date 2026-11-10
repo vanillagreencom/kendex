@@ -635,7 +635,7 @@ printf 'export {};\n' >"$M/scripts/plugin/hooks/x.js"
 printf '{}\n' >"$M/scripts/plugin/.claude-plugin/plugin.json"
 printf '{}\n' >"$M/scripts/unused/data.json"
 printf '#!/usr/bin/env bash\ngh api repos/demo/actions/workflows\n' >"$M/scripts/api"
-# open-terminal prints these launch prompts; their workflow prose reads no doc.
+# A launcher prints these launch prompts; their workflow prose reads no doc.
 cat >"$M/scripts/brief" <<'SH'
 #!/usr/bin/env bash
 case "$TRACKER:$HARNESS" in

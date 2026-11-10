@@ -1,5 +1,5 @@
 //! Process-protocol tests of the `orch-runtime` executable: they run the
-//! built binary against the legacy-shaped fixtures beside this file.
+//! built binary against the released-shape fixtures beside this file.
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests run the built binary"
@@ -63,7 +63,7 @@ fn version_prints_the_protocol_reply() {
 }
 
 #[test]
-fn inspect_reads_a_legacy_file_as_legacy_without_writing() {
+fn inspect_reads_an_unstamped_file_as_an_item_without_writing() {
     let dir = tempfile::tempdir().unwrap();
     let path = write(dir.path(), "workflow-state-KEN-4687.json", ITEM);
     let out = run(&["state", "inspect", "--file"], &[&path]);
@@ -213,7 +213,7 @@ fn op_applies_a_request_and_prints_the_committed_transition() {
     let keys: Vec<&String> = state.as_object().unwrap().keys().collect();
     let before_keys: Vec<&String> = before.as_object().unwrap().keys().collect();
     assert_eq!(keys, before_keys, "the key sequence is the file's");
-    // The legacy fields the type does not name are still there.
+    // The released fields the type does not name are still there.
     assert_eq!(
         state["round_prunes"]["1769600000123456789-1837"]["action"],
         "below-mark"

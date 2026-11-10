@@ -32,7 +32,7 @@ echo "--- workflow-state remove ---"
 old_touch="$(from_epoch "$(( $(date -u +%s) - 3 * 86400 ))" '%Y%m%d%H%M' '')"
 
 # One state directory per case, outside the project, reached by --state-dir as
-# lane-close reaches the fleet's. waiter.abc is three days old, past the
+# the close reaches the fleet's. waiter.abc is three days old, past the
 # suite's two-day retention, and named for no item.
 build() { # DIR
   local sd="$1" f

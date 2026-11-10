@@ -259,7 +259,7 @@ pub(crate) fn run_with(
 }
 
 /// The request's fields in the forms the reads pin. A head is the full
-/// lowercase 40-hex id `worktree-push --publish-base` pins: a prefix can
+/// lowercase 40-hex id: a prefix can
 /// name more than one commit. A base is one branch name; a repo is
 /// `owner/name`. Each refuses before any read.
 fn validate(r: &VerifyHead) -> Result<()> {

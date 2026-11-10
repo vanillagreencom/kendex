@@ -125,7 +125,7 @@ impl Cadences {
 
     /// The watch's defaults: `ORCH_WATCH_MAIL_INTERVAL=20`,
     /// `--interval 240`, `--max-loops 25`.
-    pub fn legacy() -> Cadences {
+    pub fn defaults() -> Cadences {
         Cadences::of_settings(Duration::from_secs(20), Duration::from_secs(240), 25)
     }
 
@@ -303,8 +303,8 @@ mod tests {
     }
 
     #[test]
-    fn the_legacy_cadences_hold_the_watch_settings() {
-        let c = Cadences::legacy();
+    fn the_default_cadences_hold_the_watch_settings() {
+        let c = Cadences::defaults();
         let rows = [
             (Duty::Mail, 20, Anchor::End),
             (Duty::NativeObservation, 240, Anchor::Start),
@@ -333,14 +333,14 @@ mod tests {
     fn running_one_duty_moves_no_other_deadline() {
         let start = Instant::now();
         for ran in Duty::ALL {
-            let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
+            let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
             let before: Vec<Instant> = Duty::ALL.iter().map(|d| s.due(*d)).collect();
             s.advance(ran, start + secs(1));
             for (duty, was) in Duty::ALL.iter().zip(before) {
                 if *duty == ran {
                     assert_eq!(
                         s.due(*duty),
-                        start + secs(1) + Cadences::legacy().of(ran).every
+                        start + secs(1) + Cadences::defaults().of(ran).every
                     );
                 } else {
                     assert_eq!(s.due(*duty), was, "{ran:?} moved {duty:?}");
@@ -352,7 +352,7 @@ mod tests {
     #[test]
     fn mail_events_do_not_reset_the_heartbeat_deadline() {
         let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
+        let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
         let heartbeat = start + secs(6000);
         s.advance(Duty::Heartbeat, start);
         assert_eq!(s.due(Duty::Heartbeat), heartbeat);
@@ -370,7 +370,7 @@ mod tests {
     #[test]
     fn a_wake_moves_a_duty_earlier_never_later() {
         let start = Instant::now();
-        let mut s = Schedule::new(&Cadences::legacy(), start, &Duty::ALL);
+        let mut s = Schedule::new(&Cadences::defaults(), start, &Duty::ALL);
         s.advance(Duty::Tracker, start);
         s.wake(Duty::Tracker, start + secs(300));
         assert_eq!(s.due(Duty::Tracker), start + secs(240));
@@ -384,7 +384,7 @@ mod tests {
     fn a_schedule_carries_its_own_duties_in_order_and_ties_break_in_it() {
         let start = Instant::now();
         let s = Schedule::new(
-            &Cadences::legacy(),
+            &Cadences::defaults(),
             start,
             &[Duty::Heartbeat, Duty::Tracker, Duty::Mail],
         );
@@ -395,7 +395,7 @@ mod tests {
             vec![Duty::Mail, Duty::Tracker, Duty::Heartbeat]
         );
         assert!(s.due_at(start - secs(1)).is_empty());
-        let empty = Schedule::new(&Cadences::legacy(), start, &[]);
+        let empty = Schedule::new(&Cadences::defaults(), start, &[]);
         assert_eq!(empty.next_due(), None);
     }
 

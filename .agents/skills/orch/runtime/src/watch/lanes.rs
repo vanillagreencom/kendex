@@ -2936,7 +2936,7 @@ pub mod reset {
         /// read in UTC): each form the grammar accepts resolves to the instant
         /// the row pins, and the forms it excludes name none.
         #[test]
-        fn the_reset_clause_resolves_as_the_legacy_suite_pins_it() {
+        fn the_reset_clause_resolves_to_the_instant_each_banner_names() {
             let since = 1_788_364_800;
             let utc = TimeZone::UTC;
             let la = TimeZone::get("America/Los_Angeles").unwrap();
@@ -3083,7 +3083,7 @@ mod tests {
     /// index each case plants): each row's five words, and `None` for the
     /// shape the count refuses.
     #[test]
-    fn the_counts_read_as_the_legacy_suite_pins_them() {
+    fn the_counts_read_from_each_state() {
         let four = Some(4);
         let none = Some(0);
         let owner_one_commit = edited(OWNER_STATE, |v| {

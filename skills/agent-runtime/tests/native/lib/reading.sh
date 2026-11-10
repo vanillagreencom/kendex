@@ -1,6 +1,6 @@
 # shellcheck shell=bash
 # The native probe's reading of an agent-runtime `process live` or `process
-# identity` reply (decision 99): the reply's `result` is the whole tagged
+# identity` reply: the reply's `result` is the whole tagged
 # reading, `{"reading":"live",...}`, `{"reading":"gone"}` or
 # `{"reading":"unreadable","cause":...}`. Sourced by thin-path.sh and by the
 # integration row that feeds the binary's own replies through it.

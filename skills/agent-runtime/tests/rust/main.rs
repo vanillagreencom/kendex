@@ -680,8 +680,8 @@ fn an_empty_baseline_read_binds_the_one_lead_that_appeared_and_no_baseline_binds
         serde_json::from_slice(&std::fs::read(&record_path).unwrap()).unwrap();
     assert_eq!(written["native_session"]["id"], "R");
     assert_eq!(written["baseline"], serde_json::json!([]));
-    let legacy = pane.record("codex", &home, &cwd, None);
-    let result = inspect(&dir.path().join("legacy.json"), &legacy);
+    let unbound = pane.record("codex", &home, &cwd, None);
+    let result = inspect(&dir.path().join("unbound.json"), &unbound);
     assert!(result["native_session"].is_null(), "{result}");
     assert!(result.get("native_session_unreadable").is_none());
 }

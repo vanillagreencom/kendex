@@ -23,7 +23,7 @@
 # overseer: a Stop at every overseer turn end, which lifts a standing
 # StopFailure row and dates the turn end the runtime watch holds the
 # overseer's context record against. The readers are the runtime watch's
-# overseer judgement, `oversee register` and oversee-succeed's caller identity.
+# overseer judgement and `oversee register`.
 # The same hook writes the Jarvis runtime record below, never this file.
 #
 # A last row session_rows_verdict cannot judge reads `unsupported`, and its
@@ -323,7 +323,7 @@ session_rows_codex_launcher() { # PID
 # session_rows_top_level PANE_PID: 0 where exactly one harness stands
 # between this process and PANE_PID, the pane's own shell: the
 # harness that ran this hook, directly under that shell or under the shells
-# and exec'd wrappers a launch puts there (overseer-run, env). A harness
+# and exec'd wrappers a launch puts there (`env`). A harness
 # nested under another, which the other one's tool shell started, has two.
 # Codex's installed Node launcher and its direct native child count as one;
 # any other non-shell process counts separately. The walk continues above

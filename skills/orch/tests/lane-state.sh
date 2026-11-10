@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests for orch/scripts/lib/lane-state.sh, the shell judge of what a lane is
-# doing, on the rungs its callers run: lane-close's close guard and
-# overseer-host-tmux run `lane_state`, and jarvis's session backend runs
+# doing, on the rungs its callers run: overseer-host-tmux runs
+# `lane_state`, and jarvis's session backend runs
 # `lane_state` and `lane_input_ready`. The screen rules are the runtime
 # classifier's (tests/rust/watch_observe.rs and agent-runtime's observe rows);
 # the rows here are the judge's own rungs no other suite runs:
@@ -126,7 +126,7 @@ assert_eq "$actual/$rc" unjudged/1 "idle rows over a drafted editor refuse input
 
 echo "=== lane-state § identity: the runtime's recorded start is read in its own form ==="
 
-# lane-close's local stop and the by-hand stop hand lane_identity_status the
+# The by-hand stop hands lane_identity_status the
 # launch identity a record names. The record is the one the runtime's
 # launch-lane writes (tests/fixtures/launch-lane/claude-dontask.json, held to
 # that producer by tests/rust/lane.rs), its pid and start bound to a
@@ -152,7 +152,7 @@ fi
 
 echo "=== lane-state § capture: the screen kept and remain-on-exit's dead flag read ==="
 
-# lane_pane_capture is lane-close's one read of a local pane. A launcher run
+# lane_pane_capture is the shell's one read of a local pane. A launcher run
 # from a job unit is a tmux client whose environment names no UTF-8 locale,
 # to which tmux prints a control byte in a format as `_`, so the screen and
 # the dead proof are read under a UTF-8 client and under none. The pane

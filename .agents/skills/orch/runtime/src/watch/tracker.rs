@@ -1266,7 +1266,7 @@ fn read_owner_tracker_answers(
         return Ok(Answered::Value(OwnerRead::Disabled));
     };
     let unread = |cause: &'static str| {
-        let _ = writeln!(std::io::stderr(), "KEN-3624-unread cause={cause}");
+        let _ = writeln!(std::io::stderr(), "owner-tracker-unread cause={cause}");
         Ok(Answered::Value(OwnerRead::Unread(cause)))
     };
     let root = &ctx.settings.roots.common;

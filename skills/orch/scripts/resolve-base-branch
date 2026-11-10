@@ -19,10 +19,9 @@ message() {
 worktree="${1:-.}"
 remote_head=""
 
-# Fail closed on an unusable path BEFORE any resolution: with the old
-# `|| true` swallow, a nonexistent path fell through to the main fallback
-# with exit 0, handing callers an unverified base. Both arms
-# require an existing directory.
+# Fail closed on an unusable path BEFORE any resolution: a nonexistent path
+# that fell through to the main fallback would exit 0 and hand callers an
+# unverified base. Both arms require an existing directory.
 if [[ ! -d "$worktree" ]]; then
     message not-directory "path=$worktree" >&2
     exit 1

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The fake `lanes` for the accounts rows (U6h, U8d, U8d3): `list --json`
+# The fake `lanes` for the accounts rows: `list --json`
 # prints the planted listing beside the path this was invoked as (the rows
 # symlink the fixture into their world as `lanes`): `lanes-<host>.json`
 # where the call named ORCH_LANE_HOST and that file exists, as the real

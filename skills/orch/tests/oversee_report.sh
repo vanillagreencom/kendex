@@ -102,7 +102,7 @@ cycle_report() {
     '0|Landed: none
 Cycles: class=micro lane_median=1200 open_median=3437 miss_share=1/3
 Cycles: class=small lane_median=- open_median=80 miss_share=-' \
-    'the report shows both class medians beside Landed and leaves legacy lane time unread'
+    'the report shows both class medians beside Landed and leaves released lane time unread'
 }
 cycle_report shipped
 CYCLE_REPORT="$(mutant_scripts cycle-report/orch oversee-report)/oversee-report" || exit 1
@@ -427,7 +427,7 @@ assert_eq "$RC|$(awk -F' [|] ' '/^Next/ { on = 1; next } on && /^$/ { on = 0 } o
   "0|KEN-4 (held by KEN-2: src/a.sh),KEN-5 (held by #12: src/b.sh),KEN-6,KEN-8 (overlap unread: location)" \
   "a queued item sharing a file with a running lane or an open pull request names that holder; an unticked Location labels its row"
 
-echo "=== render: Next labels a legacy lane's unticked Location ==="
+echo "=== render: Next labels a released lane's unticked Location ==="
 # KEN-3 runs with no touched set and its Location line names no path, so the
 # judgement of KEN-4 cannot read what the lane holds and says whose body it was.
 seed_fleet next_lane_unread
@@ -806,7 +806,7 @@ for path in /w/KEN-7/.git /clone/tmp/workflow-state-KEN-7.json; do
 done
 rm -f -- "${CASE:?}/host-busy"
 # ../workflows/merge-pr.md § 5 removes a merged lane's worktree before
-# lane-close runs: the host answers touch and has no .git there.
+# the close runs: the host answers touch and has no .git there.
 rm -f -- "${CASE:?}/host/w/KEN-7/.git"
 run ORCH_STATE_DIR=tmp -- render --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(awk '/^Waiting on you/' <<<"$OUT")" "0|Waiting on you: none" "a hosted lane whose worktree is gone renders, waiting on nothing"

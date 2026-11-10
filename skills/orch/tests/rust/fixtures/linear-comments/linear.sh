@@ -1,5 +1,5 @@
 #!/bin/bash
-# The linear package's CLI as the acceptance rows see it (U6c, U6j, U7e):
+# The linear package's CLI as the acceptance rows see it:
 # every call is appended to $LINEAR_LOG. `comments list ITEM` answers
 # $LINEAR_COMMENTS, a list in the CLI's safe shape (`[]` unset), with
 # $LINEAR_COMMENTS_MORE, a second page, appended to it where set, as the CLI

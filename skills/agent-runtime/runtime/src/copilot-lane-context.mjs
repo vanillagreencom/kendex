@@ -1,6 +1,6 @@
 // kendex-lane-context: the context reader of a Copilot CLI fleet session.
 //
-// open-terminal installs this file as the Copilot extension
+// agent-runtime's trust step installs this file as the Copilot extension
 // `<COPILOT_HOME>/extensions/kendex-lane-context/extension.mjs` of the home a
 // Copilot fleet lane runs under, and turns on the EXTENSIONS feature that
 // loads it (`enabledFeatureFlags` in that home's settings.json). Copilot runs
@@ -19,7 +19,7 @@
 //
 // The hook is the one in the Copilot hook scope the session loads, the rule
 // orch lib/lane-context.sh states as lane_context_copilot_hooks and
-// open-terminal's launch gate asks: `<git root>/.github/hooks` where it holds
+// the runtime's launch gate asks: `<git root>/.github/hooks` where it holds
 // lane-mail-check, lane-mail-compact and lane-mail-start, each `<name>.sh`
 // beside its `<name>.json`, else `${COPILOT_HOME:-$HOME/.copilot}/hooks`.
 // It is spelled again here because this copy runs from the Copilot home with
@@ -38,7 +38,7 @@
 // before any branch that can return, an unreadable reading included; the turn
 // end judges a session whose marker stands unmeasured, never its earlier
 // record as room. That directory is orch lib/lane-context.sh's
-// lane_context_copilot_pending_dir, which open-terminal's launch gate makes
+// lane_context_copilot_pending_dir, which agent-runtime's trust step makes
 // and proves writable before a fleet lane starts, spelled again here as
 // PENDING_DIR; skills/orch/tests/copilot-lane-context.sh holds the two
 // spellings to the same directory. Only a run that exits 0 carrying the

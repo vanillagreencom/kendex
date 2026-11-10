@@ -469,17 +469,17 @@ ROW_CLASSIFIER=""
 
 # The action can update before its separately checked-out default branch.
 # A classifier without the shared producer grants no lane skip.
-LEGACY_STUBS="$TMP/legacy-stubs"
-cp -R "$STUBS" "$LEGACY_STUBS"
+OLDER_STUBS="$TMP/older-stubs"
+cp -R "$STUBS" "$OLDER_STUBS"
 printf '#!/usr/bin/env bash\nset -euo pipefail\n' \
-  >"$LEGACY_STUBS/skills/harness-ci/scripts/lib/change-class.sh"
-status="$(run "$CLASSIFY" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
+  >"$OLDER_STUBS/skills/harness-ci/scripts/lib/change-class.sh"
+status="$(run "$CLASSIFY" CLASSIFIER="$OLDER_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
 check 'an older classifier runs every lane' \
   '0 lanes=true lanes_cause=lane-producer-unavailable lane_verdicts=' \
   "$status $(outputs | tr ' ' '\n' | grep -E '^(lanes|lanes_cause|lane_verdicts)=' | tr '\n' ' ' | sed 's/ $//')"
 plant classify '  lanes=true lanes_cause=lane-producer-unavailable' \
   '  lanes=false lanes_cause=lane-producer-unavailable'
-status="$(run "$PLANTED" CLASSIFIER="$LEGACY_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
+status="$(run "$PLANTED" CLASSIFIER="$OLDER_STUBS" STUB_CLASS=render STUB_PATHS=.agents/skills/orch/SKILL.md)"
 check 'must-fail: missing producer cannot authorize a lane skip' '0 lanes=false' \
   "$status $(outputs | tr ' ' '\n' | grep '^lanes=')"
 ROW_CLASSIFIER=""

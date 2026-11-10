@@ -837,7 +837,7 @@ esac
 EOF
 } > "$TMP_ROOT/bin/workflow-state-stub.sh"
 
-# Close-out stub. lane-close has its own suite; watch tests keep their provider
+# Close-out stub. Watch tests keep their provider
 # fixtures and assert only the event translation around this one verb.
 cat > "$TMP_ROOT/bin/lane-close-stub.sh" <<'EOF'
 #!/usr/bin/env bash

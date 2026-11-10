@@ -89,8 +89,8 @@ exclusions() {
     codex::high "$H/.codex" walled \
     codex::high "$H/.1codex" walled \
     codex::high "$H/.2codex" walled | LC_ALL=C sort)"
-  # OL_WALK_SKIPS is the machine-read contract of oversee/oversee-succeed and
-  # Jarvis select; test its typed fields rather than explanatory prose.
+  # OL_WALK_SKIPS is the machine-read contract of Jarvis select; test its
+  # typed fields rather than explanatory prose.
   assert_eq "$rc|$got" "3|$result" 'walk preserves every refused entry and account verdict' "$DEP_ERR"
   rc=0
   result="$("$SCRIPT_DIR/lanes" pick --harness claude --for-overseer --min-headroom-pct 90 --json 2>"$TMP_ROOT/pick.err")" || rc=$?

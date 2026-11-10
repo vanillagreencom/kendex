@@ -1598,7 +1598,7 @@ mod tests {
     }
 
     #[test]
-    fn location_lines_are_read_as_the_legacy_read_them() {
+    fn location_lines_are_read_into_their_paths() {
         let rows: [(&str, std::result::Result<Vec<&str>, &str>); 8] = [
             ("**Location**: `src/a.sh`", Ok(vec!["src/a.sh"])),
             (
@@ -1632,7 +1632,7 @@ mod tests {
     }
 
     #[test]
-    fn overlap_meets_files_directories_and_the_scope_as_the_legacy_did() {
+    fn overlap_meets_files_directories_and_the_scope() {
         let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
         let rows = [
             (

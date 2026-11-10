@@ -4,7 +4,7 @@
 # (../../references/watch-delivery.md): a controller stop (`stop-controller`)
 # leaves the watch running. The runtime (`orch-runtime watch run`, started
 # through the `oversee-watch` entry) writes the record and refuses a second
-# watch on one fleet state; the entry reads it to stop a legacy watch it
+# watch on one fleet state; the entry reads it to stop a released watch it
 # replaces; the overseer's turn-end hook reads the watch through
 # `orch-runtime watch status`, not this record.
 #
@@ -183,8 +183,8 @@ watch_clock() { WATCH_NOW=$SECONDS; }
 # remove the record naming it, whichever comes first. TERM reaches the loop's
 # trap at once, since the loop waits on its pass and its delay in the
 # background, and the trap removes the record, then signals that pass and
-# waits for it. A pass part way through `lane-close` runs that close to its end
-# and reports it before it exits; that close has no bound of its own here, so
+# waits for it. A released loop's pass part way through a lane close runs
+# that close to its end and reports it before it exits; that close has no bound of its own here, so
 # the stop waits for the record and not for the exit, and watch_pid_runs tells
 # the caller when the rest has happened. Returns 1 when PID still holds its
 # record at the bound, which is read off watch_clock rather than counted in

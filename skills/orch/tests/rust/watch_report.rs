@@ -55,7 +55,7 @@ fn epoch(stamp: &str) -> u64 {
 
 /// The recorded answers these duties keep byte for byte.
 fn recorded_lines(name: &str) -> Vec<String> {
-    lines(&fixtures().join("legacy-recorded").join(name))
+    lines(&fixtures().join("released-recorded").join(name))
 }
 
 fn lines(path: &Path) -> Vec<String> {
@@ -2455,7 +2455,7 @@ fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
                     poll: Duration::from_millis(20),
                     timer: &SystemTimer,
                 },
-                legacy_mutex: true,
+                mkdir_mutex: true,
             },
             fleet: world.fleet_path(),
             paths: paths.clone(),

@@ -96,7 +96,7 @@ resolves the item by the second, so a launch writes both or the lane is never
 handed its mail and never judged on its handoff marks. A root the first half
 binds with no `tmp/lane-mail` directory is refused as `lane-mail-check:
 mailbox-missing=<path>` before every tool call and at every turn end until
-that directory stands. Each launcher calls this: `open-terminal` locally,
+that directory stands. Each launch calls this: the runtime's launch locally,
 `lane-host create` over its transport. The mailbox keeps `context.json` only
 when HARNESS and the non-empty SESSION match its recorded identity. A launch
 without that matching resumed identity clears the predecessor reading.

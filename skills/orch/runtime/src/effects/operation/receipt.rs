@@ -1,4 +1,4 @@
-//! The pane's own registration of itself (decision 96).
+//! The pane's own registration of itself.
 //!
 //! Nothing discovers the window an effect opened: the pane registers
 //! itself. The launch line the runtime types into the new pane first writes

@@ -1,8 +1,8 @@
 //! The event log the controller session follows: typed events rendered to
-//! the legacy `EVENT` line grammar byte for byte (decision 121, Q13) and
+//! the `EVENT` line grammar the released watch printed, byte for byte, and
 //! appended, one line each, to the log beside the fleet state. A line's
 //! number is its position in the file, which is what a handoff names and
-//! what `watch log --since` reads from (step5-map F8).
+//! what `watch log --since` reads from.
 //!
 //! The log is appended and synced before the baseline row the event moves
 //! is written (`watch::commit`), so a crash between the two leaves the line
@@ -24,10 +24,10 @@ use crate::settings::Succession;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Takeover {
     /// The claim's identity read gone: a dead pid, or its pid reused by a
-    /// process with another start (decision 99).
+    /// process with another start.
     Gone,
-    /// The launcher named the live runner for replacement (`--replace`,
-    /// the legacy `OVERSEE_WATCH_REPLACE`), and it released its claim.
+    /// The launcher named the live runner for replacement (`--replace`),
+    /// and it released its claim.
     Replace,
 }
 
@@ -40,8 +40,7 @@ impl Takeover {
     }
 }
 
-/// Which reading of the overseer's own session an `overseer-*` line reports
-/// (`oversee-watch:4452`).
+/// Which reading of the overseer's own session an `overseer-*` line reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverseerCase {
     Dead,
@@ -60,18 +59,16 @@ impl OverseerCase {
 }
 
 /// One line of the log. Every field is one word: an item key, a lane name,
-/// a count, a stamp; the grammar has no quoting, as the legacy's had none.
-/// The variants are the lines whose shape the legacy watch fixed with one
-/// `echo` or `printf`, each cited to that site, and this runtime's own
-/// (`watch-taken-over`, `idle-unread`, `reconcile-refused`,
+/// a count, a stamp; the grammar has no quoting. The variants are the lines
+/// the released watch printed, whose shapes a follower parses, and this
+/// runtime's own (`watch-taken-over`, `idle-unread`, `reconcile-refused`,
 /// `notice-unmarked`, `directive-send-unsettled`, and `watch-step-failed`
-/// for any duty). A shape whose
-/// legacy tail is free-form carries the tail as one string field. The lines
-/// whose whole body the legacy composed elsewhere (`usage-limit*`,
-/// `report-due`, `tracker-quota`) are their duties' to add here.
+/// for any duty). A line whose tail is free-form carries the tail as one
+/// string field, and a line whose whole body its duty composes
+/// (`usage-limit*`, `report-due`, `tracker-quota`) carries that body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// `oversee-watch:5715`: the one periodic line (decision 128 (5)).
+    /// The one periodic line.
     Heartbeat {
         loops: u32,
         interval: Duration,
@@ -84,95 +81,128 @@ pub enum Event {
         start: Option<String>,
         reason: Takeover,
     },
-    /// `oversee-watch:2002`, generalized to every duty: a duty's body
-    /// failed `count` times in a row; the run goes on (`watch::Thread`).
-    WatchStepFailed { step: Duty, count: u64 },
+    /// A duty's body failed `count` times in a row; the run goes on
+    /// (`watch::Thread`).
+    WatchStepFailed {
+        step: Duty,
+        count: u64,
+    },
     /// This runtime's own: the reconcile duty could not complete or mark an
     /// open intent, `refusal` the refusal's key; printed when the key
-    /// changes, as the legacy printed `main-workflow-absent`.
-    ReconcileRefused { intent: String, refusal: String },
+    /// changes, as `main-workflow-absent` is.
+    ReconcileRefused {
+        intent: String,
+        refusal: String,
+    },
     /// This runtime's own: an owed notice was sent and the store refused
-    /// its mark (decision 124i (36)), `cause` the refusal's key.
-    NoticeUnmarked { intent: String, cause: String },
-    /// This runtime's own (U6d2, decision 184 (5)): a session send recorded
+    /// its mark, `cause` the refusal's key.
+    NoticeUnmarked {
+        intent: String,
+        cause: String,
+    },
+    /// This runtime's own: a session send recorded
     /// owed on the lane `item` that no kept receipt settles, `cause` the
     /// settle's word; printed when the cause is new or changed, as
     /// `reconcile-refused` is.
-    DirectiveSendUnsettled { item: String, cause: String },
-    /// `oversee-watch:1443`.
-    LaneClosed { item: String },
-    /// `oversee-watch:1459`.
-    LaneCloseRefused { item: String },
-    /// `oversee-watch:2066`.
-    Triage { id: String },
-    /// `oversee-watch:2139`.
-    Handoff { item: String },
-    /// `oversee-watch:4813`.
-    WindowGone { lane: String },
-    /// `oversee-watch:4845`.
-    LaneExited { lane: String },
-    /// `oversee-watch:3236`.
-    DirectiveRead { item: String, id: String },
-    /// `oversee-watch:3240`, `age` in seconds.
-    DirectiveUnread { item: String, id: String, age: u64 },
-    /// `oversee-watch:2747`, `age` in seconds.
-    StartStalled { item: String, age: u64 },
-    /// Decision 118 (2): a lead or lane read idle with unread mail, which
+    DirectiveSendUnsettled {
+        item: String,
+        cause: String,
+    },
+    LaneClosed {
+        item: String,
+    },
+    LaneCloseRefused {
+        item: String,
+    },
+    Triage {
+        id: String,
+    },
+    Handoff {
+        item: String,
+    },
+    WindowGone {
+        lane: String,
+    },
+    LaneExited {
+        lane: String,
+    },
+    DirectiveRead {
+        item: String,
+        id: String,
+    },
+    /// `age` in seconds.
+    DirectiveUnread {
+        item: String,
+        id: String,
+        age: u64,
+    },
+    /// `age` in seconds.
+    StartStalled {
+        item: String,
+        age: u64,
+    },
+    /// A lead or lane read idle with unread mail, which
     /// the wake duty delivers to; `lane` is the item key, or `overseer`.
-    IdleUnread { lane: String },
-    // U5g: the wake duty's own lines.
-    /// This runtime's own (decisions 61, 65): the wake's line confirmed by
+    IdleUnread {
+        lane: String,
+    },
+    // The wake duty's own lines.
+    /// This runtime's own: the wake's line confirmed by
     /// a new user turn in the target's own bound session file.
-    WakeDelivered { target: String },
+    WakeDelivered {
+        target: String,
+    },
     /// This runtime's own: the wake's line typed and the bound passed with
     /// no such turn, `cause` the verb's word (`turn-pending`, `pane-gone`,
     /// `pane-unreadable`); nothing is typed again for that unread state.
-    WakeUnconfirmed { target: String, cause: String },
-    /// This runtime's own (decision 121 Q6): the target read idle with
+    WakeUnconfirmed {
+        target: String,
+        cause: String,
+    },
+    /// This runtime's own: the target read idle with
     /// unread mail and no confirmable route for its harness; nothing typed.
     WakeLimit {
         target: String,
         harness: String,
         cause: String,
     },
-    /// `oversee-watch:2162`.
-    LaneReady { item: String },
-    /// `oversee-watch:2161` (`age` in seconds, printed with its unit) and
-    /// `:4686`, which adds `reason=relaunch-pending`.
+    LaneReady {
+        item: String,
+    },
+    /// `age` in seconds, printed with its unit; `reason` is
+    /// `relaunch-pending` on a relaunch.
     LanePrepareStuck {
         item: String,
         age: u64,
         log: String,
         reason: Option<String>,
     },
-    /// `oversee-watch:2163` and `:4678`, which adds the relaunch's `exit=`.
+    /// `exit` is a relaunch's exit status, on a relaunch.
     LanePrepareFailed {
         item: String,
         reason: String,
         exit: Option<i32>,
         log: String,
     },
-    /// `oversee-watch:1963`.
     ParkedMerged {
         item: String,
         pr: String,
         repo: String,
     },
-    /// `oversee-watch:1884`.
     ParkedClosed {
         item: String,
         pr: String,
         repo: String,
     },
-    /// `oversee-watch:1928`: the hit line as the search composed it.
-    Merged { line: String },
-    /// `oversee-watch:2228`.
+    /// The hit line as the search composed it.
+    Merged {
+        line: String,
+    },
     MainWorkflowAbsent {
         repo: String,
         workflow: String,
         cause: String,
     },
-    /// `oversee-watch:2381`.
     MainPushFailing {
         repo: String,
         workflow: String,
@@ -181,14 +211,14 @@ pub enum Event {
         jobs: String,
         cause: String,
     },
-    /// `oversee-watch:2487`: the workflow is fixed, `warnings` the JSON
+    /// The workflow is fixed, `warnings` the JSON
     /// array text.
     MainPushBudget {
         repo: String,
         run: String,
         warnings: String,
     },
-    /// `oversee-watch:2633`: `runs=2` is fixed.
+    /// `runs=2` is fixed.
     RefreshFailing {
         repo: String,
         last: String,
@@ -196,26 +226,34 @@ pub enum Event {
         report: String,
         cause: String,
     },
-    /// `oversee-watch:2735` and `lib/watch-host-kinds.sh:420`, `age` in
-    /// seconds, `state` the cloud lane's `finished` or `out-of-credit`
-    /// where its pull request or account read one.
+    /// `age` in seconds, `state` the cloud lane's `finished` or
+    /// `out-of-credit` where its pull request or account read one.
     LaneStalled {
         item: String,
         age: u64,
         state: Option<String>,
     },
-    // U7a: the hosted readings' lines (step7-map § A1).
-    /// `lib/watch-host-kinds.sh:443`: a stalled cloud lane closed through
-    /// `lane-close` once its directive stood unanswered past the bound,
+    // The hosted readings' lines.
+    /// A stalled cloud lane the watch closed once its directive stood
+    /// unanswered past the bound,
     /// `directive_age` the seconds since that directive was sent.
-    CloudStallClosed { item: String, directive_age: u64 },
-    /// `oversee-watch:3178`.
-    OwnerAskResolved { re: String, by: String, id: String },
-    /// `oversee-watch:3179`.
-    OwnerAskClosed { re: String, by: String },
-    /// `oversee-watch:3180`.
-    OwnerNote { id: String },
-    /// `oversee-watch:3181`: the repository with its `overseer:` prefix
+    CloudStallClosed {
+        item: String,
+        directive_age: u64,
+    },
+    OwnerAskResolved {
+        re: String,
+        by: String,
+        id: String,
+    },
+    OwnerAskClosed {
+        re: String,
+        by: String,
+    },
+    OwnerNote {
+        id: String,
+    },
+    /// The repository with its `overseer:` prefix
     /// dropped, and `re=` where the note answers something.
     PeerNote {
         repository: String,
@@ -223,11 +261,14 @@ pub enum Event {
         kind: String,
         re: Option<String>,
     },
-    /// `oversee-watch:3186`.
-    LaneQuestion { item: String, id: String },
-    /// `oversee-watch:3189`.
-    LaneNotice { item: String, id: String },
-    /// `oversee-watch:4061`.
+    LaneQuestion {
+        item: String,
+        id: String,
+    },
+    LaneNotice {
+        item: String,
+        id: String,
+    },
     OverseerMark {
         pane: String,
         kind: String,
@@ -235,11 +276,16 @@ pub enum Event {
         mark: String,
         succession: Succession,
     },
-    /// `oversee-watch:4159`, `age` in seconds.
-    OverseerContextStale { pane: String, age: u64 },
-    /// `oversee-watch:4175`.
-    OverseerContextUnmeasured { pane: String, gap: String },
-    /// `oversee-watch:4576`: `overseer-dead`, `overseer-walled` or
+    /// `age` in seconds.
+    OverseerContextStale {
+        pane: String,
+        age: u64,
+    },
+    OverseerContextUnmeasured {
+        pane: String,
+        gap: String,
+    },
+    /// `overseer-dead`, `overseer-walled` or
     /// `overseer-reserve`, with `cause=` only on a death the watch read the
     /// cause of (`memory-cap`), and `record=` only on a death judged with no
     /// recorded line (`none`, or `<generation>:<pane>`).
@@ -253,22 +299,28 @@ pub enum Event {
         cause: Option<&'static str>,
         record: Option<String>,
     },
-    /// `oversee-watch:4751`.
     LaneRelaunched {
         item: String,
         lane: String,
         from: String,
     },
-    /// `oversee-watch:4998`, `note` the Copilot session note where one
+    /// `note` the Copilot session note where one
     /// stands.
-    LaneAsking { lane: String, note: Option<String> },
-    /// `oversee-watch:5067`.
-    ModelCapacity { lane: String },
-    /// `oversee-watch:5092`, `note` as for `lane-asking`, or
+    LaneAsking {
+        lane: String,
+        note: Option<String>,
+    },
+    ModelCapacity {
+        lane: String,
+    },
+    /// `note` as for `lane-asking`, or
     /// `cause=<word>` where the lane's own Stop row named a stop reason
     /// that is not the harness's ordinary end.
-    IdleAfterReturn { lane: String, note: Option<String> },
-    /// `oversee-watch:5221`: `fields` is the roster's own field text,
+    IdleAfterReturn {
+        lane: String,
+        note: Option<String>,
+    },
+    /// `fields` is the roster's own field text,
     /// `change` the comma-joined kinds.
     Account {
         fields: String,
@@ -276,14 +328,20 @@ pub enum Event {
         was_status: String,
         was_verdict: String,
     },
-    /// `oversee-watch:5610` (`row` is `boxes=0`) and `:5621` (the due row).
-    VerifyingDeadline { id: String, row: String },
-    // U5d: the observation duty's lines (decision 152).
-    /// `oversee-watch:4960`: `usage-limit` or `usage-limit-passed`, then
-    /// the body the legacy composed from its optional parts, the lane, the
+    /// `row` is `boxes=0`, or the due row.
+    VerifyingDeadline {
+        id: String,
+        row: String,
+    },
+    // The observation duty's lines.
+    /// `usage-limit` or `usage-limit-passed`, then the body composed from
+    /// its optional parts, the lane, the
     /// claimed account, `resets=` and `wall_kind=auth`, as one line.
-    UsageLimit { passed: bool, line: String },
-    /// This runtime's own (decisions 96, 121 Q11): a window of the fleet
+    UsageLimit {
+        passed: bool,
+        line: String,
+    },
+    /// This runtime's own: a window of the fleet
     /// session that no lane record, controller record, open intent or
     /// receipt names, reported and never adopted or closed.
     StrayWindow {
@@ -292,31 +350,36 @@ pub enum Event {
         server: u64,
         name: String,
     },
-    /// This runtime's own (decision 99): a lane whose pane, process or
+    /// This runtime's own: a lane whose pane, process or
     /// screen could not be read this pass, with the reader's cause; never
     /// `window-gone` or `lane-exited`.
-    LaneUnreadable { lane: String, cause: String },
+    LaneUnreadable {
+        lane: String,
+        cause: String,
+    },
     /// One line of a pane tail or a banner window under a lane or overseer
-    /// line (`oversee-watch:3266`, `:3291`, `:3339`): the text itself,
-    /// unindented, as the legacy printed it; one variant per physical line.
+    /// line: the text itself, unindented; one variant per physical line.
     Tail(String),
-    // U5c: the mail duty's lines (decision 152).
-    /// `oversee-watch:3195` and `:3199`: one line of a message's payload
+    // The mail duty's lines.
+    /// One line of a message's payload
     /// under its `lane-question`, `lane-notice`, `owner-note`,
     /// `owner-ask-resolved` or `peer-note` line (the text, line by line,
     /// then `options: a, b`), indented two spaces so only a watch record
     /// begins with `EVENT`. One variant per physical line, since the
     /// follow numbers lines.
-    Payload { line: String },
-    // U5e: the tracker and GitHub read duty's lines (decision 152).
-    /// `oversee-watch:5345`: the tracker's quota refusal, the one limit
-    /// event (decision 142 (1)), its body composed by `tracker_quota_line`
-    /// (`:5307`) from the receipt: `tracker-quota status=<future|elapsed|
+    Payload {
+        line: String,
+    },
+    // The tracker and GitHub read duty's lines.
+    /// The tracker's quota refusal, the one limit event, its body composed
+    /// from the receipt: `tracker-quota status=<future|elapsed|
     /// missing|invalid> reset=<ISO|unavailable> limit=<requests|complexity|
     /// endpoint|unknown>`.
-    TrackerQuota { line: String },
-    // U5d2: the local-lane readings' lines (decision 152).
-    /// `lib/watch-host-kinds.sh:462`: a running or parked lane past the
+    TrackerQuota {
+        line: String,
+    },
+    // The local-lane readings' lines.
+    /// A running or parked lane past the
     /// age bound, once per age interval; each count is a number or
     /// `unread`, `stage` the status file's `Step` line, `parked`, `unread`
     /// or `none`.
@@ -330,11 +393,13 @@ pub enum Event {
         repeated_class_rounds: String,
         stage: String,
     },
-    // U5e2: the GitHub duty's readings' lines (decision 152).
+    // The GitHub duty's readings' lines.
     /// The reducer pass found a new attention key; `rc` the highest status
     /// any repository's reducer returned. The reducer lines and the pass's
     /// stderr follow as `Tail` lines.
-    PrWatch { rc: i32 },
+    PrWatch {
+        rc: i32,
+    },
     /// One open alert, its optional fields in the line's fixed order,
     /// `report=repeat` on a pass that lists an alert already reported with
     /// no verdict recorded.
@@ -356,7 +421,9 @@ pub enum Event {
     },
     /// `reads` the comma-joined `<source>:<cause>` set, printed when the
     /// set changes.
-    SecurityAlertsUnread { reads: String },
+    SecurityAlertsUnread {
+        reads: String,
+    },
     /// `key` is `<repo>#<number>`, `head` present on a pull request alone.
     OutsideContribution {
         key: String,
@@ -364,16 +431,18 @@ pub enum Event {
         author: String,
         head: Option<String>,
     },
-    // U5f: the report and heartbeat duties' lines (decision 152).
-    /// `oversee-watch:5248` (`check_report`): `oversee-report due`'s one
-    /// line, `report-due reason=<minutes|issues> since=<UTC> [landed=<N>]`,
-    /// as that script composed it.
-    ReportDue { line: String },
-    /// A line of the heartbeat's body (`oversee-watch:5715-5733`) or of the
-    /// report's (decision 141 (6)) under its `EVENT` line: the text as the
-    /// legacy printed it, unprefixed; one variant per physical line, since
+    // The report and heartbeat duties' lines.
+    /// The report's due line, `report-due reason=<minutes|issues>
+    /// since=<UTC> [landed=<N>]`.
+    ReportDue {
+        line: String,
+    },
+    /// A line of the heartbeat's body or of the report's under its `EVENT`
+    /// line: the text unprefixed; one variant per physical line, since
     /// the follow numbers lines.
-    Body { line: String },
+    Body {
+        line: String,
+    },
 }
 
 fn with_unit(secs: u64) -> String {
@@ -381,7 +450,7 @@ fn with_unit(secs: u64) -> String {
 }
 
 impl Event {
-    /// The line as the legacy printed it, without its newline.
+    /// The line without its newline.
     pub fn render(&self) -> String {
         match self {
             Event::Heartbeat {
@@ -424,7 +493,7 @@ impl Event {
             }
             Event::StartStalled { item, age } => format!("EVENT start-stalled {item} age={age}"),
             Event::IdleUnread { lane } => format!("EVENT idle-unread {lane}"),
-            // U5g: the wake duty's own lines.
+            // The wake duty's own lines.
             Event::WakeDelivered { target } => format!("EVENT wake-delivered {target}"),
             Event::WakeUnconfirmed { target, cause } => {
                 format!("EVENT wake-unconfirmed {target} cause={cause}")
@@ -504,7 +573,7 @@ impl Event {
                     .unwrap_or_default();
                 format!("EVENT lane-stalled {item} age={age}{state}")
             }
-            // U7a: the hosted readings' render arm.
+            // The hosted readings' render arm.
             Event::CloudStallClosed {
                 item,
                 directive_age,
@@ -586,7 +655,7 @@ impl Event {
                 was_verdict,
             } => format!("EVENT account {fields} change={change} was={was_status}/{was_verdict}"),
             Event::VerifyingDeadline { id, row } => format!("EVENT verifying-deadline {id} {row}"),
-            // U5d: the observation duty's render arms (decision 152).
+            // The observation duty's render arms.
             Event::UsageLimit { passed, line } => {
                 let event = if *passed {
                     "usage-limit-passed"
@@ -605,11 +674,11 @@ impl Event {
                 format!("EVENT lane-unreadable {lane} cause={cause}")
             }
             Event::Tail(line) => line.clone(),
-            // U5c: the mail duty's render arms (decision 152).
+            // The mail duty's render arms.
             Event::Payload { line } => format!("  {line}"),
-            // U5e: the tracker and GitHub read duty's render arms (decision 152).
+            // The tracker and GitHub read duty's render arms.
             Event::TrackerQuota { line } => format!("EVENT {line}"),
-            // U5d2: the local-lane readings' render arms (decision 152).
+            // The local-lane readings' render arms.
             Event::LaneLong {
                 item,
                 age,
@@ -622,7 +691,7 @@ impl Event {
             } => format!(
                 "EVENT lane-long {item} age={age} review_rounds={review_rounds} fix_receipts={fix_receipts} validation_runs={validation_runs} restacks={restacks} repeated_class_rounds={repeated_class_rounds} stage={stage}"
             ),
-            // U5e2: the GitHub duty's readings' render arms (decision 152).
+            // The GitHub duty's readings' render arms.
             Event::PrWatch { rc } => format!("EVENT pr-watch rc={rc}"),
             Event::SecurityAlert {
                 repo,
@@ -678,7 +747,7 @@ impl Event {
                     .unwrap_or_default();
                 format!("EVENT outside-contribution {key} kind={kind} author={author}{head}")
             }
-            // U5f: the report and heartbeat duties' render arms (decision 152).
+            // The report and heartbeat duties' render arms.
             Event::ReportDue { line } => format!("EVENT {line}"),
             Event::Body { line } => line.clone(),
         }
@@ -697,8 +766,8 @@ pub struct EventLog {
     path: PathBuf,
     file: File,
     last: u64,
-    // U5f: the lines rotated out before the live file, which its numbering
-    // continues from (decision 148: rotation with a base offset).
+    // The lines rotated out before the live file, which its numbering
+    // continues from.
     base: u64,
 }
 
@@ -827,8 +896,6 @@ impl EventLog {
         Ok(self.last)
     }
 
-    // U5f: the log's rotation (decision 148: a base offset the numbering
-    // keeps; step5-map § A11).
     /// Rotate the live file out as the segment `<log>.<base>` and open a
     /// fresh one whose first line is `last + 1`: the live log stays within
     /// [`SEGMENT_LINES`], and the numbering a handoff names continues
@@ -846,8 +913,6 @@ impl EventLog {
         Ok(())
     }
 }
-
-// U5f: the rotated segments (decision 148; step5-map § A11).
 
 /// Lines a live log holds before it is rotated out: small enough that the
 /// follow and `watch log` read it whole, large enough that a quiet fleet
@@ -933,10 +998,9 @@ fn open_live(path: &Path) -> Result<File> {
 mod tests {
     use super::*;
 
-    /// Defect: a trailing partial line (an append cut short) counted as a
-    /// line and joined by the next append, so one line of the log carries
-    /// two events and the numbering the follow uses is off by one. The open
-    /// terminates it: the partial line keeps its number, and the next
+    /// A trailing partial line (an append cut short) counted as a line and
+    /// joined by the next append would carry two events on one line and put
+    /// the follow's numbering off by one. The open terminates it: the partial line keeps its number, and the next
     /// append is the line after it.
     #[test]
     fn a_trailing_partial_line_is_terminated_at_open_and_the_next_line_follows_it() {
@@ -967,10 +1031,9 @@ mod tests {
         assert_eq!(std::fs::read(&empty).unwrap(), b"");
     }
 
-    // U5f: the rotation (decision 148).
-    /// R-U5a follow-up 8. Defect: a rotation that renumbers, so the line a
-    /// handoff names points elsewhere in the successor's follow, or a
-    /// reopened log that counts the live file alone. The live file rotates
+    /// A rotation that renumbered would point the line a handoff names
+    /// elsewhere in the successor's follow, as would a reopened log that
+    /// counted the live file alone. The live file rotates
     /// out at `SEGMENT_LINES` as `<log>.<base>`; the next line's number,
     /// the count and a `read_since` across the boundary continue the
     /// numbering, a reopen resumes from it, and the segment is listed with

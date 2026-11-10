@@ -1,5 +1,5 @@
 #!/bin/sh
-# A fake `ps` for the process reader's rows (decision 105): placed first on
+# A fake `ps` for the process reader's rows: placed first on
 # the child's PATH, it is asked the reader's own `-o <column>= -p <pid>`
 # question and answers by the pid, so each exit status the reader must tell
 # apart is a real one.

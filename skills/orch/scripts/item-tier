@@ -46,7 +46,7 @@
 # script answers says nothing about either.
 #
 # stdout is one line, `tier=CLASS brief=VERB cause=CAUSE[ DETAIL] estimate=N delta=N paths=N`.
-# open-terminal records these inputs from the launch brief. Missing counts
+# The launch records these inputs from the launch brief. Missing counts
 # print `-`; paths is the count of --path arguments. VERB is
 # the orch command the launch brief runs: micro, small, or start for
 # standard. CAUSE names the input that decided. Exit 2 is a usage or

@@ -2783,9 +2783,9 @@ mod tests {
                 );
             }
         }
-        let legacy = lane("KEN-1", json!({}));
+        let untiered = lane("KEN-1", json!({}));
         assert_eq!(
-            launch_tier(&legacy),
+            launch_tier(&untiered),
             (
                 None,
                 Some("oversee-cycle: launch-tier-missing item=KEN-1".to_owned())

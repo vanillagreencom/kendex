@@ -7,7 +7,7 @@
 # `text` as raw bytes, `stderr` to stderr, `exit` is the status, 0 when
 # absent; a key with no entry is a failed call (exit 1, as the CLI exits on
 # a refused request). A `done-when` read is the real linear CLI's own,
-# which parses a description and reads nothing (decision 9), so the row
+# which parses a description and reads nothing, so the row
 # proves the runtime through the parser it ships with. Every call appends
 # its arguments to $LINEAR_FAKE_LOG, one line each, so a row can assert
 # what was read, in what batches, and what was not. With the two names

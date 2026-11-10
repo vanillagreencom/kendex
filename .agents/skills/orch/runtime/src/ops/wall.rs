@@ -1,19 +1,19 @@
-//! The wall records the observation duty keeps (decisions 125 (1), 130,
-//! 160 (1)): the account wall record under `walls/` beside the claim store,
+//! The wall records the observation duty keeps: the account wall record
+//! under `walls/` beside the claim store,
 //! which `lanes` reads an account walled by until the reset its banner
 //! named (`lib/account-wall.sh`), and the lane record's own wall,
 //! `lanes[].walled` opened on the first sighting and closed into `pauses`
-//! when the wall ends (`oversee-watch:3393`, `wall_pause`).
+//! when the wall ends.
 //!
 //! The account record is written only for a wall the duty judged current
 //! for the live identity (`watch/lanes.rs`, `wall`): a banner an earlier
 //! process drew never reaches this writer, which is how the record is keyed
 //! to the process identity while its bytes stay what `lanes` reads. The
 //! lane wall is a fleet transition dispatched under its [`super::Request`]
-//! variant (decision 153 (3)), applied by the observation duty through
+//! variant, applied by the observation duty through
 //! `ops::apply`.
 
-// Every reading is matched variant by variant (decision 105).
+// Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::path::{Path, PathBuf};
@@ -28,7 +28,7 @@ use crate::state::{self, Document};
 
 /// POSIX `cksum`: CRC-32 over the bytes then over the byte count, least
 /// significant byte first until none is left, complemented (POSIX.1-2017,
-/// `cksum`). The legacy names the record by `cksum` of the account's
+/// `cksum`). The record is named by `cksum` of the account's
 /// canonical spelling (`lib/account-wall.sh`, `account_wall_file`).
 pub fn cksum(bytes: &[u8]) -> u32 {
     fn feed(mut crc: u32, byte: u8) -> u32 {
@@ -136,7 +136,7 @@ pub struct AccountWallWrite {
 /// `lanes` never reads half a record.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the account wall record, the watch's own file beside the claim store, written whole and renamed into place as the legacy wrote it (decision 125 (1))"
+    reason = "the account wall record, the watch's own file beside the claim store, written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
 )]
 pub fn record_account_wall(
     claim_store: &Path,
@@ -170,12 +170,11 @@ pub fn record_account_wall(
     Ok(Some(path))
 }
 
-/// The marker the legacy watch reads a running wall relaunch by
-/// (`oversee-watch:4651`, `wall_relaunch_marker`, `wall_relaunch_pending`,
+/// The marker a running wall relaunch is read by, in the released watch's
+/// shape (its `wall_relaunch_marker`, `wall_relaunch_pending`,
 /// `wall_relaunch_outcomes`): `wall-relaunch.<lane>` under the watch state
 /// directory, `{item, since, log}`, with the launch's exit status landing
-/// beside it as `.exit`. Written here before the relaunch starts, a value
-/// the runtime mints for the legacy's reader (decision 94 (b)).
+/// beside it as `.exit`. Written here before the relaunch starts.
 pub fn relaunch_marker_path(watch_state_dir: &Path, lane: &str) -> PathBuf {
     let safe: String = lane
         .chars()
@@ -193,7 +192,7 @@ pub fn relaunch_marker_path(watch_state_dir: &Path, lane: &str) -> PathBuf {
 /// Write the relaunch marker, any earlier exit status beside it removed.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the wall relaunch marker, the watch's own file the legacy outcome reader follows, written before the detached relaunch starts (decision 94 (b))"
+    reason = "the wall relaunch marker, the watch's own file the released outcome reader follows, written before the detached relaunch starts"
 )]
 pub fn write_relaunch_marker(marker: &Path, item: &str, since: u64, log: &Path) -> Result<()> {
     let exit = marker.with_extension(
@@ -248,8 +247,8 @@ pub struct WallPausesRecorded {
     pub changed: bool,
 }
 
-/// The legacy `wall_pause` transition over every running lane record
-/// (`oversee-watch:3400-3416`): a lane observed `unavailable` keeps its
+/// The wall-pause transition over every running lane record: a lane
+/// observed `unavailable` keeps its
 /// record; a standing `walled.at` at or before now that the observation
 /// does not name again closes into `pauses` (where it is before now) and
 /// goes; a walled observation at or before now opens `walled.at`. A lane
@@ -351,9 +350,8 @@ mod tests {
         );
     }
 
-    /// Defect: a quoted banner, a session wall or a Pi row read through the
-    /// pane's rule records a wall (`tests/oversee_watch_usage_limit.sh`
-    /// `WALL_ROW_QUOTED`, `WALL_ROW_SESSION`; `tests/oversee_watch_pi_lanes.sh`).
+    /// A quoted banner, a session wall or a Pi row read through the pane's
+    /// rule must record no wall.
     #[test]
     fn only_the_harness_s_own_weekly_report_is_a_wall() {
         let drawn = format!("{DRAWN}You've hit your weekly limit \u{b7} resets Oct 4, 6pm");
@@ -402,14 +400,13 @@ mod tests {
         }
     }
 
-    /// The legacy transition on the bytes `tests/oversee_watch_wall_relaunch.sh`
-    /// pins (`ITEM_PAUSE`, the `walled` and `reused` rows): a wall first
+    /// The transition on the released record's bytes: a wall first
     /// seen at 16:00 opens `walled.at`; the pass that reads it clear at
     /// 16:10 closes it into `pauses`; a wall seen again opens a new
     /// `walled.at`; an unavailable read and a record the observation does
     /// not match keep their record.
     #[test]
-    fn a_wall_opens_walled_at_and_closes_into_pauses_as_the_legacy_wrote_them() {
+    fn a_wall_opens_walled_at_and_closes_into_pauses() {
         let path = Path::new("/f/workflow-state-oversee.json");
         let at_1600 = 1_788_364_800;
         let mut doc = fleet(json!({"item": "KEN-2", "window": "gh-2", "status": "running"}));

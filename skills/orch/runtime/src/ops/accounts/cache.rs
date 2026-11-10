@@ -309,7 +309,7 @@ pub fn under_refresh_lock<R>(usage_dir: &Path, f: impl FnOnce() -> R) -> (R, Opt
     };
     let wait = agent_runtime::record::Wait {
         limit: LOCK_WAIT,
-        ..agent_runtime::record::Wait::LEGACY
+        ..agent_runtime::record::Wait::DEFAULT
     };
     let mut f = Some(f);
     let held = guard.with_wait(&wait.start(), || Ok(f.take().map(|f| f())));

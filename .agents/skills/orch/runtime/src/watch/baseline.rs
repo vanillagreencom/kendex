@@ -1,16 +1,13 @@
 //! The watch's baseline: what each duty last saw, so a duty prints news
-//! once. The legacy kept the rows as a tab-separated blob and read, set or
-//! cleared each row in a subshell that rescanned it (step5-map F5); here
-//! the record is one typed value with one writer, `Baseline::store`, and a
-//! duty reads a snapshot of it and hands back the changes it wants made.
+//! once. The record is one typed value with one writer, `Baseline::store`,
+//! and a duty reads a snapshot of it and hands back the changes it wants
+//! made.
 //!
 //! The pass stamps the runner itself keeps are one row per duty, keyed by
-//! the duty: the end of the last mail turn (the legacy `mail-pass`), the
-//! start of the last run of each long duty (the legacy kept one `long-pass`
-//! for the whole pass; here each duty resumes from its own) and the last
-//! heartbeat, each an epoch second, from which a restarted runner continues
-//! each cadence. Every other row is a duty's own, keyed by kind and identity
-//! as the legacy keyed it.
+//! the duty: the end of the last mail turn, the start of the last run of
+//! each long duty (each duty resumes from its own) and the last heartbeat,
+//! each an epoch second, from which a restarted runner continues each
+//! cadence. Every other row is a duty's own, keyed by kind and identity.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -22,7 +19,7 @@ use crate::error::{Result, WatchError};
 use crate::schedule::Duty;
 
 /// One duty row: `kind`, the identity it is about (an item, a repository,
-/// `fleet`) and its value, the legacy's three tab-separated fields.
+/// `fleet`) and its value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Row {
     pub kind: String,

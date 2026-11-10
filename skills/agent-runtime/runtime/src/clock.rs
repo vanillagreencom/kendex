@@ -1,5 +1,5 @@
 //! ISO 8601 UTC stamps with second precision, `YYYY-MM-DDTHH:MM:SSZ`: the
-//! one form every record this crate writes and every legacy workflow stamp
+//! one form every record this crate writes and every shell workflow stamp
 //! carries, computed without a date crate.
 
 use std::time::{SystemTime, UNIX_EPOCH};

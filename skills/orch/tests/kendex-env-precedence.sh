@@ -521,14 +521,14 @@ mutate_file "$SELECTED_SCRIPTS/lib/kendex-env.sh" \
 for variant in production mutant; do
   selected_lib="$LIB"
   [[ "$variant" != mutant ]] || selected_lib="$SELECTED_SCRIPTS/lib/kendex-env.sh"
-  for form in legacy output-variable; do
+  for form in bare output-variable; do
     selected_result=$(
       unset SECRET KENDEX_ENV_FILE
       source "$selected_lib"
       kendex_project_env_supports selected-private-path || exit 1
       if kendex_project_env_supports unknown-capability; then exit 1; fi
       selected_path=unchanged
-      if [[ "$form" == legacy ]]; then
+      if [[ "$form" == bare ]]; then
         kendex_load_project_env "$PROJ_SELECTED"
       else
         kendex_load_project_env "$PROJ_SELECTED" selected_path

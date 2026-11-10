@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# copilot-lane-context/extension.mjs, the Copilot extension open-terminal
-# installs in a Copilot fleet lane's COPILOT_HOME: run under node against a
+# copilot-lane-context/extension.mjs, the Copilot extension agent-runtime's
+# trust step installs in a Copilot fleet lane's COPILOT_HOME: run under node against a
 # fake @github/copilot-sdk/extension that joins a session named s1, delivers
 # the `session.usage_info` events a row lists and records what the extension
 # writes to the session timeline, beside a fake lane-mail-check hook that
@@ -172,7 +172,7 @@ done
 
 # The directory the extension leaves its marker in, asked of
 # lib/lane-context.sh's lane_context_copilot_pending_dir, the spelling
-# open-terminal's launch gate makes, and found where a run that exits 2 leaves
+# agent-runtime's trust step makes, and found where a run that exits 2 leaves
 # the extension's marker standing: the two name one directory under HOME.
 lib_pending() { HOME="$USER_HOME" bash -c 'source "$1/lib/lane-context.sh"; lane_context_copilot_pending_dir' _ "$SCRIPTS_DIR"; }
 ext_pending() {

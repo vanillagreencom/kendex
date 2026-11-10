@@ -305,7 +305,7 @@ fn read(path: &Path, meta: &fs::Metadata, boundary: Option<u64>, worktree: &Path
             return Ok(Read::Rejected(finding(
                 "invalid",
                 format!(
-                    "review-artifact-check: value_count count={count}\nAn artifact must hold exactly one JSON object, as workflow-state update --slurpfile requires."
+                    "review-artifact-check: value_count count={count}\nAn artifact must hold exactly one JSON object."
                 ),
             )));
         }

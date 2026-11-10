@@ -4,8 +4,7 @@
 # and is injected through ORCH_LANES_FETCH_CMD and ORCH_LANES_TOKEN_CMD, or, for
 # the rows that exercise the real curl calls, through a `curl` shim first on
 # PATH, so every row here runs offline against fixed responses; a chooser tested
-# against live accounts would assert whatever today's usage happens to be. open-terminal's --lane wiring is
-# open-terminal-lane-pick.sh, open-terminal-lane-hosted.sh and open-terminal-lane.sh.
+# against live accounts would assert whatever today's usage happens to be.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. Every run gets its own empty claim store unless the
@@ -351,7 +350,7 @@ table \
   "the renamed lane is the directory the alias named, its measured headroom unchanged|ORCH_LANE_ALIASES=eclaude=work|$LIST|work.config_dir=$H/.eclaude work.headroom_pct=20" \
   "an alias naming no discovered directory is inert|ORCH_LANE_ALIASES=notthere=phantom|$LIST|aliases=claude,eclaude,neutralclaude,openclaude"
 
-# open-terminal consumes check's stdout as the local alias's config dir.
+# A launcher consumes check's stdout as the local alias's config dir.
 table \
   "check resolves an alias without a usage query|ORCH_LANE_ALIASES=eclaude=work|check work|rc=0 out=$H/.eclaude fetched=none" \
   "check keeps the first local alias match|ORCH_LANE_ALIASES=claude=work,eclaude=work|check work|rc=0 out=$H/.claude fetched=none" \
@@ -1093,7 +1092,7 @@ table \
   "the renewal posts a claude-cli User-Agent, and puts it on no argument vector|$REFRESH_ENV;TOKEN_UA_LOG=$UA_LOG|$LIST|claude.status=ok claude.refreshable=true ua=claude-cli/V_(external,_cli) uaargv=argv="
 
 echo "=== a refused endpoint is reported by its HTTP code, never as an expired login ==="
-# `expired` means a proven-dead login downstream: open-terminal turns it into a
+# `expired` means a proven-dead login downstream: a launcher turns it into a
 # remedy line telling the operator to log in again on this machine. A rate limit
 # and a server fault are refusals the account survives, so neither may take it,
 # and a 400 or 401 still must.
@@ -1445,7 +1444,7 @@ assert_eq "$( (( SECONDS - started >= 5 )) && echo waited || echo "$((SECONDS - 
 LANES="$SCRIPTS_DIR/lanes"
 
 echo "=== in-flight lane claims ==="
-# open-terminal records one claim per lane window it launches; a claim is live
+# A launch records one claim per lane window it opens; a claim is live
 # while its pane is, judged by server pid and pane id together (pane ids
 # restart at %0 on every server). Usage numbers lag a launch by minutes, so
 # without the store a second pick re-reads the same numbers and hands one
@@ -1614,15 +1613,15 @@ same_home_claim_result() { # NAME SCRIPTS CLAIM_POOL QUERY
         pick --harness claude --json)" || return 1
     fi
     pool="$(jq -er '.pool' <<<"$record")" || return 1
-    if [[ "$claim" == legacy ]]; then
-      printf '%s\t%%1\t%s\tlegacy\t2026-10-11T00:00:00Z\t\t\tssh\n' "$LIVE_PID" "$account" > "$scope/store/claims/legacy.claim"
+    if [[ "$claim" == poolless ]]; then
+      printf '%s\t%%1\t%s\tpoolless\t2026-10-11T00:00:00Z\t\t\tssh\n' "$LIVE_PID" "$account" > "$scope/store/claims/poolless.claim"
     else
       printf '%s\t%%1\t%s\tlane\t2026-10-11T00:00:00Z\t\t%s\tssh\t%s\n' "$LIVE_PID" "$account" "$account" "$pool" > "$scope/store/claims/lane.claim"
     fi
     args=(pick --harness claude --json)
     case "$query" in
       named) args+=(--lane "$account" --projected) ;;
-      legacy) args+=(--lane "$account" --projected); filter='[.claims]' ;;
+      poolless) args+=(--lane "$account" --projected); filter='[.claims]' ;;
       api) args=(pick --harness pi --model anthropic/claude-opus-5-5 --json); filter='[.claims, .credits.remaining_dollars, .pool]' ;;
     esac
     record="$(cd "$NOSETTINGS" && "${world[@]}" \
@@ -1638,7 +1637,7 @@ assert_eq "$(same_home_claim_result api-named "$SCRIPTS_DIR" api-credit named)" 
   'the projected named Claude launch ignores the API claim on its home'
 assert_eq "$(same_home_claim_result plan-api "$SCRIPTS_DIR" plan api)" '0:[0,150,"api-credit"]' \
   'the reverse Claude plan claim neither charges nor refuses the API grant'
-assert_eq "$(same_home_claim_result legacy-plan "$SCRIPTS_DIR" legacy legacy)" '3:[1]' \
+assert_eq "$(same_home_claim_result poolless-plan "$SCRIPTS_DIR" poolless poolless)" '3:[1]' \
   'a claim with no pool field remains a charged plan claim'
 POOL_READER_MUTANT="$(mutant_scripts mutant-claim-pool-reader lanes)" || exit 1
 mutate_file "$POOL_READER_MUTANT/lanes" '[[ "$claim_pool" == "$pool" ]] || continue' 'true || continue'
@@ -1647,11 +1646,11 @@ assert_eq "$(same_home_claim_result old-reader "$POOL_READER_MUTANT" api-credit 
   'Claude session 92 keeps projected headroom 8 after a native Pi API claim on the same home' > "$TMP_ROOT/claim-pool-control.out"
 POOL_RED="$FAIL"; FAIL="$POOL_FAIL"
 assert_eq "$POOL_RED" 1 'control: the prior reader makes the unchanged same-home assertion fail'
-POOL_LEGACY_MUTANT="$(mutant_scripts mutant-claim-pool-legacy lib/lane-claims.sh)" || exit 1
-mutate_file "$POOL_LEGACY_MUTANT/lib/lane-claims.sh" 'printf '\''\t%s'\'' "${pool:-plan}"' 'printf '\''\t%s'\'' "$pool"'
+POOL_DEFAULT_MUTANT="$(mutant_scripts mutant-claim-pool-default lib/lane-claims.sh)" || exit 1
+mutate_file "$POOL_DEFAULT_MUTANT/lib/lane-claims.sh" 'printf '\''\t%s'\'' "${pool:-plan}"' 'printf '\''\t%s'\'' "$pool"'
 POOL_FAIL="$FAIL"; FAIL=0
-assert_eq "$(same_home_claim_result lost-legacy "$POOL_LEGACY_MUTANT" legacy legacy)" '3:[1]' \
-  'a claim with no pool field remains a charged plan claim' > "$TMP_ROOT/claim-legacy-control.out"
+assert_eq "$(same_home_claim_result lost-default "$POOL_DEFAULT_MUTANT" poolless poolless)" '3:[1]' \
+  'a claim with no pool field remains a charged plan claim' > "$TMP_ROOT/claim-poolless-control.out"
 POOL_RED="$FAIL"; FAIL="$POOL_FAIL"
 assert_eq "$POOL_RED" 1 'control: dropping the older claim default makes the unchanged plan assertion fail'
 
@@ -2216,7 +2215,7 @@ record_metadata_case() { # MODE CODE
   jq --argjson now "$(date +%s)" '.fetched_at = $now | .refusal.expires_at = ($now + 600)
     | .normalized.fetched_at = $now' "$target" > "$peer"
   rm -- "$target"
-  if [[ "$mode" == after-legacy ]]; then
+  if [[ "$mode" == after-older-format ]]; then
     skip_locks=1
     make_lane "$H" claude 3600
     claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -2224,12 +2223,12 @@ record_metadata_case() { # MODE CODE
     for f in "$state"/usage/*.json; do
       [[ "$(jq -r '.config_dir' "$f")" != "$H/.claude" ]] || figure="$f"
     done
-    jq 'del(.normalized)' "$figure" > "$figure.legacy" && mv -- "$figure.legacy" "$figure"
+    jq 'del(.normalized)' "$figure" > "$figure.older" && mv -- "$figure.older" "$figure"
     before="$(jq -c '[.fetched_at, .usage, .prior, .sample_claims]' "$figure")"
     rm -- "$target"
   elif [[ "$mode" == displaced-figure || "$mode" == late-miss ]]; then
     run_lanes "$env_list" $LIST
-    jq 'del(.normalized)' "$target" > "$target.legacy" && mv -- "$target.legacy" "$target"
+    jq 'del(.normalized)' "$target" > "$target.older" && mv -- "$target.older" "$target"
     if [[ "$mode" == late-miss ]]; then
       jq '.usage.five_hour.resets_at = "2000-01-01T00:00:00Z"' "$target" > "$target.expired" \
         && mv -- "$target.expired" "$target"
@@ -2245,25 +2244,25 @@ record_metadata_case() { # MODE CODE
     "$mode: the peer publishes only at the usage lock boundary ($code)"
   assert_eq "$(jq -c '[.usage, .usage_fetched_at, .normalized.account.status]' "$target")" \
     "[null,null,\"$want_status\"]" "$mode: a refusal-only record stays distinct from a figure ($code)"
-  if [[ "$mode" == after-legacy ]]; then
+  if [[ "$mode" == after-older-format ]]; then
     assert_eq "$(json '.[] | select(.alias == "claude") | .headroom_pct'):$(jq -c '[.fetched_at, .usage, .prior, .sample_claims]' "$figure"):$(jq -r '.normalized.account.status' "$figure")" \
-      "50:$before:ok" 'a preceding legacy figure retains its values and gains normalization' "$ERR"
+      "50:$before:ok" 'a preceding older-format figure retains its values and gains normalization' "$ERR"
   fi
   run_lanes "$env_list" $LIST --no-cache
   assert_eq "$(observe 'rc= eclaude.status= eclaude.headroom_pct= fetched=')" \
-    "rc=0 eclaude.status=$want_status eclaude.headroom_pct=null fetched=$([[ "$mode" == after-legacy ]] && printf claude || printf none)" \
+    "rc=0 eclaude.status=$want_status eclaude.headroom_pct=null fetched=$([[ "$mode" == after-older-format ]] && printf claude || printf none)" \
     "$mode: --no-cache honors the live refusal without another request ($code)" "$ERR"
 }
-for record_row in 'cold 401' 'cold 429' 'after-legacy 429' 'displaced-figure 401' 'late-miss 401'; do
+for record_row in 'cold 401' 'cold 429' 'after-older-format 429' 'displaced-figure 401' 'late-miss 401'; do
   read -r record_mode record_code <<<"$record_row"
   record_metadata_case "$record_mode" "$record_code"
 done
 record_metadata_shipped="$LANES"
 record_metadata_mutant="$(mutant_scripts record-metadata-unowned lanes)" || exit 1
-mutate_file "$record_metadata_mutant/lanes" 'local USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false' \
-  'local USAGE_CACHE_RECORD USAGE_CACHE_LEGACY'
-mutate_file "$record_metadata_mutant/lanes" $'\tUSAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false' \
-  $'\tif false; then USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false; fi'
+mutate_file "$record_metadata_mutant/lanes" 'local USAGE_CACHE_RECORD="" USAGE_CACHE_UNNORMALIZED=false' \
+  'local USAGE_CACHE_RECORD USAGE_CACHE_UNNORMALIZED'
+mutate_file "$record_metadata_mutant/lanes" $'\tUSAGE_CACHE_RECORD="" USAGE_CACHE_UNNORMALIZED=false' \
+  $'\tif false; then USAGE_CACHE_RECORD="" USAGE_CACHE_UNNORMALIZED=false; fi'
 LANES="$record_metadata_mutant/lanes"
 record_metadata_saved_fail="$FAIL"; FAIL=0
 record_metadata_case cold 401 > "$TMP_ROOT/record-metadata-control.log"
@@ -2344,7 +2343,7 @@ concurrent_fetches() {
 }
 assert_eq "$(concurrent_fetches "$TMP_ROOT/lockshare-locked" list --harness claude --json)" "claude,eclaude" \
   "two callers arriving together are one refresh of each account, not two"
-# The single-account read open-terminal and lane-mail-check make before every
+# The single-account read a launcher and lane-mail-check make before every
 # launch and every turn end goes through the same lock on a miss.
 assert_eq "$(concurrent_fetches "$TMP_ROOT/lockshare-pick" pick --lane "$H/.claude" --harness claude --json)" "claude" \
   "two pick --lane callers arriving together are one refresh of that account"
@@ -2813,7 +2812,7 @@ table \
   "a model neither legacy field names is judged on the session and weekly windows alone||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
 echo "=== pick --lane judges one named account, and says which outcome it reached ==="
-# The form open-terminal calls. Every exit it can reach is driven here directly,
+# The form a launcher calls. Every exit it can reach is driven here directly,
 # because a launcher asserting its OWN keys proves nothing about the ones this
 # script emits, and an outcome no row names is an outcome a rename can drop.
 new_home one-lane
@@ -3160,7 +3159,7 @@ table \
 # read still runs the provider unbounded, since its cost is one call per window
 # and no launch waits on a listing; a read that asked for NO cache asked to wait
 # for the provider now, and with nothing to end that wait it is refused rather
-# than left hanging with nothing on stderr. `open-terminal` passes --no-cache on
+# than left hanging with nothing on stderr. A launcher passes --no-cache on
 # the gate path, so this is the launcher's probe.
 lanes_mutant mutant-accounts-nobound lanes 'for _accounts_timeout in timeout gtimeout; do' 'for _accounts_timeout in; do'
 LANES_PATCHED="$LANES"

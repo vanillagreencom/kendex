@@ -398,7 +398,7 @@ pub enum Error {
         current: Option<String>,
     },
     /// A park the lane's host cannot take: a local lane has no sandbox to
-    /// stop (`lane-close --park`, `park-refused reason=local`).
+    /// stop (`park-lane`, `park-refused reason=local`).
     #[error("the lane for {item} cannot be parked: {reason}")]
     ParkRefused { item: String, reason: &'static str },
     /// A path the item touches is held by a lane whose harness runs or is

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # lib/pane-write.sh, the one writer into a tmux pane from shell, driven as
-# lane-close, overseer-host-tmux and a Jarvis session drive it: sourced, its
+# overseer-host-tmux and a Jarvis session drive it: sourced, its
 # pane_write called. Every refusal types nothing, a pane running the expected
 # process receives the input, copy mode is cancelled before a keystroke, a
 # failed paste takes its buffer with it, and a hosted pane takes the

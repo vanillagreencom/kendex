@@ -757,9 +757,8 @@ lane_stop_identity() { # PID START HARNESS
   lane_stop_signal "$found"
 }
 
-# A local lane's stop, the ONE sequence lane-close runs for an idle lane and
-# lane-reach.md's mail that cannot wait runs by hand, so neither can end the
-# harness and leave a woken turn running: the harness, then the turn a wake
+# A local lane's stop, the ONE sequence lane-reach.md's by-hand stop runs, so
+# it cannot end the harness and leave a woken turn running: the harness, then the turn a wake
 # started. The harness is stopped by the identity the lane record's launch
 # names, PID and START, and where the record names none, or names a stale one,
 # by the identity lane_harness_identity reads under PANE_PID now. A harness
@@ -835,11 +834,11 @@ lane_stop_launch() { # PANE_PID PID START HARNESS
   LANE_STOP_IDENTITY=pane
 }
 
-# End the turn an open-terminal --wake started, by the identity the lane
+# End the turn a wake started, by the identity the lane
 # record's wake names: it runs detached, outside the pane's process tree, so
 # no stop of the harness reaches it, and it goes on calling tools after its
 # lane closes unless it is stopped here. lane_stop_local runs it after the
-# harness, and lane-close alone for a lane whose harness has already exited.
+# harness, a lane whose harness has already exited included.
 # A record naming no wake and a stale wake identity, a turn already over, are
 # both status 0. On status 1 LANE_STOP_TARGET is `wake` and LANE_STOP_CAUSE
 # lane_stop_identity's.
@@ -886,9 +885,10 @@ lane_stop_owned() { # WORKTREE HARNESS
 # The pane a recorded window names, in either form tmux itself accepts as a
 # target: a bare `KEN-1` is that window on whatever session of the caller's
 # server carries it, and `kendex:KEN-1` is that window under exactly that
-# session. ONE owner for the resolution, because `lane-close` and the pane
-# writer (lib/pane-write.sh) both start from a recorded window and a second
-# matcher is how two of them come to point at different panes.
+# session. ONE owner for the resolution, because every shell reader that
+# starts from a recorded window, the pane writer (lib/pane-write.sh) among
+# them, must point at the same pane, and a second matcher is how two of them
+# come to point at different panes.
 #
 # The session is matched EXACTLY. tmux's own `-t` falls back to a prefix
 # match, so a lane whose session died would silently resolve a sibling
@@ -1037,8 +1037,8 @@ lane_state_is() { # STATE live|dialog
 #   asking    a dialog is up and waiting on an answer
 #   idle      the harness is at its input prompt with nothing in flight
 #   working   a turn is in flight
-#   unjudged  nothing observed settles it; this is not idle. lane-close owns
-#             admission from independent completion evidence.
+#   unjudged  nothing observed settles it; this is not idle. A caller acts
+#             on it only with independent completion evidence.
 #
 # Inputs, each the raw observation and none of them a verdict:
 #
@@ -1062,7 +1062,7 @@ lane_state_is() { # STATE live|dialog
 #            falling back to the local ssh child or the screen.
 #   The optional eleventh argument is `provider` for a screen the caller
 #            already captured through the provider, or `unreadable` for a
-#            failed capture. lane-close passes it to avoid a second remote read.
+#            failed capture. A caller passes it to avoid a second remote read.
 #   LANE_WALL_KIND is `auth` for a failed login, `usage` for a usage wall,
 #            and empty for every other verdict.
 #   LANE_EXIT_SOURCE is `provider` for a confirmed remote exit, `pane` for
@@ -1072,7 +1072,7 @@ lane_state_is() { # STATE live|dialog
 # A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE, by every caller
 # that passes ROWS: the Stop and PreToolUse rows the lane-mail-check hook
 # writes under the pi-hooks carrier, which the runtime's observation duty
-# reads. lane-close's close guard passes none, so it still reads a Pi lane's
+# reads. A caller that passes none reads a Pi lane's
 # pane. Past `gone` and `exited`, which are the window and the process and no screen,
 # ROWS answers `idle`, `working` or `walled` alone, under the same ACCOUNT and
 # SESSION rules the pane rungs keep, and a lane with no row, or rows that could
@@ -1102,8 +1102,8 @@ lane_state_is() { # STATE live|dialog
 # caller that acts on `idle` by starting a second session on the lane's
 # worktree, read off the harness process itself; a process read that cannot
 # settle the question is `unjudged`, and treating that as agreement is what
-# would wake a live lane. The callers here, `lane-close`, `overseer-host-tmux`
-# and jarvis's session backend, supply none and keep every answer the pane
+# would wake a live lane. The callers here, `overseer-host-tmux` and
+# jarvis's session backend, supply none and keep every answer the pane
 # gives; the runtime's wake reads `orch-runtime lane status` instead.
 #
 # An OUT_VAR rather than a printed word: the child probe's raw status is the
@@ -1247,16 +1247,15 @@ lane_input_ready() {
 }
 
 # ---------------------------------------------------------------------------
-# A lane's work item: which tracker its key names, and which merged pull
-# requests are its own. lane-close, oversee-report and lib/launch-overlap.sh
-# each ask one of these here, so each gets the same answer for the same key
-# and pull request.
+# A lane's work item: which tracker its key names. oversee-report and
+# lib/launch-overlap.sh each ask it here, so each gets the same answer for the
+# same key.
 # ---------------------------------------------------------------------------
 
 # lane_key_tracker ITEM — prints the tracker the item key alone names: `linear`
-# for a tracker-identifier key, nothing for an issue-N key. open-terminal
+# for a tracker-identifier key, nothing for an issue-N key. A launch
 # canonicalizes a tracker-identifier key under its default tracker, Linear. An
-# issue-N key names no tracker: it is the spelling open-terminal writes for a
+# issue-N key names no tracker: it is the spelling a launch writes for a
 # GitHub item AND the spelling a Linear item is keyed by wherever
 # GH_ISSUE_PATTERN accepts it, so nothing in the key picks between them, and
 # guessing github would read whatever repository is at hand on an unrelated

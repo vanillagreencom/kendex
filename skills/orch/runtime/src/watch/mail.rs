@@ -838,7 +838,7 @@ mod tests {
     /// The class table on real envelopes: each class and kind to its line,
     /// a stray answer to none, a class the rule does not define refused.
     #[test]
-    fn the_class_table_renders_each_legacy_line() {
+    fn the_class_table_renders_each_line() {
         let env = |json: &str| -> Envelope { serde_json::from_str(json).unwrap() };
         let rows = [
             (
@@ -924,7 +924,7 @@ mod tests {
     /// count, a directive row short of its counts reads as none, and the wake
     /// slot's value is the newest line's id or its number.
     #[test]
-    fn a_replacement_and_a_directive_row_read_as_the_legacy_read_them() {
+    fn a_replacement_and_a_directive_row_read_by_their_wire_forms() {
         assert!(!replaced(0, "", 5, "x"), "nothing drained yet");
         assert!(!replaced(3, "a", 0, ""), "a read finding no line");
         assert!(replaced(3, "a", 3, "b"), "another first id");
@@ -934,8 +934,8 @@ mod tests {
         let row = DirectiveRow::parse(Some("4 2:3 d-1")).unwrap();
         assert_eq!((row.read_at, row.unread_at, row.passes), (4, 2, 3));
         assert_eq!(row.first, "d-1");
-        let legacy = DirectiveRow::parse(Some("4 2 d-1")).unwrap();
-        assert_eq!((legacy.read_at, legacy.unread_at, legacy.passes), (4, 2, 0));
+        let short = DirectiveRow::parse(Some("4 2 d-1")).unwrap();
+        assert_eq!((short.read_at, short.unread_at, short.passes), (4, 2, 0));
         assert!(DirectiveRow::parse(Some("x 2:3 d-1")).is_none());
         assert!(DirectiveRow::parse(None).is_none());
         assert_eq!(MailCursor::parse(Some("7 a-1")).announced, 7);

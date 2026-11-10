@@ -1990,7 +1990,7 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
 /// a consumer's `SECOND_OPINION_<NAME>_ROOM_CMD` runs, the launch prefix on
 /// stdout at exit 0 and the keyed line at the answer's exit otherwise.
 #[test]
-fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
+fn the_pick_verb_answers_the_judgement_with_the_released_exit_by_number() {
     let mut world = World::new(&[]);
     world.plant_listing(&[measured("aclaude", 20, 5)]);
     world.write_fleet(Vec::new(), None);
@@ -2733,8 +2733,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             &pi_dir,
         ])
     };
-    // The launcher's form of the named question (`open-terminal`'s
-    // `named_lane_judge`): the named root on the projection.
+    // The launcher's form of the named question: the named root on the
+    // projection.
     let named_launch = |model: &str, dir: &str| {
         flags(&[
             "--harness",
@@ -5938,7 +5938,7 @@ fn without_flock_the_renewal_waits_out_a_shell_renewers_mkdir_mutex_and_takes_it
         let mut guard = agent_runtime::record::lock(&dir.join(".lanes-refresh")).unwrap();
         let now = agent_runtime::record::Wait {
             limit: std::time::Duration::ZERO,
-            ..agent_runtime::record::Wait::LEGACY
+            ..agent_runtime::record::Wait::DEFAULT
         };
         guard.with_wait(&now.start(), || Ok(())).is_err()
     };

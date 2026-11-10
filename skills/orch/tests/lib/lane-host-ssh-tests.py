@@ -431,7 +431,7 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
-        # The root open-terminal reads the lane's Pi settings under.
+        # The root the launch reads the lane's Pi settings under.
         fields = dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
         self.assertEqual(fields["pi-root"], self.row["account"])
         self.assertNotIn("pi-root", dict(word.split("=", 1) for word in first.stdout.decode().strip().split("\t")))
@@ -470,12 +470,12 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         return dict(word.split("=", 1) for word in result.stdout.decode().strip().split("\t"))
 
     def copilot_run(self, fields, library=None):
-        """The create's prefix running the command open-terminal hands it, under LIBRARY's launch policy or none."""
+        """The create's prefix running the command the launch hands it, under LIBRARY's launch policy or none."""
         probe = ('printf "%s|%s|%s|%s|%s|%s" "${COPILOT_GITHUB_TOKEN-unset}" "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}"'
                  ' "$COPILOT_HOME" "$COPILOT_SKILLS_DIRS" "$COPILOT_ALLOW_ALL"')
         words = ""
         if library:
-            # The launch policy's one owner, as open-terminal's hosted arm calls it
+            # The launch policy's one owner, as a hosted launch calls it
             # for a command carrying --allow-all.
             words = subprocess.run(["bash", "-c", '. "$1" && lane_copilot_env "$2" "$3"', "_",
                                     str(library), "copilot --allow-all", '"$HOME/.agents/skills"'],
@@ -2473,7 +2473,7 @@ exit 9
 
     def test_stop_answers_a_removed_worktree_with_its_own_status(self):
         # merge-pr removes the item's worktree before its lane goes idle, and
-        # lane-close reads exit 4 as a stop to skip, so no remote-failed line
+        # the runtime's hosted stop reads exit 4 as a stop to skip, so no remote-failed line
         # may sit above its stop-skipped line. stop's control is the guard
         # removed.
         self.assertEqual(self.create().returncode, 0)
@@ -3400,7 +3400,7 @@ fi'''))
                     self.assertIn("before-delete:" + line, (self.root / "calls").read_text())
 
     def test_close_accepts_merged_and_keeps_the_whole_archive(self):
-        # lane-close passes --merged on a merged full close; a static host cuts
+        # The close passes --merged on a merged full close; a static host cuts
         # nothing, so every tmp record stays in the archive. The control is the
         # parser without the flag, which refuses the close.
         self.assertEqual(self.create().returncode, 0)

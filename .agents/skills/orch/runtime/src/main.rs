@@ -2451,8 +2451,8 @@ fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> w
 )]
 fn host_locking(path_var: Option<&OsStr>) -> Locking {
     Locking {
-        wait: agent_runtime::record::Wait::LEGACY,
-        legacy_mutex: !agent_runtime::record::flock_on_path(path_var),
+        wait: agent_runtime::record::Wait::DEFAULT,
+        mkdir_mutex: !agent_runtime::record::flock_on_path(path_var),
     }
 }
 

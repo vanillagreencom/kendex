@@ -3,7 +3,7 @@
 # line names bash directly rather than `env`, so the kernel records this
 # script's own name, the basename of the program ORCH_HARNESS_BINARIES
 # configures, for the pane's foreground process; the runtime's judge reads
-# the pane idle only when that process is the harness's (decision 60). It
+# the pane idle only when that process is the harness's. It
 # ignores every launch flag, draws Claude Code's composer marker, then
 # executes the lane's workflow commands deterministically:
 # skills/orch/workflows/start-worktree.md § 1 and its section 2.1,
@@ -30,7 +30,7 @@
 # session, and the relaunched session finds the record standing and
 # resumes it: that run holds on the suite's barrier, so it ends after the
 # session did and the continuation reads a run that ended while the lane
-# was away (decision 133); `killed` holds the admitted validation run for
+# was away; `killed` holds the admitted validation run for
 # the suite to kill the lane under, and `retry` is the relaunched session
 # that reconciles the round and runs the admitted retry. `after` says what
 # the lane does once its job is done: `idle` on stdin until the window
@@ -307,7 +307,7 @@ SH
       # cap, on the barrier the suite releases once this session has
       # exited, then runs the project's own command: the run ends while
       # the lane is away, and the continuation reads a run that ended
-      # after the handoff was recorded (decision 133). The command is this
+      # after the handoff was recorded. The command is this
       # lane's own setting, as the killed row's is.
       cat > tmp/await-barrier <<'SH'
 #!/usr/bin/env bash
@@ -394,7 +394,7 @@ SH
   [ "$(jq -r '.commit' "$receipt")" = "$SHA" ] || fail receipt-commit
   # skills/orch/workflows/dev-start.md § Close The Round's Stages: the
   # round's admitted runs close with the words their sentinels support, then
-  # the round's own entry with the acceptance owner's word (decision 101).
+  # the round's own entry with the acceptance owner's word.
   reconciled="$(op --item "$(jq -cn --arg r "$RID" '{op: "reconcile-round", round_id: $r}')")" || fail reconcile-round
   printf '%s\n' "$reconciled" > tmp/reconcile-report.json
   dev_closed="$(op --item "$(jq -cn --arg r "$RID" '{op: "accept-result", round_id: $r, outcome: "pass"}')")" || fail accept-dev

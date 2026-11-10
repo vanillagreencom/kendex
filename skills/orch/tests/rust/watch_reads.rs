@@ -769,7 +769,7 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
             "EVENT triage KEN-2",
             "EVENT triage KEN-4"
         ],
-        "the legacy's recorded answer"
+        "the released watch's recorded answer"
     );
     let calls = world.linear_calls();
     assert_eq!(
@@ -842,9 +842,9 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
 /// recorded lines field for field, in the recorded order; the wall verdict
 /// is the heartbeat's.
 #[test]
-fn the_owed_inventory_matches_the_legacys_recorded_lines() {
+fn the_owed_inventory_matches_the_released_recorded_lines() {
     let mut world = World::new();
-    let recorded_dir = fixtures().join("legacy-recorded");
+    let recorded_dir = fixtures().join("released-recorded");
     let fleet: Value = serde_json::from_str(
         &std::fs::read_to_string(recorded_dir.join("owed-state.json")).unwrap(),
     )
@@ -854,7 +854,7 @@ fn the_owed_inventory_matches_the_legacys_recorded_lines() {
     )
     .unwrap();
     let recorded = lines(&recorded_dir.join("owed.lines"));
-    assert_eq!(recorded.len(), 9, "the legacy's nine owed lines");
+    assert_eq!(recorded.len(), 9, "the released watch's nine owed lines");
     // The suite's items carry id, state and priority; the CLI's owed select
     // carries the rest, filled here as the CLI would, and the team's open
     // states filter drops KEN-8 (Done), as the recorded run's `--state` does.
@@ -971,7 +971,7 @@ fn the_owed_inventory_matches_the_legacys_recorded_lines() {
 /// The two lines print once, in the recorded order; the search and the head
 /// list are each read once per repository.
 #[test]
-fn the_merged_index_matches_the_legacys_recorded_lines() {
+fn the_merged_index_matches_the_released_recorded_lines() {
     let mut world = World::new();
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
         "lanes": [{"item": "KEN-1", "tracker": "linear", "harness": "claude", "window": null, "host": null, "mail_root": "/w/KEN-1", "launched_at": "2026-09-20T00:00:00Z", "status": "stopped"}]}));
@@ -1023,7 +1023,7 @@ fn the_merged_index_matches_the_legacys_recorded_lines() {
             "EVENT merged 1 ken-1 owner/repo",
             "EVENT merged 2 ken-1 owner/repo"
         ],
-        "the legacy's recorded answer"
+        "the released watch's recorded answer"
     );
     assert_eq!(
         baseline.get("merged", "KEN-1"),
@@ -1267,10 +1267,9 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
 }
 
 /// The lanes the cycle row's cases plant: a hosted parked lane as `main`
-/// wrote one (only a hosted lane parks: `lane-close --park` refuses a local
-/// one), its `host` the fixture provider and its `kind` the one the
+/// wrote one (only a hosted lane parks), its `host` the fixture provider and its `kind` the one the
 /// provider declares, `ssh`, with `mail_root` its root on the host; or a
-/// local stopped lane, as `lane-close --keep-sandbox` leaves one. Both
+/// local stopped lane, as a keep-sandbox close leaves one. Both
 /// carry the tier, the launch stamp and the repository `main`'s launch
 /// recorded.
 fn cycle_lane(world: &World, hosted: bool) -> Value {
@@ -2593,7 +2592,7 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
 fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_closes() {
     const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z, `verifying_one`'s clock
     const BOX: &str = "## Done when\n- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-10-01T12:00:00Z; Deadline: 2026-10-03T00:00:00Z";
-    let recorded = |name: &str| lines(&fixtures().join("legacy-recorded").join(name));
+    let recorded = |name: &str| lines(&fixtures().join("released-recorded").join(name));
     let mut world = World::new();
     world.linear("statuses list", statuses());
     let verifying_item = |blockers: &[&str]| {
@@ -2645,7 +2644,7 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
     assert_eq!(
         *lines_slot.lock().unwrap(),
         recorded("verifying-blocked.lines"),
-        "a blocked box is the legacy's blocked line"
+        "a blocked box is the released watch's blocked line"
     );
     assert_eq!(
         rendered(&produced),

@@ -80,7 +80,7 @@ ol_runtime() {
 }
 
 # ol_runtime_supported — the runtime resolved, and 0 only where it is one
-# these launchers can open a session on. Both of them verify the new
+# a launcher here can open a session on. A launcher verifies the new
 # session's account off its tmux pane (lane_account_check reads the pane's
 # process environment), so a runtime other than tmux returns 1 with
 # OL_REASON=runtime-unsupported and the value in OL_RUNTIME: a provider path
@@ -136,7 +136,7 @@ OL_DEPRECATED_ENTRIES=()
 # prints neither line: a child `lanes` read's stderr is the caller's DEP_ERR
 # or a relayed refusal's cause, never a second copy. A script that starts
 # `lanes` before or without sourcing this file exports the hold itself
-# (lane-close, the lane-mail-check hook). A session launch drops it
+# (the lane-mail-check hook). A session launch drops it
 # (lib/lane-launch.sh LANE_LAUNCH_SCRUB), whose own launches print theirs.
 # A `lanes pick` a person
 # runs holds no latch and warns.

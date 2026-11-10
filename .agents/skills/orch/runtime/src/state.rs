@@ -125,21 +125,21 @@ impl Kind {
 }
 
 /// How a write takes the file's lock. `wait` bounds the acquisition, the
-/// flock and the mutex together; with `legacy_mutex` the file is also
+/// flock and the mutex together; with `mkdir_mutex` the file is also
 /// written under the `mkdir` mutex the shell writers take where the
 /// host has no `flock(1)`, so those writers are excluded.
 #[derive(Debug, Clone, Copy)]
 pub struct Locking {
     pub wait: Wait,
-    pub legacy_mutex: bool,
+    pub mkdir_mutex: bool,
 }
 
 impl Locking {
     /// A host with `flock(1)`: the flock alone, with the shell writers' wait. The
     /// command resolves a host's policy itself, from its own `PATH`.
     pub const FLOCK: Locking = Locking {
-        wait: Wait::LEGACY,
-        legacy_mutex: false,
+        wait: Wait::DEFAULT,
+        mkdir_mutex: false,
     };
 }
 
@@ -548,8 +548,8 @@ impl Record for ItemState {
     }
 }
 
-/// A lane record's `status` word, as `open-terminal`, `close-lane` and
-/// `oversee-watch` read it.
+/// A lane record's `status` word, as the launch, `close-lane` and the
+/// watch read it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LaneStatus {
@@ -1885,7 +1885,7 @@ pub(crate) fn locked<R>(path: &Path, locking: Locking, f: impl FnOnce() -> Resul
     let deadline = locking.wait.start();
     let mut guard = record::lock(path)?;
     guard.with_wait(&deadline, || {
-        let _mutex = if locking.legacy_mutex {
+        let _mutex = if locking.mkdir_mutex {
             Some(record::mutex_lock(path, &deadline)?)
         } else {
             None
@@ -2203,8 +2203,8 @@ mod tests {
             (FLEET_FILE_NAME, fixtures::FLEET),
         ];
         for (name, text) in rows {
-            let legacy = fixtures::without_init_fields(text);
-            let path = write(dir.path(), name, &legacy);
+            let uninitialized = fixtures::without_init_fields(text);
+            let path = write(dir.path(), name, &uninitialized);
             let s = snapshot(&path);
             validate(&path, &s).unwrap();
             for key in fixtures::PRE_2026_INIT_FIELDS {
@@ -2212,7 +2212,7 @@ mod tests {
             }
             // An unchanged store writes the same bytes back.
             store(&path, &s, &s.doc, Locking::FLOCK).unwrap();
-            assert_eq!(fs::read_to_string(&path).unwrap(), legacy, "{name}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), uninitialized, "{name}");
             inspect(&path).unwrap();
         }
     }
@@ -2342,7 +2342,7 @@ mod tests {
     /// `triaged` rows with an `item` key or a
     /// bare string read as the watch reads them, never refusing the file.
     #[test]
-    fn legacy_triaged_rows_are_admitted_and_read_as_the_watch_reads_them() {
+    fn released_triaged_rows_are_admitted_and_read_as_the_watch_reads_them() {
         let dir = tempfile::tempdir().unwrap();
         let path = write(dir.path(), FLEET_FILE_NAME, fixtures::FLEET);
         let s = snapshot(&path);
@@ -2361,7 +2361,7 @@ mod tests {
     /// A shell writer's edit between the read and the
     /// store refuses `record-changed`, and the edit stands.
     #[test]
-    fn a_legacy_edit_between_load_and_store_refuses_record_changed() {
+    fn a_shell_writers_edit_between_load_and_store_refuses_record_changed() {
         let dir = tempfile::tempdir().unwrap();
         let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
         let s = snapshot(&path);
@@ -2580,8 +2580,8 @@ mod tests {
     /// mutex wherever `flock(1)` is not on that path.
     fn for_host(path_var: Option<&OsStr>) -> Locking {
         Locking {
-            wait: Wait::LEGACY,
-            legacy_mutex: !record::flock_on_path(path_var),
+            wait: Wait::DEFAULT,
+            mkdir_mutex: !record::flock_on_path(path_var),
         }
     }
 
@@ -2604,7 +2604,7 @@ mod tests {
     /// it excludes the store, and the store removes its own mutex
     /// afterwards. The wait runs on the fake clock and stops at the limit.
     #[test]
-    fn without_flock_on_path_the_write_takes_the_legacy_mutex() {
+    fn without_flock_on_path_the_write_takes_the_mkdir_mutex() {
         let dir = tempfile::tempdir().unwrap();
         let bin = dir.path().join("bin");
         fs::create_dir(&bin).unwrap();
@@ -2614,7 +2614,7 @@ mod tests {
             wait: short(timer),
             ..for_host(Some(&path_var))
         };
-        assert!(locking.legacy_mutex);
+        assert!(locking.mkdir_mutex);
         let path = write(dir.path(), "workflow-state-KEN-4687.json", fixtures::ITEM);
         let mutex = record::mutex_path(&path);
         fs::create_dir(&mutex).unwrap();
@@ -2638,7 +2638,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(bin.join("flock"), fs::Permissions::from_mode(0o755)).unwrap();
         }
-        assert!(!for_host(Some(&path_var)).legacy_mutex);
+        assert!(!for_host(Some(&path_var)).mkdir_mutex);
     }
 
     /// The flock wait is bounded and refuses `lock-timeout` at
@@ -2665,7 +2665,7 @@ mod tests {
         let timer = FakeTimer::leaked();
         let locking = Locking {
             wait: short(timer),
-            legacy_mutex: false,
+            mkdir_mutex: false,
         };
         let started = Instant::now();
         let err = store(&path, &s, &s.doc, locking).unwrap_err();
@@ -2724,7 +2724,7 @@ mod tests {
             wait: short(timer),
             ..for_host(Some(&path_var))
         };
-        assert!(locking.legacy_mutex);
+        assert!(locking.mkdir_mutex);
         let started = Instant::now();
         let err = store(&path, &s, &s.doc, locking).unwrap_err();
         assert!(started.elapsed() < locking.wait.limit, "no real sleep");

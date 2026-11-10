@@ -1697,7 +1697,7 @@ NEEDLE="$needle" REPLACEMENT='            case "$base" in *restack*) continue ;;
   awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
   "$WORKFLOW" > "$TMP/unknown-restack.yml" || bad "restack retention control changed no workflow owner"
 os_claims "$TMP/unknown-restack.yml" macos-latest 3 > "$TMP/unknown-restack-claims"
-check "must-fail: the old restack filter loses its unresolved suite" \
+check "must-fail: a restack filter without its retention loses its unresolved suite" \
   skills/worktree/tests/worktree_future_restack.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-restack-claims")"
 
@@ -1705,7 +1705,7 @@ NEEDLE='          set -- skills/linear/tests/*.sh' REPLACEMENT='          set --
   awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
   "$WORKFLOW" > "$TMP/unknown-linear.yml" || bad "linear retention control changed no workflow owner"
 os_claims "$TMP/unknown-linear.yml" macos-latest 3 > "$TMP/unknown-linear-claims"
-check "must-fail: the old linear roster loses its unresolved suite" \
+check "must-fail: a linear roster without its retention loses its unresolved suite" \
   skills/linear/tests/native-future.test.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
 

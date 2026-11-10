@@ -134,7 +134,7 @@ assert_eq "$(startup_refusal "$TMP_ROOT/old-measurement")" \
   "rc=2 stdout= first=item-tier-error: cause=measurement-contract found=0 required=1" \
   "a measurement older than the contract item-tier needs is refused by key and prints no tier"
 
-# open-terminal records this machine-read cause with the launch tier.
+# The launch records this machine-read cause with the launch tier.
 assert_standard_setting() {
   local setting globs want setting_root ceiling repo="${1:-$TMP_ROOT}" input="${2:-location}" args path_count
   args=(--path src/main.rs)
@@ -423,7 +423,7 @@ assert_eq "$(run_tier - --production 1 --path skills/x/SKILL.md)" \
 unset TIER_BIN
 
 # Must-fail control for configuration Locations: retain the rule but disable
-# its pre-render phase in a private library, restoring the old launch answer.
+# its pre-render phase in a private library, so the launch misses the Location.
 cp -R "$LAYOUT" "$TMP_ROOT/no-configuration"
 configuration_line='  if [ "$2" = before-render ] || [ "$2" = launch ]; then'
 awk -v line="$configuration_line" '
@@ -437,8 +437,8 @@ fi
 TIER_BIN="$TMP_ROOT/no-configuration/orch/scripts/item-tier"
 control_out="$(run_tier - --production 1 --path kendex.settings.toml)"
 assert_eq "$control_out" "tier=micro brief=micro cause=estimate-within-micro rc=0" \
-  "the old launch behavior misses a settings Location"
-# The regression assertion itself must reject that old answer.
+  "a launch without the pre-render phase misses a settings Location"
+# The regression assertion itself must reject that answer.
 if (PASS=0; FAIL=0; assert_eq "$control_out" \
   "tier=standard brief=start cause=configuration-source rc=0" "settings regression" >/dev/null; [[ "$FAIL" -eq 0 ]]); then
   fail "the settings regression accepts old behavior"

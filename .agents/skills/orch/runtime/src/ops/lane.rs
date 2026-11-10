@@ -1970,7 +1970,7 @@ mod tests {
     use crate::state::{self, EffectOp, LaneStatus, Phase, fixtures};
 
     #[test]
-    fn launch_lane_writes_the_legacy_record_and_the_intent_then_reconciles() {
+    fn launch_lane_writes_the_released_record_and_the_intent_then_reconciles() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let applied = apply_on(&path, &launch_full("KEN-4468"), &env(), LOCK, &host()).unwrap();

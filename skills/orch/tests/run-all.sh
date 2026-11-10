@@ -10,8 +10,8 @@
 # Usage:
 #   bash skills/orch/tests/run-all.sh
 #   bash skills/orch/tests/run-all.sh session_init      # subset by name
-#   bash skills/orch/tests/run-all.sh open-terminal oversee   # either name
-#   bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'  # neither
+#   bash skills/orch/tests/run-all.sh lanes oversee   # either name
+#   bash skills/orch/tests/run-all.sh '!lanes' '!oversee'  # neither
 #   bash skills/orch/tests/run-all.sh =lanes      # that one suite alone
 #   bash skills/orch/tests/run-all.sh --shard orch-oversee # CI's platform partition
 #   bash skills/orch/tests/run-all.sh --battery tools/tests   # another tree's

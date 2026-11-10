@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Tests for `orch_resolve_gh_repo`, the orch entry point every waiter,
-# oversee-watch and open-terminal ask which repository they are acting on. It
+# Tests for `orch_resolve_gh_repo`, the orch entry point every waiter
+# and oversee-watch ask which repository they are acting on. It
 # forwards to `kendex_github_resolve_gh_repo` in the github skill, which owns
 # the ladder; the rows below run through the orch entry point, so a wrapper
 # that stopped forwarding reddens every one of them.
@@ -124,7 +124,7 @@ echo "=== the slug shape GitHub issues, and everything it refuses ==="
 # The refused value is still printed, so the waiter's repo-shape line names
 # what it rejected. A bare name, a three-segment host form and a value
 # carrying whitespace each reach an API path that cannot hold them; a value
-# carrying a quote reaches the shell open-terminal hands its launch line to;
+# carrying a quote reaches the shell a launch hands its launch line to;
 # a segment of dots reaches `repos/<slug>/…` as a path segment a client or
 # server may normalise into another repository.
 table \

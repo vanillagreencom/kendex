@@ -1,5 +1,4 @@
-//! U6c, U7e: the acceptance's post-transition step (step6-map § A8,
-//! decisions 174 (3), 182 Q6, 188 (e), 192 Q10, Q11). `accept` makes the
+//! The acceptance's post-transition step. `accept` makes the
 //! round's close through `accept-result`, then posts the Completion Summary
 //! the request names through the tracker CLI through the one runner, the
 //! tracker duty's route, so the item carries one summary: the acceptance's
@@ -757,7 +756,7 @@ fn locked_close(
     let mut guard = agent_runtime::record::lock(lock).map_err(|e| parent_lock(e.to_string()))?;
     let wait = agent_runtime::record::Wait {
         limit: CONTAINER_LOCK_WAIT,
-        ..agent_runtime::record::Wait::LEGACY
+        ..agent_runtime::record::Wait::DEFAULT
     };
     let mut held = None;
     let ran = guard.with_wait(&wait.start(), || {
@@ -1202,7 +1201,7 @@ impl HeldDir {
             .flatten()
     }
 
-    /// Keep this run's summary and rows, the old summary removed first, so a
+    /// Keep this run's summary and rows, the previous summary removed first, so a
     /// move that fails part way leaves no summary beside rows it was not
     /// built from.
     #[allow(

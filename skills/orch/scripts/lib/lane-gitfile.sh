@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # The one reading of a linked worktree's `.git` file. Git writes
 # `gitdir: <clone>/.git/worktrees/<name>` there, and a caller holding that
-# file's bytes composes paths on the directory it names: the hosted mail read
-# resolves the clone from it, and a hosted launch writes its lane marker under
-# the common git directory it names and its refresh record in the worktree git
-# directory it names. Both would otherwise spell the same
-# shape, and a lane whose marker lands anywhere else is handed no mail at all.
+# file's bytes composes paths on the directory it names: `oversee-report`'s
+# hosted item-state read (`lane_hosted_clone`) resolves the clone from the
+# common git directory it names.
 
 LANE_GITFILE_LIB="$(dirname -- "${BASH_SOURCE[0]}")"
 source "$LANE_GITFILE_LIB/lane-host-slots.sh"

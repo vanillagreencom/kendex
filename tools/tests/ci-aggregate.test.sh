@@ -587,7 +587,7 @@ schedule|skipped|$ALL_OFF|none
 ROWS
 [ "$queue_rows" -ge 14 ] || { echo "the queue table read $queue_rows rows" >&2; exit 1; }
 
-# Restoring the old subset must omit the orch-rest leg.
+# A subset without orch-rest must omit the orch-rest leg.
 mkdir -p "$TMP/subset/tools"
 cp -R "$ROOT/tools/lib" "$TMP/subset/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/subset/tools/"
@@ -598,10 +598,10 @@ chmod +x "$TMP/subset/tools/ci-job-set"
 [ "$(diff "$JOB_SET" "$TMP/subset/tools/ci-job-set" | grep -c '^>' || :)" -eq 1 ] || exit 1
 subset="$(SELECT_WITH="$TMP/subset/tools/ci-job-set" SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
 subset_legs="$(queue_legs "$WORKFLOW" merge_group success "$subset")"
-check "must-fail: the old subset drops orch-rest" false \
+check "must-fail: a subset without orch-rest drops orch-rest" false \
   "$(jq -c 'index("orch-rest") != null' <<<"$subset_legs")"
-[ "$subset_legs" != "$orch_script_queue" ] && ok "must-fail: the old subset fails the portability row" ||
-  bad "must-fail: the old subset leaves the portability row green"
+[ "$subset_legs" != "$orch_script_queue" ] && ok "must-fail: a subset without orch-rest fails the portability row" ||
+  bad "must-fail: a subset without orch-rest leaves the portability row green"
 
 # A condition reading no selection runs the legs on a group of prose alone.
 plant "$WORKFLOW" "|| needs.changes.outputs.queue_macos_shards != '[]')" "|| true)" \

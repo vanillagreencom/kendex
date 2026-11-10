@@ -273,8 +273,8 @@
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
 #         does not reach it. The overseer's own picks (the successor's launch, the
-#         succession walk and capacity count, oversee-succeed's headroom
-#         mark) use the configured provider for Claude accounts too: its
+#         succession walk and capacity count, the headroom mark) use the
+#         configured provider for Claude accounts too: its
 #         stored token can back a local session with no local credentials file.
 #         Other overseer accounts use this machine's reading.
 #
@@ -705,15 +705,14 @@
 # Cold reads and `check` consult `.pruned` and scan when its policy stamp
 # differs or the cache directory is newer. A scan deletes policy-refused
 # records. Nothing in that judgment reads a credential directory.
-# `--no-cache` refreshes it, and `host-accounts` passes that flag from
-# `open-terminal`, whose read decides whether the host holds an account for a
-# launch gate rather than reporting a figure. `pick` reads the answer through
+# `--no-cache` refreshes it; a read that decides whether the host holds an
+# account for a launch gate, rather than reporting a figure, passes it. `pick` reads the answer through
 # the cache: what it takes from it is usage windows, on the TTL every window
 # here has. Such a read is refused where nothing can bound it, since the cache
 # it declined is what covers an unbounded call everywhere else.
 #
-# CLAIMS are the launches already in flight on a lane: `open-terminal` records
-# one per tmux lane it launches under a resolved lane, and a claim is live
+# CLAIMS are the launches already in flight on a lane: a launch records one
+# per tmux lane it opens under a resolved lane, and a claim is live
 # while its pane is (stored under $OVERSEE_WATCH_STATE_DIR/claims, else
 # <project root>/tmp/oversee-watch/claims; a claim whose pane is gone is
 # pruned on read). A claim counts against the account its launch named, the
@@ -736,8 +735,8 @@
 # the lane's config directory — its basename without the leading dot, so
 # `1claude` for `~/.1claude` — selects the account itself, and where PATH holds
 # one the launch goes through it and sets no environment variable at all. Every
-# launcher asks one judge, `lib/lane-launch.sh`, so `open-terminal` and
-# `oversee-succeed` build the same command for the same lane. The name must
+# launcher asks one judge, `lib/lane-launch.sh`, so every launcher builds the
+# same command for the same lane. The name must
 # carry the harness word without being it: `~/.claude` and
 # `~/.codex` name the harness binary, which is the thing being configured rather
 # than a configurator, and a codex lane launched under `--harness claude` names
@@ -1620,7 +1619,7 @@ measure_lane() {
 	# behind another caller's refresh. Cache boundaries observe time themselves
 	# after renewal or lock waits, including the locked second read.
 	local raw="" buckets age=null current_at="" prior_at="" prior_raw="" prior_buckets='{}' elapsed="null" sample_claims=1
-	local USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false
+	local USAGE_CACHE_RECORD="" USAGE_CACHE_UNNORMALIZED=false
 	# store_usage_refusal keeps the prior figure beside a failed renewal.
 	# A cache-only reader must answer that live refusal before the figure.
 	if [[ "$CACHE_ONLY" == true ]] && refusal="$(read_usage_refusal "$harness" "$dir" token)"; then
@@ -1677,13 +1676,13 @@ usage_from_record() {
 	# A locked re-read may find a refusal where the fast read found an older
 	# figure. Only the figure accepted by this attempt can supply its metadata.
 	raw="" age=null current_at="" prior_at="" prior_raw="" sample_claims=1
-	USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false
+	USAGE_CACHE_RECORD="" USAGE_CACHE_UNNORMALIZED=false
 	if [[ "$CACHE_ONLY" == true ]]; then
 		refusal="$(read_usage_refusal "$harness" "$dir" usage)" || refusal=""
 	fi
 	usage_serve_max_age silent
 	if [[ "$USE_CACHE" == "true" && -z "$refusal" ]] && read_usage_cache "$harness" "$dir" "$USAGE_SERVE_MAX_AGE" silent; then
-		[[ "$USAGE_CACHE_LEGACY" != true || "$CACHE_ONLY" == true || "$refreshed" == true || "${CURRENT_USAGE_LOCKED:-false}" == true ]] || return 1
+		[[ "$USAGE_CACHE_UNNORMALIZED" != true || "$CACHE_ONLY" == true || "$refreshed" == true || "${CURRENT_USAGE_LOCKED:-false}" == true ]] || return 1
 		return 0
 	fi
 	if [[ "$CACHE_ONLY" != true ]]; then
@@ -1712,7 +1711,7 @@ refresh_lane_usage() {
 	# The second read, inside the lock: a caller that waited takes the figure or
 	# the refusal the holder brought back instead of posting its own request.
 	if usage_from_record; then
-		if [[ "$USAGE_CACHE_LEGACY" == true ]] && write_usage_cache "$harness" "$dir" "" normalize-only; then
+		if [[ "$USAGE_CACHE_UNNORMALIZED" == true ]] && write_usage_cache "$harness" "$dir" "" normalize-only; then
 			raw="$USAGE_WRITTEN_BODY" current_at="$USAGE_WRITTEN_AT"
 			prior_at="$USAGE_PRIOR_AT" prior_raw="$USAGE_PRIOR_RAW" sample_claims="$USAGE_SAMPLE_CLAIMS"
 			lane_now; age=$((LANE_NOW - current_at))
@@ -1982,7 +1981,7 @@ prune_usage_cache() {
 # declines a figure it could refresh, not the figure that stands in for one the
 # endpoint refused.
 read_usage_cache() { # HARNESS DIR MAX_AGE_S [SILENT]
-	local file output cached expired="" buckets legacy creds observed
+	local file output cached expired="" buckets unnormalized creds observed
 	local cache_age cache_at cache_raw cache_prior_at cache_prior_raw cache_claims
 	usage_cache_file "$1" "$2" silent
 	file="$USAGE_CACHE_FILE"
@@ -2013,11 +2012,11 @@ read_usage_cache() { # HARNESS DIR MAX_AGE_S [SILENT]
 		  $age, $at, (.usage | tojson), (.prior.fetched_at // ""),
 		  (if (.prior.usage | type) == "object" then (.prior.usage | tojson) else "" end),
 		  (.sample_claims // 1)' "$file" 2>/dev/null)" || return 1
-	{ IFS= read -r expired; IFS= read -r legacy; IFS= read -r cached;
+	{ IFS= read -r expired; IFS= read -r unnormalized; IFS= read -r cached;
 	  IFS= read -r cache_age; IFS= read -r cache_at; IFS= read -r cache_raw;
 	  IFS= read -r cache_prior_at; IFS= read -r cache_prior_raw; IFS= read -r cache_claims; } <<<"$output"
-	[[ "$CACHE_ONLY" != true ]] || legacy=true
-	if [[ "$legacy" == true ]]; then
+	[[ "$CACHE_ONLY" != true ]] || unnormalized=true
+	if [[ "$unnormalized" == true ]]; then
 		if [[ "$1" == host-accounts ]]; then
 			buckets="$(jq -r '.rows' <<<"$cache_raw")" || return 1
 			buckets="$(host_account_rows "$buckets" all buckets)" || return 1
@@ -2039,7 +2038,7 @@ read_usage_cache() { # HARNESS DIR MAX_AGE_S [SILENT]
 	# Publish the sample and its metadata together, after every acceptance check.
 	raw="$cache_raw" age="$cache_age" current_at="$cache_at"
 	prior_at="$cache_prior_at" prior_raw="$cache_prior_raw" sample_claims="$cache_claims"
-	USAGE_CACHE_RECORD="$cached" USAGE_CACHE_LEGACY="$legacy"
+	USAGE_CACHE_RECORD="$cached" USAGE_CACHE_UNNORMALIZED="$unnormalized"
 	[[ "${4:-}" == silent ]] || printf '%s\n' "$cached"
 }
 
@@ -2245,8 +2244,7 @@ usage_refusal_window() { # RETRY_AFTER
 #
 # One host-wide lock over each lane's REFRESH, so N callers times M lanes is
 # one request per lane per age window, plus reset refreshes, instead of one per
-# caller. The kendex watch, the fleet watch, each
-# `oversee-succeed --check-marks` and each `pick` sweep
+# caller. The kendex watch, the fleet watch and each `pick` sweep
 # the same accounts, and nothing else serializes them. measure_lane takes it
 # only for a lane its own record read could not answer, and refresh_lane_usage
 # reads the record again inside it, so the second caller through takes the
@@ -3432,9 +3430,9 @@ named_account_judgment() { # IDENTITY MAX MODEL_FLOOR BURN PROJECTED CREDIT_FLOO
 	# verdict charges the claims, and an unread store judged as none is the
 	# launch the chooser dies rather than make. Otherwise a NOTICE: the verdict
 	# is the wall reading, which no claim count enters, and the record's claims
-	# and projection are null. Same policy as the claim write in open-terminal,
-	# which is never fatal: a read that worked is not a failure because its
-	# bookkeeping did not.
+	# and projection are null. Same policy as a launch's claim write, which is
+	# never fatal: a read that worked is not a failure because its bookkeeping
+	# did not.
 	if [[ "$LANE_CLAIMS_RC" -ne 0 ]]; then
 		if [[ "$projected_verdict" == true ]]; then
 			message pick-lane-claims-refused "$dir" >&2
@@ -4412,7 +4410,7 @@ case "$SUB" in
 			done
 		fi
 		# With no resolved account, retain the raw-name refusal so an excluded
-		# alias cannot fall back to a same-named directory in open-terminal.
+		# alias cannot fall back to a same-named directory at the launch.
 		check_names="${check_dir:-$LANE_ARG}"
 		if [[ -z "$check_dir" && "$LANE_ARG" != */* ]]; then
 			while IFS=$'\t' read -r alias_name alias_val; do

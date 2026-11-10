@@ -878,9 +878,7 @@ mail_row() { # HARNESS LABEL LISTED [CMD...]
 # reads its mechanism from the `lane-mail-halt` row of the same table, which
 # carries the same cells as lane-mail-check. It asserts that the lane's next
 # tool call is refused on `lane-mail-check: halt=<id>` while the directive
-# stands, and passes once the lane's own inbox read acknowledges it. It is not
-# here because no arm row can be run on this machine: the accounts these rows
-# need are at their usage limits.
+# stands, and passes once the lane's own inbox read acknowledges it.
 
 # ---- the lane-question row -------------------------------------------------
 # A lane asks its overseer only through lane mail, and the lane-mail-halt

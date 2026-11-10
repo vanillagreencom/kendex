@@ -4482,7 +4482,7 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
 
 /// `.verification` is `{head, verdict, reason, source, at}`,
 /// appended on the first write and replaced in place by a later one; a
-/// word that is no verdict, ci-wait's `pending` among them, writes
+/// word that is no verdict, a wait's `pending` among them, writes
 /// nothing.
 #[test]
 fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
@@ -4547,7 +4547,7 @@ fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
     assert_eq!(again["verification"]["verdict"], "pass");
     assert_eq!(again["verification"]["at"], later.iso());
 
-    // A word that is no verdict is refused and writes nothing: ci-wait's
+    // A word that is no verdict is refused and writes nothing: a wait's
     // `pending` names a wait that ended without a result.
     let text = fs::read_to_string(&path).unwrap();
     for word in ["pending", "green", "PASS", ""] {

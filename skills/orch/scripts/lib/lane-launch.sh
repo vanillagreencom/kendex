@@ -2,8 +2,7 @@
 #
 # The one answer to "how does a resolved lane reach the launched harness, and
 # is the pane really running it". Every launcher that starts a harness on a
-# chosen account builds its command here — open-terminal for a wake of a work
-# item, oversee-succeed for a successor overseer — so a second builder cannot drift
+# chosen account builds its command here, so a second builder cannot drift
 # from the first and launch onto an account nobody picked.
 #
 # Sourced, never run.
@@ -175,8 +174,8 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 
 # How each harness spells the two choices a lane launch must make, for every
 # caller that READS a launch's flags and every caller that WRITES them: the
-# launcher that refuses a launch naming neither, and the successor builder in
-# `oversee-succeed` that renders them. Stated here once, in the file that owns
+# launcher that refuses a launch naming neither, and the successor builder
+# that renders them. Stated here once, in the file that owns
 # per-harness launch mapping, so a harness that renames its effort flag cannot
 # leave one copy behind and have the launcher refuse every launch of it while
 # the builder still writes the word it renamed.
@@ -229,7 +228,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 # from --settings. Codex defers normal compaction to its reported usable-window
 # cap; it can still compact between external handoff checks or on other paths.
 # references/skill-rules.md, Compaction, cites the verified runtime contract.
-# Pi uses its settings file, which open-terminal reads instead. Copilot's
+# Pi uses its settings file, which the launch reads instead. Copilot's
 # flags and `copilot help config` (1.0.88) name no switch that turns its
 # automatic compaction off, so its row has none.
 #
@@ -278,7 +277,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 #             wait on the lane's mailbox monitor, spends of the account's
 #             pool. `-i <prompt>` starts the interactive session and submits
 #             the prompt, and `--resume=<id>` resumes a session by its id;
-#             open-terminal's start_cmd renders both. The rest of what every
+#             a launch's start command renders both. The rest of what every
 #             copilot command carries is environment, lane_copilot_env below.
 # The question-tool words, measured on the same installs:
 #   claude    `claude --help`: `--disallowedTools <tools...>`, comma or space
@@ -322,9 +321,9 @@ launch_choice_row() { # HARNESS
 # naming no harness ANYWHERE in its argv carries its own argv in --cmd and
 # reaches no gate, because no row judges it, but the lane record still names the
 # model it passes and which harness will read that word is not this launcher's
-# to know. A caller that can name the harness passes it: open-terminal reads one
-# out of a `--lane auto:<h>` spec where no --harness was given, and hands that
-# harness here, so such a launch is read and judged by its own row. Derived from
+# to know. A caller that can name the harness passes it, as one read out of a
+# `--lane auto:<h>` spec where no --harness was given, so such a launch is read
+# and judged by its own row. Derived from
 # the same rows, so a spelling is added in one place and both readings get it.
 launch_choice_model_spellings() { # [HARNESS]
   local row spellings word out=""
@@ -471,8 +470,6 @@ launch_choice_permission_transferable() { # HARNESS TEXT...
 # interchangeable between two texts: a caller judging a launch hands this the
 # text the launch actually RUNS, since a --cmd template is rendered verbatim and
 # --launch-flags reach a harness only through a command the caller builds.
-# open-terminal refuses the two together for that reason, as
-# launch-flags-unreachable, so its readings have one text to give.
 #
 # Shell quoting belongs to launch_choice_shell_words, including the backslashes
 # printf %q adds around context selectors.
@@ -637,8 +634,7 @@ launch_choice_permission_write() { # HARNESS
 # writes it outside WORD..., and otherwise the one WORD... names; a WORD...
 # naming it, in either form launch_choice_value reads, is written as
 # launch_choice_model_id gives it and judged so, and one still naming the
-# alias after that is judged as the alias. open-terminal's wake asks this
-# same judge.
+# alias after that is judged as the alias.
 # LAUNCH_CHOICE_COMPACTION says what became of the compaction words: `on`,
 # `none` for a row that has none. An adapter failure gives `no-window`, or
 # `no-model` when the launch uses the native default. A caller's flags handed
@@ -733,7 +729,7 @@ LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this p
 # LAUNCH_CHOICE_FLAGS, where the row has any, as every lane launch carries
 # them; `overseer` keeps the tool in a launched overseer alone. The setting
 # never reaches a lane, since nobody sits at a lane's pane, which is why
-# open-terminal asks this function nothing. Prints `off` or `keep` for a
+# no lane launch asks this function. Prints `off` or `keep` for a
 # launched overseer; returns 3 on a value the setting does not take, for the
 # caller to name.
 launch_overseer_question_tool() {
@@ -1404,8 +1400,8 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # names of the owner's desktop session (LANE_LAUNCH_LIVE_SESSION), cleared
 # from every child a launcher starts so the child never writes that session's
 # records or answers as it, and finds no display through those names:
-# lane_launch_line opens each `env` line it renders with them, and
-# open-terminal's run_detached clears them from a wake. A tmux window takes the
+# lane_launch_line opens each `env` line it renders with them. A tmux window
+# takes the
 # server's environment rather than the launcher's, so the scrub rides in the
 # command and not in the caller's process. Account and home variables are not
 # listed: a launch sets the child's own after this scrub, and
@@ -1492,7 +1488,7 @@ lane_launch_keep_live_session() {
 # The lane is recorded in the launched command itself, so `ps` and the pane's
 # own first line show which account a stalled session belongs to: the
 # launcher's own path, or as the env prefix where the machine has no launcher.
-# Not the window title: both launchers open their window with an explicit -n,
+# Not the window title: a launcher opens its window with an explicit -n,
 # which turns tmux's automatic rename off, so the title keeps the name it was
 # given and never carries the launch line.
 #
@@ -1524,7 +1520,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
         [[ -z "$var" ]] || launch_env="$var=$(lane_single_quote "$dir")${launch_env:+ $launch_env}"
         # The whole custom command runs in the same shell language. One
         # quoted -c argument keeps operators, expansions and comments intact,
-        # and remains executable argv for overseer-run and other consumers.
+        # and remains executable argv for its consumers.
         if [[ -n "$launch_env" ]]; then
           printf '%s %s %s -c %s\n' "$scrub" "$launch_env" "$(lane_single_quote "$BASH")" "$(lane_single_quote "$cmd")"
         else
@@ -1803,7 +1799,7 @@ lane_account_equivalent() { # OBSERVED PICKED
 # Recovery must survive a stop of its predecessor's process group. On macOS,
 # the shared GitHub prefix makes a separate group without Bash job control's
 # parent-side setpgid race. It execs COMMAND, preserving the PID in $! for
-# open-terminal's wake record. The caller selects COMMAND's environment.
+# the caller's record. The caller selects COMMAND's environment.
 lane_run_detached() { # OUT ERR COMMAND...
   local out="$1" err="$2" self="${BASH_SOURCE[0]}" lib
   shift 2

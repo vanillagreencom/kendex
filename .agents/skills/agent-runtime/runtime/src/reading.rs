@@ -1,5 +1,4 @@
-//! The three-valued reading every process and pane read answers with
-//! (decision 99).
+//! The three-valued reading every process and pane read answers with.
 //!
 //! A read of a process or a pane finds its subject live, with what was read
 //! of it; gone, a successful read that found no such subject; or unreadable,
@@ -9,7 +8,7 @@
 //! and carries the cause.
 //!
 //! A reading dropped unread is a read that never happened, so the type is
-//! `#[must_use]` and its consumers match the variants by name (decision 105).
+//! `#[must_use]` and its consumers match the variants by name.
 
 #![deny(clippy::wildcard_enum_match_arm)]
 

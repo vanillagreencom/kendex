@@ -648,7 +648,7 @@ pub(crate) fn read(gh: &Gh, inputs: &Inputs, baseline: &Baseline) -> Result<Read
 }
 
 /// The end of every GitHub-tracked parked or stopped lane item, one read
-/// per item (`lane-close`'s `github` arm): a closed issue whose reason is
+/// per item: a closed issue whose reason is
 /// `completed` ended completed, closed otherwise canceled, open is open.
 /// The tracker duty's read: the item's tracker is GitHub. Each item's read
 /// stands or falls alone: a refused read is that item's `Err`, the
@@ -1998,7 +1998,7 @@ mod tests {
     /// `Closes` line and the recorded number each own; a fork's head, a
     /// mention elsewhere in the title and a `Closes` of another key do not.
     #[test]
-    fn a_pull_request_is_the_lanes_own_by_the_legacy_rule() {
+    fn a_pull_request_is_the_lanes_own_by_its_branch_title_or_closes_line() {
         let rows: [(Pull, bool); 8] = [
             (pull(1, "ken-100", Some("owner"), "repair", ""), true),
             (
@@ -2062,7 +2062,7 @@ mod tests {
     /// The refresh row's two layouts, the runtime's and a released watch's,
     /// round-trip, and an unknown layout is refused.
     #[test]
-    fn the_refresh_row_reads_its_legacy_layouts() {
+    fn the_refresh_row_reads_the_runtime_and_released_layouts() {
         let key = RunKey {
             created_at: "2026-01-01T00:00:00Z".into(),
             id: 1234,

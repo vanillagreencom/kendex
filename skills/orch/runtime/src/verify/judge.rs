@@ -1,10 +1,8 @@
-//! The classification stage (decision 107 (2)): the verdict over the
-//! selected members, a port of the legacy `ci-wait`'s poll body and its
-//! `superseding_run_state` (HEAD `ci-wait:719-804,1039-1160`), so the
-//! rebuild changes no verdict. `judge` is the judgement's one entry: it
-//! takes a validated, complete `Evidence` by value and nothing else, runs
-//! the selection stage and classifies its members. The state machine is in
-//! `classify`'s doc comment.
+//! The classification stage: the verdict over the selected members.
+//! `judge` is the judgement's one entry: it takes a validated, complete
+//! `Evidence` by value and nothing else, runs the selection stage and
+//! classifies its members. The state machine is in `classify`'s doc
+//! comment.
 
 use crate::ops::Verdict;
 
@@ -33,13 +31,12 @@ pub(super) fn judge(evidence: Evidence) -> Judgement {
     classify(select(&evidence))
 }
 
-/// The dispatches that make current-head work (`ci-wait`
-/// `superseding_run_state`, `def substantive`): only a substantive run
-/// holds a settled failure open or supersedes it. The legacy's list for its
-/// pull-request form plus the events of a head pushed to the base, whose
-/// runs are `push` and `workflow_dispatch` (decision 107 (4)): a repeated
-/// `workflow_dispatch`, or a push of the same sha to another ref, makes a
-/// second run on the pinned head.
+/// The dispatches that make current-head work: only a substantive run
+/// holds a settled failure open or supersedes it. The pull-request and
+/// merge-queue events, plus the events of a head pushed to the base, whose
+/// runs are `push` and `workflow_dispatch`: a repeated `workflow_dispatch`,
+/// or a push of the same sha to another ref, makes a second run on the
+/// pinned head.
 const SUBSTANTIVE_EVENTS: [&str; 6] = [
     "pull_request",
     "pull_request_review",
@@ -62,8 +59,7 @@ fn report(run: &RunEvidence, bucket: Bucket) -> CheckReport {
     }
 }
 
-/// What the head's Actions runs say about a settled failure (`ci-wait`
-/// `superseding_run_state`, the failures branch).
+/// What the head's Actions runs say about a settled failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Correlation {
     /// A failing member's own run is unfinished, or a substantive run on
@@ -77,8 +73,8 @@ enum Correlation {
     Terminal,
 }
 
-/// The legacy correlation of settled failures with the head's runs
-/// (`ci-wait:773-800`): per failure, no run of its own among the scoped
+/// The correlation of settled failures with the head's runs: per
+/// failure, no run of its own among the scoped
 /// runs is `terminal`; its own run unfinished is `active`; any substantive
 /// run in flight is `active`; else the newest substantive execution of its
 /// workflow (a newer id, or a later attempt of an older run whose activity
@@ -88,11 +84,10 @@ enum Correlation {
 ///
 /// A failure's own run is the run its association names: the linked run
 /// of a resolved association, or the held run an unresolved one links. An
-/// unresolved association with no such run is the one departure from the
-/// legacy (decision 112 (2)): it is `active` while a substantive run is in
-/// flight, where the legacy read a run it could not find as a proved
-/// external failure (`:776`, `:779`), and `terminal` otherwise, as the
-/// legacy read it. A member with no association is `terminal`.
+/// unresolved association with no such run is `active` while a substantive
+/// run is in flight, since a run the read could not find is no proof of an
+/// external failure, and `terminal` otherwise. A member with no association
+/// is `terminal`.
 fn correlate(failed: &[&Member], runs: &[&RunEvidence]) -> Correlation {
     let head_in_flight = runs
         .iter()
@@ -138,32 +133,29 @@ fn correlate(failed: &[&Member], runs: &[&RunEvidence]) -> Correlation {
     }
 }
 
-/// The verdict over the selected members, the legacy `ci-wait`'s for one
-/// read set; the first step that holds decides:
+/// The verdict over the selected members of one read set; the first step
+/// that holds decides:
 ///
 /// 1. Nothing is considered: the absence probe under `required_only`
 ///    (`none` or `checks-unregistered`), else `checks-unregistered`.
 /// 2. Any considered member is unfinished (queued, in flight, a stale
 ///    aggregate held `expected`, or a required context or workflow no
-///    member reports): `pending checks-pending` (`ci-wait:1046-1055`).
+///    member reports): `pending checks-pending`.
 /// 3. Any considered member failed: the failures are correlated with the
 ///    selected runs (`correlate`). `active`: `pending failed-run-active`,
-///    the failures reported `expected`, pending, as the legacy relabelled
-///    them (`:1063-1073`). `superseded`: the failures are removed and the
-///    survivors go on (`:1075-1081`). `terminal`: `complete fail`
-///    (`:1082-1106`).
+///    the failures reported `expected`, pending. `superseded`: the
+///    failures are removed and the survivors go on. `terminal`: `complete
+///    fail`.
 /// 4. No survivor counts as passed: a skipped check counts only under the
-///    `required_only` flag (`:812`), so a skipped-only result is `pending
+///    `required_only` flag, so a skipped-only result is `pending
 ///    skipped-only` and one whose every member was superseded `pending
-///    checks-superseded`; the legacy never reaches its success branch
-///    there and times out (`:1110-1111,1162-1171`).
+///    checks-superseded`: neither is a pass, and the wait times out.
 /// 5. With every check counting, a selected run still in flight is
-///    `pending actions-run-active` (`:761`), and the current execution of
+///    `pending actions-run-active`, and the current execution of
 ///    any workflow, non-skipped runs preferred, concluded outside
-///    `success`, `neutral` and `skipped` is `complete fail`
-///    (`:763-770,1121-1126`). A known required set names every blocking
-///    context, so an optional workflow never postpones its pass
-///    (`:1110-1116`).
+///    `success`, `neutral` and `skipped` is `complete fail`. A known
+///    required set names every blocking context, so an optional workflow
+///    never postpones its pass.
 /// 6. `complete pass`.
 pub(super) fn classify(selection: Selection<'_>) -> Judgement {
     let Selection {
@@ -274,7 +266,7 @@ pub(super) fn classify(selection: Selection<'_>) -> Judgement {
                 .values()
                 .filter_map(|group| {
                     // A workflow that ran once skipped and once for real is
-                    // judged by its real runs (`ci-wait:764-765`).
+                    // judged by its real runs.
                     let ran: Vec<&RunEvidence> = group
                         .iter()
                         .filter(|r| r.outcome() != Outcome::Concluded(RunConclusion::Skipped))

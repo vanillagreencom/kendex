@@ -50,7 +50,7 @@ pub struct Lock {
     _guard: Option<()>,
 }
 
-/// The lock file beside a record: `<file>.lock`, the path the legacy shell
+/// The lock file beside a record: `<file>.lock`, the path the shell
 /// writers take their `flock(1)` on.
 pub fn lock_path(path: &Path) -> PathBuf {
     let mut name = path
@@ -61,7 +61,7 @@ pub fn lock_path(path: &Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-/// The directory the legacy shell writers take as a `mkdir` mutex where
+/// The directory the shell writers take as a `mkdir` mutex where
 /// `flock(1)` is absent: `<file>.lock.d` (mailbox's `lib/file-lock.sh`).
 pub fn mutex_path(path: &Path) -> PathBuf {
     let mut name = path
@@ -95,7 +95,7 @@ impl Timer for SystemTimer {
 }
 
 /// How long a lock acquisition may wait before it refuses `lock-timeout`,
-/// how often it retries, and the timer it waits on. The legacy writers wait
+/// how often it retries, and the timer it waits on. The shell writers wait
 /// 10 s and poll every 100 ms; a test passes a shorter limit and a fake
 /// timer.
 #[derive(Clone, Copy)]
@@ -115,8 +115,9 @@ impl std::fmt::Debug for Wait {
 }
 
 impl Wait {
-    /// The legacy writers' bound: `orch_take_lock ... 10`.
-    pub const LEGACY: Wait = Wait {
+    /// The default bound, the one the shell writers wait on:
+    /// `orch_take_lock ... 10`.
+    pub const DEFAULT: Wait = Wait {
         limit: Duration::from_secs(10),
         poll: Duration::from_millis(100),
         timer: &SystemTimer,
@@ -166,7 +167,7 @@ fn lock_timeout(lock: &Path, limit: Duration) -> Error {
 }
 
 /// Whether `flock(1)` is on the given `PATH` value, which decides the lock
-/// mechanism the legacy shell writers of a host resolve (`file-lock.sh`).
+/// mechanism the shell writers of a host resolve (`file-lock.sh`).
 /// `None` is an unset `PATH`, where no executable is found.
 pub fn flock_on_path(path_var: Option<&OsStr>) -> bool {
     let Some(path_var) = path_var else {
@@ -189,7 +190,7 @@ fn is_executable(_path: &Path) -> bool {
     true
 }
 
-/// The legacy `mkdir` mutex `<file>.lock.d`, held while the value lives and
+/// The shell writers' `mkdir` mutex `<file>.lock.d`, held while the value lives and
 /// removed on drop. Acquisition retries `mkdir` every poll until the
 /// deadline passes, then refuses `lock-timeout`, as `file-lock.sh`'s
 /// `orch_take_lock` does; like it, this takes no view on a standing
@@ -206,7 +207,7 @@ impl Drop for MutexDir {
     }
 }
 
-/// Take the legacy `mkdir` mutex beside `path`, waiting up to `deadline`.
+/// Take the `mkdir` mutex beside `path`, waiting up to `deadline`.
 pub fn mutex_lock(path: &Path, deadline: &Deadline) -> Result<MutexDir> {
     let dir = mutex_path(path);
     loop {
@@ -272,7 +273,7 @@ impl Guard {
 
 /// Read the file as one JSON value, `None` when it does not exist. A typed
 /// reader that must see a record before it carries a version (orch-runtime's
-/// legacy workflow state) starts here and then hands a versioned value to
+/// unversioned workflow state) starts here and then hands a versioned value to
 /// [`split_meta`].
 pub fn read_value(path: &Path) -> Result<Option<Value>> {
     let mut file = match File::open(path) {
@@ -697,7 +698,7 @@ mod tests {
         assert_eq!(mutex, dir.path().join("r.json.lock.d"));
         let timer = FakeTimer::leaked();
         let wait = short(timer);
-        // A legacy writer holds the mutex: its directory stands.
+        // A shell writer holds the mutex: its directory stands.
         fs::create_dir(&mutex).unwrap();
         let err = mutex_lock(&path, &wait.start()).unwrap_err();
         assert_eq!(err.key(), "lock-timeout");
