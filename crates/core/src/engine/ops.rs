@@ -376,9 +376,9 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// carrier or an edge added since the last install and survive a deleted
 /// record. A rooted path in any reading keeps the removal: an older reading
 /// can cost a suppression the next add clears, but never drops one.
-/// Otherwise an ancestor the record holds no reasons for refuses, because
-/// the catalog cannot prove it gone and guessing could make the removal
-/// return.
+/// Otherwise an ancestor no recorded reading holds reasons for refuses,
+/// because the catalog cannot prove it gone and guessing could make the
+/// removal return.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -389,6 +389,7 @@ fn kept_removed(
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
     let read = read_ancestry(env, scope, manifest);
+    let captured = captured_rows(lock);
     let roots = |facts| RemovalRoots {
         scope,
         manifest,
@@ -399,7 +400,7 @@ fn kept_removed(
         facts,
     };
     let mut decisions = BTreeMap::new();
-    roots(Facts::Recorded).decide(&mut decisions);
+    roots(Facts::Recorded(&captured)).decide(&mut decisions);
     roots(Facts::Read(&read)).decide(&mut decisions);
     let mut kept = BTreeSet::new();
     for (key, decision) in decisions {
@@ -478,15 +479,30 @@ impl Reach {
 /// Where the walk reads an installation's reasons on one tool.
 enum Facts<'a> {
     /// Every recorded reading of an installation: its own entry, which
-    /// continues in that entry's snapshot, and the evidence context's
-    /// captured row, which continues in that context. Nothing in the lock
-    /// says which of two readings is newer, so each is walked on its own
-    /// and a root in any of them counts; none vetoes another, and
-    /// snapshots are never merged.
-    Recorded,
+    /// continues in that entry's snapshot, and each dependent's captured
+    /// row, which continues in that dependent's. Nothing in the lock says
+    /// which of two readings is newer, so each is walked on its own and a
+    /// root in any of them counts; none vetoes another, and snapshots are
+    /// never merged.
+    Recorded(&'a Captured<'a>),
     /// What the catalogs derive now ([`read_ancestry`]). An installation
     /// they do not derive has no carrier.
     Read(&'a BTreeMap<InstallRef, RequirerProvenance>),
+}
+
+/// Every dependent's captured row, by the installation it reads.
+type Captured<'l> = BTreeMap<&'l InstallRef, Vec<(&'l LockEntry, &'l RequirerProvenance)>>;
+
+fn captured_rows(lock: &Lock) -> Captured<'_> {
+    let mut rows = Captured::new();
+    for dependent in lock.entries.values() {
+        for row in dependent.requirer_provenance.iter().flatten() {
+            rows.entry(&row.installation)
+                .or_default()
+                .push((dependent, row));
+        }
+    }
+    rows
 }
 
 /// One reading of an installation, and the entry whose snapshot the walk
@@ -495,6 +511,16 @@ struct Reading<'f> {
     context: Option<&'f LockEntry>,
     repo: &'f str,
     reasons: &'f BTreeSet<Reason>,
+}
+
+/// What the facts hold for an installation.
+enum Readings<'f> {
+    /// Each walked in its own context. Read now, an installation the
+    /// catalogs do not derive has none, and so no carrier.
+    Of(Vec<Reading<'f>>),
+    /// No recorded reading holds a row for it, so only a declaration under
+    /// the identity the record would read it at can still root it.
+    Unrecorded { identity: Option<&'f str> },
 }
 
 /// A walk step already taken: an ancestor, in the snapshot it was read in.
@@ -538,80 +564,41 @@ impl RemovalRoots<'_> {
     }
 
     fn decide(&self, decisions: &mut BTreeMap<(ItemKind, String), Reach>) {
-        let mut merge = |node: &InstallRef, reach: Reach| {
+        let nodes: BTreeSet<InstallRef> = match self.facts {
+            Facts::Read(read) => read.keys().cloned().collect(),
+            // Every installation the record names: entries, captured rows,
+            // and the ancestors their edges name, which may have neither.
+            Facts::Recorded(captured) => captured
+                .keys()
+                .map(|node| (*node).clone())
+                .chain(self.lock.entries.values().flat_map(|entry| {
+                    let edges = entry.reasons.iter().chain(
+                        entry
+                            .requirer_provenance
+                            .iter()
+                            .flatten()
+                            .flat_map(|row| &row.reasons),
+                    );
+                    std::iter::once(install_ref(entry)).chain(edges.filter_map(
+                        |reason| match reason {
+                            Reason::RequiredBy { by } => Some(by.clone()),
+                            Reason::Requested | Reason::MemberOf { .. } => None,
+                        },
+                    ))
+                }))
+                .collect(),
+        };
+        // A selected node is walked as any ancestor is, but never cut as
+        // explicit; its declaration has already left the edited manifest.
+        for node in nodes.iter().filter(|node| self.selected(node)) {
+            let reach = self.walk(None, node, &mut Visited::new());
             let key = (node.kind, node.name.clone());
             let reach = match decisions.remove(&key) {
                 Some(old) => old.or(reach),
                 None => reach,
             };
             decisions.insert(key, reach);
-        };
-        if let Facts::Read(read) = self.facts {
-            for row in read.values().filter(|row| self.selected(&row.installation)) {
-                merge(
-                    &row.installation,
-                    self.start(None, &row.installation, &row.source_repo, &row.reasons),
-                );
-            }
-            return;
         }
-        // A selected node's readings are its own entry and every
-        // dependent's captured row for it, each walked in its own context.
-        for dependent in self.lock.entries.values() {
-            let node = install_ref(dependent);
-            if self.selected(&node) {
-                merge(
-                    &node,
-                    self.start(
-                        Some(dependent),
-                        &node,
-                        &dependent.source_repo,
-                        &dependent.reasons,
-                    ),
-                );
-            }
-            for row in dependent.requirer_provenance.iter().flatten() {
-                if self.selected(&row.installation) {
-                    merge(
-                        &row.installation,
-                        self.start(
-                            Some(dependent),
-                            &row.installation,
-                            &row.source_repo,
-                            &row.reasons,
-                        ),
-                    );
-                }
-            }
-            // An edge to a selected node this snapshot holds no row for,
-            // with no entry of its own either, leaves its carrier unknown.
-            let edges = dependent.reasons.iter().chain(
-                dependent
-                    .requirer_provenance
-                    .iter()
-                    .flatten()
-                    .flat_map(|row| &row.reasons),
-            );
-            for reason in edges {
-                if let Reason::RequiredBy { by } = reason
-                    && self.selected(by)
-                    && captured(dependent, by).is_none()
-                    && self.entry(by).is_none()
-                {
-                    merge(by, Reach::Missing(Unread::Ancestor(by.clone())));
-                }
-            }
-        }
-    }
-
-    fn start(
-        &self,
-        context: Option<&LockEntry>,
-        node: &InstallRef,
-        repo: &str,
-        reasons: &BTreeSet<Reason>,
-    ) -> Reach {
-        self.reasons(context, node, repo, reasons, &mut Visited::new())
     }
 
     fn reasons(
@@ -655,7 +642,7 @@ impl RemovalRoots<'_> {
             Facts::Read(_) => crate::source::declared_provenance(self.manifest, &bundle.source)
                 .into_iter()
                 .collect::<Vec<_>>(),
-            Facts::Recorded => (node.source == bundle.source)
+            Facts::Recorded(_) => (node.source == bundle.source)
                 .then(|| repo.to_owned())
                 .into_iter()
                 .chain(
@@ -688,30 +675,22 @@ impl RemovalRoots<'_> {
         if self.explicit(by) {
             return Reach::Unrooted;
         }
-        let readings = self.readings(context, by);
-        if readings.is_empty() {
-            return match self.facts {
-                Facts::Read(_) => Reach::Unrooted,
-                // The identity it would be read under still proves a
-                // declaration.
-                Facts::Recorded => {
-                    let repo = context
-                        .filter(|context| context.source == by.source)
-                        .map(|context| context.source_repo.as_str())
-                        .or_else(|| {
-                            self.lock
-                                .sources
-                                .get(&by.source)
-                                .map(|source| source.repo.as_str())
-                        });
-                    if repo.is_some_and(|repo| self.declared(by, repo)) {
-                        Reach::Rooted
-                    } else {
-                        Reach::Missing(Unread::Ancestor(by.clone()))
-                    }
-                }
-            };
-        }
+        self.walk(context, by, visited)
+    }
+
+    /// Whether any reading of `by` roots it, each walked once in its own
+    /// context. `context` is the snapshot whose edge led here.
+    fn walk(&self, context: Option<&LockEntry>, by: &InstallRef, visited: &mut Visited) -> Reach {
+        let readings = match self.readings(context, by) {
+            Readings::Of(readings) => readings,
+            Readings::Unrecorded { identity } => {
+                return if identity.is_some_and(|repo| self.declared(by, repo)) {
+                    Reach::Rooted
+                } else {
+                    Reach::Missing(Unread::Ancestor(by.clone()))
+                };
+            }
+        };
         let mut found = Reach::Unrooted;
         for reading in readings {
             let next = if self.declared(by, reading.repo) {
@@ -729,31 +708,55 @@ impl RemovalRoots<'_> {
         found
     }
 
-    fn readings<'f>(&'f self, context: Option<&'f LockEntry>, by: &InstallRef) -> Vec<Reading<'f>> {
-        if let Facts::Read(read) = self.facts {
-            return read
-                .get(by)
-                .map(|row| Reading {
-                    context: None,
-                    repo: &row.source_repo,
-                    reasons: &row.reasons,
-                })
-                .into_iter()
-                .collect();
-        }
+    /// The one answer to which readings speak for an installation: read
+    /// now, the catalogs' row; recorded, its own entry and every captured
+    /// row for it, wherever the walk arrived from. A snapshot without a row
+    /// gives no evidence while another holds one.
+    fn readings<'f>(&'f self, context: Option<&'f LockEntry>, by: &InstallRef) -> Readings<'f> {
+        let captured = match self.facts {
+            Facts::Read(read) => {
+                return Readings::Of(
+                    read.get(by)
+                        .map(|row| Reading {
+                            context: None,
+                            repo: &row.source_repo,
+                            reasons: &row.reasons,
+                        })
+                        .into_iter()
+                        .collect(),
+                );
+            }
+            Facts::Recorded(captured) => captured,
+        };
         let installed = self.entry(by).map(|entry| Reading {
             context: Some(entry),
             repo: &entry.source_repo,
             reasons: &entry.reasons,
         });
-        let snapshot = context.and_then(|dependent| {
-            captured(dependent, by).map(|row| Reading {
-                context: Some(dependent),
+        let rows = captured
+            .get(by)
+            .into_iter()
+            .flatten()
+            .map(|(dependent, row)| Reading {
+                context: Some(*dependent),
                 repo: &row.source_repo,
                 reasons: &row.reasons,
-            })
-        });
-        installed.into_iter().chain(snapshot).collect()
+            });
+        let readings: Vec<_> = installed.into_iter().chain(rows).collect();
+        if !readings.is_empty() {
+            return Readings::Of(readings);
+        }
+        // The identity it would be read under still proves a declaration.
+        let identity = context
+            .filter(|context| context.source == by.source)
+            .map(|context| context.source_repo.as_str())
+            .or_else(|| {
+                self.lock
+                    .sources
+                    .get(&by.source)
+                    .map(|source| source.repo.as_str())
+            });
+        Readings::Unrecorded { identity }
     }
 
     fn declared(&self, by: &InstallRef, repo: &str) -> bool {
@@ -776,15 +779,6 @@ fn install_ref(entry: &LockEntry) -> InstallRef {
         name: entry.name.clone(),
         harness: entry.harness,
     }
-}
-
-/// The dependent's own snapshot row for one ancestor.
-fn captured<'e>(dependent: &'e LockEntry, by: &InstallRef) -> Option<&'e RequirerProvenance> {
-    dependent
-        .requirer_provenance
-        .iter()
-        .flatten()
-        .find(|row| row.installation == *by)
 }
 
 /// The catalogs behind what is going away that cannot be read right now.

@@ -450,15 +450,45 @@ fn add_carrier(existing_carrier: bool) {
     );
 }
 
-/// An add gives github a second requirer, x, beside dev. On a record from
-/// before the field, as a project that just upgraded holds it, the entry
-/// then holds what verify records rather than only x's row.
+/// An add that gives github a second requirer leaves the snapshot a full
+/// pass records: a skill x beside dev, on a current record or on one from
+/// before the field as a project that just upgraded holds it, or a set
+/// over the dev declaration.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_add_over_a_record_from_before_the_field_leaves_what_verify_records() {
-    for legacy in [false, true] {
+fn an_add_over_an_installed_dependency_leaves_what_verify_records() {
+    let x = || ops::AddRequest {
+        source: Some("cat".into()),
+        skills: vec!["x".into()],
+        ..Default::default()
+    };
+    let rows = [
+        ("skill x", None, false, x()),
+        (
+            "skill x over a record from before the field",
+            None,
+            true,
+            x(),
+        ),
+        (
+            "set over the declaration",
+            Some(
+                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"dev\"]\n",
+            ),
+            false,
+            ops::AddRequest {
+                source: Some("cat".into()),
+                bundles: vec!["crew".into()],
+                ..Default::default()
+            },
+        ),
+    ];
+    for (name, catalog, legacy, request) in rows {
         let f = fixture("[skills.dev]\nsource = \"cat\"\n");
         skill(&f.source, "x", "dependencies:\n  required: [github]\n");
+        if let Some(catalog) = catalog {
+            fs::write(f.source.join("kendex.toml"), catalog).unwrap();
+        }
         apply_now(&f);
         if legacy {
             let mut lock = lock_of(&f);
@@ -467,16 +497,7 @@ fn an_add_over_a_record_from_before_the_field_leaves_what_verify_records() {
             }
             kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
         }
-        let report = ops::add(
-            &f.env,
-            &f.scope,
-            &ops::AddRequest {
-                source: Some("cat".into()),
-                skills: vec!["x".into()],
-                ..Default::default()
-            },
-        )
-        .unwrap();
+        let report = ops::add(&f.env, &f.scope, &request).unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
         let verified = kendex_core::attest::record(
             &f.env,
@@ -487,7 +508,7 @@ fn an_add_over_a_record_from_before_the_field_leaves_what_verify_records() {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(verified.problems, Vec::<String>::new(), "legacy={legacy}");
+        assert_eq!(verified.problems, Vec::<String>::new(), "{name}");
     }
 }
 
@@ -826,80 +847,110 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
     }
 }
 
-/// The set was recorded from one reading, then its source moved and an add
-/// took a new member from the new reading while keeping the old member,
-/// and so the old set record. The new member's own reading, bound to its
-/// edge, decides it; the retained set record does not.
+/// A rebind of the set's catalog leaves the set's record and a member's
+/// own reading at different readings: an add of a new member keeps the
+/// older record, and a local edit holds an older member beside a newer
+/// record. Either reading roots the member; the older one never vetoes the
+/// other.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_retained_set_record_never_overrides_a_member_read_from_the_set_source() {
-    let f = fixture("[bundles.crew]\nsource = \"cat\"\n");
-    fs::write(
-        f.source.join("kendex.toml"),
-        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
-    )
-    .unwrap();
-    apply_now(&f);
-    // A repository catalog records its set's reading; a path catalog's
-    // set has none, so this plants the record the first reading leaves.
-    let mut lock = lock_of(&f);
-    let first = manifest_of(&f).sources["cat"].path.clone().unwrap();
-    lock.bundles.insert(
-        "crew".into(),
-        kendex_core::lock::BundleRev {
-            source: "cat".into(),
-            source_repo: kendex_core::source::declared_path_identity(&first),
-            selector: None,
-            commit: "0".repeat(40),
-        },
-    );
-    kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+    for newer_record in [false, true] {
+        let f = fixture("[bundles.crew]\nsource = \"cat\"\n");
+        fs::write(
+            f.source.join("kendex.toml"),
+            "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
+        )
+        .unwrap();
+        apply_now(&f);
+        let identity = |f: &Fixture| {
+            kendex_core::source::declared_path_identity(
+                manifest_of(f).sources["cat"].path.as_ref().unwrap(),
+            )
+        };
+        let first = identity(&f);
+        // A repository catalog records its set's reading; a path catalog's
+        // set has none, so this plants the record a reading leaves.
+        let plant = |source_repo: &str| {
+            let mut lock = lock_of(&f);
+            lock.bundles.insert(
+                "crew".into(),
+                kendex_core::lock::BundleRev {
+                    source: "cat".into(),
+                    source_repo: source_repo.to_owned(),
+                    selector: None,
+                    commit: "0".repeat(40),
+                },
+            );
+            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+        };
+        let moved = f.source.with_file_name("catalog-b");
+        skill(&moved, "github", "");
+        skill(&moved, "fresh", "");
+        fs::write(
+            moved.join("kendex.toml"),
+            "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\", \"fresh\"]\n",
+        )
+        .unwrap();
+        let rebind = || {
+            edit_manifest(&f, |manifest| {
+                manifest.sources.get_mut("cat").unwrap().path =
+                    Some(moved.to_string_lossy().into_owned());
+            });
+        };
+        let member = if newer_record {
+            edit_installed(&f, "github");
+            rebind();
+            apply_now(&f);
+            plant(&identity(&f));
+            "github"
+        } else {
+            plant(&first);
+            rebind();
+            let report = ops::add(
+                &f.env,
+                &f.scope,
+                &ops::AddRequest {
+                    source: Some("cat".into()),
+                    skills: vec!["fresh".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            apply::execute(&f.env, &report.plan).unwrap();
+            "fresh"
+        };
+        let second = identity(&f);
+        let (read, recorded) = if newer_record {
+            (&first, &second)
+        } else {
+            (&second, &first)
+        };
+        let lock = lock_of(&f);
+        let entry = &lock.entries[&format!("skill:{member}:claude")];
+        assert_eq!(&entry.source_repo, read, "newer_record={newer_record}");
+        assert_eq!(
+            &lock.bundles["crew"].source_repo, recorded,
+            "newer_record={newer_record}"
+        );
+        assert!(crew_reason(&entry.reasons), "newer_record={newer_record}");
 
-    let moved = f.source.with_file_name("catalog-b");
-    skill(&moved, "github", "");
-    skill(&moved, "fresh", "");
-    fs::write(
-        moved.join("kendex.toml"),
-        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\", \"fresh\"]\n",
-    )
-    .unwrap();
-    edit_manifest(&f, |manifest| {
-        manifest.sources.get_mut("cat").unwrap().path = Some(moved.to_string_lossy().into_owned());
-    });
-    let report = ops::add(
-        &f.env,
-        &f.scope,
-        &ops::AddRequest {
-            source: Some("cat".into()),
-            skills: vec!["fresh".into()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
-    let lock = lock_of(&f);
-    assert_eq!(
-        lock.bundles["crew"].source_repo,
-        kendex_core::source::declared_path_identity(&first)
-    );
-    let fresh = &lock.entries["skill:fresh:claude"];
-    assert_ne!(fresh.source_repo, lock.bundles["crew"].source_repo);
-    assert!(
-        fresh
-            .reasons
-            .iter()
-            .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.name == "crew"))
-    );
-
-    let hidden = moved.with_file_name("catalog-b-offline");
-    fs::rename(&moved, &hidden).unwrap();
-    assert_eq!(
-        removed(&f, &["fresh"], Some(ItemKind::Skill)),
-        BTreeSet::from([(ItemKind::Skill, "fresh".to_owned())])
-    );
-    fs::rename(&hidden, &moved).unwrap();
-    apply_now(&f);
-    assert!(!lock_of(&f).entries.contains_key("skill:fresh:claude"));
+        let hidden = moved.with_file_name("catalog-b-offline");
+        fs::rename(&moved, &hidden).unwrap();
+        assert_eq!(
+            removed(&f, &[member], Some(ItemKind::Skill)),
+            BTreeSet::from([(ItemKind::Skill, member.to_owned())]),
+            "newer_record={newer_record}"
+        );
+        fs::rename(&hidden, &moved).unwrap();
+        apply_now(&f);
+        assert!(
+            !lock_of(&f)
+                .entries
+                .contains_key(&format!("skill:{member}:claude")),
+            "newer_record={newer_record}"
+        );
+    }
 }
 
 /// A set carried mid, which requires leaf. The person swaps the set for S,
@@ -924,14 +975,21 @@ fn held_reading(edited: &str) -> Fixture {
             .skills
             .insert("S".into(), manifest::ItemDecl::from_source("cat"));
     });
+    edit_installed(&f, edited);
+    apply_now(&f);
+    f
+}
+
+/// Edits the installed copy of a skill, so the next apply holds it as it
+/// was.
+#[allow(clippy::unwrap_used)]
+fn edit_installed(f: &Fixture, name: &str) {
     for root in [".claude/skills", ".agents/skills"] {
-        let installed = f.project.join(root).join(edited).join("SKILL.md");
+        let installed = f.project.join(root).join(name).join("SKILL.md");
         if installed.exists() {
             fs::write(&installed, "a local edit\n").unwrap();
         }
     }
-    apply_now(&f);
-    f
 }
 
 fn crew_reason(reasons: &BTreeSet<Reason>) -> bool {
@@ -985,37 +1043,62 @@ fn a_held_reading_never_vetoes_a_newer_one_offline() {
     assert_eq!(lost, Vec::<(&str, &str)>::new());
 }
 
-/// An add of a set over a declaration it carries gives the dependency's
-/// snapshot the same rows a full pass records.
-#[test]
+/// judge, carried by crew and withheld on Codex, requires guards, which
+/// requires leaf. The record is from before the field, and a local edit
+/// holds guards through the readable apply that reads leaf again, so only
+/// leaf's snapshot holds a row for judge.
 #[allow(clippy::unwrap_used)]
-fn an_add_of_a_set_over_a_declaration_leaves_what_verify_records() {
-    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+fn held_record_from_before_the_field() -> Fixture {
+    let f = hook_fixture(SET);
+    skill(&f.source, "guards", "dependencies:\n  required: [leaf]\n");
+    skill(&f.source, "leaf", "");
+    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
     fs::write(
         f.source.join("kendex.toml"),
-        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"dev\"]\n",
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n",
     )
     .unwrap();
     apply_now(&f);
-    let report = ops::add(
-        &f.env,
-        &f.scope,
-        &ops::AddRequest {
-            source: Some("cat".into()),
-            bundles: vec!["crew".into()],
-            ..Default::default()
-        },
-    )
-    .unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
-    let verified = kendex_core::attest::record(
-        &f.env,
-        &f.scope,
-        &lock_of(&f),
-        &audit(&f.env, &f.scope).unwrap(),
-        &kendex_core::attest::Floor::Open,
-    )
-    .unwrap()
-    .unwrap();
-    assert_eq!(verified.problems, Vec::<String>::new());
+    let mut lock = lock_of(&f);
+    for entry in lock.entries.values_mut() {
+        entry.requirer_provenance = None;
+    }
+    kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+    edit_installed(&f, "guards");
+    apply_now(&f);
+    f
+}
+
+/// A held entry whose snapshot holds no row for an ancestor gives no
+/// evidence of it beside a reading that holds one. Removing the sole
+/// carrier with the item decides in either catalog mode, and nothing roots
+/// leaf.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_reading_without_a_row_never_vetoes_one_with_a_row() {
+    for offline in [false, true] {
+        let f = held_record_from_before_the_field();
+        let lock = lock_of(&f);
+        assert_eq!(lock.entries["skill:guards:codex"].requirer_provenance, None);
+        assert!(
+            lock.entries["skill:leaf:codex"]
+                .requirer_provenance
+                .iter()
+                .flatten()
+                .any(|row| row.installation.name == "judge" && crew_reason(&row.reasons))
+        );
+        let hidden = f.source.with_file_name("catalog-offline");
+        if offline {
+            fs::rename(&f.source, &hidden).unwrap();
+        }
+        let names = ["crew".to_owned(), "leaf".to_owned()];
+        let report = ops::remove(&f.env, &f.scope, &names, None, false);
+        assert!(report.is_ok(), "offline={offline}: {:?}", report.err());
+        apply::execute(&f.env, &report.unwrap().plan).unwrap();
+        assert!(manifest_of(&f).suppressed.is_empty(), "offline={offline}");
+        if offline {
+            fs::rename(&hidden, &f.source).unwrap();
+        }
+    }
 }

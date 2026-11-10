@@ -660,12 +660,13 @@ impl Withholding {
 }
 
 impl DesiredState {
-    /// The snapshot of these edges, as this pass read them: the value of
-    /// [`crate::lock::LockEntry::requirer_provenance`], assigned whole and
-    /// never merged. Only ancestors of these edges belong in it, one row
-    /// each. An ancestor this pass did not read keeps the previous row,
-    /// and with none it stays missing, never an invented empty row. No
-    /// rows is `None`: a reader looks rows up one by one.
+    /// The snapshot of these edges: the value of
+    /// [`crate::lock::LockEntry::requirer_provenance`], assigned whole.
+    /// Only ancestors of these edges belong in it, one row each: this
+    /// pass's reading where it read one, else the previous row, and with
+    /// neither it stays missing, never an invented empty row. A row is
+    /// never widened with another's reasons. No rows is `None`: a reader
+    /// looks rows up one by one.
     pub(super) fn ancestry(
         &self,
         reasons: &BTreeSet<crate::lock::Reason>,

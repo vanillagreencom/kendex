@@ -375,8 +375,10 @@ pub struct LockEntry {
     /// Missing rows mean unknown evidence; an empty reason set proves that
     /// ancestor has no carrier. Kept entries retain this with their reasons.
     /// `None` where no row is recorded: a reader looks rows up one by one,
-    /// so an empty list would tell it nothing more. Each pass writes the
-    /// whole value (`DesiredState::ancestry`), never a merge of two.
+    /// so an empty list would tell it nothing more. Each pass assigns the
+    /// value `DesiredState::ancestry` builds: one row per ancestor, this
+    /// pass's reading where it read one, else the previous row, and a row
+    /// never widened with another's reasons.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirer_provenance: Option<Vec<RequirerProvenance>>,
     /// What only this machine knows about the installation. Never written
