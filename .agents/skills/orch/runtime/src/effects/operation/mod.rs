@@ -70,6 +70,7 @@ pub(in crate::effects) use agent_runtime::observe::{ProcessReading, State};
 pub(in crate::effects) use agent_runtime::process::{Identity, Stop};
 pub(in crate::effects) use agent_runtime::reading::Reading;
 pub(crate) use host::Recorded;
+pub(in crate::effects) use host::register_controller;
 pub(in crate::effects) use host::{
     Binding, Delivery, Foreground, Observed, ProcessRead, Proof, SessionFloor, WindowClose,
     WorktreeRelease, adopt_controller, default_home, fixed_file, fixed_id_file, heal_controller,

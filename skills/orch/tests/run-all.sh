@@ -305,8 +305,6 @@ FILTER="$*"
 shard_of() { # BASE
   case "$1" in
     *oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
-    # The launch family runs in the dev pool, off orch-oversee's deadline.
-    oversee_launch*) OWNING_SHARD=orch-dev ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
     # The account-reader family stays together, in Linux's dev pool off

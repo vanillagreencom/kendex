@@ -32,7 +32,13 @@ Where `.result.exists` is false, initialize it before a start or adoption:
 .agents/skills/orch/scripts/orch-runtime state path --fleet
 ```
 
-A session opened by hand records itself first, through `.agents/skills/orch/scripts/oversee register` or the adoption below, so the hooks and the watch know it is the overseer. `register --account [DIR]` supplies an account the pane cannot reveal. Read its hook and context-reader notices before relying on that session's marks. For the adoption, write `[REQUEST_FILE]` with the harness file tool, then run the request below. Add only known launch fields (`account`, `home`, `model`, `effort`, `session_id`) and `socket` where the pane is on another socket. The runtime reads the process identity from the pane.
+A session opened by hand records itself first, from its own pane, through the register below or the adoption after it, so the hooks and the watch know it is the overseer. The register reads the session's launch identity from the SessionStart row its harness wrote, else off its pane; `--account [DIR]` supplies an account neither reveals. Read the reply's `notices`, the hook and context-reader coverage, before relying on that session's marks.
+
+```bash
+.agents/skills/orch/scripts/orch-runtime register --fleet
+```
+
+For the adoption, write `[REQUEST_FILE]` with the harness file tool, then run the request below. Add only known launch fields (`account`, `home`, `model`, `effort`, `session_id`) and `socket` where the pane is on another socket. The runtime reads the process identity from the pane.
 
 ```json
 {"op":"adopt-controller","pane":"[PANE]","harness":"[HARNESS]","cwd":"[DIR]"}
@@ -278,7 +284,7 @@ The watch also reads each repository `ORCH_CONNECTED_REPOS` lists, after the `--
 .agents/skills/orch/scripts/lib/job-unit.sh launch watch-[STAMP] "[OVERSEE_STATE_DIR]/oversee-watch.runner" -- sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "[OVERSEE_STATE_DIR]/oversee-watch.err" .agents/skills/orch/scripts/orch-runtime watch run --file [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]...
 ```
 
-A registered session starts the watch from its own pane with the block above: the runtime watch's words, the ones § 1's `start-controller` request carries, launched detached through the orch job runner ([job-units.md](../references/job-units.md)), its runner record and stderr beside the fleet state where a `start-controller` launch leaves them. `[STAMP]` is the launch's compact UTC timestamp. The controller's request carries its typed identity, which the runtime publishes. The watch's recovery of a dead or walled controller: [overseer-session-events.md § Recovery requests](../references/overseer-session-events.md#recovery-requests). A Copilot controller whose pane cannot reveal its account registers with `oversee register --account [DIR]`. Start a hand-opened controller's watch from its own pane, with its shell's `TMUX_PANE`, so the claim names that pane.
+A registered session starts the watch from its own pane with the block above: the runtime watch's words, the ones § 1's `start-controller` request carries, launched detached through the orch job runner ([job-units.md](../references/job-units.md)), its runner record and stderr beside the fleet state where a `start-controller` launch leaves them. `[STAMP]` is the launch's compact UTC timestamp. The controller's request carries its typed identity, which the runtime publishes. The watch's recovery of a dead or walled controller: [overseer-session-events.md § Recovery requests](../references/overseer-session-events.md#recovery-requests). A Copilot controller whose pane cannot reveal its account registers with `orch-runtime register --fleet --account [DIR]`. Start a hand-opened controller's watch from its own pane, with its shell's `TMUX_PANE`, so the claim names that pane.
 
 The watch refuses a live claim as `watch-running`, a live claim with no recorded start as `watch-claim-unreadable`, its text naming `start-missing`, and a credential ladder that selects nothing as `auth-failed service=github`; none of the three claims the fleet state. After a self-succession the successor starts no watch: the scheduler outlives the controller, and the successor follows the log from the handoff's next line.
 

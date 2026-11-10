@@ -35,7 +35,7 @@ use crate::settings::Settings;
 use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
 use crate::watch::hosted::{self, Launch, PaneKind};
 
-mod gate;
+pub(super) mod gate;
 
 /// The words that close a cloud session's description, after the brief:
 /// the branch it cloned and how it publishes.

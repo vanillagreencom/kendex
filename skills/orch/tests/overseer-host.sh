@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tests for scripts/overseer-host, the overseer-session adapter whose
-# `resolve` and `inspect` the register, the succession script and a Jarvis
-# session read a recorded session through, and scripts/overseer-host-tmux,
-# the tmux provider behind `inspect`, over a real tmux server on a private
-# socket. The dispatcher rows use a fixture provider that records its argv;
-# the provider rows read panes as the register's live check does.
+# `inspect` a Jarvis session reads a recorded session through, and
+# scripts/overseer-host-tmux, the tmux provider behind `inspect`, over a
+# real tmux server on a private socket. The dispatcher rows use a fixture
+# provider that records its argv; the provider rows read panes as Jarvis's
+# live check does.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # mutant_scripts and mutate_file, the two halves of the controls.

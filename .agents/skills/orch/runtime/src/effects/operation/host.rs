@@ -2219,16 +2219,7 @@ pub(in crate::effects) fn adopt_controller(
         None => tmux::ambient_socket()?,
     };
     let server = tmux::server(&socket)?;
-    let fields = match tmux::pane_fields(&server, &r.pane) {
-        Reading::Live(fields) => fields,
-        Reading::Gone => return Err(super::super::refused("pane-gone", &[("pane", &r.pane)])),
-        Reading::Unreadable { cause } => {
-            return Err(super::super::refused(
-                "pane-unreadable",
-                &[("pane", &r.pane), ("cause", cause)],
-            ));
-        }
-    };
+    let fields = pane_read(&server, &r.pane)?;
     let target = super::super::Target::new(settings, harness);
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => identity,
@@ -2244,10 +2235,7 @@ pub(in crate::effects) fn adopt_controller(
         | ProcessReading::ForegroundOther { .. }) => {
             return Err(Error::PaneNotHarness {
                 pane: r.pane.clone(),
-                reading: serde_json::to_value(&reading)
-                    .ok()
-                    .and_then(|v| v.get("reading").and_then(Value::as_str).map(str::to_owned))
-                    .unwrap_or_default(),
+                reading: reading_word(&reading),
             });
         }
     };
@@ -2369,15 +2357,364 @@ pub(in crate::effects) fn heal_controller(
         pane,
         socket: Some(socket),
         harness: harness_word,
-        session_id: None,
+        // The heal binds no session: the recorded binding, an empty one
+        // included, is written back as it stands.
+        session_id: overseer.session_id.clone(),
         account: word("account"),
         home: word("home").or_else(|| word("account")),
         model: word("model"),
         effort: word("effort"),
         cwd: word("cwd"),
         succession: None,
+        session_rows: word("session_rows").map(PathBuf::from),
     };
     adopt_controller(path, &request, settings, locking).map(Some)
+}
+
+/// The fields of `pane` on `server`: gone refuses `pane-gone`, a failed
+/// read `pane-unreadable` with its cause.
+fn pane_read(server: &tmux::Server, pane: &str) -> Result<tmux::PaneFields> {
+    match tmux::pane_fields(server, pane) {
+        Reading::Live(fields) => Ok(fields),
+        Reading::Gone => Err(super::super::refused("pane-gone", &[("pane", pane)])),
+        Reading::Unreadable { cause } => Err(super::super::refused(
+            "pane-unreadable",
+            &[("pane", pane), ("cause", cause)],
+        )),
+    }
+}
+
+/// The word a foreground reading carries as its `reading` field.
+fn reading_word(reading: &ProcessReading) -> String {
+    serde_json::to_value(reading)
+        .ok()
+        .and_then(|v| v.get("reading").and_then(Value::as_str).map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// How long `kendex list` is given to answer a register's hook lookup.
+const INVENTORY_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The launch identity a hand-opened controller's harness stated at its
+/// start, from the last `SessionStart` row of its rows file.
+struct StartRow {
+    harness: String,
+    account: Option<String>,
+    model: Option<String>,
+    cwd: String,
+}
+
+/// The last `SessionStart` row of `file` that names a harness and a
+/// directory, over the last [`agent_runtime::rows::SPAN`] such rows: `Gone`
+/// where the file is absent or holds none, `Unreadable` where it cannot be
+/// read. A line that is no object is skipped, as a killed writer's fragment.
+fn start_row(file: &Path) -> Reading<StartRow> {
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "rows-file-unreadable",
+            };
+        }
+    };
+    let starts: Vec<&str> = text
+        .lines()
+        .filter(|line| line.contains("\"event\":\"SessionStart\""))
+        .collect();
+    let from = starts.len().saturating_sub(agent_runtime::rows::SPAN);
+    let Some(row) = starts[from..].iter().rev().find_map(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .filter(|row| row.get("event").and_then(Value::as_str) == Some("SessionStart"))
+    }) else {
+        return Reading::Gone;
+    };
+    let text_of = |key: &str| {
+        row.get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    match (text_of("harness"), text_of("cwd")) {
+        (Some(harness), Some(cwd)) => Reading::Live(StartRow {
+            harness,
+            account: text_of("account"),
+            model: text_of("model"),
+            cwd,
+        }),
+        (None, _) | (_, None) => Reading::Gone,
+    }
+}
+
+/// The harness whose own process holds the pane's terminal, judged against
+/// every harness in turn, Copilot first since a Copilot CLI runs under a
+/// `node` launcher; none refuses `pane-not-harness`.
+fn foreground_harness(
+    settings: &Settings,
+    pane: &str,
+    pane_pid: u32,
+) -> Result<(Harness, Identity)> {
+    let mut last = String::new();
+    for harness in [
+        Harness::Copilot,
+        Harness::Claude,
+        Harness::Codex,
+        Harness::Pi,
+    ] {
+        let target = super::super::Target::new(settings, harness);
+        match observe::foreground(pane_pid, &|name| target.owns(name), None) {
+            ProcessReading::Harness { identity } => return Ok((harness, identity)),
+            ProcessReading::Unread { cause } => {
+                return Err(super::super::refused(
+                    "pane-unreadable",
+                    &[("pane", pane), ("cause", cause)],
+                ));
+            }
+            reading @ (ProcessReading::ShellsOnly
+            | ProcessReading::HarnessUp
+            | ProcessReading::ForegroundShell { .. }
+            | ProcessReading::ForegroundOther { .. }) => last = reading_word(&reading),
+        }
+    }
+    Err(Error::PaneNotHarness {
+        pane: pane.to_owned(),
+        reading: last,
+    })
+}
+
+/// A variable of this process's environment, where it is set and not empty.
+fn caller_var(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// The account a session of `harness` the caller's own environment runs:
+/// the harness's home variable, else the harness's default home; a Codex
+/// home a folder-trust launch built under an account names that account.
+fn caller_account(harness: Harness) -> Option<String> {
+    let home = caller_var(harness.home_var())
+        .map(PathBuf::from)
+        .or_else(|| session::default_home(harness))?;
+    let account = match harness {
+        Harness::Codex => agent_runtime::trust::account_of(&home).to_path_buf(),
+        Harness::Claude | Harness::Copilot | Harness::Pi => home,
+    };
+    Some(account.display().to_string())
+}
+
+/// The account a Copilot process runs on, read off its own environment:
+/// its `COPILOT_HOME`, else its `HOME`'s `.copilot`; none where the host
+/// keeps no environment to read or the process has gone.
+fn copilot_account(pid: u32) -> Option<String> {
+    let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
+    let var = |name: &str| {
+        environ
+            .split(|byte| *byte == 0)
+            .filter_map(|entry| std::str::from_utf8(entry).ok())
+            .find_map(|entry| entry.strip_prefix(name)?.strip_prefix('='))
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    var("COPILOT_HOME").or_else(|| var("HOME").map(|home| format!("{home}/.copilot")))
+}
+
+/// Whether `kendex list`'s table lists the lane-mail-check hook for
+/// `harness`: a row of four columns, kind `hook`, the harness third, and
+/// the hook's own name after the last colon of its `event:matcher:name`.
+fn lists_turn_end_hook(table: &str, harness: &str) -> bool {
+    table.lines().any(|line| {
+        let columns: Vec<&str> = line.split_whitespace().collect();
+        columns.len() == 4
+            && columns[0] == "hook"
+            && columns[2] == harness
+            && columns[1].rsplit(':').next() == Some("lane-mail-check")
+    })
+}
+
+/// The notices a registered session that runs unseen needs, from the
+/// record as the adoption left it: a Copilot home gets the context reader
+/// (`context-reader=next-start` where it was absent, so this running
+/// session does not load it; `context-reader=missing` where the home
+/// refuses it) and its hooks judged (`turn-end-hook=missing`); every other
+/// harness's turn-end hook is looked up in the checkout's install.
+fn coverage_notices(
+    settings: &Settings,
+    harness: Harness,
+    home: Option<&str>,
+    cwd: &str,
+) -> Vec<String> {
+    let mut notices = Vec::new();
+    let fix = |name: &str| {
+        format!("fix=add {name} to [install] harnesses in kendex.toml and run kendex apply")
+    };
+    if harness == Harness::Copilot {
+        let Some(home) = home else {
+            notices.push("context-reader=missing home=none cause=home-unknown".to_owned());
+            return notices;
+        };
+        let reader = Path::new(home).join("extensions/kendex-lane-context/extension.mjs");
+        let before = std::fs::metadata(&reader).is_ok();
+        match agent_runtime::trust::prepare(
+            Harness::Copilot,
+            Path::new(home),
+            Path::new(cwd),
+            false,
+        ) {
+            Ok(_) => {
+                if !before && std::fs::metadata(&reader).is_ok() {
+                    notices.push(format!("context-reader=next-start home={home}"));
+                }
+            }
+            Err(e) => notices.push(format!("context-reader=missing home={home} cause={e}")),
+        }
+        if let Err(reason) =
+            crate::effects::launch::gate::local(harness, Some(Path::new(home)), Path::new(cwd))
+        {
+            notices.push(format!(
+                "turn-end-hook=missing harness=copilot reason={reason} {}",
+                fix("copilot")
+            ));
+        }
+        return notices;
+    }
+    let name = harness.name();
+    let place = host::Place {
+        cwd: Some(&settings.roots.project),
+        env: &[],
+    };
+    let listed = host::run_tagged_in(
+        "register",
+        "kendex",
+        Path::new("kendex"),
+        "list",
+        &["list", "--harness", name],
+        place,
+        INVENTORY_TIMEOUT,
+    );
+    let (exit, listed) = match &listed {
+        Ok(out) => {
+            let table = format!("{}{}", host::stdout_text(out), host::stderr_text(out));
+            (
+                out.status
+                    .code()
+                    .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
+                out.status.success() && lists_turn_end_hook(&table, name),
+            )
+        }
+        Err(e) => (format!("unanswered cause={e}"), false),
+    };
+    if !listed {
+        notices.push(format!(
+            "turn-end-hook=missing harness={name} exit={exit} {}",
+            fix(name)
+        ));
+    }
+    notices
+}
+
+/// Register the controller a person opened by hand in the caller's own
+/// pane, `$TMUX_PANE` on the server `$TMUX` names: its launch identity from
+/// the last `SessionStart` row its harness wrote to the rows file the hook
+/// keeps for that pane, else read off the pane, the named fallback said as
+/// `identity-fallback` (the harness its foreground process is, the account
+/// its environment names, the directory it runs in, no model), with
+/// `account` ahead of either; then the one adoption, which writes the rows
+/// file as the record's `session_rows`, and the coverage notices. No
+/// effort is read, since nothing here launched the session.
+pub(in crate::effects) fn register_controller(
+    path: &Path,
+    account: Option<&str>,
+    settings: &Settings,
+    locking: Locking,
+) -> Result<Value> {
+    let pane = caller_var("TMUX_PANE")
+        .ok_or_else(|| super::super::refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
+    if !is_pane_id(&pane) {
+        return Err(super::super::refused("pane-invalid", &[("pane", &pane)]));
+    }
+    let socket = tmux::ambient_socket()?;
+    let server = tmux::server(&socket)?;
+    let fields = pane_read(&server, &pane)?;
+    let rows = settings
+        .roots
+        .common
+        .join("tmp/lane-mail/overseer")
+        .join(format!(
+            "session-{}-{}.jsonl",
+            server.pid,
+            pane.trim_start_matches('%')
+        ));
+    let given = account.map(str::to_owned);
+    let mut notices = Vec::new();
+    let stated = match start_row(&rows) {
+        Reading::Live(row) => Ok(row),
+        Reading::Gone => Err("no-start-row"),
+        Reading::Unreadable { .. } => Err("unreadable"),
+    };
+    let (harness, account, model, cwd) = match stated {
+        Ok(row) => {
+            let harness = Harness::parse(&row.harness).ok_or_else(|| {
+                super::super::refused("harness-unknown", &[("harness", &row.harness)])
+            })?;
+            (harness, given.or(row.account), row.model, row.cwd)
+        }
+        Err(cause) => {
+            notices.push(format!("identity-fallback session={pane} cause={cause}"));
+            let (harness, identity) = foreground_harness(settings, &pane, fields.pid)?;
+            let account = given.or_else(|| match harness {
+                Harness::Copilot => copilot_account(identity.pid),
+                Harness::Claude | Harness::Codex | Harness::Pi => caller_account(harness),
+            });
+            let cwd = std::fs::read_link(format!("/proc/{}/cwd", identity.pid))
+                .or_else(|_| std::env::current_dir())
+                .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", Path::new("."), e)))?;
+            (harness, account, None, cwd.display().to_string())
+        }
+    };
+    let home = match harness {
+        Harness::Codex => caller_var("CODEX_HOME").or_else(|| account.clone()),
+        Harness::Claude | Harness::Copilot | Harness::Pi => account.clone(),
+    };
+    let request = AdoptController {
+        pane: pane.clone(),
+        socket: Some(socket),
+        harness: harness.name().to_owned(),
+        session_id: None,
+        account: account.clone(),
+        home,
+        model,
+        effort: None,
+        cwd: Some(cwd),
+        succession: None,
+        session_rows: Some(rows),
+    };
+    let applied = adopt_controller(path, &request, settings, locking)?;
+    // A record proven to name this pane keeps fields the request left out,
+    // so the coverage is judged on the record as written.
+    let recorded = super::super::fleet(path)?.overseer;
+    let word = |key: &str| {
+        recorded
+            .as_ref()
+            .and_then(|o| o.extra.get(key))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let cwd = word("cwd").unwrap_or_default();
+    notices.extend(coverage_notices(
+        settings,
+        harness,
+        word("home").as_deref(),
+        &cwd,
+    ));
+    Ok(json!({
+        "adopted": applied,
+        "pane": pane,
+        "window": fields.pane.window,
+        "server": server.pid,
+        "account": account,
+        "notices": notices,
+    }))
 }
 
 /// The file the harness holds the session `id` for `cwd` in under `home`,

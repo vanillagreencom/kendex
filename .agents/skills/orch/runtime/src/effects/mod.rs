@@ -514,6 +514,18 @@ pub fn adopt_controller(
     operation::adopt_controller(path, r, settings, locking)
 }
 
+/// Register the controller a person opened by hand in the caller's own
+/// pane: its identity read from its session rows or its pane, then the one
+/// adoption.
+pub fn register_controller(
+    path: &Path,
+    account: Option<&str>,
+    settings: &Settings,
+    locking: Locking,
+) -> Result<Value> {
+    operation::register_controller(path, account, settings, locking)
+}
+
 /// Whether a reconciled close left a stop to run: the recorded identity
 /// live under its recorded start (`stop: pending`), or a recorded pane
 /// present whose foreground the close stops by (`pane: present`).

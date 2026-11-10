@@ -756,8 +756,7 @@ jobs:
       # suite name and RUNNER_OS. The report suites, `oversee_report*`, enter
       # `orch-oversee-succeed`.
       # Dev and review names enter `orch-dev`, including names that also
-      # carry lane or workflow-state, and so do the `oversee_launch*` suites
-      # of `scripts/oversee register`; every other oversee name enters
+      # carry lane or workflow-state; every other oversee name enters
       # `orch-oversee`, so a new oversee suite lands there and never in
       # neither. On Linux, the account-reader `lanes*` family joins
       # `orch-dev`; `orch-state` keeps the other lane and workflow-state
@@ -800,7 +799,7 @@ jobs:
         if: matrix.shard == 'orch-oversee-succeed'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
-      - name: 'orch suites: oversee register, the dev and review names and, on Linux, the account readers'
+      - name: 'orch suites: the dev and review names and, on Linux, the account readers'
         if: matrix.shard == 'orch-dev'
         run: bash skills/orch/tests/run-all.sh --shard orch-dev
 
@@ -1501,6 +1500,8 @@ jobs:
             shard: guards-tools-tail
           - os: macos-latest
             shard: guards-commit-tail
+          - os: macos-latest
+            shard: orch-dev
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
@@ -1519,7 +1520,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-oversee-succeed", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout

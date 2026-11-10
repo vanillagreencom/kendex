@@ -262,6 +262,10 @@ pub struct AdoptController {
     /// successor the first does not record.
     #[serde(default)]
     pub succession: Option<Vec<String>>,
+    /// The file the pane's own harness writes its session rows to, which
+    /// the watch judges the controller's death and wall from.
+    #[serde(default)]
+    pub session_rows: Option<PathBuf>,
 }
 
 /// What the effects read of the pane an adoption names, handed to the
@@ -879,23 +883,15 @@ pub(crate) fn apply_adoption(
     })
 }
 
-/// Whether a record field is empty as the heal reads it: absent,
-/// `null` or `""`.
-fn empty(record: &Document, key: &str) -> bool {
-    match record.get(key) {
-        None | Some(Value::Null) => true,
-        Some(Value::String(s)) => s.is_empty(),
-        Some(_) => false,
-    }
-}
-
-/// The record `oversee register` writes, or heals. The same pane on the
-/// same server (`ol_owns`) keeps its record: `server_start` is bound,
-/// `harness`, `home` and `session_id` are filled only where empty, as
-/// `state heal` fills them, and the identity read in the pane is written as the
-/// active one, `exit` and `off` dropped. Another session's record, or none,
-/// is replaced by this session's at the next generation, with the fields of
-/// the session that ended left out.
+/// The record a hand-opened controller's adoption writes, or heals. The
+/// same pane on the same server (`ol_owns`) keeps its record and its
+/// generation: every launch field the request names replaces the recorded
+/// one, a field it leaves out is kept, and the native `session_id` is the
+/// request's or none, so a session resumed under a new id in the same pane
+/// binds that id at its next hook run; the identity read in the pane is
+/// written as the active one, and `pending`, `exit` and `off` are dropped.
+/// Another session's record, or none, is replaced by this session's at the
+/// next generation, with the fields of the session that ended left out.
 fn adopt_controller(
     path: &Path,
     doc: &mut Document,
@@ -912,32 +908,36 @@ fn adopt_controller(
     }
     let current: Option<Overseer> = state::field(path, doc, "overseer")?;
     let prior_generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
+    let home = r.home.clone().or_else(|| r.account.clone());
+    let rows = r.session_rows.as_ref().map(|p| p.display().to_string());
     if read.same {
         let record = state::object_mut(path, doc, "overseer")?;
         let generation = prior_generation.max(1);
         state::set(record, "generation", generation);
         state::set(record, "server_start", read.server_start);
         state::set(record, "server_socket", read.socket.as_str());
-        if empty(record, "harness") {
-            state::set(record, "harness", r.harness.as_str());
+        state::set(record, "harness", r.harness.as_str());
+        for (key, value) in [
+            ("account", &r.account),
+            ("home", &home),
+            ("model", &r.model),
+            ("effort", &r.effort),
+            ("cwd", &r.cwd),
+            ("session_rows", &rows),
+        ] {
+            if let Some(value) = value {
+                state::set(record, key, value.as_str());
+            }
         }
-        if empty(record, "home")
-            && let Some(home) = r.home.as_deref().or(r.account.as_deref())
-        {
-            state::set(record, "home", home);
-        }
-        if empty(record, "session_id")
-            && let Some(id) = &r.session_id
-        {
-            state::set(record, "session_id", id.as_str());
-        }
+        state::set(record, "session_id", string_or_null(&r.session_id));
         state::set(record, "harness_pid", read.identity.pid);
         state::set(record, "harness_start", read.identity.start.as_str());
         if let Some(command) = &r.succession {
             state::set(record, "succession", json!(command));
         }
-        state::delete(record, "exit");
-        state::delete(record, "off");
+        for key in ["pending", "exit", "off"] {
+            state::delete(record, key);
+        }
         return Ok(ControllerAdopted {
             generation,
             healed: true,
@@ -952,12 +952,13 @@ fn adopt_controller(
         "server_socket": read.socket,
         "pane": r.pane,
         "window": read.window,
+        "session_rows": string_or_null(&rows),
         "session_id": string_or_null(&r.session_id),
         "harness_pid": read.identity.pid,
         "harness_start": read.identity.start,
         "harness": r.harness,
         "account": string_or_null(&r.account),
-        "home": string_or_null(&r.home.clone().or_else(|| r.account.clone())),
+        "home": string_or_null(&home),
         "model": string_or_null(&r.model),
         "effort": string_or_null(&r.effort),
         "cwd": string_or_null(&r.cwd),
@@ -2084,6 +2085,7 @@ mod tests {
             effort: None,
             cwd: Some("/r".into()),
             succession: None,
+            session_rows: Some("/r/tmp/lane-mail/overseer/session-41020-7.jsonl".into()),
         };
         let read = |same: bool| {
             Recorded::planted(AdoptionRead {
@@ -2098,14 +2100,15 @@ mod tests {
                 same,
             })
         };
-        // Heal: the record names %7 on 41020; harness and home stand and
-        // are kept, session_id is empty and filled, the identity written.
-        let healed_from = fixtures::FLEET
-            .replacen(
-                "\"session_id\": \"0f3d2c1b-9a8e-4d7c-b6a5-443322110000\",\n    \"harness_pid\": \"41388\"",
-                "\"session_id\": \"\",\n    \"exit\": {\"status\": 0}, \"off\": {\"at\": \"x\"},\n    \"harness_pid\": \"41388\"",
-                1,
-            );
+        // Heal: the record names %7 on 41020 and keeps its generation;
+        // every field the request names replaces the recorded one, the
+        // binding is the request's, the identity written, and the ended
+        // session's `exit`, a standing `off` and a stale `pending` dropped.
+        let healed_from = fixtures::FLEET.replacen(
+            "\"session_id\": \"0f3d2c1b-9a8e-4d7c-b6a5-443322110000\",\n    \"harness_pid\": \"41388\"",
+            "\"session_id\": \"before-resume\",\n    \"exit\": {\"status\": 0}, \"off\": {\"at\": \"x\"}, \"pending\": {\"harness\": \"claude\"},\n    \"harness_pid\": \"41388\"",
+            1,
+        );
         fs::write(&path, &healed_from).unwrap();
         let applied = apply_adoption(&path, &request, &read(true), LOCK).unwrap();
         let Report::AdoptController(a) = &applied.report else {
@@ -2115,16 +2118,32 @@ mod tests {
         assert_eq!(a.generation, 3);
         let after = object(&path)["overseer"].clone();
         assert_eq!(after["harness"], json!("claude"));
-        assert_eq!(after["home"], json!("/home/u/.claude-lanes/a1"), "kept");
-        assert_eq!(after["session_id"], json!("fresh-session"), "filled");
+        assert_eq!(after["account"], json!("/a/x"), "the request's");
+        assert_eq!(after["home"], json!("/a/x"), "the request's account");
+        assert_eq!(after["model"], json!("m"), "the request's");
+        assert_eq!(after["cwd"], json!("/r"), "the request's");
+        assert_eq!(
+            after["session_rows"],
+            json!("/r/tmp/lane-mail/overseer/session-41020-7.jsonl")
+        );
+        assert_eq!(after["session_id"], json!("fresh-session"));
         assert_eq!(after["harness_pid"], json!(5151));
         assert_eq!(after["harness_start"], json!("ticks:5151"));
-        assert_eq!(
-            after["model"],
-            json!("claude-opus-5-5"),
-            "not the request's"
-        );
-        assert!(after.get("exit").is_none() && after.get("off").is_none());
+        for gone in ["exit", "off", "pending"] {
+            assert!(after.get(gone).is_none(), "{gone} dropped: {after}");
+        }
+        // A heal naming no model, effort or binding keeps the recorded
+        // model and effort and clears the binding.
+        fs::write(&path, &healed_from).unwrap();
+        let bare = AdoptController {
+            session_id: None,
+            model: None,
+            ..request.clone()
+        };
+        apply_adoption(&path, &bare, &read(true), LOCK).unwrap();
+        let after = object(&path)["overseer"].clone();
+        assert_eq!(after["model"], json!("claude-opus-5-5"), "kept");
+        assert_eq!(after["session_id"], Value::Null, "cleared");
         // Replace: another session's record goes, the new one is written
         // at the next generation with the request's identity.
         fs::write(&path, fixtures::FLEET).unwrap();
@@ -2145,6 +2164,7 @@ mod tests {
                 "server_socket": "/tmp/tmux-1000/default",
                 "pane": "%7",
                 "window": "@3",
+                "session_rows": "/r/tmp/lane-mail/overseer/session-41020-7.jsonl",
                 "session_id": "fresh-session",
                 "harness_pid": 5151,
                 "harness_start": "ticks:5151",

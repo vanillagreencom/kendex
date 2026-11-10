@@ -168,9 +168,6 @@ orch	scripts/lanes	pick --harness claude -h
 orch	scripts/orch-env	--help
 orch	scripts/orch-env	-h
 orch	scripts/orch-env	help
-orch	scripts/reconcile-work-items	--help
-orch	scripts/reconcile-work-items	-h
-orch	scripts/reconcile-work-items	help
 orch	scripts/workflow-state	--help
 orch	scripts/workflow-state	-h
 orch	scripts/workflow-state	help

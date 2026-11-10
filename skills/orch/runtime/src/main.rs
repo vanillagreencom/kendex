@@ -247,6 +247,19 @@ enum Verb {
         #[arg(long, conflicts_with = "body")]
         asks: bool,
     },
+    /// Register the controller a person opened by hand, run from its own
+    /// tmux pane (`$TMUX_PANE`): its launch identity from the SessionStart
+    /// row its harness wrote, else read off the pane, then the one
+    /// `adopt-controller` transition, with the notices the session's
+    /// coverage needs. An absent fleet state is made first.
+    Register {
+        #[command(flatten)]
+        target: Target,
+        /// The account the session spends, where its rows and environment
+        /// do not say.
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
     /// the lane record where one stands.
@@ -1740,6 +1753,25 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 )?,
                 None => serde_json::json!({"asks": ops::successor::open_asks(&settings, &path)?}),
             }
+        }
+        Verb::Register { target, account } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            match std::fs::metadata(&path) {
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    let fields = state::InitFields {
+                        agent: String::new(),
+                        worktree: String::new(),
+                        branch: String::new(),
+                        qa_labels: None,
+                        sub_issues: None,
+                    };
+                    init_state(&path, &fields)?;
+                }
+                Err(e) => return Err(Error::Runtime(agent_runtime::Error::io("read", &path, e))),
+            }
+            effects::register_controller(&path, account.as_deref(), &settings, locking)?
         }
         Verb::Admit { target, request } => {
             let settings = resolve_settings(&flags)?;

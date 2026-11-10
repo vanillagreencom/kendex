@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# The `kendex` a register row puts first on its PATH for the turn-end hook
+# lookup. Every call appends its argv and working directory to `kendex.log`
+# beside the path it was invoked as (the rows link the fixture into their
+# tools as `kendex`). `list` prints the table `list.txt` beside holds on
+# stderr, the stream kendex writes that table to, at the status `list.exit`
+# beside names, 0 when absent. Any other verb, or no table planted, is
+# refused, exit 64, with its argv on stderr, so a read reaching it is the
+# row's failure, never the operator's install. Bash 3.2.
+set -u
+here="$(dirname "$0")"
+printf '%s cwd=%s\n' "$*" "$PWD" >> "$here/kendex.log"
+if [ "${1:-}" != list ] || [ ! -f "$here/list.txt" ]; then
+  printf 'kendex-fixture: unplanned argv=[%s]\n' "$*" >&2
+  exit 64
+fi
+cat "$here/list.txt" >&2
+status=0
+[ ! -f "$here/list.exit" ] || status="$(cat "$here/list.exit")"
+exit "$status"

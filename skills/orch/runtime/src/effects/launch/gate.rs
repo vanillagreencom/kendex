@@ -56,7 +56,11 @@ impl Location {
 }
 
 /// A local launch of `harness` running under `home` in `worktree`.
-pub(super) fn local(harness: Harness, home: Option<&Path>, worktree: &Path) -> Result<(), String> {
+pub(in crate::effects) fn local(
+    harness: Harness,
+    home: Option<&Path>,
+    worktree: &Path,
+) -> Result<(), String> {
     let Some(home) = home else {
         return match harness {
             Harness::Claude | Harness::Codex => Ok(()),

@@ -273,7 +273,9 @@ pub enum Error {
     OverseerUnreadable { path: PathBuf, cause: String },
     /// The pane an adoption names does not hold the harness in its
     /// foreground, so there is no identity to adopt.
-    #[error("pane {pane} does not hold the harness: {reading}")]
+    #[error(
+        "pane {pane} does not hold the harness: {reading}; open the harness in that pane, or run the request from the pane that holds it"
+    )]
     PaneNotHarness { pane: String, reading: String },
     /// A claim of an intent whose effect already recorded a phase: the
     /// prior owner opened something, so a second owner would be a second

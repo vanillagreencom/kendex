@@ -323,6 +323,16 @@ shard_args=()
 while IFS= read -r line; do
   shard_args+=("${line#|}")
 done <<< "$filters"
+# CI's macOS matrix drops a shard the native contracts declare linux-only,
+# so that platform's partition is the other calls.
+linux_only=" $("$ROOT/tools/macos-test-contracts" --linux-only-shards | tr '\n' ' ') "
+if [[ "$PARTITION_RUNNER_OS" == macOS ]]; then
+  native_args=()
+  for args in "${shard_args[@]}"; do
+    case "$linux_only" in *" ${args##*--shard } "*) ;; *) native_args+=("$args") ;; esac
+  done
+  shard_args=("${native_args[@]}")
+fi
 # A single invocation is a battery that is no longer split, and the arms below
 # have no second shard to drop or repeat, so this refuses rather than reading
 # an absent element.
@@ -357,6 +367,9 @@ fi
 # Each family must also fail the existing coverage check when its workflow
 # call is omitted or repeated. Read the calls instead of restating filters.
 for profile in orch-dev orch-state; do
+  if [[ "$PARTITION_RUNNER_OS" == macOS && "$linux_only" == *" $profile "* ]]; then
+    continue
+  fi
   remaining=()
   family_args=""
   family_calls=0
@@ -441,41 +454,15 @@ rm -- "$SANDBOX/oversee_future.sh"
 PARTITION_RUNNER_OS=Linux
 cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
 
-# The launch family left the Linux orch-oversee complement for its run
-# deadline. Its suites and a future name keep their owner on both platforms.
-moved_rows='oversee_launch|orch-dev|orch-dev
-oversee_launch_future|orch-dev|orch-dev'
-orch_profiles=(orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest)
-stub_suite "$SANDBOX/oversee_launch_future.sh"
-moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
-  local profile
-  for profile in "${orch_profiles[@]}"; do
-    PARTITION_RUNNER_OS="$1" selected --shard "$profile" | sed "s/\$/|$profile/"
-  done | awk -F'|' 'NR == FNR { moved[$1] = 1; next } $1 in moved' <(printf '%s\n' "$moved_rows") - | sort
-}
-for PARTITION_RUNNER_OS in Linux macOS; do
-  column=2
-  [[ "$PARTITION_RUNNER_OS" != macOS ]] || column=3
-  check "the moved families have one owner each on $PARTITION_RUNNER_OS" \
-    "$(cut -d'|' -f1,"$column" <<< "$moved_rows" | sort)" "$(moved_owners "$PARTITION_RUNNER_OS")"
-done
-# The moved rows must name the runner's row. Remove it from a disposable
-# copy; the family falls back to the Linux catch-all.
-sed 's/^    oversee_launch\*) OWNING_SHARD=orch-dev ;;$//' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
-cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "moved-family control changed no selector"
-check "must-fail: without its row the moved family returns to Linux orch-oversee" \
-  "$(cut -d'|' -f1 <<< "$moved_rows" | sed 's/$/|orch-oversee/' | sort)" "$(moved_owners Linux)"
-cp "$TMP/runner-original" "$SANDBOX/run-all.sh"
-rm -- "$SANDBOX/oversee_launch_future.sh"
 PARTITION_RUNNER_OS=Windows
-for profile in orch-oversee orch-dev orch-state orch-rest; do
+for profile in orch-oversee orch-state orch-rest; do
   check "$profile refuses an unsupported platform" "1" "$(status_of --shard "$profile")"
 done
 # GitHub's Windows runner is outside the orch shard's supported platforms.
 # Accept it in a disposable runner to prove that the refusal checks fail.
 sed 's/Linux|macOS)/Linux|macOS|Windows)/' "$TMP/runner-original" > "$SANDBOX/run-all.sh"
 cmp -s "$TMP/runner-original" "$SANDBOX/run-all.sh" && bad "platform control changed no refusal"
-for profile in orch-oversee orch-dev orch-state orch-rest; do
+for profile in orch-oversee orch-state orch-rest; do
   check "must-fail: $profile accepts Windows after its platform refusal is removed" \
     "0" "$(status_of --shard "$profile")"
 done
@@ -1056,7 +1043,7 @@ for package in github slack review-gate orch; do
     "$(grep "^skills/$package/tests/" "$TMP/claims-owner-removed-$package")"
 done
 
-# The old literal Slack declaration answered its own search after removal.
+# A literal Slack declaration would answer its own search after its removal.
 wf_self_claim="$TMP/wf-slack-self-claim.yml"
 awk '
   /needle="--battery skills\/\$x\/tests"/ {

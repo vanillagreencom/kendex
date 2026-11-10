@@ -32,6 +32,11 @@ const SETTLE: Duration = Duration::from_secs(40);
 /// row that needs a bound to elapse sets its own.
 fn suite_runner(server: &Server, stub: &str) -> Runner {
     let mut runner = Runner::new(server, stub);
+    // The state folder lives inside the server's: the runner drops before
+    // the server, and a stub or job the server still runs then writes into
+    // a folder that goes with the server's, never a fresh one under TMPDIR.
+    runner.dir =
+        tempfile::tempdir_in(server.socket.parent().expect("the server's folder")).unwrap();
     runner.verify = None;
     runner.env.push((
         "ORCH_JOB_CLAIM_SECS".to_owned(),
@@ -1149,6 +1154,466 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     assert_eq!(answer["ok"], true, "{answer}");
     assert_eq!(answer["result"]["report"]["generation"], 4);
     assert_eq!(runner.fleet()["overseer"]["pane"], pane);
+}
+
+/// The table `kendex list` prints for a checkout whose install covers the
+/// Claude harness with the turn-end hook.
+const CLAUDE_HOOK: &str = "hook Stop::lane-mail-check claude project\n";
+
+/// The `kendex` fixture first on the runner's PATH, its `list` answering
+/// `table` at `exit`; the directory it is linked into, its log beside it.
+fn register_tools(runner: &mut Runner, table: &str, exit: i32) -> std::path::PathBuf {
+    let tools = runner.state_dir().join("register-tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    let link = tools.join("kendex");
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(fixtures().join("kendex-register/kendex"), &link).unwrap();
+    }
+    std::fs::write(tools.join("list.txt"), table).unwrap();
+    std::fs::write(tools.join("list.exit"), exit.to_string()).unwrap();
+    runner.tools = Some(tools.clone());
+    tools
+}
+
+/// A fleet of its own on `server`, its install covering Claude.
+fn register_runner(server: &Server) -> Runner {
+    let mut runner = suite_runner(server, "stub-confirm");
+    runner.init_fleet();
+    register_tools(&mut runner, CLAUDE_HOOK, 0);
+    runner
+}
+
+/// `orch-runtime register --fleet ARGS` run as from `pane`.
+fn register(
+    runner: &Runner,
+    pane: &str,
+    extra: &[(&str, &str)],
+    args: &[&str],
+) -> std::process::Output {
+    let mut words = vec!["register", "--fleet"];
+    words.extend_from_slice(args);
+    let mut env = vec![("TMUX_PANE", pane)];
+    env.extend_from_slice(extra);
+    runner.run_env(&words, &env)
+}
+
+/// The rows file the hook keeps for `pane`: under the checkout's overseer
+/// mailbox, named for the server and the pane.
+fn rows_file(runner: &Runner, server: &Server, pane: &str) -> std::path::PathBuf {
+    std::fs::canonicalize(runner.state_dir())
+        .unwrap()
+        .join("tmp/lane-mail/overseer")
+        .join(format!(
+            "session-{}-{}.jsonl",
+            server.pid,
+            pane.trim_start_matches('%')
+        ))
+}
+
+/// A hand-opened Claude session registers from its own pane: outside a pane
+/// it is refused; with no SessionStart row the pane is read, the named
+/// fallback said; with the row its harness wrote, the row's identity, the
+/// record naming this pane keeping its generation, the binding cleared so a
+/// resumed session binds its new id, a stale pending and an ended session's
+/// exit dropped, and `--account` taken; a checkout whose install lists no
+/// turn-end hook for the harness is said; a server start that cannot be
+/// read writes nothing.
+#[test]
+fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registering_again_rebinds_it()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = register_runner(&server);
+    let tools = runner.tools.clone().unwrap();
+    let work = runner.state_dir().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let pane = server.open_stub(
+        "hand",
+        "stub-confirm",
+        &work,
+        &runner.state_dir().join("pane-home"),
+    );
+    server.await_composer(&pane);
+    let caller_home = runner
+        .state_dir()
+        .join("caller-claude")
+        .display()
+        .to_string();
+    let fleet_file = runner.state_dir().join("workflow-state-oversee.json");
+
+    let out = runner.run_env(&["register", "--fleet"], &[]);
+    assert_eq!(refusal_key(&out), "tmux-missing");
+    assert_eq!(
+        refusal_key(&register(&runner, "fleet:0", &[], &[])),
+        "pane-invalid"
+    );
+    assert_eq!(
+        refusal_key(&register(&runner, "%999", &[], &[])),
+        "pane-gone"
+    );
+    assert_eq!(runner.fleet()["overseer"], Value::Null, "nothing written");
+
+    let out = register(&runner, &pane, &[("CLAUDE_CONFIG_DIR", &caller_home)], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    assert_eq!(
+        answer["result"]["notices"],
+        json!([format!(
+            "identity-fallback session={pane} cause=no-start-row"
+        )])
+    );
+    assert_eq!(answer["result"]["adopted"]["report"]["generation"], 1);
+    let record = runner.fleet()["overseer"].clone();
+    let rows = rows_file(&runner, &server, &pane);
+    let project = std::fs::canonicalize(runner.state_dir()).unwrap();
+    assert_eq!(record["harness"], "claude");
+    assert_eq!(record["account"], caller_home.as_str());
+    assert_eq!(record["home"], caller_home.as_str());
+    assert_eq!(
+        record["cwd"],
+        std::fs::canonicalize(&work).unwrap().display().to_string()
+    );
+    assert_eq!(record["model"], Value::Null);
+    assert_eq!(record["effort"], Value::Null);
+    assert_eq!(record["session_rows"], rows.display().to_string());
+    assert_eq!(record["server_socket"], server.socket.display().to_string());
+    assert_eq!(record["harness_pid"], server.pane_pid(&pane));
+    let log = std::fs::read_to_string(tools.join("kendex.log")).unwrap();
+    assert!(
+        log.contains(&format!("list --harness claude cwd={}", project.display())),
+        "{log}"
+    );
+
+    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    let stated = runner
+        .state_dir()
+        .join("stated-account")
+        .display()
+        .to_string();
+    let start = json!({
+        "event": "SessionStart",
+        "harness": "claude",
+        "account": stated,
+        "model": "claude-fable-5-1",
+        "cwd": "/elsewhere",
+    });
+    std::fs::write(
+        &rows,
+        format!(
+            "{start}\n{}\n",
+            json!({"event": "Stop", "harness": "claude"})
+        ),
+    )
+    .unwrap();
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["session_id"] = json!("before-resume");
+    fleet["overseer"]["pending"] = json!({"harness": "claude"});
+    fleet["overseer"]["exit"] = json!({"status": 0});
+    runner.write_fleet(&fleet);
+    let out = register(&runner, &pane, &[("CLAUDE_CONFIG_DIR", &caller_home)], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    assert_eq!(answer["result"]["notices"], json!([]));
+    assert_eq!(answer["result"]["adopted"]["report"]["healed"], true);
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["generation"], 1);
+    assert_eq!(record["account"], stated.as_str());
+    assert_eq!(record["model"], "claude-fable-5-1");
+    assert_eq!(record["cwd"], "/elsewhere");
+    assert_eq!(record["session_id"], Value::Null, "the binding cleared");
+    assert!(
+        record.get("pending").is_none() && record.get("exit").is_none(),
+        "{record}"
+    );
+    let log = std::fs::read_to_string(tools.join("kendex.log")).unwrap();
+    assert_eq!(
+        log.matches(&format!("cwd={}", project.display())).count(),
+        2,
+        "the checkout's install is asked, never the row's directory: {log}"
+    );
+
+    let named = runner
+        .state_dir()
+        .join("named-account")
+        .display()
+        .to_string();
+    let out = register(&runner, &pane, &[], &["--account", &named]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["generation"], 1);
+    assert_eq!(record["account"], named.as_str());
+
+    register_tools(&mut runner, "", 1);
+    let out = register(&runner, &pane, &[], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(
+        answer["result"]["notices"],
+        json!([
+            "turn-end-hook=missing harness=claude exit=1 fix=add claude to [install] harnesses in kendex.toml and run kendex apply"
+        ])
+    );
+
+    let before = std::fs::read_to_string(&fleet_file).unwrap();
+    let real = which_tmux();
+    let shim = fixtures().join("tmux-fail");
+    let path = tool_path(&[runner.tools.as_deref().unwrap(), shim.as_path()]);
+    let out = register(
+        &runner,
+        &pane,
+        &[
+            ("PATH", &path),
+            ("TMUX_FAIL_VERB", "display-message"),
+            ("TMUX_REAL", &real),
+        ],
+        &[],
+    );
+    assert_eq!(reply(&out)["ok"], false, "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(&fleet_file).unwrap(),
+        before,
+        "nothing written"
+    );
+}
+
+/// A register never takes a record another session may still hold: from a
+/// second server whose pane carries the recorded pane's id it is refused
+/// while the recorded controller lives, and takes over once that server
+/// stopped; a record naming this pane on this server pid at another server
+/// start is a gone server's, taken over; a record with no identity whose
+/// server cannot be judged is refused unread, the record kept.
+#[test]
+fn a_register_never_takes_a_record_another_live_or_unjudged_server_may_hold() {
+    let dir_a = tempfile::tempdir().unwrap();
+    let dir_b = tempfile::tempdir().unwrap();
+    let a = Server::start(dir_a.path(), "fleet");
+    let b = Server::start(dir_b.path(), "fleet");
+    let runner = register_runner(&a);
+    let pane_a = a.open_stub(
+        "hand",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    let pane_b = b.open_stub(
+        "hand",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    a.await_composer(&pane_a);
+    b.await_composer(&pane_b);
+    assert_eq!(pane_a, pane_b, "both servers hand out the same pane id");
+    let on_b = format!("{},0,0", b.socket.display());
+    let fleet_file = runner.state_dir().join("workflow-state-oversee.json");
+    let out = register(&runner, &pane_a, &[], &[]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+
+    let before = std::fs::read_to_string(&fleet_file).unwrap();
+    assert_eq!(
+        refusal_key(&register(&runner, &pane_b, &[("TMUX", &on_b)], &[])),
+        "overseer-live"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fleet_file).unwrap(),
+        before,
+        "kept"
+    );
+
+    drop(a);
+    let out = register(&runner, &pane_b, &[("TMUX", &on_b)], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    assert_eq!(answer["result"]["adopted"]["report"]["generation"], 2);
+    assert_eq!(runner.fleet()["overseer"]["server"], b.pid.to_string());
+
+    let gone = Owned::sleep();
+    let (pid, start) = (gone.pid(), gone.start());
+    drop(gone);
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["server_start"] = json!(b.start - 5);
+    fleet["overseer"]["harness_pid"] = json!(pid);
+    fleet["overseer"]["harness_start"] = json!(start);
+    runner.write_fleet(&fleet);
+    let out = register(&runner, &pane_b, &[("TMUX", &on_b)], &[]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    assert_eq!(answer["result"]["adopted"]["report"]["healed"], false);
+    assert_eq!(answer["result"]["adopted"]["report"]["generation"], 3);
+
+    let unjudged = Owned::sleep();
+    let mut fleet = runner.fleet();
+    let record = fleet["overseer"].as_object_mut().unwrap();
+    record.remove("harness_pid");
+    record.remove("harness_start");
+    record.insert("server".into(), json!(unjudged.pid().to_string()));
+    record.insert("server_start".into(), json!(1));
+    record.insert(
+        "server_socket".into(),
+        json!(dir_b.path().join("none.sock").display().to_string()),
+    );
+    runner.write_fleet(&fleet);
+    let before = std::fs::read_to_string(&fleet_file).unwrap();
+    assert_eq!(
+        refusal_key(&register(&runner, &pane_b, &[("TMUX", &on_b)], &[])),
+        "overseer-unreadable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&fleet_file).unwrap(),
+        before,
+        "kept"
+    );
+}
+
+/// Each harness a hand-opened pane runs is read off its foreground, with
+/// the account its own home variable names: Codex's account apart from its
+/// private `CODEX_HOME`, a Copilot CLI under its `node` launcher on the
+/// `COPILOT_HOME` its process runs with (`--account` ahead of it), Pi's
+/// root. A Copilot home gets the context reader, said to load at the next
+/// start, and its missing hooks said; one whose extensions are off and
+/// that runs no status line is said to have no reader and still
+/// registered; another harness's missing turn-end hook is said. A pane no
+/// harness holds is refused.
+#[test]
+fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_coverage_lacks() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["codex", "copilot", "pi"] {
+        named_sleep(&bin, name);
+    }
+    write_executable(&bin.join("node"), "#!/bin/bash\n\"${0%/*}/copilot\" 600\n");
+    let fix = |name: &str| {
+        format!("fix=add {name} to [install] harnesses in kendex.toml and run kendex apply")
+    };
+
+    let runner = register_runner(&server);
+    let account = runner.state_dir().join("codex-account");
+    let private = account.join("lane-launch/work-1/home");
+    let pane = server.open_window(
+        "codex",
+        runner.state_dir(),
+        &format!("exec {} 600", bin.join("codex").display()),
+    );
+    await_named(&server, &pane, "codex");
+    let out = register(
+        &runner,
+        &pane,
+        &[("CODEX_HOME", &private.display().to_string())],
+        &[],
+    );
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["harness"], "codex");
+    assert_eq!(record["account"], account.display().to_string());
+    assert_eq!(record["home"], private.display().to_string());
+    assert_eq!(
+        answer["result"]["notices"][1],
+        format!(
+            "turn-end-hook=missing harness=codex exit=0 {}",
+            fix("codex")
+        )
+    );
+
+    let runner = register_runner(&server);
+    let copilot_home = runner.state_dir().join("copilot-home");
+    std::fs::create_dir_all(&copilot_home).unwrap();
+    let caller = runner.state_dir().join("caller-home");
+    std::fs::create_dir_all(&caller).unwrap();
+    let caller = caller.display().to_string();
+    let pane = server.open_window(
+        "copilot",
+        runner.state_dir(),
+        &format!(
+            "exec env COPILOT_HOME={} {}",
+            copilot_home.display(),
+            bin.join("node").display()
+        ),
+    );
+    await_named(&server, &pane, "node");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let out = register(&runner, &pane, &[("HOME", &caller)], &[]);
+        if reply(&out)["ok"] == true {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the Copilot child never ran: {}",
+            stderr(&out)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["harness"], "copilot");
+    assert_eq!(record["account"], copilot_home.display().to_string());
+    assert!(
+        copilot_home
+            .join("extensions/kendex-lane-context/extension.mjs")
+            .is_file()
+    );
+    let named = runner.state_dir().join("named-copilot");
+    std::fs::create_dir_all(&named).unwrap();
+    std::fs::write(
+        named.join("settings.json"),
+        r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
+    )
+    .unwrap();
+    let named = named.display().to_string();
+    let out = register(&runner, &pane, &[("HOME", &caller)], &["--account", &named]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["account"], named.as_str());
+    let notices = answer["result"]["notices"].as_array().unwrap().clone();
+    assert!(
+        notices[1]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("context-reader=missing home={named} cause=")),
+        "{notices:?}"
+    );
+    assert!(
+        notices[2]
+            .as_str()
+            .unwrap()
+            .starts_with("turn-end-hook=missing harness=copilot reason=unsupported-for-oversee"),
+        "{notices:?}"
+    );
+    std::fs::remove_dir_all(&named).unwrap();
+    let out = register(&runner, &pane, &[("HOME", &caller)], &["--account", &named]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(
+        answer["result"]["notices"][1],
+        format!("context-reader=next-start home={named}")
+    );
+
+    // A fleet with no state yet: the register makes it first.
+    let runner = register_runner(&server);
+    std::fs::remove_file(runner.state_dir().join("workflow-state-oversee.json")).unwrap();
+    let root = runner.state_dir().join("pi-root").display().to_string();
+    let pane = server.open_window(
+        "pi",
+        runner.state_dir(),
+        &format!("exec {} 600", bin.join("pi").display()),
+    );
+    await_named(&server, &pane, "pi");
+    let out = register(&runner, &pane, &[("PI_CODING_AGENT_DIR", &root)], &[]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["harness"], "pi");
+    assert_eq!(record["account"], root.as_str());
+
+    let runner = register_runner(&server);
+    let idle = server.open_idle("idle", runner.state_dir());
+    assert_eq!(
+        refusal_key(&register(&runner, &idle, &[], &[])),
+        "pane-not-harness"
+    );
+    assert_eq!(runner.fleet()["overseer"], Value::Null, "nothing written");
 }
 
 /// Abandoning a waiting runner before retirement completes `failed` only
