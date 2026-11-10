@@ -593,9 +593,12 @@ fn the_docs_writing_cycle_loses_its_only_root_without_suppressing_it() {
     }
 }
 
+/// On a short read, a rebound catalog or a set no tool here can hold the
+/// hook for roots nothing, so the removal falls back to the name test and
+/// the record's edge from what stays keeps the suppression.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_rebound_catalog_or_removed_target_tool_cannot_root_recorded_ancestry() {
+fn a_rebound_catalog_or_untargeted_set_falls_back_to_the_name_test() {
     for rebound in [false, true] {
         for offline in [false, true] {
             let f = world(&SET_STAYS);
@@ -2157,15 +2160,16 @@ fn github_held_by_an_unread_source() -> Fixture {
 }
 
 /// No reading roots the item and no catalog reads: the record cannot see
-/// a carrier declared since the last readable apply, or one a hold kept
-/// from it while the item's own source went unread. An edge the record
-/// names from something that stays keeps the removal, so the catalogs'
-/// return cannot put the item back.
+/// a carrier declared since the last readable apply, one a hold kept from
+/// it while the item's own source went unread, or a set it recorded on a
+/// tool the set no longer targets. An edge the record names from
+/// something that stays, a requirer or a set, keeps the removal, so the
+/// catalogs' return cannot put the item back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_offline_removal_no_reading_roots_keeps_an_edge_from_what_stays() {
     type Unrooted = (&'static str, fn() -> Fixture);
-    let rows: [Unrooted; 2] = [
+    let rows: [Unrooted; 3] = [
         (
             "hold behind an unread source",
             github_held_by_an_unread_source,
@@ -2174,6 +2178,7 @@ fn an_offline_removal_no_reading_roots_keeps_an_edge_from_what_stays() {
             "carrier declared since the last readable apply",
             declaration_swapped_for_a_set,
         ),
+        ("set moved to another tool", set_moved_to_another_tool),
     ];
     for (name, world) in rows {
         let f = world();
