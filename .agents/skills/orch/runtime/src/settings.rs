@@ -114,6 +114,8 @@ pub const DEV_VALIDATE_SELECTION_CMD_KEY: &str = "DEV_VALIDATE_SELECTION_CMD";
 pub const DEV_VALIDATE_FINDING_PREFIX_KEY: &str = "DEV_VALIDATE_FINDING_PREFIX";
 /// The bound on the command, seconds.
 pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
+/// The memory cap on a validation run's whole process tree; unset is none.
+pub const VALIDATE_MEMORY_MAX_KEY: &str = "ORCH_VALIDATE_MEMORY_MAX";
 /// `pr`, the default, or `push-base`: direct delivery keeps every ci
 /// request on local validation.
 pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
@@ -421,6 +423,7 @@ const READ_KEYS: &[&str] = &[
     "DEV_VALIDATE_TEXT_CMD",
     DEV_VALIDATE_FINDING_PREFIX_KEY,
     DEV_VALIDATE_TIMEOUT_SECS_KEY,
+    VALIDATE_MEMORY_MAX_KEY,
     DELIVERY_KEY,
     ROUND_PRUNE_KEY,
     QA_KEYS[0],
@@ -658,12 +661,13 @@ pub struct ValidateSettings {
     /// `DEV_VALIDATE_TEXT_CMD` as written, an empty value kept: the docs
     /// mode, its one reader, judges it.
     pub text_cmd: Option<String>,
-    /// The finding prefix, the bound and the delivery as written: the
-    /// validation start judges each, so a value outside its form refuses no
-    /// verb that never reads it.
+    /// The finding prefix, the bound, the delivery and the memory cap as
+    /// written: the validation start judges each, so a value outside its
+    /// form refuses no verb that never reads it.
     pub finding_prefix: Option<String>,
     pub timeout: Option<String>,
     pub delivery: Option<String>,
+    pub memory_max: Option<String>,
 }
 
 /// What `queue-watch` reads beside its request: the arming grace, the
@@ -1324,6 +1328,7 @@ pub fn load(
         finding_prefix: get(DEV_VALIDATE_FINDING_PREFIX_KEY).map(str::to_owned),
         timeout: get(DEV_VALIDATE_TIMEOUT_SECS_KEY).map(str::to_owned),
         delivery: get(DELIVERY_KEY).map(str::to_owned),
+        memory_max: get(VALIDATE_MEMORY_MAX_KEY).map(str::to_owned),
     };
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     // A preference set empty names no entry, which the overseer launch

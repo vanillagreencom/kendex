@@ -25,6 +25,10 @@ printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/launches"
 printf '%s\n' "${words[@]}" > "$VALIDATE_MANAGER_DIR/$unit.argv"
 [ -z "${VALIDATE_AT_LAUNCH:-}" ] || cp -- "${ORCH_STATE_DIR:?}/workflow-state-KEN-4687.json" "$VALIDATE_AT_LAUNCH"
 case "${VALIDATE_START_ANSWER:-success}" in
+  # A client older than a property it is handed refuses the name as it
+  # builds its message, before any call (measured on systemd 262 with an
+  # unknown name, behind a private peer that never answers).
+  unknown-assignment) echo 'Unknown assignment: OOMPolicy=continue' >&2; exit 1 ;;
   refused) printf 'loaded\nfailed\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;
   unread) printf 'unread\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;
   record-only) printf 'loaded\nactive\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 0 ;;

@@ -1774,6 +1774,179 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
     );
 }
 
+/// The unit's argument words and its runner record line, for the one unit
+/// the planted manager started.
+fn unit_launch(manager: &str, dir: &str) -> (Vec<String>, String) {
+    let launches = fs::read_to_string(Path::new(manager).join("launches")).unwrap();
+    let unit = launches.lines().next().unwrap();
+    let argv = fs::read_to_string(Path::new(manager).join(format!("{unit}.argv"))).unwrap();
+    let line = run_file(dir, "runner")
+        .lines()
+        .find_map(|l| l.strip_prefix("line=").map(str::to_owned))
+        .unwrap_or_default();
+    (argv.lines().map(str::to_owned).collect(), line)
+}
+
+/// A memory cap set for validation is its unit's hard limit over the whole
+/// tree, swap included, with the manager's stop at the first OOM kill off
+/// and no soft cap beside it, on the admitted start and the ad-hoc entry
+/// alike, and the runner line names it; with none set, the unit carries
+/// none of them.
+#[test]
+fn a_set_memory_cap_is_the_validation_units_hard_limit_with_no_swap_and_no_oom_stop() {
+    for (cap, held) in [(Some("1G"), true), (None, false)] {
+        let w = World::new();
+        let (path, manager) = manager(&w);
+        let mut extra = vec![
+            ("PATH", path.as_str()),
+            ("VALIDATE_MANAGER_DIR", manager.as_str()),
+        ];
+        if let Some(cap) = cap {
+            extra.push(("ORCH_VALIDATE_MEMORY_MAX", cap));
+        }
+        let started = ok(&w.start(&[], &extra));
+        let dir = started["run_dir"].as_str().unwrap();
+        assert_eq!(w.wait_closed(dir)["outcome"], "pass", "{cap:?}");
+        let (words, line) = unit_launch(&manager, dir);
+        for property in [
+            "MemoryMax=1073741824",
+            "MemorySwapMax=0",
+            "OOMPolicy=continue",
+        ] {
+            assert_eq!(
+                words.iter().any(|w| w == property),
+                held,
+                "{cap:?} {property}: {words:?}"
+            );
+        }
+        if held {
+            assert!(
+                !words.iter().any(|w| w.starts_with("MemoryHigh=")),
+                "{words:?}"
+            );
+        }
+        assert_eq!(
+            line.ends_with(" memory-max=1073741824"),
+            held,
+            "{cap:?}: {line}"
+        );
+        assert_eq!(w.stage(dir)["job"]["line"], json!(line), "{cap:?}");
+    }
+    let w = World::new();
+    let (path, manager) = manager(&w);
+    let wt = w.worktree.display().to_string();
+    let out = w.entry(
+        &["--worktree", &wt, "--poll", "1", "--fresh"],
+        &[
+            ("PATH", path.as_str()),
+            ("VALIDATE_MANAGER_DIR", manager.as_str()),
+            ("ORCH_VALIDATE_MEMORY_MAX", "2G"),
+        ],
+    );
+    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+    let (words, line) = unit_launch(&manager, &directory(&out));
+    assert!(
+        words.iter().any(|w| w == "MemoryMax=2147483648"),
+        "{words:?}"
+    );
+    assert!(line.ends_with(" memory-max=2147483648"), "{line}");
+}
+
+/// A memory cap no cgroup of the run's own can hold, a `setsid` job or a
+/// run in the caller's own process, is said unheld once, on the runner
+/// line the run's record and its log carry, and the run still runs: a
+/// manager that does not answer, and a client older than a property the
+/// cap sets, which refuses the name before it asks the manager anything.
+#[test]
+fn a_memory_cap_no_cgroup_of_the_run_holds_is_said_unheld_once_and_the_run_runs() {
+    for (answer, opening, cause) in [
+        (
+            ("VALIDATE_PROBE_ANSWER", "no-manager"),
+            "runner=setsid reason=probe-failed ",
+            "probe-failed",
+        ),
+        (
+            ("VALIDATE_START_ANSWER", "unknown-assignment"),
+            "runner=setsid reason=unit-launch-failed detail=Unknown assignment: OOMPolicy=continue ",
+            "unit-launch-failed",
+        ),
+    ] {
+        let w = World::new();
+        let (path, manager) = manager(&w);
+        let started = ok(&w.start(
+            &[],
+            &[
+                ("PATH", &path),
+                ("VALIDATE_MANAGER_DIR", &manager),
+                answer,
+                ("ORCH_VALIDATE_MEMORY_MAX", "1G"),
+            ],
+        ));
+        let dir = started["run_dir"].as_str().unwrap();
+        let stage = w.wait_closed(dir);
+        assert_eq!(stage["outcome"], "pass", "{cause}");
+        let word = format!(" memory-cap=unavailable cause={cause}");
+        let line = stage["job"]["line"].as_str().unwrap();
+        assert!(line.starts_with(opening), "{line}");
+        assert_eq!(line.matches(&word).count(), 1, "{line}");
+        let log = run_file(dir, "log");
+        assert_eq!(log.lines().next(), Some(line), "{log}");
+        assert!(
+            !run_file(dir, "exit").contains("memory-cap"),
+            "{}",
+            run_file(dir, "exit")
+        );
+    }
+    let w = World::new();
+    let started = ok(&w.start(&["--foreground"], &[("ORCH_VALIDATE_MEMORY_MAX", "1G")]));
+    let dir = started["run_dir"].as_str().unwrap();
+    let stage = w.stage(dir);
+    assert_eq!(stage["outcome"], "pass");
+    assert_eq!(
+        stage["job"]["line"],
+        "runner=attached memory-cap=unavailable cause=attached"
+    );
+}
+
+/// The memory cap's setting is judged by the validation start that reads
+/// it, before any record: a value outside systemd's byte form or under the
+/// floor refuses the start with the key, the value and the floor, and the
+/// item's record is left as it was.
+#[test]
+fn a_memory_cap_outside_its_form_or_under_its_floor_refuses_the_start_with_nothing_recorded() {
+    for value in [
+        "512M",
+        "1073741823",
+        "1.5G",
+        "1g",
+        "01G",
+        "infinity",
+        "50%",
+        "99999999999T",
+    ] {
+        let w = World::new();
+        let before = fs::read_to_string(&w.item).unwrap();
+        let out = w.start(&[], &[("ORCH_VALIDATE_MEMORY_MAX", value)]);
+        assert_eq!(refusal(&out), "setting-invalid", "{value}");
+        assert_eq!(
+            reply(&out)["refusal"]["fields"],
+            json!([
+                ["key", "ORCH_VALIDATE_MEMORY_MAX"],
+                ["value", value],
+                ["floor", "1G"]
+            ]),
+            "{value}"
+        );
+        assert_eq!(fs::read_to_string(&w.item).unwrap(), before, "{value}");
+    }
+    let w = World::new();
+    let started = ok(&w.start(
+        &["--foreground"],
+        &[("ORCH_VALIDATE_MEMORY_MAX", "1073741824")],
+    ));
+    assert_eq!(started["outcome"], "pass");
+}
+
 /// A `PATH` of every program the row's own `PATH` names but `without`, each
 /// name linked once from the first directory that holds it.
 fn farm_without(w: &World, without: &[&str]) -> String {

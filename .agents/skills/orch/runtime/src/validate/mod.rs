@@ -1660,6 +1660,43 @@ fn started_line(run_dir: &Path, proof: &Proof) -> String {
     )
 }
 
+/// The least memory cap a start takes: a cgroup starved by a smaller one
+/// can fail a kernel allocation and leave the host's root volume read-only.
+const MEMORY_FLOOR: u64 = 1 << 30;
+
+/// `ORCH_VALIDATE_MEMORY_MAX` as a start reads it: a whole number of bytes,
+/// or of K, M, G or T in base 1024 as `systemd.resource-control(5)` spells
+/// `MemoryMax=`, at least [`MEMORY_FLOOR`]; unset is no cap.
+pub(crate) fn memory_max(settings: &crate::settings::ValidateSettings) -> Result<Option<u64>> {
+    let Some(text) = &settings.memory_max else {
+        return Ok(None);
+    };
+    let (digits, shift) = match text.as_bytes().last() {
+        Some(b'K') => (&text[..text.len() - 1], 10),
+        Some(b'M') => (&text[..text.len() - 1], 20),
+        Some(b'G') => (&text[..text.len() - 1], 30),
+        Some(b'T') => (&text[..text.len() - 1], 40),
+        _ => (text.as_str(), 0),
+    };
+    let bytes = (!digits.is_empty()
+        && !digits.starts_with('0')
+        && digits.bytes().all(|b| b.is_ascii_digit()))
+    .then(|| digits.parse::<u64>().ok())
+    .flatten()
+    .and_then(|n| n.checked_mul(1 << shift));
+    match bytes {
+        Some(bytes) if bytes >= MEMORY_FLOOR => Ok(Some(bytes)),
+        Some(_) | None => Err(Error::Runtime(agent_runtime::Error::refused(
+            "setting-invalid",
+            &[
+                ("key", crate::settings::VALIDATE_MEMORY_MAX_KEY),
+                ("value", text),
+                ("floor", "1G"),
+            ],
+        ))),
+    }
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the admitted validation launch uses the shared recorded launcher"
@@ -1670,7 +1707,7 @@ fn ask_launcher(
     run_dir: &Path,
     item: &str,
     round: &str,
-    cap_secs: u64,
+    bounds: effects::Bounds,
 ) -> Launch {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -1710,26 +1747,36 @@ fn ask_launcher(
         &run_dir.join("runner"),
         &args,
         Some(&run_dir.join("job.err")),
-        Some(Duration::from_secs(cap_secs)),
+        bounds,
         &crate::schedule::SystemClock,
     );
     launch_answer(answer.read, answer.line, answer.failed, answer.unanswered)
+}
+
+/// The runner line of a run in the caller's own process tree, which no
+/// cgroup of the run's own holds: a memory cap asked for is said unheld.
+pub(crate) fn attached_line(memory: Option<u64>) -> String {
+    match memory {
+        Some(_) => "runner=attached memory-cap=unavailable cause=attached".to_owned(),
+        None => "runner=attached".to_owned(),
+    }
 }
 
 #[allow(
     clippy::disallowed_methods,
     reason = "the foreground executor records its owner before it starts a command"
 )]
-fn attached(run_dir: &Path, env: &Env) -> Launch {
+fn attached(run_dir: &Path, env: &Env, memory: Option<u64>) -> Launch {
     let Some(owner) = &env.owner else {
         return Launch::Refused {
             cause: "owner-unreadable".to_owned(),
         };
     };
+    let line = attached_line(memory);
     if let Err(e) = fs::write(
         run_dir.join("runner"),
         format!(
-            "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+            "runner=attached\npid={}\nstart={}\nline={line}\n",
             owner.pid, owner.start
         ),
     ) {
@@ -1742,7 +1789,7 @@ fn attached(run_dir: &Path, env: &Env) -> Launch {
         unit: None,
         pid: u32::try_from(owner.pid).ok(),
         start: Some(owner.start.clone()),
-        line: "runner=attached".to_owned(),
+        line,
     }
 }
 
@@ -1816,6 +1863,7 @@ pub fn start(
         cause: format!("{worktree}: {e}"),
     })?;
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
+    let memory = memory_max(&settings.validate)?;
     state::locked(&worktree.join("tmp/validation-start"), locking, || {
         let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
         let stages = snapshot.view::<ItemState>(&path)?.stages;
@@ -1878,14 +1926,17 @@ pub fn start(
                     start: None,
                     line: "runner=none".to_owned(),
                 },
-                None if req.foreground => attached(&run_dir_path, env),
+                None if req.foreground => attached(&run_dir_path, env, memory),
                 None => ask_launcher(
                     settings,
                     &worktree,
                     &run_dir_path,
                     &item,
                     &round,
-                    resolved.proof.cap_secs,
+                    effects::Bounds {
+                        runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
+                        memory,
+                    },
                 ),
             },
         };

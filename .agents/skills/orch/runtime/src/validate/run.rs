@@ -139,6 +139,16 @@ pub fn execute(
         .ok_or_else(|| fail("runner-unreadable", run_dir.display().to_string()))?;
     writeln!(log, "{line}").map_err(|e| fail("log", e.to_string()))?;
     let paths = run_dir.join("paths");
+    // The launcher's line names the cap it set on the run's unit; the run's
+    // own cgroup is read before the command so the kill count it ends with
+    // is the command's alone.
+    let cap = (runner.get("runner").is_some_and(|r| r == "systemd")
+        && line.split(' ').any(|word| word.starts_with("memory-max=")))
+    .then(|| {
+        crate::effects::own_cgroup_dir()
+            .ok_or("cgroup-unread")
+            .and_then(Cap::of)
+    });
     let began = clock.now();
     let started = clock
         .wall()
@@ -160,6 +170,17 @@ pub fn execute(
             ". \"$1\"; exec \"${KENDEX_GROUP_LEADER[@]}\" /bin/bash -c \"$2\"",
             "_",
             &group_leader.display().to_string(),
+            &command,
+        ]);
+    } else if matches!(cap, Some(Ok(_))) {
+        // At the cap the kernel kills the process its badness ranks first
+        // (`proc_pid_oom_score_adj(5)`): the command's tree is ranked above
+        // this executor, which shares the cap and must outlive the kill to
+        // record it.
+        bash.args([
+            "-c",
+            "printf 1000 2>/dev/null >/proc/self/oom_score_adj; exec /bin/bash -c \"$1\"",
+            "_",
             &command,
         ]);
     } else {
@@ -245,13 +266,6 @@ pub fn execute(
         .as_secs();
     let started_at = agent_runtime::clock::iso_utc(started);
     let ended_at = agent_runtime::clock::iso_utc(ended);
-    let suffix = if bounded {
-        " verdict=no-verdict"
-    } else if status == 3 {
-        " verdict=no-verdict cause=host"
-    } else {
-        ""
-    };
     atomic(
         run_dir,
         "timing",
@@ -260,12 +274,124 @@ pub fn execute(
             ended.saturating_sub(started)
         ),
     )?;
+    let memory = cap.as_ref().map(MemoryEnd::of);
     atomic(
         run_dir,
         "exit",
-        &format!("guard-exit={status} at={ended_at}{suffix}\n"),
+        &sentinel(status, &ended_at, bounded, memory.as_ref()),
     )?;
     group.end()
+}
+
+/// The run's sentinel line: its exit and end, then what the memory cap
+/// says where the launcher set one, then the verdict's own suffix. A kill
+/// at the cap is the run's cause and replaces that suffix, since it decides
+/// the verdict (`ops::validate::sentinel_outcome`).
+fn sentinel(status: i32, ended_at: &str, bounded: bool, memory: Option<&MemoryEnd>) -> String {
+    let suffix = match memory {
+        Some(MemoryEnd::Killed { limit, peak }) => {
+            let peak = peak.map_or_else(|| "unread".to_owned(), |peak| peak.to_string());
+            format!(" cause=memory-cap limit={limit} peak={peak}")
+        }
+        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None if bounded => {
+            " verdict=no-verdict".to_owned()
+        }
+        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None if status == 3 => {
+            " verdict=no-verdict cause=host".to_owned()
+        }
+        Some(MemoryEnd::Within | MemoryEnd::Unstated(_)) | None => String::new(),
+    };
+    let word = match memory {
+        Some(MemoryEnd::Unstated(word)) => format!(" {word}"),
+        Some(MemoryEnd::Within | MemoryEnd::Killed { .. }) | None => String::new(),
+    };
+    format!("guard-exit={status} at={ended_at}{word}{suffix}\n")
+}
+
+/// A cgroup v2 `memory.events` file's counts this run reads: the times the
+/// group reached its own `memory.max`, and the processes an OOM killer
+/// took from it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Events {
+    max: u64,
+    oom_kill: u64,
+}
+
+impl Events {
+    fn read(dir: &Path) -> Option<Events> {
+        let text = fs::read_to_string(dir.join("memory.events")).ok()?;
+        let count = |key: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix(' '))?
+                .trim()
+                .parse()
+                .ok()
+        };
+        Some(Events {
+            max: count("max")?,
+            oom_kill: count("oom_kill")?,
+        })
+    }
+}
+
+/// The memory cap the kernel holds on the run's own cgroup, and the
+/// group's counts before the command.
+#[derive(Debug)]
+struct Cap {
+    dir: PathBuf,
+    limit: u64,
+    before: Events,
+}
+
+impl Cap {
+    /// The cap at `dir`, or why it holds none: no whole number in
+    /// `memory.max` (`max`, or no memory controller on the group), or
+    /// counts that cannot be read.
+    fn of(dir: PathBuf) -> std::result::Result<Cap, &'static str> {
+        let limit = fs::read_to_string(dir.join("memory.max"))
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .ok_or("cgroup-uncapped")?;
+        let before = Events::read(&dir).ok_or("cgroup-unread")?;
+        Ok(Cap { dir, limit, before })
+    }
+}
+
+/// How the run ended against the cap its launcher set.
+#[derive(Debug, PartialEq, Eq)]
+enum MemoryEnd {
+    /// No kill at the cap.
+    Within,
+    /// The group reached its own cap and an OOM killer took a member: a
+    /// kill counted with no rise of the group's own `max` came from an
+    /// ancestor's cap or the host's, and is not this cap's.
+    Killed { limit: u64, peak: Option<u64> },
+    /// The cap does not hold the run, or its counts went unread after: the
+    /// word the sentinel states.
+    Unstated(String),
+}
+
+impl MemoryEnd {
+    fn of(cap: &std::result::Result<Cap, &'static str>) -> MemoryEnd {
+        let cap = match cap {
+            Ok(cap) => cap,
+            Err(cause) => {
+                return MemoryEnd::Unstated(format!("memory-cap=unavailable cause={cause}"));
+            }
+        };
+        match Events::read(&cap.dir) {
+            None => MemoryEnd::Unstated("memory-cap=unread".to_owned()),
+            Some(after) if after.max > cap.before.max && after.oom_kill > cap.before.oom_kill => {
+                MemoryEnd::Killed {
+                    limit: cap.limit,
+                    peak: fs::read_to_string(cap.dir.join("memory.peak"))
+                        .ok()
+                        .and_then(|text| text.trim().parse().ok()),
+                }
+            }
+            Some(_) => MemoryEnd::Within,
+        }
+    }
 }
 
 #[allow(
@@ -1116,4 +1242,183 @@ pub fn stop(
         closed: stage.end.is_some(),
         notice: stage.notice.as_ref().map(|n| n.owner.clone()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ops::validate::{end_notice, memory_cap_cause, sentinel_outcome};
+
+    fn events(max: u64, oom_kill: u64) -> String {
+        format!("low 0\nhigh 0\nmax {max}\noom {oom_kill}\noom_kill {oom_kill}\noom_group_kill 0\n")
+    }
+
+    /// A run whose own cgroup reached its cap while an OOM killer took a
+    /// member fails with the cause and its figures, whatever the leader's
+    /// exit, on its sentinel, its `state=done` reading and its lane's end
+    /// notice; a kill the group's own cap did not cause, a cap reached
+    /// with no kill, a group with no cap and counts unread after each
+    /// keep the leader's verdict and the bound's suffix where it applies.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row plants a cgroup's files and a run directory under its own temporary directories"
+    )]
+    fn a_kill_at_the_runs_own_memory_cap_fails_the_run_with_its_figures() {
+        // case | memory.max | events after | memory.peak | leader exit | bounded |
+        // the outcome | the cause the line ends with
+        type Row<'a> = (
+            &'a str,
+            &'a str,
+            Option<String>,
+            Option<&'a str>,
+            i32,
+            bool,
+            StageOutcome,
+            Option<&'a str>,
+        );
+        let killed = Some("cause=memory-cap limit=1073741824 peak=1100000000");
+        let rows: [Row; 8] = [
+            (
+                "killed, leader 0",
+                "1073741824",
+                Some(events(3, 1)),
+                Some("1100000000"),
+                0,
+                false,
+                StageOutcome::Fail,
+                killed,
+            ),
+            (
+                "killed, leader 137",
+                "1073741824",
+                Some(events(3, 1)),
+                Some("1100000000"),
+                137,
+                false,
+                StageOutcome::Fail,
+                killed,
+            ),
+            (
+                "killed at the bound",
+                "1073741824",
+                Some(events(3, 1)),
+                Some("1100000000"),
+                124,
+                true,
+                StageOutcome::Fail,
+                killed,
+            ),
+            (
+                "killed, peak unread",
+                "1073741824",
+                Some(events(3, 1)),
+                None,
+                0,
+                false,
+                StageOutcome::Fail,
+                Some("cause=memory-cap limit=1073741824 peak=unread"),
+            ),
+            (
+                "an ancestor's kill",
+                "1073741824",
+                Some(events(0, 1)),
+                Some("1"),
+                0,
+                false,
+                StageOutcome::Pass,
+                None,
+            ),
+            (
+                "cap reached, reclaimed",
+                "1073741824",
+                Some(events(3, 0)),
+                Some("1"),
+                1,
+                false,
+                StageOutcome::Fail,
+                None,
+            ),
+            (
+                "no cap, bound",
+                "max",
+                Some(events(0, 0)),
+                None,
+                124,
+                true,
+                StageOutcome::NoVerdict,
+                None,
+            ),
+            (
+                "counts gone after",
+                "1073741824",
+                None,
+                None,
+                0,
+                false,
+                StageOutcome::Pass,
+                None,
+            ),
+        ];
+        for (case, max, after, peak, status, bounded, outcome, cause) in rows {
+            let dir = tempfile::tempdir().expect("tempdir");
+            fs::write(dir.path().join("memory.max"), format!("{max}\n")).unwrap();
+            fs::write(dir.path().join("memory.events"), events(0, 0)).unwrap();
+            let cap = Cap::of(dir.path().to_path_buf());
+            match after {
+                Some(after) => fs::write(dir.path().join("memory.events"), after).unwrap(),
+                None => fs::remove_file(dir.path().join("memory.events")).unwrap(),
+            }
+            if let Some(peak) = peak {
+                fs::write(dir.path().join("memory.peak"), format!("{peak}\n")).unwrap();
+            }
+            let line = sentinel(
+                status,
+                "2026-01-01T00:00:00Z",
+                bounded,
+                Some(&MemoryEnd::of(&cap)),
+            );
+            let line = line.trim_end();
+            assert_eq!(sentinel_outcome(line), Some(outcome), "{case}: {line}");
+            assert_eq!(memory_cap_cause(line), cause, "{case}: {line}");
+            match (max, bounded) {
+                ("max", _) => assert!(
+                    line.contains(" memory-cap=unavailable cause=cgroup-uncapped"),
+                    "{case}: {line}"
+                ),
+                (_, true) if cause.is_none() => {
+                    assert!(line.ends_with(" verdict=no-verdict"), "{case}: {line}")
+                }
+                _ => {}
+            }
+            if case == "counts gone after" {
+                assert!(line.contains(" memory-cap=unread"), "{case}: {line}");
+            }
+            // The run's end notice and its waiter's `state=done` line carry
+            // the cause the sentinel ends with.
+            let run = tempfile::tempdir().expect("tempdir");
+            let run_dir = run.path().display().to_string();
+            fs::write(run.path().join("exit"), format!("{line}\n")).unwrap();
+            fs::write(
+                run.path().join("start"),
+                "start=0\ncap-secs=1\npoll-secs=1\nvalidate-mode=full\n",
+            )
+            .unwrap();
+            let notice = end_notice("x", &run_dir, outcome).text;
+            let (done, _) =
+                super::super::files::wait(run.path(), 1, &crate::schedule::SystemClock).unwrap();
+            for (reader, text, mark) in [
+                ("notice", &notice, " state=fail "),
+                ("done", &done, " validate=FAILING "),
+            ] {
+                match cause {
+                    Some(cause) => assert!(
+                        text.contains(&format!("{mark}{cause} run-dir=")),
+                        "{case} {reader}: {text}"
+                    ),
+                    None => assert!(!text.contains("memory-cap"), "{case} {reader}: {text}"),
+                }
+            }
+        }
+    }
 }

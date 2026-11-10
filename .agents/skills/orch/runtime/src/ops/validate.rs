@@ -158,13 +158,26 @@ pub struct NoticeText {
 /// replay after a lost mark lands once and reads `duplicate` = delivered) and
 /// a text naming the run and its outcome. Both the job's own close and the
 /// reconcile that closes a gone job's stage build it, so a replay from either
-/// is the same line. `run_id` is the run directory's basename without the
-/// `dev-validate-` prefix.
+/// is the same line. A failure the run's memory cap caused carries that
+/// cause from the run's sentinel. `run_id` is the run directory's basename
+/// without the `dev-validate-` prefix.
 pub fn end_notice(run_id: &str, run_dir: &str, outcome: StageOutcome) -> NoticeText {
+    let cause = match outcome {
+        StageOutcome::Fail => run_sentinel(run_dir)
+            .as_deref()
+            .and_then(memory_cap_cause)
+            .map(|cause| format!(" {cause}"))
+            .unwrap_or_default(),
+        StageOutcome::Pass
+        | StageOutcome::NoVerdict
+        | StageOutcome::Lost
+        | StageOutcome::Stopped
+        | StageOutcome::NoChange => String::new(),
+    };
     NoticeText {
         key: format!("validate-{run_id}"),
         text: format!(
-            "validation-end run={run_id} state={} run-dir={run_dir} log={run_dir}/log",
+            "validation-end run={run_id} state={}{cause} run-dir={run_dir} log={run_dir}/log",
             outcome.word()
         ),
     }
@@ -501,14 +514,25 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
     })
 }
 
-/// The word a sentinel line names: `verdict=no-verdict` is no verdict,
+/// The cause a sentinel line ends with where the kernel killed a member of
+/// the run's tree at the run's own memory cap: `cause=memory-cap
+/// limit=<bytes> peak=<bytes>`.
+pub fn memory_cap_cause(line: &str) -> Option<&str> {
+    line.find(" cause=memory-cap ").map(|at| &line[at + 1..])
+}
+
+/// The word a sentinel line names: the memory cap's cause is a failure
+/// whatever the leader's exit, since the leader of a tree can exit 0 after
+/// the kill took one of its members; `verdict=no-verdict` is no verdict,
 /// `guard-exit=0` a pass, any other exit a failure. `None` for a line that
 /// is no sentinel.
 pub fn sentinel_outcome(line: &str) -> Option<StageOutcome> {
     let exit = line.strip_prefix("guard-exit=")?;
     let exit = exit.split(' ').next()?;
     exit.parse::<u32>().ok()?;
-    Some(if line.contains(" verdict=no-verdict") {
+    Some(if memory_cap_cause(line).is_some() {
+        StageOutcome::Fail
+    } else if line.contains(" verdict=no-verdict") {
         StageOutcome::NoVerdict
     } else if exit == "0" {
         StageOutcome::Pass

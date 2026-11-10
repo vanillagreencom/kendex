@@ -399,6 +399,7 @@ fn entry(
         return Ok(TextReply::new(text, exit));
     }
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
+    let memory = super::memory_max(&settings.validate)?;
     let run_dir = crate::state::locked(&worktree.join("tmp/validation-start"), locking, || {
         if let Some((dir, pid)) = files::live(&worktree)? {
             return Err(Error::Runtime(agent_runtime::Error::refused(
@@ -432,7 +433,10 @@ fn entry(
                 &run_dir.join("runner"),
                 &argv,
                 Some(&run_dir.join("job.err")),
-                Some(Duration::from_secs(resolved.proof.cap_secs)),
+                crate::effects::Bounds {
+                    runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
+                    memory,
+                },
                 &SystemClock,
             );
             match super::launch_answer(launch.read, launch.line, launch.failed, launch.unanswered) {
@@ -452,12 +456,13 @@ fn entry(
             fs::write(
                 run_dir.join("runner"),
                 format!(
-                    "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+                    "runner=attached\npid={}\nstart={}\nline={}\n",
                     env.owner
                         .as_ref()
                         .ok_or_else(|| files::unreadable("owner", "absent"))?
                         .pid,
-                    env.owner.as_ref().unwrap().start
+                    env.owner.as_ref().unwrap().start,
+                    super::attached_line(memory)
                 ),
             )
             .map_err(|e| files::unreadable("runner", e))?;

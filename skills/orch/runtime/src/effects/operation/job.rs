@@ -266,9 +266,13 @@ impl Launcher<'_> {
         unit: &str,
         argv: &[&str],
         stderr: Option<&Path>,
-        cap: Option<Duration>,
+        bounds: Bounds,
     ) -> std::result::Result<Launched, String> {
-        let line = format!("runner=systemd unit={unit}");
+        let memory = bounds
+            .memory
+            .map(|bytes| format!(" memory-max={bytes}"))
+            .unwrap_or_default();
+        let line = format!("runner=systemd unit={unit}{memory}");
         if let Err(e) = write_record(
             record,
             &format!("runner=systemd\nunit={unit}\nline={line}\n"),
@@ -298,8 +302,21 @@ impl Launcher<'_> {
             "-p".to_owned(),
             "IgnoreSIGPIPE=no".to_owned(),
         ];
-        if let Some(cap) = cap {
+        if let Some(cap) = bounds.runtime {
             words.extend(["-p".to_owned(), format!("RuntimeMaxSec={}", cap.as_secs())]);
+        }
+        // The memory cap holds the job's whole tree, swap included, since a
+        // swapped page is memory the cap would not count; the manager's own
+        // policy stops the unit at its first OOM kill and so ends the job
+        // before it records the kill as its verdict.
+        if let Some(bytes) = bounds.memory {
+            for property in [
+                format!("MemoryMax={bytes}"),
+                "MemorySwapMax=0".to_owned(),
+                "OOMPolicy=continue".to_owned(),
+            ] {
+                words.extend(["-p".to_owned(), property]);
+            }
         }
         if let Some((soft, hard)) = nofile_limits() {
             words.push("-p".to_owned());
@@ -309,12 +326,17 @@ impl Launcher<'_> {
             if let Some(slice) = slice_of(&cgroup) {
                 words.push(format!("--slice={slice}"));
             }
-            let dir = Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
+            let dir = cgroup_dir(&cgroup);
             if let Some(cap) = cgroup_cap(&dir, "pids.max") {
                 words.push("-p".to_owned());
                 words.push(format!("TasksMax={cap}"));
             }
-            if let Some(cap) = cgroup_cap(&dir, "memory.high") {
+            // A soft cap beside the memory cap would throttle the job short
+            // of it, so a runaway tree slows to its time bound instead of
+            // failing at the cap.
+            if bounds.memory.is_none()
+                && let Some(cap) = cgroup_cap(&dir, "memory.high")
+            {
                 words.push("-p".to_owned());
                 words.push(format!("MemoryHigh={cap}"));
             }
@@ -429,8 +451,17 @@ impl Launcher<'_> {
         reason: &str,
         argv: &[&str],
         stderr: Option<&Path>,
+        memory: Option<u64>,
     ) -> Launched {
-        let line = format!("runner=setsid reason={reason}");
+        // A process group holds no memory bound: a cap asked for is said
+        // unheld once, on the line the run's record and log carry.
+        let unheld = memory
+            .map(|_| {
+                let cause = reason.split(' ').next().unwrap_or(reason);
+                format!(" memory-cap=unavailable cause={cause}")
+            })
+            .unwrap_or_default();
+        let line = format!("runner=setsid reason={reason}{unheld}");
         let ended = |status: &str, cause: String| Launched {
             unanswered: false,
             read: SidecarRead::Failed {
@@ -644,13 +675,21 @@ impl Launcher<'_> {
     }
 }
 
+/// What a launch bounds its job by: its lifetime, and the memory of its
+/// whole process tree in bytes.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Bounds {
+    pub(crate) runtime: Option<Duration>,
+    pub(crate) memory: Option<u64>,
+}
+
 pub(crate) fn launch_recorded(
     name: &str,
     key: &str,
     record: &Path,
     argv: &[&str],
     stderr: Option<&Path>,
-    cap: Option<Duration>,
+    bounds: Bounds,
     clock: &dyn crate::schedule::Clock,
 ) -> Launched {
     let launcher = Launcher { clock };
@@ -659,7 +698,7 @@ pub(crate) fn launch_recorded(
         other => other,
     };
     let runner = match runner {
-        Runner::Unit(unit) => match launcher.launch_unit(record, &unit, argv, stderr, cap) {
+        Runner::Unit(unit) => match launcher.launch_unit(record, &unit, argv, stderr, bounds) {
             Ok(answer) => return answer,
             Err(reason) => Runner::Setsid { reason },
         },
@@ -668,7 +707,17 @@ pub(crate) fn launch_recorded(
     let Runner::Setsid { reason } = runner else {
         unreachable!()
     };
-    launcher.launch_setsid(record, &reason, argv, stderr)
+    launcher.launch_setsid(record, &reason, argv, stderr, bounds.memory)
+}
+
+/// The cgroup v2 directory of this process, where it runs under this
+/// user's manager (`own_cgroup`).
+pub(crate) fn own_cgroup_dir() -> Option<std::path::PathBuf> {
+    own_cgroup().map(|cgroup| cgroup_dir(&cgroup))
+}
+
+fn cgroup_dir(cgroup: &str) -> std::path::PathBuf {
+    Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'))
 }
 
 #[allow(
@@ -1008,7 +1057,7 @@ impl Operation<'_> {
             record,
             argv,
             stderr,
-            None,
+            Bounds::default(),
             self.clock,
         ))
     }
@@ -1614,17 +1663,21 @@ const CLIENT_SETTINGS: [(&str, Option<&str>); 21] = [
 /// anything, measured on the real client (systemd 262) under a private
 /// runtime directory and a private peer: its argument parser's refusal of
 /// an environment variable (no connect), a bus it could not connect to (one
-/// failed connect), and a message it could not build from what it was
-/// handed (no `StartTransientUnit` sent). The client parses before it
-/// connects and connects before it sends, so such a line proves nothing was
-/// sent wherever it stands: after a warning the client puts first, after
-/// the loader's line, after its debug lines, or after the time, thread and
-/// location prefixes its logging settings put before every line. Every
-/// other exit may follow a call the manager received.
-const ASKED_NOTHING: [&str; 3] = [
+/// failed connect), a message it could not build from what it was handed
+/// (no `StartTransientUnit` sent), and a property name its own table does
+/// not know, which it refuses after the connect while it builds that
+/// message: a client older than a property the launch sets (`OOMPolicy=`
+/// needs systemd 243). The client parses before it connects and connects
+/// before it sends, so such a line proves nothing was sent wherever it
+/// stands: after a warning the client puts first, after the loader's line,
+/// after its debug lines, or after the time, thread and location prefixes
+/// its logging settings put before every line. Every other exit may follow
+/// a call the manager received.
+const ASKED_NOTHING: [&str; 4] = [
     "Cannot assign environment variable ",
     "Failed to connect to ",
     "Failed to create bus message: ",
+    "Unknown assignment: ",
 ];
 
 /// The client's line for a call the manager received: its answer, which is

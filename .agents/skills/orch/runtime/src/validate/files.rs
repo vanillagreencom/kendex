@@ -562,9 +562,13 @@ pub fn wait(run_dir: &Path, budget: u64, clock: &dyn Clock) -> Result<(String, i
                 .split_whitespace()
                 .find(|s| s.starts_with("at="))
                 .unwrap_or("");
+            let cause = crate::ops::validate::memory_cap_cause(s)
+                .filter(|_| verdict == "FAILING")
+                .map(|cause| format!(" {cause}"))
+                .unwrap_or_default();
             return Ok((
                 format!(
-                    "state=done {status} {at} validate={verdict} run-dir={} log={}/log",
+                    "state=done {status} {at} validate={verdict}{cause} run-dir={} log={}/log",
                     run_dir.display(),
                     run_dir.display()
                 ),
