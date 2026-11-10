@@ -12,6 +12,7 @@
 
 use std::path::{Path, PathBuf};
 
+use agent_runtime::launch::Permission;
 use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use serde::{Deserialize, Serialize};
@@ -266,6 +267,12 @@ pub struct AdoptController {
     /// the watch judges the controller's death and wall from.
     #[serde(default)]
     pub session_rows: Option<PathBuf>,
+    /// The permission posture the session runs under and its own permission
+    /// words, which the next succession launches with.
+    #[serde(default)]
+    pub permission: Option<Permission>,
+    #[serde(default)]
+    pub extra_args: Option<Vec<String>>,
 }
 
 /// What the effects read of the pane an adoption names, handed to the
@@ -1001,6 +1008,9 @@ fn adopt_controller(
         if let Some(command) = &r.succession {
             state::set(record, "succession", json!(command));
         }
+        for (key, value) in adopted_posture(r)? {
+            state::set(record, key, value);
+        }
         for key in ["pending", "exit", "off"] {
             state::delete(record, key);
         }
@@ -1032,11 +1042,27 @@ fn adopt_controller(
     if let Some(command) = &r.succession {
         record["succession"] = json!(command);
     }
+    for (key, value) in adopted_posture(r)? {
+        record[key] = value;
+    }
     state::set(doc, "overseer", record);
     Ok(ControllerAdopted {
         generation,
         healed: false,
     })
+}
+
+/// The posture fields an adoption names, in the form a confirmed
+/// succession records them, which `Caller::of` reads with no default.
+fn adopted_posture(r: &AdoptController) -> Result<Vec<(&'static str, Value)>> {
+    let mut fields = Vec::new();
+    if let Some(permission) = r.permission {
+        fields.push(("permission", serde_json::to_value(permission)?));
+    }
+    if let Some(words) = &r.extra_args {
+        fields.push(("extra_args", json!(words)));
+    }
+    Ok(fields)
 }
 
 /// The target of a controller intent at `generation`.
@@ -2152,6 +2178,8 @@ mod tests {
             cwd: Some("/r".into()),
             succession: None,
             session_rows: Some("/r/tmp/lane-mail/overseer/session-41020-7.jsonl".into()),
+            permission: None,
+            extra_args: None,
         };
         let read = |same: bool| {
             Recorded::planted(AdoptionRead {

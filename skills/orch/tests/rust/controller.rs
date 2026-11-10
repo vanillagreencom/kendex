@@ -154,13 +154,12 @@ fn refusal_key(out: &std::process::Output) -> String {
 
 /// The predecessor here is a stub harness in a pane that runs the `op` as a
 /// foreground child, as the overseer's shell tool does. The op hands the
-/// effect to a detached job and answers `transfer-started`; the job retires
-/// the predecessor, whose exit closes the pane the op asked from, and
-/// completes the succession. The tmux shim holds the job at each
-/// `send-keys`: the launch line typed into the runner's window, released at
-/// once, and the brief typed after the retirement, where the row reads the
-/// job alive with the predecessor dead and its window gone, before the
-/// retirement is recorded.
+/// effect to a detached job and answers `transfer-started`; the job types
+/// the brief, retires the predecessor once the runner's turn stands, whose
+/// exit closes the pane the op asked from, and completes the succession
+/// from beyond it. The tmux shim holds the job at each `send-keys`: the
+/// launch line typed into the runner's window, released at once, and the
+/// brief, held while the predecessor still runs.
 #[test]
 fn a_self_succession_from_the_predecessors_own_pane_completes() {
     let dir = tempfile::tempdir().unwrap();
@@ -255,26 +254,20 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
         runner.fleet()["intents"][0]["handed_from"],
         effect["handed_from"]
     );
-    // The job retires the predecessor: the stub harness ends and its exit
-    // closes the pane the op asked from; the job, on its way to the brief
-    // it will type, is alive after the process that asked is gone.
-    wait_until("the predecessor stopped", secs(20), || !live(pid));
-    assert!(
-        live(owner_pid),
-        "the job survived the predecessor's retirement"
-    );
+    assert!(live(pid), "the predecessor runs until the runner's turn");
     assert_eq!(
         start_of(owner_pid),
         owner["start"],
         "under its recorded identity"
     );
+    // The second hold, the brief, typed while the predecessor still runs:
+    // released, the job confirms the turn, retires the predecessor, whose
+    // exit closes the pane the op asked from, and publishes from beyond it.
+    release_hold(&fifo, secs(30), evidence);
+    wait_until("the predecessor stopped", secs(20), || !live(pid));
     wait_until("the predecessor's pane closed", secs(10), || {
         !server.panes().contains(&pane)
     });
-    assert!(live(owner_pid), "the job survived the pane's close");
-    // The second hold, the brief: released, the job confirms the turn and
-    // publishes.
-    release_hold(&fifo, secs(30), evidence);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(intent["phase"]["phase"], "identity-read");
@@ -298,8 +291,9 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
 }
 
 /// The repeat reconciles against the live owner and touches nothing; the
-/// runner that records no turn is never published and is kept for a
-/// reconcile, which reads the same.
+/// runner that records no turn for its brief is never published and the
+/// predecessor is never retired for it: the runner is stopped and the
+/// predecessor stays in control.
 #[test]
 fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_runner() {
     let dir = tempfile::tempdir().unwrap();
@@ -343,22 +337,17 @@ fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_run
     wait_until("the job reached the brief", SETTLE, || mark.exists());
     release_hold(&fifo, secs(10), || runner.fleet().to_string());
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "brief-unconfirmed");
+    assert_eq!(intent["observation"]["runner"], "stopped");
     assert_eq!(intent["phase"]["phase"], "delivered");
-    assert!(!live(predecessor.pid()), "retired before delivery");
+    assert!(live(predecessor.pid()), "never retired without the turn");
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["generation"], 3, "nothing published");
-    let kept = &overseer["pending"]["runner"];
-    assert!(kept["pane"].as_str().unwrap().starts_with('%'));
-    assert_eq!(kept["socket"], server.socket.display().to_string());
     assert!(
-        kept["pid"].as_u64().is_some(),
-        "the runner identity is kept"
+        overseer["pending"].get("runner").is_none(),
+        "no runner is kept: {overseer}"
     );
-    let again = runner.reconcile_one();
-    assert_eq!(again["intent"]["outcome"], "unconfirmed");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
 }
 
 #[test]
@@ -395,34 +384,238 @@ fn a_succession_retires_the_predecessor_then_publishes_the_successor() {
     assert_eq!(intent["cause"], "live");
 }
 
-/// The brief is delivered only after retirement and the runner's composer,
-/// and the successor is published only once the runner's own file records
-/// it.
+/// The brief is typed into the runner while the predecessor still runs, the
+/// predecessor is retired only once the runner's own file records that turn,
+/// and the successor is published after.
 #[test]
-fn a_succession_delivers_the_brief_after_retirement_and_publishes_on_the_runner_s_turn() {
+fn a_succession_types_the_brief_before_retirement_and_retires_on_the_runner_s_turn() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    gated_readiness(&mut runner);
     runner.init_fleet();
     let brief = runner.state_dir().join("handoff.md");
-    std::fs::write(&brief, "HANDOFF line one\nHANDOFF line two\n").unwrap();
+    std::fs::write(&brief, "HANDOFF\n").unwrap();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut request = transfer_request(&server, runner.state_dir());
     request["brief_file"] = json!(brief.display().to_string());
-    runner.transfer_started(&request);
+    // The tmux shim holds the job at each `send-keys`, writing the mark just
+    // before it: the launch line, then the brief.
+    let fifo = runner.state_dir().join("hold.fifo");
+    let mark = runner.state_dir().join("hold.mark");
+    mkfifo(&fifo);
+    let hold = [
+        ("TMUX_HOLD_FIFO", fifo.to_str().unwrap()),
+        ("TMUX_HOLD_MARK", mark.to_str().unwrap()),
+        ("TMUX_HOLD_VERB", "send-keys"),
+    ];
+    runner.transfer_started_env(&request, &hold);
+    wait_until("the job reached the launch line", SETTLE, || mark.exists());
+    std::fs::remove_file(&mark).unwrap();
+    release_hold(&fifo, secs(10), || runner.fleet().to_string());
+    wait_until("the job reached the brief", SETTLE, || mark.exists());
+    assert!(
+        live(predecessor.pid()),
+        "the brief is typed while the predecessor runs"
+    );
+    assert_eq!(
+        runner.fleet()["intents"][0]["phase"]["phase"],
+        "delivering",
+        "{}",
+        runner.fleet()
+    );
+    release_hold(&fifo, secs(10), || runner.fleet().to_string());
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    assert!(!live(predecessor.pid()));
-    let turns = runner.stub_turns(runner.state_dir(), runner.state_dir());
+    assert!(!live(predecessor.pid()), "retired after the runner's turn");
     assert_eq!(
-        turns,
-        vec!["HANDOFF line one".to_owned(), "HANDOFF line two".to_owned()],
-        "the runner recorded the brief as its turns"
+        runner.stub_turns(runner.state_dir(), runner.state_dir()),
+        vec!["HANDOFF".to_owned()],
+        "the runner recorded the brief as its turn"
     );
-    let overseer = runner.fleet()["overseer"].clone();
-    assert_eq!(overseer["generation"], 4);
+    assert_eq!(runner.fleet()["overseer"]["generation"], 4);
     assert_eq!(intent["phase"]["phase"], "identity-read");
+}
+
+/// A successor whose first turn meets a login wall is refused before
+/// retirement with its cause and the account it ran on: the predecessor
+/// keeps running, the runner's window is closed, the record stands as it
+/// was, and the owner is told once.
+#[test]
+fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retirement_with_the_predecessor_live()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-unsigned");
+    let mail_log = runner.state_dir().join("lane-mail.log");
+    runner
+        .env
+        .push(("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()));
+    runner.init_fleet();
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    let before = runner.fleet()["overseer"].clone();
+    runner.transfer_started(&transfer_request(&server, runner.state_dir()));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    let observation = &intent["observation"];
+    assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
+    assert_eq!(observation["cause"], "auth-wall");
+    assert_eq!(
+        observation["account"],
+        runner.state_dir().display().to_string()
+    );
+    assert_eq!(observation["retired"], false);
+    assert!(live(predecessor.pid()), "the predecessor keeps running");
+    let runner_pane = intent["phase"]["pane"].as_str().unwrap().to_owned();
+    assert!(
+        !server.panes().contains(&runner_pane),
+        "the runner's window is closed"
+    );
+    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+    assert_eq!(intent["notice"]["key"], "successor-not-signed-in");
+    assert_eq!(intent["notice"]["owner"], "sent");
+    let calls = std::fs::read_to_string(&mail_log).unwrap();
+    assert_eq!(
+        calls
+            .lines()
+            .filter(|l| l.starts_with("notice --item overseer --to owner"))
+            .count(),
+        1,
+        "{calls}"
+    );
+}
+
+/// A named account holding no credential its harness signs in with is no
+/// successor: refused `successor-not-signed-in` before any window opens or
+/// any trust record is written into it, the predecessor running. The same
+/// account under a launch environment that carries a token is left to the
+/// first turn, which signs it in, and the outcome names the token.
+#[test]
+fn a_named_account_holding_no_credential_opens_nothing_and_writes_no_trust_file() {
+    for token in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        if token {
+            let out = tmux(
+                &server.socket,
+                &[
+                    "set-environment",
+                    "-g",
+                    "CLAUDE_CODE_OAUTH_TOKEN",
+                    "planted",
+                ],
+            );
+            assert!(out.status.success(), "{}", stderr(&out));
+        }
+        let account = runner.state_dir().join("unsigned");
+        std::fs::create_dir_all(&account).unwrap();
+        let predecessor = Owned::sleep();
+        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+        let mut unsigned = pending(runner.state_dir());
+        unsigned["account"] = json!(account.display().to_string());
+        unsigned["home"] = json!(account.display().to_string());
+        let mut fleet = runner.fleet();
+        fleet["overseer"]["pending"] = unsigned.clone();
+        runner.write_fleet(&fleet);
+        let panes = server.panes();
+        let mut request = transfer_request(&server, runner.state_dir());
+        request["expected"]["pending"] = unsigned.clone();
+        request["successor"] = unsigned;
+        runner.transfer_started(&request);
+        let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+        if token {
+            assert_eq!(intent["outcome"], "confirmed", "{intent}");
+            assert_eq!(
+                intent["observation"]["sign_in"],
+                json!({"token": "CLAUDE_CODE_OAUTH_TOKEN"}),
+                "{intent}"
+            );
+            continue;
+        }
+        assert_eq!(intent["outcome"], "failed", "{intent}");
+        let observation = &intent["observation"];
+        assert_eq!(observation["note"], "successor-not-signed-in", "{intent}");
+        assert_eq!(
+            observation["fields"],
+            json!({"account": account.display().to_string(), "cause": "no-credential"})
+        );
+        assert!(
+            std::fs::symlink_metadata(account.join(".claude.json")).is_err(),
+            "no trust record was written into the account"
+        );
+        assert_eq!(server.panes(), panes, "nothing opened");
+        assert!(live(predecessor.pid()), "the predecessor keeps running");
+    }
+}
+
+/// A runner a wrapper handed another account than its launch named is
+/// refused before its brief is typed, the predecessor left running.
+#[test]
+fn a_successor_running_another_account_than_its_launch_named_is_refused_before_retirement() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-rehomed");
+    runner.init_fleet();
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    runner.transfer_started(&transfer_request(&server, runner.state_dir()));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    let account = runner.state_dir().display().to_string();
+    assert_eq!(intent["observation"]["note"], "successor-wrong-account");
+    assert_eq!(intent["observation"]["account"], account.as_str());
+    assert_eq!(
+        intent["observation"]["found"],
+        format!("{account}-wrapped"),
+        "{intent}"
+    );
+    assert_eq!(
+        intent["phase"]["phase"], "window-opened",
+        "no brief was typed"
+    );
+    assert!(live(predecessor.pid()), "the predecessor keeps running");
+}
+
+/// A succession whose job ended while its delivered brief waited for the
+/// runner's turn, the predecessor still running, is abandoned by the
+/// reconcile: the runner stopped, the predecessor left in control, nothing
+/// published over it.
+#[test]
+fn a_reconcile_at_delivered_with_the_predecessor_live_abandons_the_runner() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-mute");
+    runner.verify = Some(30);
+    runner.init_fleet();
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    let started = runner.transfer_started(&transfer_request(&server, runner.state_dir()));
+    wait_until("the brief delivered", SETTLE, || {
+        runner.fleet()["intents"][0]["phase"]["phase"] == "delivered"
+    });
+    let job = started["owner"]["pid"].as_u64().unwrap() as u32;
+    let _ = std::process::Command::new("kill")
+        .args(["-KILL", "--", &format!("-{job}")])
+        .status();
+    wait_until("the job ended", SETTLE, || !live(job));
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"],
+        "abandoned-before-retirement"
+    );
+    assert_eq!(report["intent"]["observation"]["retired"], false);
+    assert!(live(predecessor.pid()), "the predecessor keeps running");
+    let runner_pane = report["intent"]["phase"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(!server.panes().contains(&runner_pane), "the runner stopped");
+    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
 }
 
 /// A precondition read before retirement refuses `failed` with the
@@ -591,7 +784,7 @@ fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     request["brief_file"] = json!(brief.display().to_string());
     runner.transfer_started(&request);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "brief-unconfirmed");
     assert!(
         neighbour.user_turns() >= 2,
@@ -609,16 +802,12 @@ fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
         project_dir(runner.state_dir(), runner.state_dir()).join(format!("{session_id}.jsonl"))
     );
     assert_eq!(phase["turns_before"], 0);
-    assert!(!live(predecessor.pid()), "retired before delivery");
+    assert!(live(predecessor.pid()), "never retired without the turn");
     assert_eq!(
         runner.fleet()["overseer"]["generation"],
         3,
         "nothing published"
     );
-    assert!(runner.fleet()["overseer"]["pending"]["runner"].is_object());
-    let again = runner.reconcile_one();
-    assert_eq!(again["intent"]["outcome"], "unconfirmed");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 3);
 }
 
 /// A neighbouring lead session holding more turns than the runner is kept
@@ -1436,7 +1625,9 @@ fn rows_file(runner: &Runner, server: &Server, pane: &str) -> std::path::PathBuf
 
 /// A hand-opened Claude session registers from its own pane: outside a pane
 /// it is refused; with no SessionStart row the pane is read, the named
-/// fallback said; with the row its harness wrote, the row's identity, the
+/// fallback said; the account is always the one the harness process's own
+/// environment names, ahead of the caller's and the row's; with the row its
+/// harness wrote, the row's model and directory, the
 /// record naming this pane keeping its generation, the binding cleared so a
 /// resumed session binds its new id, a stale pending and an ended session's
 /// exit dropped, and `--account` taken; a checkout whose install lists no
@@ -1451,13 +1642,10 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     let tools = runner.tools.clone().unwrap();
     let work = runner.state_dir().join("work");
     std::fs::create_dir_all(&work).unwrap();
-    let pane = server.open_stub(
-        "hand",
-        "stub-confirm",
-        &work,
-        &runner.state_dir().join("pane-home"),
-    );
+    let pane_home = runner.state_dir().join("pane-home");
+    let pane = server.open_stub("hand", "stub-confirm", &work, &pane_home);
     server.await_composer(&pane);
+    let pane_home = pane_home.display().to_string();
     let caller_home = runner
         .state_dir()
         .join("caller-claude")
@@ -1491,8 +1679,11 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     let rows = rows_file(&runner, &server, &pane);
     let project = std::fs::canonicalize(runner.state_dir()).unwrap();
     assert_eq!(record["harness"], "claude");
-    assert_eq!(record["account"], caller_home.as_str());
-    assert_eq!(record["home"], caller_home.as_str());
+    // The account the harness process runs under, not the caller's own.
+    assert_eq!(record["account"], pane_home.as_str());
+    assert_eq!(record["home"], pane_home.as_str());
+    assert_eq!(record["permission"], "native");
+    assert_eq!(record["extra_args"], json!([]));
     assert_eq!(
         record["cwd"],
         std::fs::canonicalize(&work).unwrap().display().to_string()
@@ -1541,7 +1732,11 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
     assert_eq!(answer["result"]["adopted"]["report"]["healed"], true);
     let record = runner.fleet()["overseer"].clone();
     assert_eq!(record["generation"], 1);
-    assert_eq!(record["account"], stated.as_str());
+    assert_eq!(
+        record["account"],
+        pane_home.as_str(),
+        "the process's environment ahead of the row's {stated}"
+    );
     assert_eq!(record["model"], "claude-fable-5-1");
     assert_eq!(record["cwd"], "/elsewhere");
     assert_eq!(record["session_id"], Value::Null, "the binding cleared");
@@ -1597,6 +1792,102 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
         std::fs::read_to_string(&fleet_file).unwrap(),
         before,
         "nothing written"
+    );
+}
+
+/// A session a person started by hand, with its own model, effort and a
+/// narrower permission word on its command line and its own config dir in
+/// its environment, registers with no start row; the next hand-over,
+/// composed by the real `successor --recover` from that record alone,
+/// launches its successor with the same words on the same account and no
+/// bypass word, and the successor takes over with no hand step.
+#[test]
+fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launches_from_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-record");
+    runner.init_fleet();
+    register_tools(&mut runner, CLAUDE_HOOK, 0);
+    let work = runner.state_dir().join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    let work = std::fs::canonicalize(&work).unwrap();
+    let account = runner.state_dir().join("hand-account");
+    plant_credential(&account);
+    let pane = server.open_window(
+        "hand",
+        &work,
+        &format!(
+            "exec env CLAUDE_CONFIG_DIR={} {} --model opus --effort high --permission-mode dontAsk",
+            account.display(),
+            stub("stub-confirm").display()
+        ),
+    );
+    server.await_composer(&pane);
+    let pid = server.pane_pid(&pane);
+    let out = register(&runner, &pane, &[], &[]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["account"], account.display().to_string(), "{record}");
+    assert_eq!(record["model"], "opus");
+    assert_eq!(record["effort"], "high");
+    assert_eq!(record["permission"], "native");
+    assert_eq!(
+        record["extra_args"],
+        json!(["--permission-mode", "dontAsk"])
+    );
+    // The handoff snapshot the live transfer is admitted on, written by the
+    // real verb where the successor's brief names it.
+    let body = runner.state_dir().join("handoff-body.md");
+    std::fs::write(&body, "## State\nHanded over by hand.\n").unwrap();
+    let handoff = work.join("tmp/handoffs/OVERSEER-HANDOFF.md");
+    let out = runner.run(&[
+        "handoff",
+        "--fleet",
+        "--body",
+        &body.display().to_string(),
+        "--handoff",
+        &handoff.display().to_string(),
+    ]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+
+    let out = runner.run(&[
+        "successor",
+        "--fleet",
+        "--predecessor",
+        &pane,
+        "--recover",
+        "--cwd",
+        &work.display().to_string(),
+    ]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    let request = json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": answer["result"]["expected"],
+        "successor": answer["result"]["successor"],
+    });
+    runner.transfer_started(&request);
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert!(!live(pid), "the hand-started predecessor was retired");
+    let launched = launch_record(&work);
+    assert_eq!(
+        launched_var(&launched, "CLAUDE_CONFIG_DIR"),
+        &json!(account.display().to_string()),
+        "{launched}"
+    );
+    let argv = argv_of(&launched);
+    for words in [
+        ["--model", "opus"],
+        ["--effort", "high"],
+        ["--permission-mode", "dontAsk"],
+    ] {
+        assert!(argv.windows(2).any(|w| w == words), "{words:?} in {argv:?}");
+    }
+    assert!(
+        !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
+        "no bypass word under the native posture: {argv:?}"
     );
 }
 
@@ -1718,15 +2009,14 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let pane = server.open_window(
         "codex",
         runner.state_dir(),
-        &format!("exec {} 600", bin.join("codex").display()),
+        &format!(
+            "exec env CODEX_HOME={} {} 600",
+            private.display(),
+            bin.join("codex").display()
+        ),
     );
     await_named(&server, &pane, "codex");
-    let out = register(
-        &runner,
-        &pane,
-        &[("CODEX_HOME", &private.display().to_string())],
-        &[],
-    );
+    let out = register(&runner, &pane, &[], &[]);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
     let record = runner.fleet()["overseer"].clone();
@@ -1822,10 +2112,13 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let pane = server.open_window(
         "pi",
         runner.state_dir(),
-        &format!("exec {} 600", bin.join("pi").display()),
+        &format!(
+            "exec env PI_CODING_AGENT_DIR={root} {} 600",
+            bin.join("pi").display()
+        ),
     );
     await_named(&server, &pane, "pi");
-    let out = register(&runner, &pane, &[("PI_CODING_AGENT_DIR", &root)], &[]);
+    let out = register(&runner, &pane, &[], &[]);
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     let record = runner.fleet()["overseer"].clone();
     assert_eq!(record["harness"], "pi");
@@ -2511,12 +2804,11 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     request["brief_file"] = json!(brief.display().to_string());
     runner.transfer_started(&request);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "brief-unconfirmed");
     let id = intent["id"].as_str().unwrap().to_owned();
-    let text = format!(
-        "orch-runtime: brief-unconfirmed op=request-transfer intent={id} outcome=unconfirmed"
-    );
+    let text =
+        format!("orch-runtime: brief-unconfirmed op=request-transfer intent={id} outcome=failed");
     assert_eq!(intent["notice"]["key"], "brief-unconfirmed");
     assert_eq!(intent["notice"]["text"], text);
     assert_eq!(intent["notice"]["owner"], "sent");
@@ -2535,10 +2827,10 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
         calls.lines().any(|l| l == format!("notice-text {text}")),
         "{calls}"
     );
-    // The reconcile reads the same outcome: nothing is announced again.
-    let again = runner.reconcile_one();
-    assert_eq!(again["intent"]["outcome"], "unconfirmed");
-    assert_eq!(again["intent"]["notice"]["text"], text);
+    // A reconcile after the closed outcome announces nothing again.
+    let out = runner.run(&["reconcile", "--fleet"]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(runner.fleet()["intents"][0]["notice"]["text"], text);
     assert_eq!(
         runner.fleet()["fleet_log"].as_array().unwrap().len(),
         rows_before + 1
@@ -3048,8 +3340,10 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
     let since = now_ms();
     let pane = server.open_idle("overseer", runner.state_dir());
     let idle = server.open_idle("predecessor", runner.state_dir());
-    let mut ph = phase("retired", &server, &pane, since, None);
+    let mut ph = phase("delivered", &server, &pane, since, None);
     ph["identity"] = json!({"pid": GONE_PID - 7, "start": "ticks:7"});
+    ph["turns_before"] = json!(0);
+    ph["session"] = json!({"session_id": "s", "file": runner.state_dir().join("s.jsonl")});
     let mut fleet = runner.fleet();
     fleet["overseer"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
     fleet["overseer"]["pane"] = json!(idle);
@@ -4227,7 +4521,8 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         runner.verify = Some(1);
         runner.init_fleet();
         let seat = dir.path().join("seat");
-        std::fs::create_dir_all(&seat).unwrap();
+        plant_credential(&seat);
+        plant_codex_credential(&seat);
         copilot_gate_passed(&mut runner, &seat);
         let predecessor = Owned::sleep();
         plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -6238,6 +6533,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
                 ),
             )
             .unwrap();
+            plant_codex_credential(&home);
         } else {
             let session = home.join("session-state").join(id);
             std::fs::create_dir_all(&session).unwrap();
@@ -8004,6 +8300,8 @@ fn walk_world_on(
     let work = runner.state_dir().join("work");
     std::fs::create_dir(&work).unwrap();
     github_skill_under(&work);
+    // A controller a row starts with `pending(&work)` names it its account.
+    plant_credential(&work);
     let unplanted = runner.state_dir().join("unplanted");
     std::fs::create_dir(&unplanted).unwrap();
     let scripts = launcher_checkout(runner, &bin, &mut env, &unplanted, "claude");
@@ -8616,7 +8914,7 @@ fn a_walled_successor_on_another_harness_runs_on_the_home_its_launch_prepared() 
     let work = runner.state_dir().to_path_buf();
     let spent = work.join("claude-a");
     let codex = work.join("codex-b");
-    std::fs::create_dir_all(&codex).unwrap();
+    plant_codex_credential(&codex);
     let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
     let successor = walled_successor(&runner, "codex:gpt-6.1-sol:high", &codex);
     let (intent, launched) = walled_transfer(&runner, &spent, &successor);
@@ -8641,7 +8939,7 @@ fn a_walled_successor_on_another_harness_runs_on_the_home_its_launch_prepared() 
     let work = runner.state_dir().to_path_buf();
     let spent = work.join("codex-a");
     let claude = work.join("claude-b");
-    std::fs::create_dir_all(&claude).unwrap();
+    plant_credential(&claude);
     let _predecessor = walled_on(&runner, &server, "codex", &spent, &spent);
     let successor = walled_successor(&runner, "claude:fable:high", &claude);
     let (intent, launched) = walled_transfer(&runner, &spent, &successor);

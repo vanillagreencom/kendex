@@ -1,8 +1,10 @@
 //! The controller effects. A succession: every precondition before
-//! retirement, the waiting runner brought to its composer, the predecessor
-//! retired and confirmed terminal, the held brief delivered and confirmed in
-//! the runner's own session file, the runner's identity read and published.
-//! A start runs the same steps with no predecessor to retire. A predecessor
+//! retirement, the waiting runner brought to its composer, the held brief
+//! delivered and confirmed in the runner's own session file and the runner
+//! read up after that turn, signed in and on the account its launch named,
+//! all while the predecessor still runs; then the predecessor retired and
+//! confirmed terminal, the runner's identity read and published. A start
+//! runs the same steps with no predecessor to retire. A predecessor
 //! with no recorded identity is proven terminal by the generation-bound exit
 //! record or by its pane gone on the proven recorded server, never by
 //! absence on a server that is not proven. The explicit stop
@@ -17,14 +19,15 @@ use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
 use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
+use agent_runtime::observe::WallKind;
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
-    ProcessRead, Proof, Published, Recovered, SessionFloor, State, Stop, TurnConfirm, WindowClose,
-    Wire, Word, opening_observation,
+    ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop, TurnConfirm,
+    WindowClose, Wire, Word, opening_observation,
 };
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
@@ -148,6 +151,27 @@ fn abandoned_before_retirement(
             launch: Some(runner_wire(opened, identity)),
             ..Wire::default()
         });
+    }
+    Ok(outcome)
+}
+
+/// The abandon before retirement with the fields of `observation` beside
+/// its note.
+fn abandoned_noting(
+    operation: Operation,
+    opened: &OpenedPane,
+    runner: &Identity,
+    pane: &Pane,
+    target: &Target,
+    note: &str,
+    observation: Value,
+) -> Result<EffectOutcome> {
+    let mut outcome =
+        abandoned_before_retirement(operation, opened, Some(runner), pane, Some(target), note)?;
+    if let Value::Object(fields) = observation {
+        for (key, value) in fields {
+            outcome.annotate(&key, value);
+        }
     }
     Ok(outcome)
 }
@@ -306,14 +330,35 @@ impl Successor {
     /// prepared by the lane launch's own rule (`launch::launch_home`) with
     /// its trust record and harness gate, on the home it keeps (`kept`):
     /// `served` is the home the fleet server its window opens on hands its
-    /// panes. The program and brief are checked by the effect that builds
-    /// the command.
+    /// panes. A named Claude or Codex account must sign the harness in
+    /// (`sign_in`) before any trust record is written into it, so an
+    /// account with no credential is no candidate and is left as it was; a
+    /// sign-in nothing here reads is the first turn's to judge, said in the
+    /// note that comes back. The program and brief are checked by the
+    /// effect that builds the command.
     fn from_pending(
         settings: &Settings,
         pending: &state::Pending,
         served: Option<&Path>,
-    ) -> std::result::Result<Successor, Unready> {
+        sign_in: &dyn Fn(Harness, &Path) -> SignIn,
+    ) -> std::result::Result<(Successor, Option<Value>), Unready> {
         let (harness, cwd) = Self::checked(pending)?;
+        let note = match (harness, pending.account.as_deref()) {
+            (Harness::Claude | Harness::Codex, Some(account)) => {
+                match sign_in(harness, Path::new(account)) {
+                    SignIn::Held => None,
+                    SignIn::Token(var) => Some(json!({"token": var})),
+                    SignIn::Unjudged { cause } => Some(json!({"unjudged": cause})),
+                    SignIn::Missing { cause } => {
+                        return Err(Unready::Refused(refused(
+                            "successor-not-signed-in",
+                            &[("account", account), ("cause", cause)],
+                        )));
+                    }
+                }
+            }
+            (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
+        };
         let homes = super::launch::launch_home(
             settings,
             harness,
@@ -329,7 +374,7 @@ impl Successor {
                 &pending.extra_args,
             ),
         )?;
-        Ok(Self::of(settings, pending, harness, cwd, homes)?)
+        Ok((Self::of(settings, pending, harness, cwd, homes)?, note))
     }
 
     /// The successor `pending` names once its runner opened, for a
@@ -419,8 +464,8 @@ impl Successor {
     /// as the launch's rule resolved them; the caller's permission posture
     /// and words are kept, the
     /// harness's own compaction off where it has a word for it, since orch's
-    /// handoff mark judges the window, and the brief held for delivery after
-    /// retirement. A resume continues the recorded session in the
+    /// handoff mark judges the window, and the brief held for delivery once
+    /// the runner is at its composer. A resume continues the recorded session in the
     /// harness's own resume form and fixes no fresh id.
     fn command(&self, settings: &Settings, session_id: Option<&str>) -> Result<LaunchCommand> {
         let compaction = match self.harness.compaction_off_words() {
@@ -490,6 +535,43 @@ impl Successor {
         }
         operation.appeared_session(self.harness, &self.home, &self.cwd, opened)
     }
+
+    /// The variable that carries the account this launch bills, and the
+    /// directory the launch names in it: the home where the account's
+    /// variable is the home's, else the billed account; none where the
+    /// launch clears the variable.
+    fn named_account(&self) -> (&'static str, Option<String>) {
+        let var = self.harness.account_var(self.model.as_deref());
+        let named = if var == self.harness.home_var() {
+            &self.named
+        } else {
+            &self.account
+        };
+        (var, named.as_ref().map(|dir| dir.display().to_string()))
+    }
+
+    /// The account the runner `pid` runs on as its environment holds it,
+    /// against the one its launch named.
+    fn read_back(&self, pid: u32) -> AccountRead {
+        let (var, named) = self.named_account();
+        match operation::process_var(pid, var) {
+            Ok(found) if found == named => AccountRead::Named,
+            Ok(found) => AccountRead::Other { named, found },
+            Err(cause) => AccountRead::Unread { cause },
+        }
+    }
+}
+
+/// The runner's account as its own environment holds it.
+enum AccountRead {
+    Named,
+    Other {
+        named: Option<String>,
+        found: Option<String>,
+    },
+    Unread {
+        cause: &'static str,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -558,6 +640,63 @@ fn resolve_predecessor(
             }),
         },
     })
+}
+
+/// The runner waiting for its readiness before anything is retired, and
+/// the predecessor the succession would retire for it.
+struct Waiting<'a> {
+    opened: &'a OpenedPane,
+    runner: &'a Identity,
+    pane: &'a Pane,
+    target: &'a Target,
+    predecessor: &'a Predecessor,
+}
+
+impl Waiting<'_> {
+    /// A runner that cannot serve, whatever a later reading says: refused,
+    /// the runner stopped and the predecessor left in control.
+    fn refused(
+        self,
+        operation: Operation,
+        note: &str,
+        observation: Value,
+    ) -> Result<EffectOutcome> {
+        abandoned_noting(
+            operation,
+            self.opened,
+            self.runner,
+            self.pane,
+            self.target,
+            note,
+            observation,
+        )
+    }
+
+    /// A runner that did not show ready within the bound. With a
+    /// predecessor to retire it is abandoned and the predecessor keeps
+    /// control; with none (a first start, or a predecessor proven ended) no
+    /// controller waits on it, so the succession holds with the runner kept
+    /// for a reconcile to complete from the recorded phase.
+    fn unready(
+        self,
+        operation: Operation,
+        session_id: Option<String>,
+        note: &str,
+        observation: Value,
+    ) -> Result<EffectOutcome> {
+        match self.predecessor {
+            Predecessor::Identity(_) => self.refused(operation, note, observation),
+            Predecessor::Absent { by } => Ok(unconfirmed_after_retirement(
+                operation,
+                self.opened,
+                Some(self.runner),
+                session_id,
+                note,
+                by,
+                observation,
+            )),
+        }
+    }
 }
 
 /// What a reconcile reads of the predecessor's retirement: never asserted,
@@ -688,17 +827,20 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         }
         Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
     };
-    let successor = match Successor::from_pending(run.settings, &pending, served.as_deref()) {
-        Ok(successor) => successor,
-        Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
-        Err(Unready::Gate(cause)) => {
-            return Ok(failed_before_retirement_cause(
-                operation,
-                GATE_REFUSED,
-                &cause,
-            ));
-        }
-    };
+    let sign_in =
+        |harness: Harness, account: &Path| operation.sign_in(&server, &session, harness, account);
+    let (successor, sign_in_note) =
+        match Successor::from_pending(run.settings, &pending, served.as_deref(), &sign_in) {
+            Ok(successor) => successor,
+            Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
+            Err(Unready::Gate(cause)) => {
+                return Ok(failed_before_retirement_cause(
+                    operation,
+                    GATE_REFUSED,
+                    &cause,
+                ));
+            }
+        };
     // The runner's session is fixed, or the sessions that already stand
     // are read, before the window opens. A resume's session is the fixed
     // one, and its file must already stand under the home: a session the
@@ -727,7 +869,8 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         },
     };
     // The brief is held, not spelled into the launch: the waiting runner
-    // opens at its prompt and is delivered the handoff after retirement.
+    // opens at its prompt and is delivered the handoff there, so its own
+    // session file is bound before the turn that proves it.
     let command = match successor
         .command(run.settings, floor.session_id())
         .and_then(|command| check_program(&command).map(|()| command))
@@ -863,6 +1006,124 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // other.
     operation.record_identity(&mut opened, &runner)?;
 
+    // --- Prove the runner ready while the predecessor still runs: the
+    // account its launch named read back in its environment, its own
+    // session file bound, the held brief typed and taken as a user turn
+    // there, and its screen up after that turn with no login wall. A
+    // session that cannot sign in shows it only once it takes a turn, so
+    // nothing short of the first turn proves it. No predecessor is retired
+    // for a runner that fails here (`Waiting`). ---
+    let runner_id = runner.identity();
+    let waiting = Waiting {
+        opened: &opened,
+        runner: runner_id,
+        pane: &pane,
+        target: &successor.target,
+        predecessor: &predecessor,
+    };
+    // A wrapper between the launch and the harness can hand it another
+    // account than the one the launch named, which no brief should reach; a
+    // host with no environment to read leaves the account unread, said on
+    // the outcome.
+    let account_unread = match successor.read_back(runner_id.pid) {
+        AccountRead::Named => None,
+        AccountRead::Other { named, found } => {
+            return waiting.refused(
+                operation,
+                "successor-wrong-account",
+                json!({"account": named, "found": found}),
+            );
+        }
+        AccountRead::Unread { cause } => Some(cause),
+    };
+    let (turns_before, session) =
+        match deliver_brief(&mut operation, &successor, &pane, &opened, &held)? {
+            Ok(delivered) => delivered,
+            Err(undelivered) => {
+                return waiting.unready(
+                    operation,
+                    undelivered.session_id,
+                    &undelivered.note,
+                    undelivered.observation,
+                );
+            }
+        };
+    let file = PathBuf::from(&session.file);
+    let unconfirmed =
+        match operation.await_delivered_turn(successor.harness, &pane, &file, turns_before)? {
+            TurnConfirm::Recorded => None,
+            TurnConfirm::PaneGone => {
+                return runner_gone_before_retirement(
+                    operation,
+                    &opened,
+                    Some(runner_id),
+                    "successor-exited",
+                    "pane-gone",
+                );
+            }
+            TurnConfirm::PaneUnobservable { cause } => {
+                Some(("pane-unobservable", json!({"cause": cause})))
+            }
+            TurnConfirm::Pending => Some((
+                "brief-unconfirmed",
+                json!({"turns_before": turns_before, "file": session.file}),
+            )),
+        };
+    if let Some((note, observation)) = unconfirmed {
+        return waiting.unready(operation, Some(session.session_id), note, observation);
+    }
+    // After the recorded turn the screen reads it running, or idle once it
+    // ended; a login wall below that turn refuses at once, since no wait
+    // signs the account in.
+    let wall = std::cell::Cell::new(false);
+    let ready = |state: &State| match state {
+        State::Walled {
+            kind: WallKind::Auth,
+            ..
+        } => {
+            wall.set(true);
+            true
+        }
+        State::Idle
+        | State::Working
+        | State::Asking
+        | State::RateLimitSwitch
+        | State::Walled {
+            kind: WallKind::Usage,
+            ..
+        }
+        | State::Exited
+        | State::Unjudged { .. } => up(state),
+    };
+    let owns = |name: &str| successor.target.owns(name);
+    let unready =
+        match operation.await_state(&pane, successor.harness, &owns, Some(runner_id), &ready)? {
+            Polled::Ready { .. } if wall.get() => {
+                return waiting.refused(
+                    operation,
+                    "successor-not-signed-in",
+                    json!({"cause": "auth-wall", "account": successor.named_account().1}),
+                );
+            }
+            Polled::Ready { .. } => None,
+            Polled::Gone => {
+                return runner_gone_before_retirement(
+                    operation,
+                    &opened,
+                    Some(runner_id),
+                    "successor-exited",
+                    "pane-gone",
+                );
+            }
+            Polled::Pending { reading, state, .. } => {
+                Some(("successor-not-up", pending_observation(&reading, &state)))
+            }
+            Polled::Unobservable { cause } => Some(("pane-unobservable", json!({"cause": cause}))),
+        };
+    if let Some((note, observation)) = unready {
+        return waiting.unready(operation, Some(session.session_id), note, observation);
+    }
+
     // --- Retire the predecessor and confirm its exact terminal state. A
     // failure here is before the successor takes over: stop the waiting
     // runner exactly and leave the predecessor in control. ---
@@ -913,20 +1174,15 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
                     operation.count_stale(&identity, &mut stale_obs)?;
                     stale_obs["identity"] = json!("stale");
                 }
-                let mut outcome = abandoned_before_retirement(
+                return abandoned_noting(
                     operation,
                     &opened,
-                    Some(runner.identity()),
+                    runner.identity(),
                     &pane,
-                    Some(&successor.target),
+                    &successor.target,
                     note,
-                )?;
-                if let Some(fields) = stale_obs.as_object() {
-                    for (key, value) in fields {
-                        outcome.annotate(key, value.clone());
-                    }
-                }
-                return Ok(outcome);
+                    stale_obs,
+                );
             }
             "identity"
         }
@@ -957,30 +1213,40 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // The predecessor's own window, closed by exact id on its proven server:
     // a handle of the record the publication settles.
     let window = operation.close_overseer_window(&overseer)?;
-    operation.record_phase(Phase::Retired {
-        opened: opened.clone(),
-    })?;
 
-    // --- Retired. From here a failure is a recoverable stopped transition. ---
-    complete_transfer(
+    // --- Retired. From here a failure is a recoverable stopped transition.
+    // The phase stays `delivered`: a reconcile reads the retirement from the
+    // predecessor itself and waits for the same turn before it publishes. ---
+    let mut outcome = publish(
         operation,
         &successor,
         &pane,
         Some(runner.identity()),
-        &Phase::Retired { opened },
+        &opened,
+        Some(session.session_id),
+        &up,
+        "successor-not-up",
         Retired {
             by: retired_by,
             overseer: &overseer,
             window: Some(window),
         },
         intent.watch.as_deref(),
-    )
+    )?;
+    if let Some(cause) = account_unread {
+        outcome.annotate("account_read", json!(cause));
+    }
+    if let Some(note) = sign_in_note {
+        outcome.annotate("sign_in", note);
+    }
+    Ok(outcome)
 }
 
-/// Complete a succession from a recorded phase after retirement: bring the
-/// runner to its composer, bind its own session file, deliver the held
-/// brief, confirm the runner wrote that turn into that file, read its
-/// identity and publish it. Each step is recorded before the wait that
+/// Complete a succession a reconcile found with its predecessor retired:
+/// from `window-opened` (a predecessor that ended by itself before the
+/// brief) bring the runner to its composer and deliver the held brief; from
+/// a delivery, confirm the runner wrote that turn into its own session
+/// file; then read its identity and publish it. Each step is recorded before the wait that
 /// follows, so a reconcile resumes here from the phase it finds. `runner` is
 /// the identity the caller already read, or `None` for a reconcile that
 /// reads it afresh; `retired` is what retired the predecessor and the record
@@ -1009,7 +1275,7 @@ fn complete_transfer(
                 "opening is resolved before complete_transfer, and a transfer creates no cloud session and asks no preparation"
             )
         }
-        Phase::WindowOpened { .. } | Phase::Retired { .. } => {
+        Phase::WindowOpened { .. } => {
             let Some(brief) = &opened.brief else {
                 // No handoff to deliver: the runner idle at its composer
                 // is the successor once its identity is
@@ -1065,106 +1331,20 @@ fn complete_transfer(
                         ));
                     }
                 };
-            // The runner's own session file, bound once before the paste;
-            // a brief is never pasted without it. A store that
-            // could not be read whole holds the succession at this phase with
-            // the cause: the runner is live, so this is no
-            // refusal.
-            let session = match successor.bind_session(&operation, opened)? {
-                Binding::Bound(session) => session,
-                Binding::Unreadable { cause } => {
+            match deliver_brief(&mut operation, successor, pane, opened, Path::new(brief))? {
+                Ok(delivered) => delivered,
+                Err(undelivered) => {
                     return Ok(unconfirmed_after_retirement(
                         operation,
                         opened,
                         Some(identity.identity()),
-                        None,
-                        "session-store-unreadable",
+                        undelivered.session_id,
+                        &undelivered.note,
                         by,
-                        json!({"cause": cause}),
+                        undelivered.observation,
                     ));
                 }
-                Binding::Absent => {
-                    return Ok(unconfirmed_after_retirement(
-                        operation,
-                        opened,
-                        Some(identity.identity()),
-                        None,
-                        "session-unbound",
-                        by,
-                        json!({}),
-                    ));
-                }
-                Binding::Ambiguous(sessions) => {
-                    return Ok(unconfirmed_after_retirement(
-                        operation,
-                        opened,
-                        Some(identity.identity()),
-                        None,
-                        "session-ambiguous",
-                        by,
-                        json!({"sessions": sessions}),
-                    ));
-                }
-            };
-            let turns_before = operation.user_turns(successor.harness, Path::new(&session.file))?;
-            let text = match read_brief(Path::new(brief)) {
-                Ok(text) => text,
-                Err(e) => {
-                    return Ok(unconfirmed_after_retirement(
-                        operation,
-                        opened,
-                        Some(identity.identity()),
-                        Some(session.session_id),
-                        e.key(),
-                        by,
-                        json!({}),
-                    ));
-                }
-            };
-            // The runner's pane stands in the set; the brief is typed through
-            // its token, the `delivering` phase written before the paste. A
-            // brief refused before the paste leaves the phase as it stood, so
-            // a repeat types it; one whose paste went unanswered is never
-            // typed again, and its turn alone says whether it went in.
-            let text = text.trim_end();
-            let delivered = match operation.standing_pane(pane.clone()) {
-                Ok(token) => operation.deliver(
-                    &token,
-                    text,
-                    Phase::Delivering {
-                        opened: opened.clone(),
-                        turns_before,
-                        session: session.clone(),
-                        lines: text.lines().count() as u64,
-                    },
-                )?,
-                Err(_) => operation::Delivery::Unsent(agent_runtime::Error::refused(
-                    "pane-not-standing",
-                    &[],
-                )),
-            };
-            let undelivered = match delivered {
-                operation::Delivery::Pasted => None,
-                operation::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
-                operation::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
-            };
-            if let Some((note, cause)) = undelivered {
-                return Ok(unconfirmed_after_retirement(
-                    operation,
-                    opened,
-                    Some(identity.identity()),
-                    Some(session.session_id),
-                    note,
-                    by,
-                    json!({"cause": cause}),
-                ));
             }
-            operation.record_phase(Phase::Delivered {
-                opened: opened.clone(),
-                turns_before,
-                session: session.clone(),
-            })?;
-            (turns_before, session)
         }
         // A brief recorded as delivering may have been pasted: it is never
         // pasted again, and the turn is waited for as after a delivery.
@@ -1265,6 +1445,103 @@ fn complete_transfer(
             json!({"turns_before": turns_before, "file": session.file}),
         )),
     }
+}
+
+/// What stopped a delivery: the note the outcome carries, the runner's
+/// bound session where it got that far, and the observation beside it.
+struct Undelivered {
+    note: String,
+    session_id: Option<String>,
+    observation: Value,
+}
+
+fn undelivered(note: &str, session_id: Option<String>, observation: Value) -> Undelivered {
+    Undelivered {
+        note: note.to_owned(),
+        session_id,
+        observation,
+    }
+}
+
+/// Bind the runner's own session file and type the held `brief` into its
+/// pane: the user turns that file held before the paste and the bound
+/// session, or what stopped the delivery. A brief is never pasted without
+/// the session bound, so the turn that confirms it is the runner's own; a
+/// store that could not be read whole stops it with the cause, the runner
+/// live. The `delivering` phase is written before the paste and
+/// `delivered` after: a brief refused before the paste leaves the phase as
+/// it stood, so a repeat types it; one whose paste went unanswered is never
+/// typed again, and its turn alone says whether it went in.
+fn deliver_brief(
+    operation: &mut Operation,
+    successor: &Successor,
+    pane: &Pane,
+    opened: &OpenedPane,
+    brief: &Path,
+) -> Result<std::result::Result<(u64, BoundSession), Undelivered>> {
+    let session = match successor.bind_session(operation, opened)? {
+        Binding::Bound(session) => session,
+        Binding::Unreadable { cause } => {
+            return Ok(Err(undelivered(
+                "session-store-unreadable",
+                None,
+                json!({"cause": cause}),
+            )));
+        }
+        Binding::Absent => return Ok(Err(undelivered("session-unbound", None, json!({})))),
+        Binding::Ambiguous(sessions) => {
+            return Ok(Err(undelivered(
+                "session-ambiguous",
+                None,
+                json!({"sessions": sessions}),
+            )));
+        }
+    };
+    let turns_before = operation.user_turns(successor.harness, Path::new(&session.file))?;
+    let text = match read_brief(brief) {
+        Ok(text) => text,
+        Err(e) => {
+            return Ok(Err(undelivered(
+                e.key(),
+                Some(session.session_id),
+                json!({}),
+            )));
+        }
+    };
+    let text = text.trim_end();
+    let delivered = match operation.standing_pane(pane.clone()) {
+        Ok(token) => operation.deliver(
+            &token,
+            text,
+            Phase::Delivering {
+                opened: opened.clone(),
+                turns_before,
+                session: session.clone(),
+                lines: text.lines().count() as u64,
+            },
+        )?,
+        Err(_) => {
+            operation::Delivery::Unsent(agent_runtime::Error::refused("pane-not-standing", &[]))
+        }
+    };
+    let stopped = match delivered {
+        operation::Delivery::Pasted => None,
+        operation::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
+        operation::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
+    };
+    if let Some((note, cause)) = stopped {
+        return Ok(Err(undelivered(
+            note,
+            Some(session.session_id),
+            json!({"cause": cause}),
+        )));
+    }
+    operation.record_phase(Phase::Delivered {
+        opened: opened.clone(),
+        turns_before,
+        session: session.clone(),
+    })?;
+    Ok(Ok((turns_before, session)))
 }
 
 /// Read the runner holding its pane in a state `accept` takes within the
@@ -1772,7 +2049,6 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
             }
         },
         resolved @ (Phase::WindowOpened { .. }
-        | Phase::Retired { .. }
         | Phase::Delivering { .. }
         | Phase::Delivered { .. }
         | Phase::IdentityRead { .. }) => resolved,
@@ -1842,11 +2118,12 @@ fn unbound_transfer_observation(generation: u64, observation: Value) -> Value {
     observation
 }
 
-/// Judge a succession intent whose phase names a pane. Before retirement a
-/// runner present is abandoned, unless the retirement has begun, in which
-/// case the predecessor's handles stand until they are read; from `retired`
-/// on the succession completes as the effect would, or stops the runner
-/// where nothing could publish it. `unproven` is the cause a record nothing
+/// Judge a succession intent whose phase names a pane. Before retirement,
+/// the brief delivered or not, a runner present is abandoned, unless the
+/// retirement has begun, in which case the predecessor's handles stand
+/// until they are read; once the predecessor reads retired the succession
+/// completes as the effect would, or stops the runner where nothing could
+/// publish it. `unproven` is the cause a record nothing
 /// resolves read with, which abandons a runner opened
 /// before retirement under it.
 #[allow(clippy::too_many_arguments)]
@@ -1876,8 +2153,9 @@ fn judge_resolved(
     };
     let by = match (retirement, phase) {
         (Some(by), _) => by,
-        (None, Phase::WindowOpened { .. }) => {
-            // The runner was opened and the predecessor still runs, or
+        (None, Phase::WindowOpened { .. } | Phase::Delivering { .. } | Phase::Delivered { .. }) => {
+            // The runner was opened, its brief typed or not, and the
+            // predecessor still runs, or
             // nothing resolves it. Where this intent began the retirement,
             // the predecessor's handles stand signalled in its set: nothing
             // is abandoned over them, and the next reconcile reads them
@@ -1942,7 +2220,7 @@ fn judge_resolved(
                 };
             }
         }
-        // Past `retired` the predecessor was confirmed terminal when the
+        // At `identity-read` the predecessor was confirmed terminal when the
         // phase was written; a reading that now finds a controller standing
         // is carried to the publication, which settles the record's handles
         // and so publishes nothing over a live identity.
@@ -1951,9 +2229,6 @@ fn judge_resolved(
             Phase::Opening { .. }
             | Phase::CloudCreate { .. }
             | Phase::Preparing { .. }
-            | Phase::Retired { .. }
-            | Phase::Delivering { .. }
-            | Phase::Delivered { .. }
             | Phase::IdentityRead { .. },
         ) => "recorded",
     };
@@ -2085,7 +2360,6 @@ fn recorded_runner(phase: &Phase) -> Option<Identity> {
             start: start.clone(),
         }),
         Phase::WindowOpened { opened }
-        | Phase::Retired { opened }
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. } => opened.identity.clone(),
         Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => None,

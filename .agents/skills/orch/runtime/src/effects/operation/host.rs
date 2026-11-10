@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, tmux};
+use agent_runtime::launch::Permission;
 use agent_runtime::observe::{self, ProcessReading, State};
 use agent_runtime::process::{self, Identity, Stop};
 use agent_runtime::reading::Reading;
@@ -21,6 +22,7 @@ use super::obligations::{
 use super::{Close, Operation, Pane, Server};
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Refusal};
+use crate::ops::accounts::usage::Credential;
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
 use crate::settings::Settings;
 use crate::state::{
@@ -408,6 +410,19 @@ pub(in crate::effects) fn server_home(
         .map(PathBuf::from))
 }
 
+/// The sign-in a launch starts with, as `Operation::sign_in` reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::effects) enum SignIn {
+    /// The account holds a credential the harness signs in with.
+    Held,
+    /// The launch environment carries this token variable.
+    Token(&'static str),
+    /// The account holds nothing the harness signs in with.
+    Missing { cause: &'static str },
+    /// Nothing here reads this sign-in: the first turn alone judges it.
+    Unjudged { cause: &'static str },
+}
+
 /// The file the harness records the session `id` for `cwd` in under `home`,
 /// for a harness whose launch fixes the id.
 pub(in crate::effects) fn fixed_file(
@@ -667,6 +682,74 @@ impl Operation<'_> {
         agent_runtime::clock::iso_utc(now + after.as_secs())
     }
 
+    /// The sign-in a successor's launch on `account` starts with, read
+    /// before anything is written for it: a token variable the window on
+    /// `server` inherits in `session`, which signs the harness in whatever
+    /// the account holds; else the credential file the account listing
+    /// reads (`ops::accounts::usage`), Claude's on Linux alone, since
+    /// another platform keeps it in its own store.
+    pub(in crate::effects) fn sign_in(
+        &self,
+        server: &Server,
+        session: &str,
+        harness: Harness,
+        account: &Path,
+    ) -> SignIn {
+        let tokens: &[&'static str] = match harness {
+            Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+            Harness::Codex => &["OPENAI_API_KEY"],
+            Harness::Copilot | Harness::Pi => {
+                return SignIn::Unjudged {
+                    cause: "harness-unread",
+                };
+            }
+        };
+        // An environment that cannot be read may hold a token: no account
+        // is refused on a read that did not answer.
+        for token in tokens {
+            match tmux::inherited(server, session, token) {
+                Ok(Some(value)) if !value.is_empty() => return SignIn::Token(token),
+                Ok(_) => {}
+                Err(_) => {
+                    return SignIn::Unjudged {
+                        cause: "environment-unread",
+                    };
+                }
+            }
+        }
+        if harness == Harness::Claude && !cfg!(target_os = "linux") {
+            return SignIn::Unjudged {
+                cause: "platform-store",
+            };
+        }
+        let dir = account.display().to_string();
+        match crate::ops::accounts::usage::credential(harness.name(), &dir) {
+            Credential::Missing(_) => SignIn::Missing {
+                cause: "no-credential",
+            },
+            Credential::NoToken { .. } => SignIn::Missing { cause: "no-token" },
+            Credential::Invalid(_) => SignIn::Unjudged {
+                cause: "credential-invalid",
+            },
+            Credential::Token {
+                refresh_expires_ms, ..
+            } => {
+                let now = self
+                    .clock
+                    .wall()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                if crate::ops::accounts::usage::expired(refresh_expires_ms, now) {
+                    SignIn::Missing {
+                        cause: "login-expired",
+                    }
+                } else {
+                    SignIn::Held
+                }
+            }
+        }
+    }
+
     pub(in crate::effects) fn sleep(&self, d: Duration) {
         self.clock.sleep(d);
     }
@@ -756,7 +839,6 @@ impl Operation<'_> {
             Some(state::Phase::Opening { opening }) => push(PathBuf::from(&opening.socket)),
             Some(
                 state::Phase::WindowOpened { opened }
-                | state::Phase::Retired { opened }
                 | state::Phase::Delivering { opened, .. }
                 | state::Phase::Delivered { opened, .. }
                 | state::Phase::IdentityRead { opened, .. },
@@ -2390,6 +2472,9 @@ pub(in crate::effects) fn heal_controller(
         cwd: word("cwd"),
         succession: None,
         session_rows: word("session_rows").map(PathBuf::from),
+        // The heal names no posture: the same pane keeps the recorded one.
+        permission: None,
+        extra_args: None,
     };
     adopt_controller(path, &request, settings, locking).map(Some)
 }
@@ -2485,19 +2570,9 @@ fn foreground_harness(
         Harness::Codex,
         Harness::Pi,
     ] {
-        let target = super::super::Target::new(settings, harness)?;
-        match observe::foreground(pane_pid, &|name| target.owns(name), None) {
-            ProcessReading::Harness { identity } => return Ok((harness, identity)),
-            ProcessReading::Unread { cause } => {
-                return Err(super::super::refused(
-                    "pane-unreadable",
-                    &[("pane", pane), ("cause", cause)],
-                ));
-            }
-            reading @ (ProcessReading::ShellsOnly
-            | ProcessReading::HarnessUp
-            | ProcessReading::ForegroundShell { .. }
-            | ProcessReading::ForegroundOther { .. }) => last = reading_word(&reading),
+        match harness_in_pane(settings, harness, pane, pane_pid)? {
+            Ok(identity) => return Ok((harness, identity)),
+            Err(reading) => last = reading_word(&reading),
         }
     }
     Err(Error::PaneNotHarness {
@@ -2506,16 +2581,39 @@ fn foreground_harness(
     })
 }
 
+/// The process of `harness` that holds the pane's terminal, or the reading
+/// that says another holds it; a process table that cannot be read refuses
+/// `pane-unreadable`.
+fn harness_in_pane(
+    settings: &Settings,
+    harness: Harness,
+    pane: &str,
+    pane_pid: u32,
+) -> Result<std::result::Result<Identity, ProcessReading>> {
+    let target = super::super::Target::new(settings, harness)?;
+    match observe::foreground(pane_pid, &|name| target.owns(name), None) {
+        ProcessReading::Harness { identity } => Ok(Ok(identity)),
+        ProcessReading::Unread { cause } => Err(super::super::refused(
+            "pane-unreadable",
+            &[("pane", pane), ("cause", cause)],
+        )),
+        reading @ (ProcessReading::ShellsOnly
+        | ProcessReading::HarnessUp
+        | ProcessReading::ForegroundShell { .. }
+        | ProcessReading::ForegroundOther { .. }) => Ok(Err(reading)),
+    }
+}
+
 /// A variable of this process's environment, where it is set and not empty.
 fn caller_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// The account a session of `harness` the caller's own environment runs:
-/// the harness's home variable, else the harness's default home; a Codex
-/// home a folder-trust launch built under an account names that account.
-fn caller_account(harness: Harness) -> Option<String> {
-    let home = caller_var(harness.home_var())
+/// The account a session of `harness` runs on whose home variable reads
+/// `home`: that home, else the harness's default home; a Codex home a
+/// folder-trust launch built under an account names that account.
+fn account_of_home(harness: Harness, home: Option<String>) -> Option<String> {
+    let home = home
         .map(PathBuf::from)
         .or_else(|| session::default_home(harness))?;
     let account = match harness {
@@ -2525,20 +2623,91 @@ fn caller_account(harness: Harness) -> Option<String> {
     Some(account.display().to_string())
 }
 
-/// The account a Copilot process runs on, read off its own environment:
-/// its `COPILOT_HOME`, else its `HOME`'s `.copilot`; none where the host
-/// keeps no environment to read or the process has gone.
-fn copilot_account(pid: u32) -> Option<String> {
-    let environ = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
-    let var = |name: &str| {
-        environ
-            .split(|byte| *byte == 0)
-            .filter_map(|entry| std::str::from_utf8(entry).ok())
-            .find_map(|entry| entry.strip_prefix(name)?.strip_prefix('='))
+/// A file of process `pid`'s `/proc` entry as its NUL-separated words: the
+/// environment the process was started with, or its argument words. `Err`
+/// names why it could not be read: a host with no `/proc`, or the process
+/// gone.
+fn proc_words(pid: u32, file: &str) -> std::result::Result<Vec<String>, &'static str> {
+    let bytes = match std::fs::read(format!("/proc/{pid}/{file}")) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("process-gone"),
+        Err(_) => return Err("proc-unreadable"),
+    };
+    Ok(bytes
+        .split(|byte| *byte == 0)
+        .filter(|word| !word.is_empty())
+        .map(|word| String::from_utf8_lossy(word).into_owned())
+        .collect())
+}
+
+/// The value `name` holds in the environment process `pid` was started
+/// with, `None` where it holds none or an empty one.
+pub(in crate::effects) fn process_var(
+    pid: u32,
+    name: &str,
+) -> std::result::Result<Option<String>, &'static str> {
+    Ok(proc_words(pid, "environ")?.into_iter().find_map(|entry| {
+        entry
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
             .filter(|value| !value.is_empty())
             .map(str::to_owned)
+    }))
+}
+
+/// The launch choices a running session's argument words spell for its
+/// harness, read with the harness's own word table: the model after its
+/// model flag, the effort its effort words carry, the full bypass where a
+/// full-bypass spelling stands (else the native posture), and the
+/// permission spelling's words, the one part of the line orch carries as
+/// the session's own; every other word is the builder's or of an arity no
+/// table states.
+#[derive(Debug, PartialEq, Eq)]
+struct Spelled {
+    model: Option<String>,
+    effort: Option<String>,
+    permission: Permission,
+    words: Vec<String>,
+}
+
+fn spelled(harness: Harness, argv: &[String]) -> Spelled {
+    // Every value `flag` takes in `argv`, as the next word or after `=`.
+    let values = |flag: &str| -> Vec<String> {
+        argv.iter()
+            .enumerate()
+            .filter_map(|(i, word)| {
+                if word == flag {
+                    return argv.get(i + 1).cloned();
+                }
+                word.strip_prefix(flag)
+                    .and_then(|rest| rest.strip_prefix('='))
+                    .map(str::to_owned)
+            })
+            .collect()
     };
-    var("COPILOT_HOME").or_else(|| var("HOME").map(|home| format!("{home}/.copilot")))
+    let effort = match harness.effort_words("\0").as_slice() {
+        [flag, value] => value.split_once('\0').and_then(|(before, after)| {
+            values(flag).into_iter().find_map(|v| {
+                v.strip_prefix(before)
+                    .and_then(|v| v.strip_suffix(after))
+                    .map(|v| v.trim_matches('"').to_owned())
+            })
+        }),
+        _ => None,
+    };
+    Spelled {
+        model: values(harness.model_flag()).into_iter().next(),
+        effort,
+        permission: if harness.bypass_word_in(argv).is_some() {
+            Permission::Bypass
+        } else {
+            Permission::Native
+        },
+        words: harness
+            .permission_word_in(argv)
+            .map(|(spelling, _)| spelling.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default(),
+    }
 }
 
 /// Whether `kendex list`'s table lists the lane-mail-check hook for
@@ -2639,11 +2808,15 @@ fn coverage_notices(
 /// pane, `$TMUX_PANE` on the server `$TMUX` names: its launch identity from
 /// the last `SessionStart` row its harness wrote to the rows file the hook
 /// keeps for that pane, else read off the pane, the named fallback said as
-/// `identity-fallback` (the harness its foreground process is, the account
-/// its environment names, the directory it runs in, no model), with
-/// `account` ahead of either; then the one adoption, which writes the rows
-/// file as the record's `session_rows`, and the coverage notices. No
-/// effort is read, since nothing here launched the session.
+/// `identity-fallback` (the harness its foreground process is, the
+/// directory it runs in); then what the running harness process itself was
+/// started with, so the next hand-over launches the session that runs: the
+/// account its environment names, ahead of the row's, and the model, effort
+/// and permission posture its argument words spell, the row's model first
+/// (`launch-unread` where that process cannot be read, the row and the
+/// caller's own environment standing in); `account` ahead of every reading.
+/// Then the one adoption, which writes the rows file as the record's
+/// `session_rows`, and the coverage notices.
 pub(in crate::effects) fn register_controller(
     path: &Path,
     account: Option<&str>,
@@ -2674,29 +2847,58 @@ pub(in crate::effects) fn register_controller(
         Reading::Gone => Err("no-start-row"),
         Reading::Unreadable { .. } => Err("unreadable"),
     };
-    let (harness, account, model, cwd) = match stated {
+    let (harness, identity, row_account, row_model, cwd) = match stated {
         Ok(row) => {
             let harness = Harness::parse(&row.harness).ok_or_else(|| {
                 super::super::refused("harness-unknown", &[("harness", &row.harness)])
             })?;
-            (harness, given.or(row.account), row.model, row.cwd)
+            let identity =
+                harness_in_pane(settings, harness, &pane, fields.pid)?.map_err(|reading| {
+                    Error::PaneNotHarness {
+                        pane: pane.clone(),
+                        reading: reading_word(&reading),
+                    }
+                })?;
+            (harness, identity, row.account, row.model, row.cwd)
         }
         Err(cause) => {
             notices.push(format!("identity-fallback session={pane} cause={cause}"));
             let (harness, identity) = foreground_harness(settings, &pane, fields.pid)?;
-            let account = given.or_else(|| match harness {
-                Harness::Copilot => copilot_account(identity.pid),
-                Harness::Claude | Harness::Codex | Harness::Pi => caller_account(harness),
-            });
             let cwd = std::fs::read_link(format!("/proc/{}/cwd", identity.pid))
                 .or_else(|_| std::env::current_dir())
                 .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", Path::new("."), e)))?;
-            (harness, account, None, cwd.display().to_string())
+            (harness, identity, None, None, cwd.display().to_string())
         }
     };
+    // The process's own environment and words where the host keeps them;
+    // where it does not, the row and the caller's own environment, which the
+    // harness's shell tool handed down, stand in, and no posture is recorded.
+    let started = process_var(identity.pid, harness.home_var()).and_then(|home| {
+        let argv = proc_words(identity.pid, "cmdline")?;
+        Ok((home, spelled(harness, &argv)))
+    });
+    let (home_var, spelled, stated_account) = match started {
+        Ok((home, spelled)) => (home, Some(spelled), None),
+        Err(cause) => {
+            notices.push(format!("launch-unread session={pane} cause={cause}"));
+            (caller_var(harness.home_var()), None, row_account)
+        }
+    };
+    let account = given
+        .or(stated_account)
+        .or_else(|| account_of_home(harness, home_var.clone()));
     let home = match harness {
-        Harness::Codex => caller_var("CODEX_HOME").or_else(|| account.clone()),
+        Harness::Codex => home_var.or_else(|| account.clone()),
         Harness::Claude | Harness::Copilot | Harness::Pi => account.clone(),
+    };
+    let (model, effort, permission, extra_args) = match spelled {
+        Some(s) => (
+            row_model.or(s.model),
+            s.effort,
+            Some(s.permission),
+            Some(s.words),
+        ),
+        None => (row_model, None, None, None),
     };
     let request = AdoptController {
         pane: pane.clone(),
@@ -2706,10 +2908,12 @@ pub(in crate::effects) fn register_controller(
         account: account.clone(),
         home,
         model,
-        effort: None,
+        effort,
         cwd: Some(cwd),
         succession: None,
         session_rows: Some(rows),
+        permission,
+        extra_args,
     };
     let applied = adopt_controller(path, &request, settings, locking)?;
     // A record proven to name this pane keeps fields the request left out,
@@ -2755,4 +2959,110 @@ pub(in crate::effects) fn fixed_id_file(
 /// The state module's receipt path for the operation.
 pub(super) fn receipt_path(settings: &Settings, intent_id: &str) -> PathBuf {
     state::receipt_path(&settings.state_dir, intent_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The words each harness spells its launch choices with, as its own
+    /// launch writes them and as a person types them by hand.
+    #[test]
+    fn a_running_sessions_words_spell_its_model_effort_and_posture() {
+        type Row<'a> = (
+            Harness,
+            &'a [&'a str],
+            Option<&'a str>,
+            Option<&'a str>,
+            Permission,
+            &'a [&'a str],
+        );
+        let words = |w: &[&str]| w.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
+        let rows: [Row; 6] = [
+            (
+                Harness::Claude,
+                &[
+                    "claude",
+                    "--model",
+                    "opus",
+                    "--effort",
+                    "high",
+                    "--permission-mode",
+                    "dontAsk",
+                    "Read the handoff",
+                ],
+                Some("opus"),
+                Some("high"),
+                Permission::Native,
+                &["--permission-mode", "dontAsk"],
+            ),
+            (
+                Harness::Claude,
+                &[
+                    "node",
+                    "/opt/claude/cli.js",
+                    "--dangerously-skip-permissions",
+                    "--model=fable",
+                ],
+                Some("fable"),
+                None,
+                Permission::Bypass,
+                &["--dangerously-skip-permissions"],
+            ),
+            (
+                Harness::Codex,
+                &[
+                    "codex",
+                    "-m",
+                    "gpt-5",
+                    "-c",
+                    "check_for_update_on_startup=false",
+                    "-c",
+                    "model_reasoning_effort=xhigh",
+                    "--dangerously-bypass-approvals-and-sandbox",
+                ],
+                Some("gpt-5"),
+                Some("xhigh"),
+                Permission::Bypass,
+                &["--dangerously-bypass-approvals-and-sandbox"],
+            ),
+            (
+                Harness::Copilot,
+                &[
+                    "node",
+                    "/opt/copilot/index.js",
+                    "--model",
+                    "gpt-5",
+                    "--reasoning-effort",
+                    "low",
+                    "--allow-all-tools",
+                ],
+                Some("gpt-5"),
+                Some("low"),
+                Permission::Native,
+                &["--allow-all-tools"],
+            ),
+            (
+                Harness::Pi,
+                &["pi", "--model", "anthropic/claude-opus-5-5:high"],
+                Some("anthropic/claude-opus-5-5:high"),
+                None,
+                Permission::Native,
+                &[],
+            ),
+            (Harness::Claude, &[], None, None, Permission::Native, &[]),
+        ];
+        for (harness, argv, model, effort, permission, kept) in rows {
+            assert_eq!(
+                spelled(harness, &words(argv)),
+                Spelled {
+                    model: model.map(str::to_owned),
+                    effort: effort.map(str::to_owned),
+                    permission,
+                    words: words(kept),
+                },
+                "{harness:?} {argv:?}"
+            );
+        }
+    }
 }

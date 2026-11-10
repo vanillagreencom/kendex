@@ -979,6 +979,8 @@ impl Runner {
         assert!(out.status.success(), "git init: {}", stderr(&out));
         let out = self.run(&["state", "init", "--fleet"]);
         assert!(out.status.success(), "init: {}", stderr(&out));
+        // The account `pending` names is the state directory: signed in.
+        plant_credential(self.state_dir());
     }
 
     pub fn fleet(&self) -> Value {
@@ -1191,6 +1193,28 @@ pub fn overseer_record(pid: u32, start: &str, server: &Server, cwd: &Path) -> Va
         "cwd": cwd.display().to_string(),
         "launch_line": "cd /r && claude",
     })
+}
+
+/// A Claude account's sign-in in `dir`: the credential file the harness
+/// signs in with on Linux, holding an access token with no stated expiry.
+pub fn plant_credential(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join(".credentials.json"),
+        r#"{"claudeAiOauth":{"accessToken":"planted","subscriptionType":"max"}}"#,
+    )
+    .unwrap();
+}
+
+/// A Codex account's sign-in in `dir`: the `auth.json` the harness signs
+/// in with, holding an access token.
+pub fn plant_codex_credential(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(
+        dir.join("auth.json"),
+        r#"{"tokens":{"access_token":"planted"}}"#,
+    )
+    .unwrap();
 }
 
 pub fn pending(cwd: &Path) -> Value {

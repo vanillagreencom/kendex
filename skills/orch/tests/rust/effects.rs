@@ -285,44 +285,6 @@ fn a_repeated_close_runs_the_stop_its_reconcile_reads_pending() {
     );
 }
 
-/// The effect's process ends after retirement with the runner at its
-/// composer and no brief owed; a reconcile completes the succession from
-/// the recorded phase and publishes that runner.
-#[test]
-fn reconcile_publishes_a_runner_recorded_at_the_retired_phase() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
-    runner.init_fleet();
-    let since = now_ms();
-    let pane = server.open_stub(
-        "overseer",
-        "stub-confirm",
-        runner.state_dir(),
-        runner.state_dir(),
-    );
-    server.await_composer(&pane);
-    // The predecessor is gone: its recorded identity holds no process.
-    let mut fleet = runner.fleet();
-    fleet["overseer"] = overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
-    fleet["overseer"]["pending"] = pending(runner.state_dir());
-    fleet["intents"] = json!([transfer_intent(
-        Some(phase("retired", &server, &pane, since, None)),
-        None
-    )]);
-    runner.write_fleet(&fleet);
-    let report = runner.reconcile_one();
-    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    let overseer = runner.fleet()["overseer"].clone();
-    assert_eq!(overseer["generation"], 4);
-    assert_eq!(overseer["pane"], pane);
-    assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
-    assert_eq!(
-        overseer["server_socket"],
-        server.socket.display().to_string()
-    );
-}
-
 /// The effect's process ends during the launch poll; a reconcile completes
 /// the launch from the recorded pane, confirming it with the identity it
 /// reads, or failing it once that pane is gone.
@@ -1440,7 +1402,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner gone",
             expect: "failed",
@@ -1449,7 +1411,7 @@ fn the_reconcile_matrix_is_total() {
                     runner,
                     server,
                     (GONE_PID as u32, "ticks:1"),
-                    Some(phase("retired", server, "%77", now_ms(), None)),
+                    Some(phase("window-opened", server, "%77", now_ms(), None)),
                 ),
                 owned: vec![],
             },
@@ -1460,7 +1422,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "server unanswering, its process live",
             expect: "unconfirmed",
@@ -1471,7 +1433,7 @@ fn the_reconcile_matrix_is_total() {
                     server,
                     (GONE_PID as u32, "ticks:1"),
                     Some(phase(
-                        "retired",
+                        "window-opened",
                         &unanswering_server(runner, &process),
                         "%1",
                         now_ms(),
@@ -1495,7 +1457,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "server gone",
             expect: "failed",
@@ -1504,7 +1466,13 @@ fn the_reconcile_matrix_is_total() {
                     runner,
                     server,
                     (GONE_PID as u32, "ticks:1"),
-                    Some(phase("retired", &gone_server(runner), "%1", now_ms(), None)),
+                    Some(phase(
+                        "window-opened",
+                        &gone_server(runner),
+                        "%1",
+                        now_ms(),
+                        None,
+                    )),
                 ),
                 owned: vec![],
             },
@@ -1516,7 +1484,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner up, not idle, no brief",
             expect: "unconfirmed",
@@ -1534,7 +1502,7 @@ fn the_reconcile_matrix_is_total() {
                         runner,
                         server,
                         (GONE_PID as u32, "ticks:1"),
-                        Some(phase("retired", server, &pane, since, None)),
+                        Some(phase("window-opened", server, &pane, since, None)),
                     ),
                     owned: vec![],
                 }
@@ -1550,7 +1518,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner idle, pending's directory gone",
             expect: "unconfirmed",
@@ -1567,7 +1535,7 @@ fn the_reconcile_matrix_is_total() {
                     runner,
                     server,
                     (GONE_PID as u32, "ticks:1"),
-                    Some(phase("retired", server, &pane, since, None)),
+                    Some(phase("window-opened", server, &pane, since, None)),
                 );
                 fleet["overseer"]["pending"]["cwd"] = json!("/nonexistent/successor/dir");
                 Planted {
@@ -1589,7 +1557,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner idle, pending missing",
             expect: "failed",
@@ -1606,7 +1574,7 @@ fn the_reconcile_matrix_is_total() {
                     runner,
                     server,
                     (GONE_PID as u32, "ticks:1"),
-                    Some(phase("retired", server, &pane, since, None)),
+                    Some(phase("window-opened", server, &pane, since, None)),
                 );
                 fleet["overseer"].as_object_mut().unwrap().remove("pending");
                 Planted {
@@ -1623,39 +1591,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
-            identity: "predecessor gone",
-            observed: "runner idle, no brief",
-            expect: "confirmed",
-            plant: |runner, server| {
-                let since = now_ms();
-                let pane = server.open_stub(
-                    "overseer",
-                    "stub-confirm",
-                    runner.state_dir(),
-                    runner.state_dir(),
-                );
-                server.await_composer(&pane);
-                Planted {
-                    fleet: transfer_fleet(
-                        runner,
-                        server,
-                        (GONE_PID as u32, "ticks:1"),
-                        Some(phase("retired", server, &pane, since, None)),
-                    ),
-                    owned: vec![],
-                }
-            },
-            check: |runner, server, _| {
-                let overseer = runner.fleet()["overseer"].clone();
-                assert_eq!(overseer["generation"], 4);
-                let pane = overseer["pane"].as_str().unwrap().to_owned();
-                assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
-            },
-        },
-        Cell {
-            op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner idle, brief held",
             expect: "confirmed",
@@ -1672,7 +1608,7 @@ fn the_reconcile_matrix_is_total() {
                 server.await_composer(&pane);
                 // The id the launch fixed, which names the runner's file before
                 // it carries a turn.
-                let mut phase = phase("retired", server, &pane, since, Some(&brief));
+                let mut phase = phase("window-opened", server, &pane, since, Some(&brief));
                 phase["session_id"] = json!(format!("stub-{}", server.pane_pid(&pane)));
                 Planted {
                     fleet: transfer_fleet(
@@ -1695,7 +1631,7 @@ fn the_reconcile_matrix_is_total() {
         },
         Cell {
             op: "transfer",
-            phase: "retired",
+            phase: "window-opened",
             identity: "predecessor gone",
             observed: "runner not idle, brief held",
             expect: "unconfirmed",
@@ -1715,7 +1651,7 @@ fn the_reconcile_matrix_is_total() {
                         runner,
                         server,
                         (GONE_PID as u32, "ticks:1"),
-                        Some(phase("retired", server, &pane, since, Some(&brief))),
+                        Some(phase("window-opened", server, &pane, since, Some(&brief))),
                     ),
                     owned: vec![],
                 }

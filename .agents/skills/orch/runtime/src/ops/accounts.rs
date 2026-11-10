@@ -68,7 +68,7 @@ use crate::watch::hosted::{self, Launch};
 mod cache;
 pub mod listing;
 mod renewal;
-mod usage;
+pub(crate) mod usage;
 
 pub use listing::Listing;
 pub use renewal::step as renewal_step;

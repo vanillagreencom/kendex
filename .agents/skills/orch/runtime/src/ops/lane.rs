@@ -3171,7 +3171,7 @@ mod tests {
         assert_eq!(row["session"]["file"], json!("/h/projects/-w/0f6e.jsonl"));
         assert_eq!(row["server_process_start"], json!("ticks:7"));
         run(&path, &outcome(&id, Outcome::Failed)).unwrap();
-        let err = run(&path, &phase(Phase::Retired { opened })).unwrap_err();
+        let err = run(&path, &phase(Phase::WindowOpened { opened })).unwrap_err();
         assert!(matches!(err, Error::IntentComplete { .. }), "{err:?}");
     }
 

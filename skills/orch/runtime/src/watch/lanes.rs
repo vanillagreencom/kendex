@@ -2122,7 +2122,6 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
             Some(Phase::Opening { opening }) => opening.pane.clone(),
             Some(
                 Phase::WindowOpened { opened }
-                | Phase::Retired { opened }
                 | Phase::Delivering { opened, .. }
                 | Phase::Delivered { opened, .. }
                 | Phase::IdentityRead { opened, .. },

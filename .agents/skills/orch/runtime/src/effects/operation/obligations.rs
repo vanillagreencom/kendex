@@ -434,7 +434,6 @@ impl Obligations {
             }
             Some(
                 Phase::WindowOpened { opened }
-                | Phase::Retired { opened }
                 | Phase::Delivering { opened, .. }
                 | Phase::Delivered { opened, .. },
             ) => Obligations::of_opened(opened, role, harness),

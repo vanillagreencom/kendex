@@ -1935,7 +1935,6 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
             }
         },
         Phase::WindowOpened { opened }
-        | Phase::Retired { opened }
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. }
         | Phase::IdentityRead { opened, .. } => (opened.clone(), None),

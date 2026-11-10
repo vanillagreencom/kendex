@@ -265,7 +265,10 @@ enum Verb {
     },
     /// Register the controller a person opened by hand, run from its own
     /// tmux pane (`$TMUX_PANE`): its launch identity from the SessionStart
-    /// row its harness wrote, else read off the pane, then the one
+    /// row its harness wrote, else read off the pane, and what the running
+    /// harness process was started with (the account its environment names,
+    /// the model, effort and permission words on its command line), so its
+    /// next hand-over launches the same session; then the one
     /// `adopt-controller` transition, with the notices the session's
     /// coverage needs. An absent fleet state is made first.
     Register {

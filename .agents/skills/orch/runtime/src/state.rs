@@ -1183,11 +1183,11 @@ pub struct BoundSession {
 /// How far an effect got, written into its intent before each wait so a
 /// `reconcile` completes the effect from the recorded step.
 /// A launch reaches `window-opened` and then its outcome; a succession
-/// passes `retired` (the predecessor confirmed terminal), `delivered` (the
-/// brief pasted, with the runner's own session file and its user-turn count
-/// before the paste) and
-/// `identity-read` (the runner's own process identity, the last read before
-/// publication).
+/// passes `delivered` (the brief pasted while the predecessor still runs,
+/// with the runner's own session file and its user-turn count before the
+/// paste), retires the predecessor, which a reconcile reads from the
+/// predecessor itself, and reaches `identity-read` (the runner's own
+/// process identity, the last read before publication).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum Phase {
@@ -1200,10 +1200,6 @@ pub enum Phase {
         opening: Opening,
     },
     WindowOpened {
-        #[serde(flatten)]
-        opened: OpenedPane,
-    },
-    Retired {
         #[serde(flatten)]
         opened: OpenedPane,
     },
@@ -1259,7 +1255,6 @@ impl Phase {
     pub fn opened(&self) -> Option<&OpenedPane> {
         match self {
             Phase::WindowOpened { opened }
-            | Phase::Retired { opened }
             | Phase::Delivering { opened, .. }
             | Phase::Delivered { opened, .. }
             | Phase::IdentityRead { opened, .. } => Some(opened),
