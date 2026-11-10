@@ -780,6 +780,185 @@ fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_
     }
 }
 
+/// A pane where the recorded harness ran and its shell now holds alone: a
+/// stub that hands its terminal to a shell, waited until the shell has
+/// replaced it.
+fn shell_left(server: &Server, runner: &Runner) -> String {
+    let pane = server.open_stub(
+        "overseer",
+        "stub-shell",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    await_named(server, &pane, "bash");
+    pane
+}
+
+/// A pane the stub harness holds, drawn.
+fn harness_held(server: &Server, runner: &Runner) -> String {
+    let pane = server.open_stub(
+        "overseer",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    server.await_composer(&pane);
+    pane
+}
+
+/// A recorded controller with no identity whose pane its shell holds alone
+/// has ended: a start replaces the record, a dead-cause transfer proceeds
+/// with the predecessor proven `harness-gone`, and a live-cause transfer
+/// refuses `predecessor-not-live`, since an ended controller is the dead
+/// recovery's. The same record over a pane the harness still holds refuses
+/// the start `overseer-live` and the dead transfer
+/// `predecessor-identity-missing`, as an unknown stop.
+#[test]
+fn a_recorded_controller_whose_pane_holds_only_its_shell_is_replaced_and_one_holding_a_harness_is_not()
+ {
+    struct Row {
+        name: &'static str,
+        /// The recorded pane, on the row's own server.
+        pane: fn(&Server, &Runner) -> String,
+        /// `start`, or a transfer's cause.
+        mode: &'static str,
+        outcome: &'static str,
+        note: &'static str,
+        retired_by: Option<&'static str>,
+    }
+    let rows = [
+        Row {
+            name: "start over the shell",
+            pane: shell_left,
+            mode: "start",
+            outcome: "confirmed",
+            note: "successor-confirmed",
+            retired_by: Some("harness-gone"),
+        },
+        Row {
+            name: "start over the harness",
+            pane: harness_held,
+            mode: "start",
+            outcome: "failed",
+            note: "overseer-live",
+            retired_by: None,
+        },
+        Row {
+            name: "dead transfer over the shell",
+            pane: shell_left,
+            mode: "dead",
+            outcome: "confirmed",
+            note: "successor-confirmed",
+            retired_by: Some("harness-gone"),
+        },
+        Row {
+            name: "dead transfer over the harness",
+            pane: harness_held,
+            mode: "dead",
+            outcome: "failed",
+            note: "predecessor-identity-missing",
+            retired_by: None,
+        },
+        Row {
+            name: "live transfer over the shell",
+            pane: shell_left,
+            mode: "live",
+            outcome: "failed",
+            note: "predecessor-not-live",
+            retired_by: None,
+        },
+    ];
+    for row in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        if row.mode != "start" {
+            gated_readiness(&mut runner);
+        }
+        runner.init_fleet();
+        let pane = (row.pane)(&server, &runner);
+        let record = record_on(&server, runner.state_dir(), &pane, None);
+        let intent = if row.mode == "start" {
+            let mut fleet = runner.fleet();
+            fleet["overseer"] = record.clone();
+            runner.write_fleet(&fleet);
+            let brief = runner.state_dir().join("brief.md");
+            std::fs::write(&brief, "START HERE\n").unwrap();
+            effect_report(&runner.op_fleet(&json!({
+                "op": "start-controller",
+                "controller": pending(runner.state_dir()),
+                "brief_file": brief.display().to_string(),
+            })))["intent"]
+                .clone()
+        } else {
+            plant(&runner, record.clone());
+            runner.transfer_started(&request_for(&record, runner.state_dir(), row.mode));
+            runner.wait_intent_settled("request-transfer:", SETTLE)
+        };
+        assert_eq!(intent["outcome"], row.outcome, "{}: {intent}", row.name);
+        assert_eq!(intent["observation"]["note"], row.note, "{}", row.name);
+        let overseer = runner.fleet()["overseer"].clone();
+        match row.retired_by {
+            Some(by) => {
+                assert_eq!(intent["observation"]["retired_by"], by, "{}", row.name);
+                assert_eq!(overseer["generation"], 4, "{}", row.name);
+                assert_ne!(overseer["pane"], json!(pane), "{}: replaced", row.name);
+            }
+            None => {
+                assert_eq!(overseer["generation"], 3, "{}", row.name);
+                assert_eq!(overseer["pane"], json!(pane), "{}: kept", row.name);
+            }
+        }
+    }
+}
+
+/// An adoption over a recorded controller with no identity whose pane its
+/// shell holds alone binds the adopted pane; one whose pane the harness
+/// holds refuses `overseer-live`. A stop of the ended controller is
+/// confirmed by the same proof and records `off`.
+#[test]
+fn an_ended_controller_with_no_identity_is_adopted_over_and_stopped_by_its_bare_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let adopted = harness_held(&server, &runner);
+    let request = json!({
+        "op": "adopt-controller",
+        "pane": adopted,
+        "harness": "claude",
+        "cwd": runner.state_dir().display().to_string(),
+    });
+    let held = harness_held(&server, &runner);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record_on(&server, runner.state_dir(), &held, None);
+    runner.write_fleet(&fleet);
+    assert_eq!(refusal_key(&runner.op_fleet(&request)), "overseer-live");
+    assert_eq!(
+        runner.fleet()["overseer"]["pane"],
+        json!(held),
+        "nothing written"
+    );
+    let ended = shell_left(&server, &runner);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record_on(&server, runner.state_dir(), &ended, None);
+    runner.write_fleet(&fleet);
+    let answer = reply(&runner.op_fleet(&request));
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["result"]["report"]["generation"], 4);
+    assert_eq!(runner.fleet()["overseer"]["pane"], json!(adopted));
+
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record_on(&server, runner.state_dir(), &ended, None);
+    fleet["intents"] = json!([]);
+    runner.write_fleet(&fleet);
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(intent["observation"]["retired_by"], "harness-gone");
+    assert_eq!(runner.fleet()["overseer"]["off"]["generation"], 3);
+}
+
 /// The request names the spent account, and a successor resolving to it
 /// refuses before any intent persists; one on another account runs.
 #[test]

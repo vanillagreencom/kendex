@@ -507,10 +507,11 @@ enum Predecessor {
 
 /// The predecessor as `mode` needs it, or the note and cause the effect
 /// fails with before retirement. A transfer retires a recorded identity, or
-/// takes the terminal proof; one with a standing pane and no identity is
-/// an unknown stop, which cannot authorize a second controller. A start
-/// refuses `overseer-live` over an identity read live or a pane standing on
-/// the proven server, and proceeds over an empty record. A record that
+/// takes the terminal proof, which a pane holding only shells gives; one
+/// with a pane standing under anything else and no identity is an unknown
+/// stop, which cannot authorize a second controller. A start refuses
+/// `overseer-live` over an identity read live or a pane so standing on the
+/// proven server, and proceeds over an empty record. A record that
 /// names a session nothing can resolve refuses `predecessor-unproven` under
 /// both: unproven is not absent, and the remedy is
 /// adoption from its pane. A `live` transfer refuses `predecessor-not-live`
@@ -1481,8 +1482,9 @@ fn controller_retired(
 /// Retire the recorded controller exactly: its handles acquired at the
 /// start, its identity stopped, or, with none recorded, proven terminal by
 /// the terminal proof, then its window closed. A stale identity, a timeout or an
-/// unreadable read is `unconfirmed`, never a name-based kill; a standing
-/// pane with no identity is refused, since nothing names what to stop. Runs
+/// unreadable read is `unconfirmed`, never a name-based kill; a pane
+/// standing under anything but shells with no identity is refused, since
+/// nothing names what to stop. Runs
 /// in the detached job: the process that asked answers from the controller's
 /// own pane as often as not, so it is let exit before the pane is retired.
 pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<EffectOutcome> {
@@ -1523,7 +1525,8 @@ pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<Effec
 }
 
 /// The stop's outcome for a record with no identity: the terminal proof
-/// confirms it, a standing pane or a record nothing proves refuses it with
+/// confirms it, a pane holding only shells among them; a pane standing
+/// under anything else or a record nothing proves refuses it with
 /// nothing signalled, an unreadable read holds it.
 fn stop_without_identity(
     mut operation: Operation,

@@ -141,8 +141,8 @@ pub(in crate::effects) enum ProcessRead {
 /// What proves a predecessor with no recorded identity terminal, or does
 /// not.
 pub(in crate::effects) enum Proof {
-    /// Proven terminal `by` the generation-bound exit record or the pane
-    /// gone on the proven recorded server.
+    /// Proven terminal `by` the generation-bound exit record, the pane gone
+    /// on the proven recorded server, or the pane there holding no harness.
     Proven { by: &'static str },
     /// The recorded pane stands on the proven server, holding `pid`.
     Standing { pid: u32 },
@@ -307,9 +307,11 @@ fn overseer_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
 /// The proof for a predecessor whose record carries no identity:
 /// `exit.run.generation` equal to the record's generation, else the recorded
 /// pane read gone by exact id on the server the record names at its recorded
-/// pid and start. Another server on that socket, no server, or a record
-/// naming no server, start or pane proves nothing.
-pub(super) fn proof_of(overseer: &Overseer) -> Proof {
+/// pid and start, or read there holding no harness by the names of `target`,
+/// the recorded harness. Another server on that socket, no server, or a
+/// record naming no server, start or pane proves nothing; with no recorded
+/// harness a listed pane stands, since nothing names what would run in it.
+pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target>) -> Proof {
     let generation = overseer.generation.unwrap_or(0);
     let exited = overseer
         .extra
@@ -340,7 +342,10 @@ pub(super) fn proof_of(overseer: &Overseer) -> Proof {
     match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
             match tmux::pane_fields(&answering, &pane) {
-                Reading::Live(fields) => Proof::Standing { pid: fields.pid },
+                Reading::Live(fields) => match target {
+                    Some(target) => standing_or_gone(fields.pid, target),
+                    None => Proof::Standing { pid: fields.pid },
+                },
                 Reading::Gone => Proof::Proven { by: "pane-gone" },
                 Reading::Unreadable { cause } => Proof::Unreadable { cause },
             }
@@ -353,6 +358,21 @@ pub(super) fn proof_of(overseer: &Overseer) -> Proof {
             Observed::Unobservable { cause } => Proof::Unreadable { cause },
             Observed::Present(_) => unreachable!("unanswering never returns a pane"),
         },
+    }
+}
+
+/// A listed pane by who holds its terminal: nothing but shells with no
+/// harness process under it is the harness gone from it. A process that is
+/// no shell may be the harness under a name the target does not know, so it
+/// stands, as the harness does.
+fn standing_or_gone(pane_pid: u32, target: &super::super::Target) -> Proof {
+    match observe::foreground(pane_pid, &|name| target.owns(name), None) {
+        ProcessReading::ShellsOnly => Proof::Proven { by: "harness-gone" },
+        ProcessReading::Unread { cause } => Proof::Unreadable { cause },
+        ProcessReading::Harness { .. }
+        | ProcessReading::HarnessUp
+        | ProcessReading::ForegroundShell { .. }
+        | ProcessReading::ForegroundOther { .. } => Proof::Standing { pid: pane_pid },
     }
 }
 
@@ -1214,7 +1234,8 @@ impl Operation<'_> {
     /// read gone on the proven server discharges the predecessor's pane
     /// where the set holds it.
     pub(in crate::effects) fn terminal_proof(&mut self, overseer: &Overseer) -> Result<Proof> {
-        let proof = proof_of(overseer);
+        let target = super::super::overseer_target_of(self.run.settings, overseer)?;
+        let proof = proof_of(overseer, target.as_ref());
         if let Proof::Proven { by: "pane-gone" } = &proof
             && let Some(key) = self.overseer_pane_key(overseer)
         {
@@ -2195,8 +2216,9 @@ fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(
 /// harness identity in the pane's foreground, through the one judge,
 /// never the caller's word for it. A record naming
 /// another session refuses `overseer-live` while that session's identity
-/// reads live, or its pane stands on the proven server with no identity
-/// recorded; one it cannot read refuses `overseer-unreadable`; one nothing
+/// reads live, or its pane stands on the proven server holding anything
+/// but shells with no identity recorded; one it cannot read refuses
+/// `overseer-unreadable`; one nothing
 /// resolves refuses `predecessor-unproven`. The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
@@ -2255,7 +2277,10 @@ pub(in crate::effects) fn adopt_controller(
                 Reading::Gone => {}
                 Reading::Unreadable { cause } => return Err(unreadable(cause)),
             },
-            None => match proof_of(recorded) {
+            None => match proof_of(
+                recorded,
+                super::super::overseer_target_of(settings, recorded)?.as_ref(),
+            ) {
                 Proof::Standing { pid } => return Err(live(pid as u64)),
                 Proof::Unreadable { cause } => return Err(unreadable(cause)),
                 // Nothing resolves the recorded session: it is not replaced;

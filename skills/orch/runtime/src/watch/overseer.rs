@@ -5,10 +5,15 @@
 //! pass, so the controller is judged once per pass and the mail duty takes
 //! no gate from it.
 //!
-//! A death is counted on `ORCH_OVERSEER_DEAD_PASSES` consecutive passes
-//! that read the session gone, never on an unreadable read; a wall the rows
-//! or the account state needs one pass, a wall the screen alone shows takes
-//! the same count and the account judgement's confirmation. The case is
+//! A death the reads prove (the exit record or the session's end row over
+//! a pane holding only shells, such a pane whose recorded process is gone,
+//! or the pane itself gone) is said on its first pass; one the shells alone
+//! show is counted on `ORCH_OVERSEER_DEAD_PASSES` consecutive passes, never
+//! on an unreadable read; a record marked `off` is not judged. A wall the
+//! rows or the account state needs one pass, a wall the screen alone shows
+//! takes the death's count and the account judgement's confirmation. Every
+//! death said is the owner's alert once, since the session that would read
+//! the log is the one that ended. The case is
 //! said on the log before anything moves, then the one existing request,
 //! `request-transfer` with its cause and the spent account, asks for the
 //! succession, whose terminal proof runs inside that transfer; a
@@ -62,6 +67,8 @@ use crate::state::{FleetState, Pending, TransferCause};
 
 /// The gap alert's notice file under the state directory.
 const GAP_ALERT_FILE: &str = "overseer-context-gap.txt";
+/// The death alert's notice file under the state directory.
+const DEAD_ALERT_FILE: &str = "overseer-dead.txt";
 
 /// Where the verdict was read, the `source=` word of the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -109,7 +116,7 @@ pub enum Verdict {
     /// A controller operation the runtime holds open is replacing the
     /// session; nothing is judged beside it.
     Transferring { intent: String },
-    /// No controller record names a pane to read.
+    /// No controller record names a pane to read, or the record is `off`.
     Unwatched { cause: &'static str },
     /// The pane, its process or its screen could not be read; nothing is
     /// counted on it.
@@ -1244,6 +1251,10 @@ struct Reads {
     process: ProcessReading,
     screen: Result<String, String>,
     rows: Option<Reading<SessionVerdict>>,
+    /// The recorded process read gone beside a pane holding only shells:
+    /// what makes such a pane the session's end rather than a moment
+    /// between programs. Read nowhere else.
+    identity_gone: bool,
 }
 
 /// One pass's inputs.
@@ -1265,11 +1276,11 @@ pub struct Pass<'a> {
     /// The overseer's context record, `context.json` in the overseer
     /// mailbox; `None` where the fleet has no mailbox root to read it in.
     pub context_record: Option<&'a Path>,
-    /// The owner's alert for a standing gap, one notice through the
-    /// overseer mailbox (`lane-mail notice --item overseer --to owner`);
-    /// `Ok` once the owner holds the words, `Err` with the cause where it
-    /// was not sent.
-    pub alert: &'a dyn Fn(&str) -> Result<(), String>,
+    /// The owner's alert for a standing gap or a death, one notice through
+    /// the overseer mailbox (`lane-mail notice --item overseer --to owner`)
+    /// written to the named file under the state directory; `Ok` once the
+    /// owner holds the words, `Err` with the cause where it was not sent.
+    pub alert: &'a dyn Fn(&str, &str) -> Result<(), String>,
 }
 
 /// The verdict of the record's session from the reads: the login wall
@@ -1414,14 +1425,19 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 6] = [
+const ROWS: [&str; 7] = [
     "overseer-dead",
     "overseer-walled",
     "overseer-mark",
     TRANSFER_ROW,
     context::GAP_ROW,
     OOM_ROW,
+    DEAD_ALERT_ROW,
 ];
+
+/// The owner's alert for the death the `overseer-dead` row said, `alerted`
+/// once the owner holds the words; owed while the death stands without it.
+const DEAD_ALERT_ROW: &str = "overseer-dead-alert";
 
 /// The live controller's last OOM kill count on its control-group path,
 /// the caps' count a death is judged against; `memory-cap` once a death
@@ -1474,6 +1490,16 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             None,
         );
     };
+    // A controller stopped on purpose: its stop closed the window, and no
+    // death or owner's alert follows from it.
+    if record.raw.get("off").is_some_and(|off| !off.is_null()) {
+        return judged(
+            Verdict::Unwatched {
+                cause: "controller-off",
+            },
+            None,
+        );
+    }
     let key = record.pane_key();
     // Rows of a pane that is no longer the controller's go with it.
     for kind in ROWS {
@@ -1483,28 +1509,29 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
         }
     }
+    // `None` is the pane id gone from the very server the record names,
+    // confirmed by pid and start: no session runs in a pane that is gone.
     let (reads, pane_pid) =
         match (pass.readers.pane)(record.server, record.server_start, &record.pane) {
-            Reading::Live(fields) => (
-                Reads {
-                    process: (pass.readers.foreground)(
-                        fields.pid,
-                        record.harness,
-                        record.identity.as_ref(),
-                    ),
-                    screen: (pass.readers.capture)(&fields.pane),
-                    rows: record.session_rows.as_deref().map(rows::session_verdict),
-                },
-                fields.pid,
-            ),
-            Reading::Gone => {
-                return judged(
-                    Verdict::Unreadable {
-                        cause: "pane-gone".to_owned(),
-                    },
-                    Some(key),
-                );
+            Reading::Live(fields) => {
+                let process =
+                    (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
+                let identity_gone = matches!(process, ProcessReading::ShellsOnly)
+                    && record
+                        .identity
+                        .as_ref()
+                        .is_some_and(|id| matches!((pass.readers.start_epoch)(id), Reading::Gone));
+                (
+                    Some(Reads {
+                        process,
+                        screen: (pass.readers.capture)(&fields.pane),
+                        rows: record.session_rows.as_deref().map(rows::session_verdict),
+                        identity_gone,
+                    }),
+                    Some(fields.pid),
+                )
             }
+            Reading::Gone => (None, None),
             Reading::Unreadable { cause } => {
                 return judged(
                     Verdict::Unreadable {
@@ -1534,7 +1561,12 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         marks_read.clone().flatten()
     };
-    let mut verdict = judge(&record, &reads, &mut marks);
+    let mut verdict = match &reads {
+        Some(reads) => judge(&record, reads, &mut marks),
+        None => Verdict::Exited {
+            source: Source::Pane,
+        },
+    };
     let mut reserve = false;
     if verdict == Verdict::Live
         && let Some(m) = marks()
@@ -1579,9 +1611,15 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     }
     let marks_now = marks_read.clone().flatten();
     let (case, source, passes_needed) = match &verdict {
-        Verdict::Exited { source } => {
-            (Some(OverseerCase::Dead), *source, pass.settings.dead_passes)
-        }
+        Verdict::Exited { source } => (
+            Some(OverseerCase::Dead),
+            *source,
+            if death_proven(*source, reads.as_ref()) {
+                1
+            } else {
+                pass.settings.dead_passes
+            },
+        ),
         Verdict::Walled { source, .. } => (
             Some(OverseerCase::Walled),
             *source,
@@ -1602,6 +1640,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         // only on a live reading, never on an unreadable one.
         if verdict == Verdict::Live {
             out.changes.push(clear("overseer-dead", &key));
+            out.changes.push(clear(DEAD_ALERT_ROW, &key));
             out.changes.push(clear(TRANSFER_ROW, &key));
             let prior = pass.baseline.get("overseer-walled", &key).unwrap_or("");
             if !prior.starts_with("reserve:")
@@ -1611,7 +1650,9 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
             mark_check(&record, &key, marks_now.as_ref(), pass, out);
             context_check(&record, &key, context.as_ref(), pass, out);
-            oom_baseline(&key, pane_pid, pass, out);
+            if let Some(pid) = pane_pid {
+                oom_baseline(&key, pid, pass, out);
+            }
         }
         return judged(verdict, Some(key));
     };
@@ -1621,6 +1662,9 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     };
     out.changes.push(clear(other, &key));
     out.changes.push(clear("overseer-mark", &key));
+    if case != OverseerCase::Dead {
+        out.changes.push(clear(DEAD_ALERT_ROW, &key));
+    }
     // A working overseer on its reserve is the only cased one with a
     // context to judge: neither a dead nor a walled one runs a turn.
     if case == OverseerCase::Reserve {
@@ -1640,6 +1684,17 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         (OverseerCase::Dead | OverseerCase::Walled, Some(_)) => String::new(),
         (OverseerCase::Dead | OverseerCase::Walled, None) => prior,
     };
+    let plan_relaunch = pass.succession == Succession::On
+        && match case {
+            OverseerCase::Dead => record.held_successor().is_some(),
+            OverseerCase::Walled | OverseerCase::Reserve => true,
+        };
+    if case == OverseerCase::Dead
+        && matches!(prior.as_str(), "reported" | "requested" | "announced")
+    {
+        let text = dead_alert_text(&record, source, passes_needed, plan_relaunch);
+        dead_turn(&record, &key, &text, pass, out);
+    }
     match prior.as_str() {
         "reported" => return judged(verdict, Some(key)),
         "requested" => {
@@ -1658,21 +1713,17 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         return judged(verdict, Some(key));
     }
     // The line, with the wall's own words under it, before anything moves.
-    let plan_relaunch = pass.succession == Succession::On
-        && match case {
-            OverseerCase::Dead => record.held_successor().is_some(),
-            OverseerCase::Walled | OverseerCase::Reserve => true,
-        };
     let record_field = match case {
         OverseerCase::Dead if record.held_successor().is_none() => {
             Some(format!("{}:{}", record.server, record.pane))
         }
         OverseerCase::Dead | OverseerCase::Walled | OverseerCase::Reserve => None,
     };
-    // A new episode counts its own transfers.
+    // A new episode counts its own transfers and owes its own alert.
     out.changes.push(clear(TRANSFER_ROW, &key));
+    out.changes.push(clear(DEAD_ALERT_ROW, &key));
     let cause = match case {
-        OverseerCase::Dead => memory_cap(&key, pane_pid, pass),
+        OverseerCase::Dead => pane_pid.and_then(|pid| memory_cap(&key, pid, pass)),
         OverseerCase::Walled | OverseerCase::Reserve => None,
     };
     if let Some(cause) = cause {
@@ -1693,8 +1744,8 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         let lines: Vec<String> = match source {
             Source::Pane => {
                 let slice = reads
-                    .screen
-                    .as_deref()
+                    .as_ref()
+                    .and_then(|r| r.screen.as_deref().ok())
                     .map(observe::below_last_turn)
                     .unwrap_or_default();
                 banner_payload(&slice, text, pass.settings.tail_lines as usize).unwrap_or_default()
@@ -1708,8 +1759,9 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         };
         out.events.extend(lines.into_iter().map(Event::Tail));
     }
-    // The request follows on the duty's next run, after the line is on
-    // disk: the row says it is owed and the duty asks to run again at once.
+    // The request, and a death's owner alert, follow on the duty's next run,
+    // after the line is on disk: the row says they are owed and the duty asks
+    // to run again at once.
     out.changes.push(set(
         row,
         &key,
@@ -1722,8 +1774,63 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
         ),
     ));
-    out.next_due = plan_relaunch.then_some(pass_next_due());
+    out.next_due = (plan_relaunch || case == OverseerCase::Dead).then_some(pass_next_due());
     judged(verdict, Some(key))
+}
+
+/// Whether a dead verdict's reads prove the session ended, so its first
+/// pass says it: the pane gone, the exit record or the end
+/// row over a pane holding only shells, or such a pane whose recorded
+/// process is gone. Shells alone, or a context that fills its window, may
+/// be a moment between programs, and take the setting's count.
+fn death_proven(source: Source, reads: Option<&Reads>) -> bool {
+    match source {
+        Source::Pane | Source::Record | Source::Rows => true,
+        Source::Process => reads.is_some_and(|r| r.identity_gone),
+        Source::Context | Source::Auth | Source::Account => false,
+    }
+}
+
+/// The state word the death's alert row is kept under.
+const DEAD_STATE: &str = "dead";
+
+/// The owner's alert for a death the line said: sent until the owner holds
+/// the words, then nothing while that death stands.
+fn dead_turn(record: &Record, key: &str, text: &str, pass: &Pass, out: &mut Produced) {
+    let prior = pass.baseline.get(DEAD_ALERT_ROW, key).unwrap_or("");
+    if Word::of_row(prior, DEAD_STATE) == Some(Word::Alerted) {
+        return;
+    }
+    match (pass.alert)(DEAD_ALERT_FILE, text) {
+        Ok(()) => {
+            context::note("overseer-dead-alerted", &format!("pane={}", record.pane));
+            out.changes
+                .push(set(DEAD_ALERT_ROW, key, Word::Alerted.row(DEAD_STATE)));
+        }
+        Err(cause) => context::note(
+            "overseer-notice-failed",
+            &format!("channel=owner cause={cause}"),
+        ),
+    }
+}
+
+/// The owner's alert for a death: which session ended, what read it, and
+/// whether anything replaces it.
+fn dead_alert_text(record: &Record, source: Source, passes: u32, recovery: bool) -> String {
+    let generation = record
+        .generation
+        .map_or_else(|| "unrecorded".to_owned(), |g| g.to_string());
+    let next = if recovery {
+        "The watch requests its recovery; a failed recovery is said as overseer-relaunch-failed on the watch log."
+    } else {
+        "Nothing replaces it: start a new overseer as the orch skill's workflows/oversee.md says under Controller start and adoption."
+    };
+    format!(
+        "overseer-dead: the overseer in pane {} (window {}, generation {generation}) has ended, read source={} on passes={passes}. {next} The remedy is under overseer-dead in the orch skill's references/overseer-session-events.md.\n",
+        record.pane,
+        record.window,
+        source.word()
+    )
 }
 
 /// The live controller's OOM kill count kept under [`OOM_ROW`]: the count
@@ -1859,20 +1966,22 @@ fn gap_turn(record: &Record, key: &str, gap: &str, pass: &Pass, out: &mut Produc
     let prior = pass.baseline.get(context::GAP_ROW, key).unwrap_or("");
     match Word::of_row(prior, gap) {
         Some(Word::Alerted) => {}
-        Some(Word::Told) => match (pass.alert)(&context::alert_text(&record.pane, gap)) {
-            Ok(()) => {
-                context::note(
-                    "overseer-context-alerted",
-                    &format!("pane={} gap={gap}", record.pane),
-                );
-                out.changes
-                    .push(set(context::GAP_ROW, key, Word::Alerted.row(gap)));
+        Some(Word::Told) => {
+            match (pass.alert)(GAP_ALERT_FILE, &context::alert_text(&record.pane, gap)) {
+                Ok(()) => {
+                    context::note(
+                        "overseer-context-alerted",
+                        &format!("pane={} gap={gap}", record.pane),
+                    );
+                    out.changes
+                        .push(set(context::GAP_ROW, key, Word::Alerted.row(gap)));
+                }
+                Err(cause) => context::note(
+                    "overseer-notice-failed",
+                    &format!("channel=owner cause={cause}"),
+                ),
             }
-            Err(cause) => context::note(
-                "overseer-notice-failed",
-                &format!("channel=owner cause={cause}"),
-            ),
-        },
+        }
         None => {
             out.events.push(Event::OverseerContextUnmeasured {
                 pane: record.pane.clone(),
@@ -2620,7 +2729,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             .common
             .join("tmp/lane-mail/overseer")
             .join("context.json");
-        let alert = |text: &str| owner_alert::send(&ctx.settings, GAP_ALERT_FILE, text);
+        let alert = |file: &str, text: &str| owner_alert::send(&ctx.settings, file, text);
         let env = crate::ops::Env {
             now_secs: tick.wall,
             now_nanos: u128::from(tick.wall) * 1_000_000_000,

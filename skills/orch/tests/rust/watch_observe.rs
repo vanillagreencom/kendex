@@ -1454,8 +1454,8 @@ struct OverseerDriver<'a> {
     transfers: &'a RefCell<Vec<RequestTransfer>>,
     /// The overseer's context record, where a row plants one.
     context_record: Option<PathBuf>,
-    /// The owner's alert for a standing gap.
-    alert: &'a dyn Fn(&str) -> Result<(), String>,
+    /// The owner's alert for a standing gap or a death, by notice file.
+    alert: &'a dyn Fn(&str, &str) -> Result<(), String>,
     /// `ORCH_OVERSEER_SUCCESSION`, on unless a row turns it off.
     succession: Succession,
 }
@@ -1514,8 +1514,14 @@ fn below(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
     Ok(marks(MarkKey::Below, "", "", Succession::On, ""))
 }
 
-fn no_alert(_: &str) -> Result<(), String> {
-    panic!("no gap stood two passes")
+/// The owner's alert of a row that judges none: a death's is taken, which
+/// the death rows of their own judge; no gap stands two passes.
+fn no_alert(_: &str, text: &str) -> Result<(), String> {
+    assert!(
+        text.starts_with("overseer-dead:"),
+        "no gap stood two passes: {text}"
+    );
+    Ok(())
 }
 
 fn reached(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
@@ -1794,6 +1800,356 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
         transfers3.borrow().is_empty(),
         "succession off asks no transfer"
     );
+}
+
+/// The owner's alerts a row records by notice file, refused while
+/// `refusing` is set.
+struct Alerts {
+    sent: RefCell<Vec<(String, String)>>,
+    refusing: Cell<bool>,
+}
+
+impl Alerts {
+    fn new() -> Alerts {
+        Alerts {
+            sent: RefCell::new(Vec::new()),
+            refusing: Cell::new(false),
+        }
+    }
+
+    fn send(&self, file: &str, text: &str) -> Result<(), String> {
+        if self.refusing.get() {
+            return Err("mailbox-down".to_owned());
+        }
+        self.sent
+            .borrow_mut()
+            .push((file.to_owned(), text.to_owned()));
+        Ok(())
+    }
+
+    fn texts(&self) -> Vec<String> {
+        self.sent.borrow().iter().map(|(_, t)| t.clone()).collect()
+    }
+}
+
+/// The pane's foreground as the duty reads it for a Claude record, once
+/// `want` holds, bounded.
+fn await_foreground(
+    server: &Server,
+    pane: &str,
+    want: fn(&ProcessReading) -> bool,
+) -> ProcessReading {
+    let pid = server.pane_pid(pane);
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let reading = foreground(pid, Some(Harness::Claude), None);
+        if want(&reading) {
+            return reading;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{pane} never read as wanted: {reading:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Wait until the pane's shell holds it alone.
+fn await_bare(server: &Server, pane: &str) {
+    let _shells = await_foreground(server, pane, |r| matches!(r, ProcessReading::ShellsOnly));
+}
+
+/// Wait until a harness holds the pane: its identity.
+fn await_held(server: &Server, pane: &str) -> Identity {
+    let ProcessReading::Harness { identity } = await_foreground(server, pane, |r| {
+        matches!(r, ProcessReading::Harness { .. })
+    }) else {
+        unreachable!("awaited a harness")
+    };
+    identity
+}
+
+/// An interactive shell pane that runs a process named `claude` from its
+/// prompt: the pane and that process's identity.
+fn harness_in_shell(dir: &Path, server: &Server) -> (String, Identity) {
+    let claude = named_sleep(dir, "claude");
+    let pane = server.open_window("overseer", dir, "bash --norc --noprofile -i");
+    await_bare(server, &pane);
+    server.send_line(&pane, &format!("{} 600", claude.display()));
+    let identity = await_held(server, &pane);
+    (pane, identity)
+}
+
+/// Kill the pane's harness as the system's memory guard does, and wait for
+/// its shell to hold the pane alone again.
+fn kill_harness(server: &Server, pane: &str, identity: &Identity) {
+    let out = std::process::Command::new("kill")
+        .args(["-KILL", &identity.pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    await_bare(server, pane);
+}
+
+/// A controller whose end a reading proves is said on the first pass
+/// (`passes=1`) whatever `ORCH_OVERSEER_DEAD_PASSES` reads: the exit record
+/// or the end row over a pane its shell holds alone, such a pane whose
+/// recorded harness was killed, and the pane gone from the recorded server.
+/// The owner's alert follows on
+/// the duty's next run, which the line asks for at once, under its own
+/// notice file, and nothing after; the alert says whether anything replaces
+/// the session.
+#[test]
+fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_owner_once() {
+    struct Case {
+        name: &'static str,
+        source: &'static str,
+        /// The record over a pane on `server`, planted in `dir`.
+        plant: fn(&Path, &Server) -> Value,
+    }
+    let bash = |dir: &Path, server: &Server| {
+        let pane = server.open_window("overseer", dir, "bash --norc --noprofile");
+        await_bare(server, &pane);
+        let window = window_of(server, &pane);
+        overseer_at(server, &pane, &window, dir)
+    };
+    let cases = [
+        Case {
+            name: "the exit record over a bare pane",
+            source: "record",
+            plant: |dir, server| {
+                let pane = server.open_window("overseer", dir, "bash --norc --noprofile");
+                await_bare(server, &pane);
+                let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+                record["exit"] = json!({"status": 0, "run": {"generation": 3}});
+                record
+            },
+        },
+        Case {
+            name: "the end row over a bare pane",
+            source: "rows",
+            plant: |dir, server| {
+                let pane = server.open_window("overseer", dir, "bash --norc --noprofile");
+                await_bare(server, &pane);
+                let rows = dir.join("overseer-rows.jsonl");
+                session_rows(
+                    &rows,
+                    &[
+                        started(1_799_999_000),
+                        json!({"harness": "claude", "event": "SessionEnd", "reason": "exit"}),
+                    ],
+                );
+                let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+                record["session_rows"] = json!(rows.display().to_string());
+                record
+            },
+        },
+        Case {
+            name: "the recorded harness killed, its shell left",
+            source: "process",
+            plant: |dir, server| {
+                let (pane, identity) = harness_in_shell(dir, server);
+                let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+                record["harness_pid"] = json!(identity.pid.to_string());
+                record["harness_start"] = json!(identity.start);
+                kill_harness(server, &pane, &identity);
+                record
+            },
+        },
+        Case {
+            name: "the pane gone from the recorded server",
+            source: "pane",
+            plant: |dir, server| overseer_at(server, "%99", "@99", dir),
+        },
+    ];
+    for case in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let record = (case.plant)(dir.path(), &server);
+        let pane = record["pane"].as_str().unwrap().to_owned();
+        let window = record["window"].as_str().unwrap().to_owned();
+        fleet.set_overseer(record);
+        let state = fleet.read();
+        let alerts = Alerts::new();
+        let alert = |file: &str, text: &str| alerts.send(file, text);
+        overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+        driver.succession = Succession::Off;
+        driver.alert = &alert;
+        let key = format!("{} {pane}", server.pid);
+        let first = driver.pass(&state);
+        assert_eq!(
+            lines(&first),
+            vec![format!(
+                "EVENT overseer-dead {pane} window={window} passes=1 succession=off source={}",
+                case.source
+            )],
+            "{}",
+            case.name
+        );
+        assert!(
+            first.next_due.is_some(),
+            "{}: the alert follows at once",
+            case.name
+        );
+        assert!(
+            alerts.texts().is_empty(),
+            "{}: the line goes first",
+            case.name
+        );
+        let second = driver.pass(&state);
+        assert!(
+            lines(&second).is_empty(),
+            "{}: {:?}",
+            case.name,
+            lines(&second)
+        );
+        let sent = alerts.sent.borrow().clone();
+        assert_eq!(sent.len(), 1, "{}: one alert", case.name);
+        assert_eq!(sent[0].0, "overseer-dead.txt", "{}", case.name);
+        let text = &sent[0].1;
+        assert!(
+            text.starts_with(&format!("overseer-dead: the overseer in pane {pane} "))
+                && text.contains(&format!("source={} on passes=1", case.source))
+                && text.contains("Nothing replaces it"),
+            "{}: {text}",
+            case.name
+        );
+        assert_eq!(
+            driver.baseline.get("overseer-dead-alert", &key),
+            Some("dead|alerted"),
+            "{}",
+            case.name
+        );
+        for _ in 0..2 {
+            let after = driver.pass(&state);
+            assert!(
+                lines(&after).is_empty(),
+                "{}: {:?}",
+                case.name,
+                lines(&after)
+            );
+        }
+        assert_eq!(alerts.texts().len(), 1, "{}: nothing after", case.name);
+        assert!(transfers.borrow().is_empty(), "{}", case.name);
+    }
+    // Under succession the alert says the watch asks for the recovery, and
+    // the request goes out on the same run.
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let mut record = bash(dir.path(), &server);
+    record["exit"] = json!({"status": 0, "run": {"generation": 3}});
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    let alerts = Alerts::new();
+    let alert = |file: &str, text: &str| alerts.send(file, text);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    driver.alert = &alert;
+    driver.pass(&state);
+    driver.pass(&state);
+    let texts = alerts.texts();
+    assert_eq!(texts.len(), 1);
+    assert!(
+        texts[0].contains("The watch requests its recovery"),
+        "{}",
+        texts[0]
+    );
+    assert_eq!(transfers.borrow().len(), 1);
+}
+
+/// A pane its shell holds alone, with nothing proving the session ended, is
+/// said on the setting's second pass, then alerted to the owner; an alert
+/// the mailbox refused stays owed and is sent on the pass after, once. A
+/// live harness in the pane clears the death and its alert, and a later
+/// death is said and alerted again.
+#[test]
+fn a_bare_pane_alone_is_said_on_the_second_pass_and_each_death_alerted_once_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = harness_in_shell(dir.path(), &server);
+    let window = window_of(&server, &pane);
+    fleet.set_overseer(overseer_at(&server, &pane, &window, dir.path()));
+    let state = fleet.read();
+    let alerts = Alerts::new();
+    let alert = |file: &str, text: &str| alerts.send(file, text);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    driver.succession = Succession::Off;
+    driver.alert = &alert;
+    let key = format!("{} {pane}", server.pid);
+    let line = format!(
+        "EVENT overseer-dead {pane} window={window} passes=2 succession=off source=process"
+    );
+    kill_harness(&server, &pane, &identity);
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(lines(&driver.pass(&state)), vec![line.clone()]);
+    assert!(alerts.texts().is_empty());
+    alerts.refusing.set(true);
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(
+        driver.baseline.get("overseer-dead-alert", &key),
+        None,
+        "an alert the owner did not get stays owed"
+    );
+    alerts.refusing.set(false);
+    driver.pass(&state);
+    assert_eq!(alerts.texts().len(), 1);
+    driver.pass(&state);
+    assert_eq!(alerts.texts().len(), 1, "nothing while the death stands");
+    // A harness in the pane again: live, the death and its alert cleared.
+    let claude = dir.path().join("claude");
+    server.send_line(&pane, &format!("{} 600", claude.display()));
+    let identity = await_held(&server, &pane);
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
+    assert_eq!(driver.baseline.get("overseer-dead", &key), None);
+    assert_eq!(driver.baseline.get("overseer-dead-alert", &key), None);
+    kill_harness(&server, &pane, &identity);
+    assert!(lines(&driver.pass(&state)).is_empty());
+    assert_eq!(lines(&driver.pass(&state)), vec![line]);
+    driver.pass(&state);
+    assert_eq!(alerts.texts().len(), 2, "the later death is alerted again");
+    assert!(transfers.borrow().is_empty());
+}
+
+/// A controller stopped on purpose is not judged: its record marked `off`
+/// over a pane its shell holds alone, or over the pane its stop closed,
+/// draws no line and no alert on any pass.
+#[test]
+fn a_controller_marked_off_is_not_judged_dead() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
+    await_bare(&server, &pane);
+    let window = window_of(&server, &pane);
+    for (pane, window) in [(pane.as_str(), window.as_str()), ("%99", "@99")] {
+        let mut record = overseer_at(&server, pane, window, dir.path());
+        record["off"] = json!({"at": "2026-10-26T10:00:00Z", "generation": 3});
+        fleet.set_overseer(record);
+        let state = fleet.read();
+        let alerts = Alerts::new();
+        let alert = |file: &str, text: &str| alerts.send(file, text);
+        overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+        driver.alert = &alert;
+        for _ in 0..3 {
+            let produced = driver.pass(&state);
+            assert!(
+                lines(&produced).is_empty(),
+                "{pane}: {:?}",
+                lines(&produced)
+            );
+            assert_eq!(
+                driver.slot.read().unwrap().verdict,
+                Verdict::Unwatched {
+                    cause: "controller-off"
+                }
+            );
+        }
+        assert!(alerts.texts().is_empty(), "{pane}");
+        assert!(transfers.borrow().is_empty(), "{pane}");
+    }
 }
 
 /// A death the caps on the controller's control-group path made: the live
@@ -2457,7 +2813,7 @@ fn a_gap_is_said_once_then_alerted_to_the_owner_once_sent_and_quiet_after() {
     session_rows(&rows, &[started(now - 600)]);
     let alerts: RefCell<Vec<String>> = RefCell::new(Vec::new());
     let refusing = Cell::new(false);
-    let alert = |text: &str| {
+    let alert = |_: &str, text: &str| {
         if refusing.get() {
             return Err("mailbox-down".to_owned());
         }
