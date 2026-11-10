@@ -3,10 +3,11 @@
 # ran, `ok` inside two poll intervals plus five seconds of the last poll,
 # `stale` past it, `failing` when the last poll was refused or the relay has
 # been reconnecting past the bound, with the last connect refusal as its fix,
-# the refused and open counts, and the connection: as the relay recorded it
-# while the record is fresh, `disconnected` since the last poll once it is
-# stale, and `unknown` since the last poll on a record the pre-Socket-Mode
-# relay wrote. The controls plant a mutant that indexes the connection error,
+# the refused and open counts, and the connection: `none` with no since for
+# queue mode; otherwise as recorded while fresh, `disconnected` since the
+# last poll once stale, and `unknown` since the last poll on a record the
+# pre-Socket-Mode relay wrote. A control disables the queue output rule.
+# Other controls plant a mutant that indexes the connection error,
 # so an old record raises, one whose fallback connection_since is not the last
 # poll, one whose freshness bound never expires, so a stale record reads ok,
 # one that shows a stale record's connection as recorded, and one that never
@@ -36,6 +37,33 @@ assert_eq "$(field "$LINE" state)=$(field "$LINE" channel)=$(field "$LINE" open_
   "a fresh poll is ok, with the channel, the open ask and the refused envelope counted"
 assert_eq "$(field "$LINE" connection)=$(field "$LINE" connection_since)" "disconnected=$(jq -r .connection_since "$STATUS")" \
   "a --once poll opens no connection and shows disconnected since it started"
+
+# The doctor's consumers parse these fields. Queue rows keep the disconnected
+# default and start time a running pre-change relay writes; only inbound differs.
+cp "$STATUS" "$SK_TMP/once.json"
+while read -r inbound connection age state expected; do
+  jq --arg inbound "$inbound" --arg connection "$connection" --argjson age "$age" \
+    '.inbound = $inbound | .connection = $connection | .last_poll -= $age' \
+    "$SK_TMP/once.json" > "$STATUS"
+  row
+  assert_eq "$RC=$(field "$LINE" state)=$(field "$LINE" inbound)=$(field "$LINE" connection)" \
+    "0=$state=$inbound=$expected" "$inbound record age=$age reports its connection independently of freshness"
+  if [ "$inbound" = queue ]; then
+    assert_lacks "$LINE" " connection_since=" "queue record age=$age has no socket timestamp"
+  else
+    assert_eq "$(field "$LINE" connection_since)" "$(jq -r .connection_since "$STATUS")" "a fresh socket record keeps its connection timestamp"
+  fi
+done <<'ROWS'
+socket connected 0 ok connected
+queue disconnected 0 ok none
+queue disconnected 30 stale none
+ROWS
+sk_mutant queue-connection verbs.py 'inbound == "queue"' 'False'
+row
+assert_eq "$(field "$LINE" connection)" "disconnected" "control: without the queue rule, a queue record reports the old socket default"
+assert_has "$LINE" " connection_since=" "control: without the queue rule, a queue record reports a socket timestamp"
+sk_bin_reset
+cp "$SK_TMP/once.json" "$STATUS"
 
 jq '.last_poll = (.last_poll - 30) | .connection = "connected"' "$STATUS" > "$SK_TMP/stale.json" && cp "$SK_TMP/stale.json" "$STATUS"
 STALE_SINCE="$(python3 -c 'import json, sys, time; print(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(json.load(open(sys.argv[1]))["last_poll"])))' "$STATUS")"
