@@ -175,12 +175,57 @@ case "$verb" in
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
+    # Claude Code records its finished first-run setup as hasCompletedOnboarding
+    # in the account's .claude.json, the file lane_claude_trust_prepare reads.
+    # Without it the task stops on the theme and security screens with nobody
+    # at the pane. Read before ol_command_line, whose trust write sets the key:
+    # the setup is the account owner's to finish at the harness.
+    # No documented interface answers whether that setup is done: `claude auth
+    # status` reports sign-in, `claude doctor` install and settings health, and
+    # neither the settings keys (`theme` among them, plus the documented global
+    # config keys of .claude.json) nor any environment variable records it.
+    # IS_DEMO skips the setup without reporting it, a skip the owner never chose.
+    # https://code.claude.com/docs/en/cli-reference
+    # https://code.claude.com/docs/en/settings-reference#global-config-settings
+    # https://code.claude.com/docs/en/env-vars
+    if [[ "$harness" == claude ]]; then
+      onboarded=false
+      if [[ -e "$account/.claude.json" ]]; then
+        onboarded="$(jq '.hasCompletedOnboarding == true' < "$account/.claude.json")" || exit 1
+      fi
+      if [[ "$onboarded" != true ]]; then
+        printf -v fix 'open claude once with CLAUDE_CONFIG_DIR=%q and finish its first-run setup, then launch the task again' "$account"
+        jq -cn --arg fix "$fix" '{refused:"harness-setup-pending",fix:$fix}'
+        exit 0
+      fi
+    fi
     ol_model_line "$OL_ENTRY_WARNING"
     ol_launch_flags --question-off "$harness" "$model" "$effort" "$model" "" || exit 1
     ol_command_line --brief "$6" "$harness" "" "$account" "$7" "${OL_FLAGS[@]}" || exit 1
     jq -cn --arg line "$OL_CMD" --arg harness "$harness" --arg model "${model:-native-default}" \
       --arg account "$account" --arg effort "$effort" \
       '{line:$line,harness:$harness,model:$model,account:$account,effort:$effort}' ;;
+  task-ready)
+    # Prints PANE's screen. Status 0 is a harness drawing its composer or a
+    # turn (orch's pane_harness_up) that orch's lane_state reads as no dialog
+    # and no wall; 1 is any other screen: one no harness drew yet, a first-run
+    # or trust screen, a selection dialog such as Codex's model switch, or a
+    # sign-in or usage wall; 2 is an unread pane; 3 is an exited harness, its
+    # `exit=` status printed first.
+    export TMUX="$1,0,0"
+    dead="$(tmux -S "$1" display-message -p -t "$2" '#{pane_dead}:#{pane_dead_status}')" || exit 2
+    screen="$(tmux -S "$1" capture-pane -p -t "$2")" || exit 2
+    if [[ "${dead%%:*}" == 1 ]]; then
+      printf 'exit=%s\n%s\n' "${dead#*:}" "$screen"
+      exit 3
+    fi
+    printf '%s\n' "$screen"
+    pane_harness_up "$screen" || exit 1
+    # No window or process read: the pane is open and its harness alive.
+    lane_state state listed "" "" "$screen" || exit 2
+    case "$state" in
+      asking|rate-limit-switch|walled) exit 1 ;;
+    esac ;;
   task-live)
     rc=0
     home_pane_live "$1" "$2" "$3" "$4" || rc=$?

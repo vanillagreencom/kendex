@@ -192,7 +192,7 @@ set-hook -g after-new-window "rename-window user-hook"
         (self.home / ".lane-fixture.json").write_text(json.dumps({"calls": str(self.root / "lane-calls"), "harness": "claude",
                                                                    "account": str(self.account), "read_rc": 0, "headroom": 100}))
         task_native = self.root / "bin/copilot"
-        task_native.write_text("#!" + sys.executable + "\nimport signal\nwhile True: signal.pause()\n")
+        task_native.write_text("#!" + sys.executable + "\nimport signal\nprint('\\u276f\\u00a0', flush=True)\nwhile True: signal.pause()\n")
         task_file, result = self.home / "task.md", self.home / "result.md"
         task_file.write_text("Write the result.\n")
         task = self.task("launch", "--name", "user config", "--harness", "copilot", "--model", "standard",
@@ -560,7 +560,7 @@ set-hook -g after-new-window "rename-window user-hook"
                         task_bin = self.root / "task-bin"
                         task_bin.mkdir(exist_ok=True)
                         task_cli = task_bin / "codex"
-                        task_cli.write_text("#!/usr/bin/env python3\nimport signal\nwhile True: signal.pause()\n")
+                        task_cli.write_text("#!/usr/bin/env python3\nimport signal\nprint('\\u276f\\u00a0', flush=True)\nwhile True: signal.pause()\n")
                         task_cli.chmod(0o755)
                         task = subprocess.run([str(skills / "jarvis/scripts/task"), "launch", "--home", str(self.home),
                             "--name", "Refusal recovery", "--harness", "codex", "--model", "standard",

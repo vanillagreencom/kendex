@@ -119,6 +119,8 @@ class Task(Session):
                                            "--outcome", "succeeded"]) + ".")
                     prepared = json.loads(self.backend("task-prepare", args.harness, args.model, args.effort,
                                                        args.account or "", self.home, brief, cwd).stdout)
+                    if "refused" in prepared:
+                        raise Refusal(prepared["refused"], "fix=" + prepared["fix"])
                     record.update(harness=prepared["harness"], model=prepared["model"],
                                   account=prepared["account"], effort=prepared["effort"])
                     if not shutil.which(prepared["harness"], path=self.env["PATH"]):
@@ -165,6 +167,23 @@ class Task(Session):
                     if startup["state"] != "started":
                         screen = self.tmux("capture-pane", "-p", "-t", pane, socket=terminal["server"]).stdout
                         raise Refusal("native-exited", "exit=" + str(startup["exit"]) + "\n" + screen.strip())
+                    # A started harness can still stop on a first-run, trust
+                    # or selection dialog, or a sign-in or usage wall, that
+                    # task-prepare could not read. The last pane read must
+                    # finish inside the bound, so the refusal keeps its screen.
+                    while True:
+                        ready = self.backend("task-ready", terminal["server"], pane, check=False)
+                        if ready.returncode == 0:
+                            break
+                        if ready.returncode == 3:
+                            raise Refusal("native-exited", ready.stdout.strip())
+                        if ready.returncode != 1:
+                            raise Refusal("terminal-unread", ready.stderr.strip())
+                        if self.deadline - time.monotonic() < 1:
+                            raise Refusal("harness-not-ready", "fix=open " + prepared["harness"] + " once on account "
+                                          + prepared["account"] + ", finish the screen below, then launch the task again\n"
+                                          + ready.stdout.strip())
+                        time.sleep(0.1)
                     record.update(state="running", launched_at=time.time())
                     self.write(record)
                     return record
