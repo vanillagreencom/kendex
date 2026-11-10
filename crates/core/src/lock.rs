@@ -87,9 +87,11 @@ use crate::model::{HarnessId, ItemKind, Scope};
 ///
 /// Version 11 also gained [`LockEntry::requirer_provenance`] without a bump.
 /// Older writers discard it. A later removal refuses where the remaining
-/// record cannot prove whether a withheld requirer stays, until apply with
-/// a readable catalog rebuilds the facts. Older verification can reject a
-/// record carrying the field because its serialization omits it.
+/// record cannot prove whether a withheld requirer stays, and names the
+/// step that ends it: an apply with a readable catalog that rebuilds the
+/// facts, or, where a local edit holds the record those facts belong in,
+/// resolving or discarding that edit first. Older verification can reject
+/// a record carrying the field because its serialization omits it.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -373,13 +375,17 @@ pub struct LockEntry {
     pub reasons: BTreeSet<Reason>,
     /// The ancestors explaining these reasons at the last successful read.
     /// Missing rows mean unknown evidence; an empty reason set proves that
-    /// ancestor has no carrier. An entry held as it was keeps its reasons,
-    /// but retains this only while its source goes unread: the rows
-    /// describe the graph, not the held bytes. `None` where no row is recorded: a reader looks rows up one by one,
-    /// so an empty list would tell it nothing more. Each pass assigns the
-    /// value `DesiredState::ancestry` builds: one row per ancestor, this
-    /// pass's reading where it read one, else the previous row, and a row
-    /// never widened with another's reasons.
+    /// ancestor has no carrier. `None` where no row is recorded: a reader
+    /// looks rows up one by one, so an empty list would tell it nothing
+    /// more. A pass that writes the entry assigns the value
+    /// `DesiredState::ancestry` builds: one row per ancestor, this pass's
+    /// reading where it read one, else the previous row, and a row never
+    /// widened with another's reasons. A full apply that holds the entry as
+    /// it was keeps its reasons and still writes this when it read the
+    /// entry's item from the recorded source, since the rows describe the
+    /// graph, not the held bytes. An add's kept entries keep their rows
+    /// unless the add gives them a new edge, and records kept for orphans
+    /// keep theirs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirer_provenance: Option<Vec<RequirerProvenance>>,
     /// What only this machine knows about the installation. Never written

@@ -3,7 +3,7 @@
 
 use super::hooks::{hook_fixture, hook_on_disk, registered};
 use super::*;
-use kendex_core::error::CoreError;
+use kendex_core::error::{CoreError, ProvenanceStep};
 
 const JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: PreToolUse\n# description: needs a narrow hook and guards\n# requires: [narrow]\n# requires-skills: [guards]\n# ---\nexit 0\n";
 const SET: &str = "[bundles.crew]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
@@ -238,7 +238,7 @@ fn legacy_missing_ancestry_refuses_offline_until_a_readable_apply_records_it() {
                 assert!(
                     matches!(
                         ops::remove(&f.env, &f.scope, &names, row.kind, false),
-                        Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex })
+                        Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex, step: ProvenanceStep::Apply })
                             if catalog == "cat" && name == "judge"
                     ),
                     "{}",
@@ -953,15 +953,16 @@ fn a_retained_set_record_never_overrides_a_member_read_from_the_set_source() {
     }
 }
 
-/// A set carried mid, which requires leaf. The person swaps the set for S,
-/// which requires mid, and edits the installed copy of `edited` so the
-/// apply holds it as it was. A held mid keeps its old reasons beside
-/// leaf's new row for it; a held leaf's row for mid is read again, since
-/// the apply read leaf's source.
+const MID_REQUIRES_LEAF: &str = "dependencies:\n  required: [leaf]\n";
+
+/// A set carried mid, whose frontmatter says what mid requires. The person
+/// swaps the set for S, which requires mid, and edits mid's installed
+/// copy, so the readable apply holds mid with its crew reason. With
+/// `MID_REQUIRES_LEAF`, leaf's row for mid is the newer reading beside it.
 #[allow(clippy::unwrap_used)]
-fn held_reading(edited: &str) -> Fixture {
+fn held_mid(mid: &str) -> Fixture {
     let f = hook_fixture("[bundles.crew]\nsource = \"cat\"\n");
-    skill(&f.source, "mid", "dependencies:\n  required: [leaf]\n");
+    skill(&f.source, "mid", mid);
     skill(&f.source, "leaf", "");
     skill(&f.source, "S", "dependencies:\n  required: [mid]\n");
     fs::write(
@@ -970,15 +971,81 @@ fn held_reading(edited: &str) -> Fixture {
     )
     .unwrap();
     apply_now(&f);
-    edit_manifest(&f, |manifest| {
+    swap_crew_for_s(&f);
+    edit_installed(&f, "mid");
+    apply_now(&f);
+    f
+}
+
+#[allow(clippy::unwrap_used)]
+fn swap_crew_for_s(f: &Fixture) {
+    edit_manifest(f, |manifest| {
         manifest.bundles.clear();
         manifest
             .skills
             .insert("S".into(), manifest::ItemDecl::from_source("cat"));
     });
-    edit_installed(&f, edited);
+}
+
+/// The same swap, with mid requiring leaf, which the person declares from
+/// a second catalog that the readable apply cannot read: mid's entry reads
+/// S, while leaf, held because its source went unread, keeps its row
+/// reading mid through crew.
+#[allow(clippy::unwrap_used)]
+fn leaf_held_by_an_unread_source() -> Fixture {
+    let f = fixture("");
+    let other = f.source.with_file_name("other");
+    skill(&other, "leaf", "");
+    fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    skill(&f.source, "mid", MID_REQUIRES_LEAF);
+    skill(&f.source, "leaf", "");
+    skill(&f.source, "S", "dependencies:\n  required: [mid]\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"mid\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        f.project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[skills.leaf]\nsource = \"other\"\n",
+            source_path(&f.source),
+            source_path(&other)
+        ),
+    )
+    .unwrap();
     apply_now(&f);
+    swap_crew_for_s(&f);
+    let hidden = other.with_file_name("other-offline");
+    fs::rename(&other, &hidden).unwrap();
+    apply_now(&f);
+    fs::rename(&hidden, &other).unwrap();
     f
+}
+
+/// Moves every catalog of the fixture out of reach until `back` puts
+/// them where they were.
+#[allow(clippy::unwrap_used)]
+fn hide_catalogs(f: &Fixture) -> Vec<(PathBuf, PathBuf)> {
+    let moved: Vec<(PathBuf, PathBuf)> = [f.source.clone(), f.source.with_file_name("other")]
+        .into_iter()
+        .filter(|catalog| catalog.exists())
+        .map(|catalog| {
+            let hidden = catalog.with_extension("offline");
+            (catalog, hidden)
+        })
+        .collect();
+    for (catalog, hidden) in &moved {
+        fs::rename(catalog, hidden).unwrap();
+    }
+    moved
+}
+
+#[allow(clippy::unwrap_used)]
+fn back(moved: Vec<(PathBuf, PathBuf)>) {
+    for (catalog, hidden) in moved {
+        fs::rename(hidden, catalog).unwrap();
+    }
 }
 
 /// Edits the installed copy of a skill, so the next apply holds it as it
@@ -1005,16 +1072,32 @@ fn s_reason(reasons: &BTreeSet<Reason>) -> bool {
         .any(|reason| matches!(reason, Reason::RequiredBy { by } if by.name == "S"))
 }
 
-/// The held mid's older reading never vetoes leaf's newer row for it: an
+/// Which hold leaves an older reading of mid beside a newer one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Older {
+    /// A local edit holds mid's entry with crew; leaf's row for it reads S.
+    MidEntry,
+    /// leaf's unread source holds its row for mid with crew; mid's entry
+    /// reads S.
+    LeafRow,
+}
+
+/// The older reading never vetoes the newer one, whichever holds it: an
 /// offline removal of leaf, or of the held mid itself, stays removed after
-/// the catalog returns. A held leaf has no older reading left, and its
-/// removal stays removed too.
+/// the catalogs return.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_reading_never_vetoes_a_newer_one_offline() {
     let mut lost = Vec::new();
-    for (edited, removing) in [("mid", "leaf"), ("mid", "mid"), ("leaf", "leaf")] {
-        let f = held_reading(edited);
+    for (older, removing) in [
+        (Older::MidEntry, "leaf"),
+        (Older::MidEntry, "mid"),
+        (Older::LeafRow, "leaf"),
+    ] {
+        let f = match older {
+            Older::MidEntry => held_mid(MID_REQUIRES_LEAF),
+            Older::LeafRow => leaf_held_by_an_unread_source(),
+        };
         let lock = lock_of(&f);
         let mid = &lock.entries["skill:mid:claude"];
         let leaf_row = lock.entries["skill:leaf:claude"]
@@ -1023,35 +1106,38 @@ fn a_held_reading_never_vetoes_a_newer_one_offline() {
             .flatten()
             .find(|row| row.installation.name == "mid")
             .unwrap();
-        // A held mid keeps the old reading; a held leaf's row was read
-        // again with mid.
-        if edited == "mid" {
-            assert!(crew_reason(&mid.reasons) && !s_reason(&mid.reasons));
-        } else {
-            assert!(s_reason(&mid.reasons) && !crew_reason(&mid.reasons));
-        }
-        assert!(s_reason(&leaf_row.reasons) && !crew_reason(&leaf_row.reasons));
-        let hidden = f.source.with_file_name("catalog-offline");
-        fs::rename(&f.source, &hidden).unwrap();
+        let reads = |reasons: &BTreeSet<Reason>| (crew_reason(reasons), s_reason(reasons));
+        let (older_reading, newer_reading) = match older {
+            Older::MidEntry => (&mid.reasons, &leaf_row.reasons),
+            Older::LeafRow => (&leaf_row.reasons, &mid.reasons),
+        };
+        assert_eq!(reads(older_reading), (true, false), "{older:?}");
+        assert_eq!(reads(newer_reading), (false, true), "{older:?}");
+        let moved = hide_catalogs(&f);
         let kept = removed(&f, &[removing], Some(ItemKind::Skill));
-        fs::rename(&hidden, &f.source).unwrap();
+        back(moved);
         apply_now(&f);
         if kept != BTreeSet::from([(ItemKind::Skill, removing.to_owned())])
             || !manifest_of(&f).is_suppressed(ItemKind::Skill, removing)
         {
-            lost.push((edited, removing));
+            lost.push((older, removing));
         }
     }
-    assert_eq!(lost, Vec::<(&str, &str)>::new());
+    assert_eq!(lost, Vec::<(Older, &str)>::new());
 }
 
-/// judge, carried by crew and withheld on Codex, requires guards, which
-/// requires leaf. The record is from before the field.
+const GUARDS_REQUIRES_LEAF: &str = "dependencies:\n  required: [leaf]\n";
+
+/// The catalog's crew carries judge, withheld on Codex, which requires
+/// guards; guards' frontmatter says what guards requires, and S requires
+/// guards. Applied over `declarations`, and with `pre_field` the record
+/// is what a build from before the field leaves.
 #[allow(clippy::unwrap_used)]
-fn record_from_before_the_field() -> Fixture {
-    let f = hook_fixture(SET);
-    skill(&f.source, "guards", "dependencies:\n  required: [leaf]\n");
+fn judge_world(declarations: &str, guards: &str, pre_field: bool) -> Fixture {
+    let f = hook_fixture(declarations);
+    skill(&f.source, "guards", guards);
     skill(&f.source, "leaf", "");
+    skill(&f.source, "S", "dependencies:\n  required: [guards]\n");
     fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
     fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
     fs::write(
@@ -1060,12 +1146,20 @@ fn record_from_before_the_field() -> Fixture {
     )
     .unwrap();
     apply_now(&f);
-    let mut lock = lock_of(&f);
-    for entry in lock.entries.values_mut() {
-        entry.requirer_provenance = None;
+    if pre_field {
+        let mut lock = lock_of(&f);
+        for entry in lock.entries.values_mut() {
+            entry.requirer_provenance = None;
+        }
+        kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
     }
-    kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
     f
+}
+
+/// judge, carried by crew and withheld on Codex, requires guards, which
+/// requires leaf. The record is from before the field.
+fn record_from_before_the_field() -> Fixture {
+    judge_world(SET, GUARDS_REQUIRES_LEAF, true)
 }
 
 /// That record, with a local edit holding guards through a readable apply.
@@ -1163,18 +1257,7 @@ fn a_readable_apply_records_what_it_read_for_held_entries() {
             let f = if pre_field {
                 held_record_from_before_the_field()
             } else {
-                let f = hook_fixture(SET);
-                skill(&f.source, "guards", "dependencies:\n  required: [leaf]\n");
-                skill(&f.source, "leaf", "");
-                fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
-                fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
-                fs::write(
-                    f.source.join("kendex.toml"),
-                    "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n",
-                )
-                .unwrap();
-                apply_now(&f);
-                f
+                judge_world(SET, GUARDS_REQUIRES_LEAF, false)
             };
             carrier_swapped_behind_held_entries(&f);
             let hidden = f.source.with_file_name("catalog-offline");
@@ -1204,21 +1287,7 @@ fn a_readable_apply_records_what_it_read_for_held_entries() {
 fn one_readable_apply_clears_a_held_sole_recorder_from_before_the_field() {
     for moved in [false, true] {
         for offline in [false, true] {
-            let f = hook_fixture(SET);
-            skill(&f.source, "guards", "");
-            fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
-            fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
-            fs::write(
-                f.source.join("kendex.toml"),
-                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n",
-            )
-            .unwrap();
-            apply_now(&f);
-            let mut lock = lock_of(&f);
-            for entry in lock.entries.values_mut() {
-                entry.requirer_provenance = None;
-            }
-            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+            let f = judge_world(SET, "", true);
             edit_installed(&f, "guards");
             if moved {
                 fs::write(f.source.join("hooks/judge.sh"), MOVED_JUDGE).unwrap();
@@ -1244,7 +1313,7 @@ fn one_readable_apply_clears_a_held_sole_recorder_from_before_the_field() {
             assert!(
                 matches!(
                     attempt(&f),
-                    Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex })
+                    Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex, .. })
                         if catalog == "cat" && name == "judge"
                 ),
                 "moved={moved} offline={offline}"
@@ -1319,4 +1388,333 @@ fn a_cycle_row_in_the_entrys_own_snapshot_is_its_own_reading() {
         BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
     );
     assert!(!lock_of(&f).entries.contains_key("skill:guards:codex"));
+}
+
+/// `kendex apply` with the catalog readable: it takes what is left over,
+/// and with `--discard-edits` the person's edits too.
+#[allow(clippy::unwrap_used)]
+fn apply_as_the_cli(f: &Fixture, discard_edits: bool) {
+    let options = PlanOptions {
+        remove_orphans: true,
+        overwrite_edited: discard_edits,
+        ..PlanOptions::locked()
+    };
+    let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+}
+
+/// mid alone: no dependent's snapshot reads it, so the held entry is its
+/// only reading.
+fn held_mid_alone() -> Fixture {
+    held_mid("")
+}
+
+/// guards, declared on Codex, is held by a local edit through a readable
+/// apply after the catalog's crew stops carrying judge. Nothing derives
+/// judge now, so no apply writes guards' row for it.
+#[allow(clippy::unwrap_used)]
+fn held_guards_whose_requirer_left_the_catalog() -> Fixture {
+    let f = judge_world(
+        &format!("[skills.guards]\nsource = \"cat\"\nharnesses = [\"codex\"]\n{SET}"),
+        "",
+        true,
+    );
+    edit_installed(&f, "guards");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"narrow\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    f
+}
+
+/// The person takes crew out of the manifest by hand; two readable applies
+/// follow, keeping guards as it was. `edited` holds guards by a local
+/// edit, and `skill` declares S, which requires guards, so guards stays
+/// wanted; without S, guards is left over.
+#[allow(clippy::unwrap_used)]
+fn guards_after_crew_left(edited: bool, skill: bool) -> Fixture {
+    let declarations = match skill {
+        true => format!("{SET}{SKILL}"),
+        false => SET.to_owned(),
+    };
+    let f = judge_world(&declarations, "", true);
+    if edited {
+        edit_installed(&f, "guards");
+    }
+    edit_manifest(&f, |manifest| {
+        manifest.bundles.remove("crew");
+    });
+    apply_now(&f);
+    apply_now(&f);
+    f
+}
+
+fn held_guards_wanted_by_s() -> Fixture {
+    guards_after_crew_left(true, true)
+}
+
+fn left_over_guards() -> Fixture {
+    guards_after_crew_left(false, false)
+}
+
+fn edited_left_over_guards() -> Fixture {
+    guards_after_crew_left(true, false)
+}
+
+/// dev requires github. A local edit holds github when dev is removed, so
+/// github stays as an orphan the removal held; `pre_field` has the record
+/// come from before the field.
+#[allow(clippy::unwrap_used)]
+fn orphan_github_held(pre_field: bool) -> Fixture {
+    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+    apply_now(&f);
+    if pre_field {
+        let mut lock = lock_of(&f);
+        for entry in lock.entries.values_mut() {
+            entry.requirer_provenance = None;
+        }
+        kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+    }
+    edit_installed(&f, "github");
+    assert!(removed(&f, &["dev"], Some(ItemKind::Skill)).is_empty());
+    assert!(lock_of(&f).entries.contains_key("skill:github:claude"));
+    f
+}
+
+fn orphan_github_held_from_before_the_field() -> Fixture {
+    orphan_github_held(true)
+}
+
+fn orphan_github_held_after_the_field() -> Fixture {
+    orphan_github_held(false)
+}
+
+/// What the person runs, with the catalog readable, before retrying.
+#[derive(Clone, Copy, Debug)]
+enum Then {
+    /// Nothing: the retry itself reads every catalog.
+    Retry,
+    Apply,
+    DiscardEdits,
+}
+
+struct HeldRow {
+    name: &'static str,
+    world: fn() -> Fixture,
+    removing: &'static [&'static str],
+    kind: Option<ItemKind>,
+    /// The refusal, as source, kind, name, tool and step, and whether a
+    /// readable catalog lifts it; `None` decides in both modes.
+    refusal: Option<(ItemKind, &'static str, HarnessId, ProvenanceStep, bool)>,
+    then: Then,
+    /// What stays removed once the removal decides.
+    kept: &'static [&'static str],
+    /// The record gone once the removal decides and the catalog applies.
+    gone: &'static str,
+}
+
+fn held(name: &str, harness: HarnessId) -> ProvenanceStep {
+    ProvenanceStep::ResolveEdit(kendex_core::lock::InstallRef {
+        source: "cat".into(),
+        kind: ItemKind::Skill,
+        name: name.into(),
+        harness,
+    })
+}
+
+fn held_rows() -> Vec<HeldRow> {
+    vec![
+        HeldRow {
+            name: "held entry is the only reading",
+            world: held_mid_alone,
+            removing: &["mid"],
+            kind: Some(ItemKind::Skill),
+            refusal: Some((
+                ItemKind::Skill,
+                "mid",
+                HarnessId::Claude,
+                ProvenanceStep::RetryReadable,
+                true,
+            )),
+            then: Then::Retry,
+            kept: &["mid"],
+            gone: "skill:mid:claude",
+        },
+        HeldRow {
+            name: "held record names a requirer the catalog dropped",
+            world: held_guards_whose_requirer_left_the_catalog,
+            removing: &["guards"],
+            kind: Some(ItemKind::Skill),
+            refusal: Some((
+                ItemKind::Hook,
+                "judge",
+                HarnessId::Codex,
+                held("guards", HarnessId::Codex),
+                false,
+            )),
+            then: Then::DiscardEdits,
+            kept: &[],
+            gone: "skill:guards:codex",
+        },
+        HeldRow {
+            name: "held record names a requirer whose carrier left",
+            world: held_guards_wanted_by_s,
+            removing: &["S", "guards"],
+            kind: None,
+            refusal: Some((
+                ItemKind::Hook,
+                "judge",
+                HarnessId::Codex,
+                held("guards", HarnessId::Codex),
+                false,
+            )),
+            then: Then::DiscardEdits,
+            kept: &[],
+            gone: "skill:guards:codex",
+        },
+        HeldRow {
+            name: "left-over record",
+            world: left_over_guards,
+            removing: &["guards"],
+            kind: Some(ItemKind::Skill),
+            refusal: Some((
+                ItemKind::Hook,
+                "judge",
+                HarnessId::Codex,
+                ProvenanceStep::Apply,
+                false,
+            )),
+            then: Then::Apply,
+            kept: &[],
+            gone: "skill:guards:codex",
+        },
+        HeldRow {
+            name: "edited left-over record",
+            world: edited_left_over_guards,
+            removing: &["guards"],
+            kind: Some(ItemKind::Skill),
+            refusal: Some((
+                ItemKind::Hook,
+                "judge",
+                HarnessId::Codex,
+                held("guards", HarnessId::Codex),
+                false,
+            )),
+            then: Then::DiscardEdits,
+            kept: &[],
+            gone: "skill:guards:codex",
+        },
+        HeldRow {
+            name: "held orphan from before the field",
+            world: orphan_github_held_from_before_the_field,
+            removing: &["github"],
+            kind: Some(ItemKind::Skill),
+            refusal: Some((
+                ItemKind::Skill,
+                "dev",
+                HarnessId::Claude,
+                held("github", HarnessId::Claude),
+                false,
+            )),
+            then: Then::DiscardEdits,
+            kept: &[],
+            gone: "skill:github:claude",
+        },
+        HeldRow {
+            name: "held orphan after the field",
+            world: orphan_github_held_after_the_field,
+            removing: &["github"],
+            kind: Some(ItemKind::Skill),
+            refusal: None,
+            then: Then::Retry,
+            kept: &[],
+            gone: "skill:github:claude",
+        },
+    ]
+}
+
+/// A removal that rests on a record a local edit or a left-over keeps
+/// refuses, naming that record and the step that ends the refusal, in
+/// place of losing the removal or naming an apply that changes nothing.
+/// One more readable apply leaves a hold's refusal standing; the named
+/// step ends it, and the removal then decides, offline included.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_removal_resting_on_a_held_record_names_the_hold_and_the_step_that_ends_it() {
+    for row in held_rows() {
+        for offline in [false, true] {
+            let case = format!("{} offline={offline}", row.name);
+            let f = (row.world)();
+            let names: Vec<String> = row.removing.iter().map(|name| (*name).to_owned()).collect();
+            let attempt = |f: &Fixture, offline: bool| {
+                let moved = if offline {
+                    hide_catalogs(f)
+                } else {
+                    Vec::new()
+                };
+                let result = ops::remove(&f.env, &f.scope, &names, row.kind, false);
+                back(moved);
+                result
+            };
+            let refused = |result: kendex_core::error::Result<_>| match result {
+                Err(CoreError::RemovalProvenanceMissing {
+                    catalog,
+                    kind,
+                    name,
+                    harness,
+                    step,
+                }) => Some((catalog, kind, name, harness, step)),
+                Err(other) => panic!("{case}: {other}"),
+                Ok(_) => None,
+            };
+            let expected = row
+                .refusal
+                .clone()
+                .filter(|refusal| offline || !refusal.4)
+                .map(|(kind, name, harness, step, _)| {
+                    ("cat".to_owned(), kind, name.to_owned(), harness, step)
+                });
+            let result = attempt(&f, offline);
+            let refusal = refused(result);
+            assert_eq!(refusal, expected, "{case}");
+            let retry_offline = match (&expected, row.then) {
+                (None, _) => offline,
+                (Some(step), _) if matches!(step.4, ProvenanceStep::ResolveEdit(_)) => {
+                    apply_now(&f);
+                    assert_eq!(
+                        refused(attempt(&f, offline)),
+                        expected,
+                        "{case} after an apply"
+                    );
+                    offline
+                }
+                (Some(_), Then::Retry) => false,
+                (Some(_), _) => offline,
+            };
+            if expected.is_some() {
+                match row.then {
+                    Then::Retry => {}
+                    Then::Apply => apply_as_the_cli(&f, false),
+                    Then::DiscardEdits => apply_as_the_cli(&f, true),
+                }
+            }
+            let report = attempt(&f, retry_offline).unwrap_or_else(|err| panic!("{case}: {err}"));
+            apply::execute(&f.env, &report.plan).unwrap();
+            let kept: BTreeSet<(ItemKind, String)> = row
+                .kept
+                .iter()
+                .map(|name| (ItemKind::Skill, (*name).to_owned()))
+                .collect();
+            let suppressed: BTreeSet<(ItemKind, String)> = manifest_of(&f)
+                .suppressed
+                .into_iter()
+                .flat_map(|(kind, names)| names.into_iter().map(move |name| (kind, name)))
+                .collect();
+            assert_eq!(suppressed, kept, "{case}");
+            apply_now(&f);
+            assert!(!lock_of(&f).entries.contains_key(row.gone), "{case}");
+        }
+    }
 }

@@ -6,17 +6,19 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
-    /// Pre-field locks can lack the carrier of a withheld requirer.
-    /// Guessing here can make a user's removal return on the next readable
-    /// apply.
+    /// The record cannot say what requires this installation: pre-field
+    /// locks can lack the carrier of a withheld requirer, and a record a
+    /// local edit holds keeps reasons older than the catalog's. Guessing
+    /// here can make a user's removal return on the next readable apply.
     #[error(
-        "removal-provenance-missing source={} kind={} name={} harness={}: apply with the catalog readable using a build that records requirer provenance, then retry removal", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name()
+        "removal-provenance-missing source={} kind={} name={} harness={} step={}: {}", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name(), step.key(), step.remedy()
     )]
     RemovalProvenanceMissing {
         catalog: String,
         kind: ItemKind,
         name: String,
         harness: HarnessId,
+        step: ProvenanceStep,
     },
     /// A set carries a member declared from another catalog, and the
     /// record binds no reading of the set to that edge: a path catalog's
@@ -848,6 +850,54 @@ impl std::fmt::Display for Version10Stop {
             Version10Stop::NoDeclarations => out.write_str(
                 "this place's manifest is missing or does not read, and a recovery rebuilds the record from what the manifest lists; put back a readable manifest first",
             ),
+        }
+    }
+}
+
+/// What ends a removal-provenance refusal, read off the record the
+/// refusal rests on. The lock carries no hold marker, so a hold is known
+/// here only by the one sign it leaves offline: an installed copy a local
+/// edit moved off what apply last wrote (`engine::edit_holds`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvenanceStep {
+    /// An apply with the catalog readable either records the reading in
+    /// the record whose edge names the installation, or takes that record
+    /// away as left over.
+    Apply,
+    /// A local edit holds the record whose edge names the installation, so
+    /// no apply rewrites that record until the edit is resolved or
+    /// discarded.
+    ResolveEdit(crate::lock::InstallRef),
+    /// A local edit holds the installation's own record, its only reading,
+    /// whose reasons may predate the catalog's; the catalogs read whole
+    /// decide in its place.
+    RetryReadable,
+}
+
+impl ProvenanceStep {
+    fn key(&self) -> String {
+        match self {
+            Self::Apply => "apply".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "resolve-edit held={}:{}:{}",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable => "retry-readable".to_owned(),
+        }
+    }
+
+    fn remedy(&self) -> String {
+        match self {
+            Self::Apply => "apply with the catalog readable using a build that records requirer provenance, removing what it reports left over, then retry removal".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "a local edit holds {} {} on {}, so no apply records what requires it: resolve the edit or apply with --discard-edits, with the catalog readable, then retry removal",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable => "a local edit holds this installation's record, which cannot say what requires it now: retry removal with every catalog readable".to_owned(),
         }
     }
 }
