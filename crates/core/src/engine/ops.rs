@@ -381,7 +381,9 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// removal return. So does an installation a local edit holds and no
 /// reading roots, unless the read now accounted for every declaration:
 /// its reasons may predate a carrier the catalog gained, which only that
-/// read sees.
+/// read sees. That refusal names what the read could not account for,
+/// since the read is of each catalog where it sits now, which an apply
+/// at the recorded revisions does not see.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -391,7 +393,7 @@ fn kept_removed(
     kind: Option<ItemKind>,
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
-    let (read, read_whole) = read_ancestry(env, scope, manifest);
+    let (read, unread) = read_ancestry(env, scope, manifest);
     let captured = captured_rows(lock);
     let roots = |facts| RemovalRoots {
         env,
@@ -415,9 +417,13 @@ fn kept_removed(
             Reach::Unrooted => {}
             // Read whole, the catalogs decide: had they rooted it, the
             // root would have won.
-            Reach::Missing(Unread::Held(_)) if read_whole => {}
+            Reach::Missing(Unread::Held(_)) if unread.is_none() => {}
             Reach::Missing(Unread::Held(by)) => {
-                return Err(provenance_missing(by, ProvenanceStep::RetryReadable));
+                let unread = unread.unwrap_or_default();
+                return Err(provenance_missing(
+                    by,
+                    ProvenanceStep::RetryReadable { unread },
+                ));
             }
             Reach::Missing(Unread::Ancestor { ancestor, held }) => {
                 let step = match held {
@@ -449,12 +455,16 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
 
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
-/// declared at, and whether the read accounted for every declaration.
+/// declared at, and, where the read did not account for every
+/// declaration, what it noted it could not read.
 fn read_ancestry(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-) -> (BTreeMap<InstallRef, RequirerProvenance>, bool) {
+) -> (
+    BTreeMap<InstallRef, RequirerProvenance>,
+    Option<Vec<String>>,
+) {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let read = super::expansion::PLANNED_KINDS
@@ -469,11 +479,20 @@ fn read_ancestry(
                 })
         })
         .collect();
-    // The expansion marks whatever it could not read where it meets it: a
-    // catalog, a set or an item that derived less than it carries says
-    // nothing of what it would carry once read.
-    let whole = super::DeclarationStatus::of(&state) == super::DeclarationStatus::Complete;
-    (expansion.requirer_provenance(&read), whole)
+    // A read that cannot account for every declaration, a catalog, item or
+    // set it could not read or a dependency it could not satisfy, says
+    // nothing of what would root an installation once it can: the
+    // declaration status counts what every reader of the expansion does,
+    // the short reads what only a removal does.
+    let complete = super::DeclarationStatus::of(&state) == super::DeclarationStatus::Complete;
+    let unread = (!complete || !state.short_reads.is_empty()).then(|| {
+        let mut unread: Vec<String> = state.short_reads.into_iter().collect();
+        if !complete {
+            unread.extend(state.notes);
+        }
+        unread
+    });
+    (expansion.requirer_provenance(&read), unread)
 }
 
 enum Reach {

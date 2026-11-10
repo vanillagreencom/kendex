@@ -514,6 +514,16 @@ pub struct DesiredState {
     /// What one derived this pass is short through no choice of the
     /// person's, so no removal is decided on it.
     pub unreadable_catalogs: BTreeSet<String>,
+    /// What the expansion could not read that [`super::DeclarationStatus`]
+    /// leaves out, each naming it: a source that did not resolve, or not to
+    /// a catalog, and an item its catalog does not offer or whose
+    /// frontmatter will not read. Only the removal read takes these as
+    /// short (`ops::read_ancestry`): a removal decided on less than the
+    /// catalogs carry could return once they read, while a lookup of one
+    /// readable item stands on its own catalog. An apply reports each
+    /// where it meets it, the source pass the catalog and the renderer the
+    /// frontmatter.
+    pub(super) short_reads: BTreeSet<String>,
     /// Compatibility stops the whole plan; ordinary unreadable sources do not.
     pub(super) catalog_refusal: Option<crate::error::CoreError>,
     /// Resolutions for item-level pins, keyed `(source, rev)` — kept apart
@@ -702,6 +712,11 @@ impl DesiredState {
 
     pub(super) fn mark_incomplete(&mut self) {
         self.declaration_status = super::DeclarationStatus::Incomplete;
+    }
+
+    /// Records one read [`DesiredState::short_reads`] holds.
+    pub(super) fn read_short(&mut self, what: String) {
+        self.short_reads.insert(crate::names::shown(&what));
     }
 
     /// Records a declaration whose item was found and read: the provenance

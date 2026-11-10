@@ -755,6 +755,7 @@ struct CatalogRead {
     unreadable: bool,
     incomplete: bool,
     notes: Vec<String>,
+    short_reads: BTreeSet<String>,
     refusal: Option<Compatibility>,
 }
 
@@ -829,6 +830,7 @@ impl CatalogRead {
         if self.incomplete {
             state.mark_incomplete();
         }
+        state.short_reads.extend(self.short_reads.iter().cloned());
         if let Some(refusal) = &self.refusal {
             state.catalog_refusal.get_or_insert_with(|| refusal.error());
         }
@@ -862,6 +864,7 @@ impl Catalogs<'_> {
                     unreadable: evidence.unreadable_catalogs.contains(source),
                     incomplete: evidence.declaration_status == super::DeclarationStatus::Incomplete,
                     notes: evidence.notes,
+                    short_reads: evidence.short_reads,
                     refusal: evidence.catalog_refusal.map(Compatibility::of),
                 },
             );
@@ -881,6 +884,27 @@ impl Catalogs<'_> {
             return Offer::Silent;
         };
         catalog.offer(kind, name)
+    }
+
+    /// What `source`, at `rev` where an item pins one, resolves to now:
+    /// once per pass, since resolving a remote reads its checkout.
+    fn resolve_now(
+        &self,
+        source: &str,
+        rev: Option<&str>,
+        state: &DesiredState,
+    ) -> crate::error::Result<SourceState> {
+        let resolved = match rev {
+            Some(rev) => state.pinned.get(&(source.to_owned(), rev.to_owned())),
+            None => state.sources.get(source),
+        };
+        match (resolved, rev) {
+            (Some(resolution), _) => Ok(resolution.clone()),
+            (None, Some(rev)) => {
+                crate::source::resolve_at(self.env, self.scope, source, self.manifest, Some(rev))
+            }
+            (None, None) => crate::source::resolve(self.env, self.scope, source, self.manifest),
+        }
     }
 
     fn read(
@@ -909,40 +933,13 @@ impl Catalogs<'_> {
                 }
             }
         } else {
-            match rev {
-                Some(rev) => {
-                    let key = (source.to_owned(), rev.to_owned());
-                    match state.pinned.get(&key) {
-                        Some(resolution) => resolution.clone(),
-                        None => {
-                            let Ok(resolution) = crate::source::resolve_at(
-                                self.env,
-                                self.scope,
-                                source,
-                                self.manifest,
-                                Some(rev),
-                            ) else {
-                                state.mark_incomplete();
-                                return None;
-                            };
-                            state.pinned.insert(key, resolution.clone());
-                            resolution
-                        }
-                    }
+            match self.resolve_now(source, rev, state) {
+                Ok(resolution) => resolution,
+                Err(problem) => {
+                    let at = rev.map(|rev| format!(" at {rev}")).unwrap_or_default();
+                    state.read_short(format!("source '{source}'{at} did not resolve: {problem}"));
+                    return None;
                 }
-                None => match state.sources.get(source) {
-                    Some(resolution) => resolution.clone(),
-                    None => {
-                        let Ok(resolution) =
-                            crate::source::resolve(self.env, self.scope, source, self.manifest)
-                        else {
-                            state.mark_incomplete();
-                            return None;
-                        };
-                        state.sources.insert(source.to_owned(), resolution.clone());
-                        resolution
-                    }
-                },
             }
         };
         match rev {
@@ -956,11 +953,16 @@ impl Catalogs<'_> {
             }
         }
         // A source that did not resolve, or not to a catalog, derived
-        // nothing, which says nothing of what it carries; the declaration
-        // naming it reports why.
-        let SourceState::Ready(ready) = resolution else {
-            state.mark_incomplete();
-            return None;
+        // nothing, which says nothing of what it carries. The source pass
+        // reports why for an apply; a lookup of an item another catalog
+        // carries stands on that catalog, so this is a short read only to
+        // the removal read.
+        let ready = match catalog_of(source, resolution) {
+            Ok(ready) => ready,
+            Err(short) => {
+                state.read_short(short);
+                return None;
+            }
         };
         // Everything derived — a set's members, a skill's dependencies —
         // reaches its catalog through here, so this is where the removal pass
@@ -1005,6 +1007,25 @@ impl Catalogs<'_> {
             config,
             offered: super::deps::OfferedSkills::default(),
         })
+    }
+}
+
+/// The catalog `source` resolved to, or, where it did not resolve to
+/// one, the short read that names why ([`DesiredState::short_reads`]).
+fn catalog_of(
+    source: &str,
+    resolution: SourceState,
+) -> std::result::Result<crate::source::ResolvedSource, String> {
+    match resolution {
+        SourceState::Ready(ready) => Ok(ready),
+        SourceState::Disabled { .. } => Err(format!("source '{source}' is disabled")),
+        SourceState::Pending { repo, .. } => {
+            Err(format!("source '{source}' ({repo}) is not fetched yet"))
+        }
+        SourceState::Missing { path, .. } => Err(format!(
+            "source '{source}' is missing at {}",
+            path.display()
+        )),
     }
 }
 

@@ -1010,9 +1010,10 @@ fn wanted_by(
 /// What `parent` declares it needs, and the directory its catalog offers
 /// it at: an agent's assignment ([`agent_assignment`]), every other kind's
 /// own frontmatter. `None` where the catalog does not offer it or that
-/// frontmatter will not read or parse, each reported where it is met; what
-/// it requires went unread, so this pass derives less than the catalog
-/// carries and is marked incomplete.
+/// frontmatter will not read or parse: what it requires went unread, so
+/// this pass derives less than the catalog carries, a short read
+/// ([`DesiredState::short_reads`]). An apply reports each where it meets
+/// it, the item pass the offer and the renderer the frontmatter.
 fn declared_by(
     catalog: &OpenCatalog,
     manifest: &Manifest,
@@ -1035,14 +1036,17 @@ fn declared_by(
                     .ok()
                     .flatten(),
             };
-            declared.map(|declared| (declared, dir))
+            declared
+                .map(|declared| (declared, dir))
+                .ok_or("its frontmatter will not read or parse")
         }
-        Offer::Retired(_) | Offer::NotOffered | Offer::Silent => None,
+        Offer::Retired(_) | Offer::NotOffered => Err("its catalog does not offer it"),
+        Offer::Silent => Err("its catalog did not read"),
     };
-    if read.is_none() {
-        state.mark_incomplete();
-    }
-    read
+    read.map_err(|why| {
+        state.read_short(format!("{} '{parent}': {why}", kind.name()));
+    })
+    .ok()
 }
 
 /// The skills an agent a skill requires loads, as its required skills: the

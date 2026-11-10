@@ -1564,7 +1564,7 @@ fn held_mid_refusal(lifted_online: bool) -> Option<Refusal> {
         kind: ItemKind::Skill,
         name: "mid",
         harness: HarnessId::Claude,
-        step: ProvenanceStep::RetryReadable,
+        step: ProvenanceStep::RetryReadable { unread: Vec::new() },
         lifted_online,
     })
 }
@@ -1739,7 +1739,24 @@ fn a_removal_resting_on_a_held_record_names_the_hold_and_the_step_that_ends_it()
                     name,
                     harness,
                     step,
-                }) => Some((catalog, kind, name, harness, step)),
+                }) => Some((
+                    catalog,
+                    kind,
+                    name,
+                    harness,
+                    match step {
+                        // The read is of the catalogs where they sit now, which
+                        // an apply at the recorded revisions does not see.
+                        ProvenanceStep::RetryReadable { unread } => {
+                            assert!(
+                                !unread.is_empty(),
+                                "{case}: the refusal names what its read could not"
+                            );
+                            ProvenanceStep::RetryReadable { unread: Vec::new() }
+                        }
+                        step => step,
+                    },
+                )),
                 Err(other) => panic!("{case}: {other}"),
                 Ok(_) => None,
             };

@@ -869,11 +869,19 @@ pub enum ProvenanceStep {
     /// discarded.
     ResolveEdit(crate::lock::InstallRef),
     /// A local edit holds the installation's own record, whose reasons may
-    /// predate the catalog's, and no reading roots it; a read that accounts
-    /// for every declaration decides in its place. One that does not leaves
-    /// the refusal standing, whether a catalog would not read or an item,
-    /// a set or a tool it needs is not there.
-    RetryReadable,
+    /// predate the catalog's, and no reading roots it; a read of the
+    /// catalogs where they sit now that accounts for every declaration
+    /// decides in its place. One that does not leaves the refusal standing,
+    /// whether a catalog would not read, an item or set it carries would
+    /// not, or a dependency could not be satisfied. That read is not the
+    /// one an apply makes at the recorded revisions, so the refusal names
+    /// what it could not account for.
+    RetryReadable {
+        /// What the read noted where it fell short, each naming what it
+        /// could not read; empty where it noted nothing, as on a
+        /// dependency the walk reports only as a finding.
+        unread: Vec<String>,
+    },
 }
 
 impl ProvenanceStep {
@@ -886,7 +894,7 @@ impl ProvenanceStep {
                 crate::names::shown(&held.name),
                 held.harness.name()
             ),
-            Self::RetryReadable => "retry-readable".to_owned(),
+            Self::RetryReadable { .. } => "retry-readable".to_owned(),
         }
     }
 
@@ -899,7 +907,14 @@ impl ProvenanceStep {
                 crate::names::shown(&held.name),
                 held.harness.name()
             ),
-            Self::RetryReadable => "a local edit holds this installation's record, which cannot say what requires it now: retry removal once an apply reads every catalog and reports nothing declared that it could not read or install".to_owned(),
+            Self::RetryReadable { unread } => {
+                let mut remedy = "a local edit holds this installation's record, which cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
+                if !unread.is_empty() {
+                    remedy.push_str("; this read noted: ");
+                    remedy.push_str(&unread.join("; "));
+                }
+                remedy
+            }
         }
     }
 }
