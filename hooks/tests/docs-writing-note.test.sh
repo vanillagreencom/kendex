@@ -118,6 +118,21 @@ delivery_rows() {
 }
 delivery_rows
 
+# Codex Delete headers name files, but only surviving Markdown edits route.
+deletion_rows() {
+  local codex path key rf=$REPO/README.md
+  rm -rf -- "$STATE"
+  codex=$(scope delete-codex codex "commit-guards docs-writing")
+  for path in README.md src/main.rs; do
+    key="delete-${path##*/}"
+    check "codex delete $path" "$codex" "$(patch $'*** Begin Patch\n*** Delete File: '"$path"$'\n*** End Patch' "$key")" "" "$key" none
+    assert_eq "$([ -s "$TMP_ROOT/stdout" ] && echo nonempty || echo empty)" empty "codex delete $path: whole stdout is empty"
+  done
+  check "codex delete and update" "$codex" "$(patch $'*** Begin Patch\n*** Delete File: notes/deleted.md\n*** Update File: README.md\n@@\n-a\n+b\n*** End Patch' delete-update)" \
+    "docs-writing-note: path=$rf type=readme" delete-update "harness=codex session=delete-update path=$rf"
+}
+deletion_rows
+
 # Global installs whose skills sit outside the hook's own harness root: a
 # Codex copy delivery, and harness roots moved out of the home.
 global_rows() {
@@ -224,6 +239,9 @@ for missing in jq cat; do
   fire "$(scope "tools-$missing" claude "commit-guards docs-writing")" "$(edit Edit "$REPO/README.md" t1)" "$TMP_ROOT/bin-$missing"
   assert_eq "$STATUS:$FIRST" "0:docs-writing-note: missing-tools=$missing" "missing $missing"
 done
+
+skill_load_control delete-headers "$HOOK" 'function flush() { if (held != "") { print held; edited = 1 }; held = "" }' '/^\*\*\* Delete File: / { next }' HOOK deletion_rows \
+  'codex delete README.md: whole stdout is empty' 'codex delete src/main.rs: whole stdout is empty'
 
 # These rows must detect a copy that refuses, forgets its marker, or takes
 # its judge from the edited repository.

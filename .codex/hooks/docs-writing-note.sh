@@ -3,8 +3,8 @@
 # name: docs-writing-note
 # event: PreToolUse
 # matcher: Edit|MultiEdit|Write
-# description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update and Move headers for the edited files, a moved file by its destination; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
-# summary: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Every edit remains allowed.
+# description: On the first Markdown edit of a session, hands the session the edited file's docs-writing type and the paths of that type's reference and example, as the commit-guards md-type lane installed in this hook's own scope routes them, once per session. The first line is `docs-writing-note: path=<file> type=<type>`, or `type=unclassified` naming the route table in docs-writing's SKILL.md. Later Markdown edits of the session, any other edit, a git-ignored file and a file outside a repository get nothing. A Claude Code subagent counts as its own session. Codex reports the edit as apply_patch, and the hook reads the patch's Add, Update, Move and Delete headers, excluding deleted files and taking a moved file by its destination; a Codex subagent shares its lead's session. Not run on copilot: preToolUse has no measured additionalContext delivery to the model. Not run on gemini: the BeforeTool edit payload and context delivery are unmeasured. Not run on opencode: it executes no hook commands. Not run on cursor: it reads hooks as advisory prose and executes no edit event. Not run on antigravity: its toolCall.args payload has no tool_input.file_path reader here.
+# summary: Points the assistant at the docs-writing rules and example for the first Markdown file it edits in a session. Deleted files need no reminder, and every edit remains allowed.
 # safety: Advisory reader. Reads the tool payload. Runs `git rev-parse` in the session's directory to bound its install walk. Runs only the commit-guards md-type installed with this hook, never one found from the edited path; md-type reads the edited repository's installed docs-writing files as data and runs `git rev-parse` and `git check-ignore` there. Writes one marker file per session under the XDG state directory, and prunes markers older than 30 days. Missing tools, an unreadable payload, a missing judge or an unwritable marker produce a keyed notice at exit 0. Uses additionalContext on stdout because successful stderr does not reach the Claude Code model.
 # timeout: 10
 # harnesses: [claude, codex, pi]
@@ -58,13 +58,14 @@ case "$TOOL" in
     TARGETS=$(jq -r '.tool_input.command | strings' 2>&1 <<<"$INPUT") ||
       { notice reader target "$TARGETS"; exit 0; }
     TARGETS=$(printf '%s\n' "$TARGETS" | awk '
-      function flush() { if (held != "") print held; held = "" }
-      /^\*\*\* Add File: / { flush(); print substr($0, 15); next }
+      function flush() { if (held != "") { print held; edited = 1 }; held = "" }
+      /^\*\*\* Add File: / { flush(); print substr($0, 15); edited = 1; next }
       /^\*\*\* Update File: / { flush(); held = substr($0, 18); next }
       /^\*\*\* Move to: / { held = substr($0, 14); flush(); next }
+      /^\*\*\* Delete File: / { flush(); deleted = 1; next }
       { flush() }
-      END { flush() }' 2>&1) ||
-      { notice reader patch-headers "$TARGETS"; exit 0; }
+      END { flush(); if (deleted && !edited) exit 3 }' 2>&1) ||
+      { [ "$?" -ne 3 ] || exit 0; notice reader patch-headers "$TARGETS"; exit 0; }
     ;;
   *) notice payload unknown-tool; exit 0 ;;
 esac
