@@ -10,7 +10,7 @@ Run `pwd -P` before the first repo-relative command; it must print the delegatio
 
 | Delegation | Detection | Flow |
 |------|-----------|------|
-| Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return |
+| Single | `Issue: [ISSUE_ID]`, `GitHub Issue: OWNER/REPO#N`, or ad-hoc | § 1 → § 2 → § 4-10 → return; § 2.3's no-change route: § 1 → § 2 → § 9.1 → § 10 → return |
 | Bundled | `Parent: [ISSUE_ID]` + `Sub-Issues: [...]` | § 1 → § 2 → [§ 4-10]×N → § 11 |
 
 **A bundle needs `in_pr_bundle`.** A parent with children is a CONTAINER, whatever its title, unless its safe read reports `in_pr_bundle`, the review audit's in-PR bundle root. A leaf issue carrying an internal checklist is one work item, delegated single. Read the parent before the first sub-issue; with `in_pr_bundle` false, stop and report the mis-delegation:
@@ -74,7 +74,9 @@ For a missing planning or research path in a brief, find it by the route the pro
 
 Check your domain's code before planning: do the required APIs and types exist, is another domain's work a prerequisite, is an existing issue blocking? Search prior decisions with `.agents/skills/decider/scripts/decisions search "[RELEVANT_KEYWORDS]"` and read the full decision file rather than the index summary; never implement an approach a decision explicitly rejects, and report back with the reference if the issue description contradicts one. Optimization work with no `baseline` label takes the label now, before any code change.
 
-Blocked → **§ 3**, then STOP. Clear → § 2.4.
+**No change needed.** A Linear item whose description permits ending with no change, by a sentence such as "if no change is needed, record the comparison and make no commit", takes the no-change route when the comparison that sentence names finds no change needed: make no edit and no commit, run no check, write the comparison as § 9.1's summary and write § 10's no-change receipt quoting that sentence. Ask no one whether the round may end so: orch's acceptance judges the quoted sentence. A round on a GitHub or ad-hoc item, or one whose item holds no such sentence, takes the normal route.
+
+Blocked → **§ 3**, then STOP. No change needed → § 9.1, then § 10. Clear → § 2.4.
 
 ### 2.4 Plan Approach
 
@@ -162,6 +164,8 @@ Follow [dev SKILL.md § Reflect](../SKILL.md#reflect). Complete every repository
 
 ## 5. Validate
 
+**Skip if** the round takes § 2.3's no-change route: it runs no check, and its receipt records `not-run`.
+
 Stage the final edits before running these checks, using the index policy in [§ 7. Commit](#7-commit).
 
 ```bash
@@ -222,6 +226,8 @@ Reflection is complete in § 4.4. Make no repository edit here.
 
 ## 7. Commit
 
+**Skip if** the round takes § 2.3's no-change route: HEAD stays where the round started.
+
 ```bash
 git -C [WORKTREE_PATH] add -A
 git -C [WORKTREE_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
@@ -255,7 +261,7 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Summary File
 
-Always required. Write `tmp/completion-summary-[ISSUE_ID].md`; the artifact carries it via `--summary-file` (§ 10). Post nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round. GitHub and ad-hoc rounds return the same content to the orchestrator.
+Always required. On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed; its Validation Routes section holds no row, since no check ran. Write `tmp/completion-summary-[ISSUE_ID].md`; the artifact carries it via `--summary-file` (§ 10). Post nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round. GitHub and ad-hoc rounds return the same content to the orchestrator.
 
 **Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `dev-validate-run --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `timeout-secs` bound. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
 
@@ -323,6 +329,14 @@ With every applicable section above complete, write the artifact per [dev SKILL.
 .agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA_AFTER_COMMIT] --validate [pass|no-verdict|"FAILING: check1,check2"] [--validate-run-dir [RUN_DIR] | --validate-record [FILE]] [--validate-note [TEXT]] [--label [LABEL]]... [--no-labels] [--qa-label [LABEL]]... [--screenshot [PATH]]... --near-ceiling-base origin/[BASE_BRANCH]
 ```
 
+On § 2.3's no-change route, write this receipt in its place, `[HEAD_SHA]` being the HEAD the round started at and `[ITEM_SENTENCE]` the item's sentence that permits the route, quoted as the description holds it:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime dev-return --text write --worktree [WORKTREE_PATH] --kind implement --issue [ARTIFACT_KEY] --round-id [DEV_ROUND_ID] --branch [BRANCH] --commit [HEAD_SHA] --validate not-run --no-change "[ITEM_SENTENCE]" --summary-file tmp/completion-summary-[ISSUE_ID].md [--label [LABEL]]... [--no-labels] --near-ceiling-base origin/[BASE_BRANCH]
+```
+
+The writer refuses it where the item's description does not hold the sentence, HEAD moved, the tree is dirty or a run is named ([dev-return.md § No-change receipt](../../orch/schemas/dev-return.md#no-change-receipt)). Report a refusal's line in the return; never rewrite the round as a pass.
+
 `[RUN_DIR]` is the `run-dir=` value the validation entry printed, and a `pass` needs that run to have passed, a `no-verdict` a run that recorded that result; omit the flag when validation failed before any run started or when § 5's interrupted foreground route has no completed record. A project whose own policy forbids orch's validation runner and runs its validation entry point in the foreground passes `--validate-record [FILE]` in place of `--validate-run-dir`, `[FILE]` being the original or recovery record § 5's foreground route wrote for this attempt.
 
 One `--qa-label` per § 8 signal, none if nothing triggered. One `--label` per entry of the delegation's `Labels:` line, or `--no-labels` when it reads `none`. One `--screenshot` per file § 8 captured, the path the Screenshots section lists; the writer refuses a path it cannot read, and the acceptance attaches each to the summary comment.
@@ -339,7 +353,7 @@ Carry a child with proved branch work and open post-merge checks into the parent
 Branch: [BRANCH_NAME]
 Commit: [SHA]
 QA: [signals or "none"]
-Validate: [pass, "no-verdict: [CAUSE]", or "FAILING: check1, check2"]
+Validate: [pass, "no-verdict: [CAUSE]", "FAILING: check1, check2", or "not-run: no change"]
 Proposed rule: [proposal or "none"]
 Summary: [ISSUE_ID] ✓
 </output_format>

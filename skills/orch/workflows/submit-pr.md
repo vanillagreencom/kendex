@@ -320,7 +320,7 @@ The **re-submit set** is the issues this session filed for work the cap did not 
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /submit_cycles
 ```
 
-At a `result.value` of 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-submit set may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines.
+At a `result.value` of 2 or more → § 3.2 with the note "max re-submit cycles reached, the re-submit set may need manual implementation". Otherwise increment `submit_cycles`, implement via `⤵ workflows/dev-start.md § 1-4`, review via `⤵ workflows/review-pr.md § 1-9` (both managed, same `worktree` and `issue_id`), then re-enter § 2 to push and update the PR body with the new `Closes` lines. A `no-change` return from dev-start adds nothing to the re-submit set: skip its review and re-enter § 2.
 
 ### 3.2 Golden Baselines
 

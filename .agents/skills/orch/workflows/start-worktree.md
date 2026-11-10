@@ -84,8 +84,16 @@ The full session from inside a worktree: implement → publication and review in
 
 1. **Run Workflow**: `⤵ workflows/dev-start.md § 1-4 → § 2 step 2` with context `worktree`, `lifecycle: "managed"`, `issue_id`.
 2. Parse the return: Branch, Commit, QA, Validate, Summary (the field names dev-implement emits).
-3. § 3 requires committed clean work: `HEAD` advanced from the pre-dev SHA, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates the exact missing step under [Delegation](../references/skill-rules.md#delegation). Never review or submit a dirty worktree.
-4. Dev persistence for § 3 fix cycles follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle). § 5.4 retires the remaining agent.
+3. **A `no-change` return** ends the item here, with no review, publication or merge: the round's acceptance closed it `no-change` and posted the comparison as the item's Completion Summary. Linear: read the item's Done-when boxes with `linear.sh issues get [ISSUE_ID]`, write `[WORKTREE_PATH]/tmp/no-change-evidence-[ISSUE_ID].md` with the harness file tool, one `N: [TEXT]` line per box the comparison meets, `[TEXT]` naming the Completion Summary comment and its finding, and complete the item:
+
+   ```bash
+   .agents/skills/linear/scripts/linear.sh issues complete [ISSUE_ID] --done-when-met [N,...] --evidence-file [WORKTREE_PATH]/tmp/no-change-evidence-[ISSUE_ID].md
+   ```
+
+   An item with no Done-when boxes omits both flags. A refusal, `done-when-open` naming the boxes the comparison leaves open among them, is the session's stop: report its line and stop. Then § 5.4, and end.
+
+4. Any other return needs committed clean work: the round dev-start § 3's Check B passed, the returned commit in `HEAD` history, and `git status --porcelain` empty. Any failure re-delegates the exact missing step under [Delegation](../references/skill-rules.md#delegation). Never review or submit a dirty worktree.
+5. Dev persistence for § 3 fix cycles follows [Agent Lifecycle](../references/skill-rules.md#agent-lifecycle). § 5.4 retires the remaining agent.
 
 ### 2.1 Open Early
 

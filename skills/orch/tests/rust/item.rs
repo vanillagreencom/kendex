@@ -3724,6 +3724,269 @@ mod dev_artifacts {
         assert_eq!(answer.value["reason"], "valid");
         assert_eq!(clock.elapsed(), Duration::ZERO);
     }
+
+    /// The item's sentence that lets a round end with no change, as the
+    /// worker quotes it from the description.
+    const PERMIT: &str = "If no change is needed, record the comparison on the item and make no commit, test or pull request.";
+
+    impl World {
+        /// A Linear item keyed `key` whose round `r1` was delegated at the
+        /// current HEAD, and, where `body` is given, the tracker's GraphQL
+        /// answer for it with that description.
+        fn linear_item(&self, key: &str, body: Option<&str>) {
+            fs::write(
+                self.state.join(format!("workflow-state-{key}.json")),
+                json!({"worktree": self.wt, "branch": "work", "dev_round_id": "r1",
+                       "pre_delegate_sha": self.head(),
+                       "stages": [{"kind": "dev", "round_id": "r1", "start": 1, "end": null}]})
+                .to_string(),
+            )
+            .unwrap();
+            let items = self.root.join("items");
+            fs::create_dir_all(&items).unwrap();
+            if let Some(body) = body {
+                let node = json!({"issue": {
+                    "id": format!("uuid-{key}"), "identifier": key, "title": key,
+                    "description": body, "state": {"name": "In Progress", "type": "started"},
+                    "parent": null, "labels": {"nodes": []}, "children": {"nodes": []},
+                    "relations": {"nodes": []}, "inverseRelations": {"nodes": []},
+                }});
+                fs::write(items.join(format!("{key}.json")), node.to_string()).unwrap();
+            }
+        }
+        /// The command with the tracker CLI as the linear package's item
+        /// read, its real bundle formatter over the planted answers.
+        fn tracked(&self) -> Command {
+            let mut command = self.command();
+            command
+                .env(
+                    "OVERSEE_WATCH_TRACKER",
+                    fixtures().join("linear-items/linear.sh"),
+                )
+                .env("LINEAR_ITEMS_DIR", self.root.join("items"))
+                .env(
+                    "LINEAR_FORMATTERS",
+                    Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../../linear/scripts/lib/formatters.sh"),
+                )
+                .env("LINEAR_FAKE_LOG", self.root.join("linear.log"));
+            command
+        }
+        /// `dev-return --text write` of round `r1` of `key` at HEAD, its
+        /// comparison as the summary, quoting `clause`.
+        fn no_change(
+            &self,
+            key: &str,
+            kind: &str,
+            validate: &str,
+            clause: &str,
+            extra: &[&str],
+        ) -> Output {
+            let summary = self.wt.join(format!("tmp/completion-summary-{key}.md"));
+            fs::write(
+                &summary,
+                "## Completion Summary\n\nThe comparison found the two equal.\n",
+            )
+            .unwrap();
+            self.tracked()
+                .args(["dev-return", "--text", "write", "--worktree"])
+                .arg(&self.wt)
+                .args(["--issue", key, "--round-id", "r1", "--kind", kind])
+                .args(["--branch", "work", "--commit", &self.head()])
+                .args(["--validate", validate, "--no-change", clause])
+                .args(["--no-labels", "--summary-file"])
+                .arg(&summary)
+                .args(extra)
+                .output()
+                .unwrap()
+        }
+    }
+
+    /// A round whose item permits ending with no change ends on its own:
+    /// the receipt names the unmoved HEAD, the comparison and no check, the
+    /// check answers `no-change`, and the round's close records that word.
+    /// The defect: such a round could write no accepting receipt, so it
+    /// ended only by asking its overseer.
+    #[test]
+    fn a_permitted_no_change_round_is_written_checked_and_closed_with_that_word() {
+        let w = World::new();
+        w.linear_item(
+            "KEN-9",
+            Some(
+                "Compare the two.\n\nIf no change is needed, record the comparison on the item\nand make no commit, test or pull request.\n",
+            ),
+        );
+        let head = w.head();
+        let out = w.no_change("KEN-9", "implement", "not-run", PERMIT, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let receipt: Value = serde_json::from_str(
+            &fs::read_to_string(w.wt.join("tmp/dev-return-KEN-9-r1.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["validate"], "not-run");
+        assert_eq!(receipt["validate_mode"], Value::Null);
+        assert_eq!(receipt["validate_time"], Value::Null);
+        assert_eq!(receipt["commit"], head.as_str());
+        assert_eq!(receipt["no_change"], PERMIT);
+        let check = |w: &World| {
+            result(
+                &w.command()
+                    .args(["dev-return", "check", "--worktree"])
+                    .arg(&w.wt)
+                    .args(["--issue", "KEN-9", "--round-id", "r1"])
+                    .output()
+                    .unwrap(),
+            )
+        };
+        let answer = check(&w);
+        assert_eq!(answer["verdict"], "no-change", "{answer}");
+        assert_eq!(answer["ok"], true);
+        assert_eq!(answer["validate"], "not-run");
+        assert_eq!(answer["no_change"], PERMIT);
+        let request = write(
+            &w.root,
+            "close.json",
+            r#"{"op": "accept-result", "round_id": "r1", "outcome": "no-change"}"#,
+        );
+        let closed = result(
+            &w.command()
+                .args(["op", "--item", "KEN-9", "--request"])
+                .arg(&request)
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(closed["report"]["outcome"], "no-change", "{closed}");
+        let state: Value = serde_json::from_str(
+            &fs::read_to_string(w.state.join("workflow-state-KEN-9.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(state["stages"][0]["kind"], "implement");
+        assert_eq!(state["stages"][0]["outcome"], "no-change");
+        assert!(state.get("validate_rounds").is_none(), "{state}");
+        // A commit after the receipt moves the HEAD it named: the answer
+        // that ends the item no longer holds.
+        w.commit("app.txt");
+        let answer = check(&w);
+        assert_eq!(answer["verdict"], "retry");
+        assert_eq!(answer["reason"], "head_moved");
+    }
+
+    /// A round that should have changed something cannot end as one that
+    /// needed none: the item's text without the quoted sentence, a HEAD
+    /// moved since the delegation, a dirty tree, a run or record beside the
+    /// receipt, a fix round, a GitHub issue (whose end without a pull
+    /// request has no owner) and an item the tracker did not answer each
+    /// refuse with their key and write no receipt.
+    #[test]
+    fn a_no_change_receipt_is_refused_without_the_items_permission_beside_a_move_a_run_or_dirt() {
+        let permitting = format!("Compare the two.\n\n{PERMIT}\n");
+        let nothing: fn(&World) = |_| {};
+        let moved: fn(&World) = |w| w.commit("app.txt");
+        let dirty: fn(&World) = |w| fs::write(w.wt.join("stray.txt"), "stray\n").unwrap();
+        // (key, the tracker's description, kind, validate, extra flags, the
+        // world's change before the write, the refusal key)
+        type Case<'a> = (
+            &'a str,
+            Option<&'a str>,
+            &'a str,
+            &'a str,
+            &'a [&'a str],
+            fn(&World),
+            &'a str,
+        );
+        let cases: [Case<'_>; 8] = [
+            (
+                "KEN-9",
+                Some("Compare the two and land the fix.\n"),
+                "implement",
+                "not-run",
+                &[],
+                nothing,
+                "no-change-unpermitted",
+            ),
+            (
+                "KEN-9",
+                Some(&permitting),
+                "implement",
+                "not-run",
+                &[],
+                moved,
+                "no-change-moved",
+            ),
+            (
+                "KEN-9",
+                Some(&permitting),
+                "implement",
+                "not-run",
+                &[],
+                dirty,
+                "no-change-dirty",
+            ),
+            (
+                "KEN-9",
+                Some(&permitting),
+                "implement",
+                "pass",
+                &[],
+                nothing,
+                "no-change-run",
+            ),
+            (
+                "KEN-9",
+                Some(&permitting),
+                "implement",
+                "not-run",
+                &["--validate-record", "/nonexistent/record"],
+                nothing,
+                "no-change-run",
+            ),
+            (
+                "KEN-9",
+                Some(&permitting),
+                "fix",
+                "not-run",
+                &[],
+                nothing,
+                "no-change-kind",
+            ),
+            (
+                "issue-8",
+                Some(&permitting),
+                "implement",
+                "not-run",
+                &[],
+                nothing,
+                "no-change-tracker",
+            ),
+            (
+                "KEN-9",
+                None,
+                "implement",
+                "not-run",
+                &[],
+                nothing,
+                "item-unread",
+            ),
+        ];
+        for (key, body, kind, validate, extra, setup, want) in cases {
+            let w = World::new();
+            w.linear_item(key, body);
+            setup(&w);
+            let out = w.no_change(key, kind, validate, PERMIT, extra);
+            assert_eq!(out.status.code(), Some(2), "{want}: {}", stderr(&out));
+            assert!(
+                stderr(&out).starts_with(&format!("dev-return-write: {want} ")),
+                "{want}: {}",
+                stderr(&out)
+            );
+            let receipts: Vec<_> = fs::read_dir(w.wt.join("tmp"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("dev-return-"))
+                .collect();
+            assert!(receipts.is_empty(), "{want}: {receipts:?}");
+        }
+    }
 }
 
 /// An operation patches only the keys it writes.

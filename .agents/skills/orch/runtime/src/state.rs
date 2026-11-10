@@ -296,8 +296,8 @@ impl StageKind {
 }
 
 /// The word `accept-result` and `reconcile-round` close a stage with: the
-/// run's verdict, or how an admitted run ended without one. A request
-/// names the word; none is assumed.
+/// run's verdict, how an admitted run ended without one, or a round its
+/// item let end with no change. A request names the word; none is assumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StageOutcome {
@@ -309,6 +309,9 @@ pub enum StageOutcome {
     Lost,
     /// The run was stopped before a verdict.
     Stopped,
+    /// The round changed nothing, as its item's own text permits, and ran
+    /// no check.
+    NoChange,
 }
 
 impl StageOutcome {
@@ -320,6 +323,7 @@ impl StageOutcome {
             StageOutcome::NoVerdict => "no-verdict",
             StageOutcome::Lost => "lost",
             StageOutcome::Stopped => "stopped",
+            StageOutcome::NoChange => "no-change",
         }
     }
 }

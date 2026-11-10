@@ -67,7 +67,7 @@ pub struct StampRound {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "A foreground record has validate-mode=full|range, head=40-hex, started-at=UTC, ended-at=UTC, exit=0..999 and selection=all|subset|battery|unreported. A reported selection also has lanes=NAME,...; an unreported selection has none. verdict=no-verdict records a bounded run.\nThe Apple gate reads ORCH_APPLE_WORKFLOW (.github/workflows/mac-run.yml) on the base branch. Declare the item's labels with --label or --no-labels. ios/macOS paths, Xcode projects, Apple Package.swift platforms or labels ios/macos require a validate-note line: mac run test: pass run=ID."
+    after_help = "A foreground record has validate-mode=full|range, head=40-hex, started-at=UTC, ended-at=UTC, exit=0..999 and selection=all|subset|battery|unreported. A reported selection also has lanes=NAME,...; an unreported selection has none. verdict=no-verdict records a bounded run.\nThe Apple gate reads ORCH_APPLE_WORKFLOW (.github/workflows/mac-run.yml) on the base branch. Declare the item's labels with --label or --no-labels. ios/macOS paths, Xcode projects, Apple Package.swift platforms or labels ios/macos require a validate-note line: mac run test: pass run=ID.\n--validate not-run ends a round whose item permits ending with no change: --no-change TEXT quotes the item's sentence that permits it, and the round names a summary, no run and no record, at the HEAD it was delegated at with a clean tree."
 )]
 pub struct WriteReturn {
     #[command(flatten)]
@@ -108,6 +108,8 @@ pub struct WriteReturn {
     pub no_summary: bool,
     #[arg(long, num_args = 3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub item: Vec<String>,
+    #[arg(long, allow_hyphen_values = true)]
+    pub no_change: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -982,7 +984,7 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
 }
 
 fn apple_gate(settings: &Settings, r: &WriteReturn) -> Result<()> {
-    if r.validate.starts_with("FAILING:") {
+    if r.validate.starts_with("FAILING:") || r.validate == "not-run" {
         return Ok(());
     }
     let base = base_ref(settings, &r.id.worktree)?;
@@ -1142,6 +1144,108 @@ fn near_ceiling(r: &WriteReturn) -> (Value, Value) {
     }
 }
 
+/// A round that made no change, admitted where the item's own text permits
+/// that end: what the receipt records of it.
+struct NoChange {
+    clause: String,
+    commit: String,
+}
+
+/// The worker quotes the item's sentence; the item's live description,
+/// read as the launch gate reads it, proves the sentence is the item's.
+/// Whether it permits the end is the acceptance's judgement, never the
+/// worker's.
+fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
+    let clause = match (r.validate.as_str(), r.no_change.as_deref()) {
+        ("not-run", Some(clause)) if nonempty(clause) => clause,
+        ("not-run", _) => return Err(refuse("required", "no-change")),
+        (validate, Some(_)) => {
+            return Err(refuse("no-change-run", format!("validate={validate}")));
+        }
+        (_, None) => return Ok(None),
+    };
+    if r.kind != "implement" || r.bundled || !r.item.is_empty() {
+        return Err(refuse(
+            "no-change-kind",
+            format!(
+                "kind={} bundled={}",
+                r.kind,
+                r.bundled || !r.item.is_empty()
+            ),
+        ));
+    }
+    if r.validate_run_dir.is_some() || r.validate_record.is_some() {
+        return Err(refuse("no-change-run", "an evidence source names a run"));
+    }
+    let issue = r.id.issue.as_str();
+    // The item key is the tracker's own: a Linear identifier, or `issue-N`
+    // for a GitHub issue, whose end without a pull request has no owner.
+    if issue
+        .strip_prefix("issue-")
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    {
+        return Err(refuse("no-change-tracker", "tracker=github"));
+    }
+    let linear = issue.split_once('-').is_some_and(|(team, n)| {
+        team.bytes().next().is_some_and(|b| b.is_ascii_uppercase())
+            && team
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+            && !n.is_empty()
+            && n.bytes().all(|b| b.is_ascii_digit())
+    });
+    if !linear {
+        return Err(refuse("no-change-unverifiable", format!("item={issue}")));
+    }
+    let worktree = &r.id.worktree;
+    let head = git(worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let commit = git(
+        worktree,
+        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
+    )?;
+    let path = state::item_path(&settings.state_dir, issue);
+    let delegated = crate::validate::load(&path)?.and_then(|s| {
+        s.doc
+            .get("pre_delegate_sha")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
+    let Some(delegated) = delegated else {
+        return Err(refuse(
+            "no-change-unverifiable",
+            format!("item={issue} pre_delegate_sha=unrecorded"),
+        ));
+    };
+    if commit != head || head != delegated {
+        return Err(refuse(
+            "no-change-moved",
+            format!("commit={commit} head={head} delegated={delegated}"),
+        ));
+    }
+    let status = git(worktree, &["status", "--porcelain"])?;
+    if !status.is_empty() {
+        return Err(refuse(
+            "no-change-dirty",
+            status.lines().next().unwrap_or_default(),
+        ));
+    }
+    let clis = super::Clis {
+        tracker: settings.reads.tracker_cli.clone(),
+        gh: PathBuf::from("gh"),
+        scope_paths: settings.scope_paths_cli.clone(),
+    };
+    let item = super::admission::read_item(&clis, "linear", issue, None)
+        .map_err(|cause| refuse("item-unread", format!("cause={cause}")))?;
+    let folded = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if !folded(&item.body).contains(&folded(clause)) {
+        return Err(refuse("no-change-unpermitted", format!("item={issue}")));
+    }
+    Ok(Some(NoChange {
+        clause: clause.to_owned(),
+        commit,
+    }))
+}
+
 pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     identity(&r.id)?;
     if !nonempty(&r.branch)
@@ -1150,7 +1254,8 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     {
         return Err(refuse("required", "branch and commit"));
     }
-    if !["pass", "no-verdict"].contains(&r.validate.as_str()) && !r.validate.starts_with("FAILING:")
+    if !["pass", "no-verdict", "not-run"].contains(&r.validate.as_str())
+        && !r.validate.starts_with("FAILING:")
     {
         return Err(refuse("invalid-validate", &r.validate));
     }
@@ -1165,13 +1270,16 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if r.near_ceiling_base.as_deref() == Some("") {
         return Err(refuse("required", "near-ceiling-base"));
     }
+    let no_change = no_change(settings, r)?;
     let run = match (&r.validate_run_dir, &r.validate_record) {
         (Some(dir), None) => Some(run_record(dir)?),
         (None, Some(file)) => Some(foreground(file)?),
-        (None, None) if r.validate.starts_with("FAILING:") => None,
+        (None, None) if r.validate.starts_with("FAILING:") || no_change.is_some() => None,
         _ => return Err(refuse("required", "one validation evidence source")),
     };
-    let mut commit = r.commit.clone();
+    let mut commit = no_change
+        .as_ref()
+        .map_or_else(|| r.commit.clone(), |n| n.commit.clone());
     if let Some(run) = &run {
         if !r.validate.starts_with("FAILING:")
             && r.validate != run.verdict
@@ -1219,6 +1327,9 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         (None, None, None) => Value::Null,
         _ => return Err(refuse("summary-conflict", "one summary source")),
     };
+    if no_change.is_some() && !summary.as_str().is_some_and(nonempty) {
+        return Err(refuse("required", "summary"));
+    }
     let mut screenshots = Vec::new();
     for path in &r.screenshot {
         let _ = fs::File::open(path).map_err(|e| refuse("screenshot-unreadable", e))?;
@@ -1244,6 +1355,9 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     }
     if !screenshots.is_empty() {
         record["screenshots"] = json!(screenshots);
+    }
+    if let Some(no_change) = &no_change {
+        record["no_change"] = json!(no_change.clause);
     }
     if r.kind == "implement" {
         let measured = shared_measure(
@@ -1272,9 +1386,11 @@ fn scalars(v: &Value) -> bool {
     let kind = v["kind"].as_str().unwrap_or_default();
     let validate = v["validate"].as_str().unwrap_or_default();
     let failing = validate.starts_with("FAILING:");
+    let not_run = validate == "not-run";
+    let unrun = failing || not_run;
     let timing = &v["validate_time"];
     let time_ok = if timing.is_null() {
-        failing && v.get("validate_time").is_some()
+        unrun && v.get("validate_time").is_some()
     } else {
         let start = timing["started_at"].as_str().and_then(clock::epoch_secs);
         let end = timing["ended_at"].as_str().and_then(clock::epoch_secs);
@@ -1291,9 +1407,14 @@ fn scalars(v: &Value) -> bool {
         && (v["validate_mode"]
             .as_str()
             .is_some_and(|s| files::mode(s).is_ok())
-            || (failing && v.get("validate_mode") == Some(&Value::Null)))
+            || (unrun && v.get("validate_mode") == Some(&Value::Null)))
         && (v["validate_note"].is_null() || v["validate_note"].as_str().is_some_and(nonempty))
         && (validate != "no-verdict" || v["validate_note"].as_str().is_some_and(nonempty))
+        && (!not_run
+            || (kind == "implement"
+                && v["validate_mode"].is_null()
+                && v["no_change"].as_str().is_some_and(nonempty)
+                && v["summary"].as_str().is_some_and(nonempty)))
         && if kind == "implement" {
             v["baseline_lines"].as_u64().is_some_and(|n| n > 0)
         } else {
@@ -1418,6 +1539,8 @@ fn check_answer(
     let ok = reason == "valid";
     let verdict = if ok && (v["validate"] == "pass" || v["validate"] == "no-verdict") {
         "accept"
+    } else if ok && v["validate"] == "not-run" {
+        "no-change"
     } else if reason == "missing" {
         "wait"
     } else {
@@ -1435,6 +1558,7 @@ fn check_answer(
         "near_ceiling",
         "near_ceiling_error",
         "screenshots",
+        "no_change",
     ] {
         let raw = &v[k];
         value[k] = match k {
@@ -1444,7 +1568,7 @@ fn check_answer(
                     .map(|a| a.iter().filter_map(Value::as_str).collect::<Vec<_>>())
                     .unwrap_or_default()
             ),
-            "validate" | "validate_mode" | "validate_note" | "near_ceiling_error" => {
+            "validate" | "validate_mode" | "validate_note" | "near_ceiling_error" | "no_change" => {
                 raw.as_str().map(|s| json!(s)).unwrap_or(Value::Null)
             }
             "validate_time" => {
@@ -1709,6 +1833,11 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
     }
     if v["validate_mode"] == "ci" && commit != git(&repo, &["rev-parse", "HEAD"])? {
         return Ok(emit("ci_head_mismatch", None, None, &[]));
+    }
+    // A no-change answer ends the item, so it holds only at the HEAD the
+    // round left unmoved.
+    if v["validate"] == "not-run" && commit != git(&repo, &["rev-parse", "HEAD"])? {
+        return Ok(emit("head_moved", None, None, &[]));
     }
     let warning = if ancestor(&repo, commit, "HEAD")? {
         None
@@ -2278,6 +2407,7 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
         bundled: false,
         no_summary: true,
         item: items,
+        no_change: None,
     };
     let artifact = match write(settings, &receipt) {
         Ok(answer) => PathBuf::from(answer.text),
