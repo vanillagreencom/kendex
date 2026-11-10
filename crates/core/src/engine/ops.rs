@@ -386,7 +386,7 @@ fn kept_removed(
     kind: Option<ItemKind>,
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
-    let (read, read_now) = read_ancestry(env, scope, manifest);
+    let read = read_ancestry(env, scope, manifest);
     let roots = |facts| RemovalRoots {
         scope,
         manifest,
@@ -394,7 +394,6 @@ fn kept_removed(
         names,
         kind,
         options,
-        read_now: &read_now,
         facts,
     };
     let mut decisions = BTreeMap::new();
@@ -428,12 +427,12 @@ fn kept_removed(
 
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
-/// declared at, and the sources whose catalogs that read opened.
+/// declared at.
 fn read_ancestry(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-) -> (BTreeMap<InstallRef, RequirerProvenance>, BTreeSet<String>) {
+) -> BTreeMap<InstallRef, RequirerProvenance> {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let read = super::expansion::PLANNED_KINDS
@@ -448,16 +447,7 @@ fn read_ancestry(
                 })
         })
         .collect();
-    let read_now = state
-        .sources
-        .iter()
-        .filter(|(source, resolution)| {
-            matches!(resolution, crate::source::SourceState::Ready(_))
-                && !state.unreadable_catalogs.contains(*source)
-        })
-        .map(|(source, _)| source.clone())
-        .collect();
-    (expansion.requirer_provenance(&read), read_now)
+    expansion.requirer_provenance(&read)
 }
 
 enum Reach {
@@ -517,8 +507,6 @@ struct RemovalRoots<'a> {
     names: &'a [String],
     kind: Option<ItemKind>,
     options: &'a PlanOptions,
-    /// Sources whose catalogs the read opened ([`read_ancestry`]).
-    read_now: &'a BTreeSet<String>,
     facts: Facts<'a>,
 }
 
@@ -672,9 +660,6 @@ impl RemovalRoots<'_> {
         match read_under {
             Some(read_under) if self.same_source(&bundle.source, &read_under) => Reach::Rooted,
             Some(_) => Reach::Unrooted,
-            // The set read now is the one the next apply derives from, and
-            // the read facts answer for it.
-            None if self.read_now.contains(&bundle.source) => Reach::Unrooted,
             None => Reach::Missing(Unread::Set(bundle.clone())),
         }
     }

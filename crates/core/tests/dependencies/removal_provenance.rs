@@ -723,8 +723,9 @@ fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
 /// A set from one catalog carries github while the person declares github
 /// from another. Removing that declaration leaves the set, and only the
 /// set's own reading, never the member's, says whether it still roots
-/// github: read now, recorded, or with no record of it, unknown. Unknown
-/// refuses, naming the set, until a retry reads its catalog.
+/// github: read now, or recorded. With no record, refusal names the set
+/// unless the set read now still carries github; removing the set with it
+/// always decides.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
@@ -787,26 +788,37 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
         if offline {
             fs::rename(&f.source, &hidden).unwrap();
         }
-        if offline && !set_recorded {
-            assert!(matches!(
-                ops::remove(&f.env, &f.scope, &["github".into()], Some(ItemKind::Skill), false),
-                Err(CoreError::RemovalSetReadingMissing { catalog, set })
-                    if catalog == "cat" && set == "crew"
-            ));
-            // The remedy: retry while the set's catalog is readable.
+        let refuses = !set_recorded && (offline || !carried_now);
+        if refuses {
+            assert!(
+                matches!(
+                    ops::remove(&f.env, &f.scope, &["github".into()], Some(ItemKind::Skill), false),
+                    Err(CoreError::RemovalSetReadingMissing { catalog, set })
+                        if catalog == "cat" && set == "crew"
+                ),
+                "offline={offline} carried_now={carried_now}"
+            );
+        }
+        if offline && refuses {
             fs::rename(&hidden, &f.source).unwrap();
         }
-        let expected = if carried_now {
-            BTreeSet::from([(ItemKind::Skill, "github".to_owned())])
+        // The remedy: retry while the set still carries github, or remove
+        // the set with it.
+        let (names, expected): (&[&str], _) = if refuses && !carried_now {
+            (&["github", "crew"], BTreeSet::new())
         } else {
-            BTreeSet::new()
+            (
+                &["github"],
+                BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
+            )
         };
+        let kind = (names.len() == 1).then_some(ItemKind::Skill);
         assert_eq!(
-            removed(&f, &["github"], Some(ItemKind::Skill)),
+            removed(&f, names, kind),
             expected,
             "offline={offline} set_recorded={set_recorded} carried_now={carried_now}"
         );
-        if offline && set_recorded {
+        if offline && !refuses {
             fs::rename(&hidden, &f.source).unwrap();
         }
         apply_now(&f);

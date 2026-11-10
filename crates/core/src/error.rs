@@ -20,10 +20,11 @@ pub enum CoreError {
     },
     /// A set carries a member declared from another catalog, and the
     /// record binds no reading of the set to that edge: a path catalog's
-    /// set records none. Only the set's catalog, read when the removal
-    /// runs, can say whether it still carries the member.
+    /// set records none, so no apply repairs it. A removal still decides
+    /// while the set read at that moment carries the member, or when the
+    /// set leaves with it.
     #[error(
-        "removal-set-reading-missing source={} set={}: retry the removal while this catalog is readable",
+        "removal-set-reading-missing source={} set={}: retry the removal while this catalog is readable and its set still carries the item, or remove the set with it",
         crate::names::shown(catalog),
         crate::names::shown(set)
     )]
