@@ -263,3 +263,51 @@ fn required_agents_keep_their_kind_and_scope_state_on_both_browse_paths() {
         );
     }
 }
+
+/// A skill's required hooks are rows of their own kind, read from the
+/// hook records and removals of the scope the install lands in.
+#[test]
+fn required_hooks_keep_their_kind_and_scope_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let catalog = root.join("catalog");
+    let home = catalog.join("skills/dev");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        home.join("SKILL.md"),
+        "---\nname: dev\ndescription: does dev things\ndependencies:\n  hooks: [note, removed, missing]\n---\nbody\n",
+    )
+    .unwrap();
+    fs::create_dir_all(catalog.join("hooks")).unwrap();
+    for name in ["note", "removed"] {
+        fs::write(
+            catalog.join(format!("hooks/{name}.sh")),
+            format!(
+                "#!/usr/bin/env bash\n# ---\n# name: {name}\n# event: PreToolUse\n# ---\nexit 0\n"
+            ),
+        )
+        .unwrap();
+    }
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    let declarations = format!(
+        "{}\n[suppressed]\nhook = [\"removed\"]\n",
+        sources_decl(&catalog)
+    );
+    let (env, scope) = project(&root, &declarations);
+    save_lock(&env, &scope, &[(ItemKind::Hook, "note")]);
+    let preview = package_preview(&env, &cat(&scope), ItemKind::Skill, "dev", None).unwrap();
+    let actual: Vec<_> = preview
+        .dependencies
+        .required
+        .iter()
+        .map(|dep| (dep.kind, dep.name.as_str(), dep.state))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (ItemKind::Hook, "note", InstallState::Installed),
+            (ItemKind::Hook, "removed", InstallState::RemovedByYou),
+            (ItemKind::Hook, "missing", InstallState::NotOffered),
+        ]
+    );
+}

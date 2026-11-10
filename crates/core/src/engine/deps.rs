@@ -1,7 +1,7 @@
 //! Required and selected optional dependencies stay within one catalog: a
-//! skill's from its SKILL.md, a hook's from its header, and a required
-//! agent's from its skill assignment. Derived install reasons preserve the
-//! manifest as a record of user choices.
+//! skill's from its SKILL.md, agents and hooks included, a hook's from its
+//! header, and a required agent's from its skill assignment. Derived install
+//! reasons preserve the manifest as a record of user choices.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -28,14 +28,16 @@ pub(crate) struct Dependencies {
     pub(crate) optional: Vec<String>,
     pub(crate) required_skills: Vec<String>,
     pub(crate) required_agents: Vec<String>,
+    pub(crate) required_hooks: Vec<String>,
     pub(crate) requires_on: Option<Vec<String>>,
     pub(crate) commands: Vec<commands::CommandDependency>,
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
-const DEPENDENT_KINDS: [(ItemKind, ItemKind); 5] = [
+const DEPENDENT_KINDS: [(ItemKind, ItemKind); 6] = [
     (ItemKind::Skill, ItemKind::Skill),
     (ItemKind::Skill, ItemKind::Agent),
+    (ItemKind::Skill, ItemKind::Hook),
     (ItemKind::Agent, ItemKind::Skill),
     (ItemKind::Hook, ItemKind::Hook),
     (ItemKind::Hook, ItemKind::Skill),
@@ -71,6 +73,7 @@ pub(crate) fn declared_dependencies(
                     optional: Vec::new(),
                     required_skills: hook.requires_skills,
                     required_agents: Vec::new(),
+                    required_hooks: Vec::new(),
                     requires_on: hook.requires_on,
                     commands: Vec::new(),
                 })
@@ -106,6 +109,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
         optional: map.string_list("optional").unwrap_or_default(),
         required_skills: Vec::new(),
         required_agents: map.string_list("agents").unwrap_or_default(),
+        required_hooks: map.string_list("hooks").unwrap_or_default(),
         requires_on: None,
         commands: commands::declared(&parsed.map).unwrap_or_default(),
     }
@@ -960,6 +964,8 @@ fn wanted_by(
             (declared.required_agents.as_slice(), [].as_slice())
         } else if *dep_kind == kind {
             (declared.required.as_slice(), declared.optional.as_slice())
+        } else if *dep_kind == ItemKind::Hook {
+            (declared.required_hooks.as_slice(), [].as_slice())
         } else {
             (declared.required_skills.as_slice(), [].as_slice())
         };

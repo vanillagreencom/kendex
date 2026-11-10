@@ -17,13 +17,13 @@ Writing rules and finished examples for repository markdown and documentation HT
 kendex add vanillagreencom/kendex --skill docs-writing
 ```
 
-kendex also installs decider, which supplies the decision-record format.
+kendex also installs decider, which supplies the decision-record format, and the docs-writing-note hook on Claude Code, Codex and Pi.
 
 ## How it works
 
 The author finds the document type in the table in [SKILL.md](SKILL.md), then reads that type's rules and its example. The author checks existing claims against the code. A focused change edits only the affected text; a rewrite extracts what is unique, then writes from a blank page.
 
-On the first Markdown edit of a session, the docs-writing-note hook names that file's type, rules and example once. It never blocks the edit. When the change is committed or pushed, the commit-guards md-type check refuses a shape the table rules out for that type, such as a settings table in a README, and md-refs checks references. kendex delivers the skill and the hook by refresh, so a repository needs no `AGENTS.md` line that sends Markdown edits here. The workflow and commit-guards bundles carry both.
+On the first Markdown edit of a session, the docs-writing-note hook names that file's type, rules and example once, where commit-guards is installed in the same scope. Without commit-guards, the hook sends the session to the route table in SKILL.md. It never blocks the edit. When the change is committed or pushed, the commit-guards md-type check refuses a shape the table rules out for that type, such as a settings table in a README, and md-refs checks references. Refresh delivers the skill and the hook, so a repository needs no `AGENTS.md` line that sends Markdown edits here.
 
 ## Setup
 
