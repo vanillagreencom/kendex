@@ -167,10 +167,10 @@ class Task(Session):
                     if startup["state"] != "started":
                         screen = self.tmux("capture-pane", "-p", "-t", pane, socket=terminal["server"]).stdout
                         raise Refusal("native-exited", "exit=" + str(startup["exit"]) + "\n" + screen.strip())
-                    # A started harness can still stop on a first-run, sign-in
-                    # or trust screen that task-prepare could not read. The
-                    # last pane read must finish inside the bound, so the
-                    # refusal keeps its screen.
+                    # A started harness can still stop on a first-run, trust
+                    # or selection dialog, or a sign-in or usage wall, that
+                    # task-prepare could not read. The last pane read must
+                    # finish inside the bound, so the refusal keeps its screen.
                     while True:
                         ready = self.backend("task-ready", terminal["server"], pane, check=False)
                         if ready.returncode == 0:

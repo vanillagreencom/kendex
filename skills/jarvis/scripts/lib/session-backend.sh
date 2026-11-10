@@ -180,6 +180,14 @@ case "$verb" in
     # Without it the task stops on the theme and security screens with nobody
     # at the pane. Read before ol_command_line, whose trust write sets the key:
     # the setup is the account owner's to finish at the harness.
+    # No documented interface answers whether that setup is done: `claude auth
+    # status` reports sign-in, `claude doctor` install and settings health, and
+    # neither the settings keys (`theme` among them, plus the documented global
+    # config keys of .claude.json) nor any environment variable records it.
+    # IS_DEMO skips the setup without reporting it, a skip the owner never chose.
+    # https://code.claude.com/docs/en/cli-reference
+    # https://code.claude.com/docs/en/settings-reference#global-config-settings
+    # https://code.claude.com/docs/en/env-vars
     if [[ "$harness" == claude ]]; then
       onboarded=false
       if [[ -e "$account/.claude.json" ]]; then
@@ -199,9 +207,11 @@ case "$verb" in
       '{line:$line,harness:$harness,model:$model,account:$account,effort:$effort}' ;;
   task-ready)
     # Prints PANE's screen. Status 0 is a harness drawing its composer or a
-    # turn (orch's pane_harness_up); 1 is any other screen, a first-run,
-    # sign-in or trust screen among them; 2 is an unread pane; 3 is an exited
-    # harness, its `exit=` status printed first.
+    # turn (orch's pane_harness_up) that orch's lane_state reads as no dialog
+    # and no wall; 1 is any other screen: one no harness drew yet, a first-run
+    # or trust screen, a selection dialog such as Codex's model switch, or a
+    # sign-in or usage wall; 2 is an unread pane; 3 is an exited harness, its
+    # `exit=` status printed first.
     export TMUX="$1,0,0"
     dead="$(tmux -S "$1" display-message -p -t "$2" '#{pane_dead}:#{pane_dead_status}')" || exit 2
     screen="$(tmux -S "$1" capture-pane -p -t "$2")" || exit 2
@@ -210,7 +220,12 @@ case "$verb" in
       exit 3
     fi
     printf '%s\n' "$screen"
-    pane_harness_up "$screen" || exit 1 ;;
+    pane_harness_up "$screen" || exit 1
+    # No window or process read: the pane is open and its harness alive.
+    lane_state state listed "" "" "$screen" || exit 2
+    case "$state" in
+      asking|rate-limit-switch|walled) exit 1 ;;
+    esac ;;
   task-live)
     rc=0
     home_pane_live "$1" "$2" "$3" "$4" || rc=$?
