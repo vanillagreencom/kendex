@@ -44,20 +44,21 @@ fi
 FIXTURE_SHA="${FIXTURE_SHA%% *}"
 
 # The fakes: curl logs the URL, then answers each attempt by the virtual
-# second it starts: a stalled endpoint before STALL_SECS, 504 before
-# OUTAGE_SECS, then CURL_STATUS (200 by default, which copies the fixture
+# second it starts: a stalled endpoint before STALL_SECS, OUTAGE_STATUS (504
+# by default) before OUTAGE_SECS, then CURL_STATUS (200, which copies the fixture
 # archive to its -o path). Each attempt is logged to TRY_LOG as "START STATUS
-# END". Its retries follow curl's own, per `curl --manual` (curl 8.5.0) on
-# --retry, --retry-delay, --retry-max-time and --max-time, and recorded runs of
-# that curl against a local 504 server and a local server that accepts and
-# never answers: only a timeout (exit 28, status 000) and 408, 429, 500, 502,
-# 503 and 504 retry; a stalled attempt ends at --max-time, or never without
-# one; the wait is --retry-delay, else 1 s doubling up to 600; the max time is
-# checked when an attempt ends, before its wait; -f exits 22 and -w names the
-# last attempt's status. --connect-timeout is accepted and not modeled, since
-# --max-time also bounds the stall it bounds. An option it does not model
-# exits 2 before any attempt, so a changed curl call fails the suite rather
-# than going unmodeled. uname answers UNAME_S and UNAME_M.
+# END". A stalled attempt ends at --max-time, or never without one. A failed
+# HTTP response normally exits 22 with -f, but can end as a receive error (56)
+# even with HTTP 500, as GitHub release run 42854385828 did. OUTAGE_EXIT models
+# that result independently of the status. curl-8_7_1/src/tool_operate.c,
+# post_per_transfer (https://github.com/curl/curl/blob/curl-8_7_1/src/tool_operate.c),
+# gates HTTP --retry on exit 0 or 22; exit 28 retries as a timeout. The old
+# flags remain modeled for the pre-fix control: a fixed --retry-delay, else
+# doubling from 1 s up to 600, and --retry-max-time checked after each attempt.
+# -w names the last status. --connect-timeout is accepted and not modeled,
+# since --max-time also bounds the stall it bounds. Unmodeled options exit 2.
+# sleep advances CLOCK, which the disposable script reads instead of SECONDS.
+# uname answers UNAME_S and UNAME_M.
 FAKE_BIN="$TMP_ROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/curl" <<'SH'
@@ -81,20 +82,30 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$url" >>"$CURL_LOG"
 NEVER=999999
-t=0 backoff=1
+t="$(cat "$CLOCK")" backoff=1
+start=$t
 while :; do
   if [ "$t" -lt "${STALL_SECS:-0}" ]; then
-    code=000 end=$NEVER
+    code=${STALL_STATUS:-000} end=$NEVER
     [ "$attempt" -eq 0 ] || end=$((t + attempt))
   elif [ "$t" -lt "${OUTAGE_SECS:-0}" ]; then
-    code=504 end=$t
+    code=${OUTAGE_STATUS:-504} end=$t
   else
     code=${CURL_STATUS:-200} end=$t
   fi
+  rc=0
+  if [ "$t" -lt "${STALL_SECS:-0}" ]; then
+    rc=28
+  elif [ "$code" != 200 ]; then
+    rc=${OUTAGE_EXIT:-22}
+  fi
   printf '%s %s %s\n' "$t" "$code" "$end" >>"$TRY_LOG"
   [ "$end" -lt "$NEVER" ] || break
-  case "$code" in 000 | 408 | 429 | 500 | 502 | 503 | 504) ;; *) break ;; esac
-  [ "$retries" -gt 0 ] && { [ "$max" -eq 0 ] || [ "$end" -lt "$max" ]; } || break
+  case "$code:$rc" in
+    *:28 | 408:22 | 429:22 | 500:22 | 502:22 | 503:22 | 504:22) ;;
+    *) break ;;
+  esac
+  [ "$retries" -gt 0 ] && { [ "$max" -eq 0 ] || [ "$((end - start))" -lt "$max" ]; } || break
   retries=$((retries - 1))
   if [ "$delay" -gt 0 ]; then
     t=$((end + delay))
@@ -102,17 +113,23 @@ while :; do
     t=$((end + backoff)) backoff=$((backoff * 2 > 600 ? 600 : backoff * 2))
   fi
 done
+printf '%s\n' "$end" >"$CLOCK"
 var='%{http_code}'
 printf '%s' "${write//"$var"/$code}"
-[ "$code" = 000 ] && exit 28
-[ "$code" = 200 ] || exit 22
+[ "$rc" -eq 0 ] || exit "$rc"
 cp -- "$FIXTURE" "$out"
+SH
+cat >"$FAKE_BIN/sleep" <<'SH'
+#!/usr/bin/env bash
+set -eu
+now="$(cat "$CLOCK")"
+printf '%s\n' "$((now + $1))" >"$CLOCK"
 SH
 cat >"$FAKE_BIN/uname" <<'SH'
 #!/usr/bin/env bash
 case "$1" in -s) echo "$UNAME_S" ;; -m) echo "$UNAME_M" ;; *) exit 64 ;; esac
 SH
-chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/uname"
+chmod +x "$FAKE_BIN/curl" "$FAKE_BIN/sleep" "$FAKE_BIN/uname"
 
 # copy NAME [FROM TO]...: a disposable copy of the script at $TMP_ROOT/NAME,
 # each FROM replaced by its TO on the one line holding it, in SCRIPT.
@@ -120,6 +137,7 @@ SCRIPT=""
 copy() {
   local name=$1 from to n before
   shift
+  set -- 'start=$SECONDS' 'start=$(cat "$CLOCK")' 'SECONDS - start' '$(cat "$CLOCK") - start' "$@"
   SCRIPT="$TMP_ROOT/$name"
   cp "$SCRIPTS/install-gitleaks" "$SCRIPT"
   while [ $# -gt 0 ]; do
@@ -138,6 +156,7 @@ copy() {
 LINUX_PIN=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 DARWIN_ARM_PIN=b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5
 
+CLOCK="$TMP_ROOT/clock"
 CURL_LOG="$TMP_ROOT/curl.log"
 TRY_LOG="$TMP_ROOT/tries.log"
 OUT_LOG="$TMP_ROOT/out.log"
@@ -146,7 +165,8 @@ run() { # DIR [NAME=VALUE...] — the exit status and the first stable line; the
   shift
   : >"$CURL_LOG"
   : >"$TRY_LOG"
-  env PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" TRY_LOG="$TRY_LOG" FIXTURE="$TMP_ROOT/fixture.tar.gz" UNAME_S=Linux UNAME_M=x86_64 "$@" "$SCRIPT" "$dir" >"$OUT_LOG" 2>&1 || rc=$?
+  printf '0\n' >"$CLOCK"
+  env PATH="$FAKE_BIN:$PATH" CLOCK="$CLOCK" CURL_LOG="$CURL_LOG" TRY_LOG="$TRY_LOG" FIXTURE="$TMP_ROOT/fixture.tar.gz" UNAME_S=Linux UNAME_M=x86_64 "$@" "$SCRIPT" "$dir" >"$OUT_LOG" 2>&1 || rc=$?
   printf 'rc=%s %s' "$rc" "$(awk '/^install-gitleaks: / && !seen { print; seen=1 }' "$OUT_LOG")"
 }
 # The latest second a failing download may end: its CI callers run it in a
@@ -195,17 +215,39 @@ assert_eq "an operating system with no pin is refused" \
 assert_eq "an architecture with no pin is refused" \
   "rc=1 install-gitleaks: platform=riscv64" "$(run "$D" UNAME_M=riscv64)"
 D="$TMP_ROOT/missing"
-assert_eq "a release answering 404 is refused" \
-  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_STATUS=404)"
-assert_eq "after one attempt, without waiting out the window" "0 404 0" "$(cat "$TRY_LOG")"
+for status in 400 401 403 404 501; do
+  for rc in 22 28 56; do
+    assert_eq "HTTP $status/exit $rc is refused" \
+      "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_STATUS="$status" OUTAGE_EXIT="$rc")"
+    assert_eq "after one attempt, without waiting out the window" "0 $status 0" "$(cat "$TRY_LOG")"
+    assert_eq "with no retry wait" "0" "$(cat "$CLOCK")"
+  done
+done
 assert_eq "an empty directory argument is a usage error" "rc=2 install-gitleaks: usage=1" "$(run "")"
 
 echo "=== a release outage ==="
-# Two minutes of 504s: far past the old 7 s of retries, within a few minutes.
+# Two minutes: far past the old 7 s of retries, within the window. Include
+# the recorded HTTP 500/exit 56 incident, not just curl's usual HTTP exit 22.
 SCRIPT="$PINNED"
-D="$TMP_ROOT/outage"
-assert_eq "an outage of two minutes is ridden out and the binary installed" \
-  "rc=0 install-gitleaks: installed=8.30.1:$D/gitleaks" "$(run "$D" OUTAGE_SECS=120)"
+for status in 408 429 500 502 503 504; do
+  for rc in 22 56; do
+    D="$TMP_ROOT/outage-$status-$rc"
+    assert_eq "HTTP $status/exit $rc recovers inside the window" \
+      "rc=0 install-gitleaks: installed=8.30.1:$D/gitleaks" "$(run "$D" OUTAGE_SECS=120 OUTAGE_STATUS="$status" OUTAGE_EXIT="$rc")"
+    assert_eq "the installed binary answers its pinned version" "8.30.1" "$("$D/gitleaks" version 2>/dev/null || echo absent)"
+  done
+done
+D="$TMP_ROOT/timeout-recovery"
+assert_eq "a timeout with a partial HTTP 200 response recovers" \
+  "rc=0 install-gitleaks: installed=8.30.1:$D/gitleaks" "$(run "$D" STALL_SECS=120 STALL_STATUS=200)"
+D="$TMP_ROOT/receive-down"
+assert_eq "HTTP 500/exit 56 past the window is refused" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" OUTAGE_SECS=100000 OUTAGE_STATUS=500 OUTAGE_EXIT=56)"
+# The issue's failure contract includes the last status and elapsed seconds.
+assert_eq "the failure names exit 56, HTTP 500, and 150 seconds of retrying" \
+  "56 500 150" "$(awk '/^The release archive/ { for (i=1; i<NF; i++) { if ($i == "exit") { rc=$(i+1); sub(/,$/, "", rc) } if ($i == "status") code=$(i+1); if ($i == "after") elapsed=$(i+1) } print rc, code, elapsed }' "$OUT_LOG")"
+assert_eq "and leaves no binary" "absent" "$([ -e "$D/gitleaks" ] && echo present || echo absent)"
+assert_eq "within the CI job's budget" "yes" "$(in_budget)"
 D="$TMP_ROOT/down"
 assert_eq "an outage past the window is refused" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" OUTAGE_SECS=100000)"
@@ -258,16 +300,18 @@ in_cwd "$TMP_ROOT/no-dash-cwd" -gitleaks >/dev/null
 assert_eq "control: without the dash-led refusal the DIR is created and the release fetched" \
   "-gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
   "$(ls -A -- "$TMP_ROOT/no-dash-cwd") $(cat -- "$CURL_LOG")"
-copy old-retry "$LINUX_PIN" "$FIXTURE_SHA" '--retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS"' '--retry 3'
-res="$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
-assert_eq "control: the old curl --retry 3 fails a two-minute outage after attempts answered 504" \
-  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz last=504" "$res last=$(last_status)"
-copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '--retry-max-time "$RETRY_SECS"' '--retry-max-time 0'
-run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=100000 >/dev/null
-assert_eq "control: without the max time a long outage retries past the budget" "no" "$(in_budget)"
-copy backoff "$LINUX_PIN" "$FIXTURE_SHA" '--retry-delay "$RETRY_DELAY_SECS"' '--retry-delay "$RETRY_DELAY_SECS" --retry-delay 0'
-run "$TMP_ROOT/backoff-dir" OUTAGE_SECS=100000 >/dev/null
-assert_eq "control: curl's doubling backoff retries past the budget" "no" "$(in_budget)"
+copy curl-only "$LINUX_PIN" "$FIXTURE_SHA" \
+  'curl -fsSL' 'curl -fsSL --retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS"' \
+  'case "$code:$rc" in' 'case curl-only in'
+assert_eq "control: the pre-fix curl-only retry refuses the recovering HTTP 500/exit 56" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" \
+  "$(run "$TMP_ROOT/curl-only-dir" OUTAGE_SECS=120 OUTAGE_STATUS=500 OUTAGE_EXIT=56)"
+copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '[ "$elapsed" -lt "$RETRY_SECS" ] || break' 'true || break'
+run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=300 >/dev/null
+assert_eq "control: without the window a long outage retries past the budget" "no" "$(in_budget)"
+copy long-delay "$LINUX_PIN" "$FIXTURE_SHA" 'sleep "$RETRY_DELAY_SECS"' 'sleep 600'
+run "$TMP_ROOT/long-delay-dir" OUTAGE_SECS=100000 >/dev/null
+assert_eq "control: an unbounded retry delay overshoots the budget" "no" "$(in_budget)"
 copy no-attempt-max "$LINUX_PIN" "$FIXTURE_SHA" ' --max-time "$ATTEMPT_SECS"' ''
 run "$TMP_ROOT/no-attempt-max-dir" STALL_SECS=100000 >/dev/null
 assert_eq "control: without a per-attempt max time a stalled endpoint hangs past the budget" "no" "$(in_budget)"

@@ -15,12 +15,12 @@
 set -euo pipefail
 
 VERSION=8.30.1
-# How long the download keeps retrying a transient failure, curl's --retry set
-# (a timeout or an HTTP 408, 429, 500, 502, 503 or 504), before it fails: long
-# enough to ride out a short outage of GitHub's release downloads. Each
-# attempt connects within CONNECT_SECS and ends by ATTEMPT_SECS, so an endpoint
-# that stops answering is a timeout curl retries, not a hang. curl checks the
-# window after an attempt ends, so the download ends at the latest by
+# How long the download keeps retrying a transient failure (a timeout or an
+# HTTP 408, 429, 500, 502, 503 or 504), before it fails: long enough to ride
+# out a short outage of GitHub's release downloads. Each attempt connects
+# within CONNECT_SECS and ends by ATTEMPT_SECS, so an endpoint that stops
+# answering is a timeout, not a hang. The window is checked after an attempt
+# ends, so the download ends at the latest by
 # RETRY_SECS + RETRY_DELAY_SECS + ATTEMPT_SECS (220 s). Its CI callers, the
 # bot-instructions job of .github/workflows/skill-tests.yml and the ci job of
 # skills/harness-ci/templates/ci.yml, run it inside a timeout-minutes: 5 job,
@@ -86,14 +86,26 @@ fi
 
 work="$(mktemp -d)" || fail scratch mktemp "Could not create a scratch directory."
 trap 'rm -rf -- "$work"' EXIT
-# A fixed --retry-delay replaces curl's doubling backoff, whose next wait could
-# overshoot the window by minutes. Each retry waits at least a second, so a
-# --retry count of RETRY_SECS never ends the window before --retry-max-time.
+# GitHub can answer 500 with a receive error (56), which curl's --retry does
+# not classify by HTTP status. Own that classification and keep a fixed delay
+# so neither curl's result gate nor its doubling backoff cuts the window short
+# or overshoots the CI budget.
 start=$SECONDS
-code="$(curl -fsSL --retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS" \
-  --connect-timeout "$CONNECT_SECS" --max-time "$ATTEMPT_SECS" -w '%{http_code}' -o "$work/$asset" \
-  "https://github.com/gitleaks/gitleaks/releases/download/v$VERSION/$asset")" \
-  || fail download "$asset" "The release archive could not be downloaded: curl exit $?, last HTTP status ${code:-000} (000 is no response), after $((SECONDS - start)) s of retrying transient failures for up to $RETRY_SECS s."
+while :; do
+  rc=0
+  code="$(curl -fsSL --connect-timeout "$CONNECT_SECS" --max-time "$ATTEMPT_SECS" \
+    -w '%{http_code}' -o "$work/$asset" \
+    "https://github.com/gitleaks/gitleaks/releases/download/v$VERSION/$asset")" || rc=$?
+  elapsed=$((SECONDS - start))
+  [ "$rc" -ne 0 ] || break
+  case "$code:$rc" in
+    408:* | 429:* | 500:* | 502:* | 503:* | 504:* | 000:28 | [123]??:28) ;;
+    *) break ;;
+  esac
+  [ "$elapsed" -lt "$RETRY_SECS" ] || break
+  sleep "$RETRY_DELAY_SECS"
+done
+[ "$rc" -eq 0 ] || fail download "$asset" "The release archive could not be downloaded: curl exit $rc, last HTTP status ${code:-000} (000 is no response), after $elapsed s of retrying transient failures for up to $RETRY_SECS s."
 got="$(digest "$work/$asset")" || fail digest "$asset" "The archive's digest could not be computed."
 got="${got%% *}"
 [ "$got" = "$want" ] || fail checksum "$asset" "The archive's SHA-256 is $got, not the pinned $want. Nothing was installed."
