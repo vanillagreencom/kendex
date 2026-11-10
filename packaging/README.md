@@ -16,7 +16,7 @@ The headline install is the curl script. It and the binary package-manager entri
 | dmg | download from the release | app (CLI inside the bundle) | built by `release.yml` |
 | AppImage | download from the release | app | built by `release.yml` |
 
-The desktop app binary is named `kendex-app`, after its cargo package, and every channel that installs both keeps it off `PATH` (on Linux the AppImage or the plain `kendex-app` binary, on macOS the `.app` bundle) so the `kendex` command is the CLI. That name is also what a Linux launcher matches a running window against, which is why both the curl script and the Arch packages put `StartupWMClass=kendex-app` in the desktop entry they write.
+The `kendex` command opens the CLI. Use your desktop launcher to open the app.
 
 ## Nix flake
 
@@ -66,20 +66,7 @@ Which package owns a running install is asked of the package manager (`pacman -Q
 
 ## Per release
 
-Version choice and release notes follow the [release standard](../changelog.d/README.md#release-standard).
-
-Each new `vX.Y.Z` changes the artifact checksums. Update, in this repo:
-
-- `arch/kendex/PKGBUILD` + `.SRCINFO`: `pkgver` and the one `sha256sums` entry, over the tag's source tarball.
-- `arch/kendex-bin/PKGBUILD` + `.SRCINFO`: `pkgver`, the four icon `sha256sums`, and the per-arch pairs (AppImage, CLI binary) in `sha256sums_x86_64` and `sha256sums_aarch64`. Regenerate `.SRCINFO` with `makepkg --printsrcinfo > .SRCINFO` in the package directory; `tools/check-aur-sync` refuses a PKGBUILD whose `.SRCINFO` disagrees, and the commit would fail on the AUR publish anyway.
-- `homebrew/kendex-cli.rb`: `version` and all four `sha256` lines (macOS arm and Intel, Linux Intel and arm).
-- `homebrew/kendex-cask.rb`: `version` and both `.dmg` checksums (`arm:` is the `_aarch64.dmg`, `intel:` the `_x64.dmg`).
-
-Checksums for the released files come from the release page or `sha256sum <file>` on a download. A target shipping for the first time has all-zero placeholders until its first release fills them. Recipes carrying a placeholder are pushed to the tap and AUR only as part of that release's version bump, never before — pushed early, a user on the new target gets a checksum mismatch instead of a clear "not supported".
-
-Committing that bump to `main` is what publishes it; the workflows under § Publishing carry the recipes to their channels.
-
-Each Linux CLI `sha256` (one per architecture) is the same value in `kendex-cli.rb` and `arch/kendex-bin/PKGBUILD` — bump both together. `kendex-git` and `kendex-cli-git` need no checksum change; each `pkgver()` is computed at build time from the cloned commit.
+Maintainers update recipe pins after publication through [DEVELOPMENT.md § Release](../DEVELOPMENT.md#release).
 
 ### The version restart, once
 
@@ -87,19 +74,7 @@ The formula's counterpart to Arch's epoch is `version_scheme 1`: brew compares t
 
 ## Publishing
 
-Two workflows push the Arch and Homebrew recipes out. A hand edit in the AUR or the tap is overwritten by the next run. Nix consumers fetch the flake directly from this repository at the revision their pin names; no publishing workflow is needed.
-
-**Arch** (`.github/workflows/publish-aur.yml`, `tools/publish-aur`): carries the four packages above, and runs on every push to `main` that touches `packaging/arch/`, the two tools, or the workflow itself, and copies each package's `PKGBUILD` + `.SRCINFO` into a clone of `ssh://aur@aur.archlinux.org/<name>.git`, committing and pushing only what differs. Before a package is pushed, its recipe is checked for a target still pinned to the all-zero placeholder, which defers the whole package (a keyed `deferred=` line in the log, exit 0): the recipe is pushed whole or not at all, so a placeholder would reach every user on that target as a package that fails makepkg's validity check. Then every download the recipe pins is fetched and hashed: a download that is absent, or whose bytes do not hash to the pin, defers the package the same way until the release is up, so a version bump merged ahead of its tag is harmless: publishing a stable draft runs a secret-free release-event job that dispatches the publisher on `main`. The release workflow explicitly dispatches the same main publisher after candidate publication, because its `GITHUB_TOKEN` release event starts no other workflow. A file the AUR tracks that the recipe no longer names is removed on the next publish, and the remote check reports one as drift. An unreachable host or an unexpected HTTP status fails the run instead: neither is a release that has not happened yet. `kendex-git` and `kendex-cli-git` have only a git source and are never deferred. An AUR name nobody has pushed yet is a first publication (`new=<package>`), not a fault. A package's file set is `PKGBUILD`, `.SRCINFO` and every companion file its recipe names (`tools/check-aur-sync --print-files`); a named file that is missing is a drift finding before anything is published. The published files are diffed against the AUR afterwards, and a weekly job compares the packages that are publishable that day (`tools/publish-aur --publishable`, then `tools/check-aur-sync --remote` on them) and reports drift without publishing; a deferred package is expected to differ and is left out.
-
-- `workflow_dispatch` takes `packages` (space separated, default all four), `dry_run` and `check_key`; a dry run clones over HTTPS, prints the diff, and pushes nothing. Locally: `tools/publish-aur --dry-run [package...]`, which needs no key.
-- Publication and key checks use the `kendex` environment, which admits only `main`. A plain dry run uses no environment and keeps its selected branch.
-- Secret `AUR_SSH_PRIVATE_KEY`, in the `kendex` environment only: the key of the AUR account `vanillagreen`, which maintains the four packages: RSA 4096, fingerprint `SHA256:t8gSJ7RLCH3fyWUrv+wJqzDOyeXkGdhrDuyfVuu19Do`, and a rotation changes this line. A real run proves the key with one login before any clone (`tools/publish-aur --check-key`), printing its fingerprint; a `check_key` dispatch runs only that proof. Locally, `ssh -T -i KEY aur@aur.archlinux.org` answers `Welcome to AUR, vanillagreen!` for the right key. Variable `AUR_SSH_KNOWN_HOSTS`: the `aur.archlinux.org` host key line, verified against the fingerprints on the Arch wiki's AUR page before it is stored; the job prints the fingerprint it trusts. A real run with either unset fails by name; it never pushes nothing under a green run.
-- Variables `AUR_COMMIT_NAME` and `AUR_COMMIT_EMAIL` are optional; unset, the AUR commit is authored as `kendex packaging <packaging@vanillagreen>`.
-
-**Homebrew** (`.github/workflows/publish-homebrew.yml`, `tools/publish-homebrew`): runs on every push to `main` that touches `packaging/homebrew/`, the tool or the workflow itself, copies `kendex-cli.rb` to `Formula/kendex-cli.rb` and `kendex-cask.rb` to `Casks/kendex.rb` in the tap `vanillagreencom/homebrew-kendex`, and commits and pushes only if they differ. The formula deliberately is NOT named `kendex`: brew resolves a formula before a cask, and the plain name must reach the cask so the default install is the app. A recipe still pinning a target to the all-zero placeholder is deferred (a keyed `deferred=` line, exit 0) and the other recipe goes on its own; a run with both deferred pushes nothing. Beyond that the push is unconditional: it does not fetch the release's downloads the way the AUR publisher does, so a Homebrew recipe carrying a version bump must not reach `main` before that release is published.
-
-- `workflow_dispatch` takes `dry_run`; a dry run clones the public tap, prints the diff, and pushes nothing. Locally: `tools/publish-homebrew --dry-run`, which needs no token.
-- Deploy keys are disabled on the tap, so the push uses an installation token of the fleet GitHub App, minted for `homebrew-kendex` alone. Secrets `FLEET_GH_APP_ID` (the App ID) and `FLEET_GH_APP_PRIVATE_KEY` (its PEM private key) go in the `kendex` environment only (D003); the App has contents write on the tap. A real run with either unset fails by name before anything is cloned.
+Maintainer publication, credentials and failure handling: [DEVELOPMENT.md § Publishers](../DEVELOPMENT.md#publishers). Change recipes in this repository; channel publication replaces direct edits in the AUR or tap.
 
 ## Caveats
 

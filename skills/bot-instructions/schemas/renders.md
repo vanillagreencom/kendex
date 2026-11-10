@@ -2,9 +2,17 @@
 
 One section per output. Each names the exact path, what the generator owns inside it, which doctrine blocks it carries and in what order, and how repo text from `[bot-instructions]` is escaped into that file's syntax.
 
-Whole-file outputs in this reference apply to full mode. SKILL.md documents local mode and its installed-doctrine pointer.
+Whole-file outputs in this reference apply to full mode. [§ Local output](#local-output) owns local mode and its installed-doctrine pointer.
 
 Doctrine block ids are the `###` headings of the doctrine source, whose parse rule is SKILL.md § Doctrine. The routing table below is the only other place they are written down, and `doctrine-routing` holds the two to the same set.
+
+## Local output
+
+Read when selecting `--output local` for `render`, `check` or `adopt`. Local mode limits those commands to the `AGENTS.md` review region. The default `--output full` keeps every enabled bot output.
+
+The doctrine loader selects `SKILL.md` or `SKILL.md.disabled`. The pointer uses that filename and the `#doctrine` anchor inside the selected checkout installation. Checkout parent paths resolve through their symlinks. The installation's own symlink keeps its checkout path. Source reads use its canonical target.
+
+An external `--spec` needs a matching selected installation inside the checkout. Otherwise local mode refuses: use `--output full` or install the package inside the checkout. Remote files are excluded from validation, adoption, writes, orphan removal and ownership reports. Local review reads the package doctrine directly; repository doctrine overrides remain in the full render.
 
 ## Common rules
 
@@ -123,7 +131,7 @@ No doctrine block reaches this region, so the routing table has no column for it
 
 **Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and writes the marker unless `--dry-run` is set, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
 
-**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the selected installation's checkout path and Doctrine anchor, under SKILL.md's `--output local` contract. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
+**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the selected installation's checkout path and Doctrine anchor, under [§ Local output](#local-output). No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
 
 ## `code-review.md`
 
