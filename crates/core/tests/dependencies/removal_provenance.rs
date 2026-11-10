@@ -213,9 +213,9 @@ fn offline_positive_skill_carrier_s_codex() {
 
 /// A record from before the field holds no carrier for the withheld
 /// judge. Offline nothing can say whether it stays, so removal refuses,
-/// whether judge itself stays or is removed alongside. The catalogs read
-/// now decide it. A readable apply records the facts the offline removal
-/// then decides from.
+/// whether judge itself stays or is removed alongside. A readable catalog
+/// that still roots the item decides it. A readable apply records the
+/// facts the offline removal then decides from.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn legacy_missing_ancestry_refuses_offline_until_a_readable_apply_records_it() {
@@ -723,20 +723,27 @@ fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
 /// A set from one catalog carries github while the person declares github
 /// from another. Removing that declaration leaves the set, and only the
 /// set's own reading, never the member's, says whether it still roots
-/// github: read now, recorded, or with no record of it, unknown.
+/// github: read now, recorded, or with no record of it, unknown. Unknown
+/// refuses, naming the set, until a retry reads its catalog.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
-    for (offline, set_recorded) in [(false, false), (true, true), (true, false)] {
+    for (offline, set_recorded, carried_now) in [
+        (false, false, true),
+        (false, false, false),
+        (true, true, true),
+        (true, false, true),
+    ] {
         let f = fixture("");
         let other = f.source.with_file_name("other");
         skill(&other, "github", "");
         fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-        fs::write(
-            f.source.join("kendex.toml"),
-            "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
-        )
-        .unwrap();
+        let set = |member: &str| {
+            format!(
+                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"{member}\"]\n"
+            )
+        };
+        fs::write(f.source.join("kendex.toml"), set("github")).unwrap();
         fs::write(
             f.project.join("kendex.toml"),
             format!(
@@ -756,8 +763,8 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
                 .iter()
                 .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.source == "cat" && bundle.name == "crew"))
         );
-        // A path catalog's set has no record of its own; a repository
-        // catalog's does, which this plants.
+        // A path catalog's set has no record of its own, even after a
+        // readable apply; a repository catalog's does, which this plants.
         assert!(lock.bundles.is_empty());
         if set_recorded {
             let path = manifest_of(&f).sources["cat"].path.clone().unwrap();
@@ -772,6 +779,10 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
             );
             kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
         }
+        if !carried_now {
+            skill(&f.source, "lint", "");
+            fs::write(f.source.join("kendex.toml"), set("lint")).unwrap();
+        }
         let hidden = f.source.with_file_name("catalog-offline");
         if offline {
             fs::rename(&f.source, &hidden).unwrap();
@@ -779,20 +790,102 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
         if offline && !set_recorded {
             assert!(matches!(
                 ops::remove(&f.env, &f.scope, &["github".into()], Some(ItemKind::Skill), false),
-                Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Skill, name, harness: HarnessId::Claude })
-                    if catalog == "other" && name == "github"
+                Err(CoreError::RemovalSetReadingMissing { catalog, set })
+                    if catalog == "cat" && set == "crew"
             ));
-            continue;
+            // The remedy: retry while the set's catalog is readable.
+            fs::rename(&hidden, &f.source).unwrap();
         }
+        let expected = if carried_now {
+            BTreeSet::from([(ItemKind::Skill, "github".to_owned())])
+        } else {
+            BTreeSet::new()
+        };
         assert_eq!(
             removed(&f, &["github"], Some(ItemKind::Skill)),
-            BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
-            "offline={offline}"
+            expected,
+            "offline={offline} set_recorded={set_recorded} carried_now={carried_now}"
         );
-        if offline {
+        if offline && set_recorded {
             fs::rename(&hidden, &f.source).unwrap();
         }
         apply_now(&f);
         assert!(!lock_of(&f).entries.contains_key("skill:github:claude"));
     }
+}
+
+/// The set was recorded from one reading, then its source moved and an add
+/// took a new member from the new reading while keeping the old member,
+/// and so the old set record. The new member's own reading, bound to its
+/// edge, decides it; the retained set record does not.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_retained_set_record_never_overrides_a_member_read_from_the_set_source() {
+    let f = fixture("[bundles.crew]\nsource = \"cat\"\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    // A repository catalog records its set's reading; a path catalog's
+    // set has none, so this plants the record the first reading leaves.
+    let mut lock = lock_of(&f);
+    let first = manifest_of(&f).sources["cat"].path.clone().unwrap();
+    lock.bundles.insert(
+        "crew".into(),
+        kendex_core::lock::BundleRev {
+            source: "cat".into(),
+            source_repo: kendex_core::source::declared_path_identity(&first),
+            selector: None,
+            commit: "0".repeat(40),
+        },
+    );
+    kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+
+    let moved = f.source.with_file_name("catalog-b");
+    skill(&moved, "github", "");
+    skill(&moved, "fresh", "");
+    fs::write(
+        moved.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\", \"fresh\"]\n",
+    )
+    .unwrap();
+    edit_manifest(&f, |manifest| {
+        manifest.sources.get_mut("cat").unwrap().path = Some(moved.to_string_lossy().into_owned());
+    });
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["fresh".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    let lock = lock_of(&f);
+    assert_eq!(
+        lock.bundles["crew"].source_repo,
+        kendex_core::source::declared_path_identity(&first)
+    );
+    let fresh = &lock.entries["skill:fresh:claude"];
+    assert_ne!(fresh.source_repo, lock.bundles["crew"].source_repo);
+    assert!(
+        fresh
+            .reasons
+            .iter()
+            .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.name == "crew"))
+    );
+
+    let hidden = moved.with_file_name("catalog-b-offline");
+    fs::rename(&moved, &hidden).unwrap();
+    assert_eq!(
+        removed(&f, &["fresh"], Some(ItemKind::Skill)),
+        BTreeSet::from([(ItemKind::Skill, "fresh".to_owned())])
+    );
+    fs::rename(&hidden, &moved).unwrap();
+    apply_now(&f);
+    assert!(!lock_of(&f).entries.contains_key("skill:fresh:claude"));
 }

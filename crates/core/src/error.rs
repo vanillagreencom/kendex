@@ -6,10 +6,9 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
-    /// Pre-field locks can lack the carrier of a withheld requirer, and a
-    /// path catalog's set records no reading of its own for a member
-    /// declared from another catalog. Guessing here can make a user's
-    /// removal return on the next readable apply.
+    /// Pre-field locks can lack the carrier of a withheld requirer.
+    /// Guessing here can make a user's removal return on the next readable
+    /// apply.
     #[error(
         "removal-provenance-missing source={} kind={} name={} harness={}: apply with the catalog readable using a build that records requirer provenance, then retry removal", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name()
     )]
@@ -19,6 +18,16 @@ pub enum CoreError {
         name: String,
         harness: HarnessId,
     },
+    /// A set carries a member declared from another catalog, and the
+    /// record binds no reading of the set to that edge: a path catalog's
+    /// set records none. Only the set's catalog, read when the removal
+    /// runs, can say whether it still carries the member.
+    #[error(
+        "removal-set-reading-missing source={} set={}: retry the removal while this catalog is readable",
+        crate::names::shown(catalog),
+        crate::names::shown(set)
+    )]
+    RemovalSetReadingMissing { catalog: String, set: String },
     #[error("catalog-needs-engine min={min} engine={engine}")]
     CatalogNeedsEngine { min: String, engine: &'static str },
 

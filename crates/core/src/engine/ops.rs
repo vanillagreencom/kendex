@@ -386,7 +386,7 @@ fn kept_removed(
     kind: Option<ItemKind>,
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
-    let read = read_ancestry(env, scope, manifest);
+    let (read, read_now) = read_ancestry(env, scope, manifest);
     let roots = |facts| RemovalRoots {
         scope,
         manifest,
@@ -394,6 +394,7 @@ fn kept_removed(
         names,
         kind,
         options,
+        read_now: &read_now,
         facts,
     };
     let mut decisions = BTreeMap::new();
@@ -406,12 +407,18 @@ fn kept_removed(
                 kept.insert(key);
             }
             Reach::Unrooted => {}
-            Reach::Missing(by) => {
+            Reach::Missing(Unread::Ancestor(by)) => {
                 return Err(crate::error::CoreError::RemovalProvenanceMissing {
                     catalog: by.source,
                     kind: by.kind,
                     name: by.name,
                     harness: by.harness,
+                });
+            }
+            Reach::Missing(Unread::Set(set)) => {
+                return Err(crate::error::CoreError::RemovalSetReadingMissing {
+                    catalog: set.source,
+                    set: set.name,
                 });
             }
         }
@@ -421,12 +428,12 @@ fn kept_removed(
 
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
-/// declared at.
+/// declared at, and the sources whose catalogs that read opened.
 fn read_ancestry(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-) -> BTreeMap<InstallRef, RequirerProvenance> {
+) -> (BTreeMap<InstallRef, RequirerProvenance>, BTreeSet<String>) {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let read = super::expansion::PLANNED_KINDS
@@ -441,13 +448,29 @@ fn read_ancestry(
                 })
         })
         .collect();
-    expansion.requirer_provenance(&read)
+    let read_now = state
+        .sources
+        .iter()
+        .filter(|(source, resolution)| {
+            matches!(resolution, crate::source::SourceState::Ready(_))
+                && !state.unreadable_catalogs.contains(*source)
+        })
+        .map(|(source, _)| source.clone())
+        .collect();
+    (expansion.requirer_provenance(&read), read_now)
 }
 
 enum Reach {
     Rooted,
     Unrooted,
-    Missing(InstallRef),
+    Missing(Unread),
+}
+
+/// The fact a refusal names: an ancestor the record holds no reasons for,
+/// or a set whose reading the record does not bind to the member's edge.
+enum Unread {
+    Ancestor(InstallRef),
+    Set(crate::lock::BundleRef),
 }
 
 impl Reach {
@@ -494,6 +517,8 @@ struct RemovalRoots<'a> {
     names: &'a [String],
     kind: Option<ItemKind>,
     options: &'a PlanOptions,
+    /// Sources whose catalogs the read opened ([`read_ancestry`]).
+    read_now: &'a BTreeSet<String>,
     facts: Facts<'a>,
 }
 
@@ -576,7 +601,7 @@ impl RemovalRoots<'_> {
                             Some(row) => {
                                 self.start(Some(dependent), by, &row.source_repo, &row.reasons)
                             }
-                            None => Reach::Missing(by.clone()),
+                            None => Reach::Missing(Unread::Ancestor(by.clone())),
                         };
                         merge(by, reach);
                     }
@@ -629,23 +654,28 @@ impl RemovalRoots<'_> {
         if !installs {
             return Reach::Unrooted;
         }
-        // The set's own record names where it was read. A member that
-        // shares the set's source was read there too; one declared from
-        // another catalog says nothing about the set's.
+        // The reading bound to this edge decides it. A member read from
+        // the set's own source was read with the set, so its reading is the
+        // edge's; a set record can be older, kept by an add that held
+        // another member. A member declared from another catalog carries
+        // no reading of the set, and only the set's record speaks for it.
         let read_under = match self.facts {
             Facts::Read(_) => crate::source::declared_provenance(self.manifest, &bundle.source),
+            Facts::Recorded if node.source == bundle.source => Some(repo.to_owned()),
             Facts::Recorded => self
                 .lock
                 .bundles
                 .get(&bundle.name)
                 .filter(|set| set.source == bundle.source)
-                .map(|set| set.source_repo.clone())
-                .or_else(|| (node.source == bundle.source).then(|| repo.to_owned())),
+                .map(|set| set.source_repo.clone()),
         };
         match read_under {
             Some(read_under) if self.same_source(&bundle.source, &read_under) => Reach::Rooted,
             Some(_) => Reach::Unrooted,
-            None => Reach::Missing(node.clone()),
+            // The set read now is the one the next apply derives from, and
+            // the read facts answer for it.
+            None if self.read_now.contains(&bundle.source) => Reach::Unrooted,
+            None => Reach::Missing(Unread::Set(bundle.clone())),
         }
     }
 
@@ -664,7 +694,7 @@ impl RemovalRoots<'_> {
             }
             Lookup::Found { repo, reasons } => self.reasons(dependent, by, repo, reasons, visited),
             Lookup::Absent => Reach::Unrooted,
-            Lookup::Unknown(_) => Reach::Missing(by.clone()),
+            Lookup::Unknown(_) => Reach::Missing(Unread::Ancestor(by.clone())),
         };
         visited.remove(by);
         found
