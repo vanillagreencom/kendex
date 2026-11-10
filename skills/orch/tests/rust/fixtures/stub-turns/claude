@@ -15,7 +15,8 @@
 #   STUB_TURNS_HOLD   a FIFO the turn blocks on twice, before its row is
 #                     written and after, so a row can hold the turn open
 #                     on either side of the harness's own record and
-#                     release each with one line written to the FIFO.
+#                     release each with one line written to the FIFO;
+#                     each hold takes one line, in the order written.
 #   STUB_TURNS_DROP   non-empty: no row is written, as a harness that lost
 #                     the pasted line.
 # It launches no model and reaches no account; it stands until its stdin
@@ -47,15 +48,21 @@ if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
 fi
 composer
 set_state idle
+hold_open=""
 held() {
   [ -n "$hold" ] || return 0
   # The read-write open never blocks and the read gives up after
   # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
-  [ -p "$hold" ] || { echo "stub-turns: hold-not-fifo path=$hold" >&2; exit 2; }
-  exec 9<>"$hold"
+  # The FIFO stays open from the first hold on: a release written before
+  # the stub reaches its next hold waits in the pipe, where a close would
+  # discard it with the pipe's last descriptor.
+  if [ -z "$hold_open" ]; then
+    [ -p "$hold" ] || { echo "stub-turns: hold-not-fifo path=$hold" >&2; exit 2; }
+    exec 9<>"$hold"
+    hold_open=1
+  fi
   read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
     || { echo "stub-turns: hold-unreleased path=$hold bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
-  exec 9<&-
 }
 while IFS= read -r line; do
   set_state working
