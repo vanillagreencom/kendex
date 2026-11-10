@@ -75,7 +75,7 @@ pub(super) fn plan_items(
                     // The snapshot of every edge the entry now records, as a
                     // full pass would write it.
                     let edges = entry.reasons.union(&added).cloned().collect();
-                    entry.requirer_provenance = state.ancestry(&edges, Some(entry));
+                    entry.assign_requirer_rows(state.ancestry(&edges, Some(entry)));
                 }
                 entry.reasons.extend(added);
             }

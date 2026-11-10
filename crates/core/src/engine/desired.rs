@@ -691,8 +691,7 @@ impl DesiredState {
                 && visited.insert(by.clone())
                 && let Some(row) = self.requirer_provenance.get(&by).or_else(|| {
                     previous?
-                        .requirer_provenance
-                        .as_ref()?
+                        .requirer_rows()
                         .iter()
                         .find(|row| row.installation == by)
                 })
@@ -702,6 +701,28 @@ impl DesiredState {
             }
         }
         (!rows.is_empty()).then(|| rows.into_values().collect())
+    }
+
+    /// Whether this pass read the record's installation, or an ancestor a
+    /// row of it holds, with an edge the record lacks: only a missing edge
+    /// can make a removal decided on the record lose a root.
+    pub(super) fn read_otherwise(&self, record: &crate::lock::LockEntry) -> bool {
+        let installation = crate::lock::InstallRef {
+            source: record.source.clone(),
+            kind: record.kind,
+            name: record.name.clone(),
+            harness: record.harness,
+        };
+        let lacks = |by: &crate::lock::InstallRef, recorded: &BTreeSet<crate::lock::Reason>| {
+            self.requirer_provenance
+                .get(by)
+                .is_some_and(|read| !read.reasons.is_subset(recorded))
+        };
+        lacks(&installation, &record.reasons)
+            || record
+                .requirer_rows()
+                .iter()
+                .any(|row| lacks(&row.installation, &row.reasons))
     }
 
     pub(super) fn refuse_catalog(&mut self) -> Result<()> {

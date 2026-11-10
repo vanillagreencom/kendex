@@ -378,12 +378,13 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// can cost a suppression the next add clears, but never drops one.
 /// Otherwise an ancestor no recorded reading holds reasons for refuses,
 /// because the catalog cannot prove it gone and guessing could make the
-/// removal return. So does an installation a local edit holds and no
-/// reading roots, unless the read now accounted for every declaration:
-/// its reasons may predate a carrier the catalog gained, which only that
-/// read sees. That refusal names what the read could not account for,
-/// since the read is of each catalog where it sits now, which an apply
-/// at the recorded revisions does not see.
+/// removal return. So does an installation a local edit holds, or whose
+/// every reading sits in a record marked held, and no reading roots,
+/// unless the read now accounted for every declaration: its reasons may
+/// predate a carrier the catalog gained, which only that read sees. That
+/// refusal names what the read could not account for, since the read is
+/// of each catalog where it sits now, which an apply at the recorded
+/// revisions does not see.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -512,7 +513,9 @@ enum Unread {
     },
     /// A set whose reading the record does not bind to the member's edge.
     Set(crate::lock::BundleRef),
-    /// An installation a local edit holds and no reading roots. The
+    /// An installation no reading roots, resting on a record a hold keeps,
+    /// which this names: its own entry while a local edit holds it, or one
+    /// of the records holding its readings where each is marked held. The
     /// catalogs read whole decide it.
     Held(InstallRef),
 }
@@ -548,7 +551,8 @@ enum Facts<'a> {
     /// any of them counts; none vetoes another. An entry a local edit holds
     /// keeps its reasons from before the hold, and a row beside it may be
     /// as old, so such an installation roots or refuses and is never
-    /// proved free.
+    /// proved free; so does one whose every reading sits in a record
+    /// marked held, the edit perhaps since undone by hand.
     Recorded(&'a Captured<'a>),
     /// What the catalogs derive now ([`read_ancestry`]). An installation
     /// they do not derive has no carrier.
@@ -561,7 +565,7 @@ type Captured<'l> = BTreeMap<&'l InstallRef, Vec<(&'l LockEntry, &'l RequirerPro
 fn captured_rows(lock: &Lock) -> Captured<'_> {
     let mut rows = Captured::new();
     for dependent in lock.entries.values() {
-        for row in dependent.requirer_provenance.iter().flatten() {
+        for row in dependent.requirer_rows() {
             rows.entry(&row.installation)
                 .or_default()
                 .push((dependent, row));
@@ -597,6 +601,15 @@ impl<'f> Recorder<'f> {
         match self {
             Self::Read => None,
             Self::Entry(entry) | Self::Row(entry) => Some(entry),
+        }
+    }
+
+    /// The record behind this reading where a hold kept it as it was
+    /// ([`crate::lock::RequirerAncestry::held`]).
+    fn kept_as_was(self) -> Option<&'f LockEntry> {
+        match self {
+            Self::Read => None,
+            Self::Entry(entry) | Self::Row(entry) => entry.held_reading().then_some(entry),
         }
     }
 
@@ -680,13 +693,10 @@ impl RemovalRoots<'_> {
                 .keys()
                 .map(|node| (*node).clone())
                 .chain(self.lock.entries.values().flat_map(|entry| {
-                    let edges = entry.reasons.iter().chain(
-                        entry
-                            .requirer_provenance
-                            .iter()
-                            .flatten()
-                            .flat_map(|row| &row.reasons),
-                    );
+                    let edges = entry
+                        .reasons
+                        .iter()
+                        .chain(entry.requirer_rows().iter().flat_map(|row| &row.reasons));
                     std::iter::once(install_ref(entry)).chain(edges.filter_map(
                         |reason| match reason {
                             Reason::RequiredBy { by } => Some(by.clone()),
@@ -811,6 +821,13 @@ impl RemovalRoots<'_> {
             Recorder::Entry(entry) => Some(entry),
             Recorder::Read | Recorder::Row(_) => None,
         });
+        // A hold kept every reading as it was, so none can say what the
+        // catalogs' newer reading would root.
+        let kept = readings
+            .iter()
+            .map(|reading| reading.recorder.kept_as_was())
+            .collect::<Option<Vec<_>>>()
+            .and_then(|kept| kept.first().copied());
         let mut found = Reach::Unrooted;
         for reading in readings {
             let next = if self.declared(by, reading.repo) {
@@ -831,16 +848,14 @@ impl RemovalRoots<'_> {
                 break;
             }
         }
-        // The lock has no hold marker; the edit a hold keeps is its sign.
-        match found {
-            Reach::Unrooted
-                if entry.is_some_and(|entry| {
-                    super::removal::edit_holds(self.env, self.scope, entry)
-                }) =>
-            {
-                Reach::Missing(Unread::Held(by.clone()))
-            }
-            found => found,
+        if !matches!(found, Reach::Unrooted) {
+            return found;
+        }
+        // An edit on disk holds the entry even before an apply marks it.
+        let edited = entry.filter(|entry| super::removal::edit_holds(self.env, self.scope, entry));
+        match edited.or(kept) {
+            Some(held) => Reach::Missing(Unread::Held(install_ref(held))),
+            None => found,
         }
     }
 

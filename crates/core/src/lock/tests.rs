@@ -44,8 +44,12 @@ fn requirer_provenance_distinguishes_unknown_and_per_tool_carriers() {
         name: "judge".into(),
         harness,
     };
-    for rows in [
+    for ancestry in [
         None,
+        Some(RequirerAncestry {
+            rows: Vec::new(),
+            held: true,
+        }),
         Some(vec![
             RequirerProvenance {
                 installation: by(HarnessId::Claude),
@@ -72,10 +76,11 @@ fn requirer_provenance_distinguishes_unknown_and_per_tool_carriers() {
                     },
                 ]),
             },
-        ]),
+        ])
+        .map(|rows| RequirerAncestry { rows, held: false }),
     ] {
         let mut original = entry(None);
-        original.requirer_provenance = rows;
+        original.requirer_provenance = ancestry;
         let value = serde_json::to_value(&original).unwrap();
         assert_eq!(
             value.get("requirerProvenance").is_some(),

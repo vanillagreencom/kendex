@@ -119,12 +119,16 @@ fn world(row: &Row) -> Fixture {
         "{}",
         row.name
     );
+    // A readable apply that holds nothing marks nothing held.
+    assert!(
+        !lock.entries.values().any(|entry| entry.held_reading()),
+        "{}",
+        row.name
+    );
     let guards = &lock.entries["skill:guards:codex"];
     assert!(
         guards
-            .requirer_provenance
-            .as_ref()
-            .unwrap()
+            .requirer_rows()
             .iter()
             .any(|row| row.installation.kind == ItemKind::Hook
                 && row.installation.name == "judge"
@@ -270,13 +274,14 @@ fn captured_empty_is_proven_unrooted_and_a_missing_row_is_unknown() {
     for empty in [false, true] {
         let f = world(&SET_STAYS);
         let mut lock = lock_of(&f);
-        let rows = lock
+        let rows = &mut lock
             .entries
             .get_mut("skill:guards:codex")
             .unwrap()
             .requirer_provenance
             .as_mut()
-            .unwrap();
+            .unwrap()
+            .rows;
         if empty {
             for row in rows {
                 row.reasons.clear();
@@ -369,7 +374,7 @@ fn ancestry_stabilizes_survives_unreadable_and_add_holds_and_follows_a_read_conf
                 .flat_map(|row| &row.reasons)
                 .any(|reason| matches!(reason, Reason::MemberOf { .. }))
     };
-    assert!(reads_s(&held.requirer_provenance.unwrap()));
+    assert!(reads_s(held.requirer_rows()));
 
     fs::write(
         f.project.join(".agents/skills/guards/SKILL.md"),
@@ -377,11 +382,8 @@ fn ancestry_stabilizes_survives_unreadable_and_add_holds_and_follows_a_read_conf
     )
     .unwrap();
     apply_now(&f);
-    let replaced = lock_of(&f).entries["skill:guards:codex"]
-        .requirer_provenance
-        .clone()
-        .unwrap();
-    assert!(reads_s(&replaced));
+    let replaced = lock_of(&f).entries["skill:guards:codex"].clone();
+    assert!(reads_s(replaced.requirer_rows()));
 }
 
 #[test]
@@ -431,9 +433,7 @@ fn add_carrier(existing_carrier: bool) {
     assert!(after.reasons.iter().any(|reason| matches!(reason, Reason::RequiredBy { by } if by.kind == ItemKind::Hook && by.name == "judge")));
     assert!(
         after
-            .requirer_provenance
-            .as_ref()
-            .unwrap()
+            .requirer_rows()
             .iter()
             .any(|row| row.installation.kind == ItemKind::Skill
                 && row.installation.name == "S"
@@ -1103,9 +1103,8 @@ fn a_held_reading_never_vetoes_a_newer_one_offline() {
         let lock = lock_of(&f);
         let mid = &lock.entries["skill:mid:claude"];
         let leaf_row = lock.entries["skill:leaf:claude"]
-            .requirer_provenance
+            .requirer_rows()
             .iter()
-            .flatten()
             .find(|row| row.installation.name == "mid")
             .unwrap();
         let reads = |reasons: &BTreeSet<Reason>| (crew_reason(reasons), s_reason(reasons));
@@ -1198,9 +1197,8 @@ fn a_held_reading_without_a_row_never_vetoes_one_with_a_row() {
         assert_eq!(lock.entries["skill:guards:codex"].requirer_provenance, None);
         assert!(
             lock.entries["skill:leaf:codex"]
-                .requirer_provenance
+                .requirer_rows()
                 .iter()
-                .flatten()
                 .any(|row| row.installation.name == "judge" && crew_reason(&row.reasons))
         );
         let hidden = f.source.with_file_name("catalog-offline");
@@ -1370,7 +1368,7 @@ fn a_cycle_row_in_the_entrys_own_snapshot_is_its_own_reading() {
     // The entry keeps crew; its snapshot's row for itself reads spare.
     let guards = lock_of(&f).entries["skill:guards:codex"].clone();
     assert!(crew_reason(&guards.reasons));
-    assert!(guards.requirer_provenance.iter().flatten().any(|row| {
+    assert!(guards.requirer_rows().iter().any(|row| {
         row.installation.name == "guards"
             && row.reasons.iter().any(
                 |reason| matches!(reason, Reason::MemberOf { bundle } if bundle.name == "spare"),
@@ -1536,11 +1534,119 @@ fn orphan_github_held(pre_field: bool) -> Fixture {
     f
 }
 
+/// The bytes of each installed copy of a skill.
+fn installed_copies(f: &Fixture, name: &str) -> Vec<(PathBuf, Vec<u8>)> {
+    [".claude/skills", ".agents/skills"]
+        .into_iter()
+        .map(|root| f.project.join(root).join(name).join("SKILL.md"))
+        .filter_map(|path| fs::read(&path).ok().map(|bytes| (path, bytes)))
+        .collect()
+}
+
+/// Puts back by hand, with no apply, the bytes `installed_copies` read.
+#[allow(clippy::unwrap_used)]
+fn restore(copies: Vec<(PathBuf, Vec<u8>)>) {
+    for (path, bytes) in copies {
+        fs::write(path, bytes).unwrap();
+    }
+}
+
+/// held_mid's world, with the person putting mid's installed bytes back
+/// by hand after the readable apply held it: the edit is gone, and mid's
+/// record still holds its crew reason.
+#[allow(clippy::unwrap_used)]
+fn held_mid_edit_undone() -> Fixture {
+    let f = hook_fixture("[bundles.crew]\nsource = \"cat\"\n");
+    skill(&f.source, "mid", "");
+    skill(&f.source, "S", "dependencies:\n  required: [mid]\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"mid\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    swap_crew_for_s(&f);
+    let copies = installed_copies(&f, "mid");
+    edit_installed(&f, "mid");
+    apply_now(&f);
+    restore(copies);
+    f
+}
+
+/// dev requires github. The person edits github and swaps dev for x,
+/// which requires github too; the readable apply holds github with its
+/// dev reason, and the person then puts github's bytes back by hand.
+fn github_held_behind_a_swapped_requirer() -> Fixture {
+    let f = hook_fixture("[skills.dev]\nsource = \"cat\"\n");
+    skill(&f.source, "x", "dependencies:\n  required: [github]\n");
+    apply_now(&f);
+    let copies = installed_copies(&f, "github");
+    edit_installed(&f, "github");
+    edit_manifest(&f, |manifest| {
+        manifest.skills.remove("dev");
+        manifest
+            .skills
+            .insert("x".into(), manifest::ItemDecl::from_source("cat"));
+    });
+    apply_now(&f);
+    restore(copies);
+    f
+}
+
+/// crew and crew2 each carry judge, withheld on Codex, which requires
+/// guards, declared from a second catalog. The person swaps crew for
+/// crew2, and the readable apply cannot read guards' catalog: guards, held
+/// because its source went unread, keeps its row reading judge through
+/// crew.
+#[allow(clippy::unwrap_used)]
+fn guards_held_by_an_unread_source() -> Fixture {
+    let f = hook_fixture("");
+    let other = f.source.with_file_name("other");
+    skill(&other, "guards", "");
+    skill(&f.source, "guards", "");
+    fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n[bundles.crew2]\ndescription = \"crew2\"\nhooks = [\"judge\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        f.project.join("kendex.toml"),
+        format!(
+            "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n{SET}\n[skills.guards]\nsource = \"other\"\nharnesses = [\"codex\"]\n",
+            source_path(&f.source),
+            source_path(&other)
+        ),
+    )
+    .unwrap();
+    apply_now(&f);
+    edit_manifest(&f, |manifest| {
+        let crew = manifest.bundles.remove("crew").unwrap();
+        manifest.bundles.insert("crew2".into(), crew);
+    });
+    let hidden = other.with_file_name("other-offline");
+    fs::rename(&other, &hidden).unwrap();
+    apply_now(&f);
+    fs::rename(&hidden, &other).unwrap();
+    let guards = &lock_of(&f).entries["skill:guards:codex"];
+    assert!(
+        guards
+            .requirer_rows()
+            .iter()
+            .any(|row| { row.installation.name == "judge" && crew_reason(&row.reasons) })
+    );
+    f
+}
+
 /// What the person runs, with the catalog readable, before retrying.
 #[derive(Clone, Copy, Debug)]
 enum Then {
     /// Nothing: the retry itself reads every catalog.
     Retry,
+    /// An apply, which writes afresh a record a hold no longer keeps; the
+    /// retry then decides on the record, offline included.
     Apply,
     DiscardEdits,
     /// The catalog's author puts back what the catalog would not give;
@@ -1548,9 +1654,10 @@ enum Then {
     Repair(fn(&Fixture)),
 }
 
-/// The refusal a row expects, on a record from catalog cat.
+/// The refusal a row expects.
 #[derive(Clone)]
 struct Refusal {
+    catalog: &'static str,
     kind: ItemKind,
     name: &'static str,
     harness: HarnessId,
@@ -1595,18 +1702,29 @@ fn held(name: &str, harness: HarnessId) -> ProvenanceStep {
 
 /// mid's own record, held by its edit, which only a whole read decides.
 fn held_mid_refusal(lifted_online: bool) -> Option<Refusal> {
-    Some(Refusal {
-        kind: ItemKind::Skill,
-        name: "mid",
-        harness: HarnessId::Claude,
-        step: ProvenanceStep::RetryReadable { unread: Vec::new() },
+    kept_record("cat", "mid", HarnessId::Claude).map(|refusal| Refusal {
         lifted_online,
+        ..refusal
+    })
+}
+
+/// A skill's own record, which a hold kept as it was: only a whole read
+/// decides it.
+fn kept_record(catalog: &'static str, name: &'static str, harness: HarnessId) -> Option<Refusal> {
+    Some(Refusal {
+        catalog,
+        kind: ItemKind::Skill,
+        name,
+        harness,
+        step: ProvenanceStep::RetryReadable { unread: Vec::new() },
+        lifted_online: true,
     })
 }
 
 /// judge on Codex, whose record no apply rewrites until `step` is taken.
 fn judge_refusal(step: ProvenanceStep) -> Option<Refusal> {
     Some(Refusal {
+        catalog: "cat",
         kind: ItemKind::Hook,
         name: "judge",
         harness: HarnessId::Codex,
@@ -1771,6 +1889,7 @@ fn held_rows() -> Vec<HeldRow> {
             removing: &["github"],
             kind: Some(ItemKind::Skill),
             refusal: Some(Refusal {
+                catalog: "cat",
                 kind: ItemKind::Skill,
                 name: "dev",
                 harness: HarnessId::Claude,
@@ -1792,6 +1911,63 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Retry,
             kept: &[],
             gone: "skill:github:claude",
+            named: &[],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "record a hold kept after its edit was undone by hand",
+            world: held_mid_edit_undone,
+            removing: &["mid"],
+            kind: Some(ItemKind::Skill),
+            refusal: kept_record("cat", "mid", HarnessId::Claude),
+            then: Then::Apply,
+            kept: &["mid"],
+            gone: "skill:mid:claude",
+            named: &[],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "record a hold kept, written afresh once its edit is undone",
+            world: || {
+                let f = held_mid_edit_undone();
+                edit_manifest(&f, |manifest| {
+                    manifest
+                        .skills
+                        .insert("github".into(), manifest::ItemDecl::from_source("cat"));
+                });
+                apply_now(&f);
+                f
+            },
+            removing: &["S", "mid"],
+            kind: None,
+            refusal: None,
+            then: Then::Retry,
+            kept: &[],
+            gone: "skill:mid:claude",
+            named: &[],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "record a hold kept naming a requirer swapped out, its edit undone",
+            world: github_held_behind_a_swapped_requirer,
+            removing: &["github"],
+            kind: Some(ItemKind::Skill),
+            refusal: kept_record("cat", "github", HarnessId::Claude),
+            then: Then::Retry,
+            kept: &["github"],
+            gone: "skill:github:claude",
+            named: &[],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "row an unread source kept naming a set swapped out",
+            world: guards_held_by_an_unread_source,
+            removing: &["guards"],
+            kind: Some(ItemKind::Skill),
+            refusal: kept_record("other", "guards", HarnessId::Codex),
+            then: Then::Apply,
+            kept: &["guards"],
+            gone: "skill:guards:codex",
             named: &[],
             unnamed: &[],
         },
@@ -1871,7 +2047,7 @@ fn a_removal_resting_on_a_held_record_names_the_hold_and_the_step_that_ends_it()
             assert_eq!(
                 refusal,
                 expected.clone().map(|expected| (
-                    "cat".to_owned(),
+                    expected.catalog.to_owned(),
                     expected.kind,
                     expected.name.to_owned(),
                     expected.harness,

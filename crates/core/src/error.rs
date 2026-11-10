@@ -8,8 +8,9 @@ use crate::model::{HarnessId, ItemKind};
 pub enum CoreError {
     /// The record cannot say what requires this installation: pre-field
     /// locks can lack the carrier of a withheld requirer, and a record a
-    /// local edit holds keeps reasons older than the catalog's. Guessing
-    /// here can make a user's removal return on the next readable apply.
+    /// hold kept, a local edit's or a source's that would not read, keeps
+    /// reasons older than the catalog's. Guessing here can make a user's
+    /// removal return on the next readable apply.
     #[error(
         "removal-provenance-missing source={} kind={} name={} harness={} step={}: {}", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name(), step.key(), step.remedy()
     )]
@@ -855,9 +856,11 @@ impl std::fmt::Display for Version10Stop {
 }
 
 /// What ends a removal-provenance refusal, read off the record the
-/// refusal rests on. The lock carries no hold marker, so a hold is known
-/// here only by the one sign it leaves offline: an installed copy a local
-/// edit moved off what apply last wrote (`engine::edit_holds`).
+/// refusal rests on. A hold is known here by an installed copy a local
+/// edit moved off what apply last wrote (`engine::edit_holds`), or by the
+/// mark a pass leaves on a record it kept older than its reading
+/// ([`crate::lock::RequirerAncestry::held`]), which outlasts an edit
+/// undone by hand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvenanceStep {
     /// An apply with the catalog readable either records the reading in
@@ -868,8 +871,9 @@ pub enum ProvenanceStep {
     /// no apply rewrites that record until the edit is resolved or
     /// discarded.
     ResolveEdit(crate::lock::InstallRef),
-    /// A local edit holds the installation's own record, whose reasons may
-    /// predate the catalog's, and no reading roots it; a read of the
+    /// A hold kept the named installation's record as it was, known by its
+    /// local edit or by the mark the hold left, so its reasons may predate
+    /// the catalog's, and no reading roots what is removed; a read of the
     /// catalogs where they sit now that accounts for every declaration
     /// decides in its place. One that does not leaves the refusal standing,
     /// whether a catalog would not read, an item or set it carries would
@@ -908,7 +912,7 @@ impl ProvenanceStep {
                 held.harness.name()
             ),
             Self::RetryReadable { unread } => {
-                let mut remedy = "a local edit holds this installation's record, which cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
+                let mut remedy = "a hold kept this installation's record as it was, so it cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
                 if !unread.is_empty() {
                     remedy.push_str("; this read could not account for: ");
                     remedy.push_str(&unread.join("; "));

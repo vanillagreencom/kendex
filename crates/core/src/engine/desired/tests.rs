@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::DesiredState;
-use crate::lock::{BundleRef, InstallRef, LockEntry, Reason, RequirerProvenance};
+use crate::lock::{BundleRef, InstallRef, LockEntry, Reason, RequirerAncestry, RequirerProvenance};
 use crate::model::{HarnessId, ItemKind};
 
 fn at(name: &str) -> InstallRef {
@@ -51,7 +51,7 @@ fn previous(rows: Vec<RequirerProvenance>) -> LockEntry {
         registration: None,
         output_style: None,
         reasons: BTreeSet::new(),
-        requirer_provenance: Some(rows),
+        requirer_provenance: Some(RequirerAncestry { rows, held: false }),
         machine: None,
     }
 }
@@ -99,4 +99,72 @@ fn ancestry_is_one_row_per_ancestor_as_read_and_none_without_rows() {
         let edges = edges.iter().cloned().collect::<BTreeSet<_>>();
         assert_eq!(state.ancestry(&edges, previous), expected, "{edges:?}");
     }
+}
+
+/// A record is read otherwise only where this pass read an edge it or one
+/// of its rows lacks: more edges than the read never lose a root, and an
+/// installation or ancestor this pass did not read says nothing.
+#[test]
+fn a_record_is_read_otherwise_only_where_it_lacks_an_edge_read_now() {
+    let mut state = DesiredState::default();
+    state
+        .requirer_provenance
+        .insert(at("leaf"), row("leaf", "./cat", &[required_by("mid")]));
+    state
+        .requirer_provenance
+        .insert(at("mid"), row("mid", "./cat", &[required_by("S")]));
+    let record = |reasons: &[Reason], rows: Vec<RequirerProvenance>| LockEntry {
+        reasons: reasons.iter().cloned().collect(),
+        ..previous(rows)
+    };
+    let cases = [
+        (
+            "reads as recorded",
+            record(
+                &[required_by("mid")],
+                vec![row("mid", "./cat", &[required_by("S")])],
+            ),
+            false,
+        ),
+        (
+            "records more than read",
+            record(
+                &[required_by("mid"), member_of("crew")],
+                vec![row("mid", "./cat", &[required_by("S"), member_of("crew")])],
+            ),
+            false,
+        ),
+        (
+            "own edge read now",
+            record(&[member_of("crew")], vec![]),
+            true,
+        ),
+        (
+            "a row's edge read now",
+            record(
+                &[required_by("mid")],
+                vec![row("mid", "./cat", &[member_of("crew")])],
+            ),
+            true,
+        ),
+        (
+            "a row this pass did not read",
+            record(
+                &[required_by("mid")],
+                vec![
+                    row("mid", "./cat", &[required_by("S")]),
+                    row("old", "./cat", &[member_of("crew")]),
+                ],
+            ),
+            false,
+        ),
+    ];
+    for (case, record, otherwise) in cases {
+        assert_eq!(state.read_otherwise(&record), otherwise, "{case}");
+    }
+    let unread = LockEntry {
+        name: "other".into(),
+        ..record(&[member_of("crew")], vec![])
+    };
+    assert!(!state.read_otherwise(&unread), "an installation not read");
 }
