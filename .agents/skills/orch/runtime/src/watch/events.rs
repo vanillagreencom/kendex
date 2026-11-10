@@ -338,6 +338,11 @@ pub enum Event {
         id: String,
         row: String,
     },
+    /// A Verifying item whose checklist cannot be judged: an open
+    /// branch-provable box or invalid post-merge metadata.
+    VerifyingInvalid {
+        id: String,
+    },
     // The observation duty's lines.
     /// `usage-limit` or `usage-limit-passed`, then the body composed from
     /// its optional parts, the lane, the
@@ -663,6 +668,7 @@ impl Event {
                 was_verdict,
             } => format!("EVENT account {fields} change={change} was={was_status}/{was_verdict}"),
             Event::VerifyingDeadline { id, row } => format!("EVENT verifying-deadline {id} {row}"),
+            Event::VerifyingInvalid { id } => format!("EVENT verifying-invalid {id}"),
             // The observation duty's render arms.
             Event::UsageLimit { passed, line } => {
                 let event = if *passed {

@@ -4336,3 +4336,262 @@ fn a_hosted_close_stops_no_validation_run_of_this_machine() {
         "no validation run stopped on this machine"
     );
 }
+
+// --- a merged item's boxes, completed by the close ------------------------------
+
+/// The merge commit the planted pull request names.
+const MERGE_SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+/// A Done-when of two branch-provable boxes, open or ticked with evidence.
+fn done_when(ticked: bool) -> String {
+    if ticked {
+        "## Done when\n\n- [x] first\n  Evidence: lane proof one\n- [x] second\n  Evidence: lane proof two\n".to_owned()
+    } else {
+        "## Done when\n\n- [ ] first\n- [ ] second\n".to_owned()
+    }
+}
+
+impl Fleet {
+    /// A hosted world whose tracker is the linear package's own CLI over
+    /// the planted Linear API (`linear-api/curl`) for KEN-1, in `state`
+    /// with `description`, and whose `gh` answers pull request 7 of `o/r`
+    /// merged with `body`. The state directory is the git checkout the CLI
+    /// resolves its project from.
+    fn boxes_world(state: &str, description: &str, body: &str) -> Fleet {
+        let mut fleet = Fleet::hosted(4);
+        fleet.answer("STOP_STATUS", "4");
+        fleet.answer(
+            "STOP_ERROR",
+            "lane-host-ssh: stop-worktree-removed item=KEN-1",
+        );
+        let git = |args: &[&str]| {
+            let out = program("git")
+                .current_dir(fleet.state_dir())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+        };
+        git(&["init", "-q"]);
+        git(&["config", "gc.auto", "0"]);
+        git(&["config", "maintenance.auto", "false"]);
+        let bin = fleet.state_dir().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(fixtures().join("linear-api/curl"), bin.join("curl")).unwrap();
+        std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+        let kind = if state == "Done" {
+            "completed"
+        } else {
+            "started"
+        };
+        std::fs::write(
+            bin.join("linear-api.json"),
+            json!({"identifier": "KEN-1", "team": "KEN", "description": description,
+                "state": {"name": state, "type": kind}})
+            .to_string(),
+        )
+        .unwrap();
+        let pull = json!({"number": 7, "state": "closed", "title": "work", "body": body,
+            "merged_at": "2026-01-29T16:30:00Z", "merge_commit_sha": MERGE_SHA,
+            "author_association": "NONE", "user": null,
+            "base": {"ref": "main", "sha": "1111111111111111111111111111111111111111"},
+            "head": {"sha": "2222222222222222222222222222222222222222", "ref": "ken-1",
+                "repo": {"full_name": "o/r", "owner": {"login": "o", "type": "User"}}}});
+        std::fs::write(
+            bin.join("gh.json"),
+            json!({"repos/o/r/pulls/7": {"body": pull}}).to_string(),
+        )
+        .unwrap();
+        let linear = orch_package()
+            .parent()
+            .unwrap()
+            .join("linear/scripts/linear.sh");
+        fleet.env.extend([
+            ("PATH".to_owned(), tool_path(&[bin.as_path()])),
+            (
+                "OVERSEE_WATCH_TRACKER".to_owned(),
+                linear.display().to_string(),
+            ),
+            (
+                "LINEAR_API_KEY_OVERRIDE".to_owned(),
+                "test-token".to_owned(),
+            ),
+            ("LINEAR_TEAM".to_owned(), "KEN".to_owned()),
+        ]);
+        let mut lane = hosted_lane("KEN-1");
+        lane["tracker"] = json!("linear");
+        lane["repo"] = json!("o/r");
+        fleet.write_lanes(vec![lane]);
+        fleet
+    }
+
+    /// The issue as the planted API holds it after the close.
+    fn issue(&self) -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(self.state_dir().join("bin/linear-api.json")).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// The GraphQL payloads the CLI sent whose document names `operation`.
+    fn sent(&self, operation: &str) -> Vec<Value> {
+        self.lines("bin/linear-api.log")
+            .iter()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|p| p["query"].as_str().is_some_and(|q| q.contains(operation)))
+            .collect()
+    }
+}
+
+/// A merged item its lane left with branch-provable boxes open, its
+/// sandbox gone or its lane ended over a Done item, has the boxes the
+/// merged pull request's `## Done-when evidence` section proves ticked by
+/// the close, through the linear package's own `issues complete`, each
+/// Evidence line citing the merge and the close's cause, and the state the
+/// command sets. A box the section gives no evidence for ticks nothing:
+/// one comment names the boxes with and without evidence. An item the lane
+/// completed is left alone.
+#[test]
+fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not() {
+    let proved = "## Summary\n- work\n\n## Done-when evidence\n1: tests/a.rs first_row\n2: tests/a.rs second_row\n\n## Test Plan\n- rows\n";
+    let one = "## Done-when evidence\n1: tests/a.rs first_row\n";
+    struct Case {
+        name: &'static str,
+        state: &'static str,
+        ticked: bool,
+        body: &'static str,
+        note: Option<&'static str>,
+        after: &'static str,
+        comment: Option<(&'static str, &'static str)>,
+        /// The mailbox read fails and the provider lists no sandbox for
+        /// the item: the terminal close's `host-absent` ground.
+        absent: bool,
+    }
+    let cases = [
+        Case {
+            name: "sandbox gone, both proved",
+            state: "Verifying",
+            ticked: false,
+            body: proved,
+            note: Some("boxes-ticked by=close cause=sandbox-gone boxes=1,2"),
+            after: "Done",
+            comment: None,
+            absent: false,
+        },
+        Case {
+            name: "Done, its sandbox gone from the provider",
+            state: "Done",
+            ticked: false,
+            body: proved,
+            note: Some("boxes-ticked by=close cause=sandbox-gone boxes=1,2"),
+            after: "Done",
+            comment: None,
+            absent: true,
+        },
+        Case {
+            name: "Done by the integration, the lane ended",
+            state: "Done",
+            ticked: false,
+            body: proved,
+            note: Some("boxes-ticked by=close cause=lane-ended boxes=1,2"),
+            after: "Done",
+            comment: None,
+            absent: false,
+        },
+        Case {
+            name: "one box without evidence",
+            state: "Verifying",
+            ticked: false,
+            body: one,
+            note: Some("boxes-unticked cause=evidence-partial boxes=2 comment=posted"),
+            after: "Verifying",
+            comment: Some(("with evidence: 1", "without evidence: 2")),
+            absent: false,
+        },
+        Case {
+            name: "no evidence section",
+            state: "Verifying",
+            ticked: false,
+            body: "## Summary\n- work\n",
+            note: Some("boxes-unticked cause=evidence-absent boxes=1,2 comment=posted"),
+            after: "Verifying",
+            comment: Some(("with evidence: none", "without evidence: 1,2")),
+            absent: false,
+        },
+        Case {
+            name: "the lane completed it",
+            state: "Verifying",
+            ticked: true,
+            body: proved,
+            note: None,
+            after: "Verifying",
+            comment: None,
+            absent: false,
+        },
+    ];
+    for case in cases {
+        let name = case.name;
+        let mut fleet = Fleet::boxes_world(case.state, &done_when(case.ticked), case.body);
+        if case.absent {
+            fleet
+                .env
+                .push(("LANE_MAIL_STATUS".to_owned(), "2".to_owned()));
+            fleet.answer("LIST", "lane.example:/srv/other/ken-9\tbusy");
+        }
+        let before = fleet.issue()["description"].clone();
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let result = &answer["result"];
+        assert_eq!(result["word"], "closed", "{name}: {answer}");
+        let notes: Vec<&str> = result["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|n| n.starts_with("boxes-"))
+            .collect();
+        assert_eq!(notes, case.note.into_iter().collect::<Vec<_>>(), "{name}");
+        let issue = fleet.issue();
+        assert_eq!(issue["state"]["name"], case.after, "{name}: {issue}");
+        let description = issue["description"].as_str().unwrap();
+        let updates = fleet.sent("issueUpdate");
+        if case.note.is_some_and(|n| n.starts_with("boxes-ticked")) {
+            let cause = if case.absent || case.state != "Done" {
+                "sandbox-gone"
+            } else {
+                "lane-ended"
+            };
+            for (n, row) in [("first", "first_row"), ("second", "second_row")] {
+                let proof = format!(
+                    "- [x] {n}\n  Evidence: tests/a.rs {row} (merged as {MERGE_SHA} in o/r#7; ticked-by=close cause={cause})\n"
+                );
+                assert!(description.contains(&proof), "{name}: {description}");
+            }
+            assert_eq!(updates.len(), 1, "{name}: one update: {updates:?}");
+        } else {
+            assert_eq!(issue["description"], before, "{name}");
+            assert!(updates.is_empty(), "{name}: no update: {updates:?}");
+        }
+        let comments = fleet.sent("commentCreate");
+        match case.comment {
+            Some((with, without)) => {
+                assert_eq!(comments.len(), 1, "{name}: one comment: {comments:?}");
+                let body = comments[0]["variables"]["input"]["body"].as_str().unwrap();
+                assert!(
+                    body.contains(with) && body.contains(without),
+                    "{name}: {body}"
+                );
+            }
+            None => assert!(comments.is_empty(), "{name}: no comment: {comments:?}"),
+        }
+        if case.note.is_none() {
+            assert!(
+                !fleet
+                    .lines("bin/gh.log")
+                    .iter()
+                    .any(|l| l.contains("pulls/7")),
+                "{name}: no pull request read for an item the lane completed"
+            );
+        }
+        assert_eq!(fleet.lane("KEN-1")["status"], "done", "{name}");
+    }
+}

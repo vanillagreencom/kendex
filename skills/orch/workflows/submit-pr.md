@@ -153,6 +153,9 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
    - Closes [ISSUE_REF] - [TITLE]
      - Closes [SUB_ISSUE_REF] - [SUB_TITLE]
 
+   ## Done-when evidence
+   [N]: [PROOF]
+
    ## Created Issues
    - [ISSUE_ID] - [TITLE] — Project: [PROJECT]
 

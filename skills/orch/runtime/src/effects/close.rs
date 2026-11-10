@@ -3,8 +3,10 @@
 //! identity the request fills, the tracker's verdict, the lane's state as the
 //! observation duty judges it, the host's capability line, and for a park the
 //! provider, the pull request and the lane's clean head. It then stops a
-//! hosted harness through its provider, and makes the one close transition
-//! (`close-owned-resources`), whose effect stops the recorded identity, ends
+//! hosted harness through its provider, completes a merged item's
+//! branch-provable boxes its lane left open ([`boxes`]), and makes the one
+//! close transition (`close-owned-resources`), whose effect stops the
+//! recorded identity, ends
 //! the wake and the validation runs, archives and removes a finished item's
 //! files, closes the provider's sandbox, closes the window and moves the
 //! record, writing the merge cycle the delivery names. A park then stops the
@@ -19,7 +21,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::ops::{
     self, CloseIdentity, CloseLane, CloseMode, CloseOwnedResources, Ended, Env, NoLanding,
-    ParkLane, ParkWait, Report, Request, Terminal,
+    ParkLane, ParkWait, Report, Request, Terminal, boxes,
 };
 use crate::schedule::Clock;
 use crate::settings::Settings;
@@ -57,8 +59,9 @@ pub enum Word {
 /// The close's answer: the word, the record's status, the tracker's verdict
 /// for `terminal-state`, the notes a step left (`stop-skipped`,
 /// `item-files-kept cause=`, `host-absent mail-status=`, `host-kept kind=
-/// session=`, `merged-unjudged`), and the close transition's effect as
-/// recorded.
+/// session=`, `merged-unjudged`, and the box completion's `boxes-ticked`,
+/// `boxes-unticked`, `boxes-held` or `boxes-unknown`), and the close
+/// transition's effect as recorded.
 #[derive(Debug, Serialize)]
 pub struct Closed {
     pub item: String,
@@ -544,6 +547,7 @@ impl Close<'_> {
                 Ok(()) => {}
                 Err(e) if matches!(ground, Ground::Terminal(_)) && self.host_absent(&e)? => {
                     notes.push(format!("host-absent mail-status={}", cause_word(&e)));
+                    self.complete_boxes(&ground, true, &mut notes);
                     let mut closed = self.persist(Ground::Ended(state::HOST_ABSENT))?;
                     closed.notes.splice(0..0, notes);
                     return Ok(closed);
@@ -552,9 +556,59 @@ impl Close<'_> {
             }
             self.host_stop(&mut notes)?;
         }
+        self.complete_boxes(&ground, false, &mut notes);
         let mut closed = self.persist(ground)?;
         closed.notes.splice(0..0, notes);
         Ok(closed)
+    }
+
+    /// A merged item's branch-provable boxes completed from its merged pull
+    /// request's evidence where the close ends a lane that did not complete
+    /// them: its worktree or sandbox gone (`gone`, or the merged ground,
+    /// which the close takes only on a gone worktree), or its item Done with
+    /// the lane ended. A Linear item alone: the completion is the linear
+    /// package's. The close goes on whatever the completion answers, its
+    /// note saying what that was.
+    fn complete_boxes(&self, ground: &Ground, gone: bool, notes: &mut Vec<String>) {
+        let cause = match ground {
+            Ground::Ended("merged") => boxes::Cause::SandboxGone,
+            Ground::Terminal(Terminal {
+                verdict: state::TerminalVerdict::Completed,
+                ..
+            }) if gone => boxes::Cause::SandboxGone,
+            Ground::Terminal(Terminal {
+                verdict: state::TerminalVerdict::Completed,
+                ..
+            }) => boxes::Cause::LaneEnded,
+            Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep => return,
+        };
+        if self.who.tracker != "linear" {
+            return;
+        }
+        let pr = match &self.r.delivery {
+            Some(ops::Delivery::Pr { pr, repo }) => Some((*pr, repo.clone())),
+            Some(ops::Delivery::Commit { .. }) => None,
+            None => self
+                .lane
+                .extra
+                .get("cycle")
+                .and_then(|c| c.get("pr"))
+                .and_then(Value::as_u64)
+                .map(|pr| (pr, None)),
+        };
+        let Some((pr, repo)) = pr else {
+            return;
+        };
+        let Some(repo) = repo.or_else(|| self.who.repo.clone()) else {
+            notes.push("boxes-unticked cause=repo-missing".to_owned());
+            return;
+        };
+        let merged = boxes::Merged { repo: &repo, pr };
+        if let Some(note) =
+            boxes::complete(self.settings, Path::new("gh"), self.item(), &merged, cause)
+        {
+            notes.push(note);
+        }
     }
 
     /// The ground a lane whose work may be over closes on: its item ended

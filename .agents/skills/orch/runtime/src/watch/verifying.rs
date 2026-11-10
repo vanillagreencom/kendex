@@ -21,8 +21,12 @@ use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
 /// The baseline row kind this duty owns: `verifying-deadline <id>`, the
-/// due keys joined by `|`, `-` with none due, `boxes=0` with no open box.
+/// due keys joined by `|`, `-` with none due, `boxes=0` with no open box,
+/// [`INVALID_ROW`] for an item its checklist leaves unjudged.
 pub const DEADLINE_ROW: &str = "verifying-deadline";
+
+/// The row value of an item read invalid.
+const INVALID_ROW: &str = "invalid";
 
 /// The bound on one call: the parser reads nothing, a `gh api` call one
 /// page.
@@ -329,6 +333,26 @@ fn parse(
     Ok(serde_json::from_str::<Parsed>(&text)
         .map(|parsed| (parsed, text))
         .map_err(|e| format!("done-when parse: {e}")))
+}
+
+/// The boxes of `description`'s checklist neither checked nor post-merge,
+/// by the same parser, for the close's completion of a merged item; `Err`
+/// is the cause word of a parse that failed or a checklist it read errors
+/// in.
+pub(crate) fn open_branch_boxes(
+    settings: &Settings,
+    description: &str,
+) -> std::result::Result<Vec<u64>, &'static str> {
+    match parse(settings, description) {
+        Ok(Ok((parsed, _))) if parsed.errors.is_empty() => Ok(parsed
+            .boxes
+            .iter()
+            .filter(|b| !b.checked && !b.post_merge)
+            .map(|b| b.number)
+            .collect()),
+        Ok(Ok(_)) => Err("checklist-invalid"),
+        Ok(Err(_)) | Err(_) => Err("checklist-unparsed"),
+    }
 }
 
 /// The merge an item's boxes count from: its epoch second and, per
@@ -725,10 +749,25 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         )?;
         let prior = tick.baseline.get(DEADLINE_ROW, &item.id);
         match judged {
-            Item::Invalid { evidence } => say_invalid(
-                &item.id,
-                &format!("verifying-invalid issue={}\n{evidence}", item.id),
-            ),
+            Item::Invalid { evidence } => {
+                say_invalid(
+                    &item.id,
+                    &format!("verifying-invalid issue={}\n{evidence}", item.id),
+                );
+                // The row stands while the item reads invalid, so a stuck
+                // item is named once, not on every pass.
+                held.insert(item.id.clone());
+                if prior != Some(INVALID_ROW) {
+                    produced.events.push(Event::VerifyingInvalid {
+                        id: item.id.clone(),
+                    });
+                    produced.changes.push(Change::Set {
+                        kind: DEADLINE_ROW.to_owned(),
+                        identity: item.id.clone(),
+                        value: INVALID_ROW.to_owned(),
+                    });
+                }
+            }
             Item::Unparsed { cause } => say_invalid(&item.id, &cause),
             Item::Unread { key, cause } => {
                 let words = format!("{key} issue={} {cause}", item.id);

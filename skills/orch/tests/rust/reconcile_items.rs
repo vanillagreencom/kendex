@@ -1231,9 +1231,17 @@ fn verification_passes() {
         "{:?}",
         produced.events
     );
+    // The invalid item keeps no deadline: its row holds `invalid` alone, so
+    // the duty names it once.
+    assert!(
+        produced.changes.contains(&row("T-0", "invalid")),
+        "{:?}",
+        produced.changes
+    );
     let touched: Vec<&Change> = produced
         .changes
         .iter()
+        .filter(|c| **c != row("T-0", "invalid"))
         .filter(|c| match c {
             Change::Set { identity, .. } | Change::Clear { identity, .. } => identity != "T-1",
             _ => true,

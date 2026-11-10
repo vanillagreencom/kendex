@@ -713,6 +713,7 @@
   ".agents/skills/orch/runtime/src/ops/admission.rs",
   ".agents/skills/orch/runtime/src/ops/approve.rs",
   ".agents/skills/orch/runtime/src/ops/artifact.rs",
+  ".agents/skills/orch/runtime/src/ops/boxes.rs",
   ".agents/skills/orch/runtime/src/ops/controller.rs",
   ".agents/skills/orch/runtime/src/ops/copilot_wait.rs",
   ".agents/skills/orch/runtime/src/ops/cycle.rs",

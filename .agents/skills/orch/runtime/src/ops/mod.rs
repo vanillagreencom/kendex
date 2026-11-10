@@ -27,6 +27,7 @@ pub mod accounts;
 mod admission;
 pub mod approve;
 pub mod artifact;
+pub mod boxes;
 mod controller;
 pub mod copilot_wait;
 pub mod cycle;

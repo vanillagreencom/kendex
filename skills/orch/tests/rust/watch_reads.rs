@@ -2809,6 +2809,74 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
     );
 }
 
+/// A Verifying item left with an open branch-provable box, as a merge
+/// whose lane never completed it leaves one, is named by the event once,
+/// not on every pass; once its checklist reads valid and turns invalid
+/// again, it is named again.
+#[test]
+fn a_verifying_item_with_an_open_branch_box_is_named_once() {
+    const NOW: u64 = 1_790_899_201;
+    let mut world = World::new();
+    world.linear("statuses list", statuses());
+    let verifying = |description: &str| {
+        let mut item = item(
+            "KEN-1",
+            "2026-09-20T00:00:00Z",
+            "Verifying",
+            "started",
+            json!(1),
+            &[],
+        );
+        item["description"] = json!(description);
+        json!({"body": [item]})
+    };
+    world.linear(
+        "issues bulk-get",
+        json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-1", "state": {"type": "started"}, "children": {"nodes": []}}
+        ]}}}),
+    );
+    let clock = FakeClock::new();
+    let settings = world.settings(&[]);
+    let ctx = world.context(settings.clone(), None);
+    let shared = ctx.shared.clone();
+    let mut tracker = tracker::body(ctx);
+    let mut verification = verifying::body(verifying::Context {
+        settings,
+        gh: world.dir.path().join("gh"),
+        shared,
+        lines: verifying::Lines::default(),
+    });
+    let mut baseline = Baseline::default();
+    let open = "## Done when\n- [ ] first";
+    let proved = "## Done when\n- [x] first\n  Evidence: tests/a.rs first_row";
+    let invalid = vec!["EVENT verifying-invalid KEN-1".to_owned()];
+    for (description, want) in [
+        (open, invalid.clone()),
+        (open, Vec::new()),
+        (
+            proved,
+            vec![
+                "EVENT verifying-deadline KEN-1 boxes=0".to_owned(),
+                "verifying KEN-1 boxes=0".to_owned(),
+            ],
+        ),
+        (open, invalid),
+    ] {
+        world.linear("issues list", verifying(description));
+        pass(&mut tracker, &mut baseline, &clock, NOW).unwrap();
+        let produced = pass_as(
+            Duty::Verification,
+            &mut verification,
+            &mut baseline,
+            &clock,
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(rendered(&produced), want, "{description:?}");
+    }
+}
+
 /// The owner's tracker answers, the description repair and the due tracker
 /// asks. The reads go through the linear fixture under the tracker's quota
 /// rule and the mailbox fixture logs every verb.
