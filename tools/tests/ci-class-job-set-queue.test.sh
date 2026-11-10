@@ -19,7 +19,7 @@ source "$TEST_DIR/lib/ci-job-set-case.sh"
 queue_table() {
   cat <<ROWS
 tree|micro|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|false
-tree|micro|skills/orch/scripts/open-terminal|true
+tree|micro|skills/orch/scripts/lanes|true
 tree|standard|skills/orch/SKILL.md|true
 tree|render|.agents/skills/orch/SKILL.md|false
 fixture|micro|skills/price-handling/scripts/x|true

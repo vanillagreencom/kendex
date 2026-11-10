@@ -1,30 +1,59 @@
-//! The wake duty's record (step5-map § A9; decisions 118 (2), 121 Q6,
-//! 135a, 159). A wake is a duty action with no intent, phases or
+//! The wake duty's record. A wake is a duty action with no intent, phases or
 //! obligations: it delivers one line to a lead or lane read positively idle
 //! with unread mail, confirms by a new user turn in that session's own
-//! bound file (decisions 61, 65), else reports the harness's capability
-//! limit. Before it types, it records one mark, pane key and unread state,
-//! in the watch's own record, and reads that record at the start of each
-//! pass, so a crash between the mark and the paste never repeats a nudge
-//! for the same unread state; a later unread state is a new wake.
+//! bound file, else reports the harness's capability limit. Before it types,
+//! it records one mark, pane key and unread state, in the watch's own
+//! record, and reads that record at the start of each pass, so a crash
+//! between the mark and the paste never repeats a nudge for the same unread
+//! state; a later unread state is a new wake.
 //!
 //! The record is the runner's `oversee-watch.wake.json` beside the fleet
 //! state, one [`WakeRecord`] written whole by the duty alone
-//! (`watch::wake`), never a field of the lane or overseer record (decision
-//! 159): the legacy `open-terminal --wake` rewrites a lane's `wake {pid,
-//! start}` from its own record, so a mark kept there goes with that write
-//! and the same unread state is reported, and on a pasting harness typed,
-//! again. The lane's `wake {pid, start}` stays the Codex wake process's
-//! identity, charged by occupancy and stopped by the close.
+//! (`watch::wake`), never a field of the lane or overseer record, whose
+//! other writers replace those records whole. A lane record's own `wake
+//! {pid, start}` names a detached print-mode turn run beside the lane's
+//! pane on its session: [`wake_identity`] is its one reader, for the
+//! duty's hold, the occupancy charge and the close's stop.
 
 use std::collections::BTreeMap;
 
+use agent_runtime::process::Identity;
+use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use super::Host;
+use crate::state::Lane;
 use crate::watch::owner_alert::Word;
 
 /// The target word of the controller's own record.
 pub const OVERSEER_TARGET: &str = "overseer";
+
+/// The detached turn a lane record's `wake {pid, start}` names, where it
+/// names one: the pid as the number the runtime writes or the string a
+/// shell writer's jq `--arg` writes, the start in whatever form its writer
+/// read it (`agent_runtime::process::still_runs` reads each).
+pub(crate) fn wake_identity(lane: &Lane) -> Option<Identity> {
+    let wake = lane.extra.get("wake")?;
+    let pid = match wake.get("pid")? {
+        Value::Number(n) => n.as_u64()?,
+        Value::String(s) => s.parse().ok()?,
+        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => return None,
+    };
+    Some(Identity {
+        pid: u32::try_from(pid).ok()?,
+        start: wake.get("start")?.as_str()?.to_owned(),
+    })
+}
+
+/// Whether the lane record names a detached print-mode turn that may still
+/// run on the lane's session: one `host` reads live under its start, or
+/// cannot read. The lane's pane reads idle while such a turn runs, so a
+/// paste then starts a second turn beside it; an ended turn, or a later
+/// process under its pid, is none.
+pub fn turn_runs(lane: &Lane, host: &Host) -> bool {
+    wake_identity(lane).is_some_and(|id| !matches!((host.still_runs)(&id), Reading::Gone))
+}
 
 /// What a wake answered for the unread state its mark names.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,7 +69,7 @@ pub enum WakeOutcome {
 }
 
 /// The mark a wake writes before it types: the pane it types into by its
-/// exact key on its server (decision 99), the unread state the wake is for
+/// exact key on its server, the unread state the wake is for
 /// (the mail duty's row value), the bound file's user-turn count the
 /// delivery is confirmed against, the epoch second of the mark, the
 /// outcome once known, and, for the overseer alone, where the owner's turn

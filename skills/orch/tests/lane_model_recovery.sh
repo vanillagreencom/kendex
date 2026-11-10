@@ -110,7 +110,7 @@ ROWS
 echo "=== a runtime record's permission words reach the replacement's request ==="
 # The record the runtime's launch-lane writes for a Claude lane launched with
 # `--permission-mode dontAsk`: tests/fixtures/launch-lane/claude-dontask.json,
-# held to the producer by tests/rust/open_terminal.rs, its root this case's.
+# held to the producer by tests/rust/lane.rs, its root this case's.
 # It carries no recovery object: the words are read from its permission.
 CASE="$TMP_ROOT/runtime-record"
 mkdir -p "$CASE"

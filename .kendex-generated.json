@@ -837,7 +837,6 @@
   ".agents/skills/orch/scripts/lib/toml.sh",
   ".agents/skills/orch/scripts/lib/verifying.sh",
   ".agents/skills/orch/scripts/lib/watch-pid.sh",
-  ".agents/skills/orch/scripts/open-terminal",
   ".agents/skills/orch/scripts/orch-env",
   ".agents/skills/orch/scripts/orch-runtime",
   ".agents/skills/orch/scripts/oversee",

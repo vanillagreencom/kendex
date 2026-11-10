@@ -8,8 +8,7 @@
 //! durably, before it types, so a crash between the mark and the paste
 //! never repeats a nudge for the same unread state; a later unread state
 //! is a new wake. The record is read at the start of each pass: nothing
-//! the fleet record's writers do (`open-terminal --wake` rewrites a lane's
-//! `wake` object) moves a mark.
+//! the fleet record's writers do to a lane or overseer record moves a mark.
 //!
 //! Slot: the mail duty sets a baseline row of kind [`UNREAD_KIND`], its
 //! identity the target (an item key, or [`OVERSEER_TARGET`]), its value the
@@ -48,7 +47,7 @@ pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
 use crate::settings::Settings;
-use crate::state::{self, FleetState, Lane, Overseer, Record};
+use crate::state::{self, FleetState, Lane, LaneStatus, Overseer, Record};
 
 /// The baseline row kind the mail duty signals unread mail with.
 pub const UNREAD_KIND: &str = "unread";
@@ -65,8 +64,7 @@ pub fn record_path(fleet: &Path) -> PathBuf {
     fleet.parent().unwrap_or(Path::new(".")).join(WAKE_FILE)
 }
 
-/// The one line typed: the `open-terminal --wake` line, which runs the
-/// target's inbox read.
+/// The one line typed, which runs the target's inbox read.
 fn line_for(target: &str) -> String {
     format!(
         "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target} and act on every envelope it prints, answers and directives alike, as its text directs."
@@ -161,8 +159,15 @@ fn overseer_socket(overseer: &Overseer) -> Option<PathBuf> {
 /// harness identity, and its session under the account home, else the
 /// harness's default home (as `effects::launch` reads them; Pi's account is
 /// a provider seat, not its home). A lane with no harness, pane, server or
-/// directory is nobody to type into.
+/// directory is nobody to type into. Nor is a lane whose record names
+/// another host: its session runs there, the pane here holds the client,
+/// and no file here confirms its turn. Nor is a lane that is not running:
+/// it is relaunched, never woken, and the mail duty's unread row for it
+/// stands until that duty's next turn.
 fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
+    if lane.status != LaneStatus::Running || lane.host.as_deref().is_some_and(|h| h != "local") {
+        return None;
+    }
     let harness = Harness::parse(lane.harness.as_deref()?)?;
     let launch = lane.launch.as_ref()?;
     let identity = match (launch.pid, &launch.start) {
@@ -276,6 +281,10 @@ struct Wake {
 }
 
 impl Wake {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the wake's one construction of the kernel host, for the read of a print-mode turn a lane record names before anything is typed; the read acts on nothing"
+    )]
     fn run(&self, tick: &Tick) -> Result<Produced> {
         let mut produced = Produced::default();
         let unread: Vec<(String, String)> = tick
@@ -298,15 +307,14 @@ impl Wake {
             Some(socket) => socket,
             None => tmux::ambient_socket()?,
         };
+        let host = crate::ops::Host::kernel(self.settings.lane_cap);
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet.overseer.as_ref().and_then(overseer_target)
             } else {
-                fleet
-                    .lanes
-                    .iter()
-                    .find(|l| l.item == name)
-                    .and_then(|l| lane_target(l, &socket))
+                fleet.lanes.iter().find(|l| l.item == name).and_then(|l| {
+                    lane_target(l, &socket).filter(|_| !crate::ops::wake::turn_runs(l, &host))
+                })
             };
             let Some(target) = target else {
                 continue;

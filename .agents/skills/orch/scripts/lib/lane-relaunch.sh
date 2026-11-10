@@ -1,13 +1,8 @@
 # shellcheck shell=bash
 #
-# Owners: open-terminal's wake, which sources this file for the session its
-# resume continues; the lane-mail-check hook's model-switch recovery, which
-# runs it as `lane-relaunch.sh model-recovery`; and a Jarvis session, which
-# reads a recorded session file through it.
-#
-# The session lookup: which harness transcript a wake resumes, and the id the
-# harness resumes it by. It reads the caller's LAUNCH_FLAGS. Exit 1 means no
-# session; exit 2 means the lookup failed, never permission to start fresh.
+# Owners: the lane-mail-check hook's model-switch recovery, which runs it as
+# `lane-relaunch.sh model-recovery`, and a Jarvis session, which reads a
+# recorded session file through `recorded_session_file`.
 
 # The replacement is the runtime's: one `launch-lane` request written beside
 # the fleet state, its path in LANE_RECOVERY_REQUEST, composed from the lane
@@ -237,99 +232,11 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
   return "$rc"
 }
 
-# Pi resolves a relative session directory from the process working directory,
-# which is the item worktree for the command this launcher emits.
-pi_relaunch_root() { # WORKTREE HOME
-  local cwd="$1" home="$2" agent_dir="${PI_CODING_AGENT_DIR:-$home/.pi/agent}" root="" settings setting="" setting_rc token expect_value=false override_found=false project_trusted=false trust_override=false decision="" trust_rc
-  local -a tokens=()
-  cwd="$(cd "$cwd" && pwd -P)" || return 2
-  case "$agent_dir" in "~") agent_dir="$home" ;; "~/"*) agent_dir="$home/${agent_dir#\~/}" ;; /*) ;; *) agent_dir="$cwd/$agent_dir" ;; esac
-  if [[ -n "$LAUNCH_FLAGS" ]]; then
-    read -r -a tokens <<<"$LAUNCH_FLAGS"
-    for token in ${tokens[@]+"${tokens[@]}"}; do
-      if [[ "$expect_value" == true ]]; then root="$token"; expect_value=false; override_found=true; continue; fi
-      case "$token" in
-        --session-dir) expect_value=true ;;
-        --session-dir=*) root="${token#*=}"; [[ -n "$root" ]] || return 2; override_found=true ;;
-        -a|--approve) project_trusted=true; trust_override=true ;;
-        -na|--no-approve) project_trusted=false; trust_override=true ;;
-      esac
-    done
-    [[ "$expect_value" == false ]] || return 2
-  fi
-  if [[ "$override_found" == false && -n "${PI_CODING_AGENT_SESSION_DIR:-}" ]]; then root="$PI_CODING_AGENT_SESSION_DIR"; override_found=true; fi
-  if [[ "$override_found" == false ]]; then
-    root="$agent_dir/sessions"
-    settings="$agent_dir/settings.json"
-    if [[ -e "$settings" ]]; then
-      [[ -f "$settings" && -r "$settings" ]] || return 2
-      setting_rc=0
-      setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
-      case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
-    fi
-    settings="$cwd/.pi/settings.json"
-    if [[ -e "$settings" ]]; then
-      if [[ "$trust_override" == false ]]; then
-        [[ ! -r "$agent_dir/settings.json" ]] || project_trusted="$(jq -r 'if .defaultProjectTrust=="always" then "true" else "false" end' "$agent_dir/settings.json")" || return 2
-        if [[ -e "$agent_dir/trust.json" ]]; then
-          [[ -f "$agent_dir/trust.json" && -r "$agent_dir/trust.json" ]] || return 2
-          trust_rc=0
-          decision="$(jq -er --arg p "$cwd" 'if type!="object" or any(.[]; .!=true and .!=false and .!=null) then error("trust") else [to_entries[]|select(.value==true or .value==false)|select(.key as $k|$k=="/" or $k==$p or ($p|startswith($k+"/")))]|sort_by(.key|length)|last|if .value==true then "true" elif .value==false then "false" else empty end end' "$agent_dir/trust.json")" || trust_rc=$?
-          case "$trust_rc" in 0) project_trusted="$decision" ;; 4) ;; *) return 2 ;; esac
-        fi
-      fi
-      if [[ "$project_trusted" == true ]]; then
-        [[ -f "$settings" && -r "$settings" ]] || return 2
-        setting_rc=0
-        setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
-        case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
-      fi
-    fi
-  fi
-  case "$root" in "~") root="$home" ;; "~/"*) root="$home/${root#\~/}" ;; /*) ;; *) root="$cwd/$root" ;; esac
-  printf '%s\n' "$root"
-}
-
-# Transcript fallback for Claude listSessions and Pi SessionManager.list:
-# shell launches lack SDK/app-server connections. Worktree metadata owns
-# repository/item, never prompts. Pi workers use kendex/sessions, outside its
-# lead store; Pi parents are forks.
-find_relaunch_session() { # HARNESS WORKTREE
-  local harness="$1" cwd="$2" home="${LANES_HOME:-$HOME}" roots root match_filter="" files file best="" rc
-  command -v jq >/dev/null 2>&1 || return 2
-  cwd="$(cd -- "$cwd" && pwd -P)" || return 2
-  case "$harness" in
-    claude) roots="$home/.claude-shared/projects"; match_filter='first(inputs|fromjson?|select(.cwd!=null)) // {} | {cwd, lead:(.isSidechain!=true)}' ;;
-    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='first(inputs|fromjson?|select(.type=="session")) // {} | {cwd, lead:true}' ;;
-    *) return 1 ;;
-  esac
-
-  while IFS= read -r root; do
-    [[ -n "$root" && -e "$root" ]] || continue
-    [[ -d "$root" && -r "$root" ]] || return 2
-    # A Claude child lives below a subagents directory.
-    # Only direct project children are lead transcripts; other stores recurse.
-    if [[ "$harness" == claude ]]; then
-      files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
-    else
-      files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
-    fi
-    while IFS= read -r file; do
-      [[ -n "$file" ]] || continue
-      if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1; then
-        [[ -n "$best" && ! "$file" -nt "$best" ]] || best="$file"
-      else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
-    done <<<"$files"
-  done <<<"$roots"
-  [[ -n "$best" ]] || return 1
-  printf '%s\n' "$best"
-}
 # The id a harness resumes a transcript by: the file's basename for claude,
 # the session_meta id inside a codex transcript, the file itself for pi,
 # whose --session takes a path, and a copilot session's own id, read from its
-# workspace.yaml by lib/copilot-session.sh; a Jarvis session reads a recorded
-# codex or copilot file through recorded_session_file below. Empty is a
-# transcript the harness cannot resume, and a failure.
+# workspace.yaml by lib/copilot-session.sh, for recorded_session_file below.
+# Empty is a transcript the harness cannot resume, and a failure.
 session_id_of() { # HARNESS SESSION_FILE
   local id=""
   case "$1" in

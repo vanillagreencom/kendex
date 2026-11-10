@@ -129,7 +129,7 @@ echo "=== lane-state § identity: the runtime's recorded start is read in its ow
 # lane-close's local stop and the by-hand stop hand lane_identity_status the
 # launch identity a record names. The record is the one the runtime's
 # launch-lane writes (tests/fixtures/launch-lane/claude-dontask.json, held to
-# that producer by tests/rust/open_terminal.rs), its pid and start bound to a
+# that producer by tests/rust/lane.rs), its pid and start bound to a
 # process this suite holds: the start keeps the form the producer wrote, its
 # value the /proc start field the producer reads. Read as text in another
 # form, a running harness reads ended, and a stop with no pane stops nothing.

@@ -3,7 +3,9 @@
 //! its own bound session file; the mark is in the watch's own record on
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
-//! Codex target and an unreadable pane are never typed into. Each row's
+//! Codex target, a pane that is gone, unreadable or mid-turn, a lane on
+//! another host or not running, and a lane whose record names a print-mode
+//! turn still running are never typed into. Each row's
 //! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
@@ -328,31 +330,6 @@ impl Fleet {
         let bytes = std::fs::read(self.record_file()).ok()?;
         let record: WakeRecord = serde_json::from_slice(&bytes).expect("the wake record parses");
         record.get(target).cloned()
-    }
-
-    /// Open-terminal's wake-mode patch on the lane's record
-    /// (`open-terminal` `update-report oversee`, mode `wake`): the lane row
-    /// gains `{session_id, status, wake, obligation}` from the wake's own
-    /// record, `wake` the detached turn's `{pid, start}`, replacing whatever
-    /// `wake` object stood.
-    fn apply_open_terminal_wake(&self, item: &str, session: &str) {
-        let mut fleet = self.read_fleet();
-        let lane = fleet["lanes"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|l| l["item"] == item)
-            .expect("the lane row");
-        let patch = json!({
-            "session_id": session,
-            "status": "running",
-            "wake": {"pid": 4242, "start": "ticks:77"},
-            "obligation": Value::Null,
-        });
-        for (key, value) in patch.as_object().unwrap() {
-            lane[key] = value.clone();
-        }
-        self.write_fleet(&fleet);
     }
 
     fn body(&self) -> watch::Body<'static> {
@@ -881,89 +858,135 @@ fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     assert_eq!(rendered(&again), Vec::<String>::new(), "reported once");
 }
 
-/// `open-terminal --wake`, the overseer's route for a Codex lane the duty
-/// reported, rewrites the lane's `wake` object from its own record, so the
-/// mark lives off the lane record. A Codex lane and a Claude lane are
-/// served once; the wake-mode patch lands on both lane rows between the
-/// passes; a fresh body (a restarted runner, holding nothing in memory)
-/// reads the marks standing and reports and types nothing again.
+/// A lane the wake may not type into is typed nothing and marked nothing:
+/// its recorded pane gone; its recorded server one the socket does not
+/// answer for; its harness mid-turn (the stub holding a line whose echo
+/// reads working); its record naming another host; its record not
+/// running; and an unread row naming an item no record holds, beside an
+/// idle running lane no row names. A fleet state that does not parse then
+/// fails the pass loud, never read as a fleet with no lanes.
 #[test]
-fn an_open_terminal_wake_on_the_lane_record_moves_no_mark_and_nothing_is_reported_or_typed_again() {
-    let fleet = Fleet::new();
-    let typed = fleet.root.join("typed.lines");
-    let codex = fleet.open(
-        "KEN-3",
-        "codex",
-        "lead-3",
-        &[("STUB_TURNS_LINES", &typed.display().to_string())],
-    );
-    let claude = fleet.open("KEN-1", "claude", "lead-1", &[]);
-    fleet.server.await_composer(&claude.id);
-    fleet.set_lanes(vec![
-        fleet.lane("KEN-1", "claude", &claude),
-        fleet.lane("KEN-3", "codex", &codex),
-    ]);
-    let clock = FakeClock::new();
-    let baseline = unread(&[("KEN-1", "m-1"), ("KEN-3", "m-1")]);
-    let produced = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
-    assert_eq!(
-        rendered(&produced),
-        vec![
-            "EVENT idle-unread KEN-1",
-            "EVENT wake-delivered KEN-1",
-            "EVENT idle-unread KEN-3",
-            "EVENT wake-limit KEN-3 harness=codex cause=process-running",
-        ]
-    );
-    assert_eq!(fleet.turns("lead-1").len(), 1);
-    fleet.apply_open_terminal_wake("KEN-3", "lead-3");
-    fleet.apply_open_terminal_wake("KEN-1", "lead-1");
-    assert_eq!(
-        fleet.read_fleet()["lanes"][1]["wake"],
-        json!({"pid": 4242, "start": "ticks:77"}),
-        "open-terminal's wake identity stands on the lane row"
-    );
-    let again = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
-    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
-    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
-    assert!(!typed.exists(), "{:?}", std::fs::read_to_string(&typed));
-    assert_eq!(
-        fleet.mark("KEN-1").and_then(|m| m.outcome),
-        Some(WakeOutcome::Delivered { turns_after: 1 })
-    );
-    assert_eq!(
-        fleet.mark("KEN-3").and_then(|m| m.outcome),
-        Some(WakeOutcome::Limit {
-            harness: "codex".into(),
-            cause: "process-running".into()
-        })
-    );
-}
-
-/// A lane whose recorded pane is gone and one whose recorded server the
-/// socket does not answer for are never typed into, print nothing and leave
-/// no mark.
-#[test]
-fn a_gone_or_unreadable_pane_is_never_typed_into_and_leaves_no_mark() {
+fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     let fleet = Fleet::new();
     let pane = fleet.open("KEN-2", "claude", "lead-2", &[]);
-    fleet.server.await_composer(&pane.id);
+    let state = fleet.root.join("busy.state");
+    let hold = fleet.root.join("busy.fifo");
+    mkfifo(&hold);
+    let busy = fleet.open(
+        "KEN-4",
+        "claude",
+        "lead-4",
+        &[
+            ("STUB_TURNS_STATE", &state.display().to_string()),
+            ("STUB_TURNS_HOLD", &hold.display().to_string()),
+        ],
+    );
+    let hosted = fleet.open("KEN-5", "claude", "lead-5", &[]);
+    let stopped = fleet.open("KEN-6", "claude", "lead-6", &[]);
+    let unnamed = fleet.open("KEN-8", "claude", "lead-8", &[]);
+    for stub in [&pane, &busy, &hosted, &stopped, &unnamed] {
+        fleet.server.await_composer(&stub.id);
+    }
+    await_state(&state, "idle");
+    fleet
+        .server
+        .send_line(&busy.id, "✻ Thinking… (esc to interrupt)");
+    await_state(&state, "working");
     let mut gone = fleet.lane("KEN-1", "claude", &pane);
     gone["launch"]["pane"] = json!("%999");
     let mut unreadable = fleet.lane("KEN-2", "claude", &pane);
     unreadable["launch"]["server"] = json!(fleet.server.pid + 1);
-    fleet.set_lanes(vec![gone, unreadable]);
+    let mut elsewhere = fleet.lane("KEN-5", "claude", &hosted);
+    elsewhere["host"] = json!("/srv/box");
+    let mut ended = fleet.lane("KEN-6", "claude", &stopped);
+    ended["status"] = json!("stopped");
+    fleet.set_lanes(vec![
+        fleet.lane("KEN-8", "claude", &unnamed),
+        gone,
+        unreadable,
+        fleet.lane("KEN-4", "claude", &busy),
+        elsewhere,
+        ended,
+    ]);
     let clock = FakeClock::new();
     let mut body = fleet.body();
-    let baseline = unread(&[("KEN-1", "m-1"), ("KEN-2", "m-1")]);
-    let produced = run_once(&mut body, &baseline, &clock).unwrap();
+    let targets = ["KEN-1", "KEN-2", "KEN-4", "KEN-5", "KEN-6", "KEN-7"];
+    let rows: Vec<(&str, &str)> = targets.iter().map(|t| (*t, "m-1")).collect();
+    let produced = run_once(&mut body, &unread(&rows), &clock).unwrap();
     assert_eq!(rendered(&produced), Vec::<String>::new());
-    assert_eq!(fleet.turns("lead-2"), Vec::<String>::new());
-    assert_eq!(fleet.mark("KEN-1"), None);
-    assert_eq!(fleet.mark("KEN-2"), None);
+    for session in ["lead-2", "lead-4", "lead-5", "lead-6", "lead-8"] {
+        assert_eq!(fleet.turns(session), Vec::<String>::new(), "{session}");
+    }
+    for target in targets {
+        assert_eq!(fleet.mark(target), None, "{target}");
+    }
     assert!(
         std::fs::symlink_metadata(fleet.record_file()).is_err(),
         "a pass that marked nothing wrote no record"
+    );
+    release_hold(&hold, secs(5), || state_of(&state));
+    release_hold(&hold, secs(5), || state_of(&state));
+    await_state(&state, "idle");
+    assert_eq!(fleet.turns("lead-4").len(), 1, "the held line alone");
+    std::fs::write(fleet.fleet_file(), "{ not json").unwrap();
+    let unparsed = run_once(&mut body, &unread(&[("KEN-8", "m-1")]), &clock);
+    assert!(unparsed.is_err(), "{:?}", unparsed.map(|p| rendered(&p)));
+    assert_eq!(fleet.turns("lead-8"), Vec::<String>::new());
+}
+
+/// The bare `ps -o lstart` start of `pid`, its blanks squeezed, in the C
+/// locale and UTC: the form a shell writer records a lane's `wake` in.
+fn lstart_of(pid: u32) -> String {
+    let out = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .output()
+        .expect("ps");
+    assert!(out.status.success(), "ps: {}", stderr(&out));
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A lane record naming a detached print-mode turn, `wake {pid, start}` in
+/// the bare `lstart` form a shell writer records, holds the lane while that
+/// process runs: the pane reads idle beside such a turn, and a paste then
+/// would start a second turn on the session. Nothing is typed or marked
+/// while it runs; once it has ended the next pass delivers once; a writer
+/// rewriting the lane's `wake` meanwhile moves no mark, so a restarted
+/// runner types nothing again for the same unread state.
+#[test]
+fn a_print_mode_turn_the_record_names_holds_the_lane_until_it_ends_and_moves_no_mark() {
+    let fleet = Fleet::new();
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    let turn = Owned::sleep();
+    let mut lane = fleet.lane("KEN-1", "claude", &pane);
+    lane["wake"] = json!({"pid": turn.pid(), "start": lstart_of(turn.pid())});
+    fleet.set_lanes(vec![lane.clone()]);
+    let clock = FakeClock::new();
+    let baseline = unread(&[("KEN-1", "m-1")]);
+    let held = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
+    assert_eq!(rendered(&held), Vec::<String>::new());
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
+    assert_eq!(fleet.mark("KEN-1"), None);
+    drop(turn);
+    let woken = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
+    assert_eq!(
+        rendered(&woken),
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+    );
+    assert_eq!(fleet.turns("lead-1").len(), 1);
+    lane["wake"] = json!({"pid": 4242, "start": "Thu Jan 1 00:00:00 1970"});
+    fleet.set_lanes(vec![lane]);
+    let again = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
+    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+    assert_eq!(
+        fleet.mark("KEN-1").and_then(|m| m.outcome),
+        Some(WakeOutcome::Delivered { turns_after: 1 })
     );
 }
 

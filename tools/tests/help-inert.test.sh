@@ -165,10 +165,6 @@ orch	scripts/lanes	-h
 orch	scripts/lanes	help
 orch	scripts/lanes	list --help
 orch	scripts/lanes	pick --harness claude -h
-orch	scripts/open-terminal	--help
-orch	scripts/open-terminal	-h
-orch	scripts/open-terminal	help
-orch	scripts/open-terminal	KEN-1 --harness claude --help
 orch	scripts/orch-env	--help
 orch	scripts/orch-env	-h
 orch	scripts/orch-env	help

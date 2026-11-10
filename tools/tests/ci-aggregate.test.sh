@@ -549,12 +549,12 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
   [ -n "$expr" ] || { printf 'no-lane'; return 0; }
   gh_eval value "$(context_json "$2" "$3" "$4" "$TMP/published-map")" "$expr"
 }
-# A merge group touching the script the orch-terminal shard races.
-open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
-open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
+# A merge group touching an orch script.
+orch_script="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
+orch_script_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$orch_script")")"
 linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls-a","linear-controls-b"]' '[]')"
 check "the portability row selects orch-rest" true \
-  "$(jq -c 'index("orch-rest") != null' <<<"$open_terminal_queue")"
+  "$(jq -c 'index("orch-rest") != null' <<<"$orch_script_queue")"
 only_succeed="$(measured linux false true false '["orch-oversee-succeed"]' '["orch-oversee-succeed"]')"
 only_dev="$(measured both false true false '["orch-dev"]' '["orch-dev"]')"
 only_state="$(measured both false true false '["orch-state"]' '["orch-state"]')"
@@ -570,7 +570,7 @@ while IFS='|' read -r event result sel expected; do
   check "CI's queue lane is $lane on $event at $result under '$sel'" "$lane" \
     "$(queue_lane "$WORKFLOW" "$event" "$result" "$sel")"
 done <<ROWS
-merge_group|success|$open_terminal|$open_terminal_queue
+merge_group|success|$orch_script|$orch_script_queue
 merge_group|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
 merge_group|success|$only_succeed|["orch-oversee-succeed"]
 merge_group|success|$only_dev|["orch-dev"]
@@ -592,15 +592,15 @@ mkdir -p "$TMP/subset/tools"
 cp -R "$ROOT/tools/lib" "$TMP/subset/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/subset/tools/"
 cp "$ROOT/tools/rust-reads" "$TMP/subset/tools/rust-reads"
-sed '/^queue=""$/,/^fi$/s/for shard in \$SHARDS/for shard in orch-terminal orch-oversee-succeed guards-tools/' \
+sed '/^queue=""$/,/^fi$/s/for shard in \$SHARDS/for shard in orch-oversee orch-oversee-succeed guards-tools/' \
   "$JOB_SET" >"$TMP/subset/tools/ci-job-set"
 chmod +x "$TMP/subset/tools/ci-job-set"
 [ "$(diff "$JOB_SET" "$TMP/subset/tools/ci-job-set" | grep -c '^>' || :)" -eq 1 ] || exit 1
-subset="$(SELECT_WITH="$TMP/subset/tools/ci-job-set" SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
+subset="$(SELECT_WITH="$TMP/subset/tools/ci-job-set" SELECT_EVENT=merge_group selection micro false skills/orch/scripts/lanes)"
 subset_legs="$(queue_legs "$WORKFLOW" merge_group success "$subset")"
 check "must-fail: the old subset drops orch-rest" false \
   "$(jq -c 'index("orch-rest") != null' <<<"$subset_legs")"
-[ "$subset_legs" != "$open_terminal_queue" ] && ok "must-fail: the old subset fails the portability row" ||
+[ "$subset_legs" != "$orch_script_queue" ] && ok "must-fail: the old subset fails the portability row" ||
   bad "must-fail: the old subset leaves the portability row green"
 
 # A condition reading no selection runs the legs on a group of prose alone.
@@ -616,8 +616,8 @@ check "must-fail: a queue shard key reading no selection runs an unselected queu
 # A queue job ignoring the event runs its legs on a pull request.
 plant "$WORKFLOW" "github.event_name == 'merge_group'" "github.event_name != 'push'" \
   "$TMP/wf-queue-pr.yml" "$MACOS_QUEUE_JOB"
-check "must-fail: a queue job ignoring the event runs on a pull request" "$open_terminal_queue" \
-  "$(queue_legs "$TMP/wf-queue-pr.yml" pull_request success "$open_terminal")"
+check "must-fail: a queue job ignoring the event runs on a pull request" "$orch_script_queue" \
+  "$(queue_legs "$TMP/wf-queue-pr.yml" pull_request success "$orch_script")"
 
 # The shard key expands to the published list, and to the whole roster where
 # nothing was published; that literal is the roster ci-job-set selects from,
@@ -1344,10 +1344,10 @@ while IFS='|' read -r row event sel result expected; do
   check "$CI_JOB queue macOS legs on $row" "$expected" \
     "$(queue_aggregate "$queue_expr" "$event" "$sel" "$result")"
 done <<ROWS
-selected-failed|merge_group|$open_terminal|failure|true 1
-selected-cancelled|merge_group|$open_terminal|cancelled|true 1
-selected-skipped|merge_group|$open_terminal|skipped|true 1
-selected-passed|merge_group|$open_terminal|success|true 0
+selected-failed|merge_group|$orch_script|failure|true 1
+selected-cancelled|merge_group|$orch_script|cancelled|true 1
+selected-skipped|merge_group|$orch_script|skipped|true 1
+selected-passed|merge_group|$orch_script|success|true 0
 dev-failed|merge_group|$only_dev|failure|true 1
 dev-cancelled|merge_group|$only_dev|cancelled|true 1
 dev-skipped|merge_group|$only_dev|skipped|true 1
@@ -1362,7 +1362,7 @@ plant "$WORKFLOW" "MACOS_QUEUE: \${{ $queue_expr }}" "MACOS_QUEUE: \${{ $queue_e
   "$TMP/wf-queue-lane-false.yml" "$CI_JOB"
 false_expr="$(aggregate_lanes "$TMP/wf-queue-lane-false.yml" "$CI_JOB" | awk -F '\t' -v j="$MACOS_QUEUE_JOB" '$2 == j { print $3 }')"
 check "must-fail: a CI lane ignoring the selection lets a selected queue job skip" "false 0" \
-  "$(queue_aggregate "$false_expr" merge_group "$open_terminal" skipped)"
+  "$(queue_aggregate "$false_expr" merge_group "$orch_script" skipped)"
 for selection in "$only_dev" "$only_state"; do
   check "must-fail: ignoring a family selection lets its selected queue job skip" "false 0" \
     "$(queue_aggregate "$false_expr" merge_group "$selection" skipped)"

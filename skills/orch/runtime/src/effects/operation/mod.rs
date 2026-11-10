@@ -264,7 +264,7 @@ impl<'a> Operation<'a> {
             EffectOp::CloseOwnedResources => {
                 let (lane, _) = lane_for_intent(run.path, &intent.id)?;
                 let mut obligations = Obligations::of_launch(lane.launch.as_ref(), harness);
-                if let Some(wake) = host::wake_identity(&lane) {
+                if let Some(wake) = crate::ops::wake::wake_identity(&lane) {
                     obligations.add(Obligation::Process(wake), Role::Wake, None);
                 }
                 let owed = intent.observation.as_ref().is_some_and(|prior| {

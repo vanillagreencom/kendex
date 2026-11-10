@@ -163,7 +163,7 @@ LANES="shell_shards shell_os $JOBS"
 # The events a selection is made for; each selects the same lanes.
 EVENTS="pull_request merge_group"
 # The shell shards, in the order of the skill-tests.yml matrix list.
-SHARDS="review-gate refresh orch-terminal orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
+SHARDS="review-gate refresh orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest guards-scans guards-commit guards-commit-tail guards-hooks guards-hooks-tail guards-tools guards-tools-tail linear linear-controls-a linear-controls-b worktree worktree-restack rest slack mailbox node pi-claude-bridge"
 # The native eligibility owner declares empty and unsupported macOS shards.
 # The ownership proof compares those declarations with actual suite coverage
 # and the workflow matrix. Linux keeps the complete SHARDS roster.
@@ -377,7 +377,7 @@ want_package() { # PACKAGE
   case "$1" in
     skills/orch)
       if [ -n "$suite_path" ]; then want_shard "$suite_shard"
-      else want_shard orch-terminal orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest; fi ;;
+      else want_shard orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest; fi ;;
     skills/github) want_shard orch-rest ;;
     skills/review-gate | refresh)
       if [ -n "$suite_path" ]; then want_shard "${1#skills/}"
@@ -413,7 +413,7 @@ if [ -n "$suite_path" ]; then
   kendex=none
   if [ "$suite_os" = Linux ]; then
     for shard in $want; do
-      case "$shard" in rest | orch-terminal | orch-rest | refresh) kendex=checkout ;; esac
+      case "$shard" in rest | orch-rest | refresh) kendex=checkout ;; esac
     done
   fi
   printf '%s\n' "$kendex"

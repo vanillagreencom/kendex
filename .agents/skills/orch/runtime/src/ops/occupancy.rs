@@ -39,7 +39,6 @@ use agent_runtime::clock;
 use agent_runtime::process::{self, Identity};
 use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use super::admission::{AdmissionReads, Clis};
 use crate::settings::Settings;
@@ -180,21 +179,6 @@ pub(super) fn identity_of(launch: &LaunchIdentity) -> Option<Identity> {
     })
 }
 
-/// The identity of the lane's recorded detached wake turn, `wake {pid,
-/// start}`, where the record carries one.
-fn wake_identity(lane: &Lane) -> Option<Identity> {
-    let wake = lane.extra.get("wake")?;
-    let pid = match wake.get("pid")? {
-        Value::Number(n) => n.as_u64()?,
-        Value::String(s) => s.parse().ok()?,
-        _ => return None,
-    };
-    Some(Identity {
-        pid: u32::try_from(pid).ok()?,
-        start: wake.get("start")?.as_str()?.to_owned(),
-    })
-}
-
 /// One recorded identity and what the kernel answered for it.
 #[derive(Debug, Clone)]
 pub(super) struct Read {
@@ -228,7 +212,7 @@ pub(super) fn read_identities(lane: &Lane, host: &Host) -> Identities {
     };
     Identities {
         launch: read(lane.launch.as_ref().and_then(identity_of)),
-        wake: read(wake_identity(lane)),
+        wake: read(super::wake::wake_identity(lane)),
     }
 }
 

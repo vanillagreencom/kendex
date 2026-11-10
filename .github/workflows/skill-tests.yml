@@ -77,12 +77,9 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` is the first:
-# run-all.sh's shard_of names its suites by their `open-terminal` and
-# `lane-launch` names, the wake entry's and the launch libraries', pooled
-# under the leg's own step bound. The macOS
+# steps says so. One leg is that case. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
-# `rest`, and `render-lint` is the second: a target whose cost is one
+# `rest`, and `render-lint` is that leg: a target whose cost is one
 # expensive test, so no target seam reaches inside it. After its comments
 # pass split across scopes, its macOS test step measured 277s in run
 # 37597618670. `rest`
@@ -490,7 +487,7 @@ jobs:
         # SHARDS spells it, and runs where the classifier published nothing.
         # The job stands down where the list is empty, so no empty matrix
         # expands.
-        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
+        shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls-a", "linear-controls-b", "worktree", "worktree-restack", "rest", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
@@ -514,7 +511,7 @@ jobs:
     # fourteen on macOS, which leave the 15- and 30-minute ceilings here a
     # margin; their figures are above their steps.
     # Slack retains the budget of the rest shard it splits from on both OSes.
-    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
+    timeout-minutes: &skill-suite-timeout ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest' || matrix.shard == 'slack' || matrix.shard == 'orch-rest' || (matrix.os == 'ubuntu-latest' && matrix.shard == 'orch-dev')) && 30 || 15 }}
     # change-scope's change-scope suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -701,8 +698,7 @@ jobs:
       # shards whose suites run a real kendex: `rest`, for change-scope's
       # change-scope rows, whose comment at the `rest` shard's verify-document
       # step says why the build is this checkout's and why Linux alone,
-      # `orch-terminal`, which tools/ci-job-set keeps among the checkout
-      # shards, `orch-rest`, for claude-model-classes.sh, whose core
+      # `orch-rest`, for claude-model-classes.sh, whose core
       # contract rows hold the Claude plugin's fixtures to this checkout's
       # `tier-model`, and tier-model-fixture.sh, which holds the orch suites'
       # class table fixture to it, and `refresh`, for refresh-consumer's held-render
@@ -710,13 +706,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
       - name: kendex from this checkout
-        if: (matrix.shard == 'rest' || matrix.shard == 'orch-terminal' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
+        if: (matrix.shard == 'rest' || matrix.shard == 'orch-rest' || matrix.shard == 'refresh') && runner.os == 'Linux'
         run: |
           set -euo pipefail
           cargo build -p kendex-cli --locked
@@ -754,11 +750,11 @@ jobs:
           done
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" || fail=1
           exit "$fail"
-      # ---- shards: orch-terminal, orch-oversee, orch-oversee-succeed,
-      # orch-dev, orch-state, orch-rest ---------------------------------------
+      # ---- shards: orch-oversee, orch-oversee-succeed, orch-dev,
+      # orch-state, orch-rest -------------------------------------------------
       # run-all.sh's shard_of owns the families and their complement, by
-      # suite name and RUNNER_OS. `open-terminal` names enter `orch-terminal`
-      # and the report suites, `oversee_report*`, enter `orch-oversee-succeed`.
+      # suite name and RUNNER_OS. The report suites, `oversee_report*`, enter
+      # `orch-oversee-succeed`.
       # Dev and review names enter `orch-dev`, including names that also
       # carry lane or workflow-state, and so do the `oversee_launch*` suites
       # of `scripts/oversee register`; every other oversee name enters
@@ -775,7 +771,7 @@ jobs:
       # each one's `suite=<name> seconds=<n>` line, so each leg's log carries
       # its suites' figures.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
+        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -794,20 +790,8 @@ jobs:
           fi
           tmux -V
 
-          if [[ '${{ matrix.shard }}' == orch-terminal ]]; then
-            if [[ "$RUNNER_OS" == macOS ]]; then
-              command -v fish >/dev/null || brew install fish
-            else
-              command -v fish >/dev/null || { sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y fish; }
-            fi
-          fi
-
       # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
       # naming every red suite, which is this shard's FAILED SUITES report.
-      - name: orch suites — the open-terminal wake
-        if: matrix.shard == 'orch-terminal'
-        run: bash skills/orch/tests/run-all.sh --shard orch-terminal
-
       - name: orch suites — the oversee watch loop
         if: matrix.shard == 'orch-oversee'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee
@@ -1535,7 +1519,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-terminal", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "orch-oversee", "orch-oversee-succeed", "orch-dev", "orch-state", "orch-rest", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
@@ -2067,11 +2051,9 @@ jobs:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && (github.event_name != 'merge_group' || needs.changes.result != 'success' || needs.changes.outputs.catalog == 'true') }}
     permissions:
       contents: read
-    # The package-suites leg runs the suites a Linux shard gives a kendex.
-    # For orch those are the orch-terminal and orch-rest shards, 800s and 436s
-    # of suites in merge-group run 39197875058, together past that run's
-    # slowest other job, 1204s. A merge group splits them over two jobs, each
-    # rendering the catalog again; other events run one.
+    # The package-suites leg runs the suites a Linux shard gives a kendex,
+    # for orch the orch-rest shard's. A merge group splits them over two
+    # jobs, each rendering the catalog again; other events run one.
     strategy:
       fail-fast: false
       matrix:

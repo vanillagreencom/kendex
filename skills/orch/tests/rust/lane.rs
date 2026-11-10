@@ -758,6 +758,159 @@ fn an_interrupting_close_still_refuses_an_unanswered_ask() {
     assert_eq!(asking.lane("KEN-A")["status"], "running");
 }
 
+/// The shipped mailbox reader under a cleared environment rooted at `root`,
+/// a git checkout of its own, so an ask a row plants is the reader's own
+/// write.
+fn shipped_mail(root: &Path) -> PathBuf {
+    let path = root.join("shipped-lane-mail");
+    let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap();
+    write_executable(
+        &path,
+        format!(
+            "#!/bin/sh\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES='{}' '{}' \"$@\"\n",
+            root.join("home").display(),
+            tool_path(&[]),
+            std::env::temp_dir().display(),
+            root.parent().unwrap_or(root).display(),
+            actual.display()
+        ),
+    );
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "gc.auto", "0"],
+        vec!["config", "maintenance.auto", "false"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    path
+}
+
+/// Through the executable and the shipped mailbox: an ask the lane's own
+/// mailbox holds, written by that mailbox, refuses the interrupting close
+/// `ask-unanswered` naming the id the mailbox lists, the harness live and
+/// the lane running.
+#[test]
+fn a_close_reads_the_lanes_open_ask_through_the_shipped_mailbox() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let root = fleet.state_dir().canonicalize().unwrap();
+    let mail = shipped_mail(&root);
+    let question = root.join("question.txt");
+    std::fs::write(&question, "Which base?").unwrap();
+    let asked = program(&mail)
+        .current_dir(&root)
+        .args(["ask", "--item", "KEN-A", "--file"])
+        .arg(&question)
+        .output()
+        .unwrap();
+    assert!(asked.status.success(), "{}", stderr(&asked));
+    let listed = program(&mail)
+        .current_dir(&root)
+        .args(["pending", "--item", "KEN-A", "--root"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(listed.status.success(), "{}", stderr(&listed));
+    let rows: Vec<Value> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let ask = rows
+        .iter()
+        .find(|r| r["kind"] == "ask")
+        .and_then(|r| r["id"].as_str())
+        .unwrap_or_else(|| panic!("the mailbox lists no ask: {rows:?}"))
+        .to_owned();
+    let harness = Owned::sleep();
+    fleet.write_lanes(vec![record("KEN-A", "running", Some(&harness), &root)]);
+    let asking = Fleet {
+        env: vec![("LANE_MAIL_CLI".to_owned(), mail.display().to_string())],
+        ..fleet
+    };
+    let close = json!({
+        "op": "close-owned-resources",
+        "item": "KEN-A",
+        "no_landing": {"reason": "model-switch", "source": "model-recovery", "interrupt": true},
+    });
+    let answer = reply(&asking.op(&close));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let report = &answer["result"]["effect"]["report"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(report["intent"]["observation"]["cause"], "ask-unanswered");
+    assert_eq!(report["intent"]["observation"]["ask"], json!(ask));
+    assert!(live(harness.pid()), "an unanswered ask stops nothing");
+    assert_eq!(asking.lane("KEN-A")["status"], "running");
+}
+
+/// The lane record the shell suites plant drifting from what the real
+/// `launch-lane` writes: `tests/lane_model_recovery.sh` and the hook's
+/// `lane-mail-model-switch.test.sh` read the permission words off the
+/// record the fixture holds, and `tests/lane-state.sh` and
+/// `tests/lane_close.sh` read its launch identity in the start's form, so
+/// the fixture is this launch's record, its root and its process, pane and
+/// clock values as placeholders and the start's form (`ticks:`) kept before
+/// its placeholder.
+#[test]
+fn the_recovery_suites_planted_record_is_the_real_launch_lanes() {
+    const PERMISSION: &str = "--permission-mode dontAsk";
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let mut request = launch_request("KEN-1", &work);
+    request["model"] = json!("claude-fable-5-1");
+    request["effort"] = json!("high");
+    request["permission"] = json!(PERMISSION);
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let mut record = runner.fleet()["lanes"][0].clone();
+    for (field, placeholder) in [
+        ("pane", "@PANE@"),
+        ("server", "@SERVER@"),
+        ("server_start", "@SERVER_START@"),
+        ("pid", "@PID@"),
+    ] {
+        if record["launch"].get(field).is_some() {
+            record["launch"][field] = json!(placeholder);
+        }
+    }
+    if let Some(start) = record["launch"]["start"].as_str() {
+        let form = start.split_once(':').map_or("", |(form, _)| form);
+        record["launch"]["start"] = json!(format!("{form}:@START@"));
+    }
+    for (field, placeholder) in [
+        ("session_id", "@SESSION_ID@"),
+        ("launched_at", "@LAUNCHED_AT@"),
+        ("running_at", "@RUNNING_AT@"),
+        ("session_since", "@SESSION_SINCE@"),
+    ] {
+        assert!(record[field].is_string(), "{field} on the record: {record}");
+        record[field] = json!(placeholder);
+    }
+    let text = serde_json::to_string_pretty(&record)
+        .unwrap()
+        .replace(&work.display().to_string(), "@ROOT@");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/fixtures/launch-lane/claude-dontask.json");
+    let planted: Value = serde_json::from_str(&std::fs::read_to_string(fixture).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        planted,
+        "the fixture is not this launch's record:\n{text}"
+    );
+    assert_eq!(planted["permission"], json!(PERMISSION), "{planted}");
+}
+
 /// Through the executable: each is refused `permission-unrepresentable`
 /// naming the harness and the word, and nothing is written.
 #[test]

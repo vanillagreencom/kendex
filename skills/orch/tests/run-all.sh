@@ -289,7 +289,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-terminal|orch-oversee|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
+    orch-oversee|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; set -- ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -304,7 +304,6 @@ FILTER="$*"
 
 shard_of() { # BASE
   case "$1" in
-    *open-terminal*) OWNING_SHARD=orch-terminal ;;
     *oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
     # The launch family runs in the dev pool, off orch-oversee's deadline.
     oversee_launch*) OWNING_SHARD=orch-dev ;;

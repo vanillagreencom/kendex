@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The orch battery outgrew one CI shard, so `.github/workflows/skill-tests.yml`
 # runs it as platform partitions, and each shard uses `run-all.sh` filters:
-# `open-terminal`, `oversee` in two halves, a third set of name fragments, and
-# the negation of all three. That makes the filters load-bearing. A filter that stopped
+# `oversee` in two halves, a third set of name fragments, and the negation of
+# them all. That makes the filters load-bearing. A filter that stopped
 # matching would leave its suites in no shard at all, and every shard would
 # stay green while the battery proved less than it claims — the silent loss
 # this file exists to catch.
@@ -221,13 +221,13 @@ check "no filter runs the whole battery" "$roster" "$(selected)"
 check "a bare argument selects by substring" \
   "$(printf '%s\n' "$roster" | grep -F 'oversee')" "$(selected oversee)"
 check "two arguments are a union, not an intersection" \
-  "$(printf '%s\n' "$roster" | grep -F -e 'oversee' -e 'open-terminal')" \
-  "$(selected oversee open-terminal)"
+  "$(printf '%s\n' "$roster" | grep -F -e 'oversee' -e 'lanes')" \
+  "$(selected oversee lanes)"
 check "an argument written !name rejects what it matches" \
   "$(printf '%s\n' "$roster" | grep -vF 'oversee')" "$(selected '!oversee')"
 check "a rejector overrides a selector that also matches" \
-  "$(printf '%s\n' "$roster" | grep -F 'open-terminal' | grep -vF 'oversee')" \
-  "$(selected open-terminal oversee '!oversee')"
+  "$(printf '%s\n' "$roster" | grep -F 'lanes' | grep -vF 'oversee')" \
+  "$(selected lanes oversee '!oversee')"
 check "an empty argument refuses instead of running everything" \
   "1" "$(status_of '')"
 check "a filter matching no suite exits non-zero" \
@@ -445,7 +445,7 @@ cp "$SANDBOX/run-all.sh" "$TMP/runner-original"
 # deadline. Its suites and a future name keep their owner on both platforms.
 moved_rows='oversee_launch|orch-dev|orch-dev
 oversee_launch_future|orch-dev|orch-dev'
-orch_profiles=(orch-terminal orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest)
+orch_profiles=(orch-oversee orch-oversee-succeed orch-dev orch-state orch-rest)
 stub_suite "$SANDBOX/oversee_launch_future.sh"
 moved_owners() { # OS ; `name|shard` for every shard that runs a moved row's suite
   local profile
@@ -1517,7 +1517,7 @@ queue_fallback_shards() { # queue_fallback_shards <workflow>
     sed -n "s/.*'\(\[[^]]*\]\)'.*/\1/p" | tr -d '[]" ' | tr ',' '\n' | grep . | sort -u
 }
 queue_shards="$(queue_fallback_shards "$WORKFLOW")"
-grep -qx orch-terminal <<< "$queue_shards" ||
+grep -qx orch-oversee <<< "$queue_shards" ||
   bad "no queue shard read from $WORKFLOW, so the queue reader is broken"
 check "the queue fallback equals the nightly roster less its macOS exclusions" \
   "$(comm -23 <(sed -n "s/^        shard: &skill-suite-shards .*'\[\([^]]*\)\]'.*/\1/p" "$WORKFLOW" | tr -d ' "' | tr ',' '\n' | sort -u) <(printf '%s\n' "$excluded"))" "$queue_shards"

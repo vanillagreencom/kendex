@@ -20,6 +20,7 @@ use super::obligations::{
 };
 use super::{Close, Operation, Pane, Server};
 use crate::error::{Error, Result};
+use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
 use crate::settings::Settings;
 use crate::state::{
@@ -264,17 +265,6 @@ fn observe_key(key: &PaneRef) -> Observed<Pane> {
     observe_fields(&server, &key.pane)
 }
 
-/// The identity a lane's `wake` record names, where it names one.
-pub(super) fn wake_identity(lane: &Lane) -> Option<Identity> {
-    let wake = lane.extra.get("wake").filter(|v| !v.is_null())?;
-    let pid = wake.get("pid").and_then(super::super::pid_value)?;
-    let start = wake.get("start").and_then(Value::as_str)?;
-    Some(Identity {
-        pid: u32::try_from(pid).ok()?,
-        start: start.to_owned(),
-    })
-}
-
 /// Whether the record names a session: any of the keys a launch, a
 /// registration or a watch start writes for one. `{}` and a record holding
 /// only a generation or an `off` mark name none.
@@ -410,12 +400,11 @@ pub(in crate::effects) fn fixed_file(
 }
 
 /// The oldest unanswered ask the lane's mailbox holds, read through the
-/// mailbox CLI (`lane-mail pending --item ITEM --root ROOT [--host]`), whose
-/// lines are JSON rows; only a row of kind `ask` counts. A hosted lane's
-/// mailbox is read under `ORCH_LANE_HOST` set to the record's host, never the
-/// caller's. `Err` is a read that did not answer: a mailbox program that is
-/// absent, failed or printed a row that is not JSON, or a lane with no
-/// recorded root; the dispatcher's cap refusal leads with `lane-host-busy`.
+/// mailbox client (`lane-mail pending --item ITEM --root ROOT [--host]`): the
+/// first envelope of kind `ask`. A hosted lane's mailbox is read under its
+/// record's host, never the caller's. `Err` is a read that did not answer,
+/// or a lane with no recorded root; a host's per-home cap refusal leads
+/// with `lane-host-busy`, the word the close refuses by.
 pub(in crate::effects) fn pending_ask(
     cli: &Path,
     lane: &Lane,
@@ -424,54 +413,22 @@ pub(in crate::effects) fn pending_ask(
         return Err("mail-root-unrecorded".to_owned());
     };
     let hosted = lane.host.as_deref().filter(|h| !h.is_empty());
-    let mut args = vec!["pending", "--item", lane.item.as_str(), "--root", root];
-    if hosted.is_some() {
-        args.push("--host");
-    }
-    let env: Vec<(&str, &std::ffi::OsStr)> = hosted
-        .map(|h| ("ORCH_LANE_HOST", std::ffi::OsStr::new(h)))
-        .into_iter()
-        .collect();
-    let output = host::run_tagged_in(
-        "close",
-        "lane-mail",
-        cli,
-        "pending",
-        &args,
-        host::Place {
-            cwd: None,
-            env: &env,
-        },
-        CLI_TIMEOUT,
-    )
-    .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let code = output.status.code().unwrap_or(-1);
-        let busy = if code == crate::watch::hosted::LANE_HOST_BUSY_EXIT {
-            "lane-host-busy step=mail-read "
-        } else {
-            ""
-        };
-        return Err(format!(
-            "{busy}status={code} {}",
-            host::stderr_text(&output).trim()
-        ));
-    }
-    for line in host::stdout_text(&output).lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let row: Value = serde_json::from_str(line).map_err(|e| format!("row-unparsed: {e}"))?;
-        if row.get("kind").and_then(Value::as_str) == Some("ask") {
-            return Ok(Some(
-                row.get("id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ));
-        }
-    }
-    Ok(None)
+    let envelopes = Mailbox::new(cli.to_path_buf())
+        .pending(&lane.item, Path::new(root), hosted)
+        .map_err(|refusal| match refusal {
+            Refusal::Exit {
+                status: Some(crate::watch::hosted::LANE_HOST_BUSY_EXIT),
+                ..
+            } => format!("lane-host-busy step=mail-read {refusal}"),
+            Refusal::NotStarted { .. }
+            | Refusal::Unanswered { .. }
+            | Refusal::Exit { .. }
+            | Refusal::Reply { .. } => refusal.to_string(),
+        })?;
+    Ok(envelopes
+        .iter()
+        .find(|e| e.kind() == "ask")
+        .map(|e| e.id().to_owned()))
 }
 
 /// The close verb's transitions, its one close and its park record, applied
@@ -1318,7 +1275,7 @@ impl Operation<'_> {
         lane: &Lane,
         owns: &dyn Fn(&str) -> bool,
     ) -> Result<Option<String>> {
-        let wake = wake_identity(lane);
+        let wake = crate::ops::wake::wake_identity(lane);
         if let Some(id) = &wake {
             self.add_as(Obligation::Process(id.clone()), Role::Wake)?;
         }
@@ -1410,7 +1367,7 @@ impl Operation<'_> {
         &mut self,
         lane: &Lane,
     ) -> Result<Option<Reading<Identity>>> {
-        let Some(id) = wake_identity(lane) else {
+        let Some(id) = crate::ops::wake::wake_identity(lane) else {
             return Ok(None);
         };
         self.add_as(Obligation::Process(id.clone()), Role::Wake)?;

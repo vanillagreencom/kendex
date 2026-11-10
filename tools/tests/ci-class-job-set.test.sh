@@ -208,7 +208,6 @@ while IFS='|' read -r path shard expected; do
   done
 done <<'ROWS'
 skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/open-terminal-wake.sh|orch-terminal|checkout
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
 skills/orch/tests/dev_return.sh|orch-dev|none
 skills/github/tests/pr-view.test.sh||checkout
@@ -226,7 +225,7 @@ skills/deep-research/tests/deep-research.test.mjs||none
 tools/tests/guard-range.test.sh||none
 hooks/tests/check.test.sh||none
 ROWS
-sed 's/rest | orch-terminal | orch-rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
+sed 's/rest | orch-rest | refresh/__no_checkout__/' "$JOB_SET" > "$TMP/rule/tools/ci-job-set"
 ! cmp -s "$JOB_SET" "$TMP/rule/tools/ci-job-set" || exit 1
 check 'control: removing checkout legs changes the same suite result' none \
   "$("$TMP/rule/tools/ci-job-set" --suite-kendex Linux skills/harness-ci/tests/change-class.test.sh '')"
