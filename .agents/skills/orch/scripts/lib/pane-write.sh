@@ -69,7 +69,7 @@ pane_write_message() { # KEY FIELD=VALUE...
     pane-unresolved) printf '%s\n' 'fix=name the lane by its recorded window (KIND window), a pane you opened by the pane id (%N) new-window printed (KIND pane), or the hosted item (KIND host)' ;;
     pane-self) printf '%s\n' 'fix=the target is the pane this command runs in; name the lane'"'"'s own window' ;;
     pane-missing) printf '%s\n' 'fix=no pane on this tmux server carries the target; read the lane record'"'"'s window again, or relaunch a lane whose window closed' ;;
-    pane-ambiguous) printf '%s\n' 'fix=more than one pane carries the window name; rename the one that is not the lane'"'"'s, as lane-reach.md § Wake refusals says' ;;
+    pane-ambiguous) printf '%s\n' 'fix=more than one pane carries the window name; rename the one that is not the lane'"'"'s; oversee-lanes.md § Talking to a lane holds the pane writer' ;;
     pane-read-failed) printf '%s\n' 'fix=tmux or the process table did not answer; nothing was typed, and a retry is safe once it does' ;;
     process-mismatch)
       case " $* " in

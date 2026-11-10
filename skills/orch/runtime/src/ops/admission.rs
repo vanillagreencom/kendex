@@ -79,7 +79,7 @@ use super::{Env, intents, lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, Document, Intent, Lane, LaneStatus, RebaseObligation};
-use crate::verify::wire::{Nullable, Optional, Pull};
+use crate::verify::wire::{Nullable, Optional, Pull, PullFile};
 use crate::verify::{Answer, Gh};
 
 /// The item as its tracker reports it: the body the Location paths are
@@ -1191,15 +1191,6 @@ pub(super) fn read_range_paths(
 
 /// The label the pull-request reads carry in a `gh` refusal.
 const PULLS_READ: &str = "pr-holders";
-
-/// `GET /repos/{owner}/{repo}/pulls/{n}/files` ("Diff Entry"): `filename`
-/// required; `previous_filename` documented optional, a rename's old path.
-#[derive(Deserialize)]
-struct PullFile {
-    filename: String,
-    #[serde(default)]
-    previous_filename: Optional<String>,
-}
 
 /// The `owner/name` GitHub issues, the shared resolver's classes
 /// (`github/scripts/lib/gh-repo.sh`): one slash, an owner of alphanumerics

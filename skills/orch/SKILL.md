@@ -79,10 +79,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `resolve-base-branch` | Print a worktree's base branch; exits 1 rather than guess |
 | `sync-base` | Resolve, fetch, and fast-forward the checkout that owns the base branch; prints the branch name |
 | `base-freshness` | Gate the review cycle on a current base, or on a clean merge onto a merge-queue base; unverifiable = stale |
-| `dev-return-write` | `orch-runtime dev-return write`: write a dev agent's round-scoped completion artifact; never hand-author the JSON |
-| `dev-round-write` | `orch-runtime round stamp`: persist a fix round's delegated item set at stamp time; `--cut` records a reviewer or orchestrator scope choice |
 | `dev-artifact-check` | `orch-runtime dev-return check`: validate a dev round's completion artifact by round id |
-| `round-recover` | `orch-runtime round recover`: close a stalled dev round from the idle agent's transcript: write the report as the artifact, or mint one re-delegation's round id |
 | `dev-validate-run` | `orch-runtime validate entry`: run configured validation; contract: `--help`. Harness routes: dev SKILL.md § Long-Running Validation |
 | `restack-skip` | Say whether a restacked head skips its range re-test: no conflict, or only version fields and changelog entries conflicted, per `--help` |
 | `item-tier` | Assign an item's tier, `micro`, `small` or `standard`, from the launch estimate, Expected delta and the shared Location and changed-path rules; the widest input wins. `--help` |
@@ -92,7 +89,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `lanes` | A hand read of the harness accounts. Launches and marks ask `orch-runtime accounts pick`, and the roster is `orch-runtime accounts roster` |
 | `lane-host` | Resolve or call the configured host provider; protocol: [lane-host.md](schemas/lane-host.md) |
 | `lane-host-ssh` | The static SSH host provider |
-| `overseer-host` | Resolve or call the provider `ORCH_OVERSEER_HOST` names for the shell readers of the overseer's own session, Jarvis's session backend among them; the runtime's controller verbs use tmux directly; protocol: [overseer-host.md](schemas/overseer-host.md) |
+| `overseer-host` | Resolve or call the provider `ORCH_OVERSEER_HOST` names for Jarvis's session backend; the runtime's controller verbs use tmux directly; protocol: [overseer-host.md](schemas/overseer-host.md) |
 | `overseer-host-tmux` | The tmux provider behind `overseer-host` |
 | `oversee` | `register` runs `orch-runtime register --fleet`, which records a hand-opened controller. A first start, adoption, native resume and succession use the requests in [oversee § 1](workflows/oversee.md#controller-start-and-adoption); the runtime owns their launch and outcome |
 | `lane-marker` | Write a lane's launch record, the marker under the common git directory and the lane's own mailbox; `lane-host create` calls it on the host, the runtime's launch writes the same marker itself, and `lane-mail-check` hands a lane its mail only where it stands |

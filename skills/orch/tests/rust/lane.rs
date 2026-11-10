@@ -774,7 +774,7 @@ fn shipped_mail(root: &Path) -> PathBuf {
             root.join("home").display(),
             tool_path(&[]),
             std::env::temp_dir().display(),
-            root.parent().unwrap_or(root).display(),
+            ceilings(root.parent().unwrap()).to_string_lossy(),
             actual.display()
         ),
     );
@@ -4138,7 +4138,9 @@ fn rounds_state(fix: u64) -> Value {
 /// file leaves; with none, the rounds are null and the close's notes name
 /// the paths tried. The class stays unread with its cause, the checkout no
 /// repository. The archives are planted in the three forms
-/// `lane-host-ssh::archive_tmp` writes, as `main` wrote them.
+/// `lane-host-ssh::archive_tmp` writes, as `main` wrote them. Under the C
+/// locale, where tar lists a non-ASCII name escaped, a marker naming one
+/// still answers, and a worktree named so still sorts after the clone.
 #[test]
 fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
     for (case, fix) in [
@@ -4148,6 +4150,8 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("the archive its close kept", Some(6)),
         ("the archive's saved copy alone", Some(6)),
         ("the archive with no state marker", Some(8)),
+        ("a marker naming a non-ASCII path", Some(10)),
+        ("no marker, a non-ASCII worktree", Some(12)),
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
@@ -4264,9 +4268,37 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                     "w/ken-1/tmp/workflow-state-KEN-1.json",
                 )],
             )),
+            ("a marker naming a non-ASCII path", Some(fix)) => log.push(archive(
+                Some("clon\u{e9}/tmp/workflow-state-KEN-1.json\n"),
+                &[(
+                    "clon\u{e9}/tmp/workflow-state-KEN-1.json",
+                    rounds_state(fix),
+                )],
+                &[],
+            )),
+            // The worktree's name sorts before the clone's, so only a name
+            // read raw places the clone's copy first.
+            ("no marker, a non-ASCII worktree", Some(fix)) => log.push(archive(
+                None,
+                &[
+                    (
+                        "w/an\u{e9}-1/tmp/workflow-state-KEN-1.json",
+                        rounds_state(9),
+                    ),
+                    ("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix)),
+                ],
+                &[],
+            )),
             _ => retained(),
         }
-        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        let mut lane = hosted_lane("KEN-1");
+        if case.contains("non-ASCII") {
+            fleet.env.push(("LC_ALL".to_owned(), "C".to_owned()));
+        }
+        if case == "no marker, a non-ASCII worktree" {
+            lane["mail_root"] = json!("/w/an\u{e9}-1");
+        }
+        fleet.write_lanes(vec![lane]);
         let mut doc = fleet.fleet();
         doc["fleet_log"] = json!(log);
         std::fs::write(fleet.fleet_path(), doc.to_string()).unwrap();
@@ -4594,4 +4626,109 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
         }
         assert_eq!(fleet.lane("KEN-1")["status"], "done", "{name}");
     }
+
+    // A box ticked with no Evidence line is one the command refuses on, so
+    // the section's line for it is given beside the open box's.
+    let fleet = Fleet::boxes_world(
+        "Verifying",
+        "## Done when\n\n- [x] first\n- [ ] second\n",
+        proved,
+    );
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    let notes: Vec<&str> = answer["result"]["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|n| n.starts_with("boxes-"))
+        .collect();
+    assert_eq!(
+        notes,
+        ["boxes-ticked by=close cause=sandbox-gone boxes=1,2"],
+        "{answer}"
+    );
+    assert_eq!(fleet.issue()["state"]["name"], "Done", "{answer}");
+
+    // A Done item is read by no duty again: a completion whose pull request
+    // GitHub does not hold is named in one comment there.
+    let fleet = Fleet::boxes_world("Done", &done_when(false), proved);
+    std::fs::write(fleet.state_dir().join("bin/gh.json"), "{}").unwrap();
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    let notes: Vec<&str> = answer["result"]["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|n| n.starts_with("boxes-"))
+        .collect();
+    assert_eq!(
+        notes,
+        ["boxes-unticked cause=pr-missing comment=posted"],
+        "{answer}"
+    );
+    let comments = fleet.sent("commentCreate");
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    let body = comments[0]["variables"]["input"]["body"].as_str().unwrap();
+    assert!(body.contains("boxes-unticked cause=pr-missing"), "{body}");
+
+    // A write Linear answers with a 5xx may have landed: the completion's
+    // and the comment's are unknown, never failed.
+    let box_notes = |answer: &Value| -> Vec<String> {
+        answer["result"]["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|n| n.starts_with("boxes-"))
+            .map(str::to_owned)
+            .collect()
+    };
+    for (state, body, operation, note) in [
+        (
+            "Verifying",
+            proved,
+            "UpdateIssue",
+            "boxes-unknown cause=unconfirmed",
+        ),
+        (
+            "Done",
+            one,
+            "CreateComment",
+            "boxes-unticked cause=evidence-partial boxes=2 comment=unknown",
+        ),
+    ] {
+        let fleet = Fleet::boxes_world(state, &done_when(false), body);
+        let path = fleet.state_dir().join("bin/linear-api.json");
+        let mut world: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        world["codes"] = json!({ operation: 502 });
+        std::fs::write(&path, world.to_string()).unwrap();
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        assert_eq!(box_notes(&answer), [note], "{operation}: {answer}");
+    }
+
+    // A provider close that fails leaves the close unconfirmed, which the
+    // watch asks again: the comment waits for the close that confirms, and
+    // is posted once.
+    let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), one);
+    fleet.answer("CLOSE_STATUS", "1");
+    for _ in 0..2 {
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        assert_eq!(answer["result"]["word"], "unconfirmed", "{answer}");
+        assert!(
+            !answer["result"]["notes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(Value::as_str)
+                .any(|n| n.starts_with("boxes-")),
+            "{answer}"
+        );
+    }
+    assert_eq!(fleet.sent("commentCreate"), Vec::<Value>::new());
+    fleet.answer("CLOSE_STATUS", "0");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert_eq!(fleet.sent("commentCreate").len(), 1, "{answer}");
 }

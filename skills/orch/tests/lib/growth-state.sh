@@ -3,7 +3,7 @@
 # mutant_scripts NAME [FILE] — a must-fail control mutates a private copy of
 # one script, never the shipped one. Every orch script finds its siblings and
 # lib/ through its own directory without resolving a symlink, so a lone `cp`
-# of dev-round-write dies on startup, and a control whose mutant never runs
+# of restack-skip dies on startup, and a control whose mutant never runs
 # credits a pass to nothing. This builds $TMP_ROOT/NAME/scripts as real
 # directories of symlinks to the shipped scripts, with FILE, a path relative
 # to scripts/, the one private copy, which the caller mutates with
@@ -88,9 +88,10 @@ mutant_scripts() {
       [ -e "$paired_orch/../github" ] || cp -R "$orch_src/../../github" "$paired_orch/../github" || _mutant_scripts_refuse copy-failed "$paired_orch"
     fi
   fi
-  # dev-return-write, item-tier and the classifier reader resolve change-scope
-  # beside their package and refuse at startup without it, so the tree carries
-  # that required sibling as real files a control can mutate.
+  # The runtime's dev-return writer, item-tier and the classifier reader
+  # resolve change-scope beside their package and refuse at startup without
+  # it, so the tree carries that required sibling as real files a control can
+  # mutate.
   local change_scope="${sibling%/*}/change-scope"
   if [[ ! -e "$change_scope" ]]; then
     mkdir -p "$change_scope" || _mutant_scripts_refuse mkdir-failed "$change_scope"

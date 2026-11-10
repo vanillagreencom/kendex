@@ -261,7 +261,7 @@ A signal is never silently dropped: every triggered row appears in the artifact 
 
 ### 9.1 Completion Summary File
 
-Always required. On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed; its Validation Routes section holds no row, since no check ran. Write `tmp/completion-summary-[ISSUE_ID].md`; the artifact carries it via `--summary-file` (§ 10). Post nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round. GitHub and ad-hoc rounds return the same content to the orchestrator.
+Always required. On § 2.3's no-change route it holds the comparison: what was compared, against what, and the finding that no change is needed; its Validation Routes section holds one line, `none: no check ran (no-change route)`. Write `tmp/completion-summary-[ISSUE_ID].md`; the artifact carries it via `--summary-file` (§ 10). A single round posts nothing: on Linear, orch's acceptance of the round posts this file to the issue as the item's one Completion Summary comment, with the screenshots § 10 names attached, and updates that comment on every later round. A bundled round's acceptance posts on the parent alone, so on Linear post each sub-issue's summary yourself once its commit stands: `linear.sh comments create [SUB_ISSUE_ID] --body-file tmp/completion-summary-[SUB_ISSUE_ID].md`, with one `--attach` per screenshot § 8 captured for it. GitHub and ad-hoc rounds return the same content to the orchestrator.
 
 **Validation routes.** Before writing a completion, fix, session or merge summary, read each actual run's native `start` and `dev-validate-run --record --run-dir [RUN_DIR]` evidence while available. Use `--record` for its reported fields and `start` for that run's actual `timeout-secs` bound. Include one row per run, with its original round id and kind, run directory, recorded head/start identity, and source references. Keep implementation, fix and restack runs separate; a restack has no dev round id. Preserve earlier attempts and recovery or reused-run references rather than replacing their outcomes with the final verdict.
 
@@ -368,7 +368,7 @@ Summary: [ISSUE_ID] ✓
 
 1. **Aggregate QA signals across sub-issues** (including nested ones) into the bundle artifact's `--qa-label` flags, the union of every sub-issue's § 8 signals. No tracker mutation. The near-ceiling lines need no union: the writer's probe measures the whole branch, every sub-issue's commits included.
 
-2. **Post the parent summary** (Linear only): write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists.
+2. **Post the parent summary** (Linear only), beside each sub-issue's own from § 9.1: write `tmp/bundle-summary-[PARENT_ID].md`, then `linear.sh comments create [PARENT_ID] --body-file tmp/bundle-summary-[PARENT_ID].md`, with one `--attach` per screenshot. Its Screenshots section is the union of the sub-issues' lists.
 
    ```markdown
    ## Bundle Complete

@@ -1770,7 +1770,7 @@ merged_pr_for_branch() {
   # and fail the parse, turning the proof off for every branch at once.
   # Every merged PR sharing the name is scanned, not just the newest row.
   #
-  # The query answers for THIS checkout, the way reconcile-work-items does it:
+  # The query answers for THIS checkout:
   # an inherited GH_REPO / GITHUB_REPOSITORY redirect would let another
   # repository's same-named branch at the same commit authorize a delete here,
   # and a fork's PR is someone else's merge, so cross-repository rows are cut.

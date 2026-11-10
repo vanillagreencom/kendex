@@ -95,6 +95,10 @@ struct Parsed {
     /// ticks: on a container, an outcome still to move into a child.
     #[serde(default)]
     container_open_boxes: Vec<u64>,
+    /// The boxes `issues complete` refuses while they stand: unchecked and
+    /// not post-merge, and checked with no Evidence line.
+    unmet_branch_boxes: Vec<u64>,
+    missing_evidence_boxes: Vec<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -335,8 +339,8 @@ fn parse(
         .map_err(|e| format!("done-when parse: {e}")))
 }
 
-/// The boxes of `description`'s checklist neither checked nor post-merge,
-/// by the same parser, for the close's completion of a merged item; `Err`
+/// The boxes of `description`'s checklist the completion command refuses
+/// on, by its own parser, for the close's completion of a merged item; `Err`
 /// is the cause word of a parse that failed or a checklist it read errors
 /// in.
 pub(crate) fn open_branch_boxes(
@@ -344,12 +348,16 @@ pub(crate) fn open_branch_boxes(
     description: &str,
 ) -> std::result::Result<Vec<u64>, &'static str> {
     match parse(settings, description) {
-        Ok(Ok((parsed, _))) if parsed.errors.is_empty() => Ok(parsed
-            .boxes
-            .iter()
-            .filter(|b| !b.checked && !b.post_merge)
-            .map(|b| b.number)
-            .collect()),
+        Ok(Ok((parsed, _))) if parsed.errors.is_empty() => {
+            let mut boxes: Vec<u64> = parsed
+                .unmet_branch_boxes
+                .into_iter()
+                .chain(parsed.missing_evidence_boxes)
+                .collect();
+            boxes.sort_unstable();
+            boxes.dedup();
+            Ok(boxes)
+        }
         Ok(Ok(_)) => Err("checklist-invalid"),
         Ok(Err(_)) | Err(_) => Err("checklist-unparsed"),
     }

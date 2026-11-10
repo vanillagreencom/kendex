@@ -511,9 +511,8 @@ case "$JOBS" in
   '' | *[!0-9]* | 0) echo "run-all.sh: nproc printed '$JOBS', not a worker count" >&2; exit 1 ;;
 esac
 
-# A suite's own bound: 1.7 times the slowest suite of merge-group run
-# 37477526298, open-terminal-relaunch-route at 540s on macOS. It is the only
-# bound where no deadline is set, as on tools/guard's runs, and on a 30-minute
+# A suite's own bound, above the slowest suite's run. It is the only bound
+# where no deadline is set, as on tools/guard's runs, and on a 30-minute
 # leg it stops a suite hung early in time for the ALONE suites, which wait for
 # every other suite to end, to run before the deadline.
 SUITE_SECS="${RUN_ALL_SUITE_SECS:-900}"

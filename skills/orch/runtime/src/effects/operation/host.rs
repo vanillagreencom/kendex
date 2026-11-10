@@ -2881,32 +2881,49 @@ pub(in crate::effects) fn register_controller(
     // The process's own environment and words where the host keeps them;
     // where it does not, the row and the caller's own environment, which the
     // harness's shell tool handed down, stand in, and no posture is recorded.
-    let started = process_var(identity.pid, harness.home_var()).and_then(|home| {
-        let argv = proc_words(identity.pid, "cmdline")?;
-        Ok((home, spelled(harness, &argv)))
+    // The model is read first: the account a session spends is the variable
+    // its model routes it through, which for a Pi session on a Claude seat
+    // is not the variable its own home is under.
+    let words = proc_words(identity.pid, "cmdline").map(|argv| spelled(harness, &argv));
+    let model = row_model.or_else(|| words.as_ref().ok().and_then(|s| s.model.clone()));
+    let seat = harness.account_var(model.as_deref());
+    let started = words.and_then(|spelled| {
+        Ok((
+            process_var(identity.pid, harness.home_var())?,
+            process_var(identity.pid, seat)?,
+            spelled,
+        ))
     });
-    let (home_var, spelled, stated_account) = match started {
-        Ok((home, spelled)) => (home, Some(spelled), None),
+    let (home_var, seat_var, spelled, stated_account) = match started {
+        Ok((home, seat, spelled)) => (home, seat, Some(spelled), None),
         Err(cause) => {
             notices.push(format!("launch-unread session={pane} cause={cause}"));
-            (caller_var(harness.home_var()), None, row_account)
+            (
+                caller_var(harness.home_var()),
+                caller_var(seat),
+                None,
+                row_account,
+            )
         }
     };
+    let seat_harness = Harness::ALL
+        .into_iter()
+        .find(|h| h.home_var() == seat)
+        .unwrap_or(harness);
     let account = given
         .or(stated_account)
-        .or_else(|| account_of_home(harness, home_var.clone()));
+        .or_else(|| account_of_home(seat_harness, seat_var));
     let home = match harness {
         Harness::Codex => home_var.or_else(|| account.clone()),
-        Harness::Claude | Harness::Copilot | Harness::Pi => account.clone(),
+        Harness::Claude | Harness::Copilot | Harness::Pi if seat == harness.home_var() => {
+            account.clone()
+        }
+        Harness::Claude | Harness::Copilot | Harness::Pi => home_var
+            .or_else(|| session::default_home(harness).map(|home| home.display().to_string())),
     };
-    let (model, effort, permission, extra_args) = match spelled {
-        Some(s) => (
-            row_model.or(s.model),
-            s.effort,
-            Some(s.permission),
-            Some(s.words),
-        ),
-        None => (row_model, None, None, None),
+    let (effort, permission, extra_args) = match spelled {
+        Some(s) => (s.effort, Some(s.permission), Some(s.words)),
+        None => (None, None, None),
     };
     let request = AdoptController {
         pane: pane.clone(),

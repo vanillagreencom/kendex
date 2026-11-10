@@ -85,9 +85,8 @@ ORCH_LANE_HOST = "local"
 # The provider overseer-host resolves for Jarvis's session backend, which
 # reads a recorded overseer session through it: "tmux", the included
 # provider, or an executable script path speaking schemas/overseer-host.md.
-# scripts/lib/overseer-launch.sh refuses any value but "tmux" as
-# runtime-unsupported. The orch runtime's controller start, succession and
-# register use tmux directly and read no value here.
+# The orch runtime's controller start, succession and register use tmux
+# directly and read no value here.
 # ORCH_OVERSEER_HOST = "tmux"
 
 # How much a lane prints into its own window. "quiet" prints one line per
@@ -605,12 +604,13 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 
 # How many watch passes in a row a weak reading of the overseer as exited,
 # or a usage banner on its pane that the account judgement confirms, must
-# hold before the watch reports it: a pane its shell holds alone with nothing
-# proving the end, or a context that fills its window, can be a healthy
-# session between programs. A proven end is reported on its first pass: the
-# exit record or the session's end row over such a pane, such a pane whose
-# recorded process is gone, or the pane gone from the recorded server or kept
-# dead there. What the watch then does: references/overseer-session-events.md.
+# hold before the watch reports it: a context that fills its window, or a
+# pane its shell holds alone while the recorded process still runs, can be a
+# healthy session. A proven end is reported on its first pass: the exit
+# record or the session's end row over a pane its shell holds alone, such a
+# pane whose recorded process is gone or whose record names no process, or
+# the pane gone from the recorded server or kept dead there. What the watch
+# then does: references/overseer-session-events.md.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No

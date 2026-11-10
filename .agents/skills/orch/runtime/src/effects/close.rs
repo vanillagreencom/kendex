@@ -322,6 +322,25 @@ enum Ground {
     Keep,
 }
 
+/// Why the close completes a merged item's boxes on `ground`, and whether
+/// its tracker read the item Done, or `None` where it completes none: its
+/// worktree or sandbox gone (`gone`, or the merged ground, which the close
+/// takes only on a gone worktree), or its item Done with the lane ended.
+fn boxes_cause(ground: &Ground, gone: bool) -> Option<(boxes::Cause, bool)> {
+    match ground {
+        Ground::Ended("merged") => Some((boxes::Cause::SandboxGone, false)),
+        Ground::Terminal(Terminal {
+            verdict: state::TerminalVerdict::Completed,
+            ..
+        }) if gone => Some((boxes::Cause::SandboxGone, true)),
+        Ground::Terminal(Terminal {
+            verdict: state::TerminalVerdict::Completed,
+            ..
+        }) => Some((boxes::Cause::LaneEnded, true)),
+        Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep => None,
+    }
+}
+
 impl Close<'_> {
     fn item(&self) -> &str {
         &self.r.item
@@ -547,41 +566,35 @@ impl Close<'_> {
                 Ok(()) => {}
                 Err(e) if matches!(ground, Ground::Terminal(_)) && self.host_absent(&e)? => {
                     notes.push(format!("host-absent mail-status={}", cause_word(&e)));
-                    self.complete_boxes(&ground, true, &mut notes);
+                    let cause = boxes_cause(&ground, true);
                     let mut closed = self.persist(Ground::Ended(state::HOST_ABSENT))?;
                     closed.notes.splice(0..0, notes);
+                    self.complete_boxes(cause, &mut closed);
                     return Ok(closed);
                 }
                 Err(e) => return Err(e),
             }
             self.host_stop(&mut notes)?;
         }
-        self.complete_boxes(&ground, false, &mut notes);
+        let cause = boxes_cause(&ground, false);
         let mut closed = self.persist(ground)?;
         closed.notes.splice(0..0, notes);
+        self.complete_boxes(cause, &mut closed);
         Ok(closed)
     }
 
     /// A merged item's branch-provable boxes completed from its merged pull
-    /// request's evidence where the close ends a lane that did not complete
-    /// them: its worktree or sandbox gone (`gone`, or the merged ground,
-    /// which the close takes only on a gone worktree), or its item Done with
-    /// the lane ended. A Linear item alone: the completion is the linear
-    /// package's. The close goes on whatever the completion answers, its
-    /// note saying what that was.
-    fn complete_boxes(&self, ground: &Ground, gone: bool, notes: &mut Vec<String>) {
-        let cause = match ground {
-            Ground::Ended("merged") => boxes::Cause::SandboxGone,
-            Ground::Terminal(Terminal {
-                verdict: state::TerminalVerdict::Completed,
-                ..
-            }) if gone => boxes::Cause::SandboxGone,
-            Ground::Terminal(Terminal {
-                verdict: state::TerminalVerdict::Completed,
-                ..
-            }) => boxes::Cause::LaneEnded,
-            Ground::Terminal(_) | Ground::Exited | Ground::Ended(_) | Ground::Keep => return,
+    /// request's evidence where the close ended a lane that did not complete
+    /// them, its note added to the close's. It runs only once the record
+    /// reads done: a close left unconfirmed or failed is asked again, and
+    /// the completion's comment is a tracker write no repeat may make twice,
+    /// while a done record answers a later close at once. A Linear item
+    /// alone: the completion is the linear package's.
+    fn complete_boxes(&self, cause: Option<(boxes::Cause, bool)>, closed: &mut Closed) {
+        let Some((cause, done)) = cause.filter(|_| closed.word == Word::Closed) else {
+            return;
         };
+        let notes = &mut closed.notes;
         if self.who.tracker != "linear" {
             return;
         }
@@ -604,9 +617,14 @@ impl Close<'_> {
             return;
         };
         let merged = boxes::Merged { repo: &repo, pr };
-        if let Some(note) =
-            boxes::complete(self.settings, Path::new("gh"), self.item(), &merged, cause)
-        {
+        if let Some(note) = boxes::complete(
+            self.settings,
+            Path::new("gh"),
+            self.item(),
+            &merged,
+            cause,
+            done,
+        ) {
             notes.push(note);
         }
     }

@@ -377,7 +377,7 @@ SH
   SHA="$(git rev-parse HEAD)" || fail head
   step receipt
   printf '## Completion Summary\n\nAdded farewell, salute and visitors with their test.\n' > "tmp/completion-summary-$ITEM.md"
-  receipt="$("$ORCH/dev-return-write" --worktree "$WT" --kind implement --issue "$ITEM" --round-id "$RID" \
+  receipt="$("$ORCH/orch-runtime" dev-return --text write --worktree "$WT" --kind implement --issue "$ITEM" --round-id "$RID" \
     --branch "$BRANCH" --commit "$SHA" --validate pass --validate-run-dir "$RUN_DIR" --no-labels \
     --near-ceiling-base origin/main --summary-file "tmp/completion-summary-$ITEM.md" --no-summary)" || fail receipt
   [ -f "$receipt" ] || fail receipt-path

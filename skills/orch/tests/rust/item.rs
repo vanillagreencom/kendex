@@ -3328,76 +3328,22 @@ mod dev_artifacts {
             .status()
             .unwrap();
         assert!(copied.success());
-        for (name, args) in [
-            (
-                "dev-round-write",
-                vec!["--item", "1", "repair", "CLI input"],
-            ),
-            ("dev-artifact-check", vec!["--expect-items-from-round"]),
-            (
-                "dev-return-write",
-                vec![
-                    "--kind",
-                    "fix",
-                    "--branch",
-                    "work",
-                    "--commit",
-                    "not-hex",
-                    "--validate",
-                    "FAILING: lint",
-                    "--item",
-                    "1",
-                    "Blocked",
-                    "x",
-                ],
-            ),
-            ("round-recover", vec!["--directive-unconfirmed"]),
-        ] {
-            let mut command = program(scripts().join(name));
-            command
-                .current_dir(&w.wt)
-                .args(w.identity("r1"))
-                .args(&args)
-                .env("AGENT_RUNTIME_CACHE", &cache)
-                .env("ORCH_STATE_DIR", &w.state);
-            let out = command.output().unwrap();
-            match name {
-                "dev-round-write" => {
-                    assert!(out.status.success(), "{}", stderr(&out));
-                    assert!(Path::new(String::from_utf8_lossy(&out.stdout).trim()).is_file());
-                }
-                "dev-artifact-check" => {
-                    assert_eq!(out.status.code(), Some(1));
-                    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
-                    assert_eq!(v["verdict"], "wait");
-                }
-                "dev-return-write" => {
-                    assert_eq!(out.status.code(), Some(2));
-                    assert!(out.stdout.is_empty());
-                }
-                "round-recover" => {
-                    assert_eq!(out.status.code(), Some(3));
-                    assert!(
-                        String::from_utf8_lossy(&out.stdout)
-                            .starts_with("round-recover: redelegate ")
-                    );
-                }
-                _ => unreachable!(),
-            }
-        }
+        w.stamp("r1");
+        let out = program(scripts().join("dev-artifact-check"))
+            .current_dir(&w.wt)
+            .args(w.identity("r1"))
+            .arg("--expect-items-from-round")
+            .env("AGENT_RUNTIME_CACHE", &cache)
+            .env("ORCH_STATE_DIR", &w.state)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1));
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(v["verdict"], "wait");
         // A value that begins with a hyphen is prose, not a flag.
-        let delegate = |name: &str, args: &[&str]| {
-            program(scripts().join(name))
-                .current_dir(&w.wt)
-                .args(w.identity("dash"))
-                .args(args)
-                .env("AGENT_RUNTIME_CACHE", &cache)
-                .env("ORCH_STATE_DIR", &w.state)
-                .output()
-                .unwrap()
-        };
-        let out = delegate(
-            "dev-round-write",
+        let out = w.call(
+            &["round", "--text", "stamp"],
+            "dash",
             &["--item", "1", "- the parser drops input", "- CLI input"],
         );
         assert!(out.status.success(), "{}", stderr(&out));
@@ -3407,8 +3353,9 @@ mod dev_artifacts {
         .unwrap();
         assert_eq!(round["items"][0]["text"], "- the parser drops input");
         let head = w.head();
-        let out = delegate(
-            "dev-return-write",
+        let out = w.call(
+            &["dev-return", "--text", "write"],
+            "dash",
             &[
                 "--kind",
                 "fix",

@@ -2,9 +2,9 @@
 
 The `scripts/overseer-host` command selects the runtime the overseer's own session runs in from `ORCH_OVERSEER_HOST`, and speaks the protocol below to it. Read this file when opening, reading or stopping an overseer session, or when reading the fleet record's `overseer` object.
 
-`resolve` prints `tmux` for an empty or `tmux` setting, selecting `scripts/overseer-host-tmux`; another value names an executable provider. `scripts/lib/overseer-launch.sh` refuses another runtime as `runtime-unsupported`. The runtime's controller verbs, `orch-runtime register --fleet` among them, use the fleet's tmux session directly and read no `ORCH_OVERSEER_HOST`.
+`resolve` prints `tmux` for an empty or `tmux` setting, selecting `scripts/overseer-host-tmux`; another value names an executable provider. The runtime's controller verbs, `orch-runtime register --fleet` among them, use the fleet's tmux session directly and read no `ORCH_OVERSEER_HOST`.
 
-The dispatcher's `resolve` and `inspect` callers are `scripts/lib/overseer-launch.sh`'s `ol_runtime` and `ol_session_inspect`, which the turn-end hook, `lanes`, `lane-mail` and Jarvis's session backend source. The runtime's `start-controller` and `request-transfer` open, retire and publish controllers through their own effects in the fleet's tmux session. [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) names their request and outcome route. The host protocol does not choose accounts or own succession.
+The dispatcher's one caller is `scripts/lib/overseer-launch.sh`'s `ol_session_inspect`, which Jarvis's session backend runs. The runtime's `start-controller` and `request-transfer` open, retire and publish controllers through their own effects in the fleet's tmux session. [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) names their request and outcome route. The host protocol does not choose accounts or own succession.
 
 ## Provider protocol
 

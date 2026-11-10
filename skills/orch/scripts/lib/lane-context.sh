@@ -481,8 +481,8 @@ lane_context_record_fields() { # RECORD
 #
 # Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
 # alone is not. Every consumer that compares one session's key against another
-# session's record reads it here: `oversee register` and the runtime's
-# controller record the overseer's by it, the session rows name it, and the turn-end hook compares
+# session's record reads it here: the runtime's controller records the
+# overseer's by it, the session rows name it, and the turn-end hook compares
 # its own against that record, so none of them can spell one session
 # differently.
 lane_context_caller_key() {

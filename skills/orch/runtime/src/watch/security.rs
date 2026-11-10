@@ -417,12 +417,12 @@ fn watched_sources(repos: &[String]) -> BTreeSet<String> {
 }
 
 /// The pass's `security-alerts-unread` line and rows, one row per failed
-/// source holding its cause: a failure with no row, or with another cause,
-/// is recorded; the same cause on the next pass is named on the line and
-/// its row marked `|reported`; a reported row prints nothing more. A source
-/// read clean or off clears its row, one the pass did not judge keeps it,
-/// and on a whole pass (`watched` given) a row naming no source it could
-/// judge is cleared.
+/// source holding its latest cause: a failure with no row is recorded; a
+/// second consecutive failure, whatever its cause, is named on the line
+/// with this pass's cause and its row marked `|reported`; a reported row
+/// keeps the latest cause and prints nothing more. A source read clean or
+/// off clears its row, one the pass did not judge keeps it, and on a whole
+/// pass (`watched` given) a row naming no source it could judge is cleared.
 fn commit_unread(
     unread: &Unread,
     watched: Option<&BTreeSet<String>>,
@@ -434,11 +434,12 @@ fn commit_unread(
         let reported = format!("{cause}|reported");
         let value = match baseline.get(UNREAD_ROW, source) {
             Some(prior) if prior == reported => continue,
-            Some(prior) if prior == cause => {
+            Some(prior) if prior.ends_with("|reported") => reported,
+            Some(_) => {
                 reached.push(format!("{source}:{cause}"));
                 reported
             }
-            Some(_) | None => cause.clone(),
+            None => cause.clone(),
         };
         produced.changes.push(Change::Set {
             kind: UNREAD_ROW.to_owned(),

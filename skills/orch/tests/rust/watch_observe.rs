@@ -1683,8 +1683,8 @@ fn window_of(server: &Server, pane: &str) -> String {
     fields.pane.window
 }
 
-/// A pane holding nothing but shells is dead on the second consecutive
-/// pass: the line goes out with `source=process`, the record's transfer is
+/// A pane holding nothing but shells under a record naming its harness is
+/// dead: the line goes out with `source=process`, the record's transfer is
 /// asked for once on the next run with `cause: dead` and the record's own
 /// launch fields as the successor, and nothing more is asked after. The one verdict of each
 /// pass is what the slot holds, so the mail gate reads the same source and
@@ -1692,7 +1692,7 @@ fn window_of(server: &Server, pane: &str) -> String {
 /// Under `ORCH_OVERSEER_SUCCESSION=off` the line says `succession=off`
 /// and no transfer is asked.
 #[test]
-fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead() {
+fn a_dead_overseer_is_said_and_transferred_once_with_cause_dead() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
@@ -1703,7 +1703,12 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
     overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     let key = format!("{} {pane}", server.pid);
     let first = driver.pass(&state);
-    assert!(lines(&first).is_empty(), "{:?}", lines(&first));
+    assert_eq!(
+        lines(&first),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process"
+        )]
+    );
     let judged = driver.slot.read().expect("a verdict is stored each pass");
     assert_eq!(
         judged.verdict,
@@ -1711,20 +1716,11 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
             source: Source::Process
         }
     );
-    assert_eq!(driver.baseline.get("overseer-dead", &key), Some("1"));
-    assert!(transfers.borrow().is_empty());
-    let second = driver.pass(&state);
-    assert_eq!(
-        lines(&second),
-        vec![format!(
-            "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=process"
-        )]
-    );
     assert_eq!(
         driver.baseline.get("overseer-dead", &key),
         Some("announced")
     );
-    assert!(second.next_due.is_some(), "the request follows at once");
+    assert!(first.next_due.is_some(), "the request follows at once");
     assert!(
         transfers.borrow().is_empty(),
         "the line is on disk before anything moves"
@@ -1780,12 +1776,10 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
     overseer_driver!(server, fleet, below, no_walk, readers3, transfers3, driver3);
     driver3.succession = Succession::Off;
     let off_key = format!("{} {off_pane}", server.pid);
-    let counted = driver3.pass(&off_state);
-    assert!(lines(&counted).is_empty(), "{:?}", lines(&counted));
     assert_eq!(
         lines(&driver3.pass(&off_state)),
         vec![format!(
-            "EVENT overseer-dead {off_pane} window={off_window} passes=2 succession=off source=process"
+            "EVENT overseer-dead {off_pane} window={off_window} passes=1 succession=off source=process"
         )]
     );
     assert_eq!(
@@ -2076,13 +2070,14 @@ fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_
     assert_eq!(transfers.borrow().len(), 1);
 }
 
-/// A pane its shell holds alone, with nothing proving the session ended, is
-/// said on the setting's second pass, then alerted to the owner; an alert
-/// the mailbox refused stays owed and is sent on the pass after, once. A
-/// live harness in the pane clears the death and its alert, and a later
-/// death is said and alerted again.
+/// A pane its shell holds alone under a record that names a harness and
+/// no process is the harness gone, as a start reads it: said on its first
+/// pass, then alerted to the owner; an alert the mailbox refused stays owed
+/// and is sent on the pass after, once. A live harness in the pane clears
+/// the death and its alert, and a later death is said and alerted again.
 #[test]
-fn a_bare_pane_alone_is_said_on_the_second_pass_and_each_death_alerted_once_sent() {
+fn a_bare_pane_under_a_record_naming_no_process_is_said_on_its_first_pass_and_each_death_alerted_once()
+ {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
@@ -2097,10 +2092,9 @@ fn a_bare_pane_alone_is_said_on_the_second_pass_and_each_death_alerted_once_sent
     driver.alert = &alert;
     let key = format!("{} {pane}", server.pid);
     let line = format!(
-        "EVENT overseer-dead {pane} window={window} passes=2 succession=off source=process"
+        "EVENT overseer-dead {pane} window={window} passes=1 succession=off source=process"
     );
     kill_harness(&server, &pane, &identity);
-    assert!(lines(&driver.pass(&state)).is_empty());
     assert_eq!(lines(&driver.pass(&state)), vec![line.clone()]);
     assert!(alerts.texts().is_empty());
     alerts.refusing.set(true);
@@ -2124,7 +2118,6 @@ fn a_bare_pane_alone_is_said_on_the_second_pass_and_each_death_alerted_once_sent
     assert_eq!(driver.baseline.get("overseer-dead", &key), None);
     assert_eq!(driver.baseline.get("overseer-dead-alert", &key), None);
     kill_harness(&server, &pane, &identity);
-    assert!(lines(&driver.pass(&state)).is_empty());
     assert_eq!(lines(&driver.pass(&state)), vec![line]);
     driver.pass(&state);
     assert_eq!(alerts.texts().len(), 2, "the later death is alerted again");
@@ -2290,16 +2283,15 @@ fn a_dead_overseer_whose_caps_oom_kill_count_rose_is_dead_of_the_memory_cap() {
             std::thread::sleep(std::time::Duration::from_millis(50));
             passes = vec![driver.pass(&state)];
         }
-        let second = driver.pass(&state);
         assert_eq!(
-            lines(&second),
+            lines(&passes[0]),
             vec![format!(
-                "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=process{cause}"
+                "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process{cause}"
             )],
             "{case}"
         );
-        let third = driver.pass(&state);
-        assert!(lines(&third).is_empty(), "{case}: {:?}", lines(&third));
+        let second = driver.pass(&state);
+        assert!(lines(&second).is_empty(), "{case}: {:?}", lines(&second));
         let asked = transfers.borrow();
         assert_eq!(asked.len(), 1, "{case}");
         assert_eq!(asked[0].cause, TransferCause::Dead, "{case}");
@@ -5172,17 +5164,16 @@ fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_
     overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     driver.judges.succeed = &succeed;
     let key = format!("{} {pane}", server.pid);
-    driver.pass(&state);
+    let first = driver.pass(&state);
+    assert_eq!(
+        lines(&first),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process"
+        )]
+    );
     let second = driver.pass(&state);
     assert_eq!(
         lines(&second),
-        vec![format!(
-            "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=process"
-        )]
-    );
-    let third = driver.pass(&state);
-    assert_eq!(
-        lines(&third),
         vec!["succession owner=jarvis-session succeed --home /h/jarvis".to_owned()]
     );
     assert_eq!(
@@ -5205,10 +5196,9 @@ fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_
     overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, failed);
     failed.judges.succeed = &failing;
     failed.pass(&state);
-    failed.pass(&state);
-    let third = failed.pass(&state);
+    let second = failed.pass(&state);
     assert_eq!(
-        third.failed.as_deref(),
+        second.failed.as_deref(),
         Some("succession-owner-failed cause=exit 1")
     );
     assert_eq!(failed.baseline.get("overseer-dead", &key), Some("reported"));
@@ -5242,7 +5232,6 @@ fn a_succession_command_that_gave_no_answer_is_settled_by_the_record() {
     overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     driver.judges.succeed = &unanswered;
     let key = format!("{} {pane}", server.pid);
-    driver.pass(&state);
     driver.pass(&state);
     let asked_at = driver.now;
     let asked = driver.pass(&state);
@@ -5398,8 +5387,9 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
 /// from: a `lane-host` that logs each call as `ORCH_LANE_HOST=<value|unset>
 /// <argv>` to `lane-host.log` beside it, then starts the dispatcher under the
 /// test child's isolation (the row's scratch home its call slots count
-/// under, git's ceiling at the temporary root) from a directory no checkout
-/// holds, so it loads no project's settings, with `ORCH_LANE_HOST` as the
+/// under, git's ceiling at the parent of the folder it starts in) from a
+/// directory no checkout holds, so it loads no project's settings, with
+/// `ORCH_LANE_HOST` as the
 /// duty sets it and the shared provider's world (its `disk`, `provider.json`
 /// and `provider.log`) this directory.
 fn real_lane_host(dir: &Path) -> PathBuf {
@@ -5415,11 +5405,12 @@ fn real_lane_host(dir: &Path) -> PathBuf {
     write_executable(
         &path,
         format!(
-            "#!/bin/sh\nprintf 'ORCH_LANE_HOST=%s %s\\n' \"${{ORCH_LANE_HOST-unset}}\" \"$*\" >> '{log}'\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' LANE_HOST_WORLD='{world}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
+            "#!/bin/sh\nprintf 'ORCH_LANE_HOST=%s %s\\n' \"${{ORCH_LANE_HOST-unset}}\" \"$*\" >> '{log}'\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' LANE_HOST_WORLD='{world}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
             log = scripts.join("lane-host.log").display(),
             cwd = cwd.display(),
             path = tool_path(&[]),
             root = root.display(),
+            ceiling = ceilings(dir).to_string_lossy(),
             home = home.display(),
             world = scripts.display(),
             lane_host = orch_scripts().join("lane-host").display(),

@@ -612,8 +612,8 @@ new_copilot_named() { # NAME [JUDGE]
   # The named session's install beside its hooks, whose runtime answers the
   # watch claim read (no claim until a row plants one).
   plant_copilot_install
-  # Mailbox delivery uses a configured reader. The missing-reader SessionStart
-  # rule has its own fixture in orch/tests/oversee_launch.sh.
+  # Mailbox delivery uses a configured reader. A Copilot home with no context
+  # reader is the runtime launch's `no-context-reader` refusal, not this hook's.
   env -i PATH="$PATH" HOME="$COP_HOME" TMPDIR="$TMPDIR" bash -euo pipefail -c \
     '. "$1/lib/lane-context.sh" && copilot_context_install "$2"' \
     _ "$REPO_ROOT/skills/orch/scripts" "$COP_HOME/.copilot"

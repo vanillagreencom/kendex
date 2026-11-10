@@ -1,7 +1,7 @@
 # shellcheck shell=bash
 #
-# The overseer steps the shell callers share: `oversee register`, the
-# turn-end hook and the Jarvis session's selector.
+# The overseer steps the shell callers share: the turn-end hook and the
+# Jarvis session's selector.
 # One account walk, so no two of them choose an account differently. What
 # differs between them is policy and stays with the caller: which marks fire
 # and which entries the account walk tries; the walk and the flag assembly
@@ -36,8 +36,6 @@
 #   ol_command_line        the harness command for a picked lane, brief
 #                          included, made trusted and put under the lane form
 #   ol_identity            the launch identity the next record write stores
-#   ol_runtime_supported   the runtime resolved and held to the one these
-#                          launchers can verify a session on
 #   ol_record_*            the session record in the oversee state's
 #                          `overseer` object: read, written, the current
 #                          session's launch identity read back, and a
@@ -70,26 +68,6 @@ source "${BASH_SOURCE[0]%/*}/session-rows.sh"
 # The start time the record binds its tmux server by is lib/tmux-server.sh's.
 # shellcheck source=tmux-server.sh
 source "${BASH_SOURCE[0]%/*}/tmux-server.sh"
-
-# The runtime the caller launches into, resolved once per process.
-OL_RUNTIME=""
-ol_runtime() {
-  [[ -n "$OL_RUNTIME" ]] && return 0
-  OL_RUNTIME="$("$SCRIPT_DIR/overseer-host" resolve 2>"$DEP_ERR")" || { OL_REASON=host-unresolved; return 1; }
-  [[ -n "$OL_RUNTIME" ]] || { OL_REASON=host-unresolved; return 1; }
-}
-
-# ol_runtime_supported — the runtime resolved, and 0 only where it is one
-# a launcher here can open a session on. A launcher verifies the new
-# session's account off its tmux pane (lane_account_check reads the pane's
-# process environment), so a runtime other than tmux returns 1 with
-# OL_REASON=runtime-unsupported and the value in OL_RUNTIME: a provider path
-# ORCH_OVERSEER_HOST names is refused before anything opens, never opened
-# through and recorded as tmux. Resolution failing is OL_REASON=host-unresolved.
-ol_runtime_supported() {
-  ol_runtime || return 1
-  [[ "$OL_RUNTIME" == tmux ]] || { OL_REASON=runtime-unsupported; return 1; }
-}
 
 # The standard class on each harness, which ol_model_class resolves at launch:
 # claude's family alias for it, so a model release moves the overseer with no
@@ -953,9 +931,7 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # record was written for. The lane-mail-check hook's identification and
 # lane-mail's peer reader ask it rather than read an empty start.
 # `ol_owns($server; $start; $session)` is either answer: the record is that
-# session's, bound or unstarted. `oversee register` reads it for its
-# liveness refusal, so a live pane a startless record names blocks a second
-# overseer. The runtime's heal (`orch-runtime state heal --fleet`), which the
+# session's, bound or unstarted. The runtime's heal (`orch-runtime state heal --fleet`), which the
 # lane-mail-check hook runs from the overseer's turn ends and tool calls,
 # binds an unstarted record to its session by the same rule and
 # ol_native_match's. `ol_model_launch` is the launch a model check is bound to, which
@@ -997,8 +973,8 @@ ol_identity() { # HARNESS ACCOUNT HOME MODEL EFFORT CWD
     "$OL_JQ_DEFS"' $ARGS.named | ol_identity | map_values(if . == "" then null else . end)' 2>"$DEP_ERR")"
 }
 
-# ol_session_inspect SESSION [--launch] — the runtime's `inspect`, which
-# `oversee register`'s live-overseer check takes.
+# ol_session_inspect SESSION [--launch] — the runtime's `inspect` of a
+# recorded session.
 # The caller's captured OL_PRIOR supplies recorded routing. Bootstrap and
 # fresh-pane verification need no record to inspect their caller-server pane.
 # The keyed line's state, server, window, cause and probe go into

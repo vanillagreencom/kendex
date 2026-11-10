@@ -1835,7 +1835,10 @@ fn a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registerin
 /// its environment, registers with no start row; the next hand-over,
 /// composed by the real `successor --recover` from that record alone,
 /// launches its successor with the same words on the same account and no
-/// bypass word, and the successor takes over with no hand step.
+/// bypass word, and the successor takes over with no hand step. A Pi
+/// session on a `pi-claude/` model records the Claude seat its model bills
+/// as its account and its own root as its home, and its successor launches
+/// with each in its own variable.
 #[test]
 fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launches_from_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -1924,6 +1927,80 @@ fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launch
         !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
         "no bypass word under the native posture: {argv:?}"
     );
+
+    let mut runner = register_runner(&server);
+    runner.verify = Some(1);
+    let root = runner.state_dir().join("pi-root");
+    let seat = runner.state_dir().join("claude-seat");
+    std::fs::create_dir_all(&root).unwrap();
+    pi_root_marked(&root);
+    plant_credential(&seat);
+    let pi = fixtures().join("stub-record/pi");
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("pi={}", pi.display()),
+    ));
+    let pane = server.open_window(
+        "hand-pi",
+        runner.state_dir(),
+        &format!(
+            "exec env PI_CODING_AGENT_DIR={} CLAUDE_CONFIG_DIR={} {} --model pi-claude/opus",
+            root.display(),
+            seat.display(),
+            pi.display(),
+        ),
+    );
+    await_named(&server, &pane, "pi");
+    let out = register(&runner, &pane, &[], &[]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let record = runner.fleet()["overseer"].clone();
+    assert_eq!(record["account"], seat.display().to_string(), "{record}");
+    assert_eq!(record["home"], root.display().to_string(), "{record}");
+    let out = runner.run(&[
+        "handoff",
+        "--fleet",
+        "--body",
+        &body.display().to_string(),
+        "--handoff",
+        &runner
+            .state_dir()
+            .join("tmp/handoffs/OVERSEER-HANDOFF.md")
+            .display()
+            .to_string(),
+    ]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let out = runner.run(&[
+        "successor",
+        "--fleet",
+        "--predecessor",
+        &pane,
+        "--recover",
+        "--cwd",
+        &runner.state_dir().display().to_string(),
+    ]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+    // The record the hand start wrote is the predecessor's own.
+    launch_record(runner.state_dir());
+    std::fs::remove_file(runner.state_dir().join("launch-record.json")).unwrap();
+    runner.transfer_started(&json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": answer["result"]["expected"],
+        "successor": answer["result"]["successor"],
+    }));
+    let launched = launch_record(runner.state_dir());
+    assert_eq!(
+        launched_var(&launched, "CLAUDE_CONFIG_DIR"),
+        &json!(seat.display().to_string()),
+        "{launched}"
+    );
+    assert_eq!(
+        launched_var(&launched, "PI_CODING_AGENT_DIR"),
+        &json!(root.display().to_string()),
+        "{launched}"
+    );
+    runner.wait_intent_settled("request-transfer:", SETTLE);
 }
 
 /// A register never takes a record another session may still hold: from a
@@ -2030,7 +2107,7 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let server = Server::start(dir.path(), "fleet");
     let bin = dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    for name in ["codex", "copilot", "pi"] {
+    for name in ["codex", "copilot"] {
         named_sleep(&bin, name);
     }
     write_executable(&bin.join("node"), "#!/bin/bash\n\"${0%/*}/copilot\" 600\n");
@@ -2144,12 +2221,13 @@ fn a_register_reads_each_harness_and_its_account_off_its_pane_and_says_what_its_
     let runner = register_runner(&server);
     std::fs::remove_file(runner.state_dir().join("workflow-state-oversee.json")).unwrap();
     let root = runner.state_dir().join("pi-root").display().to_string();
+    // A model Pi bills to its own root, so the root is the account too.
     let pane = server.open_window(
         "pi",
         runner.state_dir(),
         &format!(
-            "exec env PI_CODING_AGENT_DIR={root} {} 600",
-            bin.join("pi").display()
+            "exec env PI_CODING_AGENT_DIR={root} {} --model github-copilot/gpt-5",
+            fixtures().join("stub-record/pi").display()
         ),
     );
     await_named(&server, &pane, "pi");
@@ -7243,7 +7321,8 @@ fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_
 }
 
 /// The shipped mailbox reader, run under an environment of its own rooted
-/// at `root`, so the asks a row plants are the reader's own writes.
+/// at `root`, a git checkout of its own whose parent is the ceiling, so the
+/// asks a row plants are the reader's own writes.
 fn real_mail(root: &Path) -> std::path::PathBuf {
     let path = root.join("real-lane-mail");
     let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -7257,7 +7336,7 @@ fn real_mail(root: &Path) -> std::path::PathBuf {
             root.join("home").display(),
             tool_path(&[]),
             std::env::temp_dir().display(),
-            root.display(),
+            ceilings(root.parent().unwrap()).to_string_lossy(),
             actual.display()
         ),
     );

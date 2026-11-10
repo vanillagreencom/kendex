@@ -578,7 +578,7 @@ that due or overdue box's saved key changed. The same event with `boxes=0` repor
 
 ### `verifying-invalid [ITEM]`
 
-the item's checklist cannot be judged: a branch-provable box still open on a Verifying item, or post-merge metadata the parser refuses. The watch's stderr carries the parser's rule and box under `verifying-invalid issue=[ITEM]`, and the line prints once while the item stays invalid. Correct the item's checklist in the tracker; the next pass judges it again.
+the item's checklist cannot be judged: a branch-provable box still open on a Verifying item, or post-merge metadata the parser refuses. The watch's stderr carries the parser's rule and box under `verifying-invalid issue=[ITEM]` on every pass; the event is raised once while the item stays invalid. Correct the item's checklist in the tracker; the next pass judges it again.
 
 ### Verification
 

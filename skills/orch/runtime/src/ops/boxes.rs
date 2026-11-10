@@ -5,7 +5,8 @@
 //! `issues complete`, whose own rule sets the item's state. The command
 //! refuses any open branch box it is not given, so a box the section gives
 //! no evidence for ticks nothing: one comment on the item names the boxes
-//! with evidence and the boxes without.
+//! with evidence and the boxes without. On a Done item, which no duty reads
+//! again, one comment names any other completion left unsettled.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -117,25 +118,68 @@ fn box_list(boxes: &[u64]) -> String {
 
 /// Complete `item`'s branch-provable boxes from `merged`'s evidence
 /// section: the close's note, or `None` for an item already Verifying or
-/// Done with no open branch box, the lane's own completion standing.
+/// Done with no open branch box, the lane's own completion standing. An
+/// item the tracker reads Done (`done`) is read by no duty again, so a
+/// completion that left its boxes unticked, held or unknown with no comment
+/// is named in the one comment there.
 pub fn complete(
     settings: &Settings,
     gh: &Path,
     item: &str,
     merged: &Merged<'_>,
     cause: Cause,
+    done: bool,
 ) -> Option<String> {
+    match settle(settings, gh, item, merged, cause)? {
+        Outcome::Said(note) => Some(note),
+        Outcome::Unsettled(note) if done => {
+            let text = format!(
+                "## Done-when boxes left open at close\n\n\
+                 The close completed no box of this Done item from the merged pull request \
+                 {}#{}: `{note}`. No duty reads a Done item again: complete its branch-provable \
+                 boxes through merge-pr's completion step.\n\n\
+                 ticked-by=close cause={}\n",
+                merged.repo,
+                merged.pr,
+                cause.word()
+            );
+            let posted = match RunDir::create(&settings.state_dir) {
+                Ok(run) => post_comment(settings, &run, item, &text),
+                Err(_) => "failed",
+            };
+            Some(format!("{note} comment={posted}"))
+        }
+        Outcome::Unsettled(note) => Some(note),
+    }
+}
+
+/// What a completion left, as the close's note says it.
+enum Outcome {
+    /// The boxes ticked, or a comment that names the open ones posted.
+    Said(String),
+    /// Boxes left unticked, held or unknown with nothing posted.
+    Unsettled(String),
+}
+
+fn settle(
+    settings: &Settings,
+    gh: &Path,
+    item: &str,
+    merged: &Merged<'_>,
+    cause: Cause,
+) -> Option<Outcome> {
+    let unsettled = |note: &str| Some(Outcome::Unsettled(note.to_owned()));
     let got = match run_linear(settings, "get", &["issues", "get", item, "--format=raw"]) {
         Ok(out) if out.status.success() => serde_json::from_slice::<Got>(&out.stdout).ok(),
         Ok(_) | Err(_) => None,
     };
     let Some(Got { issue }) = got else {
-        return Some("boxes-unticked cause=item-unread".to_owned());
+        return unsettled("boxes-unticked cause=item-unread");
     };
     let description = issue.description.unwrap_or_default();
     let open = match crate::watch::verifying::open_branch_boxes(settings, &description) {
         Ok(open) => open,
-        Err(cause) => return Some(format!("boxes-unticked cause={cause}")),
+        Err(cause) => return unsettled(&format!("boxes-unticked cause={cause}")),
     };
     let completed = issue.state.name == "Verifying" || issue.state.kind == "completed";
     if open.is_empty() && completed {
@@ -144,11 +188,11 @@ pub fn complete(
     let path = format!("repos/{}/pulls/{}", merged.repo, merged.pr);
     let pull = match crate::watch::github::handle(gh).object::<Pull>(TAG, &path) {
         Ok(Some(pull)) => pull,
-        Ok(None) => return Some("boxes-unticked cause=pr-missing".to_owned()),
-        Err(_) => return Some("boxes-unticked cause=pr-unread".to_owned()),
+        Ok(None) => return unsettled("boxes-unticked cause=pr-missing"),
+        Err(_) => return unsettled("boxes-unticked cause=pr-unread"),
     };
     let Nullable::Present(merged_at) = &pull.merged_at else {
-        return Some("boxes-unticked cause=pr-unmerged".to_owned());
+        return unsettled("boxes-unticked cause=pr-unmerged");
     };
     let body = match &pull.body {
         Nullable::Present(body) => body.as_str(),
@@ -162,14 +206,28 @@ pub fn complete(
     let (with, without): (Vec<u64>, Vec<u64>) = open.iter().partition(|b| lines.contains_key(b));
     let run = match RunDir::create(&settings.state_dir) {
         Ok(run) => run,
-        Err(e) => return Some(format!("boxes-unticked cause=run-dir-failed error={e}")),
+        Err(e) => return unsettled(&format!("boxes-unticked cause=run-dir-failed error={e}")),
     };
     if !without.is_empty() {
-        let posted = post_open_boxes(settings, &run, item, merged, cause, &with, &without);
-        return Some(format!(
+        let text = format!(
+            "## Done-when boxes left open at close\n\n\
+             The merged pull request {}#{} gives no `{HEADING}` line for box {}, so the close ticked \
+             no box: `issues complete` ticks every open branch-provable box or none.\n\n\
+             - Boxes with evidence: {}\n\
+             - Boxes without evidence: {}\n\n\
+             ticked-by=close cause={}\n",
+            merged.repo,
+            merged.pr,
+            box_list(&without),
+            box_list(&with),
+            box_list(&without),
+            cause.word()
+        );
+        let posted = post_comment(settings, &run, item, &text);
+        return Some(Outcome::Said(format!(
             "boxes-unticked cause={word} boxes={} comment={posted}",
             box_list(&without)
-        ));
+        )));
     }
     let merge = match &pull.merge_commit_sha {
         Nullable::Present(sha) => format!(" as {sha}"),
@@ -197,7 +255,9 @@ pub fn complete(
     if !with.is_empty() {
         let file = run.dir.join("evidence");
         if let Err(e) = run.write(&file, &proof) {
-            return Some(format!("boxes-unticked cause=evidence-unwritten error={e}"));
+            return unsettled(&format!(
+                "boxes-unticked cause=evidence-unwritten error={e}"
+            ));
         }
         args.extend([
             "--done-when-met".to_owned(),
@@ -207,28 +267,35 @@ pub fn complete(
         ]);
     }
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    Some(match run_linear(settings, "complete", &args) {
-        Ok(out) if out.status.success() => format!(
+    match run_linear(settings, "complete", &args) {
+        Ok(out) if out.status.success() => Some(Outcome::Said(format!(
             "boxes-ticked by=close cause={} boxes={}",
             cause.word(),
             box_list(&with)
-        ),
+        ))),
         Ok(out) => {
             let stderr = host::stderr_text(&out);
-            completion_note(&stderr, out.status.code())
+            unsettled(&completion_note(&stderr, out.status.code()))
         }
         Err(agent_runtime::Error::NotStarted { .. }) => {
-            "boxes-unticked cause=tracker-unstarted".to_owned()
+            unsettled("boxes-unticked cause=tracker-unstarted")
         }
-        // Started with no answer: the item may have moved; the verifying
-        // duty's next read of it settles what stands.
-        Err(_) => "boxes-unknown cause=unanswered".to_owned(),
-    })
+        // Started with no answer: the item may have moved.
+        Err(_) => unsettled("boxes-unknown cause=unanswered"),
+    }
 }
 
-/// The note a completion the tracker CLI refused leaves: the checklist's
-/// own refusal with the boxes it names, a quota hold, or the exit.
+/// The line the linear package prints for a write Linear may have applied:
+/// a 5xx or a lost answer (`lib/common.sh` `linear_retry_wait`).
+const WRITE_UNCONFIRMED: &str = "linear-http: write=unconfirmed";
+
+/// The note a completion the tracker CLI refused leaves: a write Linear
+/// may have applied, the checklist's own refusal with the boxes it names, a
+/// quota hold, or the exit.
 fn completion_note(stderr: &str, code: Option<i32>) -> String {
+    if stderr.lines().any(|l| l.starts_with(WRITE_UNCONFIRMED)) {
+        return "boxes-unknown cause=unconfirmed".to_owned();
+    }
     if let Some((_, reset)) = Quota::receipt_resets(stderr) {
         return format!("boxes-held cause=quota reset={reset}");
     }
@@ -256,34 +323,12 @@ fn completion_note(stderr: &str, code: Option<i32>) -> String {
     )
 }
 
-/// The one comment naming the boxes the section gave evidence for and the
-/// boxes it did not: `posted`, `failed`, or `unknown` where the call
-/// started and gave no answer.
-fn post_open_boxes(
-    settings: &Settings,
-    run: &RunDir,
-    item: &str,
-    merged: &Merged<'_>,
-    cause: Cause,
-    with: &[u64],
-    without: &[u64],
-) -> &'static str {
-    let text = format!(
-        "## Done-when boxes left open at close\n\n\
-         The merged pull request {}#{} gives no `{HEADING}` line for box {}, so the close ticked \
-         no box: `issues complete` ticks every open branch-provable box or none.\n\n\
-         - Boxes with evidence: {}\n\
-         - Boxes without evidence: {}\n\n\
-         ticked-by=close cause={}\n",
-        merged.repo,
-        merged.pr,
-        box_list(without),
-        box_list(with),
-        box_list(without),
-        cause.word()
-    );
+/// The one comment on the item: `posted`, `failed`, or `unknown` where the
+/// call started and gave no answer or the package reads the write as one
+/// Linear may have applied.
+fn post_comment(settings: &Settings, run: &RunDir, item: &str, text: &str) -> &'static str {
     let file = run.dir.join("comment.md");
-    if run.write(&file, &text).is_err() {
+    if run.write(&file, text).is_err() {
         return "failed";
     }
     let file = file.display().to_string();
@@ -293,6 +338,13 @@ fn post_open_boxes(
         &["comments", "create", item, "--body-file", &file],
     ) {
         Ok(out) if out.status.success() => "posted",
+        Ok(out)
+            if host::stderr_text(&out)
+                .lines()
+                .any(|l| l.starts_with(WRITE_UNCONFIRMED)) =>
+        {
+            "unknown"
+        }
         Ok(_) | Err(agent_runtime::Error::NotStarted { .. }) => "failed",
         Err(_) => "unknown",
     }

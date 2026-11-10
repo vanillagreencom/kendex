@@ -42,7 +42,7 @@ use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::wire::{
-    Issue, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
+    Issue, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
 };
 use crate::verify::{self, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun};
 use crate::watch::{Baseline, Body, Change, Event, Produced, Tick};
@@ -494,16 +494,6 @@ impl Page for SearchPage {
 struct JobsPage {
     total_count: usize,
     jobs: Vec<Job>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Job {
-    id: u64,
-    name: String,
-    /// Documented nullable.
-    conclusion: Nullable<String>,
-    /// The check run the job's annotations hang off.
-    check_run_url: String,
 }
 
 /// `GET /repos/{owner}/{repo}/check-runs/{id}/annotations` (no total).
@@ -1536,7 +1526,7 @@ fn failed_job_logs(
     let mut logs = Vec::new();
     for job in jobs {
         let conclusion = match &job.conclusion {
-            Nullable::Present(c) => c.as_str(),
+            Nullable::Present(c) => c.word(),
             Nullable::Absent | Nullable::Null => continue,
         };
         if !failing.contains(&conclusion) {

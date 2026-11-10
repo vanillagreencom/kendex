@@ -285,7 +285,7 @@ The op records a `complete` verdict through `record-verification` in the same ca
 .agents/skills/orch/scripts/git-context common-root "[WORKTREE_PATH]"
 ```
 
-Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip that step's `gh pr view` timestamp read. Use the existing `issues complete --post-merge-at` command, verified box selections and evidence file. For the in-PR bundle, repeat it for each non-canceled child implemented in the pushed commit. Follow that step's container close.
+Stop on a nonzero exit. Bind the printed path as `[MAIN_REPO_ROOT]`. Substitute that value into the next command; a shell variable from this command does not survive a separate tool call. Run [merge-pr.md § 5 step 2](merge-pr.md#5-execute-the-merge) alone. Bind `[ISSUE]` to this session's root `[ISSUE_ID]` and `[MERGED_AT]` to the receipt's `[PUSHED_AT]`. Skip both of that step's `gh pr view` reads, the timestamp and the body: this delivery has no pull request. Take `[MET_BOXES]` and `[EVIDENCE_FILE]` from the recorded proof, as that step's direct-delivery sentence states, and use the existing `issues complete --post-merge-at` command. For the in-PR bundle, repeat it for each non-canceled child implemented in the pushed commit. Follow that step's container close.
 
 **GitHub completion**, **GitHub only**. Use this session's resolved tracker and repository. Bind `[ISSUE_NUMBER]` to the root GitHub item's number from Tracker Resolution, then run:
 

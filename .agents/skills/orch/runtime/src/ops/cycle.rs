@@ -468,8 +468,17 @@ fn kept_state(
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let member = |name: &str| tar(&["-xzOf", &kept, name]);
+    let object = |name: &str| match serde_json::from_str::<Value>(&member(name)?) {
+        Ok(Value::Object(doc)) => Some(doc),
+        Ok(_) | Err(_) => None,
+    };
+    // The marker holds the member's raw name, which no listing need match.
+    let marker = member("lane-host-state");
+    if let Some(name) = marker.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        return object(name);
+    }
     let listing = tar(&["-tzf", &kept])?;
-    let names: Vec<&str> = listing.lines().collect();
+    let names: Vec<String> = listing.lines().map(listed_name).collect();
     let worktree = format!(
         "{}/",
         lane.mail_root
@@ -478,22 +487,19 @@ fn kept_state(
             .trim_start_matches('/')
     );
     let copies = |matches: &dyn Fn(&str) -> bool| {
-        let mut found: Vec<&str> = names.iter().copied().filter(|name| matches(name)).collect();
+        let mut found: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .filter(|name| matches(name))
+            .collect();
         found.sort_by_key(|name| (name.starts_with(&worktree), *name));
         found
     };
-    let candidates: Vec<&str> = if names.contains(&"lane-host-state") {
-        match member("lane-host-state")?.trim() {
-            "" => {
-                let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
-                copies(&|name| name.ends_with(&suffix))
-            }
-            name => names
-                .iter()
-                .copied()
-                .filter(|member| *member == name)
-                .collect(),
-        }
+    let candidates: Vec<&str> = if names.iter().any(|name| name == "lane-host-state") {
+        // Listed and not read: the archive answers nothing for it.
+        marker.as_ref()?;
+        let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
+        copies(&|name| name.ends_with(&suffix))
     } else {
         let mut keyed = vec![format!("workflow-state-{}.json", lane.item)];
         keyed.extend(pr.map(|pr| format!("workflow-state-pr-{pr}.json")));
@@ -502,12 +508,51 @@ fn kept_state(
             .flat_map(|file| copies(&|name| name.rsplit('/').next() == Some(file.as_str())))
             .collect()
     };
-    candidates
-        .into_iter()
-        .find_map(|name| match serde_json::from_str::<Value>(&member(name)?) {
-            Ok(Value::Object(doc)) => Some(doc),
-            Ok(_) | Err(_) => None,
-        })
+    candidates.into_iter().find_map(object)
+}
+
+/// A member's raw name from a `tar -t` line. GNU tar's listing under the C
+/// locale escapes a backslash and every byte it cannot print (`\\`,
+/// `\303\251`, `\n`), where bsdtar lists the name raw; decoding the escapes
+/// reads both, a raw name changing only where it holds a backslash.
+fn listed_name(line: &str) -> String {
+    let bytes = line.as_bytes();
+    let mut raw = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escape = (bytes[i] == b'\\')
+            .then(|| bytes.get(i + 1).copied())
+            .flatten();
+        let octal = bytes.get(i + 1..i + 4).filter(|digits| {
+            (b'0'..=b'3').contains(&digits[0]) && digits.iter().all(|d| (b'0'..=b'7').contains(d))
+        });
+        match (escape, octal) {
+            (Some(_), Some(digits)) => {
+                let value = digits.iter().fold(0u32, |n, d| n * 8 + u32::from(d - b'0'));
+                raw.push(u8::try_from(value).unwrap_or(u8::MAX));
+                i += 4;
+            }
+            (Some(letter), None) => {
+                match letter {
+                    b'\\' => raw.push(b'\\'),
+                    b'a' => raw.push(0x07),
+                    b'b' => raw.push(0x08),
+                    b'f' => raw.push(0x0c),
+                    b'n' => raw.push(b'\n'),
+                    b'r' => raw.push(b'\r'),
+                    b't' => raw.push(b'\t'),
+                    b'v' => raw.push(0x0b),
+                    other => raw.extend([b'\\', other]),
+                }
+                i += 2;
+            }
+            (None, _) => {
+                raw.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&raw).into_owned()
 }
 
 // --- the reads --------------------------------------------------------------------

@@ -3,13 +3,19 @@
 # drives the real `linear.sh` against Linear's GraphQL answers planted for
 # one issue. It reads the request as the package sends it, a curl config on
 # stdin whose `data = ` line is the payload, and answers its body and
-# `___HTTP_CODE___200` as `curl -s -w` prints them. The issue is the JSON
-# world at $LINEAR_API_WORLD, `{identifier, team, description, state:
-# {name, type}}`, answered for `issue(id:)` and `issues(filter:)`; an
-# `issueUpdate` writes its description and state into that world, as Linear
-# stores them, and answers the updated issue. `teams(filter:)` answers the
-# world's team, `workflowStates(filter:)` the state its name asks for, and
-# `commentCreate` a created comment. Every payload is appended to
+# `___HTTP_CODE___<code>` as `curl -s -w` prints them. The world is the JSON
+# at $LINEAR_API_WORLD, `{identifier, team, description, state: {name,
+# type}, codes?}`. It answers only the operations the package's issue read,
+# completion and comment send, each named as the package names it, and
+# checks each one's target against the world as Linear does: an issue id,
+# or a comment's `issueId`, that is neither the world's identifier nor its
+# id answers Linear's `Entity not found: Issue` error; an `IssueRefs`
+# filter answers the world's issue only where it names it; a team or a
+# state the world does not hold answers no node. `UpdateIssue` writes the
+# description and state into the world, as Linear stores them, and answers
+# the updated issue. `codes` maps an operation name to the HTTP status
+# answered in its place, as a 5xx Linear sent: the request is not applied.
+# Any other operation is refused. Every payload is appended to
 # $LINEAR_API_LOG, one JSON object per line. With the two names unset, they
 # are `linear-api.json` and `linear-api.log` beside the path this was
 # invoked as.
@@ -21,6 +27,18 @@ config="$(cat)"
 payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
 printf '%s\n' "$payload" | jq -c . >>"$LINEAR_API_LOG"
 query="$(jq -r '.query' <<<"$payload")"
+operation="$(sed -nE 's/^[[:space:]]*(query|mutation)[[:space:]]+([A-Za-z]+).*/\2/p' <<<"$query" | head -n 1)"
+
+# Linear's ids are UUIDs: the package resolves a state by the issue's team
+# id, and a team by its key or name where its reference reads as no UUID.
+issue_id=00000000-0000-4000-8000-000000000001
+team_id=00000000-0000-4000-8000-0000000000aa
+
+code="$(jq -r --arg op "$operation" '.codes[$op] // 200' "$LINEAR_API_WORLD")"
+if [ "$code" != 200 ]; then
+  printf 'upstream unavailable___HTTP_CODE___%s' "$code"
+  exit 0
+fi
 
 state_of() { # NAME: the state Linear's workflow names it
   case "$1" in
@@ -31,10 +49,10 @@ state_of() { # NAME: the state Linear's workflow names it
 }
 
 issue() { # the world's issue as Linear's issue node
-  jq -c '{
-    id: "issue-uuid", identifier: .identifier, title: "t", description: .description,
+  jq -c --arg id "$issue_id" --arg team "$team_id" '{
+    id: $id, identifier: .identifier, title: "t", description: .description,
     state: .state, assignee: null, project: null, projectMilestone: null, cycle: null,
-    team: {key: .team, id: "team-uuid", name: .team},
+    team: {key: .team, id: $team, name: .team},
     labels: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []},
     priority: 3, estimate: null, sortOrder: 1.0, url: "https://linear.app/t/issue/x",
     branchName: "b", createdAt: "2026-01-29T15:00:00Z", updatedAt: "2026-01-29T15:00:00Z",
@@ -45,52 +63,77 @@ issue() { # the world's issue as Linear's issue node
   }' "$LINEAR_API_WORLD"
 }
 
-case "$query" in
-*"commentCreate(input:"*)
-  jq -cj --argjson issue "$(issue)" '{data: {commentCreate: {success: true, comment: {
-    id: "comment-1", body: .variables.input.body, createdAt: "2026-01-29T16:00:00Z",
-    updatedAt: "2026-01-29T16:00:00Z", user: {name: "t"},
-    issue: {identifier: $issue.identifier, updatedAt: "2026-01-29T16:00:00Z"}}}}}' <<<"$payload"
-  ;;
-*"workflowStates(filter:"*)
-  name="$(jq -r '.variables.name' <<<"$payload")"
-  state="$(state_of "$name")" || {
-    printf '{"errors":[{"message":"no state %s"}]}___HTTP_CODE___200' "$name"
-    exit 0
-  }
-  jq -cjn --arg name "$name" --argjson state "$state" \
-    '{data: {workflowStates: {pageInfo: {hasNextPage: false, endCursor: null},
-      nodes: [{id: ("state-" + $name), type: $state.type}]}}}'
-  ;;
-*"teams(filter:"*)
-  jq -cj '{data: {teams: {pageInfo: {hasNextPage: false, endCursor: null},
-    nodes: [{id: "team-uuid", key: .team, name: .team}]}}}' "$LINEAR_API_WORLD"
-  ;;
-*"issueUpdate(id:"*)
-  input="$(jq -c '.variables.input' <<<"$payload")"
-  state='null'
-  name="$(jq -r '.stateId // "" | ltrimstr("state-")' <<<"$input")"
-  if [ -n "$name" ]; then
-    state="$(state_of "$name")" || {
-      printf '{"errors":[{"message":"no state %s"}]}___HTTP_CODE___200' "$name"
-      exit 0
-    }
+# Whether ID names the world's issue, by its identifier or its id.
+held() {
+  [ "$1" = "$issue_id" ] || jq -e --arg id "$1" '.identifier == $id' "$LINEAR_API_WORLD" >/dev/null
+}
+
+# Linear's answer for an issue id it does not hold (`path` the field).
+not_found() {
+  jq -cjn --arg path "$1" '{errors: [{message: "Entity not found: Issue", path: [$path],
+    extensions: {type: "invalid input", code: "INPUT_ERROR", statusCode: 400, userError: true,
+    userPresentableMessage: "Could not find referenced Issue."}}], data: null}'
+}
+
+case "$operation" in
+CreateComment)
+  if ! held "$(jq -r '.variables.input.issueId' <<<"$payload")"; then
+    not_found commentCreate
+  else
+    jq -cj --argjson issue "$(issue)" '{data: {commentCreate: {success: true, comment: {
+      id: "comment-1", body: .variables.input.body, createdAt: "2026-01-29T16:00:00Z",
+      updatedAt: "2026-01-29T16:00:00Z", user: {name: "t"},
+      issue: {identifier: $issue.identifier, updatedAt: "2026-01-29T16:00:00Z"}}}}}' <<<"$payload"
   fi
-  world="$(jq -c --argjson input "$input" --argjson state "$state" '
-    .description = ($input.description // .description)
-    | .state = ($state // .state)' "$LINEAR_API_WORLD")"
-  printf '%s\n' "$world" >"$LINEAR_API_WORLD"
-  jq -cjn --argjson issue "$(issue)" '{data: {issueUpdate: {success: true, issue: $issue}}}'
   ;;
-*"issues(filter:"*)
-  jq -cjn --argjson issue "$(issue)" \
-    '{data: {issues: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: [$issue]}}}'
+GetState)
+  name="$(jq -r '.variables.name' <<<"$payload")"
+  if [ "$(jq -r '.variables.teamId' <<<"$payload")" != "$team_id" ] || ! state="$(state_of "$name")"; then
+    jq -cjn '{data: {workflowStates: {pageInfo: {hasNextPage: false, endCursor: null}, nodes: []}}}'
+  else
+    jq -cjn --arg name "$name" --argjson state "$state" \
+      '{data: {workflowStates: {pageInfo: {hasNextPage: false, endCursor: null},
+        nodes: [{id: ("state-" + $name), type: $state.type}]}}}'
+  fi
   ;;
-*"issue(id:"*)
-  jq -cjn --argjson issue "$(issue)" '{data: {issue: $issue}}'
+GetTeam)
+  jq -cj --arg name "$(jq -r '.variables.name' <<<"$payload")" --arg id "$team_id" '{data: {teams: {pageInfo: {hasNextPage: false, endCursor: null},
+    nodes: (if .team == $name then [{id: $id, key: .team, name: .team}] else [] end)}}}' "$LINEAR_API_WORLD"
+  ;;
+UpdateIssue)
+  if ! held "$(jq -r '.variables.id' <<<"$payload")"; then
+    not_found issueUpdate
+  else
+    input="$(jq -c '.variables.input' <<<"$payload")"
+    state='null'
+    name="$(jq -r '.stateId // "" | ltrimstr("state-")' <<<"$input")"
+    if [ -n "$name" ]; then
+      state="$(state_of "$name")" || {
+        printf '{"errors":[{"message":"no state %s"}]}___HTTP_CODE___200' "$name"
+        exit 0
+      }
+    fi
+    world="$(jq -c --argjson input "$input" --argjson state "$state" '
+      .description = ($input.description // .description)
+      | .state = ($state // .state)' "$LINEAR_API_WORLD")"
+    printf '%s\n' "$world" >"$LINEAR_API_WORLD"
+    jq -cjn --argjson issue "$(issue)" '{data: {issueUpdate: {success: true, issue: $issue}}}'
+  fi
+  ;;
+IssueRefs)
+  jq -cjn --argjson issue "$(issue)" --argjson refs "$(jq -c '.variables.filter.id.in' <<<"$payload")" \
+    '{data: {issues: {pageInfo: {hasNextPage: false, endCursor: null},
+      nodes: [$issue | select(.identifier as $i | .id as $u | $refs | index($i) or index($u))]}}}'
+  ;;
+GetIssue | IssueTeam)
+  if held "$(jq -r '.variables.id' <<<"$payload")"; then
+    jq -cjn --argjson issue "$(issue)" '{data: {issue: $issue}}'
+  else
+    not_found issue
+  fi
   ;;
 *)
-  printf '{"errors":[{"message":"unexpected query"}]}'
+  printf '{"errors":[{"message":"unexpected operation %s"}]}' "$operation"
   ;;
 esac
 printf '___HTTP_CODE___200'

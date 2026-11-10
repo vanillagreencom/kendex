@@ -445,9 +445,9 @@ for row in 'cdangling|make_dangling' 'cmode000|make_unreadable' 'cadirectory|mak
 done
 
 # What each launcher DOES with that answer is its own behaviour and is pinned
-# where each launcher's fixtures live: open-terminal-lane-pick.sh has the row for the
-# refused item, and tests/rust/controller.rs the row for the refused successor. A grep
-# of the catalog line here would survive a guard that stopped refusing.
+# with that launcher's rows: tests/rust/controller.rs has the row for the
+# refused successor. A grep of the catalog line here would survive a guard that
+# stopped refusing.
 
 # --- § account --------------------------------------------------------------
 #

@@ -212,12 +212,15 @@ pub fn program(name: impl AsRef<std::ffi::OsStr>) -> Command {
     command
 }
 
-/// Git's ceilings for a test child: the temporary root and, where these
-/// tests live in a repository (a clean copy of the index does not), its
-/// root, so a row that hands the binary a fixture path inside the
-/// repository (`tests/rust/fixtures/...`) resolves no project root there
-/// either; git stops below each ceiling, never at it.
-fn ceilings(root: &Path) -> std::ffi::OsString {
+/// Git's ceilings for a test child: `root` and, where these tests live in a
+/// repository (a clean copy of the index does not), its root, so a row that
+/// hands the binary a fixture path inside the repository
+/// (`tests/rust/fixtures/...`) resolves no project root there either. Git
+/// stops below each ceiling, never at it: a child that starts in `root`
+/// itself climbs past it, so `root` is a proper ancestor of the folder the
+/// child starts in, and a wrapper whose child starts in a known folder
+/// passes that folder's parent.
+pub fn ceilings(root: &Path) -> std::ffi::OsString {
     let mut ceilings = root.as_os_str().to_owned();
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     while dir.pop() {

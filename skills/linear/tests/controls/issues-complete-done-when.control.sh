@@ -1,5 +1,5 @@
 # Set Done without the ticked description: the boxes the caller verified stay
-# unchecked, and reconcile-work-items reports the close as done-unchecked.
+# unchecked while the item reads Done.
 control_expect "the Done update carries the ticked description"
 control_replace scripts/commands/issues.sh 1 \
     '        update_args+=(--description "${ticked_description%.}")' \

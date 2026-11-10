@@ -4,7 +4,6 @@
 # lib/lane-launch.sh, the table a launcher judges against, so no suite holds
 # a second copy of the words. Appended to a `true` template they run nothing:
 # each row's harness finds its own run among them, and the rest are inert.
-# open-terminal-question-tool.sh is the suite that judges that gate itself.
 #
 # Sets QUESTION_OFF_ALL, and exits naming the library when it reads nothing.
 QUESTION_OFF_ALL="$(bash -c '
@@ -17,7 +16,7 @@ QUESTION_OFF_ALL="${QUESTION_OFF_ALL% }"
 # The unattended words every lane is briefed with, shell-quoted so the command
 # passes the text whole, appended to QUESTION_OFF_ALL: a --cmd row judging
 # another gate clears this one beside the question-tool gate, and inert the
-# same way. open-terminal-question-tool.sh judges this gate too.
+# same way.
 UNATTENDED_ALL="$(bash -c '
   source "$1" || exit 1
   printf "%q" "$LAUNCH_UNATTENDED_TEXT"
@@ -27,8 +26,7 @@ QUESTION_OFF_ALL="$QUESTION_OFF_ALL $UNATTENDED_ALL"
 
 # The words that turn every harness row's own compaction off, which a fleet
 # --cmd must carry past the fleet gate as it carries the question-tool words,
-# each shell-quoted so the command passes it whole; open-terminal-harness-gate.sh
-# judges that gate itself.
+# each shell-quoted so the command passes it whole.
 #
 # Sets COMPACTION_OFF_ALL, and exits naming the library when it reads nothing.
 COMPACTION_OFF_ALL="$(bash -c '

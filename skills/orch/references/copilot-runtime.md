@@ -91,7 +91,7 @@ A relaunch is the item's `launch-lane` request sent again ([oversee.md § Lane d
 
 ## Wake and lane mail
 
-A Copilot lane's own wake is its `lane-mail watch --once` monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). Where the lane reads positively idle with mail unread, the watch's wake duty types it one line that runs `lane-mail inbox`, and confirms it by a new user turn in the lane's own session: `wake-delivered`, else `wake-unconfirmed`. Mail that the monitor, the hooks and the wake duty do not deliver waits for the lane's next turn, or takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver): stop, close with `keep-sandbox`, relaunch.
+A Copilot lane's own wake is its `lane-mail watch --once` monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)). Where the lane reads idle with mail unread, the watch's wake duty wakes it ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)): `wake-delivered`, else `wake-unconfirmed`. Mail that the monitor, the hooks and the wake duty do not deliver waits for the lane's next turn, or takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver): stop, close with `keep-sandbox`, relaunch.
 
 ## Lane close
 

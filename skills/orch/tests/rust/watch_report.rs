@@ -70,7 +70,9 @@ fn lines(path: &Path) -> Vec<String> {
 const DEADLINE_BOXES: &str = "## Done when\n- [x] branch proof\n- [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z\n- [ ] Post-merge: Read consumer refresh; Where: consumer PR; Why after merge: needs rollout; Deadline: 2026-10-03T00:00:00Z";
 
 /// The real mailbox program behind a wrapper under `dir`, run with a
-/// cleared environment, no git configuration and no repository above `dir`.
+/// cleared environment and no git configuration. The compaction starts it
+/// in `dir`, so its ceiling is `dir`'s parent: no checkout above `dir` is
+/// the project root whose private files its `orch-env` would load.
 fn real_mail(dir: &Path) -> PathBuf {
     let path = dir.join("real-lane-mail");
     let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -82,7 +84,7 @@ fn real_mail(dir: &Path) -> PathBuf {
         dir.display(),
         tool_path(&[]),
         std::env::temp_dir().display(),
-        dir.display(),
+        ceilings(dir.parent().unwrap()).to_string_lossy(),
         actual.display()
     );
     write_executable(&path, text);
@@ -100,7 +102,12 @@ struct World {
 
 impl World {
     fn new() -> World {
-        let dir = tempfile::tempdir().unwrap();
+        World::new_in(&std::env::temp_dir())
+    }
+
+    /// A world whose folder is made under `parent`.
+    fn new_in(parent: &Path) -> World {
+        let dir = tempfile::tempdir_in(parent).unwrap();
         let fix = fixtures();
         for (name, fixture) in [
             ("linear", "linear-fixture/linear.sh"),
@@ -2337,6 +2344,47 @@ fn the_retention_duty_compacts_the_overseer_mailbox_and_says_a_refusal() {
         vec!["EVENT watch-step-failed step=retention count=1".to_owned()]
     );
     assert!(std::fs::symlink_metadata(&old).is_err(), "the prune ran");
+
+    // A world inside a checkout whose private file names a retention the
+    // program refuses: the mailbox, started in the world, reads no project
+    // root above it, so the compaction answers.
+    let canary = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "gc.auto", "0"],
+        vec!["config", "maintenance.auto", "false"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(canary.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    std::fs::write(
+        canary.path().join(".env.local"),
+        "ORCH_RECORD_RETENTION_DAYS=0\n",
+    )
+    .unwrap();
+    let world = World::new_in(canary.path());
+    let answered = retention::body(retention::Context {
+        locking: Locking::FLOCK,
+        fleet: world.fleet_path(),
+        paths: world.paths(),
+        settings: world.settings.clone(),
+    })(&Tick {
+        duty: Duty::Retention,
+        now: clock.now(),
+        wall,
+        baseline: &baseline,
+        clock: &clock,
+    })
+    .unwrap();
+    assert_eq!(
+        answered.failed, None,
+        "the checkout above the world is not read"
+    );
 }
 
 /// The real program `name` on this host's `PATH`, which a fixture execs.

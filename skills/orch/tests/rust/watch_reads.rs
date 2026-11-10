@@ -1257,9 +1257,12 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
         write_executable(
             &wrapper,
             format!(
-                "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token ORCH_LANE_HOST=\"${{ORCH_LANE_HOST:-}}\" bash '{shipped}' \"$@\"\n",
+                "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token ORCH_LANE_HOST=\"${{ORCH_LANE_HOST:-}}\" bash '{shipped}' \"$@\"\n",
                 path = tool_path(&[world.dir.path()]),
                 root = root.display(),
+                // The world's own `.git` ends discovery inside it; the
+                // temporary root above it is the ceiling past that.
+                ceiling = ceilings(&root).to_string_lossy(),
                 home = home.display(),
                 shipped = shipped.display(),
             ),
@@ -2307,12 +2310,24 @@ fn a_security_read_failure_reaches_the_overseer_on_its_second_consecutive_pass_a
     assert_eq!(next(&mut body, &mut baseline), none);
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(next(&mut body, &mut baseline), none);
-    // A changed cause starts the count again.
+    // A named failure whose cause changes is not named again; its row
+    // holds the latest cause.
     world.gh(link, json!({"exit": 1, "stderr": "gh: HTTP 502"}));
     assert_eq!(next(&mut body, &mut baseline), none);
     assert_eq!(
+        baseline.get("security-alerts-unread", "owner/repo/dependabot-prs"),
+        Some("http-502|reported")
+    );
+    // Read clean, then failing with a cause that alternates: the second
+    // consecutive failure is named, with its own cause.
+    world.gh(link, linked.clone());
+    assert_eq!(next(&mut body, &mut baseline), none);
+    world.gh(link, json!({"exit": 1, "stderr": "gh: HTTP 502"}));
+    assert_eq!(next(&mut body, &mut baseline), none);
+    world.gh(link, page);
+    assert_eq!(
         next(&mut body, &mut baseline),
-        unread("owner/repo/dependabot-prs:http-502")
+        unread("owner/repo/dependabot-prs:invalid-html")
     );
     world.gh(link, linked);
     world.gh(code_list, json!({"body": []}));
@@ -2470,8 +2485,8 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
         world.gh(
             "repos/owner/repo/actions/runs/202/jobs?per_page=100&page=1",
             json!({"body": {"total_count": 2, "jobs": [
-                {"id": 902, "name": "a", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/902"},
-                {"id": 903, "name": "b", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/903"}]}}),
+                {"id": 902, "run_id": 202, "name": "a", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/902"},
+                {"id": 903, "run_id": 202, "name": "b", "head_sha": "0000000000000000000000000000000000000000", "status": "completed", "conclusion": "success", "check_run_url": "https://api.github.com/repos/owner/repo/check-runs/903"}]}}),
         );
         world.gh(
             "repos/owner/repo/check-runs/902/annotations?per_page=100&page=1",

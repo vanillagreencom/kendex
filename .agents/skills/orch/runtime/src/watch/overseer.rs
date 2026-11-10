@@ -1251,10 +1251,12 @@ struct Reads {
     process: ProcessReading,
     screen: Result<String, String>,
     rows: Option<Reading<SessionVerdict>>,
-    /// The recorded process read gone beside a pane holding only shells:
-    /// what makes such a pane the session's end rather than a moment
+    /// A pane holding only shells whose harness is proven gone: its
+    /// recorded process read gone, or no process recorded under a record
+    /// that names a harness, the reading a start takes as `harness-gone`.
+    /// What makes such a pane the session's end rather than a moment
     /// between programs. Read nowhere else.
-    identity_gone: bool,
+    harness_gone: bool,
 }
 
 /// One pass's inputs.
@@ -1517,17 +1519,17 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             Reading::Live(fields) => {
                 let process =
                     (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
-                let identity_gone = matches!(process, ProcessReading::ShellsOnly)
-                    && record
-                        .identity
-                        .as_ref()
-                        .is_some_and(|id| matches!((pass.readers.start_epoch)(id), Reading::Gone));
+                let harness_gone = matches!(process, ProcessReading::ShellsOnly)
+                    && match record.identity.as_ref() {
+                        Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
+                        None => record.harness.is_some(),
+                    };
                 (
                     Some(Reads {
                         process,
                         screen: (pass.readers.capture)(&fields.pane),
                         rows: record.session_rows.as_deref().map(rows::session_verdict),
-                        identity_gone,
+                        harness_gone,
                     }),
                     Some(fields.pid),
                 )
@@ -1784,13 +1786,14 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
 
 /// Whether a dead verdict's reads prove the session ended, so its first
 /// pass says it: the pane gone, the exit record or the end
-/// row over a pane holding only shells, or such a pane whose recorded
-/// process is gone. Shells alone, or a context that fills its window, may
-/// be a moment between programs, and take the setting's count.
+/// row over a pane holding only shells, or such a pane whose harness is
+/// proven gone. Shells alone beside a recorded process still running, or a
+/// context that fills its window, may be a moment between programs, and
+/// take the setting's count.
 fn death_proven(source: Source, reads: Option<&Reads>) -> bool {
     match source {
         Source::Pane | Source::Record | Source::Rows => true,
-        Source::Process => reads.is_some_and(|r| r.identity_gone),
+        Source::Process => reads.is_some_and(|r| r.harness_gone),
         Source::Context | Source::Auth | Source::Account => false,
     }
 }

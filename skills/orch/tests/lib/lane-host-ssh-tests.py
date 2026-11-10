@@ -860,12 +860,12 @@ signal.sigwait({signal.SIGTERM})
 
     def hosted_state_launch(self, harness="claude"):
         """Run delegation and recovery through create's actual hosted prefix."""
-        # round-recover runs the runtime beside it; the source checkout carries
-        # no built runtime, so the probe names the one setup built here.
+        # The source checkout carries no built runtime, so the probe runs the
+        # round's recovery through the one setup built here.
         runtime = self.runtime_binary()
         self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
         scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context", "round-recover", "orch-env"):
+        for name in ("workflow-state", "git-context", "orch-env"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         self.copy_tree(PACKAGE.parent / "github/scripts/lib",
                         self.source / ".agents/skills/github/scripts/lib", dirs_exist_ok=True)
@@ -890,7 +890,7 @@ state="$scripts/workflow-state"
 round=$("$state" new-round-id TEST-1 dev_round_id)
 "$state" set-now TEST-1 dev_delegated_at >/dev/null
 rc=0
-ORCH_RUNTIME_CLI=@RUNTIME@ "$scripts/round-recover" --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
+@RUNTIME@ round --text recover --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
 [[ "$rc" -eq 3 ]]
 "$state" set-now TEST-1 dev_delegated_at >/dev/null
 "$state" get TEST-1

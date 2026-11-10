@@ -1,6 +1,0 @@
-#!/usr/bin/env bash
-# The runtime owns the command's arguments, answer and record writes.
-set -euo pipefail
-here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
-export DEV_VALIDATE_CLI="${DEV_VALIDATE_CLI:-$here/dev-validate-run}"
-exec "${ORCH_RUNTIME_CLI:-$here/orch-runtime}" round --text stamp "$@"
