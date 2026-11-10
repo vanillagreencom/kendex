@@ -419,7 +419,7 @@ fn kept_removed(
     roots(Facts::Read(&installations)).decide(&mut decisions);
     let named = unread
         .is_some()
-        .then(|| recorded_edges(lock, names, options));
+        .then(|| recorded_edges(lock, &captured, names, options));
     let mut kept = BTreeSet::new();
     for (key, decision) in decisions {
         match decision {
@@ -459,30 +459,34 @@ fn kept_removed(
     Ok(kept)
 }
 
-/// The selected installations whose record names an edge from something
-/// not going away: a requirer not named for removal, or a set not being
+/// The selected installations whose recorded readings name an edge from
+/// something not going away: a requirer not named for removal, or a set not being
 /// uninstalled. A short read cannot see a carrier declared since the last
 /// readable apply, or a hold that kept a record whose installation went
 /// unread, so where no reading roots an installation this name test keeps
 /// the removal rather than lose it.
 fn recorded_edges(
     lock: &Lock,
+    captured: &Captured<'_>,
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
     lock.entries
         .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
-        .filter(|entry| {
-            entry.reasons.iter().any(|reason| match reason {
+        .map(|entry| (entry.kind, &entry.name, &entry.reasons))
+        .chain(captured.iter().flat_map(|(node, rows)| {
+            rows.iter()
+                .map(|(_, row)| (node.kind, &node.name, &row.reasons))
+        }))
+        .filter(|(kind, name, _)| names.contains(name) && options.named_for_removal(*kind, name))
+        .filter(|(_, _, reasons)| {
+            reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
                 Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
-        .map(|entry| (entry.kind, entry.name.clone()))
+        .map(|(kind, name, _)| (kind, name.clone()))
         .collect()
 }
 

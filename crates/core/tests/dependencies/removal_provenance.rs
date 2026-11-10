@@ -771,12 +771,15 @@ fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
 /// prove absence by kind and name, not merely by successful expansion;
 /// a still-named member that cannot expand remains unknown. Recorded
 /// bindings keep their precedence, and removing the set always decides.
+/// A short read of a newly declared carrier keeps the removal even when
+/// the set is empty, so repairing that carrier cannot restore the item.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
     #[derive(Clone, Copy, Debug)]
     enum SetNow {
         Empty,
+        EmptyUnreadCarrier,
         Carries,
         MissingItem,
         Drops,
@@ -789,6 +792,7 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
         (ItemKind::Skill, "github", "skills", HarnessId::Claude),
     ] {
         for (offline, set_recorded, set_now) in [
+            (false, false, SetNow::EmptyUnreadCarrier),
             (false, false, SetNow::MissingItem),
             (false, false, SetNow::Empty),
             (false, false, SetNow::Carries),
@@ -902,6 +906,25 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
                     }
                     set("\"lint\"")
                 }
+                SetNow::EmptyUnreadCarrier => {
+                    skill(&other, "S", "");
+                    let dependency = if kind == ItemKind::Hook {
+                        "hooks"
+                    } else {
+                        "required"
+                    };
+                    fs::write(
+                        other.join("skills/S/SKILL.md"),
+                        format!("---\nname: S\ndescription: the S skill\ndependencies:\n  {dependency}: [{name}]\nBody.\n"),
+                    )
+                    .unwrap();
+                    edit_manifest(&f, |manifest| {
+                        manifest
+                            .skills
+                            .insert("S".into(), manifest::ItemDecl::from_source("other"));
+                    });
+                    set("")
+                }
                 SetNow::Empty => set(""),
                 SetNow::NotOffered | SetNow::Unreadable => {
                     // Reading another set in this open catalog proves nothing
@@ -955,7 +978,7 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
                 SetNow::Empty | SetNow::Drops | SetNow::SameNameOtherKind => {
                     (vec![name], BTreeSet::new())
                 }
-                SetNow::Carries | SetNow::MissingItem => {
+                SetNow::Carries | SetNow::MissingItem | SetNow::EmptyUnreadCarrier => {
                     (vec![name], BTreeSet::from([(kind, name.to_owned())]))
                 }
             };
@@ -967,6 +990,18 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
             );
             if offline && !refuses {
                 fs::rename(&hidden, &f.source).unwrap();
+            }
+            if matches!(set_now, SetNow::EmptyUnreadCarrier) {
+                let dependency = if kind == ItemKind::Hook {
+                    "hooks"
+                } else {
+                    "required"
+                };
+                skill(
+                    &other,
+                    "S",
+                    &format!("dependencies:\n  {dependency}: [{name}]\n"),
+                );
             }
             if kind == ItemKind::Hook {
                 for source in [&f.source, &other] {
