@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The retired doc-drift-check stub: a Stop payload passes at exit 0 with
+# The doc-drift-check stub: a Stop payload passes at exit 0 with
 # nothing on stdout or stderr, so a consumer still declaring the hook is never
 # held. The control reruns the same observation on a planted copy that writes
 # and refuses, and requires it to differ.
@@ -15,7 +15,8 @@ FAIL=0
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
-# Padding exceeds a pipe buffer so an early close always rejects the old writer.
+# Padding exceeds a pipe buffer, so a stub that closes stdin unread fails the
+# payload's writer.
 printf -v PAYLOAD '%s%131072s' '{"session_id":"s","stop_hook_active":false}' ''
 trap '' PIPE
 

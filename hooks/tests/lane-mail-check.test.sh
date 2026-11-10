@@ -282,9 +282,10 @@ MUTANT_PATH=""
 # with an empty mailbox, which is the path the marks are judged on.
 
 # A lane whose mailbox holds nothing, so each row below judges the marks alone.
-# The mailbox directory is what `write_lane_marker` makes at launch beside the
-# marker, so a lane nobody has messaged still carries the name the hook
-# resolves the marks by; open-terminal-lane-pick.sh asserts the launcher makes it.
+# The mailbox directory is what the runtime's launch makes beside the marker,
+# so a lane nobody has messaged still carries the name the hook resolves the
+# marks by; tests/rust/effects.rs asserts the launch makes it
+# (a_launch_writes_its_marker_and_mailbox_before_the_window_...).
 # The lane reports a step before each turn end, so the idle judge after the
 # marks passes it; the idle rows clear REPORT_ITEM.
 new_handoff_lane() { # NAME ITEM
@@ -2060,7 +2061,7 @@ owned_payload s2 "$TRANSCRIPT" $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) headroom=$(grep -c '^lane-mail-check: headroom=4' "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: transcript-unowned=$TRANSCRIPT argv=marks --fleet --harness claude headroom=1" \
   "a predecessor's transcript is not this session's, so its context is unmeasured and the account mark decides" "$ERR_FILE"
-# A record naming this pane and no launch home, one `oversee register` wrote
+# A record naming this pane and no launch home, one `orch-runtime register --fleet` wrote
 # for a session with no account, is healed from the session's own
 # environment: the home the harness variable carries is written into the
 # record and binds the transcript on this very turn end. A session whose
@@ -2086,7 +2087,7 @@ assert_eq "RC=$RC first=$(first_line) argv=$(judge_argv | tail -n 1) reason=$(gr
   "a session whose own home is not the one its transcript sits under binds nothing, so the account mark decides" "$ERR_FILE"
 # That turn end still writes the overseer's context record, with no figure and
 # the gate's reason as its gap, so the record advances at every turn end and
-# oversee-watch can report why it carries no reading.
+# the runtime watch can report why it carries no reading.
 gap_record() { jq -r '"\(.tokens) \(.gap) \(.pane_key)"' "$LANE/tmp/lane-mail/overseer/context.json" 2>/dev/null || echo none; }
 assert_eq "$(gap_record)" "null home-mismatch $OVERSEER_SERVER $OVERSEER_PANE" \
   "and the context record is written with no reading, the gate's reason as its gap and this pane's key" "$ERR_FILE"
@@ -3642,7 +3643,7 @@ for identity_case in home session missing; do
     assert_eq "$IDENTITY_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
       "$identity_arm: a Claude child with another $identity_case changes no mail, context, gap or fleet record"
     assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-      "lane-mail-check: session-unbound=${identity_session:-none} harness=claude home=$OVERSEER_HOME_DIR remedy=oversee register|1" \
+      "lane-mail-check: session-unbound=${identity_session:-none} harness=claude home=$OVERSEER_HOME_DIR remedy=orch-runtime register --fleet|1" \
       "the child receives one diagnostic on stderr and no context"
   done
 done
@@ -3782,7 +3783,7 @@ run_payload '{"session_id":"pi-child","tool_name":"Bash","tool_input":{"command"
 ARM_ARGS=()
 CALL_ENV=()
 assert_eq "RC=$RC stdout=$(cat "$TMP_ROOT/stdout") unchanged=$([ "$pi_before" = "$(overseer_snapshot)" ] && echo yes || echo no) first=$(first_line)" \
-  "RC=0 stdout= unchanged=yes first=lane-mail-check: session-unbound=pi-child harness=pi home=$OVERSEER_HOME_DIR remedy=oversee register" \
+  "RC=0 stdout= unchanged=yes first=lane-mail-check: session-unbound=pi-child harness=pi home=$OVERSEER_HOME_DIR remedy=orch-runtime register --fleet" \
   'a Pi child with an unmeasured home and another native id changes no overseer mail or context'
 
 named_session native_bound
@@ -3803,11 +3804,12 @@ CALL_ENV=("${SESSION_ENV[@]}")
 ARM_ARGS=(start)
 run_payload '{"session_id":"resumed","source":"resume"}'
 ARM_ARGS=()
+register_rc=0
 (cd "$LANE" && env -u ORCH_STATE_DIR -u CODEX_HOME -u COPILOT_HOME \
   "${SESSION_ENV[@]}" "HOME=$OFFLINE_HOME" "LANES_HOME=$OFFLINE_HOME" \
-  "$REPO_ROOT/skills/orch/scripts/oversee" register > "$TMP_ROOT/register.out" 2> "$TMP_ROOT/register.err")
-assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id // "none"')" none \
-  'register clears the binding from the previous native session'
+  "$REPO_ROOT/skills/orch/scripts/oversee" register > "$TMP_ROOT/register.out" 2> "$TMP_ROOT/register.err") || register_rc=$?
+assert_eq "rc=$register_rc session=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id // "none"')" \
+  'rc=0 session=none' 'register clears the binding from the previous native session'
 peer_send 'After native resume.'
 ARM_ARGS=(deliver)
 run_payload '{"session_id":"resumed","tool_name":"Bash","tool_input":{"command":"git status"}}'
@@ -3924,9 +3926,8 @@ expect 0 - "nor a session outside tmux"
 assert_eq "$(overseer_unread 'Nobody named.')" "1" "and the note stays unread"
 
 # A live watch reads this mailbox, so the named session leaves every line for
-# it. The watch is a process whose command line names oversee-watch, recorded
-# where a repeat watch records itself: beside the fleet state
-# `workflow-state path oversee` prints.
+# it. The watch is the claim the runtime's `watch status` answers for the
+# fleet state `orch-runtime state path --fleet` prints.
 FAKE_WATCH=""
 # A live watch on the lane's fleet state, as the runtime answers it, with
 # its follow running.
@@ -3982,7 +3983,7 @@ stop "${SESSION_ENV[@]}"
 expect 0 - "a session with a peer note standing and no reader beside the hook is handed and refused nothing"
 
 # Whether a live watch holds the fleet state is the install's answer for the
-# named session: the state's path from its workflow-state, and the claim from
+# named session: the state's path from its `orch-runtime state path --fleet`, and the claim from
 # its runtime's `watch status`. One it cannot give leaves the mailbox neither
 # read nor passed as read.
 named_session peer_state_broken

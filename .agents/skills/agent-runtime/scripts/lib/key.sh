@@ -26,12 +26,18 @@
 
 # agent_runtime_digest reads stdin and prints its sha256 hex. sha256sum is
 # coreutils; macOS ships shasum instead.
+# agent_runtime_digest_files FILE... prints `<hex>  <file>` for each FILE in
+# argument order, in one process, so a key costs a few processes per crate
+# rather than several per input.
 if command -v sha256sum >/dev/null 2>&1; then
   agent_runtime_digest() { sha256sum | cut -d' ' -f1; }
+  agent_runtime_digest_files() { sha256sum "$@"; }
 elif command -v shasum >/dev/null 2>&1; then
   agent_runtime_digest() { shasum -a 256 | cut -d' ' -f1; }
+  agent_runtime_digest_files() { shasum -a 256 "$@"; }
 else
   agent_runtime_digest() { return 127; }
+  agent_runtime_digest_files() { return 127; }
 fi
 
 agent_runtime_cache() {
@@ -59,22 +65,24 @@ agent_runtime_path_dependencies() { # RUNTIME_DIR
 # agent_runtime_manifest RUNTIME_DIR PREFIX prints the manifest lines of
 # RUNTIME_DIR and its path dependencies, each path under PREFIX.
 agent_runtime_manifest() { # RUNTIME_DIR PREFIX
-  local dir="$1" prefix="$2" rel paths digest deps dep
+  local dir="$1" prefix="$2" rel paths digests deps dep
+  local -a inputs
   [ -f "$dir/Cargo.toml" ] && [ -f "$dir/Cargo.lock" ] && [ -d "$dir/src" ] ||
     refuse inputs-missing "runtime=$dir"
   [ -r "$dir/Cargo.toml" ] || refuse manifest-unreadable "path=$dir/Cargo.toml"
   # One stable order whatever the filesystem returns: byte order of the
-  # relative paths. Source paths are the package's own and hold no newline.
+  # relative paths. Source paths are the package's own and hold no newline
+  # and no backslash, so each digest line is the hex, two spaces and the path.
   paths="$(cd -- "$dir" && find src -type f | LC_ALL=C sort)" || refuse inputs-unreadable "runtime=$dir"
+  inputs=(Cargo.toml Cargo.lock)
   while IFS= read -r rel; do
-    [ -n "$rel" ] || continue
-    digest="$(agent_runtime_digest <"$dir/$rel")" || refuse inputs-unreadable "path=$dir/$rel"
-    printf '%s%s %s\n' "$prefix" "$rel" "$digest"
+    [ -z "$rel" ] || inputs+=("$rel")
   done <<EOF
-Cargo.toml
-Cargo.lock
 $paths
 EOF
+  digests="$(cd -- "$dir" && agent_runtime_digest_files "${inputs[@]}")" || refuse inputs-unreadable "runtime=$dir"
+  [ "$(printf '%s\n' "$digests" | wc -l)" -eq "${#inputs[@]}" ] || refuse inputs-unreadable "runtime=$dir"
+  printf '%s\n' "$digests" | awk -v prefix="$prefix" '{ print prefix substr($0, 67) " " substr($0, 1, 64) }'
   deps="$(agent_runtime_path_dependencies "$dir")" || refuse manifest-unreadable "path=$dir/Cargo.toml"
   while IFS= read -r dep; do
     [ -n "$dep" ] || continue

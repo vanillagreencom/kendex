@@ -214,16 +214,16 @@ else
 fi
 }
 
-# KEN-3813 expressly requires this remedy example as well as the keyed
-# verdict. The remaining English is not pinned. Every command below stays
+# The remedy example is part of the refusal's contract, pinned beside the
+# keyed verdict. The remaining English is not pinned. Every command below stays
 # fixture data submitted only to the hook, including all planted controls.
 # A JSON escape keeps the coprocess data word out of the Bash syntax lint.
 # Named-method rows use the Jarvis config command and lane-host-ssh settings
 # lookups. Mapping methods, line-end aliases and executable xargs input cover
 # the corresponding whole-object and downstream-receiver restrictions.
-# The reported-public-selection-log row is attributed KEN-4584 command text;
-# the hook classifies it without executing the command or opening its log.
-# The Python replacement-source row models KEN-4586's attributed edit; its
+# The reported-public-selection-log row is a command a lane ran; the hook
+# classifies it without executing the command or opening its log.
+# The Python replacement-source row models a lane's edit command; its
 # pathlib and environment text are submitted data, never executed here.
 environment_rows() {
   local rows expected command_json label world payload payload_cwd status output

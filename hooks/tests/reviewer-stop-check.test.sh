@@ -312,9 +312,8 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id
   "an agent_id that is not a name refuses"
 # The id is judged as the payload holds it, so no spelling outside the
 # alphabet reaches the marker path whatever the encoding between. This row
-# pins that refusal rather than a defect the old hook had: @tsv escaped a NUL
-# to a backslash and a zero, and the old shell-side test refused that for the
-# backslash.
+# pins the refusal on the id itself: a reader that took the id through @tsv
+# would see a NUL as a backslash and a zero, and refuse it for the backslash.
 run_payload "{\"agent_type\":\"reviewer-test\",\"agent_id\":\"a1\\u0000a2\",\"transcript_path\":\"$T\"}"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-stop-check: agent-id=invalid" \
   "an agent_id carrying a NUL refuses"

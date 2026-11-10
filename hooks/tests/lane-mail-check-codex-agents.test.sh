@@ -35,7 +35,7 @@ snapshot() { # STATUS
 }
 # Status forms come from Codex 0.163.0 protocol/src/protocol.rs AgentStatus
 # and core/src/agent/status.rs. Interrupted releases the reserve until followup.
-# The hook refusal is the real KEN-4292 PreToolUse output. A thread-limit
+# The hook refusal is a real PreToolUse output a Codex lane received. A thread-limit
 # failure or a damaged result does not prove that dispatch launched no child.
 
 new_lane codex_agents AGENT-1

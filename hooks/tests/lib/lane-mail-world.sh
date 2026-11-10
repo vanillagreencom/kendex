@@ -9,16 +9,16 @@
 # here and reports them itself.
 # shellcheck disable=SC2034
 
-# A suite runs with no environment but HOME, PATH, the runtime cache and the
-# hook it is told to run, as `env -i` starts it: an orch, harness, mailbox or
-# git variable the caller carries would point the hook, `lane-mail` and the
-# runtime at the caller's own records, and GIT_DIR would configure the real
-# repository. The suite restarts once in that environment, so its own setup
-# runs there too.
+# A suite runs with no environment but HOME, PATH, TMPDIR, the runtime cache
+# and the hook it is told to run, as `env -i` starts it: an orch, harness,
+# mailbox or git variable the caller carries would point the hook, `lane-mail`
+# and the runtime at the caller's own records, and GIT_DIR would configure the
+# real repository. The suite restarts once in that environment, so its own
+# setup runs there too.
 if [ "${LANE_MAIL_WORLD:-}" != started ]; then
-  exec env -i "HOME=$HOME" "PATH=$PATH" ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} \
+  exec env -i "HOME=$HOME" "PATH=$PATH" ${TMPDIR+"TMPDIR=$TMPDIR"} ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} \
     ${AGENT_RUNTIME_CACHE+"AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE"} \
-    ${SESSION_ROWS_LIB_VARIANT+"SESSION_ROWS_LIB_VARIANT=$SESSION_ROWS_LIB_VARIANT"} LANE_MAIL_WORLD=started \
+    LANE_MAIL_WORLD=started \
     "$BASH" "${BASH_SOURCE[${#BASH_SOURCE[@]}-1]}" "$@"
 fi
 
@@ -45,6 +45,10 @@ export AGENT_RUNTIME_CACHE
 TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-world: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-world: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-world: scratch=resolve-failed" >&2; exit 1; }
+# Every hook run's own scratch under the root the exit trap removes: a row
+# that kills the hook before its trap runs leaves its directory here.
+mkdir -p "$TMP_ROOT/tmp"
+export TMPDIR="$TMP_ROOT/tmp"
 # FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
 trap 'stop_wake_processes; [ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
@@ -831,7 +835,7 @@ wake_row_process_table() {
 wake_control() { # NAME ROW OLD NEW
   local status=0
   wake_mutant "$1" "$3" "$4"
-  env -i "PATH=$PATH" "HOME=$COP_HOME" "AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE" "HOOK_UNDER_TEST=$MUTANT_PATH" \
+  env -i "PATH=$PATH" "HOME=$COP_HOME" "TMPDIR=$TMPDIR" "AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE" "HOOK_UNDER_TEST=$MUTANT_PATH" \
     bash "$TEST_DIR/lane-mail-check-wake.test.sh" --wake-row "$2" > "$TMP_ROOT/$1.control.log" 2>&1 || status=$?
   assert_eq "$status" 1 "control: $1 makes the $2 assertion red"
 }

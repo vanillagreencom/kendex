@@ -614,7 +614,7 @@ new_copilot_named() { # NAME [JUDGE]
   plant_copilot_install
   # Mailbox delivery uses a configured reader. The missing-reader SessionStart
   # rule has its own fixture in orch/tests/oversee_launch.sh.
-  env -i PATH="$PATH" HOME="$COP_HOME" bash -euo pipefail -c \
+  env -i PATH="$PATH" HOME="$COP_HOME" TMPDIR="$TMPDIR" bash -euo pipefail -c \
     '. "$1/lib/lane-context.sh" && copilot_context_install "$2"' \
     _ "$REPO_ROOT/skills/orch/scripts" "$COP_HOME/.copilot"
   unmark_lanes
@@ -667,7 +667,7 @@ for child_arm in deliver stop usage start; do
   assert_eq "$CHILD_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
     "$child_arm: a Copilot child in the Claude pane receives no mail and writes no context or gap"
   assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-    "lane-mail-check: session-unbound=s1 harness=claude home=$OVERSEER_HOME_DIR remedy=oversee register|1" \
+    "lane-mail-check: session-unbound=s1 harness=claude home=$OVERSEER_HOME_DIR remedy=orch-runtime register --fleet|1" \
     "the child receives one session diagnostic and no missing-reader notice for the Claude home"
 done
 # The previous hook admitted the inherited pane. These rows use that complete hook,
@@ -692,7 +692,7 @@ for child_arm in deliver stop usage start; do
   assert_eq "$CHILD_RESULT" 'RC=0 stdout= unchanged=yes state=same judged=0' \
     "$child_arm: the recorded harness alone refuses a child before the first session binding"
   assert_eq "$(first_line)|$(wc -l < "$ERR_FILE" | tr -d ' ')" \
-    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee register|1' \
+    'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=orch-runtime register --fleet|1' \
     'the harness-only refusal gives one stderr diagnostic'
 done
 # Before the first session binding the harness rule is also the runtime

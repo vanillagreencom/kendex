@@ -5217,6 +5217,101 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     stop_live_watch(&runner, &state);
 }
 
+/// A model switch whose transfer job never claims: the real hook's recovery
+/// reads the runtime's refusal naming its `persisted_intent` as the
+/// outcome unknown, never as nothing done, and hands the session
+/// `recovery-unconfirmed`; the intent stands `unconfirmed` for its
+/// reconcile and the controller stands.
+#[test]
+fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, mut env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("claude-account");
+    std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
+    std::fs::create_dir(&account).unwrap();
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
+    let launch = workflow_launch(
+        &runner,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    );
+    let launched = launch.run();
+    let started = launched.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(launched.op())
+    );
+    let overseer = runner.fleet()["overseer"].clone();
+    let (sleepers, log) = sleeper_world(runner.state_dir());
+    let mut unclaimed: Vec<(String, String)> = launch
+        .env
+        .iter()
+        .filter(|(name, _)| name != "PATH" && name != "ORCH_JOB_CLAIM_SECS")
+        .cloned()
+        .collect();
+    unclaimed.push((
+        "PATH".to_owned(),
+        tool_path(&[sleepers.as_path(), bin.as_path()]),
+    ));
+    unclaimed.push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    unclaimed.push(("SETSID_LOG".to_owned(), log.display().to_string()));
+    let (out, _) = model_switch(&runner, &scripts, &unclaimed, &account, &work, &overseer);
+    let intent = runner.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| {
+            i["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("request-transfer:overseer:1:"))
+        })
+        .cloned()
+        .expect("the recovery's transfer intent");
+    // The sleeper ends before any assertion, so a red row leaves none.
+    let job = remaining(&intent["observation"], "job")["pid"].as_u64();
+    if let Some(pid) = job {
+        end_sleeper(pid as u32);
+    }
+    let context: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        context["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .and_then(|text| text.lines().next())
+            .unwrap_or_default(),
+        "lane-mail-check: model-unavailable=recovery-unconfirmed",
+        "the persisted refusal, handed to the session: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    assert!(
+        job.is_some(),
+        "the launcher read the sleeper's pid: {intent}"
+    );
+    assert_eq!(launches(&log), 1, "{intent}");
+    assert_eq!(
+        runner.fleet()["overseer"]["session_id"],
+        overseer["session_id"],
+        "the controller stands"
+    );
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
+}
+
 /// The real `marks` verb through the real installed hook: at a launched
 /// controller's turn end the hook asks the runtime's judge on the reading
 /// it took off the session's transcript and acts on the reply's key. A

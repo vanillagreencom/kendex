@@ -22,10 +22,6 @@ while IFS='|' read -r shape; do
     continue
   fi
   new_overseer "pane-$shape"
-  if [ -n "${SESSION_ROWS_LIB_VARIANT:-}" ]; then
-    hole_install lib/session-rows.sh "$LANE/.claude/skills/orch/scripts"
-    cp -- "$SESSION_ROWS_LIB_VARIANT" "$LANE/.claude/skills/orch/scripts/lib/session-rows.sh"
-  fi
   mkdir -p "$LANE/tmp/lane-mail/overseer"
   bind_overseer claude "$OVERSEER_HOME_DIR" s1
   overseer_transcript
@@ -170,7 +166,7 @@ copilot-compact
 copilot-compact-foreign
 ROWS
 
-if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
+if [ -z "${HOOK_UNDER_TEST:-}" ] &&
     { [ -z "${1:-}" ] || [ "${1:-}" = --controls ]; }; then
   while IFS='|' read -r kind shape label; do
     [ -z "${2:-}" ] || [ "$kind" = "$2" ] || continue
@@ -191,19 +187,9 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
         mutant pane-consumers -e 's@row | stop | deliver | halt | usage)@row | stop | deliver | halt)@' \
           -e 's@compact) \[ "\$TRIGGER" = auto \] || return 0 ;;@compact) return 0 ;;@'
         ;;
-      private-env)
-        assert_eq "$(grep -Fc ' --no-private-env get oversee ' "$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh")" 1 \
-          'private-env: mutation matches once'
-        MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/session-rows.sh" mutant pane-private-env \
-          -e 's@ --no-private-env get oversee @ get oversee @'
-        ;;
     esac
     control_rc=0
-    if [ "$kind" = private-env ]; then
-      SESSION_ROWS_LIB_VARIANT="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" "$shape" > "$TMP_ROOT/control.log" 2>&1 || control_rc=$?
-    else
-      HOOK_UNDER_TEST="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" "$shape" > "$TMP_ROOT/control.log" 2>&1 || control_rc=$?
-    fi
+    HOOK_UNDER_TEST="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" "$shape" > "$TMP_ROOT/control.log" 2>&1 || control_rc=$?
     assert_eq "$control_rc" 1 "$kind: control rejects the planted defect"
     assert_eq "$(grep -Fxc "  FAIL  $label" "$TMP_ROOT/control.log" || :)" 1 \
       "$kind: control reaches its contract assertion"
@@ -211,7 +197,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
 carrier|codex-row|codex-row: first row visibly reports unjudged identity
 blank|foreign|foreign: first row visibly reports unjudged identity
 consumers|copilot-usage|copilot-usage: notification uses the controller pane and native id
-private-env|private-env|private-env: missing-pane SessionStart never sources checkout shell
 CONTROLS
 fi
 

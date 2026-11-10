@@ -296,7 +296,7 @@ if model_case runtime-record; then
   echo '=== a runtime record carries its permission words into the recovery request ==='
   # The record the runtime's launch-lane writes for a Claude lane launched
   # with `--permission-mode dontAsk` (skills/orch/tests/fixtures/launch-lane/
-  # claude-dontask.json, held to the producer by tests/rust/open_terminal.rs),
+  # claude-dontask.json, held to the producer by tests/rust/lane.rs),
   # bound to this world: its item and root, the live predecessor's identity
   # on the world's pane and server, the session and the account the world
   # names.
