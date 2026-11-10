@@ -302,7 +302,7 @@ fn captured_empty_is_proven_unrooted_and_a_missing_row_is_unknown() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn ancestry_stabilizes_and_survives_unreadable_conflict_and_unrelated_add_holds() {
+fn ancestry_stabilizes_survives_unreadable_and_add_holds_and_follows_a_read_conflict() {
     let f = world(&SET_STAYS);
     let original = lock_of(&f).entries["skill:guards:codex"].clone();
     let lock_path = lock_path(&f.env, &f.scope);
@@ -351,9 +351,19 @@ fn ancestry_stabilizes_and_survives_unreadable_conflict_and_unrelated_add_holds(
     )
     .unwrap();
     apply_now(&f);
+    // The conflict holds the reasons, but this pass read guards' source,
+    // so the rows already read S.
     let held = lock_of(&f).entries["skill:guards:codex"].clone();
     assert_eq!(held.reasons, original.reasons);
-    assert_eq!(held.requirer_provenance, original.requirer_provenance);
+    let reads_s = |rows: &[kendex_core::lock::RequirerProvenance]| {
+        rows.iter()
+            .any(|row| row.installation.name == "S" && row.installation.kind == ItemKind::Skill)
+            && !rows
+                .iter()
+                .flat_map(|row| &row.reasons)
+                .any(|reason| matches!(reason, Reason::MemberOf { .. }))
+    };
+    assert!(reads_s(&held.requirer_provenance.unwrap()));
 
     fs::write(
         f.project.join(".agents/skills/guards/SKILL.md"),
@@ -365,17 +375,7 @@ fn ancestry_stabilizes_and_survives_unreadable_conflict_and_unrelated_add_holds(
         .requirer_provenance
         .clone()
         .unwrap();
-    assert!(
-        replaced
-            .iter()
-            .any(|row| row.installation.name == "S" && row.installation.kind == ItemKind::Skill)
-    );
-    assert!(
-        !replaced
-            .iter()
-            .flat_map(|row| &row.reasons)
-            .any(|reason| matches!(reason, Reason::MemberOf { .. }))
-    );
+    assert!(reads_s(&replaced));
 }
 
 #[test]
@@ -955,8 +955,9 @@ fn a_retained_set_record_never_overrides_a_member_read_from_the_set_source() {
 
 /// A set carried mid, which requires leaf. The person swaps the set for S,
 /// which requires mid, and edits the installed copy of `edited` so the
-/// apply holds it as it was. One of mid and leaf keeps the old reading,
-/// the other the new.
+/// apply holds it as it was. A held mid keeps its old reasons beside
+/// leaf's new row for it; a held leaf's row for mid is read again, since
+/// the apply read leaf's source.
 #[allow(clippy::unwrap_used)]
 fn held_reading(edited: &str) -> Fixture {
     let f = hook_fixture("[bundles.crew]\nsource = \"cat\"\n");
@@ -1004,9 +1005,10 @@ fn s_reason(reasons: &BTreeSet<Reason>) -> bool {
         .any(|reason| matches!(reason, Reason::RequiredBy { by } if by.name == "S"))
 }
 
-/// Whichever entry the edit holds, its older reading never vetoes the
-/// newer one: an offline removal of leaf, or of the held mid itself,
-/// stays removed after the catalog returns.
+/// The held mid's older reading never vetoes leaf's newer row for it: an
+/// offline removal of leaf, or of the held mid itself, stays removed after
+/// the catalog returns. A held leaf has no older reading left, and its
+/// removal stays removed too.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_reading_never_vetoes_a_newer_one_offline() {
@@ -1021,14 +1023,14 @@ fn a_held_reading_never_vetoes_a_newer_one_offline() {
             .flatten()
             .find(|row| row.installation.name == "mid")
             .unwrap();
-        // The edit held one reading and the other was read again.
+        // A held mid keeps the old reading; a held leaf's row was read
+        // again with mid.
         if edited == "mid" {
             assert!(crew_reason(&mid.reasons) && !s_reason(&mid.reasons));
-            assert!(s_reason(&leaf_row.reasons));
         } else {
             assert!(s_reason(&mid.reasons) && !crew_reason(&mid.reasons));
-            assert!(crew_reason(&leaf_row.reasons) && !s_reason(&leaf_row.reasons));
         }
+        assert!(s_reason(&leaf_row.reasons) && !crew_reason(&leaf_row.reasons));
         let hidden = f.source.with_file_name("catalog-offline");
         fs::rename(&f.source, &hidden).unwrap();
         let kept = removed(&f, &[removing], Some(ItemKind::Skill));
@@ -1044,11 +1046,9 @@ fn a_held_reading_never_vetoes_a_newer_one_offline() {
 }
 
 /// judge, carried by crew and withheld on Codex, requires guards, which
-/// requires leaf. The record is from before the field, and a local edit
-/// holds guards through the readable apply that reads leaf again, so only
-/// leaf's snapshot holds a row for judge.
+/// requires leaf. The record is from before the field.
 #[allow(clippy::unwrap_used)]
-fn held_record_from_before_the_field() -> Fixture {
+fn record_from_before_the_field() -> Fixture {
     let f = hook_fixture(SET);
     skill(&f.source, "guards", "dependencies:\n  required: [leaf]\n");
     skill(&f.source, "leaf", "");
@@ -1065,20 +1065,43 @@ fn held_record_from_before_the_field() -> Fixture {
         entry.requirer_provenance = None;
     }
     kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+    f
+}
+
+/// That record, with a local edit holding guards through a readable apply.
+/// The apply read guards' source, so guards' snapshot is recorded beside
+/// leaf's.
+fn held_record_from_before_the_field() -> Fixture {
+    let f = record_from_before_the_field();
     edit_installed(&f, "guards");
     apply_now(&f);
     f
 }
 
-/// A held entry whose snapshot holds no row for an ancestor gives no
-/// evidence of it beside a reading that holds one. Removing the sole
-/// carrier with the item decides in either catalog mode, and nothing roots
-/// leaf.
+/// An add of x, which requires leaf, keeps guards as the record from
+/// before the field holds it, with no row for judge, and records leaf's
+/// snapshot, which holds one. The held reading without the row gives no
+/// evidence of judge beside the one that holds it. Removing the sole
+/// carrier with the item and x decides in either catalog mode, and nothing
+/// roots leaf.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_held_reading_without_a_row_never_vetoes_one_with_a_row() {
     for offline in [false, true] {
-        let f = held_record_from_before_the_field();
+        let f = record_from_before_the_field();
+        skill(&f.source, "x", "dependencies:\n  required: [leaf]\n");
+        let report = ops::add(
+            &f.env,
+            &f.scope,
+            &ops::AddRequest {
+                source: Some("cat".into()),
+                skills: vec!["x".into()],
+                harnesses: Some(vec![HarnessId::Codex]),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
         let lock = lock_of(&f);
         assert_eq!(lock.entries["skill:guards:codex"].requirer_provenance, None);
         assert!(
@@ -1092,7 +1115,7 @@ fn a_held_reading_without_a_row_never_vetoes_one_with_a_row() {
         if offline {
             fs::rename(&f.source, &hidden).unwrap();
         }
-        let names = ["crew".to_owned(), "leaf".to_owned()];
+        let names = ["crew".to_owned(), "leaf".to_owned(), "x".to_owned()];
         let report = ops::remove(&f.env, &f.scope, &names, None, false);
         assert!(report.is_ok(), "offline={offline}: {:?}", report.err());
         apply::execute(&f.env, &report.unwrap().plan).unwrap();
