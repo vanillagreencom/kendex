@@ -660,13 +660,17 @@ impl Withholding {
 }
 
 impl DesiredState {
-    /// Only ancestors of these edges belong in the dependent's snapshot.
-    /// An unread ancestor leaves a missing row, never an invented empty one.
+    /// The snapshot of these edges, as this pass read them: the value of
+    /// [`crate::lock::LockEntry::requirer_provenance`], assigned whole and
+    /// never merged. Only ancestors of these edges belong in it, one row
+    /// each. An ancestor this pass did not read keeps the previous row,
+    /// and with none it stays missing, never an invented empty row. No
+    /// rows is `None`: a reader looks rows up one by one.
     pub(super) fn ancestry(
         &self,
         reasons: &BTreeSet<crate::lock::Reason>,
         previous: Option<&crate::lock::LockEntry>,
-    ) -> Vec<crate::lock::RequirerProvenance> {
+    ) -> Option<Vec<crate::lock::RequirerProvenance>> {
         let mut pending = reasons.iter().cloned().collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         let mut rows = BTreeMap::new();
@@ -685,7 +689,7 @@ impl DesiredState {
                 rows.insert(by, row.clone());
             }
         }
-        rows.into_values().collect()
+        (!rows.is_empty()).then(|| rows.into_values().collect())
     }
 
     pub(super) fn refuse_catalog(&mut self) -> Result<()> {
@@ -839,6 +843,8 @@ pub(crate) use places::{IN_PLACE_DISABLED, effective_method, in_place_source, sk
 pub(crate) use places::{harnesses_for, names_the_default, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
+#[cfg(test)]
+mod tests;
 
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,

@@ -72,15 +72,10 @@ pub(super) fn plan_items(
                     .cloned()
                     .collect::<BTreeSet<_>>();
                 if !added.is_empty() {
-                    // A record holding no rows may predate the field: its
-                    // old edges are read with the new one, as a full pass
-                    // reads them, or verify would find only the new edge's.
-                    let edges = match entry.requirer_provenance {
-                        Some(_) => added.clone(),
-                        None => entry.reasons.union(&added).cloned().collect(),
-                    };
-                    let rows = state.ancestry(&edges, Some(entry));
-                    entry.record_ancestry(rows);
+                    // The snapshot of every edge the entry now records, as a
+                    // full pass would write it.
+                    let edges = entry.reasons.union(&added).cloned().collect();
+                    entry.requirer_provenance = state.ancestry(&edges, Some(entry));
                 }
                 entry.reasons.extend(added);
             }

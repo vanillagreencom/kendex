@@ -901,3 +901,121 @@ fn a_retained_set_record_never_overrides_a_member_read_from_the_set_source() {
     apply_now(&f);
     assert!(!lock_of(&f).entries.contains_key("skill:fresh:claude"));
 }
+
+/// A set carried mid, which requires leaf. The person swaps the set for S,
+/// which requires mid, and edits the installed copy of `edited` so the
+/// apply holds it as it was. One of mid and leaf keeps the old reading,
+/// the other the new.
+#[allow(clippy::unwrap_used)]
+fn held_reading(edited: &str) -> Fixture {
+    let f = hook_fixture("[bundles.crew]\nsource = \"cat\"\n");
+    skill(&f.source, "mid", "dependencies:\n  required: [leaf]\n");
+    skill(&f.source, "leaf", "");
+    skill(&f.source, "S", "dependencies:\n  required: [mid]\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"mid\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    edit_manifest(&f, |manifest| {
+        manifest.bundles.clear();
+        manifest
+            .skills
+            .insert("S".into(), manifest::ItemDecl::from_source("cat"));
+    });
+    for root in [".claude/skills", ".agents/skills"] {
+        let installed = f.project.join(root).join(edited).join("SKILL.md");
+        if installed.exists() {
+            fs::write(&installed, "a local edit\n").unwrap();
+        }
+    }
+    apply_now(&f);
+    f
+}
+
+fn crew_reason(reasons: &BTreeSet<Reason>) -> bool {
+    reasons
+        .iter()
+        .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.name == "crew"))
+}
+
+fn s_reason(reasons: &BTreeSet<Reason>) -> bool {
+    reasons
+        .iter()
+        .any(|reason| matches!(reason, Reason::RequiredBy { by } if by.name == "S"))
+}
+
+/// Whichever entry the edit holds, its older reading never vetoes the
+/// newer one: an offline removal of leaf, or of the held mid itself,
+/// stays removed after the catalog returns.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_held_reading_never_vetoes_a_newer_one_offline() {
+    let mut lost = Vec::new();
+    for (edited, removing) in [("mid", "leaf"), ("mid", "mid"), ("leaf", "leaf")] {
+        let f = held_reading(edited);
+        let lock = lock_of(&f);
+        let mid = &lock.entries["skill:mid:claude"];
+        let leaf_row = lock.entries["skill:leaf:claude"]
+            .requirer_provenance
+            .iter()
+            .flatten()
+            .find(|row| row.installation.name == "mid")
+            .unwrap();
+        // The edit held one reading and the other was read again.
+        if edited == "mid" {
+            assert!(crew_reason(&mid.reasons) && !s_reason(&mid.reasons));
+            assert!(s_reason(&leaf_row.reasons));
+        } else {
+            assert!(s_reason(&mid.reasons) && !crew_reason(&mid.reasons));
+            assert!(crew_reason(&leaf_row.reasons) && !s_reason(&leaf_row.reasons));
+        }
+        let hidden = f.source.with_file_name("catalog-offline");
+        fs::rename(&f.source, &hidden).unwrap();
+        let kept = removed(&f, &[removing], Some(ItemKind::Skill));
+        fs::rename(&hidden, &f.source).unwrap();
+        apply_now(&f);
+        if kept != BTreeSet::from([(ItemKind::Skill, removing.to_owned())])
+            || !manifest_of(&f).is_suppressed(ItemKind::Skill, removing)
+        {
+            lost.push((edited, removing));
+        }
+    }
+    assert_eq!(lost, Vec::<(&str, &str)>::new());
+}
+
+/// An add of a set over a declaration it carries gives the dependency's
+/// snapshot the same rows a full pass records.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_of_a_set_over_a_declaration_leaves_what_verify_records() {
+    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"dev\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            bundles: vec!["crew".into()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    let verified = kendex_core::attest::record(
+        &f.env,
+        &f.scope,
+        &lock_of(&f),
+        &audit(&f.env, &f.scope).unwrap(),
+        &kendex_core::attest::Floor::Open,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(verified.problems, Vec::<String>::new());
+}

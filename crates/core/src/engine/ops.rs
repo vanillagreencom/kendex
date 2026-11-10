@@ -374,9 +374,11 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// One walk answers it over two sets of facts: the record, which costs no
 /// catalog, and the catalogs read now over the edited manifest, which see a
 /// carrier or an edge added since the last install and survive a deleted
-/// record. A rooted path in either keeps the removal. Otherwise an ancestor
-/// the record holds no reasons for refuses, because the catalog cannot
-/// prove it gone and guessing could make the removal return.
+/// record. A rooted path in any reading keeps the removal: an older reading
+/// can cost a suppression the next add clears, but never drops one.
+/// Otherwise an ancestor the record holds no reasons for refuses, because
+/// the catalog cannot prove it gone and guessing could make the removal
+/// return.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -475,28 +477,28 @@ impl Reach {
 
 /// Where the walk reads an installation's reasons on one tool.
 enum Facts<'a> {
-    /// Installed entries, and the dependent's own captured snapshot for an
-    /// ancestor with no entry. Snapshots of different dependents are never
-    /// unioned: each was read with its own edges.
+    /// Every recorded reading of an installation: its own entry, which
+    /// continues in that entry's snapshot, and the evidence context's
+    /// captured row, which continues in that context. Nothing in the lock
+    /// says which of two readings is newer, so each is walked on its own
+    /// and a root in any of them counts; none vetoes another, and
+    /// snapshots are never merged.
     Recorded,
     /// What the catalogs derive now ([`read_ancestry`]). An installation
     /// they do not derive has no carrier.
     Read(&'a BTreeMap<InstallRef, RequirerProvenance>),
 }
 
-/// What the facts hold for one installation.
-enum Lookup<'f> {
-    Found {
-        repo: &'f str,
-        reasons: &'f BTreeSet<Reason>,
-    },
-    /// No carrier derives it now.
-    Absent,
-    /// The record holds no reasons for it. The catalog identity it would
-    /// be read under, where the record names one, still proves a
-    /// declaration.
-    Unknown(Option<&'f str>),
+/// One reading of an installation, and the entry whose snapshot the walk
+/// continues in from it.
+struct Reading<'f> {
+    context: Option<&'f LockEntry>,
+    repo: &'f str,
+    reasons: &'f BTreeSet<Reason>,
 }
+
+/// A walk step already taken: an ancestor, in the snapshot it was read in.
+type Visited = BTreeSet<(Option<InstallRef>, InstallRef)>;
 
 /// The single decision of whether a surviving declaration or set still
 /// roots an installation once the selected items leave.
@@ -527,6 +529,14 @@ impl RemovalRoots<'_> {
         crate::source::declared_provenance(self.manifest, source).as_deref() == Some(repo)
     }
 
+    /// The entry recorded for exactly this installation, source included.
+    fn entry(&self, by: &InstallRef) -> Option<&LockEntry> {
+        self.lock
+            .entries
+            .get(&crate::lock::entry_key(by.kind, &by.name, by.harness))
+            .filter(|entry| entry.source == by.source)
+    }
+
     fn decide(&self, decisions: &mut BTreeMap<(ItemKind, String), Reach>) {
         let mut merge = |node: &InstallRef, reach: Reach| {
             let key = (node.kind, node.name.clone());
@@ -536,63 +546,59 @@ impl RemovalRoots<'_> {
             };
             decisions.insert(key, reach);
         };
-        match self.facts {
-            Facts::Read(read) => {
-                for row in read.values().filter(|row| self.selected(&row.installation)) {
+        if let Facts::Read(read) = self.facts {
+            for row in read.values().filter(|row| self.selected(&row.installation)) {
+                merge(
+                    &row.installation,
+                    self.start(None, &row.installation, &row.source_repo, &row.reasons),
+                );
+            }
+            return;
+        }
+        // A selected node's readings are its own entry and every
+        // dependent's captured row for it, each walked in its own context.
+        for dependent in self.lock.entries.values() {
+            let node = install_ref(dependent);
+            if self.selected(&node) {
+                merge(
+                    &node,
+                    self.start(
+                        Some(dependent),
+                        &node,
+                        &dependent.source_repo,
+                        &dependent.reasons,
+                    ),
+                );
+            }
+            for row in dependent.requirer_provenance.iter().flatten() {
+                if self.selected(&row.installation) {
                     merge(
                         &row.installation,
-                        self.start(None, &row.installation, &row.source_repo, &row.reasons),
+                        self.start(
+                            Some(dependent),
+                            &row.installation,
+                            &row.source_repo,
+                            &row.reasons,
+                        ),
                     );
                 }
             }
-            Facts::Recorded => {
-                for dependent in self.lock.entries.values() {
-                    let node = InstallRef {
-                        source: dependent.source.clone(),
-                        kind: dependent.kind,
-                        name: dependent.name.clone(),
-                        harness: dependent.harness,
-                    };
-                    if self.selected(&node) {
-                        merge(
-                            &node,
-                            self.start(
-                                Some(dependent),
-                                &node,
-                                &dependent.source_repo,
-                                &dependent.reasons,
-                            ),
-                        );
-                    }
-                    // A selected requirer withheld on the edge's tool has no
-                    // entry there. The dependent's snapshot records what
-                    // carries it; without that row the answer is unknown.
-                    let edges = dependent.reasons.iter().chain(
-                        dependent
-                            .requirer_provenance
-                            .iter()
-                            .flatten()
-                            .flat_map(|row| &row.reasons),
-                    );
-                    for reason in edges {
-                        let Reason::RequiredBy { by } = reason else {
-                            continue;
-                        };
-                        if !self.selected(by)
-                            || self.lock.entries.contains_key(&crate::lock::entry_key(
-                                by.kind, &by.name, by.harness,
-                            ))
-                        {
-                            continue;
-                        }
-                        let reach = match captured(dependent, by) {
-                            Some(row) => {
-                                self.start(Some(dependent), by, &row.source_repo, &row.reasons)
-                            }
-                            None => Reach::Missing(Unread::Ancestor(by.clone())),
-                        };
-                        merge(by, reach);
-                    }
+            // An edge to a selected node this snapshot holds no row for,
+            // with no entry of its own either, leaves its carrier unknown.
+            let edges = dependent.reasons.iter().chain(
+                dependent
+                    .requirer_provenance
+                    .iter()
+                    .flatten()
+                    .flat_map(|row| &row.reasons),
+            );
+            for reason in edges {
+                if let Reason::RequiredBy { by } = reason
+                    && self.selected(by)
+                    && captured(dependent, by).is_none()
+                    && self.entry(by).is_none()
+                {
+                    merge(by, Reach::Missing(Unread::Ancestor(by.clone())));
                 }
             }
         }
@@ -600,28 +606,28 @@ impl RemovalRoots<'_> {
 
     fn start(
         &self,
-        dependent: Option<&LockEntry>,
+        context: Option<&LockEntry>,
         node: &InstallRef,
         repo: &str,
         reasons: &BTreeSet<Reason>,
     ) -> Reach {
-        self.reasons(dependent, node, repo, reasons, &mut BTreeSet::new())
+        self.reasons(context, node, repo, reasons, &mut Visited::new())
     }
 
     fn reasons(
         &self,
-        dependent: Option<&LockEntry>,
+        context: Option<&LockEntry>,
         node: &InstallRef,
         repo: &str,
         reasons: &BTreeSet<Reason>,
-        visited: &mut BTreeSet<InstallRef>,
+        visited: &mut Visited,
     ) -> Reach {
         let mut found = Reach::Unrooted;
         for reason in reasons {
             let next = match reason {
                 Reason::Requested => Reach::Unrooted,
                 Reason::MemberOf { bundle } => self.member(node, repo, bundle),
-                Reason::RequiredBy { by } => self.installation(dependent, by, visited),
+                Reason::RequiredBy { by } => self.installation(context, by, visited),
             };
             found = found.or(next);
             if matches!(found, Reach::Rooted) {
@@ -632,7 +638,10 @@ impl RemovalRoots<'_> {
     }
 
     /// A set roots its member only while the manifest still installs it on
-    /// the member's tool from the catalog it was read from.
+    /// the member's tool from the catalog it was read from. Two readings
+    /// bind the set's catalog to this edge: the member's own, when it was
+    /// read from the set's source, and the set's record. Either one that
+    /// matches roots it; with neither, the set's reading is unknown.
     fn member(&self, node: &InstallRef, repo: &str, bundle: &crate::lock::BundleRef) -> Reach {
         let installs = self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
             decl.source == bundle.source
@@ -642,93 +651,109 @@ impl RemovalRoots<'_> {
         if !installs {
             return Reach::Unrooted;
         }
-        // The reading bound to this edge decides it. A member read from
-        // the set's own source was read with the set, so its reading is the
-        // edge's; a set record can be older, kept by an add that held
-        // another member. A member declared from another catalog carries
-        // no reading of the set, and only the set's record speaks for it.
-        let read_under = match self.facts {
-            Facts::Read(_) => crate::source::declared_provenance(self.manifest, &bundle.source),
-            Facts::Recorded if node.source == bundle.source => Some(repo.to_owned()),
-            Facts::Recorded => self
-                .lock
-                .bundles
-                .get(&bundle.name)
-                .filter(|set| set.source == bundle.source)
-                .map(|set| set.source_repo.clone()),
+        let readings = match self.facts {
+            Facts::Read(_) => crate::source::declared_provenance(self.manifest, &bundle.source)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            Facts::Recorded => (node.source == bundle.source)
+                .then(|| repo.to_owned())
+                .into_iter()
+                .chain(
+                    self.lock
+                        .bundles
+                        .get(&bundle.name)
+                        .filter(|set| set.source == bundle.source)
+                        .map(|set| set.source_repo.clone()),
+                )
+                .collect(),
         };
-        match read_under {
-            Some(read_under) if self.same_source(&bundle.source, &read_under) => Reach::Rooted,
-            Some(_) => Reach::Unrooted,
-            None => Reach::Missing(Unread::Set(bundle.clone())),
+        if readings.is_empty() {
+            Reach::Missing(Unread::Set(bundle.clone()))
+        } else if readings
+            .iter()
+            .any(|read_under| self.same_source(&bundle.source, read_under))
+        {
+            Reach::Rooted
+        } else {
+            Reach::Unrooted
         }
     }
 
     fn installation(
         &self,
-        dependent: Option<&LockEntry>,
+        context: Option<&LockEntry>,
         by: &InstallRef,
-        visited: &mut BTreeSet<InstallRef>,
+        visited: &mut Visited,
     ) -> Reach {
-        if self.explicit(by) || !visited.insert(by.clone()) {
+        if self.explicit(by) {
             return Reach::Unrooted;
         }
-        let found = match self.lookup(dependent, by) {
-            Lookup::Found { repo, .. } | Lookup::Unknown(Some(repo)) if self.declared(by, repo) => {
+        let readings = self.readings(context, by);
+        if readings.is_empty() {
+            return match self.facts {
+                Facts::Read(_) => Reach::Unrooted,
+                // The identity it would be read under still proves a
+                // declaration.
+                Facts::Recorded => {
+                    let repo = context
+                        .filter(|context| context.source == by.source)
+                        .map(|context| context.source_repo.as_str())
+                        .or_else(|| {
+                            self.lock
+                                .sources
+                                .get(&by.source)
+                                .map(|source| source.repo.as_str())
+                        });
+                    if repo.is_some_and(|repo| self.declared(by, repo)) {
+                        Reach::Rooted
+                    } else {
+                        Reach::Missing(Unread::Ancestor(by.clone()))
+                    }
+                }
+            };
+        }
+        let mut found = Reach::Unrooted;
+        for reading in readings {
+            let next = if self.declared(by, reading.repo) {
                 Reach::Rooted
+            } else if visited.insert((reading.context.map(install_ref), by.clone())) {
+                self.reasons(reading.context, by, reading.repo, reading.reasons, visited)
+            } else {
+                Reach::Unrooted
+            };
+            found = found.or(next);
+            if matches!(found, Reach::Rooted) {
+                break;
             }
-            Lookup::Found { repo, reasons } => self.reasons(dependent, by, repo, reasons, visited),
-            Lookup::Absent => Reach::Unrooted,
-            Lookup::Unknown(_) => Reach::Missing(Unread::Ancestor(by.clone())),
-        };
-        visited.remove(by);
+        }
         found
     }
 
-    fn lookup<'f>(&'f self, dependent: Option<&'f LockEntry>, by: &InstallRef) -> Lookup<'f> {
-        let Facts::Read(read) = self.facts else {
-            return self.recorded(dependent, by);
-        };
-        match read.get(by) {
-            Some(row) => Lookup::Found {
+    fn readings<'f>(&'f self, context: Option<&'f LockEntry>, by: &InstallRef) -> Vec<Reading<'f>> {
+        if let Facts::Read(read) = self.facts {
+            return read
+                .get(by)
+                .map(|row| Reading {
+                    context: None,
+                    repo: &row.source_repo,
+                    reasons: &row.reasons,
+                })
+                .into_iter()
+                .collect();
+        }
+        let installed = self.entry(by).map(|entry| Reading {
+            context: Some(entry),
+            repo: &entry.source_repo,
+            reasons: &entry.reasons,
+        });
+        let snapshot = context.and_then(|dependent| {
+            captured(dependent, by).map(|row| Reading {
+                context: Some(dependent),
                 repo: &row.source_repo,
                 reasons: &row.reasons,
-            },
-            None => Lookup::Absent,
-        }
-    }
-
-    fn recorded<'f>(&'f self, dependent: Option<&'f LockEntry>, by: &InstallRef) -> Lookup<'f> {
-        let captured = dependent.and_then(|dependent| captured(dependent, by));
-        let installed = self
-            .lock
-            .entries
-            .get(&crate::lock::entry_key(by.kind, &by.name, by.harness))
-            .filter(|entry| entry.source == by.source)
-            .filter(|entry| captured.is_none_or(|row| row.source_repo == entry.source_repo));
-        if let Some(entry) = installed {
-            return Lookup::Found {
-                repo: &entry.source_repo,
-                reasons: &entry.reasons,
-            };
-        }
-        if let Some(row) = captured {
-            return Lookup::Found {
-                repo: &row.source_repo,
-                reasons: &row.reasons,
-            };
-        }
-        Lookup::Unknown(
-            dependent
-                .filter(|dependent| dependent.source == by.source)
-                .map(|dependent| dependent.source_repo.as_str())
-                .or_else(|| {
-                    self.lock
-                        .sources
-                        .get(&by.source)
-                        .map(|source| source.repo.as_str())
-                }),
-        )
+            })
+        });
+        installed.into_iter().chain(snapshot).collect()
     }
 
     fn declared(&self, by: &InstallRef, repo: &str) -> bool {
@@ -741,6 +766,15 @@ impl RemovalRoots<'_> {
                     && super::desired::target_harnesses(decl, self.manifest, by.kind, self.scope)
                         .contains(&by.harness)
             })
+    }
+}
+
+fn install_ref(entry: &LockEntry) -> InstallRef {
+    InstallRef {
+        source: entry.source.clone(),
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
     }
 }
 

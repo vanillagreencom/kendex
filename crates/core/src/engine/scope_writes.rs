@@ -207,9 +207,7 @@ pub(super) fn record_entry_readings(
                 unreachable!("a successfully planned item has its reading owner's selector basis");
             };
             entry.selector = basis.recorded();
-            let rows = state.ancestry(&entry.reasons, lock.entries.get(key));
-            entry.requirer_provenance = None;
-            entry.record_ancestry(rows);
+            entry.requirer_provenance = state.ancestry(&entry.reasons, lock.entries.get(key));
         }
     }
 }
