@@ -478,12 +478,12 @@ impl Reach {
 
 /// Where the walk reads an installation's reasons on one tool.
 enum Facts<'a> {
-    /// Every recorded reading of an installation: its own entry, which
-    /// continues in that entry's snapshot, and each dependent's captured
-    /// row, which continues in that dependent's. Nothing in the lock says
-    /// which of two readings is newer, so each is walked on its own and a
-    /// root in any of them counts; none vetoes another, and snapshots are
-    /// never merged.
+    /// Every recorded reading of an installation: its own entry and each
+    /// dependent's captured row. Each reading's reasons come from its own
+    /// snapshot, and every step reads every recorded reading of the next
+    /// ancestor, wherever the walk arrived from. Nothing in the lock says
+    /// which of two readings is newer, so each is walked once and a root in
+    /// any of them counts; none vetoes another.
     Recorded(&'a Captured<'a>),
     /// What the catalogs derive now ([`read_ancestry`]). An installation
     /// they do not derive has no carrier.
@@ -505,17 +505,50 @@ fn captured_rows(lock: &Lock) -> Captured<'_> {
     rows
 }
 
-/// One reading of an installation, and the entry whose snapshot the walk
-/// continues in from it.
+/// One reading of an installation, and who recorded it.
 struct Reading<'f> {
-    context: Option<&'f LockEntry>,
+    recorder: Recorder<'f>,
     repo: &'f str,
     reasons: &'f BTreeSet<Reason>,
 }
 
+/// Who recorded a reading. An entry's own reading and a row its own
+/// snapshot captures for it, in a cycle, are two readings with the same
+/// entry behind them, and either can root it.
+#[derive(Clone, Copy)]
+enum Recorder<'f> {
+    /// The catalogs read now.
+    Read,
+    /// The installation's own entry.
+    Entry(&'f LockEntry),
+    /// A dependent's snapshot.
+    Row(&'f LockEntry),
+}
+
+impl<'f> Recorder<'f> {
+    /// The snapshot an ancestor no reading holds falls back to for the
+    /// identity it would be read under.
+    fn context(self) -> Option<&'f LockEntry> {
+        match self {
+            Self::Read => None,
+            Self::Entry(entry) | Self::Row(entry) => Some(entry),
+        }
+    }
+
+    /// With the installation read, names exactly one reading: an
+    /// installation has one entry and a snapshot one row per ancestor.
+    fn visit(self) -> Visit {
+        match self {
+            Self::Read => Visit::Read,
+            Self::Entry(_) => Visit::Entry,
+            Self::Row(dependent) => Visit::Row(install_ref(dependent)),
+        }
+    }
+}
+
 /// What the facts hold for an installation.
 enum Readings<'f> {
-    /// Each walked in its own context. Read now, an installation the
+    /// Each walked once, on its own reasons. Read now, an installation the
     /// catalogs do not derive has none, and so no carrier.
     Of(Vec<Reading<'f>>),
     /// No recorded reading holds a row for it, so only a declaration under
@@ -523,8 +556,17 @@ enum Readings<'f> {
     Unrecorded { identity: Option<&'f str> },
 }
 
-/// A walk step already taken: an ancestor, in the snapshot it was read in.
-type Visited = BTreeSet<(Option<InstallRef>, InstallRef)>;
+/// [`Recorder`], owned, for the visited set.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Visit {
+    Read,
+    Entry,
+    Row(InstallRef),
+}
+
+/// The readings already walked, each by its recorder and the installation
+/// it reads.
+type Visited = BTreeSet<(Visit, InstallRef)>;
 
 /// The single decision of whether a surviving declaration or set still
 /// roots an installation once the selected items leave.
@@ -678,8 +720,9 @@ impl RemovalRoots<'_> {
         self.walk(context, by, visited)
     }
 
-    /// Whether any reading of `by` roots it, each walked once in its own
-    /// context. `context` is the snapshot whose edge led here.
+    /// Whether any reading of `by` roots it, each walked once. `context`
+    /// is the snapshot whose edge led here, which only an unrecorded `by`
+    /// reads.
     fn walk(&self, context: Option<&LockEntry>, by: &InstallRef, visited: &mut Visited) -> Reach {
         let readings = match self.readings(context, by) {
             Readings::Of(readings) => readings,
@@ -695,8 +738,14 @@ impl RemovalRoots<'_> {
         for reading in readings {
             let next = if self.declared(by, reading.repo) {
                 Reach::Rooted
-            } else if visited.insert((reading.context.map(install_ref), by.clone())) {
-                self.reasons(reading.context, by, reading.repo, reading.reasons, visited)
+            } else if visited.insert((reading.recorder.visit(), by.clone())) {
+                self.reasons(
+                    reading.recorder.context(),
+                    by,
+                    reading.repo,
+                    reading.reasons,
+                    visited,
+                )
             } else {
                 Reach::Unrooted
             };
@@ -718,7 +767,7 @@ impl RemovalRoots<'_> {
                 return Readings::Of(
                     read.get(by)
                         .map(|row| Reading {
-                            context: None,
+                            recorder: Recorder::Read,
                             repo: &row.source_repo,
                             reasons: &row.reasons,
                         })
@@ -729,7 +778,7 @@ impl RemovalRoots<'_> {
             Facts::Recorded(captured) => captured,
         };
         let installed = self.entry(by).map(|entry| Reading {
-            context: Some(entry),
+            recorder: Recorder::Entry(entry),
             repo: &entry.source_repo,
             reasons: &entry.reasons,
         });
@@ -738,7 +787,7 @@ impl RemovalRoots<'_> {
             .into_iter()
             .flatten()
             .map(|(dependent, row)| Reading {
-                context: Some(*dependent),
+                recorder: Recorder::Row(dependent),
                 repo: &row.source_repo,
                 reasons: &row.reasons,
             });

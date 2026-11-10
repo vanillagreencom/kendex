@@ -373,8 +373,9 @@ pub struct LockEntry {
     pub reasons: BTreeSet<Reason>,
     /// The ancestors explaining these reasons at the last successful read.
     /// Missing rows mean unknown evidence; an empty reason set proves that
-    /// ancestor has no carrier. Kept entries retain this with their reasons.
-    /// `None` where no row is recorded: a reader looks rows up one by one,
+    /// ancestor has no carrier. An entry held as it was keeps its reasons,
+    /// but retains this only while its source goes unread: the rows
+    /// describe the graph, not the held bytes. `None` where no row is recorded: a reader looks rows up one by one,
     /// so an empty list would tell it nothing more. Each pass assigns the
     /// value `DesiredState::ancestry` builds: one row per ancestor, this
     /// pass's reading where it read one, else the previous row, and a row

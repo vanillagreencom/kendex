@@ -450,10 +450,10 @@ fn add_carrier(existing_carrier: bool) {
     );
 }
 
-/// An add that gives github a second requirer leaves the snapshot a full
-/// pass records: a skill x beside dev, on a current record or on one from
-/// before the field as a project that just upgraded holds it, or a set
-/// over the dev declaration.
+/// An add that reaches an installed dependency's requirer leaves the
+/// snapshot a full pass records: a second requirer x beside dev, on a
+/// current record or on one from before the field as a project that just
+/// upgraded holds it, or a set over the dev declaration.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_add_over_an_installed_dependency_leaves_what_verify_records() {
@@ -1101,4 +1101,199 @@ fn a_held_reading_without_a_row_never_vetoes_one_with_a_row() {
             fs::rename(&hidden, &f.source).unwrap();
         }
     }
+}
+
+/// The catalog moves the guards edge from judge to judge2; crew still
+/// carries judge.
+const MOVED_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: PreToolUse\n# description: needs a narrow hook\n# requires: [narrow]\n# ---\nexit 0\n";
+const JUDGE2: &str = "#!/usr/bin/env bash\n# ---\n# name: judge2\n# event: PreToolUse\n# description: needs a narrow hook and guards\n# requires: [narrow]\n# requires-skills: [guards]\n# ---\nexit 0\n";
+
+/// Offers judge through crew2 as well and swaps the crew declaration for
+/// it, then edits the installed copies of guards and leaf so the readable
+/// apply that reads crew2 holds both. Only that apply ever read crew2.
+#[allow(clippy::unwrap_used)]
+fn carrier_swapped_behind_held_entries(f: &Fixture) {
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n[bundles.crew2]\ndescription = \"crew2\"\nhooks = [\"judge\"]\n",
+    )
+    .unwrap();
+    edit_manifest(f, |manifest| {
+        let crew = manifest.bundles.remove("crew").unwrap();
+        manifest.bundles.insert("crew2".into(), crew);
+    });
+    edit_installed(f, "guards");
+    edit_installed(f, "leaf");
+    apply_now(f);
+}
+
+/// The held entries are every reading of the withheld judge, from a
+/// record written before the field or after it. A readable apply records
+/// what it read of them, so an offline removal of guards or of leaf stays
+/// removed after the catalog returns, as crew2 still carries judge.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_readable_apply_records_what_it_read_for_held_entries() {
+    let mut lost = Vec::new();
+    for pre_field in [true, false] {
+        for removing in ["guards", "leaf"] {
+            let f = if pre_field {
+                held_record_from_before_the_field()
+            } else {
+                let f = hook_fixture(SET);
+                skill(&f.source, "guards", "dependencies:\n  required: [leaf]\n");
+                skill(&f.source, "leaf", "");
+                fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+                fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+                fs::write(
+                    f.source.join("kendex.toml"),
+                    "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n",
+                )
+                .unwrap();
+                apply_now(&f);
+                f
+            };
+            carrier_swapped_behind_held_entries(&f);
+            let hidden = f.source.with_file_name("catalog-offline");
+            fs::rename(&f.source, &hidden).unwrap();
+            let kept = removed(&f, &[removing], Some(ItemKind::Skill));
+            fs::rename(&hidden, &f.source).unwrap();
+            apply_now(&f);
+            if kept != BTreeSet::from([(ItemKind::Skill, removing.to_owned())])
+                || lock_of(&f)
+                    .entries
+                    .contains_key(&format!("skill:{removing}:codex"))
+            {
+                lost.push((pre_field, removing));
+            }
+        }
+    }
+    assert_eq!(lost, Vec::<(bool, &str)>::new());
+}
+
+/// guards, held by a local edit, is the only entry whose snapshot can hold
+/// a row for the withheld judge, and its record is from before the field.
+/// The refusal's remedy, one readable apply, records that row even though
+/// the edit still holds guards, so the retry decides in either catalog
+/// mode. `moved` has the catalog give the guards edge to judge2 first.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_readable_apply_clears_a_held_sole_recorder_from_before_the_field() {
+    for moved in [false, true] {
+        for offline in [false, true] {
+            let f = hook_fixture(SET);
+            skill(&f.source, "guards", "");
+            fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+            fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+            fs::write(
+                f.source.join("kendex.toml"),
+                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\"]\n",
+            )
+            .unwrap();
+            apply_now(&f);
+            let mut lock = lock_of(&f);
+            for entry in lock.entries.values_mut() {
+                entry.requirer_provenance = None;
+            }
+            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+            edit_installed(&f, "guards");
+            if moved {
+                fs::write(f.source.join("hooks/judge.sh"), MOVED_JUDGE).unwrap();
+                fs::write(f.source.join("hooks/judge2.sh"), JUDGE2).unwrap();
+                fs::write(
+                    f.source.join("kendex.toml"),
+                    "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nhooks = [\"judge\", \"judge2\"]\n",
+                )
+                .unwrap();
+            }
+            let names = ["crew".to_owned(), "guards".to_owned()];
+            let hidden = f.source.with_file_name("catalog-offline");
+            let attempt = |f: &Fixture| {
+                if offline {
+                    fs::rename(&f.source, &hidden).unwrap();
+                }
+                let result = ops::remove(&f.env, &f.scope, &names, None, false);
+                if offline {
+                    fs::rename(&hidden, &f.source).unwrap();
+                }
+                result
+            };
+            assert!(
+                matches!(
+                    attempt(&f),
+                    Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex })
+                        if catalog == "cat" && name == "judge"
+                ),
+                "moved={moved} offline={offline}"
+            );
+            apply_now(&f);
+            let report = attempt(&f);
+            assert!(
+                report.is_ok(),
+                "moved={moved} offline={offline}: {:?}",
+                report.err()
+            );
+            apply::execute(&f.env, &report.unwrap().plan).unwrap();
+            assert!(
+                manifest_of(&f).suppressed.is_empty(),
+                "moved={moved} offline={offline}"
+            );
+        }
+    }
+}
+
+/// guards and the withheld judge require each other, and crew carries
+/// guards. The person swaps crew for spare, then adds x, which requires
+/// guards, before any apply: the add keeps guards' entry with the crew
+/// reason, and its own snapshot reads guards through spare. An offline
+/// removal of x and guards stays removed after the catalog returns.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_cycle_row_in_the_entrys_own_snapshot_is_its_own_reading() {
+    let f = hook_fixture(SET);
+    skill(&f.source, "guards", "dependencies:\n  hooks: [judge]\n");
+    skill(&f.source, "x", "dependencies:\n  required: [guards]\n");
+    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"guards\"]\n[bundles.spare]\ndescription = \"spare\"\nskills = [\"guards\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    edit_manifest(&f, |manifest| {
+        let crew = manifest.bundles.remove("crew").unwrap();
+        manifest.bundles.insert("spare".into(), crew);
+    });
+    let report = ops::add(
+        &f.env,
+        &f.scope,
+        &ops::AddRequest {
+            source: Some("cat".into()),
+            skills: vec!["x".into()],
+            harnesses: Some(vec![HarnessId::Codex]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    // The entry keeps crew; its snapshot's row for itself reads spare.
+    let guards = lock_of(&f).entries["skill:guards:codex"].clone();
+    assert!(crew_reason(&guards.reasons));
+    assert!(guards.requirer_provenance.iter().flatten().any(|row| {
+        row.installation.name == "guards"
+            && row.reasons.iter().any(
+                |reason| matches!(reason, Reason::MemberOf { bundle } if bundle.name == "spare"),
+            )
+    }));
+    let hidden = f.source.with_file_name("catalog-offline");
+    fs::rename(&f.source, &hidden).unwrap();
+    let kept = removed(&f, &["x", "guards"], None);
+    fs::rename(&hidden, &f.source).unwrap();
+    apply_now(&f);
+    assert_eq!(
+        kept,
+        BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
+    );
+    assert!(!lock_of(&f).entries.contains_key("skill:guards:codex"));
 }
