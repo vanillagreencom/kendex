@@ -370,6 +370,7 @@ def status(roots: List[Path], now: float) -> int:
         if record is None:
             print(keyed("slack-relay", f"{root} state=never fix=start the relay with `slack listen --root {root}`"))
             continue
+        inbound = record.get("inbound", "socket")
         age = now - float(record["last_poll"])
         fresh = age <= 2 * int(record["poll_seconds"]) + 5
         # A record the pre-Socket-Mode relay wrote has no connection fields:
@@ -395,14 +396,15 @@ def status(roots: List[Path], now: float) -> int:
             since = connection_since
         else:
             connection, since = "disconnected", last_poll_at
+        # Queue records may carry a socket default, but queue mode opens no socket.
+        connection_fields = " connection=none" if inbound == "queue" else f" connection={connection} connection_since={since}"
         unknown = record.get("unknown") or []
         held = f" held-by={record['held_by']}" if record.get("held_by") else ""
         print(
             keyed(
                 "slack-relay",
                 f"{root} state={state} channel={record['channel']} code={record.get('code') or '-'} last_poll_age={int(age)}s"
-                f" inbound={record.get('inbound', 'socket')}"
-                f" connection={connection} connection_since={since}"
+                f" inbound={inbound}{connection_fields}"
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"
                 f" refused={len(record.get('refused') or [])} calls_last_minute={record.get('calls_last_minute', 0)}"
