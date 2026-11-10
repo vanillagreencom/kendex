@@ -429,7 +429,8 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 /// one named for the merge. Among several copies the clone's comes before
 /// the worktree's, then name order, and the first that reads as an object
 /// answers: a file archived twice is a hard-link entry the second time,
-/// which `tar -O` prints empty.
+/// which `tar -O` prints empty, so a marker naming one reads its link's
+/// target.
 #[allow(
     clippy::disallowed_methods,
     reason = "the cycle record's reads of a kept archive through tar and the one runner, streamed"
@@ -468,14 +469,24 @@ fn kept_state(
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let member = |name: &str| tar(&["-xzOf", &kept, name]);
-    let object = |name: &str| match serde_json::from_str::<Value>(&member(name)?) {
-        Ok(Value::Object(doc)) => Some(doc),
+    let doc = |text: &str| match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(map)) => Some(map),
         Ok(_) | Err(_) => None,
     };
+    let object = |name: &str| doc(&member(name)?);
     // The marker holds the member's raw name, which no listing need match.
     let marker = member("lane-host-state");
     if let Some(name) = marker.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        return object(name);
+        let text = member(name)?;
+        if !text.is_empty() {
+            return doc(&text);
+        }
+        // A file archived under two paths is a hard-link entry the second
+        // time, which `tar -O` prints empty; its listing line names the
+        // member that holds the bytes.
+        let line = listed_name(tar(&["-tvzf", &kept, name])?.lines().next()?);
+        let (_, target) = line.split_once(&format!(" {name} link to "))?;
+        return object(target);
     }
     let listing = tar(&["-tzf", &kept])?;
     let names: Vec<String> = listing.lines().map(listed_name).collect();

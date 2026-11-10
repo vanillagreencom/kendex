@@ -378,13 +378,13 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergedAt --jq .mergedAt
    ```
 
+   Use that live UTC timestamp as `[MERGED_AT]`. An absent or unreadable timestamp is a tracker-completion failure.
+
    On a pull-request delivery, read its body:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json body --jq .body
    ```
-
-   Use that live UTC timestamp as `[MERGED_AT]`. An absent or unreadable timestamp is a tracker-completion failure.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh issues complete [ISSUE] --post-merge-at [MERGED_AT] --done-when-met [MET_BOXES] --evidence-file [EVIDENCE_FILE]
@@ -394,7 +394,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Required supersession failures remain tracker-completion failures after Done. Preserve the successful transition and structured `supersession-incomplete` diagnostic, then retry the action and options it gives without summary flags, through the same completion command. An open-child disposition requires resolution before that retry can succeed. Done alone does not prove these required effects completed.
 
-   Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box, the text citing the recorded proof. On a pull-request delivery, take `[MET_BOXES]` and those lines from the `## Done-when evidence` section the body read above prints. A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request: its lines cite the proof the round recorded. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. Select `[MET_BOXES]` under that acceptance rule. Use `all` only when that rule accepts every box. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
+   Write `[EVIDENCE_FILE]` under the checkout’s `tmp/`, with one `N: text` line for each selected box, the text citing the recorded proof. On a pull-request delivery, take `[MET_BOXES]` and those lines from the `## Done-when evidence` section the body read above prints. A direct delivery ([submit-pr.md § 2.1](submit-pr.md#21-base-publication)) creates no pull request and reads no body. Include already-ticked boxes that need their Evidence line added from the existing evidence comment. Select `[MET_BOXES]` under that acceptance rule. Use `all` only when that rule accepts every box. Otherwise use their numbers in section order from 1, comma-separated. When no box needs a tick or Evidence line, omit both `--done-when-met` and `--evidence-file`. The command refuses an open branch-provable box or invalid post-merge metadata before any write. A section with plain bullets and no checkbox takes `all`, which ticks nothing and sets Done.
 
    A canceled or unreadable issue is a tracker failure, not a completed merge record. Carry the diagnostic into § 6 and do not claim tracker completion.
 

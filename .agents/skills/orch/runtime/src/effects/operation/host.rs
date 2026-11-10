@@ -2898,11 +2898,15 @@ pub(in crate::effects) fn register_controller(
         Ok((home, seat, spelled)) => (home, seat, Some(spelled), None),
         Err(cause) => {
             notices.push(format!("launch-unread session={pane} cause={cause}"));
+            // The process's `/proc` files did not read, as on a host with no
+            // `/proc`. A start row's account is its harness's own root, which
+            // is the seat only where the model bills through the harness's
+            // home variable.
             (
                 caller_var(harness.home_var()),
                 caller_var(seat),
                 None,
-                row_account,
+                row_account.filter(|_| seat == harness.home_var()),
             )
         }
     };

@@ -4140,7 +4140,9 @@ fn rounds_state(fix: u64) -> Value {
 /// repository. The archives are planted in the three forms
 /// `lane-host-ssh::archive_tmp` writes, as `main` wrote them. Under the C
 /// locale, where tar lists a non-ASCII name escaped, a marker naming one
-/// still answers, and a worktree named so still sorts after the clone.
+/// still answers, and a worktree named so still sorts after the clone. A
+/// marker naming the physical path of a clone recorded through a symlink
+/// names the hard-link entry its second archiving left, and still answers.
 #[test]
 fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
     for (case, fix) in [
@@ -4152,6 +4154,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("the archive with no state marker", Some(8)),
         ("a marker naming a non-ASCII path", Some(10)),
         ("no marker, a non-ASCII worktree", Some(12)),
+        ("a marker naming a hard-link entry", Some(14)),
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
@@ -4288,6 +4291,16 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                     ("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix)),
                 ],
                 &[],
+            )),
+            // The clone's tmp archived through its recorded path, then the
+            // state file through its physical one, which the marker names.
+            ("a marker naming a hard-link entry", Some(fix)) => log.push(archive(
+                Some("var/w/clone/tmp/workflow-state-KEN-1.json\n"),
+                &[("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
+                &[(
+                    "var/w/clone/tmp/workflow-state-KEN-1.json",
+                    "w/clone/tmp/workflow-state-KEN-1.json",
+                )],
             )),
             _ => retained(),
         }
