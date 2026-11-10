@@ -149,6 +149,35 @@ struct Disagreement {
 }
 
 impl Expansion {
+    /// Per-tool ancestry before render withholding, bound only to items
+    /// whose catalog identity the desired pass successfully read.
+    pub(super) fn requirer_provenance(
+        &self,
+        processed: &BTreeMap<(ItemKind, String), String>,
+    ) -> BTreeMap<crate::lock::InstallRef, crate::lock::RequirerProvenance> {
+        self.reasons
+            .iter()
+            .filter_map(|((kind, name, harness), reasons)| {
+                let planned = self.items.get(&(*kind, name.clone()))?;
+                let source_repo = processed.get(&(*kind, name.clone()))?;
+                let installation = crate::lock::InstallRef {
+                    source: planned.decl.source.clone(),
+                    kind: *kind,
+                    name: name.clone(),
+                    harness: *harness,
+                };
+                Some((
+                    installation.clone(),
+                    crate::lock::RequirerProvenance {
+                        installation,
+                        source_repo: source_repo.clone(),
+                        reasons: reasons.clone(),
+                    },
+                ))
+            })
+            .collect()
+    }
+
     pub(super) fn selector_bases(
         &self,
         manifest: &Manifest,

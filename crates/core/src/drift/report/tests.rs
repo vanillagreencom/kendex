@@ -580,6 +580,7 @@ fn recorded_entry(
     reasons: std::collections::BTreeSet<crate::lock::Reason>,
 ) -> crate::lock::LockEntry {
     crate::lock::LockEntry {
+        requirer_provenance: None,
         name: name.into(),
         kind,
         harness: crate::model::HarnessId::Claude,

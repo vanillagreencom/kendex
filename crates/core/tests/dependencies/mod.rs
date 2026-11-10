@@ -1,7 +1,8 @@
 //! One item requiring another: what installs, what is held back, and what
 //! goes away. The manifest records choices — what was asked for, which
 //! optional extras were taken, what stays removed — and every plan derives
-//! the rest, so losing the lock loses nothing.
+//! the rest from readable catalogs. Offline removal also needs the lock's
+//! recorded ancestry.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -442,5 +443,6 @@ mod agent_skills;
 mod hook_skills;
 mod hooks;
 mod more;
+mod removal_provenance;
 mod skill_hooks;
 mod two_catalogs;

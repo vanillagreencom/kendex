@@ -202,7 +202,25 @@ pub fn inplace_source_root(scope: &Scope) -> Option<PathBuf> {
     }
 }
 
+/// The portable identity a declaration names, even while its catalog is
+/// unavailable. Disabled subscriptions keep their identity.
+pub(crate) fn declared_provenance(manifest: &Manifest, name: &str) -> Option<String> {
+    if crate::manifest::is_reserved_source(name) {
+        return Some(name.to_owned());
+    }
+    let decl = manifest.sources.get(name)?;
+    decl.path
+        .as_deref()
+        .map(declared_path_identity)
+        .or_else(|| decl.repo.clone())
+}
+
 pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Result<SourceState> {
+    let provenance = || {
+        declared_provenance(manifest, name).ok_or_else(|| CoreError::UnknownSource {
+            name: name.to_owned(),
+        })
+    };
     if name == INPLACE_SOURCE_NAME {
         // Adoption creates this tree; a scope that has none yet reads as
         // missing rather than as an empty catalog everything resolves from.
@@ -224,7 +242,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         return Ok(SourceState::Ready(ResolvedSource {
             name: name.to_owned(),
             root,
-            provenance: INPLACE_SOURCE_NAME.to_owned(),
+            provenance: provenance()?,
             commit: None,
             from_record: false,
         }));
@@ -242,7 +260,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         return Ok(SourceState::Ready(ResolvedSource {
             name: name.to_owned(),
             root,
-            provenance: LOCAL_SOURCE_NAME.to_owned(),
+            provenance: provenance()?,
             commit: None,
             from_record: false,
         }));
@@ -262,7 +280,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         return match crate::paths::canonical(&joined) {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
-                provenance: declared_path_identity(path),
+                provenance: provenance()?,
                 root,
                 commit: None,
                 from_record: false,
@@ -279,7 +297,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
             return Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
                 root: resolution.root,
-                provenance: repo.clone(),
+                provenance: provenance()?,
                 commit: Some(resolution.commit),
                 from_record: false,
             }));
@@ -293,7 +311,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
             return Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
                 root,
-                provenance: repo.clone(),
+                provenance: provenance()?,
                 commit: Some(commit),
                 from_record: true,
             }));

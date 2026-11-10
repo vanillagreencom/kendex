@@ -1644,6 +1644,7 @@ mod tests {
                 kendex_core::model::HarnessId::Codex,
             ),
             kendex_core::lock::LockEntry {
+                requirer_provenance: None,
                 name: "bot-instructions".to_owned(),
                 kind: kendex_core::model::ItemKind::Skill,
                 harness: kendex_core::model::HarnessId::Codex,

@@ -84,6 +84,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// deletes the default and an older build writes the lock, a later build
 /// can insert `switchModelsOnFlag=true` again. This mixed-version loss is
 /// accepted rather than requiring lock recovery for the added default.
+///
+/// Version 11 also gained [`LockEntry::requirer_provenance`] without a bump.
+/// Older writers discard it. A later removal refuses where the remaining
+/// record cannot prove whether a withheld requirer stays, until apply with
+/// a readable catalog rebuilds the facts. Older verification can reject a
+/// record carrying the field because its serialization omits it.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -244,8 +250,8 @@ impl DeclaredSelector {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRef {
-    /// Declared source name — dependencies stay inside one catalog, so this
-    /// is the source both ends share.
+    /// Declared source name of the requirer. A dependency may be declared
+    /// from a different catalog.
     pub source: String,
     pub kind: ItemKind,
     pub name: String,
@@ -267,7 +273,8 @@ pub struct BundleRef {
 /// The set is a cache, not intent: the manifest records the choices (what
 /// was requested, which optional dependencies were taken, what is kept
 /// removed) and the plan derives the closure again from those choices plus
-/// the catalogs. A lost lock therefore loses nothing.
+/// the catalogs. Losing the lock preserves intent, but loses the evidence
+/// an offline removal needs until readable catalogs rebuild it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Reason {
@@ -277,6 +284,17 @@ pub enum Reason {
     RequiredBy { by: InstallRef },
     /// An installed bundle carries it as a member.
     MemberOf { bundle: BundleRef },
+}
+
+/// An ancestor's per-tool derivation, including ancestors withheld from
+/// rendering. This is dependency evidence, never an ownership record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RequirerProvenance {
+    pub installation: InstallRef,
+    /// Portable catalog identity, as [`LockEntry::source_repo`] records it.
+    pub source_repo: String,
+    pub reasons: BTreeSet<Reason>,
 }
 
 /// One installation the engine wrote: item × harness within this scope's
@@ -353,6 +371,11 @@ pub struct LockEntry {
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+    /// The ancestors explaining these reasons at the last successful read.
+    /// Missing rows mean unknown evidence; an empty reason set proves that
+    /// ancestor has no carrier. Kept entries retain this with their reasons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirer_provenance: Option<Vec<RequirerProvenance>>,
     /// What only this machine knows about the installation. Never written
     /// into the committed record ([`MACHINE_FILE`] holds it), and `None`
     /// where this machine holds nothing about it: a clone whose install was

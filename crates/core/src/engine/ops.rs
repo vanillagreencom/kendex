@@ -315,7 +315,7 @@ fn prepare_removal(
             });
         }
     }
-    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
+    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, kind, &options)? {
         manifest.suppress(kind, &name);
     }
     Ok(PreparedRemoval {
@@ -371,22 +371,21 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// that is still installed. Those are the removals that have to be written
 /// down, or the next plan would simply undo them.
 ///
-/// Two readings answer it, and either one alone has a blind spot: the record
-/// says nothing once it has been deleted, and the catalogs say nothing while
-/// they cannot be read. So both are asked and anything either one names is
-/// written down — over-recording a removal costs a line the next `add`
-/// clears, while missing one puts back something the user took away.
+/// Recorded ancestry decides recorded edges. The catalog walk also sees
+/// recordless items and newly added edges, but cannot revive a recorded
+/// edge whose last carrier leaves.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
+    kind: Option<ItemKind>,
     options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
-    let mut kept = recorded_edges(lock, names, options);
-    kept.extend(still_derived(env, scope, manifest, names, options));
-    kept
+) -> Result<BTreeSet<(ItemKind, String)>> {
+    let mut kept = recorded_edges(scope, manifest, lock, names, kind, options)?;
+    kept.extend(still_derived(env, scope, manifest, lock, names, options));
+    Ok(kept)
 }
 
 /// What the record already says holds these installations up. Every one
@@ -395,24 +394,221 @@ fn kept_removed(
 /// reading it costs no catalog, which is what makes a removal stick while a
 /// source is unreadable.
 fn recorded_edges(
+    scope: &Scope,
+    manifest: &Manifest,
     lock: &Lock,
     names: &[String],
+    kind: Option<ItemKind>,
     options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
-    lock.entries
-        .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
-        .filter(|entry| {
-            entry.reasons.iter().any(|reason| match reason {
-                Reason::Requested => false,
-                Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
-                Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
+) -> Result<BTreeSet<(ItemKind, String)>> {
+    let roots = RemovalRoots {
+        scope,
+        manifest,
+        lock,
+        names,
+        kind,
+    };
+    let mut decisions = std::collections::BTreeMap::new();
+    // A selected requirer can itself be withheld. Its attached evidence
+    // still records the edge a surviving carrier would derive again.
+    for dependent in lock.entries.values() {
+        for row in dependent
+            .requirer_provenance
+            .iter()
+            .flatten()
+            .filter(|row| {
+                names.contains(&row.installation.name)
+                    && options.named_for_removal(row.installation.kind, &row.installation.name)
+                    && !lock.entries.contains_key(&crate::lock::entry_key(
+                        row.installation.kind,
+                        &row.installation.name,
+                        row.installation.harness,
+                    ))
             })
-        })
-        .map(|entry| (entry.kind, entry.name.clone()))
-        .collect()
+        {
+            let by = &row.installation;
+            let decision = roots.reasons(
+                dependent,
+                (by.kind, by.harness),
+                &row.source_repo,
+                &row.reasons,
+                &mut BTreeSet::new(),
+            );
+            let key = (by.kind, by.name.clone());
+            let old = decisions.remove(&key).unwrap_or(Reach::Unrooted);
+            decisions.insert(key, old.or(decision));
+        }
+    }
+    for entry in lock.entries.values().filter(|entry| {
+        names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+    }) {
+        let decision = roots.reasons(
+            entry,
+            (entry.kind, entry.harness),
+            &entry.source_repo,
+            &entry.reasons,
+            &mut BTreeSet::new(),
+        );
+        let key = (entry.kind, entry.name.clone());
+        let old = decisions.remove(&key).unwrap_or(Reach::Unrooted);
+        decisions.insert(key, old.or(decision));
+    }
+    let mut kept = BTreeSet::new();
+    for (key, decision) in decisions {
+        match decision {
+            Reach::Rooted => {
+                kept.insert(key);
+            }
+            Reach::Unrooted => {}
+            Reach::Missing(by) => {
+                return Err(crate::error::CoreError::RemovalProvenanceMissing {
+                    catalog: by.source,
+                    kind: by.kind,
+                    name: by.name,
+                    harness: by.harness,
+                });
+            }
+        }
+    }
+    Ok(kept)
+}
+
+enum Reach {
+    Rooted,
+    Unrooted,
+    Missing(crate::lock::InstallRef),
+}
+
+impl Reach {
+    fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Rooted, _) | (_, Self::Rooted) => Self::Rooted,
+            (missing @ Self::Missing(_), _) | (_, missing @ Self::Missing(_)) => missing,
+            (Self::Unrooted, Self::Unrooted) => Self::Unrooted,
+        }
+    }
+}
+
+struct RemovalRoots<'a> {
+    scope: &'a Scope,
+    manifest: &'a Manifest,
+    lock: &'a Lock,
+    names: &'a [String],
+    kind: Option<ItemKind>,
+}
+
+impl RemovalRoots<'_> {
+    fn same_source(&self, source: &str, repo: &str) -> bool {
+        crate::source::declared_provenance(self.manifest, source).as_deref() == Some(repo)
+    }
+
+    fn reasons(
+        &self,
+        dependent: &crate::lock::LockEntry,
+        node: (ItemKind, HarnessId),
+        source_repo: &str,
+        reasons: &BTreeSet<Reason>,
+        visited: &mut BTreeSet<crate::lock::InstallRef>,
+    ) -> Reach {
+        let mut found = Reach::Unrooted;
+        for reason in reasons {
+            let next = match reason {
+                Reason::Requested => Reach::Unrooted,
+                Reason::MemberOf { bundle } => {
+                    if self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
+                        decl.source == bundle.source
+                            && self.same_source(&bundle.source, source_repo)
+                            && super::desired::target_harnesses(
+                                decl,
+                                self.manifest,
+                                node.0,
+                                self.scope,
+                            )
+                            .contains(&node.1)
+                    }) {
+                        Reach::Rooted
+                    } else {
+                        Reach::Unrooted
+                    }
+                }
+                Reason::RequiredBy { by } => self.installation(dependent, by, visited),
+            };
+            found = found.or(next);
+            if matches!(found, Reach::Rooted) {
+                break;
+            }
+        }
+        found
+    }
+
+    fn installation(
+        &self,
+        dependent: &crate::lock::LockEntry,
+        by: &crate::lock::InstallRef,
+        visited: &mut BTreeSet<crate::lock::InstallRef>,
+    ) -> Reach {
+        // Bundle members in removal_filter were selected indirectly; an
+        // independent declaration or another set can still root them.
+        if self.names.contains(&by.name) && self.kind.is_none_or(|kind| kind == by.kind) {
+            return Reach::Unrooted;
+        }
+        if !visited.insert(by.clone()) {
+            return Reach::Unrooted;
+        }
+        let captured = dependent
+            .requirer_provenance
+            .as_ref()
+            .and_then(|rows| rows.iter().find(|row| row.installation == *by));
+        let installed = self
+            .lock
+            .entries
+            .get(&crate::lock::entry_key(by.kind, &by.name, by.harness))
+            .filter(|entry| entry.source == by.source)
+            .filter(|entry| captured.is_none_or(|row| row.source_repo == entry.source_repo));
+        let repo = installed
+            .map(|entry| entry.source_repo.as_str())
+            .or_else(|| captured.map(|row| row.source_repo.as_str()))
+            .or_else(|| (by.source == dependent.source).then_some(dependent.source_repo.as_str()))
+            .or_else(|| {
+                self.lock
+                    .sources
+                    .get(&by.source)
+                    .map(|source| source.repo.as_str())
+            });
+        let declared = self
+            .manifest
+            .declared(by.kind)
+            .get(&by.name)
+            .is_some_and(|decl| {
+                decl.source == by.source
+                    && repo.is_some_and(|repo| self.same_source(&by.source, repo))
+                    && super::desired::target_harnesses(decl, self.manifest, by.kind, self.scope)
+                        .contains(&by.harness)
+            });
+        let found = if declared {
+            Reach::Rooted
+        } else if let Some(entry) = installed {
+            self.reasons(
+                dependent,
+                (by.kind, by.harness),
+                &entry.source_repo,
+                &entry.reasons,
+                visited,
+            )
+        } else if let Some(row) = captured {
+            self.reasons(
+                dependent,
+                (by.kind, by.harness),
+                &row.source_repo,
+                &row.reasons,
+                visited,
+            )
+        } else {
+            Reach::Missing(by.clone())
+        };
+        visited.remove(by);
+        found
+    }
 }
 
 /// What the catalogs say the manifest still implies, now that the
@@ -423,6 +619,7 @@ fn still_derived(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
+    lock: &Lock,
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
@@ -431,7 +628,31 @@ fn still_derived(
     let mut derived = BTreeSet::new();
     for name in names {
         for kind in super::expansion::PLANNED_KINDS {
-            if options.named_for_removal(kind, name) && expansion.contains(kind, name) {
+            if options.named_for_removal(kind, name)
+                && expansion.contains(kind, name)
+                && expansion.package_reasons(kind, name).iter().any(|reason| {
+                    !lock.entries.values().any(|entry| {
+                        let same_reading = |source: &str, repo: &str| {
+                            expansion.decl_of(kind, name).is_some_and(|decl| {
+                                decl.source == source
+                                    && crate::source::declared_provenance(manifest, source)
+                                        .as_deref()
+                                        == Some(repo)
+                            })
+                        };
+                        (entry.kind == kind
+                            && entry.name == *name
+                            && same_reading(&entry.source, &entry.source_repo)
+                            && entry.reasons.contains(reason))
+                            || entry.requirer_provenance.iter().flatten().any(|row| {
+                                row.installation.kind == kind
+                                    && row.installation.name == *name
+                                    && same_reading(&row.installation.source, &row.source_repo)
+                                    && row.reasons.contains(reason)
+                            })
+                    })
+                })
+            {
                 derived.insert((kind, name.clone()));
             }
         }

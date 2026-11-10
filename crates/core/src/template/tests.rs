@@ -43,6 +43,7 @@ pub(super) fn lock_entry(
     repo: &str,
 ) -> crate::lock::LockEntry {
     crate::lock::LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind,
         harness: HarnessId::Claude,

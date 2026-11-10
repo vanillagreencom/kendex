@@ -90,6 +90,7 @@ fn declare(env: &Env, scope: &Scope) {
 #[allow(clippy::unwrap_used)]
 fn record_a_missing_agent(env: &Env, scope: &Scope) {
     let entry = kendex_core::lock::LockEntry {
+        requirer_provenance: None,
         name: "gh".to_owned(),
         kind: kendex_core::model::ItemKind::Agent,
         harness: kendex_core::model::HarnessId::Claude,

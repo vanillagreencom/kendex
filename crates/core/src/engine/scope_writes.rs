@@ -189,6 +189,7 @@ pub(super) struct RecordReadings {
 /// beside a targeted update; recording the new one would apply no edit.
 pub(super) fn record_entry_selectors(
     state: &DesiredState,
+    lock: &Lock,
     new_lock: &mut Lock,
     pass: &super::plan_pass::ItemPass,
     kept: &super::item_plan::KeptAsIs,
@@ -204,6 +205,7 @@ pub(super) fn record_entry_selectors(
                 unreachable!("a successfully planned item has its reading owner's selector basis");
             };
             entry.selector = basis.recorded();
+            entry.requirer_provenance = Some(state.ancestry(&entry.reasons, lock.entries.get(key)));
         }
     }
 }

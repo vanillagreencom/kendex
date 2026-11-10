@@ -388,6 +388,7 @@ fn a_snapshot_a_lock_names_is_never_removed() {
     crate::settings::register_project(&f.env, &project).unwrap();
     let scope = Scope::Project { root: project };
     let entry = LockEntry {
+        requirer_provenance: None,
         name: "gh".to_owned(),
         kind: ItemKind::Skill,
         harness: HarnessId::Claude,

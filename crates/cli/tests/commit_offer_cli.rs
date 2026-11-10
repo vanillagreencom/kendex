@@ -745,6 +745,7 @@ fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> Pa
             kendex_core::model::HarnessId::Codex,
         ),
         kendex_core::lock::LockEntry {
+            requirer_provenance: None,
             name: "bot-instructions".to_owned(),
             kind: kendex_core::model::ItemKind::Skill,
             harness: kendex_core::model::HarnessId::Codex,
@@ -847,6 +848,7 @@ fn an_unarmed_cli_apply_succeeds_names_setup_and_runs_no_package_code() {
             kendex_core::model::HarnessId::Codex,
         ),
         kendex_core::lock::LockEntry {
+            requirer_provenance: None,
             name: "bot-instructions".to_owned(),
             kind: kendex_core::model::ItemKind::Skill,
             harness: kendex_core::model::HarnessId::Codex,

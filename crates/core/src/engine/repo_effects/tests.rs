@@ -85,6 +85,7 @@ fn a_namespaced_copy_declares_what_it_armed() {
 
 fn entry(name: &str, harness: crate::model::HarnessId) -> crate::lock::LockEntry {
     crate::lock::LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind: ItemKind::Skill,
         harness,

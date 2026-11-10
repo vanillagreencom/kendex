@@ -435,6 +435,7 @@ fn recorded_lock(stamp: &str) -> crate::lock::Lock {
     lock.entries.insert(
         "skill:gh:claude".to_owned(),
         LockEntry {
+            requirer_provenance: None,
             name: "gh".to_owned(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,

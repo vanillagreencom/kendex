@@ -295,6 +295,7 @@ impl Redirect {
         lock.entries.insert(
             kendex_core::lock::entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
             kendex_core::lock::LockEntry {
+                requirer_provenance: None,
                 name: "gh".to_owned(),
                 kind: ItemKind::Skill,
                 harness: HarnessId::Claude,

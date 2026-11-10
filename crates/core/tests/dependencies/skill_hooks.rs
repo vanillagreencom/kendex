@@ -151,7 +151,7 @@ fn naming_the_hook(f: &Fixture) -> BTreeSet<String> {
 /// skill's `hooks` line dropped where `edge` is false, installed into a
 /// project that declares only the skill for every tool.
 #[allow(clippy::unwrap_used)]
-fn world(edge: bool, extra: &str) -> Fixture {
+pub(super) fn world(edge: bool, extra: &str) -> Fixture {
     let f = fixture("");
     let checkout = test_util::checkout_root();
     let skill_md = fs::read_to_string(checkout.join("skills/docs-writing/SKILL.md")).unwrap();

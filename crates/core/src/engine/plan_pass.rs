@@ -59,19 +59,34 @@ pub(super) fn plan_items(
     for item in &state.items {
         if state.addition_kept.contains(&item.key) {
             if let Some(entry) = new_lock.entries.get_mut(&item.key) {
-                entry.reasons.extend(
-                    item.reasons
-                        .iter()
-                        .filter(|reason| match reason {
-                            Reason::RequiredBy { by } => {
-                                state.additions.as_ref().is_some_and(|reached| {
-                                    reached.contains(&(by.kind, by.name.clone()))
-                                })
-                            }
-                            Reason::Requested | Reason::MemberOf { .. } => false,
-                        })
-                        .cloned(),
-                );
+                let added = item
+                    .reasons
+                    .iter()
+                    .filter(|reason| match reason {
+                        Reason::RequiredBy { by } => state
+                            .additions
+                            .as_ref()
+                            .is_some_and(|reached| reached.contains(&(by.kind, by.name.clone()))),
+                        Reason::Requested | Reason::MemberOf { .. } => false,
+                    })
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                let ancestry = state.ancestry(&added, Some(entry));
+                if !ancestry.is_empty() {
+                    let rows = entry.requirer_provenance.get_or_insert_with(Vec::new);
+                    for row in ancestry {
+                        if let Some(old) = rows.iter_mut().find(|old| {
+                            old.installation == row.installation
+                                && old.source_repo == row.source_repo
+                        }) {
+                            old.reasons.extend(row.reasons);
+                        } else {
+                            rows.push(row);
+                        }
+                    }
+                    rows.sort();
+                }
+                entry.reasons.extend(added);
             }
             continue;
         }

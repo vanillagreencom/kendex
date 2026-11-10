@@ -448,6 +448,8 @@ pub struct DesiredState {
     /// another catalog installed it, invariant 4's conflict
     /// (`plan_pass::plan_rebound`).
     pub processed: BTreeMap<(ItemKind, String), String>,
+    pub(super) requirer_provenance:
+        BTreeMap<crate::lock::InstallRef, crate::lock::RequirerProvenance>,
     /// Items their catalog retired that this pass met, declared or derived
     /// ([`DesiredState::retire`]); `EngineReport::retired`.
     pub retired: BTreeMap<(ItemKind, String), Retirement>,
@@ -658,6 +660,34 @@ impl Withholding {
 }
 
 impl DesiredState {
+    /// Only ancestors of these edges belong in the dependent's snapshot.
+    /// An unread ancestor leaves a missing row, never an invented empty one.
+    pub(super) fn ancestry(
+        &self,
+        reasons: &BTreeSet<crate::lock::Reason>,
+        previous: Option<&crate::lock::LockEntry>,
+    ) -> Vec<crate::lock::RequirerProvenance> {
+        let mut pending = reasons.iter().cloned().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        let mut rows = BTreeMap::new();
+        while let Some(reason) = pending.pop() {
+            if let crate::lock::Reason::RequiredBy { by } = reason
+                && visited.insert(by.clone())
+                && let Some(row) = self.requirer_provenance.get(&by).or_else(|| {
+                    previous?
+                        .requirer_provenance
+                        .as_ref()?
+                        .iter()
+                        .find(|row| row.installation == by)
+                })
+            {
+                pending.extend(row.reasons.iter().cloned());
+                rows.insert(by, row.clone());
+            }
+        }
+        rows.into_values().collect()
+    }
+
     pub(super) fn refuse_catalog(&mut self) -> Result<()> {
         match self.catalog_refusal.take() {
             Some(error) => Err(error),
@@ -1007,6 +1037,7 @@ fn compute(
     }
     manifest_changed |= settle_retired(env, scope, manifest, &mut state, &mut updated_manifest);
     inline(env, scope, manifest, &mut state);
+    state.requirer_provenance = expansion.requirer_provenance(&state.processed);
 
     if manifest_changed {
         state.manifest_update = Some(updated_manifest);
