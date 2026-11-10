@@ -766,109 +766,259 @@ fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
     }
 }
 
-/// A set from one catalog carries github while the person declares github
-/// from another. Removing that declaration leaves the set, and only the
-/// set's own reading, never the member's, says whether it still roots
-/// github: read now, or recorded. With no record, refusal names the set
-/// unless the set read now still carries github; removing the set with it
-/// always decides.
+/// A set's own reading decides cross-catalog membership, including when
+/// an unsupported hook has only a captured requirer row. Readable bodies
+/// prove absence by kind and name, not merely by successful expansion;
+/// a still-named member that cannot expand remains unknown. Recorded
+/// bindings keep their precedence, and removing the set always decides.
+/// A short read of a newly declared carrier keeps the removal even when
+/// the set is empty, so repairing that carrier cannot restore the item.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
-    for (offline, set_recorded, carried_now) in [
-        (false, false, true),
-        (false, false, false),
-        (true, true, true),
-        (true, false, true),
+    #[derive(Clone, Copy, Debug)]
+    enum SetNow {
+        Empty,
+        EmptyUnreadCarrier,
+        Carries,
+        MissingItem,
+        Drops,
+        SameNameOtherKind,
+        NotOffered,
+        Unreadable,
+    }
+    for (kind, name, section, harness) in [
+        (ItemKind::Hook, "judge", "hooks", HarnessId::Codex),
+        (ItemKind::Skill, "github", "skills", HarnessId::Claude),
     ] {
-        let f = fixture("");
-        let other = f.source.with_file_name("other");
-        skill(&other, "github", "");
-        fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-        let set = |member: &str| {
-            format!(
-                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"{member}\"]\n"
-            )
-        };
-        fs::write(f.source.join("kendex.toml"), set("github")).unwrap();
-        fs::write(
-            f.project.join("kendex.toml"),
-            format!(
-                "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[skills.github]\nsource = \"other\"\n",
-                source_path(&f.source),
-                source_path(&other)
-            ),
-        )
-        .unwrap();
-        apply_now(&f);
-        let mut lock = lock_of(&f);
-        let github = &lock.entries["skill:github:claude"];
-        assert_eq!(github.source, "other");
-        assert!(
-            github
-                .reasons
-                .iter()
-                .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.source == "cat" && bundle.name == "crew"))
-        );
-        // A path catalog's set has no record of its own, even after a
-        // readable apply; a repository catalog's does, which this plants.
-        assert!(lock.bundles.is_empty());
-        if set_recorded {
-            let path = manifest_of(&f).sources["cat"].path.clone().unwrap();
-            lock.bundles.insert(
-                "crew".into(),
-                kendex_core::lock::BundleRev {
-                    source: "cat".into(),
-                    source_repo: kendex_core::source::declared_path_identity(&path),
-                    selector: None,
-                    commit: "0".repeat(40),
-                },
-            );
-            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
-        }
-        if !carried_now {
-            skill(&f.source, "lint", "");
-            fs::write(f.source.join("kendex.toml"), set("lint")).unwrap();
-        }
-        let hidden = f.source.with_file_name("catalog-offline");
-        if offline {
-            fs::rename(&f.source, &hidden).unwrap();
-        }
-        let refuses = !set_recorded && (offline || !carried_now);
-        if refuses {
-            assert!(
-                matches!(
-                    ops::remove(&f.env, &f.scope, &["github".into()], Some(ItemKind::Skill), false),
-                    Err(CoreError::RemovalSetReadingMissing { catalog, set })
-                        if catalog == "cat" && set == "crew"
+        for (offline, set_recorded, set_now) in [
+            (false, false, SetNow::EmptyUnreadCarrier),
+            (false, false, SetNow::MissingItem),
+            (false, false, SetNow::Empty),
+            (false, false, SetNow::Carries),
+            (false, false, SetNow::Drops),
+            (false, false, SetNow::SameNameOtherKind),
+            (false, false, SetNow::NotOffered),
+            (false, false, SetNow::Unreadable),
+            (true, true, SetNow::Carries),
+            (true, false, SetNow::Carries),
+        ] {
+            let f = hook_fixture("");
+            let other = f.source.with_file_name("other");
+            for source in [&f.source, &other] {
+                skill(source, name, "");
+                if kind == ItemKind::Hook {
+                    skill(source, "guards", "");
+                    fs::create_dir_all(source.join("hooks")).unwrap();
+                    fs::write(source.join("hooks/judge.sh"), JUDGE).unwrap();
+                    fs::write(source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+                }
+            }
+            fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+            let set = |members: &str| {
+                format!(
+                    "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\n{section} = [{members}]\n"
+                )
+            };
+            let member = format!("\"{name}\"");
+            fs::write(f.source.join("kendex.toml"), set(&member)).unwrap();
+            fs::write(
+                f.project.join("kendex.toml"),
+                format!(
+                    "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"{}\"]\nmethod = \"copy\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[{section}.{name}]\nsource = \"other\"\n",
+                    source_path(&f.source),
+                    source_path(&other),
+                    harness.name()
                 ),
-                "offline={offline} carried_now={carried_now}"
-            );
-        }
-        if offline && refuses {
-            fs::rename(&hidden, &f.source).unwrap();
-        }
-        // The remedy: retry while the set still carries github, or remove
-        // the set with it.
-        let (names, expected): (&[&str], _) = if refuses && !carried_now {
-            (&["github", "crew"], BTreeSet::new())
-        } else {
-            (
-                &["github"],
-                BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
             )
-        };
-        let kind = (names.len() == 1).then_some(ItemKind::Skill);
-        assert_eq!(
-            removed(&f, names, kind),
-            expected,
-            "offline={offline} set_recorded={set_recorded} carried_now={carried_now}"
-        );
-        if offline && !refuses {
-            fs::rename(&hidden, &f.source).unwrap();
+            .unwrap();
+            apply_now(&f);
+            let mut lock = lock_of(&f);
+            let key = format!("{}:{name}:{}", kind.name(), harness.name());
+            let reasons = if kind == ItemKind::Hook {
+                assert!(!lock.entries.contains_key(&key));
+                let judge = lock.entries["skill:guards:codex"]
+                    .requirer_rows()
+                    .iter()
+                    .find(|row| row.installation.kind == kind && row.installation.name == name)
+                    .unwrap();
+                assert_eq!(judge.installation.source, "other");
+                &judge.reasons
+            } else {
+                let entry = &lock.entries[&key];
+                assert_eq!(entry.source, "other");
+                &entry.reasons
+            };
+            assert!(reasons.iter().any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.source == "cat" && bundle.name == "crew")));
+            // A path catalog's set has no record of its own, even after a
+            // readable apply; a repository catalog's does, which this plants.
+            assert!(lock.bundles.is_empty());
+            if set_recorded {
+                let path = manifest_of(&f).sources["cat"].path.clone().unwrap();
+                lock.bundles.insert(
+                    "crew".into(),
+                    kendex_core::lock::BundleRev {
+                        source: "cat".into(),
+                        source_repo: kendex_core::source::declared_path_identity(&path),
+                        selector: None,
+                        commit: "0".repeat(40),
+                    },
+                );
+                kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+            }
+            let current = match set_now {
+                SetNow::Carries => set(&member),
+                SetNow::MissingItem => {
+                    if kind == ItemKind::Hook {
+                        fs::remove_file(f.source.join("hooks/judge.sh")).unwrap();
+                    } else {
+                        fs::remove_dir_all(f.source.join("skills/github")).unwrap();
+                    }
+                    set(&member)
+                }
+                SetNow::SameNameOtherKind => {
+                    let other_section = if kind == ItemKind::Hook {
+                        "skills"
+                    } else {
+                        fs::write(
+                            f.source.join("hooks/github.sh"),
+                            super::hooks::NARROW
+                                .replace("narrow", "github")
+                                .replace("TaskCompleted", "PreToolUse"),
+                        )
+                        .unwrap();
+                        "hooks"
+                    };
+                    format!(
+                        "is_source_catalog = true\n[bundles.crew]\n{other_section} = [{member}]\n"
+                    )
+                }
+                SetNow::Drops => {
+                    skill(&f.source, "lint", "");
+                    if kind == ItemKind::Hook {
+                        fs::write(
+                            f.source.join("hooks/lint.sh"),
+                            super::hooks::NARROW
+                                .replace("narrow", "lint")
+                                .replace("TaskCompleted", "PreToolUse"),
+                        )
+                        .unwrap();
+                    }
+                    set("\"lint\"")
+                }
+                SetNow::EmptyUnreadCarrier => {
+                    skill(&other, "S", "");
+                    let dependency = if kind == ItemKind::Hook {
+                        "hooks"
+                    } else {
+                        "required"
+                    };
+                    fs::write(
+                        other.join("skills/S/SKILL.md"),
+                        format!("---\nname: S\ndescription: the S skill\ndependencies:\n  {dependency}: [{name}]\nBody.\n"),
+                    )
+                    .unwrap();
+                    edit_manifest(&f, |manifest| {
+                        manifest
+                            .skills
+                            .insert("S".into(), manifest::ItemDecl::from_source("other"));
+                    });
+                    set("")
+                }
+                SetNow::Empty => set(""),
+                SetNow::NotOffered | SetNow::Unreadable => {
+                    // Reading another set in this open catalog proves nothing
+                    // about crew's missing or unreadable body.
+                    edit_manifest(&f, |manifest| {
+                        manifest
+                            .bundles
+                            .insert("spare".into(), manifest.bundles["crew"].clone());
+                    });
+                    let mut catalog =
+                        "is_source_catalog = true\n[bundles.spare]\nskills = []\n".to_owned();
+                    if matches!(set_now, SetNow::Unreadable) {
+                        catalog.push_str("[bundles.crew]\nskills = 1\n");
+                    }
+                    catalog
+                }
+            };
+            fs::write(f.source.join("kendex.toml"), current).unwrap();
+            let hidden = f.source.with_file_name("catalog-offline");
+            if offline {
+                fs::rename(&f.source, &hidden).unwrap();
+            }
+            let refuses = !set_recorded
+                && (offline
+                    || matches!(
+                        set_now,
+                        SetNow::NotOffered | SetNow::Unreadable | SetNow::MissingItem
+                    ));
+            if refuses {
+                assert!(
+                    matches!(
+                        ops::remove(&f.env, &f.scope, &[name.into()], Some(kind), false),
+                        Err(CoreError::RemovalSetReadingMissing { catalog, set })
+                            if catalog == "cat" && set == "crew"
+                    ),
+                    "kind={kind:?} offline={offline} set_now={set_now:?}"
+                );
+            }
+            if offline && refuses {
+                fs::rename(&hidden, &f.source).unwrap();
+            }
+            if matches!(set_now, SetNow::MissingItem) {
+                if kind == ItemKind::Hook {
+                    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+                } else {
+                    skill(&f.source, name, "");
+                }
+            }
+            let (names, expected): (Vec<&str>, _) = match set_now {
+                SetNow::NotOffered | SetNow::Unreadable => (vec![name, "crew"], BTreeSet::new()),
+                SetNow::Empty | SetNow::Drops | SetNow::SameNameOtherKind => {
+                    (vec![name], BTreeSet::new())
+                }
+                SetNow::Carries | SetNow::MissingItem | SetNow::EmptyUnreadCarrier => {
+                    (vec![name], BTreeSet::from([(kind, name.to_owned())]))
+                }
+            };
+            let removing_kind = (names.len() == 1).then_some(kind);
+            assert_eq!(
+                removed(&f, &names, removing_kind),
+                expected,
+                "kind={kind:?} offline={offline} set_recorded={set_recorded} set_now={set_now:?}"
+            );
+            if offline && !refuses {
+                fs::rename(&hidden, &f.source).unwrap();
+            }
+            if matches!(set_now, SetNow::EmptyUnreadCarrier) {
+                let dependency = if kind == ItemKind::Hook {
+                    "hooks"
+                } else {
+                    "required"
+                };
+                skill(
+                    &other,
+                    "S",
+                    &format!("dependencies:\n  {dependency}: [{name}]\n"),
+                );
+            }
+            if kind == ItemKind::Hook {
+                for source in [&f.source, &other] {
+                    fs::write(
+                        source.join("hooks/narrow.sh"),
+                        super::hooks::NARROW.replace("TaskCompleted", "PreToolUse"),
+                    )
+                    .unwrap();
+                }
+            }
+            apply_now(&f);
+            assert!(!lock_of(&f).entries.contains_key(&key));
+            if kind == ItemKind::Hook {
+                assert!(!hook_on_disk(&f, harness, "judge.sh"));
+                assert!(!registered(&f, harness, name));
+            }
         }
-        apply_now(&f);
-        assert!(!lock_of(&f).entries.contains_key("skill:github:claude"));
     }
 }
 

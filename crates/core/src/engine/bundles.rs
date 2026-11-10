@@ -304,6 +304,8 @@ fn installable(
             }
         ));
     }
+    let set = bundle_ref(name, &decl.source);
+    state.read_bundles.insert(set, bundle.members);
     installable
 }
 

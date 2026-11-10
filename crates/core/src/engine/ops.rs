@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::apply::{Op, PlannedOp};
 
+use super::desired::ReadBundles;
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{ProvenanceStep, Result};
@@ -396,7 +397,11 @@ fn kept_removed(
     kind: Option<ItemKind>,
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
-    let (read, unread) = read_ancestry(env, scope, manifest);
+    let ReadAncestry {
+        installations,
+        bundles,
+        unread,
+    } = read_ancestry(env, scope, manifest);
     let captured = captured_rows(lock);
     let roots = |facts| RemovalRoots {
         env,
@@ -407,13 +412,14 @@ fn kept_removed(
         kind,
         options,
         facts,
+        read_bundles: &bundles,
     };
     let mut decisions = BTreeMap::new();
     roots(Facts::Recorded(&captured)).decide(&mut decisions);
-    roots(Facts::Read(&read)).decide(&mut decisions);
+    roots(Facts::Read(&installations)).decide(&mut decisions);
     let named = unread
         .is_some()
-        .then(|| recorded_edges(lock, names, options));
+        .then(|| recorded_edges(lock, &captured, names, options));
     let mut kept = BTreeSet::new();
     for (key, decision) in decisions {
         match decision {
@@ -453,30 +459,34 @@ fn kept_removed(
     Ok(kept)
 }
 
-/// The selected installations whose record names an edge from something
-/// not going away: a requirer not named for removal, or a set not being
+/// The selected installations whose recorded readings name an edge from
+/// something not going away: a requirer not named for removal, or a set not being
 /// uninstalled. A short read cannot see a carrier declared since the last
 /// readable apply, or a hold that kept a record whose installation went
 /// unread, so where no reading roots an installation this name test keeps
 /// the removal rather than lose it.
 fn recorded_edges(
     lock: &Lock,
+    captured: &Captured<'_>,
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
     lock.entries
         .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
-        .filter(|entry| {
-            entry.reasons.iter().any(|reason| match reason {
+        .map(|entry| (entry.kind, &entry.name, &entry.reasons))
+        .chain(captured.iter().flat_map(|(node, rows)| {
+            rows.iter()
+                .map(|(_, row)| (node.kind, &node.name, &row.reasons))
+        }))
+        .filter(|(kind, name, _)| names.contains(name) && options.named_for_removal(*kind, name))
+        .filter(|(_, _, reasons)| {
+            reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
                 Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
-        .map(|entry| (entry.kind, entry.name.clone()))
+        .map(|(kind, name, _)| (kind, name.clone()))
         .collect()
 }
 
@@ -490,18 +500,17 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
     }
 }
 
+struct ReadAncestry {
+    installations: BTreeMap<InstallRef, RequirerProvenance>,
+    bundles: ReadBundles,
+    unread: Option<Vec<String>>,
+}
+
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
 /// declared at, and, where the read did not account for every
 /// declaration, each cause it met.
-fn read_ancestry(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-) -> (
-    BTreeMap<InstallRef, RequirerProvenance>,
-    Option<Vec<String>>,
-) {
+fn read_ancestry(env: &Env, scope: &Scope, manifest: &Manifest) -> ReadAncestry {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let read = super::expansion::PLANNED_KINDS
@@ -529,7 +538,11 @@ fn read_ancestry(
     );
     let unread = (!complete || !state.short_reads.is_empty())
         .then(|| state.short_reads.into_iter().collect());
-    (expansion.requirer_provenance(&read), unread)
+    ReadAncestry {
+        installations: expansion.requirer_provenance(&read),
+        bundles: state.read_bundles,
+        unread,
+    }
 }
 
 enum Reach {
@@ -693,6 +706,7 @@ struct RemovalRoots<'a> {
     kind: Option<ItemKind>,
     options: &'a PlanOptions,
     facts: Facts<'a>,
+    read_bundles: &'a ReadBundles,
 }
 
 impl RemovalRoots<'_> {
@@ -782,7 +796,9 @@ impl RemovalRoots<'_> {
     /// the member's tool from the catalog it was read from. Two readings
     /// bind the set's catalog to this edge: the member's own, when it was
     /// read from the set's source, and the set's record. Either one that
-    /// matches roots it; with neither, the set's reading is unknown.
+    /// matches roots it. With neither, only a live set reading that omits
+    /// this member proves it absent. Expansion may skip a named member
+    /// the catalog no longer offers, leaving no live ancestry for it.
     fn member(&self, node: &InstallRef, repo: &str, bundle: &crate::lock::BundleRef) -> Reach {
         let installs = self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
             decl.source == bundle.source
@@ -809,7 +825,15 @@ impl RemovalRoots<'_> {
                 .collect(),
         };
         if readings.is_empty() {
-            Reach::Missing(Unread::Set(bundle.clone()))
+            if self.read_bundles.get(bundle).is_some_and(|members| {
+                !members
+                    .iter()
+                    .any(|member| member.kind == node.kind && member.name == node.name)
+            }) {
+                Reach::Unrooted
+            } else {
+                Reach::Missing(Unread::Set(bundle.clone()))
+            }
         } else if readings
             .iter()
             .any(|read_under| self.same_source(&bundle.source, read_under))
