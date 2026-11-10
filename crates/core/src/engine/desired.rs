@@ -19,6 +19,9 @@ use super::expansion::{Offer, OpenCatalog};
 
 type RenderedFiles<'a> = (&'a Path, Vec<(PathBuf, Vec<u8>)>);
 
+pub(super) type ReadBundles =
+    BTreeMap<crate::lock::BundleRef, Vec<crate::source::bundles::BundleMember>>;
+
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Desired {
@@ -462,8 +465,9 @@ pub struct DesiredState {
     /// keeps as recorded, each with why.
     pub(super) kept_bundles: BTreeMap<crate::lock::BundleRef, KeptBundle>,
     /// Offered sets successfully read under this manifest's declarations,
-    /// including empty sets: absence of derived members proves no read.
-    pub(super) read_bundles: BTreeSet<crate::lock::BundleRef>,
+    /// with every named member, even one expansion cannot install. Only a
+    /// member absent from this reading is known not to be carried.
+    pub(super) read_bundles: ReadBundles,
     /// The records a set in `kept_bundles` keeps, its members and what
     /// they require, by entry key, each with the edges tying it to them it
     /// was recorded under (`bundles::kept_members`). The item pass adds

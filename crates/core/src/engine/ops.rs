@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::apply::{Op, PlannedOp};
 
+use super::desired::ReadBundles;
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::{ProvenanceStep, Result};
@@ -497,7 +498,7 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
 
 struct ReadAncestry {
     installations: BTreeMap<InstallRef, RequirerProvenance>,
-    bundles: BTreeSet<crate::lock::BundleRef>,
+    bundles: ReadBundles,
     unread: Option<Vec<String>>,
 }
 
@@ -701,7 +702,7 @@ struct RemovalRoots<'a> {
     kind: Option<ItemKind>,
     options: &'a PlanOptions,
     facts: Facts<'a>,
-    read_bundles: &'a BTreeSet<crate::lock::BundleRef>,
+    read_bundles: &'a ReadBundles,
 }
 
 impl RemovalRoots<'_> {
@@ -791,8 +792,9 @@ impl RemovalRoots<'_> {
     /// the member's tool from the catalog it was read from. Two readings
     /// bind the set's catalog to this edge: the member's own, when it was
     /// read from the set's source, and the set's record. Either one that
-    /// matches roots it. With neither, a successful live set read lets the
-    /// live ancestry decide; without that read, its membership is unknown.
+    /// matches roots it. With neither, only a live set reading that omits
+    /// this member proves it absent. Expansion may skip a named member
+    /// the catalog no longer offers, leaving no live ancestry for it.
     fn member(&self, node: &InstallRef, repo: &str, bundle: &crate::lock::BundleRef) -> Reach {
         let installs = self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
             decl.source == bundle.source
@@ -819,7 +821,11 @@ impl RemovalRoots<'_> {
                 .collect(),
         };
         if readings.is_empty() {
-            if self.read_bundles.contains(bundle) {
+            if self.read_bundles.get(bundle).is_some_and(|members| {
+                !members
+                    .iter()
+                    .any(|member| member.kind == node.kind && member.name == node.name)
+            }) {
                 Reach::Unrooted
             } else {
                 Reach::Missing(Unread::Set(bundle.clone()))

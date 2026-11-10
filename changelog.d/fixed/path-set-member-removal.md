@@ -1,1 +1,1 @@
-- Removing an item that a readable folder-catalog set no longer carries now succeeds without removing the set. Unreadable or missing sets still refuse the removal.
+- Removing an item that a readable folder-catalog set no longer carries now succeeds without removing the set. Unreadable or missing sets still refuse the removal, as do still-listed members the catalog can no longer account for.

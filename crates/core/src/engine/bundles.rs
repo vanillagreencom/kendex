@@ -239,7 +239,6 @@ fn installable(
             .insert(kept, KeptBundle::NotOffered { detail });
         return Vec::new();
     };
-    state.read_bundles.insert(bundle_ref(name, &decl.source));
     let mut installable = Vec::new();
     let mut held_back = 0;
     for member in &bundle.members {
@@ -305,6 +304,8 @@ fn installable(
             }
         ));
     }
+    let set = bundle_ref(name, &decl.source);
+    state.read_bundles.insert(set, bundle.members);
     installable
 }
 
