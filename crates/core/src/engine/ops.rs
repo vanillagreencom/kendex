@@ -5,7 +5,7 @@ use crate::apply::{Op, PlannedOp};
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{InstallRef, Lock, Reason, entry_key, lock_path};
+use crate::lock::{Lock, Reason, lock_path};
 use crate::manifest::{self, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -172,12 +172,6 @@ pub struct PreparedRemoval {
     names: Vec<String>,
     options: PlanOptions,
     disown: bool,
-    /// The catalogs of the edited manifest that this removal could not
-    /// read, as [`kept_removed`] decided on them.
-    unread: BTreeSet<String>,
-    /// Whether the removal writes anything to `[suppressed]`, which the
-    /// note on an unread catalog claims only when it does.
-    records: bool,
 }
 
 impl PreparedRemoval {
@@ -212,9 +206,14 @@ impl PreparedRemoval {
         let mut report = plan_scope(env, &self.scope, &self.manifest, &self.lock, options)?;
         match self.disown {
             true => {
-                report
-                    .notes
-                    .extend(unreadable_origins(&self.unread, self.records));
+                report.notes.extend(unreadable_origins(
+                    env,
+                    &self.scope,
+                    &self.manifest,
+                    &self.lock,
+                    &self.names,
+                    options,
+                ));
                 // An unchanged manifest is no removal. Creating one in a
                 // previously absent scope would declare a new install.
                 if self.manifest != self.original {
@@ -316,9 +315,7 @@ fn prepare_removal(
             });
         }
     }
-    let (kept, unread) = kept_removed(env, scope, &manifest, &lock, names, &options);
-    let records = !kept.is_empty();
-    for (kind, name) in kept {
+    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
         manifest.suppress(kind, &name);
     }
     Ok(PreparedRemoval {
@@ -329,8 +326,6 @@ fn prepare_removal(
         names: names.to_vec(),
         options,
         disown,
-        unread,
-        records,
     })
 }
 
@@ -381,10 +376,6 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// they cannot be read. So both are asked and anything either one names is
 /// written down — over-recording a removal costs a line the next `add`
 /// clears, while missing one puts back something the user took away.
-///
-/// Beside what it keeps removed, it answers which catalogs of the edited
-/// manifest it could not read ([`unread_catalogs`]): the record decides on
-/// that set, and the preview's note names it, so the two cannot differ.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -392,54 +383,31 @@ fn kept_removed(
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
-) -> (BTreeSet<(ItemKind, String)>, BTreeSet<String>) {
-    let (derived, unreadable) = still_derived(env, scope, manifest, names, options);
-    let unread = unread_catalogs(env, scope, manifest, &unreadable);
-    let mut kept = recorded_edges(manifest, lock, names, options, unread.is_empty());
-    kept.extend(derived);
-    (kept, unread)
+) -> BTreeSet<(ItemKind, String)> {
+    let mut kept = recorded_edges(lock, names, options);
+    kept.extend(still_derived(env, scope, manifest, names, options));
+    kept
 }
 
-/// What the record already says holds these installations up. Reading it
-/// costs no catalog, which is what makes a removal stick while a source is
-/// unreadable. `manifest` is the edited one, without the declarations this
-/// removal drops.
-///
-/// While every catalog reads, an edge holds the removal up where its
-/// requirer stays ([`requirer_stays`]), and [`still_derived`] covers what
-/// the lock does not record. While one does not, the lock alone cannot say
-/// what keeps a requirer: a declaration or a set the manifest gained since
-/// the last apply, or what brought a withheld requirer to a tool, may come
-/// from that catalog. So every edge then holds the removal up unless the
-/// removal names its requirer too: at worst one removal recorded too many,
-/// which the next `add` of that item clears. A set member stays removed
-/// where its set is not uninstalled, either way. KEN-5017 records in the
-/// lock what carries a requirer on each tool, and deletes this fallback.
+/// What the record already says holds these installations up. Every one
+/// carries the edges it was installed under, so an edge from something that
+/// is not going away is exactly what would derive the item again — and
+/// reading it costs no catalog, which is what makes a removal stick while a
+/// source is unreadable.
 fn recorded_edges(
-    manifest: &Manifest,
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
-    catalogs_read: bool,
 ) -> BTreeSet<(ItemKind, String)> {
-    let removed = |kind: ItemKind, name: &str| {
-        names.iter().any(|n| n == name) && options.named_for_removal(kind, name)
-    };
-    let stays = match catalogs_read {
-        true => staying(manifest, lock, options, &removed),
-        false => BTreeSet::new(),
-    };
-    let holds = |by: &InstallRef| match catalogs_read {
-        true => requirer_stays(manifest, lock, &stays, by),
-        false => !options.named_for_removal(by.kind, &by.name),
-    };
     lock.entries
         .values()
-        .filter(|entry| removed(entry.kind, &entry.name))
+        .filter(|entry| {
+            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+        })
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => holds(by),
+                Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
@@ -447,80 +415,17 @@ fn recorded_edges(
         .collect()
 }
 
-/// The records this removal leaves installed, by entry key: what is reached
-/// over `RequiredBy` edges from the records that are declared, carried by a
-/// set that is not uninstalled, or hold no reason. What the removal names
-/// goes or is kept removed, so it is neither a root nor a step, and a cycle
-/// it alone held up is reached from no root however its members require
-/// each other. A set member the removal takes is a step like any other: it
-/// stays where its own declaration or a requirer that stays keeps it.
-fn staying(
-    manifest: &Manifest,
-    lock: &Lock,
-    options: &PlanOptions,
-    removed: &impl Fn(ItemKind, &str) -> bool,
-) -> BTreeSet<String> {
-    let mut stays = BTreeSet::new();
-    loop {
-        let grew: Vec<String> = lock
-            .entries
-            .iter()
-            .filter(|(key, entry)| {
-                !stays.contains(*key)
-                    && !removed(entry.kind, &entry.name)
-                    && (entry.reasons.is_empty()
-                        || entry.reasons.iter().any(|reason| match reason {
-                            Reason::Requested => true,
-                            Reason::RequiredBy { by } => requirer_stays(manifest, lock, &stays, by),
-                            Reason::MemberOf { bundle } => {
-                                !options.uninstalled_bundles.contains(&bundle.name)
-                            }
-                        }))
-            })
-            .map(|(key, _)| key.clone())
-            .collect();
-        if grew.is_empty() {
-            return stays;
-        }
-        stays.extend(grew);
-    }
-}
-
-/// Whether the requirer an edge names stays, every catalog read: where its
-/// record stays. The walk records a hook's edge before it withholds the
-/// hook, so a requirer withheld from this tool has no record here though
-/// its edge does. It stays where the edited manifest still declares it,
-/// whose next walk records that edge again, or where a record of it on
-/// another tool stays; past those, [`still_derived`] says whether a set or
-/// a skill that stays brings it back.
-fn requirer_stays(
-    manifest: &Manifest,
-    lock: &Lock,
-    stays: &BTreeSet<String>,
-    by: &InstallRef,
-) -> bool {
-    let key = entry_key(by.kind, &by.name, by.harness);
-    if lock.entries.contains_key(&key) {
-        return stays.contains(&key);
-    }
-    manifest.declared(by.kind).contains_key(&by.name)
-        || HarnessId::ALL
-            .iter()
-            .any(|harness| stays.contains(&entry_key(by.kind, &by.name, *harness)))
-}
-
 /// What the catalogs say the manifest still implies, now that the
 /// declarations are gone. This is the reading that survives a deleted
 /// record, and the one that sees an edge the catalog gained since the last
-/// install. Beside it, the catalogs that resolved and still answered with
-/// less than they offer, whose part of that reading is short.
+/// install.
 fn still_derived(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     names: &[String],
     options: &PlanOptions,
-) -> (BTreeSet<(ItemKind, String)>, BTreeSet<String>) {
+) -> BTreeSet<(ItemKind, String)> {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let mut derived = BTreeSet::new();
@@ -531,84 +436,43 @@ fn still_derived(
             }
         }
     }
-    (derived, state.unreadable_catalogs)
+    derived
 }
 
-/// The catalogs of the edited manifest this removal could not read: each
-/// one it declares an item or a set from, and each enabled subscription,
-/// where that catalog does not resolve, at its own revision or at a `rev`
-/// an item or a set declares, or [`still_derived`] found it short
-/// (`unreadable`). The walk reads a pinned declaration at its `rev` and
-/// passes over one the mirror has not fetched without marking it short,
-/// so a catalog that reads at its own revision is still unread there.
-/// Any of them may hold what keeps a requirer, so one unread is enough for
-/// [`recorded_edges`] to fall back. The local and in-place catalogs count
-/// like any subscription. A subscription switched
-/// off that a declaration or a set still names counts and is unread:
-/// switching it off keeps its records, and switching it back on brings
-/// back what its items require. One that nothing names is read by
-/// nothing, and `builtin` is no catalog, so neither is asked: neither
-/// ever resolves Ready, and counting it would put every removal in that
-/// scope on the fallback.
-fn unread_catalogs(
+/// The catalogs behind what is going away that cannot be read right now.
+/// What else still wants an item is written in its catalog, so an unreadable
+/// one means the preview cannot show the whole consequence of the removal.
+/// The removal itself stands either way — the record already says what has
+/// to stay removed.
+fn unreadable_origins(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
-    unreadable: &BTreeSet<String>,
-) -> BTreeSet<String> {
-    let mut catalogs = crate::remote::sources_in_use(manifest);
-    catalogs.remove(manifest::BUILTIN_SOURCE_NAME);
-    catalogs.extend(
-        manifest
-            .sources
-            .iter()
-            .filter(|(_, decl)| decl.enabled)
-            .map(|(name, _)| name.as_str()),
-    );
-    let pins: BTreeSet<(&str, &str)> = ItemKind::ALL
-        .iter()
-        .flat_map(|kind| manifest.declared(*kind).values())
-        .chain(manifest.bundles.values())
-        .filter(|decl| decl.source != manifest::BUILTIN_SOURCE_NAME)
-        .filter_map(|decl| Some((decl.source.as_str(), decl.rev.as_deref()?)))
+    lock: &Lock,
+    names: &[String],
+    options: &PlanOptions,
+) -> Vec<String> {
+    let mut sources: Vec<String> = lock
+        .entries
+        .values()
+        .filter(|entry| {
+            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
+        })
+        .map(|entry| entry.source.clone())
         .collect();
-    let reads = |source: &str, rev: Option<&str>| {
-        matches!(
-            crate::source::resolve_at(env, scope, source, manifest, rev),
-            Ok(crate::source::SourceState::Ready(_))
-        )
-    };
-    catalogs
+    sources.sort();
+    sources.dedup();
+    sources
         .into_iter()
         .filter(|source| {
-            unreadable.contains(*source)
-                || !reads(source, None)
-                || pins
-                    .iter()
-                    .any(|(pinned, rev)| pinned == source && !reads(source, Some(rev)))
+            !matches!(
+                crate::source::resolve(env, scope, source, manifest),
+                Ok(crate::source::SourceState::Ready(_))
+            )
         })
-        .map(str::to_owned)
-        .collect()
-}
-
-/// What else still wants an item can be written in any catalog the
-/// manifest reads, so an unread one means the preview cannot show the
-/// whole consequence of the removal. Where the record holds an edge for
-/// it, the removal writes what has to stay removed (`records`); where it
-/// holds none, nothing is written, and the note says so rather than claim
-/// a record.
-fn unreadable_origins(unread: &BTreeSet<String>, records: bool) -> Vec<String> {
-    let consequence = match records {
-        true => "the removal stands, and what has to stay removed is recorded",
-        false => {
-            "nothing is recorded to keep it removed, so whatever in that catalog still wants it can bring it back"
-        }
-    };
-    unread
-        .iter()
         .map(|source| {
             format!(
-                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — {consequence}"
+                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — the removal stands, and what has to stay removed is recorded"
             )
         })
         .collect()

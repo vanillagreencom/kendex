@@ -244,9 +244,8 @@ impl DeclaredSelector {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRef {
-    /// The requirer's declared source name. The installation that records
-    /// the edge can come from another catalog: the manifest may take that
-    /// item from a second catalog by a declaration or a set.
+    /// Declared source name — dependencies stay inside one catalog, so this
+    /// is the source both ends share.
     pub source: String,
     pub kind: ItemKind,
     pub name: String,
