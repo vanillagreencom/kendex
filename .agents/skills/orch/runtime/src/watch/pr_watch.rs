@@ -259,12 +259,15 @@ pub(super) fn pass(
 /// One reducer run for `repo`: `GH_REPO` names
 /// the repository in the child's environment, the reducer takes no flag;
 /// its exit, stdout and stderr. A reducer that could not run is refused.
+/// The reducer runs `gh` itself, so it takes the watch's renewed sign-in.
 #[allow(
     clippy::disallowed_methods,
     reason = "the GitHub duty runs the github skill's reducer per repository, the repository named in its environment (`GH_REPO`), no effect on a lane or a controller"
 )]
 fn reduce(reducer: &Path, repo: &str) -> crate::error::Result<(i32, String, String)> {
-    let env = [("GH_REPO", OsStr::new(repo))];
+    let credential = super::github::renewed_credential();
+    let mut env = super::github::credential_env(&credential);
+    env.push(("GH_REPO", OsStr::new(repo)));
     let place = host::Place {
         cwd: None,
         env: &env,

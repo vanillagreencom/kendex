@@ -592,6 +592,16 @@ impl Failed {
     pub(crate) fn http(&self) -> Option<u16> {
         http_status(&self.stderr)
     }
+
+    /// Whether GitHub refused the sign-in itself: gh's exit 4, where it had
+    /// no credential to send, or a last status of 401, where the one it sent
+    /// was refused (gh 2.103.3: `gh: Bad credentials (HTTP 401)` and
+    /// `gh: Requires authentication (HTTP 401)`, exit 1, on the REST and the
+    /// GraphQL form alike). A 403 is the credential's reach, never its
+    /// validity.
+    pub(crate) fn sign_in_refused(&self) -> bool {
+        self.exit == Some(4) || self.http() == Some(401)
+    }
 }
 
 /// Why a `gh` call has no answer.
@@ -1175,6 +1185,37 @@ mod tests {
             ("", None),
         ] {
             assert_eq!(http_status(text), status, "{text}");
+        }
+    }
+
+    /// gh's answers on the measured sign-in failures read refused; a 403,
+    /// a 404, a 5xx and a transport failure on the same exit do not.
+    #[test]
+    fn a_refused_sign_in_is_exit_4_or_a_last_status_of_401() {
+        for (exit, stderr, refused) in [
+            (1, "gh: Bad credentials (HTTP 401)\n", true),
+            (1, "gh: Requires authentication (HTTP 401)\n", true),
+            (
+                4,
+                "gh: To use GitHub CLI in automation, set the GH_TOKEN environment variable.\n",
+                true,
+            ),
+            (
+                1,
+                "gh: Resource not accessible by integration (HTTP 403)\n",
+                false,
+            ),
+            (1, "gh: Not Found (HTTP 404)\n", false),
+            (1, "gh: upstream (HTTP 401) (HTTP 502)\n", false),
+            (1, "Get \"https://api.github.com/user\": EOF\n", false),
+        ] {
+            let failed = Failed {
+                stdout: Vec::new(),
+                stderr: stderr.to_owned(),
+                exit: Some(exit),
+                status: format!("exit status: {exit}"),
+            };
+            assert_eq!(failed.sign_in_refused(), refused, "{exit} {stderr}");
         }
     }
 

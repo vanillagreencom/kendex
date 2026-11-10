@@ -11,7 +11,9 @@
 //! or a page set that disagrees with its total refuses the inventory with
 //! its cause and never reads as an empty one; the refusal is
 //! this duty's, printed as `watch-step-failed step=github`, so a GitHub
-//! refusal discards no tracker news and no close.
+//! refusal discards no tracker news and no close. A refused sign-in is
+//! renewed for every duty's reads (§ the sign-in); one that cannot be
+//! renewed is also the owner's turn, `github-auth-failed`.
 //!
 //! The tracker's terminal verdicts the parked-merged hand consults come
 //! through the slot the tracker duty writes (`tracker::Shared`), which
@@ -25,7 +27,11 @@
 //! (`github-capped`).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::{OsStr, OsString};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use agent_runtime::clock;
 use serde::Serialize;
@@ -38,9 +44,10 @@ use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::wire::{
     Issue, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
 };
-use crate::verify::{self, Answer, Gh, MAX_PAGES, PER_PAGE, Page, Unrun};
+use crate::verify::{self, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun};
 use crate::watch::{Baseline, Body, Change, Event, Produced, Tick};
 
+use super::owner_alert::{self, Word};
 use super::tracker::{Shared, TerminalState};
 use super::{outside, pr_watch, security};
 
@@ -78,6 +85,15 @@ pub const MAIN_BUDGET_ROW: &str = "main-push-budget";
 
 /// The prefix of a budget warning's message.
 const BUDGET_WARNING: &str = "run-all-budget ";
+
+/// Baseline row kind of the owner's turn for a sign-in that cannot be
+/// renewed: one row, under the one key, holding the turn's word.
+pub const SIGN_IN_ROW: &str = "github-auth";
+const SIGN_IN_KEY: &str = "github";
+const SIGN_IN_STATE: &str = "unrenewed";
+
+/// The owner's notice of that sign-in, under the state directory.
+const SIGN_IN_ALERT_FILE: &str = "github-auth-failed.txt";
 
 // --- what a pass hands over -----------------------------------------------------
 
@@ -134,19 +150,231 @@ pub(super) fn unrun(read: &'static str, unrun: &Unrun) -> Error {
     )
 }
 
+// --- the sign-in ------------------------------------------------------------------
+//
+// `watch run` selects its credential through the github skill's ladder before
+// its claim and starts itself again in place under the selection, so a watch
+// that cannot read GitHub never claims, and every program the watch starts
+// outside the handle inherits a validated pair. The process lives for hours
+// and across hand-overs, so a credential that expires later is renewed here,
+// by running the ladder again: the renewal rides each handle's own pairs,
+// since a process running threads cannot reset its own environment safely,
+// and a second start in place would end the duties in flight, drop the
+// runner's state and lose the read that met the refusal.
+
+/// The github skill's credential ladder under the project's install.
+const GH_AUTH_LADDER: &str = ".agents/skills/github/scripts/gh-auth-ladder";
+
+/// How long the ladder's bounded probes may take together.
+const GH_AUTH_LADDER_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// The two token variables as the ladder leaves them. An empty value is one
+/// gh reads as unset (gh 2.103.3), so a pair masks an inherited token.
+pub type Credential = Vec<(String, OsString)>;
+
+/// `credential` as the runner's environment pairs.
+pub(crate) fn credential_env(credential: &[(String, OsString)]) -> Vec<(&str, &OsStr)> {
+    credential
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_os_str()))
+        .collect()
+}
+
+/// Run the ladder over the project at `project`, its environment this
+/// process's with `current` over it: the two variables it prints, or
+/// `auth-failed service=github` with its first line where no candidate
+/// works; a ladder that never started or gave no answer is the runner's
+/// error.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the watch's run of the github skill's credential ladder through the one runner, at its start and on a refused sign-in"
+)]
+pub fn select_sign_in(project: &Path, current: &[(String, OsString)]) -> Result<Credential> {
+    let env = credential_env(current);
+    let out = agent_runtime::host::run_tagged_in(
+        "watch",
+        "gh-auth-ladder",
+        &project.join(GH_AUTH_LADDER),
+        "select",
+        &["--project", &project.display().to_string()],
+        agent_runtime::host::Place {
+            cwd: None,
+            env: &env,
+        },
+        GH_AUTH_LADDER_TIMEOUT,
+    )?;
+    if !out.status.success() {
+        let stderr = agent_runtime::host::stderr_text(&out);
+        let line = stderr.lines().next().unwrap_or_default();
+        return Err(refused(
+            "auth-failed",
+            &[("service", "github"), ("detail", line)],
+        ));
+    }
+    Ok(agent_runtime::host::stdout_text(&out)
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(name, _)| matches!(*name, "GH_TOKEN" | "GITHUB_TOKEN"))
+        .map(|(name, value)| (name.to_owned(), value.into()))
+        .collect())
+}
+
+/// The watch's sign-in after its start: the project the ladder runs over
+/// and where the renewals stand. Installed by `watch run` alone, so every
+/// other command's reads keep their own environment's credential.
+struct SignIn {
+    project: PathBuf,
+    standing: Mutex<Renewals>,
+}
+
+#[derive(Default)]
+struct Renewals {
+    /// The pair the last renewal selected; empty until one has run, the
+    /// start's selection standing in this process's environment.
+    pairs: Credential,
+    /// How many renewals have selected.
+    generation: u64,
+    /// A renewal that selected nothing, its cause word and its words,
+    /// standing until the GitHub duty's next pass, so a refused sign-in
+    /// runs the ladder at most once per long cadence.
+    failed: Option<(String, String)>,
+}
+
+static SIGN_IN: OnceLock<SignIn> = OnceLock::new();
+
+/// The sign-in of this `watch run`, renewed over `project`.
+pub fn install_sign_in(project: &Path) {
+    let _ = SIGN_IN.set(SignIn {
+        project: project.to_path_buf(),
+        standing: Mutex::new(Renewals::default()),
+    });
+}
+
+fn renewals_of(sign_in: &SignIn) -> std::sync::MutexGuard<'_, Renewals> {
+    sign_in.standing.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// The pair a child that reads GitHub takes over this process's
+/// environment, and the renewal it was selected by.
+fn sign_in_now() -> (Credential, u64) {
+    match SIGN_IN.get() {
+        None => (Credential::new(), 0),
+        Some(sign_in) => {
+            let standing = renewals_of(sign_in);
+            (standing.pairs.clone(), standing.generation)
+        }
+    }
+}
+
+/// The renewed pair for a child the watch starts outside the handle.
+pub(crate) fn renewed_credential() -> Credential {
+    sign_in_now().0
+}
+
+/// The refusal of a sign-in that could not be renewed: `cause` one word,
+/// `detail` what said so.
+fn sign_in_failed(cause: &str, detail: &str) -> Error {
+    refused(
+        "github-auth-failed",
+        &[("cause", cause), ("detail", detail)],
+    )
+}
+
+/// What a read whose sign-in was refused does next.
+enum Renewal {
+    /// No `watch run` installed a sign-in: the refusal stands as the read's.
+    Unowned,
+    /// Read again under this pair.
+    Selected(Credential),
+}
+
+/// Renew the sign-in a read under renewal `seen` met refused: a newer
+/// renewal is taken as it stands, a failed one standing refuses at once,
+/// else the ladder runs. The lock is held while it runs, so the reads of
+/// other duties wait for its pair rather than run it again.
+fn renew_sign_in(seen: u64) -> Result<Renewal> {
+    let Some(sign_in) = SIGN_IN.get() else {
+        return Ok(Renewal::Unowned);
+    };
+    let mut standing = renewals_of(sign_in);
+    if let Some((cause, detail)) = &standing.failed {
+        return Err(sign_in_failed(cause, detail));
+    }
+    if standing.generation == seen {
+        match select_sign_in(&sign_in.project, &standing.pairs) {
+            Ok(pairs) => {
+                standing.pairs = pairs;
+                standing.generation += 1;
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "github-sign-in-renewed generation={}",
+                    standing.generation
+                );
+            }
+            Err(e) => {
+                let failed = (e.key().to_owned(), e.to_string());
+                let refusal = sign_in_failed(&failed.0, &failed.1);
+                standing.failed = Some(failed);
+                return Err(refusal);
+            }
+        }
+    }
+    Ok(Renewal::Selected(standing.pairs.clone()))
+}
+
+/// A read under a renewed pair refused again: the refusal stands until the
+/// GitHub duty's next pass, as a failed renewal does.
+fn refused_again(failed: &Failed) -> Error {
+    let cause = if failed.exit == Some(4) {
+        "exit-4"
+    } else {
+        "http-401"
+    };
+    let detail = failed.detail();
+    if let Some(sign_in) = SIGN_IN.get() {
+        renewals_of(sign_in).failed = Some((cause.to_owned(), detail.clone()));
+    }
+    sign_in_failed(cause, &detail)
+}
+
+/// The GitHub duty's pass may run the ladder again.
+fn retry_renewal() {
+    if let Some(sign_in) = SIGN_IN.get() {
+        renewals_of(sign_in).failed = None;
+    }
+}
+
 /// The watch's `gh` handle: `cli` resolved as the caller named it
-/// (production: on `PATH`), its starts counted under the GitHub tag.
+/// (production: on `PATH`), its starts counted under the GitHub tag, under
+/// the renewed sign-in where one stands.
 pub(crate) fn handle(cli: &Path) -> Gh<'static> {
-    Gh::new(cli).tagged(TAG)
+    Gh::with_env(cli, renewed_credential()).tagged(TAG)
 }
 
 /// The watch's reads over the one handle: GitHub's 404 is the answer
 /// `None`, every other failure the read's refusal under the duty's keys.
 impl Gh<'_> {
     /// What one `gh api` read answered: the bytes of a call that exited
-    /// zero, or `None` where the last status gh wrote is 404.
+    /// zero, or `None` where the last status gh wrote is 404. A refused
+    /// sign-in is renewed and the read asked once more; one that cannot be
+    /// renewed refuses `github-auth-failed`.
     fn answer(&self, read: &'static str, path: &str) -> Result<Option<Vec<u8>>> {
-        match self.run(read, &["api", path], None) {
+        let (pairs, seen) = sign_in_now();
+        let answer = match self.adding_env(pairs).run(read, &["api", path], None) {
+            Ok(Answer::Failed(failed)) if failed.sign_in_refused() => match renew_sign_in(seen)? {
+                Renewal::Unowned => Ok(Answer::Failed(failed)),
+                Renewal::Selected(pairs) => {
+                    match self.adding_env(pairs).run(read, &["api", path], None) {
+                        Ok(Answer::Failed(again)) if again.sign_in_refused() => {
+                            return Err(refused_again(&again));
+                        }
+                        other => other,
+                    }
+                }
+            },
+            other => other,
+        };
+        match answer {
             Err(e) => Err(unrun(read, &e)),
             Ok(Answer::Printed { stdout, .. }) => Ok(Some(stdout)),
             Ok(Answer::Failed(failed)) if failed.http() == Some(404) => Ok(None),
@@ -588,7 +816,91 @@ fn load_fleet(path: &Path) -> Result<(FleetState, Vec<Value>)> {
     Ok((fleet, verdicts))
 }
 
+/// The pass: the reads, under a sign-in this pass may renew once. A sign-in
+/// that could not be renewed is the owner's turn ([`sign_in_turn`]) and the
+/// pass's failure; a pass whose reads answered clears the turn.
 fn run(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
+    retry_renewal();
+    match pass_reads(ctx, passes, tick) {
+        Ok(mut produced) => {
+            if tick.baseline.get(SIGN_IN_ROW, SIGN_IN_KEY).is_some() {
+                produced.changes.push(Change::Clear {
+                    kind: SIGN_IN_ROW.to_owned(),
+                    identity: SIGN_IN_KEY.to_owned(),
+                });
+            }
+            Ok(produced)
+        }
+        Err(e) => match sign_in_cause(&e) {
+            Some(cause) => Ok(sign_in_turn(ctx, tick.baseline, &cause, &e.to_string())),
+            None => Err(e),
+        },
+    }
+}
+
+/// The cause word of a `github-auth-failed` refusal.
+fn sign_in_cause(e: &Error) -> Option<String> {
+    let Error::Runtime(agent_runtime::Error::Refused {
+        key: "github-auth-failed",
+        fields,
+    }) = e
+    else {
+        return None;
+    };
+    fields
+        .iter()
+        .find(|(name, _)| name == "cause")
+        .map(|(_, value)| value.clone())
+}
+
+/// The owner's turn for a sign-in that cannot be renewed, as the owner
+/// alert runs it: the line and the told row on the pass that reads it, the
+/// owner's notice on the next, nothing while it stands. The cause stays
+/// the pass's failure under the runner's one rule.
+fn sign_in_turn(ctx: &Context, baseline: &Baseline, cause: &str, words: &str) -> Produced {
+    let mut produced = Produced {
+        failed: Some(words.to_owned()),
+        ..Produced::default()
+    };
+    let prior = baseline.get(SIGN_IN_ROW, SIGN_IN_KEY).unwrap_or("");
+    match Word::of_row(prior, SIGN_IN_STATE) {
+        Some(Word::Alerted) => {}
+        Some(Word::Told) => {
+            match owner_alert::send(&ctx.settings, SIGN_IN_ALERT_FILE, &sign_in_text(words)) {
+                Ok(()) => produced.changes.push(Change::Set {
+                    kind: SIGN_IN_ROW.to_owned(),
+                    identity: SIGN_IN_KEY.to_owned(),
+                    value: Word::Alerted.row(SIGN_IN_STATE),
+                }),
+                Err(cause) => {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "github-auth-notice-failed channel=owner cause={cause}"
+                    );
+                }
+            }
+        }
+        None => {
+            produced.events.push(Event::GitHubAuthFailed {
+                cause: cause.to_owned(),
+            });
+            produced.changes.push(Change::Set {
+                kind: SIGN_IN_ROW.to_owned(),
+                identity: SIGN_IN_KEY.to_owned(),
+                value: Word::Told.row(SIGN_IN_STATE),
+            });
+        }
+    }
+    produced
+}
+
+fn sign_in_text(words: &str) -> String {
+    format!(
+        "github-auth-failed: the orch watch cannot sign in to GitHub and the github skill's credential ladder selected no working credential, so every GitHub read of the fleet fails until one works: {words}. Sign gh in again, or renew the token the ladder reads (the caller's GH_TOKEN, the keyring, the project's GH_BOT_TOKEN); the watch runs the ladder again on its next GitHub pass.\n"
+    )
+}
+
+fn pass_reads(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
     let (fleet, verdicts) = load_fleet(&ctx.fleet)?;
     let terminal = ctx
         .shared
@@ -1940,7 +2252,7 @@ pub fn pr_watch_context(rc: i32, out: &str, err: &str) -> pr_watch::Context {
     }
 }
 
-pub fn row_kinds() -> [&'static str; 11] {
+pub fn row_kinds() -> [&'static str; 12] {
     [
         MERGED_ROW,
         PARKED_UNTIL_ROW,
@@ -1953,6 +2265,7 @@ pub fn row_kinds() -> [&'static str; 11] {
         outside::ROW,
         security::ALERT_ROW,
         security::BOT_FIX_ROW,
+        SIGN_IN_ROW,
     ]
 }
 

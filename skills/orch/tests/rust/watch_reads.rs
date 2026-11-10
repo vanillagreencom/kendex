@@ -1740,7 +1740,8 @@ fn the_duty_owns_its_row_kinds() {
             "pr-watch",
             "outside-contribution",
             "security-alert",
-            "bot-fix"
+            "bot-fix",
+            "github-auth"
         ]
     );
     let _ = set("triage", "KEN-1", "Todo|-");

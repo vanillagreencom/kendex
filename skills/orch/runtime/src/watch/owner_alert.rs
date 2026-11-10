@@ -1,17 +1,20 @@
 //! The owner's alert through the overseer mailbox: a watch duty's one way
 //! to tell the owner of an overseer condition nobody in the session can act
-//! on. Two duties take it: the overseer duty for a context gap that stands
-//! (`watch::overseer`), the wake duty for an idle overseer holding the
-//! owner's unread mail that no wake reached (`watch::wake`).
+//! on. Three duties take it: the overseer duty for a context gap that stands
+//! and for an overseer whose session has ended (`watch::overseer`), the
+//! wake duty for an idle overseer holding the owner's unread mail that no
+//! wake reached (`watch::wake`), and the GitHub duty for a sign-in the
+//! credential ladder cannot renew (`watch::github`).
 //!
-//! The turn is the same for both: the condition is said on the log on the
+//! The turn is the same for each: the condition is said on the log on the
 //! pass that reads it, [`Word::Told`]; the owner is alerted on the next
 //! pass, and the mark advanced to [`Word::Alerted`] only once the owner
 //! holds the words, so an alert the owner did not get is sent again on the
 //! pass after; nothing is sent while that condition stands; a changed
 //! condition starts the turn again. Each duty keeps the mark in the record
-//! it owns for the condition: the overseer duty in its baseline row, the
-//! wake duty in the wake record its mark already stands in.
+//! it owns for the condition: the overseer and GitHub duties in a baseline
+//! row of their own per condition, the wake duty in the wake record its
+//! mark already stands in.
 
 use std::time::Duration;
 

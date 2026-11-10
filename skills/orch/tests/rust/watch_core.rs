@@ -2137,3 +2137,261 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
 }
+
+// The GitHub sign-in through `watch run`: the real ladder of the github
+// skill over the `gh` fixture's credential judge.
+
+/// The credential the watch is started with.
+const START_TOKEN: &str = "ghs_watchStartFixture";
+
+/// The project's bot token a renewal finds in `.env.local`.
+const BOT_TOKEN: &str = "ghs_projectBotFixture";
+
+/// The one repository the GitHub duty reads.
+const SIGN_IN_REPO: &str = "owner/repo";
+
+/// `value` at `path` whole: a reader between two writes sees one map or
+/// the other, never a part.
+fn plant_whole(path: &Path, value: &str) {
+    let partial = path.with_extension("partial");
+    std::fs::write(&partial, value).unwrap();
+    std::fs::rename(&partial, path).unwrap();
+}
+
+/// The `gh` fixture's map: the repository's audits answer quiet (no
+/// workflow, no open pull request or issue) and `sign_in` judges every
+/// call's credential.
+fn plant_github(bin: &Path, sign_in: Value) {
+    let quiet = json!({
+        format!("repos/{SIGN_IN_REPO}/actions/workflows?per_page=100&page=1"):
+            {"body": {"total_count": 0, "workflows": []}},
+        format!("repos/{SIGN_IN_REPO}/pulls?state=open&per_page=100&page=1"): {"body": []},
+        format!("repos/{SIGN_IN_REPO}/issues?state=open&per_page=100&page=1"): {"body": []},
+        "sign-in": sign_in,
+    });
+    plant_whole(&bin.join("gh.json"), &quiet.to_string());
+}
+
+/// `watch run` on a one-second long cadence over [`SIGN_IN_REPO`], started
+/// with [`START_TOKEN`], which the fixture takes until a row expires it:
+/// the `gh` fixture first on `PATH`, the reducer quiet, the owner's mailbox
+/// the logging fixture, the runner's stderr in `watch.err`.
+fn spawn_sign_in_watch(dir: &Path) -> std::process::Child {
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    link_fixture("gh/gh", &bin.join("gh"));
+    link_fixture("pr-watch-fixture/pr-watch.sh", &bin.join("pr-watch"));
+    link_fixture("lane-mail-owner/lane-mail", &bin.join("lane-mail"));
+    plant_github(&bin, json!({"expired": [], "stored": null}));
+    std::fs::write(
+        bin.join("pr-watch.json"),
+        json!({SIGN_IN_REPO: {"exit": 0}}).to_string(),
+    )
+    .unwrap();
+    let mut command = watch_run_command(dir, &["--interval", "1", "--repo", SIGN_IN_REPO]);
+    command
+        .env("GH_TOKEN", START_TOKEN)
+        .env("OVERSEE_WATCH_PR_WATCH", bin.join("pr-watch"))
+        .env("LANE_MAIL_CLI", bin.join("lane-mail"))
+        .stderr(std::fs::File::create(dir.join("watch.err")).unwrap());
+    command.spawn().expect("spawn watch run")
+}
+
+/// The epoch second now, the floor a pass that starts after a plant is
+/// stamped at or past.
+fn wall_now() -> u64 {
+    SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// Wait until the GitHub duty's pass stamp is past `after` and `holds`
+/// reads the baseline true, bounded; the bound's failure names the log and
+/// the runner's stderr.
+fn await_github_pass(
+    dir: &Path,
+    paths: &Paths,
+    after: u64,
+    what: &str,
+    holds: impl Fn(&watch::Baseline) -> bool,
+) -> u64 {
+    let deadline = Instant::now() + secs(30);
+    loop {
+        if let Ok(baseline) = watch::Baseline::load(&paths.baseline)
+            && let Some(&at) = baseline.passes.get(&Duty::GitHub)
+            && at > after
+            && holds(&baseline)
+        {
+            return at;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{what}: {:?}\n{}",
+            log_lines(paths),
+            std::fs::read_to_string(dir.join("watch.err")).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn stop_watch(state_dir: &Path, mut child: std::process::Child) {
+    let stop = watch_cmd(state_dir, &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    assert!(child.wait().unwrap().success());
+}
+
+fn lines_of(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A watch whose starting token expires mid-life reads on: the GitHub
+/// duty's first read under the expired token is refused 401, the ladder
+/// runs again and selects the stored login, the read is asked again under
+/// the renewed pair, and the pass completes with no step failure and no
+/// alert. The renewed pair masks the token the process inherited, on the
+/// duty's reads and on the reducer the duty starts.
+#[test]
+fn a_token_that_expires_mid_life_is_renewed_and_the_pass_completes() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
+    let mut child = spawn_sign_in_watch(&state_dir);
+    await_claim(&mut child, &paths);
+    await_github_pass(&state_dir, &paths, 0, "the first pass", |_| true);
+    let bin = state_dir.join("bin");
+    plant_github(&bin, json!({"expired": [START_TOKEN], "stored": "valid"}));
+    let expired = wall_now();
+    await_github_pass(
+        &state_dir,
+        &paths,
+        expired,
+        "the GitHub duty never passed under the expired token",
+        |_| true,
+    );
+    stop_watch(&state_dir, child);
+    let log = log_lines(&paths);
+    assert!(
+        !log.iter()
+            .any(|l| l.starts_with("EVENT watch-step-failed step=github")
+                || l.starts_with("EVENT github-auth-failed")),
+        "the renewed pass failed nothing: {log:?}"
+    );
+    let calls = lines_of(&bin.join("gh.env"));
+    let read = format!("api repos/{SIGN_IN_REPO}/");
+    assert!(
+        calls
+            .iter()
+            .any(|l| l.starts_with(&format!("GH_TOKEN={START_TOKEN} {read}"))),
+        "a read went out under the start token: {calls:?}"
+    );
+    assert!(
+        calls
+            .iter()
+            .any(|l| l.starts_with(&format!("GH_TOKEN= {read}"))),
+        "a read went out under the renewed stored login: {calls:?}"
+    );
+    assert_eq!(
+        lines_of(&bin.join("pr-watch.env"))
+            .last()
+            .map(String::as_str),
+        Some("GH_TOKEN="),
+        "the reducer's last run took the renewed pair"
+    );
+}
+
+/// A sign-in the ladder cannot renew (the start token expired, no stored
+/// login, no project token) is said once on the log with its cause and
+/// once to the owner on the next pass, then nothing while it stands; a
+/// project token the ladder then finds renews it and clears the turn, and
+/// a later expiry of that token is said again.
+#[test]
+fn an_unrenewable_sign_in_reaches_the_owner_once_and_a_renewal_clears_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
+    let mut child = spawn_sign_in_watch(&state_dir);
+    await_claim(&mut child, &paths);
+    await_github_pass(&state_dir, &paths, 0, "the first pass", |_| true);
+    let bin = state_dir.join("bin");
+    let turn = |b: &watch::Baseline| b.get("github-auth", "github").map(str::to_owned);
+    plant_github(&bin, json!({"expired": [START_TOKEN], "stored": null}));
+    let alerted = await_github_pass(
+        &state_dir,
+        &paths,
+        wall_now(),
+        "the owner was never alerted",
+        |b| turn(b).as_deref() == Some("unrenewed|alerted"),
+    );
+    // Two more passes with the condition standing.
+    let standing = await_github_pass(&state_dir, &paths, alerted, "standing", |_| true);
+    await_github_pass(&state_dir, &paths, standing, "standing", |_| true);
+    let said = |log: &[String]| {
+        log.iter()
+            .filter(|l| l.starts_with("EVENT github-auth-failed "))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let notices = || {
+        lines_of(&bin.join("lane-mail.log"))
+            .into_iter()
+            .filter(|l| l.starts_with("notice to=owner github-auth-failed: "))
+            .count()
+    };
+    assert_eq!(
+        said(&log_lines(&paths)),
+        vec!["EVENT github-auth-failed cause=auth-failed"],
+        "said once on the log"
+    );
+    assert_eq!(notices(), 1, "one notice to the owner");
+    std::fs::write(
+        state_dir.join(".env.local"),
+        format!("GH_BOT_TOKEN={BOT_TOKEN}\n"),
+    )
+    .unwrap();
+    await_github_pass(
+        &state_dir,
+        &paths,
+        wall_now(),
+        "the project token never renewed the sign-in",
+        |b| turn(b).is_none(),
+    );
+    assert!(
+        lines_of(&bin.join("gh.env"))
+            .iter()
+            .any(|l| l.starts_with(&format!("GH_TOKEN={BOT_TOKEN} api repos/"))),
+        "the reads went out under the project token"
+    );
+    plant_github(
+        &bin,
+        json!({"expired": [START_TOKEN, BOT_TOKEN], "stored": null}),
+    );
+    await_github_pass(
+        &state_dir,
+        &paths,
+        wall_now(),
+        "a later expiry was never said",
+        |b| turn(b).is_some(),
+    );
+    stop_watch(&state_dir, child);
+    assert_eq!(
+        said(&log_lines(&paths)),
+        vec![
+            "EVENT github-auth-failed cause=auth-failed",
+            "EVENT github-auth-failed cause=auth-failed"
+        ],
+        "a later expiry is said again"
+    );
+}

@@ -63,6 +63,15 @@
 # GraphQL reply's `data` is projected onto its query's selection
 # (`select.jq` beside this file), and a `pr view` body onto its `--json`
 # list.
+# The map's `sign-in` entry, where present, is GitHub judging the call's
+# credential before anything else: GH_TOKEN, else GITHUB_TOKEN, an empty
+# value read as unset (as gh 2.103.3 reads it); with neither, the stored
+# login its `stored` names (`valid` or `expired`; absent, there is none).
+# A token its `expired` list names, or an expired stored login, is
+# answered as GitHub answers it whatever was asked, with gh's measured
+# words: the body on stdout, `gh: Bad credentials (HTTP 401)` on stderr,
+# exit 1; no credential at all is gh's exit 4. `auth status` answers 0
+# for a working credential and 1 otherwise; `api user` prints the login.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -71,6 +80,32 @@ if [ -z "${GH_FAKE_LOG:-}" ]; then
 fi
 : "${GH_FAKE_REPLIES:=$here/gh.json}"
 printf '%s\n' "$*" >> "$GH_FAKE_LOG"
+sign_in=$(jq -c '."sign-in" // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+if [ -n "$sign_in" ]; then
+  token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  if [ -n "$token" ]; then
+    login=$(jq -r --arg t "$token" 'if ((.expired // []) | index($t)) != null then "expired" else "valid" end' <<<"$sign_in")
+  else
+    login=$(jq -r '.stored // "none"' <<<"$sign_in")
+  fi
+  if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
+    [ "$login" = valid ] || exit 1
+    exit 0
+  fi
+  case "$login" in
+    none)
+      echo 'gh: To use GitHub CLI in automation, set the GH_TOKEN environment variable.' >&2
+      exit 4 ;;
+    expired)
+      echo '{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest","status":"401"}'
+      echo 'gh: Bad credentials (HTTP 401)' >&2
+      exit 1 ;;
+  esac
+  if [ "${1:-}" = api ] && [ "${2:-}" = user ]; then
+    echo fixture
+    exit 0
+  fi
+fi
 acts="${GH_FAKE_REPLIES%.json}.acts.json"
 overlay="" number="" query="" fields=""
 real="$(readlink -f "${BASH_SOURCE[0]}")"

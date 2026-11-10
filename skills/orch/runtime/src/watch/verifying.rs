@@ -15,8 +15,8 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::settings::Settings;
+use crate::verify::Answer;
 use crate::verify::wire::{Nullable, Pull};
-use crate::verify::{Answer, Gh};
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
@@ -273,7 +273,7 @@ fn gh_json(
     if let Some(value) = read.get(path) {
         return Ok(value.clone());
     }
-    let answer = Gh::new(gh)
+    let answer = super::github::handle(gh)
         .tagged(TAG)
         .bounded(BOUND)
         .run("api", &["api", path], None)

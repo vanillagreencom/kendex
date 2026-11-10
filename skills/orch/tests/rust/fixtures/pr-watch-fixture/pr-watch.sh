@@ -8,9 +8,12 @@
 # with no entry is the reducer's global failure (exit 2, stderr alone). With
 # the two names unset, the map and the log are `pr-watch.json` and
 # `pr-watch.log` beside the path this was invoked as (the rows symlink the
-# fixture into their world as `pr-watch`).
+# fixture into their world as `pr-watch`), and each run's GH_TOKEN (`unset`
+# where absent) is appended to `pr-watch.env` there, so a row proves which
+# sign-in the reducer's own `gh` would read with.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
+[ -n "${PR_WATCH_FAKE_LOG:-}" ] || printf 'GH_TOKEN=%s\n' "${GH_TOKEN-unset}" >> "$here/pr-watch.env"
 : "${PR_WATCH_FAKE_REPLIES:=$here/pr-watch.json}"
 : "${PR_WATCH_FAKE_LOG:=$here/pr-watch.log}"
 repo="${GH_REPO-unset}"

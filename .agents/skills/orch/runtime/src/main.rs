@@ -1981,54 +1981,30 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
     Ok(value)
 }
 
-/// The github skill's credential ladder under the project's install.
-const GH_AUTH_LADDER: &str = ".agents/skills/github/scripts/gh-auth-ladder";
-
-/// How long the ladder's bounded probes may take together.
-const GH_AUTH_LADDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
 /// The word `watch run` is started again with once the ladder has run.
 const CREDENTIAL_SELECTED: &str = "--credential-selected";
 
-/// Select the GitHub credential this process and every `gh` it starts read
-/// with, once: before the claim, so a watch that cannot read GitHub never
+/// Select the GitHub credential this process and every program it starts
+/// read with: before the claim, so a watch that cannot read GitHub never
 /// stands as the fleet's watch, and before a report's GitHub reads, so a
-/// stale inherited token leaves no window unread: the github skill's ladder
-/// prints the two token variables as it leaves them, and this process
-/// starts itself again in place under that environment with
-/// `--credential-selected`, which changes no running thread's environment
-/// and keeps the pid and start the launcher recorded. A ladder with no working candidate refuses
+/// stale inherited token leaves no window unread. The github skill's
+/// ladder (`watch::github::select_sign_in`) prints the two token variables as it
+/// leaves them, and this process starts itself again in place under that
+/// environment with `--credential-selected`, which changes no running
+/// thread's environment and keeps the pid and start the launcher recorded;
+/// a watch renews the selection later through its handle
+/// (`watch::github::install_sign_in`). A ladder with no working candidate refuses
 /// `auth-failed`; one that cannot be run, and a restart that fails, refuse
 /// with their cause. Returns only the refusal.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the command's one run of the credential ladder through the one runner, and its one restart of itself under the selection"
+    reason = "the command's one restart of itself under the ladder's selection"
 )]
 fn reexec_with_github_auth(settings: &Settings) -> Error {
-    let ladder = settings.roots.project.join(GH_AUTH_LADDER);
-    let project = settings.roots.project.display().to_string();
-    let out = match agent_runtime::host::run_tagged(
-        "watch",
-        "gh-auth-ladder",
-        &ladder,
-        "select",
-        &["--project", &project],
-        GH_AUTH_LADDER_TIMEOUT,
-    ) {
-        Ok(out) => out,
-        Err(e) => return Error::Runtime(e),
+    let selected = match watch::github::select_sign_in(&settings.roots.project, &[]) {
+        Ok(selected) => selected,
+        Err(e) => return e,
     };
-    if !out.status.success() {
-        let line = agent_runtime::host::stderr_text(&out)
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .to_owned();
-        return Error::Runtime(agent_runtime::Error::refused(
-            "auth-failed",
-            &[("service", "github"), ("detail", &line)],
-        ));
-    }
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
         Err(e) => return Error::Runtime(agent_runtime::Error::io("exe", PathBuf::from("."), e)),
@@ -2037,13 +2013,7 @@ fn reexec_with_github_auth(settings: &Settings) -> Error {
     command
         .args(std::env::args_os().skip(1))
         .arg(CREDENTIAL_SELECTED);
-    for line in agent_runtime::host::stdout_text(&out).lines() {
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if !matches!(name, "GH_TOKEN" | "GITHUB_TOKEN") {
-            continue;
-        }
+    for (name, value) in selected {
         if value.is_empty() {
             command.env_remove(name);
         } else {
@@ -2075,6 +2045,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             if !credential_selected {
                 return Err(reexec_with_github_auth(&settings));
             }
+            watch::github::install_sign_in(&settings.roots.project);
             let path = target_path(&target, &settings);
             let paths = watch::Paths::of(&path)?;
             let env = system_env()?;

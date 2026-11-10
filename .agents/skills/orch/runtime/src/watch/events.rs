@@ -285,6 +285,11 @@ pub enum Event {
         pane: String,
         gap: String,
     },
+    /// This runtime's own: the watch's GitHub sign-in was refused and the
+    /// credential ladder renewed none, `cause` the renewal's word.
+    GitHubAuthFailed {
+        cause: String,
+    },
     /// `overseer-dead`, `overseer-walled` or
     /// `overseer-reserve`, with `cause=` only on a death the watch read the
     /// cause of (`memory-cap`), and `record=` only on a death judged with no
@@ -614,6 +619,9 @@ impl Event {
             }
             Event::OverseerContextUnmeasured { pane, gap } => {
                 format!("EVENT overseer-context-unmeasured {pane} gap={gap}")
+            }
+            Event::GitHubAuthFailed { cause } => {
+                format!("EVENT github-auth-failed cause={cause}")
             }
             Event::OverseerSession {
                 case,

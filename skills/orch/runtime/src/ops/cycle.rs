@@ -583,6 +583,10 @@ fn pr_timeline(settings: &Settings, pr: u64, repo: Option<&str>) -> Result<Value
         args.extend(["--repo", repo]);
     }
     let failed = |cause: &str| refused("timeline-failed", &[("pr", &number), ("cause", cause)]);
+    // The router selects from the token it inherits first: the watch's
+    // renewed sign-in where one stands.
+    let credential = crate::watch::github::renewed_credential();
+    let env = crate::watch::github::credential_env(&credential);
     let out = host::run_tagged_in(
         TAG,
         "github",
@@ -591,7 +595,7 @@ fn pr_timeline(settings: &Settings, pr: u64, repo: Option<&str>) -> Result<Value
         &args,
         host::Place {
             cwd: Some(&settings.roots.project),
-            env: &[],
+            env: &env,
         },
         BOUND,
     )
