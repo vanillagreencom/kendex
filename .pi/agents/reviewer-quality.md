@@ -38,6 +38,8 @@ A finding in a class `.agents/skills/reviewer/references/finding-disposition.md`
 Under `Trigger: needs-ui-review` this lens is the whole review. Read the consumer's design-system doc, the path `.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""` prints, and the screenshots the dev summary lists. Judge each changed view against that doc and the standard UI practice in `.agents/skills/code-quality/references/ui.md`, the diff included for token use.
 
 - A changed view missing any image of the set `.agents/skills/reviewer/workflows/qa-review.md` § Screenshots defines is a blocker: that view cannot be judged in that theme.
+- Read each visible string the diff adds or changes, in view files and in files that hold copy but draw nothing, such as plugin manifest JSON. Judge each string against the consumer design-system doc's copy section.
+- Report each string that breaks a copy rule. Quote the old text, name the rule it breaks and give a shorter or clearer version.
 - A regression from before to after, a one-off value where the doc has a token, or copy a first-time user would misread is a blocker. A lesser polish gap is a `fix` suggestion.
 - An unset `QA_UI_DESIGN_DOC`, or one naming a missing file, is an `issue` suggestion naming the gap. Judge against standard UI practice alone and infer no token the consumer did not write.
 
