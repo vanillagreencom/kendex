@@ -184,10 +184,12 @@ pub(super) struct RecordReadings {
     sets: BTreeMap<String, Reading<BundleRev>>,
 }
 
-/// A conflict keeps the old selector with its bytes. Synthetic holds
-/// also read under that selector, even when the source was redeclared
-/// beside a targeted update; recording the new one would apply no edit.
-pub(super) fn record_entry_selectors(
+/// The selector each successfully planned entry was read under, and the
+/// ancestry of every edge it records. A conflict keeps the old selector
+/// and ancestry with its bytes. Synthetic holds also read under that
+/// selector, even when the source was redeclared beside a targeted update;
+/// recording the new one would apply no edit.
+pub(super) fn record_entry_readings(
     state: &DesiredState,
     lock: &Lock,
     new_lock: &mut Lock,
@@ -205,7 +207,9 @@ pub(super) fn record_entry_selectors(
                 unreachable!("a successfully planned item has its reading owner's selector basis");
             };
             entry.selector = basis.recorded();
-            entry.requirer_provenance = Some(state.ancestry(&entry.reasons, lock.entries.get(key)));
+            let rows = state.ancestry(&entry.reasons, lock.entries.get(key));
+            entry.requirer_provenance = None;
+            entry.record_ancestry(rows);
         }
     }
 }

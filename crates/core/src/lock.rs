@@ -374,6 +374,8 @@ pub struct LockEntry {
     /// The ancestors explaining these reasons at the last successful read.
     /// Missing rows mean unknown evidence; an empty reason set proves that
     /// ancestor has no carrier. Kept entries retain this with their reasons.
+    /// `None` where no row is recorded: a reader looks rows up one by one,
+    /// so an empty list would tell it nothing more.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requirer_provenance: Option<Vec<RequirerProvenance>>,
     /// What only this machine knows about the installation. Never written
@@ -384,6 +386,28 @@ pub struct LockEntry {
     /// agent fork refuses when it needs the recorded delivery.
     #[serde(skip)]
     pub machine: Option<MachineRecord>,
+}
+
+impl LockEntry {
+    /// The one writer of [`LockEntry::requirer_provenance`]: one row per
+    /// ancestor installation. A row read again from the same catalog widens
+    /// the held one, a row from another catalog identity replaces it, and
+    /// rows held for other edges stay.
+    pub(crate) fn record_ancestry(&mut self, rows: Vec<RequirerProvenance>) {
+        let mut held = self.requirer_provenance.take().unwrap_or_default();
+        for row in rows {
+            match held
+                .iter_mut()
+                .find(|old| old.installation == row.installation)
+            {
+                Some(old) if old.source_repo == row.source_repo => old.reasons.extend(row.reasons),
+                Some(old) => *old = row,
+                None => held.push(row),
+            }
+        }
+        held.sort();
+        self.requirer_provenance = (!held.is_empty()).then_some(held);
+    }
 }
 
 /// The shared position one output-style installation owns.

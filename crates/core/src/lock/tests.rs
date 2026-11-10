@@ -37,7 +37,7 @@ fn skill_at(paths: Vec<PathBuf>) -> Option<EmittedArtifact> {
 }
 
 #[test]
-fn requirer_provenance_distinguishes_unknown_empty_and_per_tool_carriers() {
+fn requirer_provenance_distinguishes_unknown_and_per_tool_carriers() {
     let by = |harness| InstallRef {
         source: "cat".into(),
         kind: ItemKind::Hook,
@@ -46,7 +46,6 @@ fn requirer_provenance_distinguishes_unknown_empty_and_per_tool_carriers() {
     };
     for rows in [
         None,
-        Some(vec![]),
         Some(vec![
             RequirerProvenance {
                 installation: by(HarnessId::Claude),
@@ -84,6 +83,69 @@ fn requirer_provenance_distinguishes_unknown_empty_and_per_tool_carriers() {
         );
         let read: LockEntry = serde_json::from_value(value).unwrap();
         assert_eq!(read.requirer_provenance, original.requirer_provenance);
+    }
+}
+
+#[test]
+fn ancestry_is_one_row_per_ancestor_and_none_without_rows() {
+    let row = |name: &str, repo: &str, bundle: Option<&str>| RequirerProvenance {
+        installation: InstallRef {
+            source: "cat".into(),
+            kind: ItemKind::Hook,
+            name: name.into(),
+            harness: HarnessId::Codex,
+        },
+        source_repo: repo.into(),
+        reasons: bundle
+            .map(|name| Reason::MemberOf {
+                bundle: BundleRef {
+                    source: "cat".into(),
+                    name: name.into(),
+                },
+            })
+            .into_iter()
+            .collect(),
+    };
+    let widened = {
+        let mut both = row("judge", "./cat", Some("crew"));
+        both.reasons
+            .extend(row("judge", "./cat", Some("spare")).reasons);
+        both
+    };
+    for (held, rows, expected) in [
+        (None, vec![], None),
+        (Some(vec![]), vec![], None),
+        (
+            None,
+            vec![row("judge", "./cat", Some("crew"))],
+            Some(vec![row("judge", "./cat", Some("crew"))]),
+        ),
+        (
+            Some(vec![row("judge", "./cat", Some("crew"))]),
+            vec![row("judge", "./cat", Some("spare"))],
+            Some(vec![widened]),
+        ),
+        (
+            Some(vec![row("judge", "./cat", Some("crew"))]),
+            vec![row("judge", "./moved", Some("spare"))],
+            Some(vec![row("judge", "./moved", Some("spare"))]),
+        ),
+        (
+            Some(vec![row("judge", "./cat", Some("crew"))]),
+            vec![row("boss", "./cat", None)],
+            Some(vec![
+                row("boss", "./cat", None),
+                row("judge", "./cat", Some("crew")),
+            ]),
+        ),
+    ] {
+        let mut recorded = entry(None);
+        recorded.requirer_provenance = held.clone();
+        recorded.record_ancestry(rows.clone());
+        assert_eq!(
+            recorded.requirer_provenance, expected,
+            "{held:?} + {rows:?}"
+        );
     }
 }
 

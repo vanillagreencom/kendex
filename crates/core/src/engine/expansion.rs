@@ -243,10 +243,6 @@ impl Expansion {
             .collect()
     }
 
-    pub(super) fn contains(&self, kind: ItemKind, name: &str) -> bool {
-        self.items.contains_key(&(kind, name.to_owned()))
-    }
-
     /// The declaration an item in this expansion installs under — the
     /// source it reads and the revision it is held at, if any.
     pub(super) fn decl_of(&self, kind: ItemKind, name: &str) -> Option<ItemDecl> {

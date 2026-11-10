@@ -71,20 +71,16 @@ pub(super) fn plan_items(
                     })
                     .cloned()
                     .collect::<BTreeSet<_>>();
-                let ancestry = state.ancestry(&added, Some(entry));
-                if !ancestry.is_empty() {
-                    let rows = entry.requirer_provenance.get_or_insert_with(Vec::new);
-                    for row in ancestry {
-                        if let Some(old) = rows.iter_mut().find(|old| {
-                            old.installation == row.installation
-                                && old.source_repo == row.source_repo
-                        }) {
-                            old.reasons.extend(row.reasons);
-                        } else {
-                            rows.push(row);
-                        }
-                    }
-                    rows.sort();
+                if !added.is_empty() {
+                    // A record holding no rows may predate the field: its
+                    // old edges are read with the new one, as a full pass
+                    // reads them, or verify would find only the new edge's.
+                    let edges = match entry.requirer_provenance {
+                        Some(_) => added.clone(),
+                        None => entry.reasons.union(&added).cloned().collect(),
+                    };
+                    let rows = state.ancestry(&edges, Some(entry));
+                    entry.record_ancestry(rows);
                 }
                 entry.reasons.extend(added);
             }

@@ -6,8 +6,10 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
-    /// Pre-field locks can lack the carrier of a withheld requirer. Guessing
-    /// here can make a user's removal return on the next readable apply.
+    /// Pre-field locks can lack the carrier of a withheld requirer, and a
+    /// path catalog's set records no reading of its own for a member
+    /// declared from another catalog. Guessing here can make a user's
+    /// removal return on the next readable apply.
     #[error(
         "removal-provenance-missing source={} kind={} name={} harness={}: apply with the catalog readable using a build that records requirer provenance, then retry removal", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name()
     )]

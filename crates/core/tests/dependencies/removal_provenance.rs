@@ -31,6 +31,13 @@ const SKILL_STAYS: Row = Row {
     kind: Some(ItemKind::Skill),
     suppressed: true,
 };
+const EXPLICIT_LEAVES: Row = Row {
+    name: "explicit requirer leaves",
+    declarations: SET,
+    removing: &["judge", "guards"],
+    kind: None,
+    suppressed: false,
+};
 
 fn rows() -> Vec<Row> {
     vec![
@@ -71,13 +78,7 @@ fn rows() -> Vec<Row> {
             kind: None,
             suppressed: true,
         },
-        Row {
-            name: "explicit requirer leaves",
-            declarations: SET,
-            removing: &["judge", "guards"],
-            kind: None,
-            suppressed: false,
-        },
+        EXPLICIT_LEAVES,
         Row {
             name: "same name different kind stays",
             declarations: "[bundles.crew]\nsource = \"cat\"\nharnesses = [\"codex\"]\n[skills.judge]\nsource = \"cat\"\n",
@@ -132,6 +133,34 @@ fn world(row: &Row) -> Fixture {
     f
 }
 
+fn expected(row: &Row) -> BTreeSet<(ItemKind, String)> {
+    let mut expected = if row.suppressed {
+        BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
+    } else {
+        BTreeSet::new()
+    };
+    if row.name == EXPLICIT_LEAVES.name {
+        expected.insert((ItemKind::Hook, "judge".to_owned()));
+    }
+    expected
+}
+
+/// Plans the removal, executes it and reads back what it kept removed.
+#[allow(clippy::unwrap_used)]
+fn removed(f: &Fixture, names: &[&str], kind: Option<ItemKind>) -> BTreeSet<(ItemKind, String)> {
+    let names = names
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    let report = ops::remove(&f.env, &f.scope, &names, kind, false).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    manifest_of(f)
+        .suppressed
+        .into_iter()
+        .flat_map(|(kind, names)| names.into_iter().map(move |name| (kind, name)))
+        .collect()
+}
+
 #[allow(clippy::unwrap_used)]
 fn check(row: &Row, offline: bool) {
     let f = world(row);
@@ -139,27 +168,12 @@ fn check(row: &Row, offline: bool) {
     if offline {
         fs::rename(&f.source, &hidden).unwrap();
     }
-    let names = row
-        .removing
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect::<Vec<_>>();
-    let report = ops::remove(&f.env, &f.scope, &names, row.kind, false).unwrap();
-    apply::execute(&f.env, &report.plan).unwrap();
-    let mut expected = if row.suppressed {
-        BTreeSet::from([(ItemKind::Skill, "guards".to_owned())])
-    } else {
-        BTreeSet::new()
-    };
-    if row.name == "explicit requirer leaves" {
-        expected.insert((ItemKind::Hook, "judge".to_owned()));
-    }
-    let actual = manifest_of(&f)
-        .suppressed
-        .into_iter()
-        .flat_map(|(kind, names)| names.into_iter().map(move |name| (kind, name)))
-        .collect::<BTreeSet<_>>();
-    assert_eq!(actual, expected, "{} offline={offline}", row.name);
+    assert_eq!(
+        removed(&f, row.removing, row.kind),
+        expected(row),
+        "{} offline={offline}",
+        row.name
+    );
     for tool in [HarnessId::Claude, HarnessId::Codex] {
         assert!(!hook_on_disk(&f, tool, "judge.sh"));
         assert!(!registered(&f, tool, "judge"));
@@ -197,48 +211,50 @@ fn offline_positive_skill_carrier_s_codex() {
     check(&SKILL_STAYS, true);
 }
 
+/// A record from before the field holds no carrier for the withheld
+/// judge. Offline nothing can say whether it stays, so removal refuses,
+/// whether judge itself stays or is removed alongside. The catalogs read
+/// now decide it. A readable apply records the facts the offline removal
+/// then decides from.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn legacy_missing_ancestry_refuses_before_writes_and_readable_apply_repairs_it() {
-    for offline in [false, true] {
-        let f = world(&SET_STAYS);
-        let path = lock_path(&f.env, &f.scope);
-        let mut lock = lock_of(&f);
-        for entry in lock.entries.values_mut() {
-            entry.requirer_provenance = None;
+fn legacy_missing_ancestry_refuses_offline_until_a_readable_apply_records_it() {
+    for row in [SET_STAYS, EXPLICIT_LEAVES] {
+        for offline in [false, true] {
+            let f = world(&row);
+            let mut lock = lock_of(&f);
+            for entry in lock.entries.values_mut() {
+                entry.requirer_provenance = None;
+            }
+            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+            if offline {
+                let hidden = f.source.with_file_name("catalog-offline");
+                fs::rename(&f.source, &hidden).unwrap();
+                let names = row
+                    .removing
+                    .iter()
+                    .map(|name| (*name).to_owned())
+                    .collect::<Vec<_>>();
+                assert!(
+                    matches!(
+                        ops::remove(&f.env, &f.scope, &names, row.kind, false),
+                        Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex })
+                            if catalog == "cat" && name == "judge"
+                    ),
+                    "{}",
+                    row.name
+                );
+                fs::rename(&hidden, &f.source).unwrap();
+                apply_now(&f);
+                fs::rename(&f.source, &hidden).unwrap();
+            }
+            assert_eq!(
+                removed(&f, row.removing, row.kind),
+                expected(&row),
+                "{} offline={offline}",
+                row.name
+            );
         }
-        kendex_core::lock::save(&path, &lock).unwrap();
-        let before_lock = fs::read(&path).unwrap();
-        let before_manifest = fs::read(f.project.join("kendex.toml")).unwrap();
-        let skill_path = f.project.join(".agents/skills/guards/SKILL.md");
-        let before_skill = fs::read(&skill_path).unwrap();
-        let hidden = f.source.with_file_name("catalog-offline");
-        if offline {
-            fs::rename(&f.source, &hidden).unwrap();
-        }
-        assert!(
-            matches!(ops::remove(&f.env, &f.scope, &["guards".into()], Some(ItemKind::Skill), false), Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Hook, name, harness: HarnessId::Codex }) if catalog == "cat" && name == "judge")
-        );
-        assert_eq!(fs::read(&path).unwrap(), before_lock);
-        assert_eq!(
-            fs::read(f.project.join("kendex.toml")).unwrap(),
-            before_manifest
-        );
-        assert_eq!(fs::read(&skill_path).unwrap(), before_skill);
-        if offline {
-            fs::rename(&hidden, &f.source).unwrap();
-        }
-        apply_now(&f);
-        assert!(
-            ops::remove(
-                &f.env,
-                &f.scope,
-                &["guards".into()],
-                Some(ItemKind::Skill),
-                false
-            )
-            .is_ok()
-        );
     }
 }
 
@@ -434,6 +450,47 @@ fn add_carrier(existing_carrier: bool) {
     );
 }
 
+/// An add gives github a second requirer, x, beside dev. On a record from
+/// before the field, as a project that just upgraded holds it, the entry
+/// then holds what verify records rather than only x's row.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_add_over_a_record_from_before_the_field_leaves_what_verify_records() {
+    for legacy in [false, true] {
+        let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+        skill(&f.source, "x", "dependencies:\n  required: [github]\n");
+        apply_now(&f);
+        if legacy {
+            let mut lock = lock_of(&f);
+            for entry in lock.entries.values_mut() {
+                entry.requirer_provenance = None;
+            }
+            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+        }
+        let report = ops::add(
+            &f.env,
+            &f.scope,
+            &ops::AddRequest {
+                source: Some("cat".into()),
+                skills: vec!["x".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let verified = kendex_core::attest::record(
+            &f.env,
+            &f.scope,
+            &lock_of(&f),
+            &audit(&f.env, &f.scope).unwrap(),
+            &kendex_core::attest::Floor::Open,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(verified.problems, Vec::<String>::new(), "legacy={legacy}");
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn legacy_installed_and_declared_requirers_remain_removable_offline() {
@@ -539,5 +596,203 @@ fn a_rebound_catalog_or_removed_target_tool_cannot_root_recorded_ancestry() {
                 "rebound={rebound} offline={offline}"
             );
         }
+    }
+}
+
+/// Rewrites the project manifest through one edit.
+#[allow(clippy::unwrap_used)]
+fn edit_manifest(f: &Fixture, edit: impl FnOnce(&mut manifest::Manifest)) {
+    let mut manifest = manifest_of(f);
+    edit(&mut manifest);
+    fs::write(
+        f.project.join("kendex.toml"),
+        toml::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+/// The catalog gives judge a set after the last apply, behind the guards
+/// edge the record already holds; the record's only carrier, S, leaves.
+#[allow(clippy::unwrap_used)]
+fn carrier_added_behind_a_recorded_edge() -> Fixture {
+    let f = hook_fixture(&format!(
+        "[skills.guards]\nsource = \"cat\"\nharnesses = [\"codex\"]\n{SKILL}{SET}"
+    ));
+    skill(&f.source, "guards", "");
+    skill(&f.source, "S", "dependencies:\n  hooks: [judge]\n");
+    fs::write(f.source.join("hooks/judge.sh"), JUDGE).unwrap();
+    fs::write(f.source.join("hooks/narrow.sh"), super::hooks::NARROW).unwrap();
+    let catalog =
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n";
+    fs::write(f.source.join("kendex.toml"), catalog).unwrap();
+    apply_now(&f);
+    fs::write(
+        f.source.join("kendex.toml"),
+        format!("{catalog}hooks = [\"judge\"]\n"),
+    )
+    .unwrap();
+    f
+}
+
+/// The person swaps the skill that needs github for a set carrying it,
+/// and removes github before any apply records the set.
+#[allow(clippy::unwrap_used)]
+fn declaration_swapped_for_a_set() -> Fixture {
+    let f = fixture("[skills.dev]\nsource = \"cat\"\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"dev\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    edit_manifest(&f, |manifest| {
+        manifest.skills.remove("dev");
+        manifest
+            .bundles
+            .insert("crew".into(), manifest::ItemDecl::from_source("cat"));
+    });
+    f
+}
+
+/// The set installed on Claude now targets Codex, not yet applied.
+#[allow(clippy::unwrap_used)]
+fn set_moved_to_another_tool() -> Fixture {
+    let f = hook_fixture("[bundles.crew]\nsource = \"cat\"\nharnesses = [\"claude\"]\n");
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
+    )
+    .unwrap();
+    apply_now(&f);
+    assert!(lock_of(&f).entries.contains_key("skill:github:claude"));
+    edit_manifest(&f, |manifest| {
+        manifest.bundles.get_mut("crew").unwrap().harnesses = Some(vec![HarnessId::Codex]);
+    });
+    f
+}
+
+/// What the record has not seen, the catalog read now has: a carrier it
+/// derives keeps the removal, so the next apply cannot put it back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
+    type Unseen = (
+        fn() -> Fixture,
+        &'static [&'static str],
+        Option<ItemKind>,
+        &'static str,
+    );
+    let rows: [Unseen; 3] = [
+        (
+            carrier_added_behind_a_recorded_edge,
+            &["S", "guards"],
+            None,
+            "guards",
+        ),
+        (
+            declaration_swapped_for_a_set,
+            &["github"],
+            Some(ItemKind::Skill),
+            "github",
+        ),
+        (
+            set_moved_to_another_tool,
+            &["github"],
+            Some(ItemKind::Skill),
+            "github",
+        ),
+    ];
+    for (world, names, kind, kept) in rows {
+        let f = world();
+        assert_eq!(
+            removed(&f, names, kind),
+            BTreeSet::from([(ItemKind::Skill, kept.to_owned())]),
+            "{names:?}"
+        );
+        apply_now(&f);
+        assert!(
+            !lock_of(&f)
+                .entries
+                .values()
+                .any(|entry| entry.kind == ItemKind::Skill && entry.name == kept),
+            "{names:?}"
+        );
+    }
+}
+
+/// A set from one catalog carries github while the person declares github
+/// from another. Removing that declaration leaves the set, and only the
+/// set's own reading, never the member's, says whether it still roots
+/// github: read now, recorded, or with no record of it, unknown.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
+    for (offline, set_recorded) in [(false, false), (true, true), (true, false)] {
+        let f = fixture("");
+        let other = f.source.with_file_name("other");
+        skill(&other, "github", "");
+        fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        fs::write(
+            f.source.join("kendex.toml"),
+            "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"github\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            f.project.join("kendex.toml"),
+            format!(
+                "schema = 7\n\n[sources.cat]\n{}\n\n[sources.other]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.crew]\nsource = \"cat\"\n\n[skills.github]\nsource = \"other\"\n",
+                source_path(&f.source),
+                source_path(&other)
+            ),
+        )
+        .unwrap();
+        apply_now(&f);
+        let mut lock = lock_of(&f);
+        let github = &lock.entries["skill:github:claude"];
+        assert_eq!(github.source, "other");
+        assert!(
+            github
+                .reasons
+                .iter()
+                .any(|reason| matches!(reason, Reason::MemberOf { bundle } if bundle.source == "cat" && bundle.name == "crew"))
+        );
+        // A path catalog's set has no record of its own; a repository
+        // catalog's does, which this plants.
+        assert!(lock.bundles.is_empty());
+        if set_recorded {
+            let path = manifest_of(&f).sources["cat"].path.clone().unwrap();
+            lock.bundles.insert(
+                "crew".into(),
+                kendex_core::lock::BundleRev {
+                    source: "cat".into(),
+                    source_repo: kendex_core::source::declared_path_identity(&path),
+                    selector: None,
+                    commit: "0".repeat(40),
+                },
+            );
+            kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
+        }
+        let hidden = f.source.with_file_name("catalog-offline");
+        if offline {
+            fs::rename(&f.source, &hidden).unwrap();
+        }
+        if offline && !set_recorded {
+            assert!(matches!(
+                ops::remove(&f.env, &f.scope, &["github".into()], Some(ItemKind::Skill), false),
+                Err(CoreError::RemovalProvenanceMissing { catalog, kind: ItemKind::Skill, name, harness: HarnessId::Claude })
+                    if catalog == "other" && name == "github"
+            ));
+            continue;
+        }
+        assert_eq!(
+            removed(&f, &["github"], Some(ItemKind::Skill)),
+            BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
+            "offline={offline}"
+        );
+        if offline {
+            fs::rename(&hidden, &f.source).unwrap();
+        }
+        apply_now(&f);
+        assert!(!lock_of(&f).entries.contains_key("skill:github:claude"));
     }
 }
