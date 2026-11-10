@@ -2079,8 +2079,8 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
             format!("{line_secret} report=repeat")
         ]
     );
-    // A failed Dependabot read: its unread line once, the other lists still
-    // reported, its rows standing.
+    // A failed Dependabot read: the other lists still reported, its rows
+    // standing, its unread line on the second pass it fails and no other.
     world.gh(
         "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
         json!({"exit": 1, "stderr": "gh: Resource not accessible by integration (HTTP 403)"}),
@@ -2091,9 +2091,8 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         vec![
             format!("{line_code} report=repeat"),
             format!("{line_secret} report=repeat"),
-            "EVENT security-alerts-unread reads=owner/repo/dependabot:permission".to_owned()
         ],
-        "a failed read is the unread line, the other lists are reported"
+        "a failed read is never no alerts, and one failure reaches no one"
     );
     assert_eq!(
         baseline.get("security-alert", "owner/repo#dependabot/7"),
@@ -2115,6 +2114,16 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         rendered(&fourth),
         vec![
             format!("{line_code} report=repeat"),
+            format!("{line_secret} report=repeat"),
+            "EVENT security-alerts-unread reads=owner/repo/dependabot:permission".to_owned()
+        ],
+        "a read failing on two consecutive passes is the unread line"
+    );
+    let standing = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1840).unwrap();
+    assert_eq!(
+        rendered(&standing),
+        vec![
+            format!("{line_code} report=repeat"),
             format!("{line_secret} report=repeat")
         ],
         "a standing failure prints no unread line"
@@ -2130,7 +2139,10 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         rendered(&fifth)[0],
         format!("{line_dependabot} report=repeat")
     );
-    assert_eq!(baseline.get("security-alerts-unread", "fleet"), None);
+    assert_eq!(
+        baseline.get("security-alerts-unread", "owner/repo/dependabot"),
+        None
+    );
     // A verdict recorded for the secret ends its repeats; a reopened alert
     // is news again.
     world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": [],
@@ -2185,13 +2197,16 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         shared.lock().unwrap().github.as_ref().unwrap().bot_fix,
         BTreeMap::from([("owner/repo#12".to_owned(), "7".to_owned())])
     );
-    // A token the reader refuses: the credential source is unread, no
-    // alert read runs, and the rows and mapping stand.
+    // A token the reader refuses: the credential source is unread, its line
+    // on the second pass, no alert read runs, and the rows and mapping
+    // stand.
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o640)).unwrap();
     let calls_before = world.gh_calls().len();
     let eighth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2680).unwrap();
+    assert_eq!(rendered(&eighth), Vec::<String>::new());
+    let ninth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2800).unwrap();
     assert_eq!(
-        rendered(&eighth),
+        rendered(&ninth),
         vec!["EVENT security-alerts-unread reads=installation-token:credential"]
     );
     assert!(
@@ -2207,6 +2222,103 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     assert_eq!(
         shared.lock().unwrap().github.as_ref().unwrap().bot_fix,
         BTreeMap::from([("owner/repo#12".to_owned(), "7".to_owned())])
+    );
+}
+
+#[test]
+fn a_security_read_failure_reaches_the_overseer_on_its_second_consecutive_pass_alone() {
+    let lists = [
+        "repos/owner/repo/dependabot/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/code-scanning/alerts?state=open&per_page=100&page=1",
+        "repos/owner/repo/secret-scanning/alerts?state=open&hide_secret=true&per_page=100&page=1",
+    ];
+    let code_list = lists[1];
+    let link = "graphql owner=owner name=repo";
+    let linked = json!({"body": {"data": {"repository": {"vulnerabilityAlerts": {
+        "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}}});
+    // A web page answered with a success status, as GitHub's edge serves one.
+    let page = json!({"text": "<!DOCTYPE html>\n<html><head><title>Unicorn! · GitHub</title></head><body></body></html>\n"});
+    let mut world = World::new();
+    quiet_github(&mut world);
+    let token = plant_token(&world, "ghs_fixture_overseer");
+    for list in lists {
+        world.gh(list, json!({"body": []}));
+    }
+    world.gh(link, page.clone());
+    let settings = world.settings(&[
+        ("ORCH_SECURITY_ALERTS", "on"),
+        (
+            "ORCH_SECURITY_ALERT_TOKEN_FILE",
+            &token.display().to_string(),
+        ),
+    ]);
+    let clock = FakeClock::new();
+    let mut body =
+        github::body(world.github_context(settings, None, &["owner/repo"], Shared::default()));
+    // A planted row for a repository the watch no longer reads.
+    let mut baseline = Baseline::default();
+    baseline.apply(set(
+        "security-alerts-unread",
+        "gone/repo/dependabot",
+        "http-502",
+    ));
+    let mut wall = SINCE_EPOCH + 1000;
+    let mut next = |body: &mut watch::Body, baseline: &mut Baseline| {
+        wall += 240;
+        rendered(&pass(body, baseline, &clock, wall).unwrap())
+    };
+    let unread = |reads: &str| vec![format!("EVENT security-alerts-unread reads={reads}")];
+    let none: Vec<String> = Vec::new();
+    // One failure that the next pass reads clean reaches no one.
+    assert_eq!(next(&mut body, &mut baseline), none, "the first failure");
+    assert_eq!(
+        baseline.get("security-alerts-unread", "gone/repo/dependabot"),
+        None,
+        "a source naming no watched repository is swept"
+    );
+    world.gh(link, linked.clone());
+    assert_eq!(next(&mut body, &mut baseline), none, "read clean");
+    assert_eq!(
+        baseline.identities("security-alerts-unread"),
+        Vec::<String>::new(),
+        "a clean read clears its source"
+    );
+    // Two consecutive failures print once, named by what came back.
+    world.gh(link, page.clone());
+    assert_eq!(next(&mut body, &mut baseline), none);
+    assert_eq!(
+        next(&mut body, &mut baseline),
+        unread("owner/repo/dependabot-prs:invalid-html"),
+        "a web page in place of data, on its second pass"
+    );
+    assert_eq!(next(&mut body, &mut baseline), none, "a third failure");
+    // Another source failing beside it is named alone, on its own second
+    // pass, by gh's exit status.
+    world.gh(code_list, json!({"exit": 7, "stderr": "something else"}));
+    assert_eq!(next(&mut body, &mut baseline), none);
+    assert_eq!(
+        next(&mut body, &mut baseline),
+        unread("owner/repo/code-scanning:exit-7")
+    );
+    // A token refused for one pass judges no repository source: their rows
+    // stand, and the standing failures are not named again.
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o640)).unwrap();
+    assert_eq!(next(&mut body, &mut baseline), none);
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(next(&mut body, &mut baseline), none);
+    // A changed cause starts the count again.
+    world.gh(link, json!({"exit": 1, "stderr": "gh: HTTP 502"}));
+    assert_eq!(next(&mut body, &mut baseline), none);
+    assert_eq!(
+        next(&mut body, &mut baseline),
+        unread("owner/repo/dependabot-prs:http-502")
+    );
+    world.gh(link, linked);
+    world.gh(code_list, json!({"body": []}));
+    assert_eq!(next(&mut body, &mut baseline), none);
+    assert_eq!(
+        baseline.identities("security-alerts-unread"),
+        Vec::<String>::new()
     );
 }
 

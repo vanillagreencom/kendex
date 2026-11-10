@@ -4,11 +4,13 @@
 //! its verdict, repeated with `report=repeat` on every pass while its row
 //! stands, each alert read under the installation token the fleet renews
 //! in `ORCH_SECURITY_ALERT_TOKEN_FILE` and no other call. A read that
-//! cannot be judged keeps every row of its source and joins the pass's one
-//! `security-alerts-unread reads=` line, printed only when the set of
-//! failed reads changes; a refused token, an unreadable verdict record
-//! and a list the pass cannot read are each such a source, never an empty
-//! list.
+//! cannot be judged keeps every row of its source; a refused token, an
+//! unreadable verdict record and a list the pass cannot read, answer or
+//! start are each such a source, never an empty list. A source that fails
+//! on two consecutive passes with the same cause is named once, on the
+//! second, in that pass's one `security-alerts-unread reads=` line: a
+//! failure that outlasts one long interval is the overseer's, and one bad
+//! answer that the next pass reads clean is no one's.
 //!
 //! The lines are protocol the overseer reads under
 //! `references/security-alerts.md`, rendered by `Event::SecurityAlert` and
@@ -27,15 +29,16 @@ use crate::settings::{Audit, Settings};
 use crate::verify::wire::{GraphReply, Nullable};
 use crate::watch::{Baseline, Change, Event, Produced};
 
-use crate::verify::{self, Answer, Gh};
+use crate::verify::{self, Answer, Gh, Unrun};
 
 /// Baseline row kinds.
 pub const ALERT_ROW: &str = "security-alert";
 pub const BOT_FIX_ROW: &str = "bot-fix";
 pub const UNREAD_ROW: &str = "security-alerts-unread";
 
-/// The identity the unread row is held under.
-const FLEET: &str = "fleet";
+/// The two sources no repository names.
+const TOKEN_SOURCE: &str = "installation-token";
+const VERDICT_SOURCE: &str = "alerts_triaged";
 
 /// The alert API's own path segments (`SECURITY_KINDS`).
 const KINDS: [&str; 3] = ["dependabot", "code-scanning", "secret-scanning"];
@@ -216,8 +219,9 @@ fn row_valid(kind: &str, row: &AlertRow) -> bool {
 
 /// The cause a failed read is reported under (`security_read_cause`): the
 /// first row whose words match what gh printed, else GitHub's HTTP status
-/// where gh names one, else the exit status.
-fn read_cause(stderr: &str, status: &str) -> String {
+/// where gh names one, else gh's exit status, `killed` where a signal ended
+/// it.
+fn read_cause(stderr: &str, exit: Option<i32>) -> String {
     let permission = [
         "Resource not accessible by integration",
         "Resource not accessible by personal access token",
@@ -247,23 +251,49 @@ fn read_cause(stderr: &str, status: &str) -> String {
             return format!("http-{code}");
         }
     }
-    let exit = status
-        .strip_prefix("exit status ")
-        .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
-        .unwrap_or("1");
-    format!("exit-{exit}")
+    match exit {
+        Some(code) => format!("exit-{code}"),
+        None => "killed".to_owned(),
+    }
+}
+
+/// What came back where the pass wanted data, never its text: data of
+/// another shape, a web page, or anything else, nothing included.
+fn body_cause(stdout: &[u8]) -> &'static str {
+    let parses = serde_json::Deserializer::from_slice(stdout)
+        .into_iter::<serde::de::IgnoredAny>()
+        .all(|value| value.is_ok());
+    match stdout.iter().find(|b| !b.is_ascii_whitespace()) {
+        Some(_) if parses => "invalid",
+        Some(b'<') => "invalid-html",
+        Some(_) | None => "invalid-text",
+    }
 }
 
 /// How one source's read ended.
 enum ReadEnd<T> {
     Read(T),
-    /// gh exited nonzero: the cause, and its words for stderr.
+    /// gh exited nonzero or gave no answer: the cause, and its words for
+    /// stderr.
     Failed {
         cause: String,
         stderr: String,
     },
-    /// A list this pass cannot report from.
-    Invalid,
+    /// A list this pass cannot report from, with what came back.
+    Invalid(&'static str),
+}
+
+/// A read gh gave no answer to: unread under `not-started` where gh never
+/// started, `no-answer` where it started and did not answer in its bound.
+fn unanswered_read<T>(unrun: &Unrun) -> ReadEnd<T> {
+    let cause = match unrun {
+        Unrun::Runner(agent_runtime::Error::NotStarted { .. }) => "not-started",
+        Unrun::Runner(_) | Unrun::BudgetSpent => "no-answer",
+    };
+    ReadEnd::Failed {
+        cause: cause.to_owned(),
+        stderr: unrun.detail(),
+    }
 }
 
 /// Whether this process's effective uid owns `path`, judged by bash's `-O`
@@ -349,13 +379,17 @@ fn note(text: String) {
     let _ = std::io::Write::write_all(&mut std::io::stderr(), text.as_bytes());
 }
 
-/// The pass's failed reads, in order (`security_unread`).
+/// The sources the pass judged: each failed one with its cause, in the
+/// order it failed, and each read clean or off.
 #[derive(Default)]
-struct Unread(Vec<String>);
+struct Unread {
+    failed: Vec<(String, String)>,
+    clean: BTreeSet<String>,
+}
 
 impl Unread {
     fn add(&mut self, source: &str, cause: &str, stderr: &str) {
-        self.0.push(format!("{source}:{cause}"));
+        self.failed.push((source.to_owned(), cause.to_owned()));
         note(format!(
             "security-alerts-read-failed source={source} cause={cause}\n"
         ));
@@ -364,36 +398,68 @@ impl Unread {
         }
     }
 
-    /// The `reads=` value: the sources in the order they failed.
-    fn reads(&self) -> String {
-        self.0.join(",")
+    fn read(&mut self, source: String) {
+        self.clean.insert(source);
     }
 }
 
-/// The pass's `security-alerts-unread` line and row
-/// (`security_unread_commit`): the line only when the set differs from the
-/// row's, the row holding the set; a pass with every read judged clears it.
-fn commit_unread(unread: &Unread, baseline: &Baseline, produced: &mut Produced) {
-    if unread.0.is_empty() {
-        if baseline.get(UNREAD_ROW, FLEET).is_some() {
-            produced.changes.push(Change::Clear {
-                kind: UNREAD_ROW.to_owned(),
-                identity: FLEET.to_owned(),
-            });
-        }
-        return;
+/// Every source a whole pass over `repos` judges.
+fn watched_sources(repos: &[String]) -> BTreeSet<String> {
+    let mut sources: BTreeSet<String> = [TOKEN_SOURCE, VERDICT_SOURCE]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    for repo in repos {
+        sources.extend(KINDS.iter().map(|kind| format!("{repo}/{kind}")));
+        sources.insert(format!("{repo}/dependabot-prs"));
     }
-    let reads = unread.reads();
-    if baseline.get(UNREAD_ROW, FLEET) != Some(reads.as_str()) {
-        produced.events.push(Event::SecurityAlertsUnread {
-            reads: reads.clone(),
+    sources
+}
+
+/// The pass's `security-alerts-unread` line and rows, one row per failed
+/// source holding its cause: a failure with no row, or with another cause,
+/// is recorded; the same cause on the next pass is named on the line and
+/// its row marked `|reported`; a reported row prints nothing more. A source
+/// read clean or off clears its row, one the pass did not judge keeps it,
+/// and on a whole pass (`watched` given) a row naming no source it could
+/// judge is cleared.
+fn commit_unread(
+    unread: &Unread,
+    watched: Option<&BTreeSet<String>>,
+    baseline: &Baseline,
+    produced: &mut Produced,
+) {
+    let mut reached = Vec::new();
+    for (source, cause) in &unread.failed {
+        let reported = format!("{cause}|reported");
+        let value = match baseline.get(UNREAD_ROW, source) {
+            Some(prior) if prior == reported => continue,
+            Some(prior) if prior == cause => {
+                reached.push(format!("{source}:{cause}"));
+                reported
+            }
+            Some(_) | None => cause.clone(),
+        };
+        produced.changes.push(Change::Set {
+            kind: UNREAD_ROW.to_owned(),
+            identity: source.clone(),
+            value,
         });
     }
-    produced.changes.push(Change::Set {
-        kind: UNREAD_ROW.to_owned(),
-        identity: FLEET.to_owned(),
-        value: reads,
-    });
+    for identity in baseline.identities(UNREAD_ROW) {
+        let swept = watched.is_some_and(|sources| !sources.contains(&identity));
+        if unread.clean.contains(&identity) || swept {
+            produced.changes.push(Change::Clear {
+                kind: UNREAD_ROW.to_owned(),
+                identity,
+            });
+        }
+    }
+    if !reached.is_empty() {
+        produced.events.push(Event::SecurityAlertsUnread {
+            reads: reached.join(","),
+        });
+    }
 }
 
 /// The `bot-fix` rows as they stand in the baseline: what the heartbeat
@@ -453,27 +519,22 @@ fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
 
 /// One alert list under the token handle, every page (`verify::list`):
 /// the typed rows, or how the read ended.
-fn alert_list<T: DeserializeOwned>(
-    gh: &Gh,
-    read: &'static str,
-    path: &str,
-) -> Result<ReadEnd<Vec<T>>> {
+fn alert_list<T: DeserializeOwned>(gh: &Gh, read: &'static str, path: &str) -> ReadEnd<Vec<T>> {
     let read_all = verify::list(
         path,
         |page| match gh.run(read, &["api", page], None) {
-            Err(unrun) => Err(Err(super::github::unrun(read, &unrun))),
-            Ok(Answer::Failed(failed)) => Err(Ok(ReadEnd::Failed {
-                cause: read_cause(&failed.stderr, &failed.status),
+            Err(unrun) => Err(unanswered_read(&unrun)),
+            Ok(Answer::Failed(failed)) => Err(ReadEnd::Failed {
+                cause: read_cause(&failed.stderr, failed.exit),
                 stderr: failed.stderr,
-            })),
-            Ok(Answer::Printed { stdout, .. }) => {
-                serde_json::from_slice::<Vec<T>>(&stdout).map_err(|_| Ok(ReadEnd::Invalid))
-            }
+            }),
+            Ok(Answer::Printed { stdout, .. }) => serde_json::from_slice::<Vec<T>>(&stdout)
+                .map_err(|_| ReadEnd::Invalid(body_cause(&stdout))),
         },
-        || Ok(ReadEnd::Invalid),
+        || ReadEnd::Invalid("invalid"),
     );
     match read_all {
-        Ok(members) => Ok(ReadEnd::Read(members)),
+        Ok(members) => ReadEnd::Read(members),
         Err(end) => end,
     }
 }
@@ -532,36 +593,35 @@ fn alert_rows(kind: &str, members: Value) -> Option<Vec<AlertRow>> {
 /// The Dependabot alerts in any state that carry an open pull request,
 /// `(alert, alert state, pr)` each, through the GraphQL record paged by
 /// gh.
-fn dependabot_prs(gh: &Gh, repo: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>>> {
+fn dependabot_prs(gh: &Gh, repo: &str) -> ReadEnd<Vec<(u64, String, u64)>> {
     let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
     let owner = format!("owner={owner}");
     let name = format!("name={name}");
     let query = format!("query={PR_QUERY}");
     let read = "dependabot-prs";
-    let answer = gh
-        .run(
-            read,
-            &[
-                "api",
-                "graphql",
-                "--paginate",
-                "-f",
-                &owner,
-                "-f",
-                &name,
-                "-f",
-                &query,
-            ],
-            None,
-        )
-        .map_err(|unrun| super::github::unrun(read, &unrun))?;
+    let answer = gh.run(
+        read,
+        &[
+            "api",
+            "graphql",
+            "--paginate",
+            "-f",
+            &owner,
+            "-f",
+            &name,
+            "-f",
+            &query,
+        ],
+        None,
+    );
     let stdout = match answer {
-        Answer::Printed { stdout, .. } => stdout,
-        Answer::Failed(failed) => {
-            return Ok(ReadEnd::Failed {
-                cause: read_cause(&failed.stderr, &failed.status),
+        Err(unrun) => return unanswered_read(&unrun),
+        Ok(Answer::Printed { stdout, .. }) => stdout,
+        Ok(Answer::Failed(failed)) => {
+            return ReadEnd::Failed {
+                cause: read_cause(&failed.stderr, failed.exit),
                 stderr: failed.stderr,
-            });
+            };
         }
     };
     let mut out = Vec::new();
@@ -571,7 +631,7 @@ fn dependabot_prs(gh: &Gh, repo: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>
             ..
         }) = page
         else {
-            return Ok(ReadEnd::Invalid);
+            return ReadEnd::Invalid(body_cause(&stdout));
         };
         for node in data.repository.vulnerability_alerts.nodes {
             let Nullable::Present(update) = node.dependabot_update else {
@@ -589,12 +649,12 @@ fn dependabot_prs(gh: &Gh, repo: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>
                     .bytes()
                     .all(|b| b.is_ascii_uppercase() || b == b'_')
             {
-                return Ok(ReadEnd::Invalid);
+                return ReadEnd::Invalid("invalid");
             }
             out.push((node.number, node.state, pull.number));
         }
     }
-    Ok(ReadEnd::Read(out))
+    ReadEnd::Read(out)
 }
 
 /// The pass (`check_security_alerts`): the token, the verdicts, each
@@ -619,21 +679,23 @@ pub(super) fn pass(
         Ok(token) => token,
         Err((file, cause)) => {
             unread.add(
-                "installation-token",
+                TOKEN_SOURCE,
                 "credential",
                 &format!("orch_token_file_read: refused file={file} cause={cause}"),
             );
-            commit_unread(&unread, baseline, produced);
+            commit_unread(&unread, None, baseline, produced);
             return Ok(standing_bot_fix(baseline));
         }
     };
+    unread.read(TOKEN_SOURCE.to_owned());
     // The verdicts first: without them nothing is judged, and every row
     // stands.
     let Some(recorded) = recorded(verdicts) else {
-        unread.add("alerts_triaged", "invalid", "");
-        commit_unread(&unread, baseline, produced);
+        unread.add(VERDICT_SOURCE, "invalid", "");
+        commit_unread(&unread, None, baseline, produced);
         return Ok(standing_bot_fix(baseline));
     };
+    unread.read(VERDICT_SOURCE.to_owned());
     // The token rides on the alert reads' own handle alone.
     let alerts = gh.adding_env(vec![("GH_TOKEN".to_owned(), token.into())]);
     let reported: BTreeSet<String> = baseline.identities(ALERT_ROW).into_iter().collect();
@@ -654,34 +716,40 @@ pub(super) fn pass(
                 query.push_str("&hide_secret=true");
             }
             let path = format!("repos/{repo}/{kind}/alerts?{query}");
-            let mut end = match alert_list::<Value>(&alerts, "alerts", &path)? {
+            let mut end = match alert_list::<Value>(&alerts, "alerts", &path) {
                 ReadEnd::Read(members) => match alert_rows(kind, Value::Array(members)) {
                     Some(rows) if rows.iter().all(|r| row_valid(kind, r)) => ReadEnd::Read(rows),
-                    Some(_) | None => ReadEnd::Invalid,
+                    Some(_) | None => ReadEnd::Invalid("invalid"),
                 },
                 ReadEnd::Failed { cause, stderr } => ReadEnd::Failed { cause, stderr },
-                ReadEnd::Invalid => ReadEnd::Invalid,
+                ReadEnd::Invalid(cause) => ReadEnd::Invalid(cause),
             };
             let mut prs: Vec<(u64, String, u64)> = Vec::new();
             if matches!(end, ReadEnd::Read(_)) && kind == "dependabot" {
+                unread.read(source);
                 source = format!("{repo}/dependabot-prs");
-                match dependabot_prs(&alerts, repo)? {
+                match dependabot_prs(&alerts, repo) {
                     ReadEnd::Read(linked) => prs = linked,
                     ReadEnd::Failed { cause, stderr } => end = ReadEnd::Failed { cause, stderr },
-                    ReadEnd::Invalid => end = ReadEnd::Invalid,
+                    ReadEnd::Invalid(cause) => end = ReadEnd::Invalid(cause),
                 }
             }
             let rows = match end {
-                ReadEnd::Read(rows) => rows,
+                ReadEnd::Read(rows) => {
+                    unread.read(source);
+                    rows
+                }
                 failed => {
                     match failed {
-                        ReadEnd::Invalid => unread.add(&source, "invalid", ""),
+                        ReadEnd::Invalid(cause) => unread.add(&source, cause, ""),
                         // Code and secret scanning answer feature-off on
                         // every repository without GitHub's paid security
                         // products: the source is off, not unread, and its
                         // rows stand as for a failed read.
                         ReadEnd::Failed { cause, stderr } => {
-                            if !(cause == "feature-off" && kind != "dependabot") {
+                            if cause == "feature-off" && kind != "dependabot" {
+                                unread.read(source);
+                            } else {
                                 unread.add(&source, &cause, &stderr);
                             }
                         }
@@ -808,7 +876,7 @@ pub(super) fn pass(
     // The repeats ride the pass's output ahead of the first reports.
     produced.events.extend(repeats);
     produced.events.extend(events);
-    commit_unread(&unread, baseline, produced);
+    commit_unread(&unread, Some(&watched_sources(repos)), baseline, produced);
     Ok(bot_fix)
 }
 
@@ -986,9 +1054,10 @@ mod tests {
             ("something else", "exit-1"),
         ];
         for (text, cause) in rows {
-            assert_eq!(read_cause(text, "exit status 1"), cause, "{text}");
+            assert_eq!(read_cause(text, Some(1)), cause, "{text}");
         }
-        assert_eq!(read_cause("", "exit status 7"), "exit-7");
+        assert_eq!(read_cause("", Some(7)), "exit-7");
+        assert_eq!(read_cause("", None), "killed");
         assert_eq!(
             encoded_manifest("packages/my app/100%/package.json"),
             "packages/my%20app/100%25/package.json"
@@ -1008,6 +1077,42 @@ mod tests {
         assert!(!row_valid("code-scanning", &row(None, "r")));
         assert!(row_valid("secret-scanning", &row(None, "r")));
         assert!(!row_valid("code-scanning", &row(Some("error"), "r x")));
+    }
+
+    #[test]
+    fn an_unreadable_answer_is_named_by_what_came_back_never_its_text() {
+        for (body, cause) in [
+            (
+                b"<!DOCTYPE html>\n<html><body>Unicorn!</body></html>".as_slice(),
+                "invalid-html",
+            ),
+            (b"\n  <html>".as_slice(), "invalid-html"),
+            (b"upstream connect error".as_slice(), "invalid-text"),
+            (b"".as_slice(), "invalid-text"),
+            (b" \n".as_slice(), "invalid-text"),
+            (b"{\"message\":\"Not Found\"}".as_slice(), "invalid"),
+            (b"{\"data\":null}\n{\"data\":null}\n".as_slice(), "invalid"),
+        ] {
+            assert_eq!(body_cause(body), cause, "{}", String::from_utf8_lossy(body));
+        }
+        let cause = |error: agent_runtime::Error| {
+            let ReadEnd::<()>::Failed { cause, .. } = unanswered_read(&Unrun::Runner(error)) else {
+                panic!("a read with no answer is a failed read");
+            };
+            cause
+        };
+        let not_started = agent_runtime::Error::NotStarted {
+            program: "gh",
+            operation: "alerts",
+            cause: "No such file or directory (os error 2)".to_owned(),
+        };
+        let unanswered_in_bound = agent_runtime::Error::External {
+            program: "gh",
+            operation: "alerts",
+            cause: "no answer within 60s".to_owned(),
+        };
+        assert_eq!(cause(not_started), "not-started");
+        assert_eq!(cause(unanswered_in_bound), "no-answer");
     }
 
     /// The verdict record's reading: the
