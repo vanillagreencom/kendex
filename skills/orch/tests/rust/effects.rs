@@ -8323,38 +8323,85 @@ fn fleet_origin(checkouts: &[&Path]) {
 }
 
 /// A lane briefed without the unattended words asks its questions in a chat
-/// nobody reads. Through the real `launch-lane`, for each harness: a brief
-/// with no unattended words reaches the harness's line closed by them,
-/// exactly once, on a line after the brief's own; a Claude brief that
-/// already carries them, at its end or on its first line before an
-/// item-tier line, reaches the line as written; a hosted lane's brief,
-/// through the real `lane-host` dispatcher and a fixture provider, reaches
-/// its harness on the host closed by them the same way.
+/// nobody reads, and a lane told its output mode only by a skill it reads
+/// later writes its first reply under no mode. Through the real
+/// `launch-lane`, on every launch path: the brief reaches the harness's
+/// line closed by the unattended words, once, on a line after the brief's
+/// own, then by the sentence of the resolved `ORCH_LANE_OUTPUT`, once, on
+/// the last line, the quiet sentence where the setting is unset. The paths:
+/// a fresh local launch on each harness; a Claude brief that already
+/// carries the words, at its end or on its first line before an item-tier
+/// line; the watch's wall relaunch brief, in the form
+/// `watch/lanes.rs::start_brief` writes, pinned here so a change to that
+/// form is read against this row; the hook's recovery continuation,
+/// captured from the real `lane_recovery_continuation`; a local relaunch
+/// that resumes its bound session; a hosted lane, through the real
+/// `lane-host` dispatcher and a fixture provider.
 #[test]
-fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
-    let words = std::fs::read_to_string(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/watch/unattended.txt"),
-    )
-    .unwrap();
-    let words = words.trim_end();
-    let cases: [(&str, &str); 6] = [
-        ("claude", "/orch start KEN-U"),
+fn every_lane_brief_states_its_resolved_lane_output_once() {
+    let text = |path: &str| {
+        std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path))
+            .unwrap()
+            .trim_end()
+            .to_owned()
+    };
+    let words = text("src/watch/unattended.txt");
+    let words = words.as_str();
+    let quiet = text("src/effects/lane-output-quiet.txt");
+    let normal = text("src/effects/lane-output-normal.txt");
+    let closed = |brief: &str, mode: Option<&str>| {
+        let brief = if brief.contains(words) {
+            brief.to_owned()
+        } else {
+            format!("{brief}\n{words}")
+        };
+        let sentence = if mode == Some("normal") {
+            &normal
+        } else {
+            &quiet
+        };
+        format!("{brief}\n{sentence}")
+    };
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    let continuation = program("bash")
+        .args([
+            "-c",
+            ". \"$1/lib/lane-launch.sh\" && . \"$1/lib/lane-relaunch.sh\" && lane_recovery_continuation KEN-U claude",
+            "continuation",
+        ])
+        .arg(&shipped)
+        .output()
+        .unwrap();
+    assert!(continuation.status.success(), "{}", stderr(&continuation));
+    let continuation = String::from_utf8(continuation.stdout).unwrap();
+    let cases: [(&str, &str, Option<&str>); 9] = [
+        ("claude", "/orch start KEN-U", None),
         (
             "codex",
             "Read .agents/skills/orch/SKILL.md and run orch start KEN-U.",
+            Some("normal"),
         ),
         (
             "copilot",
             "Read .agents/skills/orch/SKILL.md and run orch start KEN-U.",
+            None,
         ),
-        ("pi", "/skill:orch start KEN-U"),
-        ("claude", "/orch start KEN-U WORDS"),
+        ("pi", "/skill:orch start KEN-U", Some("normal")),
+        ("claude", "/orch start KEN-U WORDS", None),
         (
             "claude",
             "/orch small KEN-U WORDS\ntier=small brief=small cause=estimate estimate=2 delta=40 paths=3",
+            Some("quiet"),
         ),
+        (
+            "codex",
+            "Read .agents/skills/orch/SKILL.md and execute the orch start workflow for KEN-U. WORDS",
+            Some("normal"),
+        ),
+        ("pi", "/skill:orch start KEN-U WORDS", None),
+        ("claude", continuation.trim_end(), Some("normal")),
     ];
-    for (harness, brief) in cases {
+    for (harness, brief, mode) in cases {
         let brief = brief.replace("WORDS", words);
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -8399,7 +8446,9 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
         let file = dir.path().join("brief.md");
         std::fs::write(&file, format!("{brief}\n")).unwrap();
         request["brief_file"] = json!(file.display().to_string());
-        let report = effect_report(&runner.op_fleet(&request));
+        let setting: Vec<(&str, &str)> =
+            mode.map(|m| ("ORCH_LANE_OUTPUT", m)).into_iter().collect();
+        let report = effect_report(&runner.op_fleet_env(&request, &setting));
         assert_ne!(report["intent"]["outcome"], "failed", "{harness}: {report}");
         let recorded = launch_record_of(&work);
         let carried: Vec<&str> = recorded["argv"]
@@ -8409,11 +8458,7 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
             .filter_map(Value::as_str)
             .filter(|arg| arg.contains(words))
             .collect();
-        let expected = if brief.contains(words) {
-            brief.clone()
-        } else {
-            format!("{brief}\n{words}")
-        };
+        let expected = closed(&brief, mode);
         assert_eq!(
             carried,
             [expected.as_str()],
@@ -8437,7 +8482,6 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
     );
     // The real dispatcher in front of the fixture provider, and the
     // recording harness on the host.
-    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
     let provider = dir.path().join("provider");
     std::fs::create_dir_all(&provider).unwrap();
     std::fs::rename(
@@ -8469,10 +8513,14 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
     let mut request = world.request();
     request["host"] = json!(provider.join("lane-host").display().to_string());
     request["brief_file"] = json!(brief.display().to_string());
-    let report = effect_report(&world.runner.op_fleet(&request));
+    let report = effect_report(
+        &world
+            .runner
+            .op_fleet_env(&request, &[("ORCH_LANE_OUTPUT", "normal")]),
+    );
     assert_ne!(report["intent"]["outcome"], "failed", "hosted: {report}");
     let recorded = launch_record_of(&world.host_path);
-    let expected = format!("Review the hosted change.\n{words}");
+    let expected = closed("Review the hosted change.", Some("normal"));
     assert!(
         recorded["argv"]
             .as_array()
@@ -8480,6 +8528,85 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
             .iter()
             .any(|arg| arg == &json!(expected)),
         "hosted: the brief the host's line carries: {recorded}"
+    );
+    // A relaunch on the account its bound session ran under resumes that
+    // session with the brief as its next prompt: the file the line reads.
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-resume");
+    runner.init_fleet();
+    let account = dir.path().join("account");
+    std::fs::create_dir_all(&account).unwrap();
+    let file = dir.path().join("brief.md");
+    std::fs::write(&file, &continuation).unwrap();
+    let request = json!({
+        "op": "launch-lane",
+        "item": "KEN-U",
+        "harness": "claude",
+        "mail_root": runner.state_dir().display().to_string(),
+        "account": account.display().to_string(),
+        "model": "claude-fable-5-1",
+        "effort": "high",
+        "brief_file": file.display().to_string(),
+    });
+    let first = effect_report(&runner.op_fleet(&request));
+    assert_eq!(first["intent"]["outcome"], "confirmed", "{first}");
+    effect_report(&runner.op_fleet(&terminal_close("KEN-U")));
+    let resumed = effect_report(&runner.op_fleet(&request));
+    assert_eq!(
+        resumed["intent"]["observation"]["route"], "resume",
+        "{resumed}"
+    );
+    let held = runner.state_dir().join("intents").join(format!(
+        "{}.brief",
+        resumed["intent"]["id"].as_str().unwrap()
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&held).unwrap().trim_end(),
+        closed(continuation.trim_end(), None),
+        "resume: the brief the resumed line reads"
+    );
+}
+
+/// An `ORCH_LANE_OUTPUT` the brief cannot state, a typo of either word,
+/// would start a lane under a mode the owner never chose. Through the real
+/// `launch-lane`: the launch refuses `setting-invalid` naming the key and
+/// the value before any intent is recorded or any harness starts.
+#[test]
+fn a_lane_output_outside_its_words_refuses_the_launch_before_any_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!(
+            "claude={}",
+            fixtures().join("stub-record").join("claude").display()
+        ),
+    ));
+    let work = runner.state_dir().to_path_buf();
+    let file = dir.path().join("brief.md");
+    std::fs::write(&file, "/orch start KEN-U\n").unwrap();
+    let mut request = launch_request("KEN-U", &work);
+    request["brief_file"] = json!(file.display().to_string());
+    let before = runner.fleet();
+    let answer = reply(&runner.op_fleet_env(&request, &[("ORCH_LANE_OUTPUT", "verbose")]));
+    assert_eq!(answer["refusal"]["key"], "setting-invalid", "{answer}");
+    assert_eq!(
+        answer["refusal"]["fields"],
+        json!([["key", "ORCH_LANE_OUTPUT"], ["value", "verbose"]]),
+        "{answer}"
+    );
+    assert_eq!(runner.fleet(), before, "a refusal writes nothing");
+    assert!(
+        !work.join("launch-record.json").exists(),
+        "no harness started"
     );
 }
 

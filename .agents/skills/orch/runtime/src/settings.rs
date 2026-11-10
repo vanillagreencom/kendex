@@ -478,6 +478,7 @@ const READ_KEYS: &[&str] = &[
     REVIEW_MAX_CYCLES_KEY,
     REVIEW_MAX_EXTERNAL_ROUNDS_KEY,
     CI_FIX_MAX_CYCLES_KEY,
+    LANE_OUTPUT_KEY,
 ];
 
 /// The keys every verb needs, so the load itself judges them and a private
@@ -813,6 +814,17 @@ pub struct Settings {
     pub round_prune_mark: Option<String>,
     /// The `QA_KEYS` that are set, as written.
     pub qa: BTreeMap<String, String>,
+    pub lane_output: Judged<LaneOutput>,
+}
+
+pub const LANE_OUTPUT_KEY: &str = "ORCH_LANE_OUTPUT";
+
+/// What a lane prints in its pane, stated in its launch brief so its first
+/// reply already follows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LaneOutput {
+    Quiet,
+    Normal,
 }
 
 /// The controller's own marks beyond the headroom trigger: the rate mark
@@ -1709,6 +1721,11 @@ pub fn load(
         home: get(HOME_KEY).map(str::to_owned),
         copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
         pi_root: get(PI_ROOT_KEY).map(str::to_owned),
+        lane_output: Judged::word(
+            LANE_OUTPUT_KEY,
+            get(LANE_OUTPUT_KEY),
+            &[("quiet", LaneOutput::Quiet), ("normal", LaneOutput::Normal)],
+        ),
     })
 }
 
@@ -2729,6 +2746,7 @@ mod tests {
             (USAGE_TTL_KEY, "5m"),
             (USAGE_MAX_AGE_KEY, "+1"),
             (HOST_ACCOUNTS_TIMEOUT_KEY, "-30"),
+            (LANE_OUTPUT_KEY, "verbose"),
         ];
         for (key, value) in refused {
             let settings = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap();
@@ -2768,6 +2786,7 @@ mod tests {
             s.store.review_max_external_rounds.get().map(drop),
             s.store.ci_fix_max_cycles.get().map(drop),
             s.accounts.get().map(drop),
+            s.lane_output.get().map(drop),
         ];
         judged
             .into_iter()

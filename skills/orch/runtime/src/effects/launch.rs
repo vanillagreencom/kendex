@@ -31,7 +31,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch, accounts};
-use crate::settings::Settings;
+use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
 use crate::watch::hosted::{self, Launch, PaneKind};
 
@@ -44,21 +44,49 @@ const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
 /// watch's relaunch brief closes on: an unattended lane asks the overseer
 /// through its mailbox, never in a chat nobody reads.
 const UNATTENDED_TEXT: &str = include_str!("../watch/unattended.txt");
+/// The sentence every lane brief closes on last, stating the lane's output
+/// mode: the brief is a harness's first message, so the lane's first reply
+/// already follows the mode, before it reads any skill text.
+const QUIET_TEXT: &str = include_str!("lane-output-quiet.txt");
+const NORMAL_TEXT: &str = include_str!("lane-output-normal.txt");
 
-/// `brief` closed by the unattended words on a line of their own, once: a
-/// brief that already carries them, anywhere, is kept as it stands. They
-/// ride the brief, never a system-prompt flag (Pi's `--append-system-prompt`
-/// would stop it reading its own `APPEND_SYSTEM.md`).
-fn unattended(brief: &str) -> String {
-    let brief = brief.trim_end();
-    let words = UNATTENDED_TEXT.trim_end();
-    if brief.contains(words) {
-        brief.to_owned()
-    } else if brief.is_empty() {
-        words.to_owned()
+/// `text` closed by `line` on a line of its own, once: a text that already
+/// carries it, anywhere, is kept as it stands.
+fn closed_by(text: &str, line: &str) -> String {
+    let text = text.trim_end();
+    let line = line.trim_end();
+    if text.contains(line) {
+        text.to_owned()
+    } else if text.is_empty() {
+        line.to_owned()
     } else {
-        format!("{brief}\n{words}")
+        format!("{text}\n{line}")
     }
+}
+
+fn mode_sentence(mode: LaneOutput) -> &'static str {
+    match mode {
+        LaneOutput::Quiet => QUIET_TEXT,
+        LaneOutput::Normal => NORMAL_TEXT,
+    }
+}
+
+/// A local or hosted lane's brief: closed by the unattended words, then by
+/// the sentence stating `mode`. Both ride the brief, never a system-prompt
+/// flag (Pi's `--append-system-prompt` would stop it reading its own
+/// `APPEND_SYSTEM.md`).
+fn lane_brief(brief: &str, mode: LaneOutput) -> String {
+    closed_by(&closed_by(brief, UNATTENDED_TEXT), mode_sentence(mode))
+}
+
+/// A cloud session's description: the brief, then the cloud session words
+/// for the branch it cloned in place of the unattended words, then the
+/// sentence stating `mode`.
+fn cloud_prompt(brief: &str, branch: &str, mode: LaneOutput) -> String {
+    let words = CLOUD_SESSION_TEXT
+        .trim_end_matches('\n')
+        .replace("{branch}", branch);
+    closed_by(&format!("{brief}\n\n{words}"), mode_sentence(mode))
 }
 /// The POSIX shell step a hosted Pi lane on the Copilot pool runs before
 /// its harness, inside the provider's login shell: it copies the
@@ -315,12 +343,12 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
-    // The file the line reads is the brief closed by the unattended words,
-    // held beside the intent.
+    // The file the line reads is the brief closed by the unattended words
+    // and the output mode, held beside the intent.
     let brief = match &r.brief_file {
         Some(file) => Some(
             operation
-                .hold_brief(&unattended(&read_brief(file)?))
+                .hold_brief(&lane_brief(&read_brief(file)?, settings.lane_output.get()?))
                 .map_err(Error::from)?,
         ),
         None => None,
@@ -1024,8 +1052,18 @@ fn hosted_launch(
     if let Err(e) = check_directory("cwd-missing", &cwd) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
-    let brief = match r.brief_file.as_deref().map(read_brief).transpose() {
-        Ok(text) => text.map(|text| unattended(&text)),
+    let brief = match r
+        .brief_file
+        .as_deref()
+        .map(|file| -> Result<String> {
+            Ok(lane_brief(
+                &read_brief(file)?,
+                run.settings.lane_output.get()?,
+            ))
+        })
+        .transpose()
+    {
+        Ok(text) => text,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     // A parked lane's sandbox is stopped with its disk kept: the provider's
@@ -1300,10 +1338,11 @@ fn cloud_launch(
     let Some(brief_file) = r.brief_file.as_deref() else {
         return failed(operation, "cloud-brief-missing");
     };
-    let brief = match read_brief(brief_file) {
-        Ok(text) => text,
-        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
-    };
+    let (brief, mode) =
+        match read_brief(brief_file).and_then(|text| Ok((text, run.settings.lane_output.get()?))) {
+            Ok(read) => read,
+            Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
+        };
     let Some(account) = r.account.as_deref() else {
         return failed(operation, "host-request-incomplete");
     };
@@ -1360,12 +1399,7 @@ fn cloud_launch(
     let Ok(branch) = git_line(&wt, "branch", &["symbolic-ref", "--short", "HEAD"]) else {
         return failed(operation, "cloud-branch-unread");
     };
-    let prompt = format!(
-        "{brief}\n\n{}",
-        CLOUD_SESSION_TEXT
-            .trim_end_matches('\n')
-            .replace("{branch}", &branch)
-    );
+    let prompt = cloud_prompt(&brief, &branch, mode);
     operation.record_phase(Phase::Preparing {
         step: WORKTREE_PUSH.to_owned(),
         at: wt.display().to_string(),
@@ -2141,6 +2175,30 @@ mod tests {
             cloud_create(&killed, "brief"),
             Created::Unknown(cause) if cause == "cloud-create-unanswered cause=signal"
         ));
+    }
+
+    /// A cloud session's description is its first message: a session told
+    /// its output mode only later writes its first reply under no mode. The
+    /// description closes on the cloud session words for its branch after a
+    /// blank line, then on the mode's sentence on the last line, for either
+    /// mode.
+    #[test]
+    fn a_cloud_description_closes_on_its_branch_words_then_its_output_mode() {
+        let words = CLOUD_SESSION_TEXT.replace("{branch}", "ken-1");
+        for (mode, sentence) in [
+            (LaneOutput::Quiet, QUIET_TEXT),
+            (LaneOutput::Normal, NORMAL_TEXT),
+        ] {
+            assert_eq!(
+                cloud_prompt("Review KEN-1.", "ken-1", mode),
+                format!(
+                    "Review KEN-1.\n\n{}\n{}",
+                    words.trim_end(),
+                    sentence.trim_end()
+                ),
+                "{mode:?}"
+            );
+        }
     }
 
     /// The worktree package read by the runner's three values. One that

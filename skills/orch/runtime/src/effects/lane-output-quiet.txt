@@ -1,0 +1,1 @@
+Your lane output mode is quiet from your first reply on, so print one line per completed step and nothing else of your own, with no narration, recap or closing summary, and write each filled output format block to a file and print only the output line naming it, as the orch skill rules on lane output say.

@@ -384,8 +384,9 @@ pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
 /// The keys a request's effect reads, judged before its intent persists and
 /// again by its job before the claim, so no intent stands under a value its
 /// effect would refuse: every live effect's bounds, posture and harness
-/// programs; a controller launch's question dialog; a job's claim bound; a
-/// lane close's grace. A request with no effect reads none of them.
+/// programs; a controller launch's question dialog; a lane launch's output
+/// mode; a job's claim bound; a lane close's grace. A request with no effect
+/// reads none of them.
 pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
     let effect = |controller_launch: bool, job: bool| -> Result<()> {
         settings.verify.get()?;
@@ -401,7 +402,11 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
         Ok(())
     };
     match request {
-        Request::LaunchLane(_) | Request::CloseOwnedResources(_) => effect(false, false),
+        Request::LaunchLane(_) => {
+            effect(false, false)?;
+            settings.lane_output.get().map(drop)
+        }
+        Request::CloseOwnedResources(_) => effect(false, false),
         Request::RequestTransfer(_) => effect(true, true),
         Request::StartController(_) => effect(true, false),
         Request::StopController(_) => effect(false, true),

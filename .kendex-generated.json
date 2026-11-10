@@ -687,6 +687,8 @@
   ".agents/skills/orch/runtime/src/archive.rs",
   ".agents/skills/orch/runtime/src/effects/close.rs",
   ".agents/skills/orch/runtime/src/effects/cloud-session.txt",
+  ".agents/skills/orch/runtime/src/effects/lane-output-normal.txt",
+  ".agents/skills/orch/runtime/src/effects/lane-output-quiet.txt",
   ".agents/skills/orch/runtime/src/effects/launch.rs",
   ".agents/skills/orch/runtime/src/effects/launch/gate.rs",
   ".agents/skills/orch/runtime/src/effects/mod.rs",
