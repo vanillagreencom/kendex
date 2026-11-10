@@ -55,19 +55,21 @@ const DECLARING_KINDS: [ItemKind; 2] = [ItemKind::Skill, ItemKind::Hook];
 /// read, or a hook's script. Read through the bounded parser every other
 /// frontmatter read of that kind goes through; there is no fallback to
 /// scanning the body, because a dependency the author never declared is not
-/// a dependency. A block that will not parse is left to the renderer, which
-/// reads the same bytes and reports what is wrong with them.
+/// a dependency. `None` where the block will not parse: what it declares is
+/// unknown, which is not declaring nothing; the renderer reads the same
+/// bytes and reports what is wrong with them.
 pub(crate) fn declared_dependencies(
     sealed: &SealedSource,
     kind: ItemKind,
     found: &std::path::Path,
-) -> Result<Dependencies> {
+) -> Result<Option<Dependencies>> {
     let declared = match kind {
         ItemKind::Skill => sealed
             .read_if_exists(&found.join("SKILL.md"))?
             .map(|text| declared_in(&text)),
         ItemKind::Hook => sealed.read_if_exists(found)?.map(|text| {
             crate::hook::parse_hook(&text)
+                .ok()
                 .map(|hook| Dependencies {
                     required: hook.requires,
                     optional: Vec::new(),
@@ -77,7 +79,6 @@ pub(crate) fn declared_dependencies(
                     requires_on: hook.requires_on,
                     commands: Vec::new(),
                 })
-                .unwrap_or_default()
         }),
         // No other kind's frontmatter has a dependency field to read.
         ItemKind::Agent
@@ -87,24 +88,20 @@ pub(crate) fn declared_dependencies(
         | ItemKind::PiExtension
         | ItemKind::OutputStyle => None,
     };
-    Ok(declared.unwrap_or_default())
+    Ok(declared.unwrap_or(Some(Dependencies::default())))
 }
 
 /// [`declared_dependencies`] over bytes a caller already holds — a listing
 /// reads each package's SKILL.md for its header anyway, and the sealed read
 /// checks containment per path component, so reading it a second time here
 /// costs the whole page.
-pub(crate) fn declared_in(text: &str) -> Dependencies {
-    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
-        return Dependencies::default();
-    };
-    let Ok(parsed) = crate::frontmatter::parse_tolerant(yaml) else {
-        return Dependencies::default();
-    };
+pub(crate) fn declared_in(text: &str) -> Option<Dependencies> {
+    let (yaml, _) = crate::frontmatter::split(text).ok()?;
+    let parsed = crate::frontmatter::parse_tolerant(yaml).ok()?;
     let Some(crate::frontmatter::Value::Map(map)) = parsed.map.get("dependencies") else {
-        return Dependencies::default();
+        return Some(Dependencies::default());
     };
-    Dependencies {
+    Some(Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
         required_skills: Vec::new(),
@@ -112,7 +109,7 @@ pub(crate) fn declared_in(text: &str) -> Dependencies {
         required_hooks: map.string_list("hooks").unwrap_or_default(),
         requires_on: None,
         commands: commands::declared(&parsed.map).unwrap_or_default(),
-    }
+    })
 }
 
 /// One item the walk names: its kind and its name, since a skill and a hook
@@ -901,18 +898,15 @@ fn wanted_by(
         armed: parent_decl.enabled,
         ..Wanted::default()
     };
-    let dir = match catalog.offer(kind, parent) {
-        Offer::Item(_, dir) => dir,
-        // A retired item installs nothing, so it derives nothing either;
-        // what a copy kept as recorded runs with is its record's
-        // ([`withhold_kept_retired`]).
-        Offer::Retired(migration) => {
-            state.retire_planned(expansion, kind, parent, &parent_decl.source, migration);
-            return None;
-        }
-        Offer::NotOffered | Offer::Silent => return Some(wanted),
-    };
-    let Some(declared) = declared_by(catalog, manifest, kind, parent, &dir) else {
+    let offer = catalog.offer(kind, parent);
+    // A retired item installs nothing, so it derives nothing either;
+    // what a copy kept as recorded runs with is its record's
+    // ([`withhold_kept_retired`]).
+    if let Offer::Retired(migration) = offer {
+        state.retire_planned(expansion, kind, parent, &parent_decl.source, migration);
+        return None;
+    }
+    let Some((declared, dir)) = declared_by(catalog, manifest, kind, parent, offer, state) else {
         return Some(wanted);
     };
     let header = hook_header(sealed, kind, &dir);
@@ -1013,27 +1007,42 @@ fn wanted_by(
     Some(wanted)
 }
 
-/// What `parent`, offered at `dir`, declares it needs: an agent's
-/// assignment ([`agent_assignment`]), every other kind's own frontmatter.
-/// `None` where that frontmatter will not read, which the renderer
-/// reports.
+/// What `parent` declares it needs, and the directory its catalog offers
+/// it at: an agent's assignment ([`agent_assignment`]), every other kind's
+/// own frontmatter. `None` where the catalog does not offer it or that
+/// frontmatter will not read or parse, each reported where it is met; what
+/// it requires went unread, so this pass derives less than the catalog
+/// carries and is marked incomplete.
 fn declared_by(
     catalog: &OpenCatalog,
     manifest: &Manifest,
     kind: ItemKind,
     parent: &str,
-    dir: &std::path::Path,
-) -> Option<Dependencies> {
-    match kind {
-        ItemKind::Agent => Some(agent_assignment(catalog, manifest, parent, dir)),
-        ItemKind::Skill
-        | ItemKind::Hook
-        | ItemKind::Command
-        | ItemKind::McpServer
-        | ItemKind::Plugin
-        | ItemKind::PiExtension
-        | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, dir).ok(),
+    offer: Offer<'_>,
+    state: &mut DesiredState,
+) -> Option<(Dependencies, std::path::PathBuf)> {
+    let read = match offer {
+        Offer::Item(_, dir) => {
+            let declared = match kind {
+                ItemKind::Agent => agent_assignment(catalog, manifest, parent, &dir),
+                ItemKind::Skill
+                | ItemKind::Hook
+                | ItemKind::Command
+                | ItemKind::McpServer
+                | ItemKind::Plugin
+                | ItemKind::PiExtension
+                | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, &dir)
+                    .ok()
+                    .flatten(),
+            };
+            declared.map(|declared| (declared, dir))
+        }
+        Offer::Retired(_) | Offer::NotOffered | Offer::Silent => None,
+    };
+    if read.is_none() {
+        state.mark_incomplete();
     }
+    read
 }
 
 /// The skills an agent a skill requires loads, as its required skills: the
@@ -1041,8 +1050,9 @@ fn declared_by(
 /// catalog's assignment for the rendering too, and the catalog's own
 /// (`mapping::upstream_skills`) otherwise. Only names this catalog offers:
 /// a row may name a skill another source carries, and one nothing installs
-/// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
-/// agent that will not read or parse needs nothing; the renderer reports it.
+/// is the agent pass's warning (`agent_skills::warn_uninstalled`). `None`
+/// where an agent with no row will not read or parse; the renderer
+/// reports it.
 /// [`wanted_by`] derives only tools [`held_elsewhere`] finds the scope
 /// does not hold; held tools follow only the agent's switch.
 fn agent_assignment(
@@ -1050,7 +1060,7 @@ fn agent_assignment(
     manifest: &Manifest,
     agent: &str,
     path: &std::path::Path,
-) -> Dependencies {
+) -> Option<Dependencies> {
     let available = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared
@@ -1059,19 +1069,15 @@ fn agent_assignment(
             .cloned()
             .collect(),
         None => {
-            let Ok(Some(text)) = catalog.sealed.read_if_exists(path) else {
-                return Dependencies::default();
-            };
-            let Ok(parsed) = crate::render::agent::parse_source_agent(&text) else {
-                return Dependencies::default();
-            };
+            let text = catalog.sealed.read_if_exists(path).ok()??;
+            let parsed = crate::render::agent::parse_source_agent(&text).ok()?;
             crate::mapping::upstream_skills(agent, parsed.role, &catalog.config, &available)
         }
     };
-    Dependencies {
+    Some(Dependencies {
         required_skills,
         ..Dependencies::default()
-    }
+    })
 }
 
 /// Another reason satisfies this installation without adding an agent

@@ -868,9 +868,11 @@ pub enum ProvenanceStep {
     /// no apply rewrites that record until the edit is resolved or
     /// discarded.
     ResolveEdit(crate::lock::InstallRef),
-    /// A local edit holds the installation's own record, its only reading,
-    /// whose reasons may predate the catalog's; the catalogs read whole
-    /// decide in its place.
+    /// A local edit holds the installation's own record, whose reasons may
+    /// predate the catalog's, and no reading roots it; a read that accounts
+    /// for every declaration decides in its place. One that does not leaves
+    /// the refusal standing, whether a catalog would not read or an item,
+    /// a set or a tool it needs is not there.
     RetryReadable,
 }
 
@@ -897,7 +899,7 @@ impl ProvenanceStep {
                 crate::names::shown(&held.name),
                 held.harness.name()
             ),
-            Self::RetryReadable => "a local edit holds this installation's record, which cannot say what requires it now: retry removal with every catalog readable".to_owned(),
+            Self::RetryReadable => "a local edit holds this installation's record, which cannot say what requires it now: retry removal once an apply reads every catalog and reports nothing declared that it could not read or install".to_owned(),
         }
     }
 }

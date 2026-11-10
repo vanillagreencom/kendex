@@ -915,14 +915,16 @@ impl Catalogs<'_> {
                     match state.pinned.get(&key) {
                         Some(resolution) => resolution.clone(),
                         None => {
-                            let resolution = crate::source::resolve_at(
+                            let Ok(resolution) = crate::source::resolve_at(
                                 self.env,
                                 self.scope,
                                 source,
                                 self.manifest,
                                 Some(rev),
-                            )
-                            .ok()?;
+                            ) else {
+                                state.mark_incomplete();
+                                return None;
+                            };
                             state.pinned.insert(key, resolution.clone());
                             resolution
                         }
@@ -931,9 +933,12 @@ impl Catalogs<'_> {
                 None => match state.sources.get(source) {
                     Some(resolution) => resolution.clone(),
                     None => {
-                        let resolution =
+                        let Ok(resolution) =
                             crate::source::resolve(self.env, self.scope, source, self.manifest)
-                                .ok()?;
+                        else {
+                            state.mark_incomplete();
+                            return None;
+                        };
                         state.sources.insert(source.to_owned(), resolution.clone());
                         resolution
                     }
@@ -950,7 +955,11 @@ impl Catalogs<'_> {
                 state.sources.insert(source.to_owned(), resolution.clone());
             }
         }
+        // A source that did not resolve, or not to a catalog, derived
+        // nothing, which says nothing of what it carries; the declaration
+        // naming it reports why.
         let SourceState::Ready(ready) = resolution else {
+            state.mark_incomplete();
             return None;
         };
         // Everything derived — a set's members, a skill's dependencies —

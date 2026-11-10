@@ -378,9 +378,10 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// can cost a suppression the next add clears, but never drops one.
 /// Otherwise an ancestor no recorded reading holds reasons for refuses,
 /// because the catalog cannot prove it gone and guessing could make the
-/// removal return. So does an installation whose only reading a local
-/// edit holds, unless every catalog read now: its reasons may predate a
-/// carrier the catalog gained, which only that read sees.
+/// removal return. So does an installation a local edit holds and no
+/// reading roots, unless the read now accounted for every declaration:
+/// its reasons may predate a carrier the catalog gained, which only that
+/// read sees.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -448,7 +449,7 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
 
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
-/// declared at, and whether every catalog the read reached was readable.
+/// declared at, and whether the read accounted for every declaration.
 fn read_ancestry(
     env: &Env,
     scope: &Scope,
@@ -468,14 +469,10 @@ fn read_ancestry(
                 })
         })
         .collect();
-    // A source that did not resolve to a readable catalog derived nothing,
-    // which says nothing of what it would carry once it reads.
-    let whole = state.unreadable_catalogs.is_empty()
-        && state
-            .sources
-            .values()
-            .chain(state.pinned.values())
-            .all(|resolution| matches!(resolution, crate::source::SourceState::Ready(_)));
+    // The expansion marks whatever it could not read where it meets it: a
+    // catalog, a set or an item that derived less than it carries says
+    // nothing of what it would carry once read.
+    let whole = super::DeclarationStatus::of(&state) == super::DeclarationStatus::Complete;
     (expansion.requirer_provenance(&read), whole)
 }
 
@@ -496,23 +493,28 @@ enum Unread {
     },
     /// A set whose reading the record does not bind to the member's edge.
     Set(crate::lock::BundleRef),
-    /// An installation whose only reading a local edit holds, and which
-    /// that reading does not root. The catalogs read whole decide it.
+    /// An installation a local edit holds and no reading roots. The
+    /// catalogs read whole decide it.
     Held(InstallRef),
 }
 
 impl Reach {
     /// Rooted, then a refusal no read lifts, then one a whole read does.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Unrooted => 0,
+            Self::Missing(Unread::Held(_)) => 1,
+            Self::Missing(Unread::Ancestor { .. } | Unread::Set(_)) => 2,
+            Self::Rooted => 3,
+        }
+    }
+
+    /// The higher-ranked answer; on a tie, `self`.
     fn or(self, other: Self) -> Self {
-        match (self, other) {
-            (Self::Rooted, _) | (_, Self::Rooted) => Self::Rooted,
-            (
-                Self::Missing(Unread::Held(_)),
-                missing @ Self::Missing(Unread::Ancestor { .. } | Unread::Set(_)),
-            )
-            | (missing @ Self::Missing(_), _)
-            | (_, missing @ Self::Missing(_)) => missing,
-            (Self::Unrooted, Self::Unrooted) => Self::Unrooted,
+        if other.rank() > self.rank() {
+            other
+        } else {
+            self
         }
     }
 }
@@ -525,8 +527,9 @@ enum Facts<'a> {
     /// ancestor, wherever the walk arrived from. Nothing in the lock says
     /// which of two readings is newer, so each is walked once and a root in
     /// any of them counts; none vetoes another. An entry a local edit holds
-    /// keeps its reasons from before the hold, so where it is the only
-    /// reading it roots or refuses, and never proves an installation free.
+    /// keeps its reasons from before the hold, and a row beside it may be
+    /// as old, so such an installation roots or refuses and is never
+    /// proved free.
     Recorded(&'a Captured<'a>),
     /// What the catalogs derive now ([`read_ancestry`]). An installation
     /// they do not derive has no carrier.
@@ -785,37 +788,22 @@ impl RemovalRoots<'_> {
                 };
             }
         };
-        // The lock has no hold marker; the edit a hold keeps is its sign.
-        let held_alone = match readings.as_slice() {
-            [
-                Reading {
-                    recorder: Recorder::Entry(entry),
-                    ..
-                },
-            ] => Some(*entry),
-            _ => None,
-        };
+        let entry = readings.iter().find_map(|reading| match reading.recorder {
+            Recorder::Entry(entry) => Some(entry),
+            Recorder::Read | Recorder::Row(_) => None,
+        });
         let mut found = Reach::Unrooted;
         for reading in readings {
             let next = if self.declared(by, reading.repo) {
                 Reach::Rooted
             } else if visited.insert((reading.recorder.visit(), by.clone())) {
-                match self.reasons(
+                self.reasons(
                     reading.recorder.context(),
                     by,
                     reading.repo,
                     reading.reasons,
                     visited,
-                ) {
-                    Reach::Unrooted
-                        if held_alone.is_some_and(|entry| {
-                            super::removal::edit_holds(self.env, self.scope, entry)
-                        }) =>
-                    {
-                        Reach::Missing(Unread::Held(by.clone()))
-                    }
-                    reach => reach,
-                }
+                )
             } else {
                 Reach::Unrooted
             };
@@ -824,7 +812,17 @@ impl RemovalRoots<'_> {
                 break;
             }
         }
-        found
+        // The lock has no hold marker; the edit a hold keeps is its sign.
+        match found {
+            Reach::Unrooted
+                if entry.is_some_and(|entry| {
+                    super::removal::edit_holds(self.env, self.scope, entry)
+                }) =>
+            {
+                Reach::Missing(Unread::Held(by.clone()))
+            }
+            found => found,
+        }
     }
 
     /// The one answer to which readings speak for an installation: read
