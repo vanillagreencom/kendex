@@ -894,7 +894,7 @@ fn launch_job(
     let line = launched.line;
     // The job's first act is its claim (`claim-intent`); until then this
     // process holds the lease, so a contender defers to it.
-    let deadline = operation.now() + run.settings.claim;
+    let deadline = operation.now() + run.settings.claim.get()?;
     loop {
         let current = read_intent(run.path, id)?;
         if let Some(owner) = &current.owner
@@ -1090,7 +1090,7 @@ impl Operation<'_> {
             return Ok(WatchStart::Refused { cause });
         }
         let line = launched.line;
-        let deadline = self.now() + self.run.settings.claim;
+        let deadline = self.now() + self.run.settings.claim.get()?;
         loop {
             match self.watch_claimed(&paths)? {
                 Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
@@ -1881,6 +1881,9 @@ pub(in crate::effects) fn run_job(run: &Run, intent_id: &str) -> Result<Applied>
             cause: format!("{} is not a job's operation", request.name()),
         });
     };
+    // The job's own settings may differ from its caller's: a value its
+    // effect would refuse leaves the intent unclaimed.
+    ops::judge_effect_settings(&request, run.settings)?;
     ops::apply(
         run.path,
         &Request::ClaimIntent(ClaimIntent {

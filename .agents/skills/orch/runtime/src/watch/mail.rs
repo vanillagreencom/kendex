@@ -77,23 +77,20 @@ pub struct Config {
 
 impl Config {
     /// The configuration `watch run` builds from its settings and records.
-    pub fn of(settings: &Settings, paths: &Paths) -> Config {
-        Config {
+    pub fn of(settings: &Settings, paths: &Paths) -> Result<Config> {
+        let watch = settings.watch.get()?;
+        Ok(Config {
             fleet: paths.state.clone(),
             common_root: settings.roots.common.clone(),
             request: paths.dir.join("oversee-watch.mail-request"),
-            interval: settings.watch.mail_interval,
-            mark_repeat: settings.watch.mark_repeat,
-            unread: settings.watch.directive_unread,
-        }
+            interval: watch.mail_interval,
+            mark_repeat: watch.mark_repeat,
+            unread: watch.directive_unread,
+        })
     }
 
-    /// The overseer's mailbox directory, `<common root>/tmp/lane-mail/overseer`.
     fn overseer_dir(&self) -> PathBuf {
-        self.common_root
-            .join("tmp")
-            .join("lane-mail")
-            .join(OVERSEER)
+        overseer_dir(&self.common_root)
     }
 
     /// The overseer's box, `to-lane.jsonl` under its mailbox directory.
@@ -108,12 +105,17 @@ impl Config {
     }
 }
 
+/// The overseer's mailbox directory, `<common root>/tmp/lane-mail/overseer`.
+pub fn overseer_dir(common_root: &Path) -> PathBuf {
+    common_root.join("tmp").join("lane-mail").join(OVERSEER)
+}
+
 /// Register the mail duty on `runner` for the fleet state at `fleet`, with
 /// the mailbox program the settings name.
 pub fn register(runner: &mut Runner<'_>, fleet: &Path, settings: &Settings) -> Result<()> {
     let duty = MailDuty::new(
         Mailbox::new(settings.lane_mail_cli.clone()),
-        Config::of(settings, &Paths::of(fleet)?),
+        Config::of(settings, &Paths::of(fleet)?)?,
     );
     register_duty(runner, duty);
     Ok(())

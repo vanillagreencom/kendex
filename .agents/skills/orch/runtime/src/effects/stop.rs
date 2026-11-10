@@ -42,7 +42,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let close = Close {
         item: &item,
         lane: &lane,
-        target: harness.map(|h| Target::new(run.settings, h)),
+        target: harness.map(|h| Target::new(run.settings, h)).transpose()?,
         ground: intent.close.as_ref(),
         cycle: intent.cycle.as_ref().map(|row| &row.cycle),
     };
@@ -578,7 +578,8 @@ fn moved_lane(
     }
     let target = operation
         .recorded_harness()
-        .map(|h| Target::new(run.settings, h));
+        .map(|h| Target::new(run.settings, h))
+        .transpose()?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     operation.read_standing(None)?;
     operation.release_validation_moved()?;

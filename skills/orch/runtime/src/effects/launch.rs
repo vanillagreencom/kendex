@@ -345,7 +345,7 @@ fn prepare_launch(
         r.model.as_deref(),
         kept.as_ref(),
         &cwd,
-        agent_runtime::launch::full_bypass(harness, settings.permission, &permission),
+        agent_runtime::launch::full_bypass(harness, settings.permission.get()?, &permission),
     )?;
     let floor = match (route, &homes.sessions) {
         (Route::Resume { session_id, .. }, _) => SessionFloor::Fixed(session_id.clone()),
@@ -388,7 +388,7 @@ fn prepare_launch(
     let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
-        target: Target::new(settings, harness),
+        target: Target::new(settings, harness)?,
         home: homes.sessions,
         home_implicit: homes.cleared,
         server: fleet.server,
@@ -525,8 +525,8 @@ pub(super) struct LaunchHome {
 /// environment holds.
 fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
     let named = match harness {
-        Harness::Copilot => settings.accounts.copilot_home.as_deref(),
-        Harness::Pi => settings.accounts.pi_root.as_deref(),
+        Harness::Copilot => settings.copilot_home.as_deref(),
+        Harness::Pi => settings.pi_root.as_deref(),
         Harness::Claude | Harness::Codex => None,
     };
     named
@@ -1085,7 +1085,7 @@ fn hosted_launch(
     if let Err(e) = check_program(&command) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
-    let target = Target::new(run.settings, harness);
+    let target = Target::new(run.settings, harness)?;
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
@@ -1253,7 +1253,7 @@ fn hosted_command(
             "-o".to_owned(),
             "BatchMode=yes".to_owned(),
             "-o".to_owned(),
-            format!("ConnectTimeout={}", settings.verify.as_secs()),
+            format!("ConnectTimeout={}", settings.verify.get()?.as_secs()),
             "--".to_owned(),
             created.target.clone(),
             line,
@@ -1728,7 +1728,7 @@ fn launch_outcome(
                                     None
                                 }
                                 Some(home) => {
-                                    match operation.appeared_session(harness, &home, cwd, opened) {
+                                    match operation.appeared_session(harness, &home, cwd, opened)? {
                                         Binding::Bound(session) => Some(session.session_id),
                                         Binding::Absent => {
                                             observation["note"] = json!("session-unbound");
@@ -1953,7 +1953,7 @@ fn judge_opened(
             json!({"reconcile": "launch", "observed": "present", "cause": "harness-unknown"}),
         ));
     };
-    let target = Target::new(run.settings, harness);
+    let target = Target::new(run.settings, harness)?;
     let hosted = matches!(surface_of(lane.host.as_deref()), Surface::Hosted(_));
     let owns = |name: &str| (hosted && name == "ssh") || target.owns(name);
     let (foreground, state) =

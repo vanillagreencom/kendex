@@ -563,7 +563,8 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
         },
-    );
+    )
+    .unwrap();
     let mail = Arc::new(AtomicUsize::new(0));
     let mail_in = mail.clone();
     runner.register(
@@ -676,7 +677,8 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
         },
-    );
+    )
+    .unwrap();
     let mail = Arc::new(AtomicUsize::new(0));
     let mail_in = mail.clone();
     runner.register(
@@ -1519,8 +1521,24 @@ fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
         "#!/bin/bash\n[ \"${1:-}\" = pending ] && printf '%s\\n' '{\"id\":\"1769700000-9-31\",\"kind\":\"ask\",\"text\":\"which base\"}'\nexit 0\n",
     );
     let mailbox = mailbox.display().to_string();
-    let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
     let clock = FakeClock::new();
+    // A close bound outside its form refuses the close before its intent
+    // persists: the pass says it refused, and no intent stands.
+    let judged = world.settings(&[
+        ("LANE_MAIL_CLI", mailbox.as_str()),
+        ("ORCH_LANE_CLOSE_SECS", "0"),
+    ]);
+    let mut refusing = tracker::body(world.context(judged, None));
+    let refused = pass(
+        &mut refusing,
+        &mut Baseline::default(),
+        &clock,
+        SINCE_EPOCH + 1000,
+    )
+    .unwrap();
+    assert_eq!(rendered(&refused), vec!["EVENT lane-close-refused KEN-3"]);
+    assert_eq!(world.fleet()["intents"], Value::Null, "no intent persisted");
+    let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
     let mut body = tracker::body(world.context(settings, None));
     let mut baseline = Baseline::default();
     let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
@@ -2520,7 +2538,8 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
         },
-    );
+    )
+    .unwrap();
     let ctx = world.context(settings.clone(), Some(SINCE));
     let shared = ctx.shared.clone();
     runner.register(Duty::Tracker, tracker::body(ctx));

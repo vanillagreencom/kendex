@@ -361,12 +361,16 @@ pub enum Progress {
     Yielded { owner: Owner },
 }
 
-/// What `ORCH_OVERSEER_SUCCESSION` admits before any transition runs: a
-/// `request-transfer` under `off` refuses `succession-off` and persists
-/// nothing; a live one also needs its predecessor's current snapshot
-/// ([`handoff_current`]). Every other request is admitted.
+/// What the settings admit before any transition runs: the keys the
+/// request's live effect reads ([`judge_effect_settings`]); a
+/// `request-transfer` under `ORCH_OVERSEER_SUCCESSION=off` refuses
+/// `succession-off` and persists nothing; a live one also needs its
+/// predecessor's current snapshot ([`handoff_current`]).
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
-    if let (Request::RequestTransfer(_), Succession::Off) = (request, settings.succession) {
+    judge_effect_settings(request, settings)?;
+    if let Request::RequestTransfer(_) = request
+        && settings.succession.get()? == Succession::Off
+    {
         return Err(Error::SuccessionOff);
     }
     if let Request::RequestTransfer(r) = request
@@ -375,6 +379,63 @@ pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
         handoff_current(r)?;
     }
     Ok(())
+}
+
+/// The keys a request's effect reads, judged before its intent persists and
+/// again by its job before the claim, so no intent stands under a value its
+/// effect would refuse: every live effect's bounds, posture and harness
+/// programs; a controller launch's question dialog; a job's claim bound; a
+/// lane close's grace. A request with no effect reads none of them.
+pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
+    let effect = |controller_launch: bool, job: bool| -> Result<()> {
+        settings.verify.get()?;
+        settings.close_grace.get()?;
+        settings.permission.get()?;
+        settings.harness_binaries.get()?;
+        if controller_launch {
+            settings.question_tool.get()?;
+        }
+        if job {
+            settings.claim.get()?;
+        }
+        Ok(())
+    };
+    match request {
+        Request::LaunchLane(_) | Request::CloseOwnedResources(_) => effect(false, false),
+        Request::RequestTransfer(_) => effect(true, true),
+        Request::StartController(_) => effect(true, false),
+        Request::StopController(_) => effect(false, true),
+        Request::CloseLane(_) => settings.close_grace.get().map(|_| ()),
+        Request::AdoptSession(_)
+        | Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::AdoptController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::RecordVerification(_)
+        | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::ReconcileRound(_)
+        | Request::RecordHandoff(_)
+        | Request::ResumeHandoff(_)
+        | Request::ParkLane(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::RecordOutcome(_)
+        | Request::RecordPhase(_)
+        | Request::RecordProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_)
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => Ok(()),
+    }
 }
 
 /// The successor's pane and server a transfer confirmation names, or

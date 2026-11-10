@@ -81,10 +81,10 @@ pub const LANE_CAP_KEY: &str = "ORCH_OVERSEER_LANES";
 /// The Claude cloud sessions one overseer holds at once: the record's
 /// declared `claude-cloud` kind owns this cap, whatever its host name.
 pub const CLOUD_LANE_CAP_KEY: &str = "ORCH_OVERSEER_CLOUD_LANES";
-/// The directory the shell launcher keeps its claim store under, as
-/// `<dir>/claims` (`lib/lane-claims.sh`, `lane_claims_dir`); the main
-/// checkout's `tmp/oversee-watch` when unset. Read, never written, by the
-/// lane cap's admission while both launchers run.
+/// The watch's state directory, which holds the claim store `<dir>/claims`
+/// (`lib/lane-claims.sh`, `lane_claims_dir`), the account walls, the usage
+/// cache and the relaunch markers; the main checkout's `tmp/oversee-watch`
+/// when unset.
 pub const CLAIM_STATE_DIR_KEY: &str = "OVERSEE_WATCH_STATE_DIR";
 /// The mailbox program a close asks for a lane's unanswered asks; empty
 /// finds the installed mailbox package.
@@ -470,6 +470,14 @@ const READ_KEYS: &[&str] = &[
     REVIEW_WAIT_SECS_KEY,
     REVIEW_ON_TIMEOUT_KEY,
     COPILOT_REQUESTS_KEY,
+    ARCHIVE_ROOT_KEY,
+    FLEET_DIR_KEY,
+    TAKEOVER_ROWS_KEY,
+    FLEET_LOG_ROW_BYTES_KEY,
+    PROGRESS_REPORT_DIR_KEY,
+    REVIEW_MAX_CYCLES_KEY,
+    REVIEW_MAX_EXTERNAL_ROUNDS_KEY,
+    CI_FIX_MAX_CYCLES_KEY,
 ];
 
 /// The keys every verb needs, so the load itself judges them and a private
@@ -581,10 +589,10 @@ pub enum WallRelaunch {
     Ask,
 }
 
-/// The fleet watch's settings, read once at the runner's start: the cadence
-/// the mail duty keeps and the bounds the observation, the mail and tracker
-/// duties judge against. `--interval` and `--max-loops` are the runner's
-/// own flags.
+/// The fleet watch's settings, which `watch run` judges at its start, before
+/// its claim: the cadence the mail duty keeps and the bounds the
+/// observation, mail and GitHub duties judge against. `--interval` and
+/// `--max-loops` are the runner's own flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchSettings {
     pub mail_interval: Duration,
@@ -601,7 +609,8 @@ pub struct WatchSettings {
     /// `owner/repo:workflow.yml` entries, lowercased repository; an entry
     /// of another shape is refused.
     pub main_workflows: Vec<String>,
-    pub linear_team: Option<String>,
+    pub security_alerts: Audit,
+    pub external_triage: Audit,
 }
 
 /// Whether a GitHub audit runs: the `on`/`off` switches.
@@ -627,10 +636,8 @@ pub struct ReadSettings {
     pub tracker_cli: PathBuf,
     /// The reducer the GitHub duty runs per repository.
     pub pr_watch_cli: PathBuf,
-    pub security_alerts: Audit,
     /// The installation token file the alert reads run under.
     pub security_alert_token_file: Option<PathBuf>,
-    pub external_triage: Audit,
     /// Lowercased, deduplicated, in the order given.
     pub connected_repos: Vec<String>,
     pub owner_tracker: Option<OwnerTracker>,
@@ -660,13 +667,12 @@ pub struct ValidateSettings {
 
 /// What `queue-watch` reads beside its request: the arming grace, the
 /// confirmation count and the probe interval, each a whole number above
-/// zero, refused by key and value otherwise, and the reach command, a
-/// blank value no declaration.
+/// zero, and the reach command, a blank value no declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueWatchSettings {
-    pub arm_grace: Duration,
-    pub confirm_polls: u32,
-    pub probe_interval: Duration,
+    pub arm_grace: Judged<Duration>,
+    pub confirm_polls: Judged<u32>,
+    pub probe_interval: Judged<Duration>,
     pub reach_cmd: Option<String>,
 }
 
@@ -701,11 +707,8 @@ pub struct AccountSettings {
     pub aliases: Vec<Alias>,
     /// The provider a pick runs under, `None` for this machine's own read.
     pub host: Option<String>,
-    pub home: Option<String>,
     pub lane_dirs: Vec<String>,
     pub codex_home: Option<String>,
-    pub copilot_home: Option<String>,
-    pub pi_root: Option<String>,
     pub usage_ttl: u64,
     pub usage_max_age: u64,
     pub accounts_timeout: u64,
@@ -751,22 +754,25 @@ pub struct Settings {
     pub reconcile_gh_cli: PathBuf,
     pub state_dir: PathBuf,
     pub tmux_session: Option<String>,
-    pub verify: Duration,
-    pub close_grace: Duration,
-    pub claim: Duration,
-    pub watch: WatchSettings,
-    pub question_tool: QuestionToolSetting,
-    pub permission: Permission,
-    pub harness_binaries: BTreeMap<Harness, PathBuf>,
+    pub verify: Judged<Duration>,
+    pub close_grace: Judged<Duration>,
+    pub claim: Judged<Duration>,
+    pub watch: Judged<WatchSettings>,
+    /// The tracker duties' team, which the report and the admission read too.
+    pub linear_team: Option<String>,
+    pub question_tool: Judged<QuestionToolSetting>,
+    pub permission: Judged<Permission>,
+    pub harness_binaries: Judged<BTreeMap<Harness, PathBuf>>,
     pub worktree_cli: PathBuf,
     pub agent_runtime: PathBuf,
-    pub succession: Succession,
+    pub succession: Judged<Succession>,
     /// The controller's own marks.
     pub marks: MarkSettings,
     pub job_unit: PathBuf,
-    pub lane_cap: u32,
-    pub cloud_lane_cap: u32,
-    /// The shell launcher's claim store the cap's admission reads, never writes.
+    pub lane_cap: Judged<u32>,
+    pub cloud_lane_cap: Judged<u32>,
+    /// The claim store under the watch's state directory, whose parent its
+    /// readers take.
     pub claim_store: PathBuf,
     pub lane_mail_cli: PathBuf,
     pub dev_validate_cli: PathBuf,
@@ -786,7 +792,7 @@ pub struct Settings {
     /// A lane launch's preference entries; `None` where the setting
     /// names none.
     pub lane_preference: Option<String>,
-    pub retention_days: u32,
+    pub retention_days: Judged<u32>,
     pub queue_watch: QueueWatchSettings,
     pub archive_root: ArchiveRoot,
     /// The report's keys as their text, an empty value kept, since an
@@ -794,7 +800,13 @@ pub struct Settings {
     /// alone judges them (`report::Policy::of`).
     pub report: Vec<(String, String)>,
     pub lanes_cli: PathBuf,
-    pub accounts: AccountSettings,
+    pub accounts: Judged<AccountSettings>,
+    /// `HOME`, `COPILOT_HOME` and `PI_CODING_AGENT_DIR`: the homes an
+    /// accountless launch and the watch's lane readers run under, which the
+    /// accounts judge reads too.
+    pub home: Option<String>,
+    pub copilot_home: Option<String>,
+    pub pi_root: Option<String>,
     pub store: StoreSettings,
     pub review: ReviewSettings,
     /// `ORCH_ROUND_PRUNE_DISK_PCT` as written.
@@ -804,12 +816,13 @@ pub struct Settings {
 }
 
 /// The controller's own marks beyond the headroom trigger: the rate mark
-/// in minutes, the memory mark where set, and the context share.
+/// in minutes, the memory mark where set, and the context share, each
+/// judged apart, since a lane's turn end reads the context share alone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkSettings {
-    pub wall_minutes: u32,
-    pub memory_pct: Option<u32>,
-    pub context_pct: u32,
+    pub wall_minutes: Judged<u32>,
+    pub memory_pct: Judged<Option<u32>>,
+    pub context_pct: Judged<u32>,
 }
 
 /// The state verbs' settings: the takeover window and the row bound of the
@@ -817,13 +830,13 @@ pub struct MarkSettings {
 /// none is a documented value, so each is a whole number from zero.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoreSettings {
-    pub takeover_rows: u64,
-    pub fleet_log_row_bytes: u64,
+    pub takeover_rows: Judged<u64>,
+    pub fleet_log_row_bytes: Judged<u64>,
     /// Absolute: a relative setting is joined to the main checkout.
     pub progress_report_dir: PathBuf,
-    pub review_max_cycles: u64,
-    pub review_max_external_rounds: u64,
-    pub ci_fix_max_cycles: u64,
+    pub review_max_cycles: Judged<u64>,
+    pub review_max_external_rounds: Judged<u64>,
+    pub ci_fix_max_cycles: Judged<u64>,
 }
 
 /// The review settings as read: the overseer app's approval credential
@@ -871,6 +884,48 @@ fn file_refusal(path: &Path, key: &str, reason: &str) -> crate::Error {
 
 pub(crate) fn value_refusal(key: &str, value: &str) -> crate::Error {
     refused("setting-invalid", &[("key", key), ("value", value)])
+}
+
+/// A key only some verbs read: the key's one parse ran in the load, and its
+/// answer waits here, so a value outside its form refuses the verb that
+/// reads it and no other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Judged<T> {
+    /// The key and the text it refused.
+    read: std::result::Result<T, (&'static str, String)>,
+}
+
+impl<T: Clone> Judged<T> {
+    fn of(key: &'static str, read: std::result::Result<T, &str>) -> Judged<T> {
+        Judged {
+            read: read.map_err(|text| (key, text.to_owned())),
+        }
+    }
+
+    /// A key read as one of its words, unset the first word's value.
+    fn word(key: &'static str, text: Option<&str>, words: &[(&str, T)]) -> Judged<T> {
+        let read = match text {
+            None => Ok(words[0].1.clone()),
+            Some(text) => words
+                .iter()
+                .find(|(word, _)| *word == text)
+                .map(|(_, value)| value.clone())
+                .ok_or(text),
+        };
+        Judged::of(key, read)
+    }
+
+    /// The value, or `setting-invalid` naming the key and the text refused.
+    pub fn get(&self) -> Result<T> {
+        self.read
+            .clone()
+            .map_err(|(key, value)| value_refusal(key, &value))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn valid(value: T) -> Judged<T> {
+        Judged { read: Ok(value) }
+    }
 }
 
 /// The checkout roots for `cwd`, read from git through the one runner. A
@@ -1097,132 +1152,134 @@ pub fn load(
     } else {
         roots.common.join(state_dir)
     };
-    let secs = |key: &str, default: u64| -> Result<Duration> {
-        match get(key) {
-            None => Ok(Duration::from_secs(default)),
-            Some(text) => match text.parse::<u64>() {
-                Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => {
-                    Ok(Duration::from_secs(n))
-                }
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+    let secs = |key: &'static str, default: u64| -> Judged<Duration> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(Duration::from_secs(default)),
+                Some(text) => match text.parse::<u64>() {
+                    Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => {
+                        Ok(Duration::from_secs(n))
+                    }
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
     // Zero, or digits with no leading zero: a wait of none is a documented
     // value (the mail read once a turn, a directive reported unread at once).
-    let secs_or_none = |key: &str, default: u64| -> Result<Duration> {
+    let secs_or_none = |key: &'static str, default: u64| -> Judged<Duration> {
         match get(key) {
-            None => Ok(Duration::from_secs(default)),
-            Some("0") => Ok(Duration::ZERO),
-            Some(_) => secs(key, default),
+            Some("0") => Judged::of(key, Ok(Duration::ZERO)),
+            None | Some(_) => secs(key, default),
         }
     };
-    let question_tool = match get(QUESTION_TOOL_KEY) {
-        None | Some("off") => QuestionToolSetting::Off,
-        Some("overseer") => QuestionToolSetting::Overseer,
-        Some(other) => return Err(value_refusal(QUESTION_TOOL_KEY, other)),
-    };
-    let permission = match get(LAUNCH_PERMISSION_KEY) {
-        None | Some("bypass") => Permission::Bypass,
-        Some("native") => Permission::Native,
-        Some(other) => return Err(value_refusal(LAUNCH_PERMISSION_KEY, other)),
-    };
-    let mut harness_binaries = BTreeMap::new();
-    if let Some(text) = get(HARNESS_BINARIES_KEY) {
-        for pair in text.split(',') {
-            let pair = pair.trim();
-            let (Some((name, path)), true) = (pair.split_once('='), !pair.is_empty()) else {
-                return Err(value_refusal(HARNESS_BINARIES_KEY, text));
-            };
-            let path = PathBuf::from(path.trim());
-            let Some(harness) = Harness::parse(name.trim()) else {
-                return Err(value_refusal(HARNESS_BINARIES_KEY, text));
-            };
-            if !path.is_absolute() || harness_binaries.insert(harness, path).is_some() {
-                return Err(value_refusal(HARNESS_BINARIES_KEY, text));
-            }
-        }
-    }
+    let question_tool = Judged::word(
+        QUESTION_TOOL_KEY,
+        get(QUESTION_TOOL_KEY),
+        &[
+            ("off", QuestionToolSetting::Off),
+            ("overseer", QuestionToolSetting::Overseer),
+        ],
+    );
+    let permission = Judged::word(
+        LAUNCH_PERMISSION_KEY,
+        get(LAUNCH_PERMISSION_KEY),
+        &[
+            ("bypass", Permission::Bypass),
+            ("native", Permission::Native),
+        ],
+    );
+    let harness_binaries = Judged::of(
+        HARNESS_BINARIES_KEY,
+        match get(HARNESS_BINARIES_KEY) {
+            None => Ok(BTreeMap::new()),
+            Some(text) => harness_binaries(text).ok_or(text),
+        },
+    );
     let worktree_cli = match get(WORKTREE_CLI_KEY) {
         Some(path) => PathBuf::from(path),
         None => roots.project.join(WORKTREE_CLI_DEFAULT),
     };
-    let succession = match get(SUCCESSION_KEY) {
-        None | Some("on") => Succession::On,
-        Some("off") => Succession::Off,
-        Some(other) => return Err(value_refusal(SUCCESSION_KEY, other)),
-    };
+    let succession = Judged::word(
+        SUCCESSION_KEY,
+        get(SUCCESSION_KEY),
+        &[("on", Succession::On), ("off", Succession::Off)],
+    );
     let job_unit = match get(JOB_UNIT_KEY) {
         Some(path) => PathBuf::from(path),
         None => roots.project.join(JOB_UNIT_DEFAULT),
     };
-    // Base ten, no sign and no leading zero, as the shell launcher parses
-    // it; a count of none names a misconfiguration (a cap of none admits no
-    // lane, a repeat of none repeats every pass).
-    let count = |key: &str, default: u32| -> Result<u32> {
-        match get(key) {
-            None => Ok(default),
-            Some(text) => match text.parse::<u32>() {
-                Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => Ok(n),
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+    // Base ten, no sign and no leading zero; a count of none names a
+    // misconfiguration (a cap of none admits no lane, a repeat of none
+    // repeats every pass).
+    let count = |key: &'static str, default: u32| -> Judged<u32> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(default),
+                Some(text) => match text.parse::<u32>() {
+                    Ok(n) if n > 0 && !text.starts_with('0') && !text.starts_with('+') => Ok(n),
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
-    let lane_cap = count(LANE_CAP_KEY, DEFAULT_LANE_CAP)?;
-    let cloud_lane_cap = count(CLOUD_LANE_CAP_KEY, DEFAULT_CLOUD_LANE_CAP)?;
+    let lane_cap = count(LANE_CAP_KEY, DEFAULT_LANE_CAP);
+    let cloud_lane_cap = count(CLOUD_LANE_CAP_KEY, DEFAULT_CLOUD_LANE_CAP);
     // Digits alone with the value at least 1, a leading zero admitted.
-    let passes = |key: &str, default: u32| -> Result<u32> {
-        match get(key) {
-            None => Ok(default),
-            Some(text) => match text.parse::<u32>() {
-                Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+    let passes = |key: &'static str, default: u32| -> Judged<u32> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(default),
+                Some(text) => match text.parse::<u32>() {
+                    Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
-    let wall_relaunch = match get(WALL_RELAUNCH_KEY) {
-        None | Some("auto") => WallRelaunch::Auto,
-        Some("ask") => WallRelaunch::Ask,
-        Some(other) => return Err(value_refusal(WALL_RELAUNCH_KEY, other)),
-    };
-    let mut main_workflows = Vec::new();
-    if let Some(text) = get(MAIN_WORKFLOWS_KEY) {
-        for entry in text.split_whitespace() {
-            let Some((repo, workflow)) = entry.split_once(':') else {
-                return Err(value_refusal(MAIN_WORKFLOWS_KEY, text));
-            };
-            let word = |s: &str| {
-                !s.is_empty()
-                    && s.chars()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-            };
-            let repo_ok = repo
-                .split_once('/')
-                .is_some_and(|(o, n)| word(o) && word(n));
-            let workflow_ok = workflow
-                .strip_suffix(".yml")
-                .or_else(|| workflow.strip_suffix(".yaml"))
-                .is_some_and(word);
-            if !repo_ok || !workflow_ok {
-                return Err(value_refusal(MAIN_WORKFLOWS_KEY, text));
-            }
-            main_workflows.push(format!("{}:{workflow}", repo.to_ascii_lowercase()));
-        }
-    }
-    let watch = WatchSettings {
-        mail_interval: secs_or_none(WATCH_MAIL_INTERVAL_KEY, DEFAULT_MAIL_INTERVAL_SECS)?,
-        mark_repeat: count(OVERSEER_MARK_REPEAT_KEY, DEFAULT_MARK_REPEAT)?,
-        dead_passes: passes(OVERSEER_DEAD_PASSES_KEY, DEFAULT_DEAD_PASSES)?,
-        tail_lines: count(WATCH_TAIL_LINES_KEY, DEFAULT_TAIL_LINES)?,
-        prepare: secs(WATCH_PREPARE_SECS_KEY, DEFAULT_PREPARE_SECS)?,
-        directive_unread: secs_or_none(DIRECTIVE_UNREAD_SECS_KEY, DEFAULT_DIRECTIVE_UNREAD_SECS)?,
-        start_stall: secs(WATCH_START_STALL_SECS_KEY, DEFAULT_START_STALL_SECS)?,
-        lane_stall: secs(WATCH_LANE_STALL_SECS_KEY, DEFAULT_LANE_STALL_SECS)?,
-        cloud_stall: secs(CLOUD_STALL_MINUTES_KEY, DEFAULT_CLOUD_STALL_MINUTES)?.saturating_mul(60),
-        lane_age: secs(WATCH_LANE_AGE_SECS_KEY, DEFAULT_LANE_AGE_SECS)?,
-        wall_relaunch,
-        main_workflows,
-        linear_team: get(LINEAR_TEAM_KEY).map(str::to_owned),
+    let audit =
+        |key: &'static str| Judged::word(key, get(key), &[("on", Audit::On), ("off", Audit::Off)]);
+    let watch = Judged {
+        read: (|| {
+            Ok(WatchSettings {
+                mail_interval: secs_or_none(WATCH_MAIL_INTERVAL_KEY, DEFAULT_MAIL_INTERVAL_SECS)
+                    .read?,
+                mark_repeat: count(OVERSEER_MARK_REPEAT_KEY, DEFAULT_MARK_REPEAT).read?,
+                dead_passes: passes(OVERSEER_DEAD_PASSES_KEY, DEFAULT_DEAD_PASSES).read?,
+                tail_lines: count(WATCH_TAIL_LINES_KEY, DEFAULT_TAIL_LINES).read?,
+                prepare: secs(WATCH_PREPARE_SECS_KEY, DEFAULT_PREPARE_SECS).read?,
+                directive_unread: secs_or_none(
+                    DIRECTIVE_UNREAD_SECS_KEY,
+                    DEFAULT_DIRECTIVE_UNREAD_SECS,
+                )
+                .read?,
+                start_stall: secs(WATCH_START_STALL_SECS_KEY, DEFAULT_START_STALL_SECS).read?,
+                lane_stall: secs(WATCH_LANE_STALL_SECS_KEY, DEFAULT_LANE_STALL_SECS).read?,
+                cloud_stall: secs(CLOUD_STALL_MINUTES_KEY, DEFAULT_CLOUD_STALL_MINUTES)
+                    .read?
+                    .saturating_mul(60),
+                lane_age: secs(WATCH_LANE_AGE_SECS_KEY, DEFAULT_LANE_AGE_SECS).read?,
+                wall_relaunch: Judged::word(
+                    WALL_RELAUNCH_KEY,
+                    get(WALL_RELAUNCH_KEY),
+                    &[("auto", WallRelaunch::Auto), ("ask", WallRelaunch::Ask)],
+                )
+                .read?,
+                main_workflows: Judged::of(
+                    MAIN_WORKFLOWS_KEY,
+                    match get(MAIN_WORKFLOWS_KEY) {
+                        None => Ok(Vec::new()),
+                        Some(text) => main_workflows(text).ok_or(text),
+                    },
+                )
+                .read?,
+                security_alerts: audit(SECURITY_ALERTS_KEY).read?,
+                external_triage: audit(EXTERNAL_TRIAGE_KEY).read?,
+            })
+        })(),
     };
     let claim_store = match get(CLAIM_STATE_DIR_KEY) {
         Some(dir) => {
@@ -1265,20 +1322,22 @@ pub fn load(
         .to_owned();
     let overseer_preference_set = values.contains_key(OVERSEER_PREFERENCE_KEY);
     let lane_preference = get(LANE_PREFERENCE_KEY).map(str::to_owned);
-    let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
+    let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS);
+    let count_secs = |key: &'static str, default: u32| Judged {
+        read: count(key, default)
+            .read
+            .map(|n| Duration::from_secs(u64::from(n))),
+    };
     let queue_watch = QueueWatchSettings {
-        arm_grace: Duration::from_secs(u64::from(count(
-            QUEUE_WAIT_ARM_GRACE_KEY,
-            DEFAULT_QUEUE_WAIT_ARM_GRACE_SECS,
-        )?)),
+        arm_grace: count_secs(QUEUE_WAIT_ARM_GRACE_KEY, DEFAULT_QUEUE_WAIT_ARM_GRACE_SECS),
         confirm_polls: count(
             QUEUE_WAIT_CONFIRM_POLLS_KEY,
             DEFAULT_QUEUE_WAIT_CONFIRM_POLLS,
-        )?,
-        probe_interval: Duration::from_secs(u64::from(count(
+        ),
+        probe_interval: count_secs(
             QUEUE_WAIT_PROBE_INTERVAL_KEY,
             DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS,
-        )?)),
+        ),
         reach_cmd: command(QUEUE_WAIT_REACH_CMD_KEY),
     };
     let archive_root = match get(ARCHIVE_ROOT_KEY) {
@@ -1302,199 +1361,225 @@ pub fn load(
         .filter_map(|key| values.get(key).map(|v| (key.to_owned(), v.clone())))
         .collect();
     let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
-    // The accounts judge's keys, held to `lanes`' own grammar
-    // (`validate_lane_settings`, `pct_valid`): a retirement names a lane
-    // (no `/`, no `~`) and a real calendar day; a percentage is a whole
-    // number 0 to 100; a value nobody can read is refused, never defaulted.
-    let mut retire = Vec::new();
-    if let Some(text) = get(LANE_RETIRE_KEY) {
-        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
-            let valid = item.split_once('=').filter(|(name, date)| {
-                lane_key_valid(name.trim()) && calendar_date_valid(date.trim())
-            });
-            let Some((name, date)) = valid else {
-                return Err(value_refusal(LANE_RETIRE_KEY, item));
-            };
-            retire.push(Retirement {
-                name: name.trim().to_owned(),
-                date: date.trim().to_owned(),
-            });
-        }
-    }
-    let pct = |key: &str, default: u32| -> Result<u32> {
-        match get(key) {
-            None => Ok(default),
-            Some(text) => match text.parse::<u32>() {
-                Ok(n)
-                    if n <= 100 && text.len() <= 3 && text.bytes().all(|b| b.is_ascii_digit()) =>
-                {
+    let pct = |key: &'static str, default: u32| -> Judged<u32> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(default),
+                Some(text) => match text.parse::<u32>() {
                     Ok(n)
-                }
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+                        if n <= 100
+                            && text.len() <= 3
+                            && text.bytes().all(|b| b.is_ascii_digit()) =>
+                    {
+                        Ok(n)
+                    }
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
-    let whole = |key: &str, default: u64| -> Result<u64> {
-        match get(key) {
-            None => Ok(default),
-            Some(text) => match text.parse::<u64>() {
-                Ok(n) if text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+    let whole = |key: &'static str, default: u64| -> Judged<u64> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(default),
+                Some(text) => match text.parse::<u64>() {
+                    Ok(n) if text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
-    // A cloud repository entry names a lane (as a retirement does) and
-    // an `owner/repo` in GitHub's own alphabet; one nobody can read is
-    // refused, never dropped, since a dropped entry would hand a cloud
-    // session an account with no access to the repository.
-    let mut cloud_repos = Vec::new();
-    if let Some(text) = get(LANE_CLOUD_REPOS_KEY) {
-        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
-            let valid = item.split_once('=').filter(|(name, repo)| {
-                let name = name.trim();
-                let repo = repo.trim();
-                let (owner, project) = repo.split_once('/').unwrap_or(("", ""));
-                lane_key_valid(name)
-                    && !owner.is_empty()
-                    && owner
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                    && !project.is_empty()
-                    && project
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-            });
-            let Some((name, repo)) = valid else {
-                return Err(value_refusal(LANE_CLOUD_REPOS_KEY, item));
-            };
-            cloud_repos.push(CloudRepo {
-                name: name.trim().to_owned(),
-                repo: repo.trim().to_owned(),
-            });
-        }
-    }
-    // The stated Copilot pool, `lanes`' `copilot_pool_entries` rule:
-    // an absolute Pi root, the credits used and granted as whole numbers of
-    // at most twelve digits, the grant above zero, one entry per root; an
-    // entry nobody can read is refused, never dropped, since a reading
-    // nobody can parse is not judged as room.
-    let mut copilot_pool: Vec<CopilotPool> = Vec::new();
-    if let Some(text) = get(LANE_COPILOT_POOL_KEY) {
-        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
-            let whole =
-                |s: &str| (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit());
-            let entry = item.rsplit_once('=').and_then(|(dir, value)| {
-                let dir = dir.trim().trim_end_matches('/');
-                let (used, granted) = value.trim().split_once('/')?;
-                (dir.starts_with('/') && whole(used) && whole(granted)).then(|| CopilotPool {
-                    dir: dir.to_owned(),
-                    used: used.parse().unwrap_or(0),
-                    granted: granted.parse().unwrap_or(0),
-                })
-            });
-            let Some(entry) = entry.filter(|e| e.granted > 0) else {
-                return Err(value_refusal(LANE_COPILOT_POOL_KEY, item));
-            };
-            if copilot_pool.iter().any(|e| e.dir == entry.dir) {
-                return Err(value_refusal(LANE_COPILOT_POOL_KEY, item));
-            }
-            copilot_pool.push(entry);
-        }
-    }
-    // `ORCH_LANE_EXCLUDE` names lanes, never paths (`lanes`' `lane_key_valid`).
-    let mut exclude = Vec::new();
-    if let Some(text) = get(LANE_EXCLUDE_KEY) {
-        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
-            if !lane_key_valid(item) {
-                return Err(value_refusal(LANE_EXCLUDE_KEY, item));
-            }
-            exclude.push(item.to_owned());
-        }
-    }
-    // `ORCH_LANE_ALIASES` as `lanes` reads it (`validate_lane_settings`):
-    // an item without `=` or with an empty side is passed over, never refused.
-    let mut aliases = Vec::new();
-    if let Some(text) = get(LANE_ALIASES_KEY) {
-        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
-            let Some((name, alias)) = item.split_once('=') else {
-                continue;
-            };
-            let (name, alias) = (name.trim(), alias.trim());
-            if name.is_empty() || alias.is_empty() {
-                continue;
-            }
-            aliases.push(Alias {
-                name: name.to_owned(),
-                alias: alias.to_owned(),
-            });
-        }
-    }
     // A whole number of at most nine digits, 0 included: 0 turns a mark off.
-    let minutes = |key: &str, default: u32| -> Result<u32> {
-        match get(key) {
-            None => Ok(default),
-            Some(text) => match text.parse::<u32>() {
-                Ok(n) if text.len() <= 9 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+    let minutes = |key: &'static str, default: u32| -> Judged<u32> {
+        Judged::of(
+            key,
+            match get(key) {
+                None => Ok(default),
+                Some(text) => match text.parse::<u32>() {
+                    Ok(n) if text.len() <= 9 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                    Ok(_) | Err(_) => Err(text),
+                },
             },
-        }
+        )
     };
     let marks = MarkSettings {
-        wall_minutes: minutes(OVERSEER_WALL_MINUTES_KEY, DEFAULT_OVERSEER_WALL_MINUTES)?,
+        wall_minutes: minutes(OVERSEER_WALL_MINUTES_KEY, DEFAULT_OVERSEER_WALL_MINUTES),
         // Unset or 0 is no memory mark, as 0 turns the other marks off.
-        memory_pct: Some(pct(OVERSEER_MEMORY_PCT_KEY, 0)?).filter(|&pct| pct > 0),
-        context_pct: match pct(HANDOFF_CONTEXT_PCT_KEY, DEFAULT_HANDOFF_CONTEXT_PCT)? {
-            0 => return Err(value_refusal(HANDOFF_CONTEXT_PCT_KEY, "0")),
-            n => n,
+        memory_pct: Judged {
+            read: pct(OVERSEER_MEMORY_PCT_KEY, 0)
+                .read
+                .map(|pct| Some(pct).filter(|&pct| pct > 0)),
+        },
+        context_pct: Judged {
+            read: pct(HANDOFF_CONTEXT_PCT_KEY, DEFAULT_HANDOFF_CONTEXT_PCT)
+                .read
+                .and_then(|pct| match pct {
+                    0 => Err((HANDOFF_CONTEXT_PCT_KEY, "0".to_owned())),
+                    n => Ok(n),
+                }),
         },
     };
-    let accounts = AccountSettings {
-        retire,
-        max_pct: pct(LANE_MAX_PCT_KEY, DEFAULT_LANE_MAX_PCT)?,
-        burn_pct_per_hour: pct(LANE_BURN_PCT_KEY, DEFAULT_LANE_BURN_PCT)?,
-        overseer_headroom_pct: pct(OVERSEER_HEADROOM_PCT_KEY, DEFAULT_OVERSEER_HEADROOM_PCT)?,
-        codex_credit_floor: whole(CODEX_CREDIT_FLOOR_KEY, DEFAULT_CODEX_CREDIT_FLOOR)?,
-        cloud_credit_floor: whole(CLOUD_CREDIT_FLOOR_KEY, DEFAULT_CLOUD_CREDIT_FLOOR)?,
-        cloud_repos,
-        copilot_pool,
-        exclude,
-        aliases,
-        host: get(LANE_HOST_KEY)
-            .filter(|h| *h != "local")
-            .map(str::to_owned),
-        home: get(HOME_KEY).map(str::to_owned),
-        lane_dirs: get(LANE_DIRS_KEY)
-            .unwrap_or_default()
-            .split(':')
-            .filter(|d| !d.is_empty())
-            .map(str::to_owned)
-            .collect(),
-        codex_home: get(CODEX_HOME_KEY).map(str::to_owned),
-        copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
-        pi_root: get(PI_ROOT_KEY).map(str::to_owned),
-        usage_ttl: whole(USAGE_TTL_KEY, DEFAULT_USAGE_TTL)?,
-        usage_max_age: whole(USAGE_MAX_AGE_KEY, 0)?,
-        accounts_timeout: whole(HOST_ACCOUNTS_TIMEOUT_KEY, DEFAULT_HOST_ACCOUNTS_TIMEOUT)?,
-        host_busy_wait: get(HOST_BUSY_WAIT_KEY).map(str::to_owned),
-        claude_usage_url: get(CLAUDE_USAGE_URL_KEY)
-            .unwrap_or(CLAUDE_USAGE_URL_DEFAULT)
-            .to_owned(),
-        codex_usage_url: get(CODEX_USAGE_URL_KEY)
-            .unwrap_or(CODEX_USAGE_URL_DEFAULT)
-            .to_owned(),
-        claude_token_url: get(CLAUDE_TOKEN_URL_KEY)
-            .unwrap_or(CLAUDE_TOKEN_URL_DEFAULT)
-            .to_owned(),
-        claude_client_id: get(CLAUDE_CLIENT_ID_KEY).map(str::to_owned),
+    // The accounts judge's keys, held to `lanes`' own grammar
+    // (`validate_lane_settings`, `pct_valid`), judged together since every
+    // entry of the judge reads them: a retirement names a lane (no `/`, no
+    // `~`) and a real calendar day; a percentage is a whole number 0 to 100;
+    // a value nobody can read is refused, never defaulted.
+    let accounts = Judged {
+        read: (|| {
+            let mut retire = Vec::new();
+            if let Some(text) = get(LANE_RETIRE_KEY) {
+                for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+                    let valid = item.split_once('=').filter(|(name, date)| {
+                        lane_key_valid(name.trim()) && calendar_date_valid(date.trim())
+                    });
+                    let Some((name, date)) = valid else {
+                        return Err((LANE_RETIRE_KEY, item.to_owned()));
+                    };
+                    retire.push(Retirement {
+                        name: name.trim().to_owned(),
+                        date: date.trim().to_owned(),
+                    });
+                }
+            }
+            // A cloud repository entry names a lane (as a retirement does) and
+            // an `owner/repo` in GitHub's own alphabet; one nobody can read is
+            // refused, never dropped, since a dropped entry would hand a cloud
+            // session an account with no access to the repository.
+            let mut cloud_repos = Vec::new();
+            if let Some(text) = get(LANE_CLOUD_REPOS_KEY) {
+                for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+                    let valid = item.split_once('=').filter(|(name, repo)| {
+                        let name = name.trim();
+                        let repo = repo.trim();
+                        let (owner, project) = repo.split_once('/').unwrap_or(("", ""));
+                        lane_key_valid(name)
+                            && !owner.is_empty()
+                            && owner
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                            && !project.is_empty()
+                            && project.bytes().all(|b| {
+                                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
+                            })
+                    });
+                    let Some((name, repo)) = valid else {
+                        return Err((LANE_CLOUD_REPOS_KEY, item.to_owned()));
+                    };
+                    cloud_repos.push(CloudRepo {
+                        name: name.trim().to_owned(),
+                        repo: repo.trim().to_owned(),
+                    });
+                }
+            }
+            // The stated Copilot pool, `lanes`' `copilot_pool_entries` rule:
+            // an absolute Pi root, the credits used and granted as whole numbers of
+            // at most twelve digits, the grant above zero, one entry per root; an
+            // entry nobody can read is refused, never dropped, since a reading
+            // nobody can parse is not judged as room.
+            let mut copilot_pool: Vec<CopilotPool> = Vec::new();
+            if let Some(text) = get(LANE_COPILOT_POOL_KEY) {
+                for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+                    let whole = |s: &str| {
+                        (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
+                    };
+                    let entry = item.rsplit_once('=').and_then(|(dir, value)| {
+                        let dir = dir.trim().trim_end_matches('/');
+                        let (used, granted) = value.trim().split_once('/')?;
+                        (dir.starts_with('/') && whole(used) && whole(granted)).then(|| {
+                            CopilotPool {
+                                dir: dir.to_owned(),
+                                used: used.parse().unwrap_or(0),
+                                granted: granted.parse().unwrap_or(0),
+                            }
+                        })
+                    });
+                    let Some(entry) = entry.filter(|e| e.granted > 0) else {
+                        return Err((LANE_COPILOT_POOL_KEY, item.to_owned()));
+                    };
+                    if copilot_pool.iter().any(|e| e.dir == entry.dir) {
+                        return Err((LANE_COPILOT_POOL_KEY, item.to_owned()));
+                    }
+                    copilot_pool.push(entry);
+                }
+            }
+            // `ORCH_LANE_EXCLUDE` names lanes, never paths (`lanes`' `lane_key_valid`).
+            let mut exclude = Vec::new();
+            if let Some(text) = get(LANE_EXCLUDE_KEY) {
+                for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+                    if !lane_key_valid(item) {
+                        return Err((LANE_EXCLUDE_KEY, item.to_owned()));
+                    }
+                    exclude.push(item.to_owned());
+                }
+            }
+            // `ORCH_LANE_ALIASES` as `lanes` reads it (`validate_lane_settings`):
+            // an item without `=` or with an empty side is passed over, never refused.
+            let mut aliases = Vec::new();
+            if let Some(text) = get(LANE_ALIASES_KEY) {
+                for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+                    let Some((name, alias)) = item.split_once('=') else {
+                        continue;
+                    };
+                    let (name, alias) = (name.trim(), alias.trim());
+                    if name.is_empty() || alias.is_empty() {
+                        continue;
+                    }
+                    aliases.push(Alias {
+                        name: name.to_owned(),
+                        alias: alias.to_owned(),
+                    });
+                }
+            }
+            Ok(AccountSettings {
+                retire,
+                max_pct: pct(LANE_MAX_PCT_KEY, DEFAULT_LANE_MAX_PCT).read?,
+                burn_pct_per_hour: pct(LANE_BURN_PCT_KEY, DEFAULT_LANE_BURN_PCT).read?,
+                overseer_headroom_pct: pct(
+                    OVERSEER_HEADROOM_PCT_KEY,
+                    DEFAULT_OVERSEER_HEADROOM_PCT,
+                )
+                .read?,
+                codex_credit_floor: whole(CODEX_CREDIT_FLOOR_KEY, DEFAULT_CODEX_CREDIT_FLOOR)
+                    .read?,
+                cloud_credit_floor: whole(CLOUD_CREDIT_FLOOR_KEY, DEFAULT_CLOUD_CREDIT_FLOOR)
+                    .read?,
+                cloud_repos,
+                copilot_pool,
+                exclude,
+                aliases,
+                host: get(LANE_HOST_KEY)
+                    .filter(|h| *h != "local")
+                    .map(str::to_owned),
+                lane_dirs: get(LANE_DIRS_KEY)
+                    .unwrap_or_default()
+                    .split(':')
+                    .filter(|d| !d.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+                codex_home: get(CODEX_HOME_KEY).map(str::to_owned),
+                usage_ttl: whole(USAGE_TTL_KEY, DEFAULT_USAGE_TTL).read?,
+                usage_max_age: whole(USAGE_MAX_AGE_KEY, 0).read?,
+                accounts_timeout: whole(HOST_ACCOUNTS_TIMEOUT_KEY, DEFAULT_HOST_ACCOUNTS_TIMEOUT)
+                    .read?,
+                host_busy_wait: get(HOST_BUSY_WAIT_KEY).map(str::to_owned),
+                claude_usage_url: get(CLAUDE_USAGE_URL_KEY)
+                    .unwrap_or(CLAUDE_USAGE_URL_DEFAULT)
+                    .to_owned(),
+                codex_usage_url: get(CODEX_USAGE_URL_KEY)
+                    .unwrap_or(CODEX_USAGE_URL_DEFAULT)
+                    .to_owned(),
+                claude_token_url: get(CLAUDE_TOKEN_URL_KEY)
+                    .unwrap_or(CLAUDE_TOKEN_URL_DEFAULT)
+                    .to_owned(),
+                claude_client_id: get(CLAUDE_CLIENT_ID_KEY).map(str::to_owned),
+            })
+        })(),
     };
     // The read duties' keys; the connected repositories and the owner
     // tracker keep the shell's grammar (`orch_connected_repos`,
     // `owner_tracker_settings`).
-    let audit = |key: &str| match get(key) {
-        None | Some("on") => Ok(Audit::On),
-        Some("off") => Ok(Audit::Off),
-        Some(other) => Err(value_refusal(key, other)),
-    };
     let mut connected_repos: Vec<String> = Vec::new();
     for entry in get(CONNECTED_REPOS_KEY)
         .unwrap_or_default()
@@ -1518,28 +1603,26 @@ pub fn load(
     let reads = ReadSettings {
         tracker_cli: program(TRACKER_CLI_KEY, TRACKER_CLI_DEFAULT),
         pr_watch_cli: program(PR_WATCH_CLI_KEY, PR_WATCH_CLI_DEFAULT),
-        security_alerts: audit(SECURITY_ALERTS_KEY)?,
         security_alert_token_file: get(SECURITY_ALERT_TOKEN_FILE_KEY).map(PathBuf::from),
-        external_triage: audit(EXTERNAL_TRIAGE_KEY)?,
         connected_repos,
         owner_tracker,
     };
     let progress_report_dir =
         PathBuf::from(get(PROGRESS_REPORT_DIR_KEY).unwrap_or(DEFAULT_PROGRESS_REPORT_DIR));
     let store = StoreSettings {
-        takeover_rows: whole(TAKEOVER_ROWS_KEY, DEFAULT_TAKEOVER_ROWS)?,
-        fleet_log_row_bytes: whole(FLEET_LOG_ROW_BYTES_KEY, DEFAULT_FLEET_LOG_ROW_BYTES)?,
+        takeover_rows: whole(TAKEOVER_ROWS_KEY, DEFAULT_TAKEOVER_ROWS),
+        fleet_log_row_bytes: whole(FLEET_LOG_ROW_BYTES_KEY, DEFAULT_FLEET_LOG_ROW_BYTES),
         progress_report_dir: if progress_report_dir.is_absolute() {
             progress_report_dir
         } else {
             roots.common.join(progress_report_dir)
         },
-        review_max_cycles: whole(REVIEW_MAX_CYCLES_KEY, DEFAULT_REVIEW_MAX_CYCLES)?,
+        review_max_cycles: whole(REVIEW_MAX_CYCLES_KEY, DEFAULT_REVIEW_MAX_CYCLES),
         review_max_external_rounds: whole(
             REVIEW_MAX_EXTERNAL_ROUNDS_KEY,
             DEFAULT_REVIEW_MAX_EXTERNAL_ROUNDS,
-        )?,
-        ci_fix_max_cycles: whole(CI_FIX_MAX_CYCLES_KEY, DEFAULT_CI_FIX_MAX_CYCLES)?,
+        ),
+        ci_fix_max_cycles: whole(CI_FIX_MAX_CYCLES_KEY, DEFAULT_CI_FIX_MAX_CYCLES),
     };
     let text = |key: &str, default: &str| get(key).unwrap_or(default).to_owned();
     let review = ReviewSettings {
@@ -1582,10 +1665,11 @@ pub fn load(
         store,
         review,
         tmux_session: get(TMUX_SESSION_KEY).map(str::to_owned),
-        verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS)?,
-        close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS)?,
-        claim: secs(JOB_CLAIM_SECS_KEY, DEFAULT_CLAIM_SECS)?,
+        verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS),
+        close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS),
+        claim: secs(JOB_CLAIM_SECS_KEY, DEFAULT_CLAIM_SECS),
         watch,
+        linear_team: get(LINEAR_TEAM_KEY).map(str::to_owned),
         question_tool,
         permission,
         harness_binaries,
@@ -1622,7 +1706,51 @@ pub fn load(
         report,
         lanes_cli,
         accounts,
+        home: get(HOME_KEY).map(str::to_owned),
+        copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
+        pi_root: get(PI_ROOT_KEY).map(str::to_owned),
     })
+}
+
+/// `harness=/absolute/path` pairs separated by commas, one per harness;
+/// `None` is any other shape.
+fn harness_binaries(text: &str) -> Option<BTreeMap<Harness, PathBuf>> {
+    let mut binaries = BTreeMap::new();
+    for pair in text.split(',') {
+        let (name, path) = pair.trim().split_once('=')?;
+        let harness = Harness::parse(name.trim())?;
+        let path = PathBuf::from(path.trim());
+        if !path.is_absolute() || binaries.insert(harness, path).is_some() {
+            return None;
+        }
+    }
+    Some(binaries)
+}
+
+/// `owner/repo:workflow.yml` entries separated by whitespace, the
+/// repository lowercased; `None` is any other shape.
+fn main_workflows(text: &str) -> Option<Vec<String>> {
+    let word = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+    };
+    let mut workflows = Vec::new();
+    for entry in text.split_whitespace() {
+        let (repo, workflow) = entry.split_once(':')?;
+        let repo_ok = repo
+            .split_once('/')
+            .is_some_and(|(o, n)| word(o) && word(n));
+        let workflow_ok = workflow
+            .strip_suffix(".yml")
+            .or_else(|| workflow.strip_suffix(".yaml"))
+            .is_some_and(word);
+        if !repo_ok || !workflow_ok {
+            return None;
+        }
+        workflows.push(format!("{}:{workflow}", repo.to_ascii_lowercase()));
+    }
+    Some(workflows)
 }
 
 /// `lanes`' `lane_key_valid`, the one grammar of a name that stands
@@ -2305,8 +2433,8 @@ mod tests {
         );
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
         assert_eq!(settings.tmux_session.as_deref(), Some("lit"));
-        assert_eq!(settings.verify, Duration::from_secs(3));
-        assert_eq!(settings.close_grace, Duration::from_secs(15));
+        assert_eq!(settings.verify.get().unwrap(), Duration::from_secs(3));
+        assert_eq!(settings.close_grace.get().unwrap(), Duration::from_secs(15));
     }
 
     /// A key's value reads as the sourcing shell assigns it, `$HOME` as the
@@ -2325,7 +2453,7 @@ mod tests {
         );
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
         assert_eq!(settings.tmux_session, None);
-        assert_eq!(settings.verify, Duration::from_secs(7));
+        assert_eq!(settings.verify.get().unwrap(), Duration::from_secs(7));
         write(&roots.project, ".env.local", "ORCH_STATE_DIR=a $b\n");
         let err = load(&roots, &env(&[]), &FLAGS).unwrap_err();
         assert_eq!(err.key(), "settings-invalid");
@@ -2337,8 +2465,8 @@ mod tests {
         );
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
         assert_eq!(settings.tmux_session.as_deref(), Some("plain"));
-        assert_eq!(settings.verify, Duration::from_secs(4));
-        assert_eq!(settings.close_grace, Duration::from_secs(5));
+        assert_eq!(settings.verify.get().unwrap(), Duration::from_secs(4));
+        assert_eq!(settings.close_grace.get().unwrap(), Duration::from_secs(5));
         write(
             &roots.project,
             ".env.local",
@@ -2350,9 +2478,12 @@ mod tests {
             let caller: Vec<(&str, &str)> = home.map(|h| ("HOME", h)).into_iter().collect();
             let settings = load(&roots, &env(&caller), &FLAGS).unwrap();
             assert_eq!(settings.tmux_session.as_deref(), session, "{home:?}");
-            assert!(settings.accounts.lane_dirs.is_empty(), "{home:?}");
+            assert!(
+                settings.accounts.get().unwrap().lane_dirs.is_empty(),
+                "{home:?}"
+            );
             assert_eq!(
-                settings.accounts.codex_home.as_deref(),
+                settings.accounts.get().unwrap().codex_home.as_deref(),
                 codex_home,
                 "{home:?}"
             );
@@ -2370,7 +2501,11 @@ mod tests {
         ] {
             write(&roots.project, ".env.local", text);
             let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
-            assert_eq!(settings.accounts.exclude, exclude, "{text:?}");
+            assert_eq!(
+                settings.accounts.get().unwrap().exclude,
+                exclude,
+                "{text:?}"
+            );
         }
     }
 
@@ -2380,13 +2515,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
-        assert_eq!(settings.permission, Permission::Bypass);
-        assert_eq!(settings.question_tool, QuestionToolSetting::Off);
-        assert_eq!(settings.verify, Duration::from_secs(15));
-        assert_eq!(settings.close_grace, Duration::from_secs(15));
-        assert_eq!(settings.claim, Duration::from_secs(15));
+        assert_eq!(settings.permission.get().unwrap(), Permission::Bypass);
         assert_eq!(
-            settings.watch,
+            settings.question_tool.get().unwrap(),
+            QuestionToolSetting::Off
+        );
+        assert_eq!(settings.verify.get().unwrap(), Duration::from_secs(15));
+        assert_eq!(settings.close_grace.get().unwrap(), Duration::from_secs(15));
+        assert_eq!(settings.claim.get().unwrap(), Duration::from_secs(15));
+        assert_eq!(
+            settings.watch.get().unwrap(),
             WatchSettings {
                 mail_interval: Duration::from_secs(20),
                 mark_repeat: 5,
@@ -2400,11 +2538,13 @@ mod tests {
                 lane_age: Duration::from_secs(12600),
                 wall_relaunch: WallRelaunch::Auto,
                 main_workflows: Vec::new(),
-                linear_team: None,
+                security_alerts: Audit::On,
+                external_triage: Audit::On,
             },
             "the watch's documented defaults"
         );
-        assert!(settings.harness_binaries.is_empty());
+        assert_eq!(settings.linear_team, None);
+        assert!(settings.harness_binaries.get().unwrap().is_empty());
         assert_eq!(
             settings.worktree_cli,
             roots.project.join(WORKTREE_CLI_DEFAULT)
@@ -2413,10 +2553,10 @@ mod tests {
             settings.agent_runtime,
             roots.project.join(AGENT_RUNTIME_DEFAULT)
         );
-        assert_eq!(settings.succession, Succession::On);
+        assert_eq!(settings.succession.get().unwrap(), Succession::On);
         assert_eq!(settings.job_unit, roots.project.join(JOB_UNIT_DEFAULT));
-        assert_eq!(settings.lane_cap, 4);
-        assert_eq!(settings.cloud_lane_cap, 10);
+        assert_eq!(settings.lane_cap.get().unwrap(), 4);
+        assert_eq!(settings.cloud_lane_cap.get().unwrap(), 10);
         assert_eq!(settings.claim_store, roots.common.join(CLAIM_STORE_DEFAULT));
         assert_eq!(
             settings.lane_mail_cli,
@@ -2461,14 +2601,17 @@ mod tests {
                 (WATCH_LANE_AGE_SECS_KEY, "600"),
                 (WALL_RELAUNCH_KEY, "ask"),
                 (MAIN_WORKFLOWS_KEY, "Owner/Repo:ci.yml  other/one:x.yaml"),
+                (SECURITY_ALERTS_KEY, "off"),
+                (EXTERNAL_TRIAGE_KEY, "off"),
                 (LINEAR_TEAM_KEY, "KEN"),
             ]),
             &FLAGS,
         )
         .unwrap();
-        assert_eq!(settings.claim, Duration::from_secs(40));
+        assert_eq!(settings.claim.get().unwrap(), Duration::from_secs(40));
+        assert_eq!(settings.linear_team.as_deref(), Some("KEN"));
         assert_eq!(
-            settings.watch,
+            settings.watch.get().unwrap(),
             WatchSettings {
                 mail_interval: Duration::from_secs(5),
                 mark_repeat: 3,
@@ -2485,13 +2628,14 @@ mod tests {
                     "owner/repo:ci.yml".to_owned(),
                     "other/one:x.yaml".to_owned()
                 ],
-                linear_team: Some("KEN".to_owned()),
+                security_alerts: Audit::Off,
+                external_triage: Audit::Off,
             }
         );
-        assert_eq!(settings.succession, Succession::Off);
+        assert_eq!(settings.succession.get().unwrap(), Succession::Off);
         assert_eq!(settings.job_unit, PathBuf::from("/opt/job-unit.sh"));
-        assert_eq!(settings.lane_cap, 7);
-        assert_eq!(settings.cloud_lane_cap, 2);
+        assert_eq!(settings.lane_cap.get().unwrap(), 7);
+        assert_eq!(settings.cloud_lane_cap.get().unwrap(), 2);
         assert_eq!(settings.claim_store, PathBuf::from("/var/watch/claims"));
         assert_eq!(settings.lane_mail_cli, PathBuf::from("/opt/lane-mail"));
         assert_eq!(
@@ -2503,11 +2647,17 @@ mod tests {
         // launcher reads it from the checkout it runs in.
         let relative = load(&roots, &env(&[(CLAIM_STATE_DIR_KEY, "tmp/w")]), &FLAGS).unwrap();
         assert_eq!(relative.claim_store, roots.project.join("tmp/w/claims"));
-        assert_eq!(settings.permission, Permission::Native);
-        assert_eq!(settings.question_tool, QuestionToolSetting::Overseer);
-        assert_eq!(settings.question_tool.for_overseer(), QuestionTool::Keep);
+        assert_eq!(settings.permission.get().unwrap(), Permission::Native);
         assert_eq!(
-            settings.harness_binaries,
+            settings.question_tool.get().unwrap(),
+            QuestionToolSetting::Overseer
+        );
+        assert_eq!(
+            settings.question_tool.get().unwrap().for_overseer(),
+            QuestionTool::Keep
+        );
+        assert_eq!(
+            settings.harness_binaries.get().unwrap(),
             BTreeMap::from([
                 (Harness::Claude, PathBuf::from("/opt/claude/claude")),
                 (Harness::Pi, PathBuf::from("/opt/pi")),
@@ -2548,23 +2698,92 @@ mod tests {
             (MAIN_WORKFLOWS_KEY, "owner/repo"),
             (MAIN_WORKFLOWS_KEY, "repo:ci.yml"),
             (MAIN_WORKFLOWS_KEY, "owner/repo:ci.txt"),
+            (SECURITY_ALERTS_KEY, "yes"),
+            (EXTERNAL_TRIAGE_KEY, "1"),
+            (RECORD_RETENTION_DAYS_KEY, "0"),
+            (RECORD_RETENTION_DAYS_KEY, "05"),
+            (RECORD_RETENTION_DAYS_KEY, "5d"),
+            (OVERSEER_WALL_MINUTES_KEY, "1234567890"),
+            (OVERSEER_WALL_MINUTES_KEY, "-5"),
+            (OVERSEER_MEMORY_PCT_KEY, "101"),
+            (HANDOFF_CONTEXT_PCT_KEY, "0"),
+            (HANDOFF_CONTEXT_PCT_KEY, "1000"),
+            (QUEUE_WAIT_ARM_GRACE_KEY, "0"),
+            (QUEUE_WAIT_CONFIRM_POLLS_KEY, "02"),
+            (QUEUE_WAIT_PROBE_INTERVAL_KEY, "x"),
+            (TAKEOVER_ROWS_KEY, "x"),
+            (FLEET_LOG_ROW_BYTES_KEY, "-1"),
+            (REVIEW_MAX_CYCLES_KEY, "1.5"),
+            (REVIEW_MAX_EXTERNAL_ROUNDS_KEY, "two"),
+            (CI_FIX_MAX_CYCLES_KEY, "+6"),
+            (LANE_RETIRE_KEY, "/a/b=2027-01-01"),
+            (LANE_RETIRE_KEY, "a=2027-02-30"),
+            (LANE_CLOUD_REPOS_KEY, "a=repo"),
+            (LANE_COPILOT_POOL_KEY, "/p=1/0"),
+            (LANE_EXCLUDE_KEY, "~/x"),
+            (LANE_MAX_PCT_KEY, "101"),
+            (LANE_BURN_PCT_KEY, "five"),
+            (OVERSEER_HEADROOM_PCT_KEY, "-1"),
+            (CODEX_CREDIT_FLOOR_KEY, "1.5"),
+            (CLOUD_CREDIT_FLOOR_KEY, "x"),
+            (USAGE_TTL_KEY, "5m"),
+            (USAGE_MAX_AGE_KEY, "+1"),
+            (HOST_ACCOUNTS_TIMEOUT_KEY, "-30"),
         ];
         for (key, value) in refused {
-            let err = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap_err();
-            assert_eq!(err.key(), "setting-invalid", "{key}={value}");
+            let settings = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap();
             assert_eq!(
-                err.fields(),
-                vec![("key".into(), key.into()), ("value".into(), value.into())],
-                "{key}={value}"
+                refusals(&settings),
+                vec![(key.to_owned(), value.to_owned())],
+                "{key}={value}: refused by its own carrier alone"
             );
         }
     }
 
-    /// The read duties' keys: each default, word and shape, the rest
-    /// refused by key and value, and the owner tracker configured only by
-    /// both its halves.
+    /// Every carrier's refusal, as its key and refused value, in one list:
+    /// a value outside its key's form refuses that key's carrier and no
+    /// other.
+    fn refusals(s: &Settings) -> Vec<(String, String)> {
+        let judged = [
+            s.verify.get().map(drop),
+            s.close_grace.get().map(drop),
+            s.claim.get().map(drop),
+            s.watch.get().map(drop),
+            s.question_tool.get().map(drop),
+            s.permission.get().map(drop),
+            s.harness_binaries.get().map(drop),
+            s.succession.get().map(drop),
+            s.marks.wall_minutes.get().map(drop),
+            s.marks.memory_pct.get().map(drop),
+            s.marks.context_pct.get().map(drop),
+            s.lane_cap.get().map(drop),
+            s.cloud_lane_cap.get().map(drop),
+            s.retention_days.get().map(drop),
+            s.queue_watch.arm_grace.get().map(drop),
+            s.queue_watch.confirm_polls.get().map(drop),
+            s.queue_watch.probe_interval.get().map(drop),
+            s.store.takeover_rows.get().map(drop),
+            s.store.fleet_log_row_bytes.get().map(drop),
+            s.store.review_max_cycles.get().map(drop),
+            s.store.review_max_external_rounds.get().map(drop),
+            s.store.ci_fix_max_cycles.get().map(drop),
+            s.accounts.get().map(drop),
+        ];
+        judged
+            .into_iter()
+            .filter_map(std::result::Result::err)
+            .map(|e| {
+                assert_eq!(e.key(), "setting-invalid");
+                let fields = e.fields();
+                (fields[0].1.clone(), fields[1].1.clone())
+            })
+            .collect()
+    }
+
+    /// The read duties' keys: each default and shape, and the owner tracker
+    /// configured only by both its halves.
     #[test]
-    fn the_read_duties_keys_take_their_defaults_words_and_refusals() {
+    fn the_read_duties_keys_take_their_defaults_and_shapes() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
@@ -2573,9 +2792,7 @@ mod tests {
             ReadSettings {
                 tracker_cli: roots.project.join(TRACKER_CLI_DEFAULT),
                 pr_watch_cli: roots.project.join(PR_WATCH_CLI_DEFAULT),
-                security_alerts: Audit::On,
                 security_alert_token_file: None,
-                external_triage: Audit::On,
                 connected_repos: Vec::new(),
                 owner_tracker: None,
             }
@@ -2585,9 +2802,7 @@ mod tests {
             &env(&[
                 (TRACKER_CLI_KEY, "/opt/linear.sh"),
                 (PR_WATCH_CLI_KEY, "/opt/pr-watch.sh"),
-                (SECURITY_ALERTS_KEY, "off"),
                 (SECURITY_ALERT_TOKEN_FILE_KEY, "/run/token"),
-                (EXTERNAL_TRIAGE_KEY, "off"),
                 (CONNECTED_REPOS_KEY, " Owner/Repo\tother/one owner/repo "),
                 (USER_EMAIL_KEY, "user@example.com"),
                 (OWNER_ASK_LABEL_KEY, "owner-ask"),
@@ -2600,9 +2815,7 @@ mod tests {
             ReadSettings {
                 tracker_cli: PathBuf::from("/opt/linear.sh"),
                 pr_watch_cli: PathBuf::from("/opt/pr-watch.sh"),
-                security_alerts: Audit::Off,
                 security_alert_token_file: Some(PathBuf::from("/run/token")),
-                external_triage: Audit::Off,
                 connected_repos: vec!["owner/repo".to_owned(), "other/one".to_owned()],
                 owner_tracker: Some(OwnerTracker {
                     email: "user@example.com".to_owned(),
@@ -2633,14 +2846,6 @@ mod tests {
             let one = load(&roots, &env(&[half]), &FLAGS).unwrap();
             assert_eq!(one.reads.owner_tracker, None, "{half:?}");
         }
-        for (key, value) in [(SECURITY_ALERTS_KEY, "yes"), (EXTERNAL_TRIAGE_KEY, "1")] {
-            let err = load(&roots, &env(&[(key, value)]), &FLAGS).unwrap_err();
-            assert_eq!(err.key(), "setting-invalid", "{key}={value}");
-            assert_eq!(
-                err.fields(),
-                vec![("key".into(), key.into()), ("value".into(), value.into())]
-            );
-        }
     }
 
     /// The three watch keys read through their own grammars, never the
@@ -2661,9 +2866,10 @@ mod tests {
             &FLAGS,
         )
         .unwrap();
-        assert_eq!(settings.watch.mail_interval, Duration::ZERO);
-        assert_eq!(settings.watch.directive_unread, Duration::ZERO);
-        assert_eq!(settings.watch.dead_passes, 2);
+        let watch = settings.watch.get().unwrap();
+        assert_eq!(watch.mail_interval, Duration::ZERO);
+        assert_eq!(watch.directive_unread, Duration::ZERO);
+        assert_eq!(watch.dead_passes, 2);
     }
 
     /// A mistyped retention never reads as the default, nor a count of
@@ -2675,7 +2881,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
-        assert_eq!(settings.retention_days, 5);
+        assert_eq!(settings.retention_days.get().unwrap(), 5);
         assert_eq!(settings.lanes_cli, roots.project.join(LANES_CLI_DEFAULT));
         let settings = load(
             &roots,
@@ -2686,18 +2892,13 @@ mod tests {
             &FLAGS,
         )
         .unwrap();
-        assert_eq!(settings.retention_days, 12);
+        assert_eq!(settings.retention_days.get().unwrap(), 12);
         assert_eq!(settings.lanes_cli, PathBuf::from("/opt/lanes"));
         for value in ["0", "05", "x", "-1", "5d", "+5"] {
-            let err =
-                load(&roots, &env(&[(RECORD_RETENTION_DAYS_KEY, value)]), &FLAGS).unwrap_err();
-            assert_eq!(err.key(), "setting-invalid", "{value:?}");
+            let settings = load(&roots, &env(&[(RECORD_RETENTION_DAYS_KEY, value)]), &FLAGS);
             assert_eq!(
-                err.fields(),
-                vec![
-                    ("key".into(), RECORD_RETENTION_DAYS_KEY.into()),
-                    ("value".into(), value.into())
-                ],
+                refusals(&settings.unwrap()),
+                vec![(RECORD_RETENTION_DAYS_KEY.to_owned(), value.to_owned())],
                 "{value:?}"
             );
         }
@@ -2748,58 +2949,67 @@ mod tests {
         }
     }
 
-    /// The keys whose value the load still judges for every verb, until
-    /// each one's judgement moves to the verbs that read it.
-    const JUDGED_IN_LOAD: &[&str] = &[
-        SECURITY_ALERTS_KEY,
-        EXTERNAL_TRIAGE_KEY,
-        VERIFY_SECS_KEY,
-        CLOSE_SECS_KEY,
-        QUESTION_TOOL_KEY,
-        LAUNCH_PERMISSION_KEY,
-        HARNESS_BINARIES_KEY,
-        SUCCESSION_KEY,
-        LANE_CAP_KEY,
-        CLOUD_LANE_CAP_KEY,
-        JOB_CLAIM_SECS_KEY,
-        WATCH_MAIL_INTERVAL_KEY,
-        OVERSEER_MARK_REPEAT_KEY,
-        OVERSEER_DEAD_PASSES_KEY,
-        OVERSEER_WALL_MINUTES_KEY,
-        OVERSEER_MEMORY_PCT_KEY,
-        HANDOFF_CONTEXT_PCT_KEY,
-        WATCH_TAIL_LINES_KEY,
-        WATCH_PREPARE_SECS_KEY,
-        DIRECTIVE_UNREAD_SECS_KEY,
-        WATCH_START_STALL_SECS_KEY,
-        WATCH_LANE_STALL_SECS_KEY,
-        CLOUD_STALL_MINUTES_KEY,
-        WATCH_LANE_AGE_SECS_KEY,
-        WALL_RELAUNCH_KEY,
-        MAIN_WORKFLOWS_KEY,
-        RECORD_RETENTION_DAYS_KEY,
-        QUEUE_WAIT_ARM_GRACE_KEY,
-        QUEUE_WAIT_CONFIRM_POLLS_KEY,
-        QUEUE_WAIT_PROBE_INTERVAL_KEY,
-    ];
+    /// A private-file line of a key the state verbs or the archive read is
+    /// read as the sourcing loader read it, so a fleet that sets one there
+    /// keeps its value: a path, a count and a cap each take the line, the
+    /// caller's environment over it, and the default with no line.
+    #[test]
+    fn the_state_and_archive_keys_private_lines_are_read_as_the_sourced_file_read_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let read = |caller: &[(&str, &str)]| {
+            let s = load(&roots, &env(caller), &FLAGS).unwrap();
+            (
+                s.archive_root,
+                s.store.takeover_rows.get().unwrap(),
+                s.store.review_max_cycles.get().unwrap(),
+            )
+        };
+        let home = ("HOME", "/h");
+        assert_eq!(
+            read(&[home]),
+            (
+                ArchiveRoot::Default(PathBuf::from("/h/.fleet/archive")),
+                DEFAULT_TAKEOVER_ROWS,
+                DEFAULT_REVIEW_MAX_CYCLES
+            ),
+            "no line: the defaults"
+        );
+        write(
+            &roots.project,
+            ".env.local",
+            "ORCH_ARCHIVE_ROOT=$HOME/archives\nexport ORCH_TAKEOVER_ROWS=25\nREVIEW_MAX_CYCLES='0'\n",
+        );
+        assert_eq!(
+            read(&[home]),
+            (ArchiveRoot::Configured(PathBuf::from("/h/archives")), 25, 0),
+            "the private file's lines"
+        );
+        assert_eq!(
+            read(&[home, (TAKEOVER_ROWS_KEY, "3")]).1,
+            3,
+            "the caller's environment over the line"
+        );
+    }
 
     /// A key only some verbs read never refuses the load, so one verb's bad
     /// value cannot refuse every verb and the watch: neither its private
-    /// env file line in a form only a shell reads nor, outside the keys
-    /// still judged in the load, a value outside its form in the caller's
-    /// environment. [`LOAD_KEYS`] are the load's own.
+    /// env file line in a form only a shell reads nor a value outside its
+    /// form in the caller's environment. The keys are the private reader's
+    /// own lists, every key the load reads; [`LOAD_KEYS`] are the load's own.
     #[test]
     fn a_key_only_some_verbs_read_never_refuses_the_settings_load() {
         let mut refused = Vec::new();
-        for &key in READ_KEYS.iter().filter(|key| !LOAD_KEYS.contains(key)) {
+        for &key in READ_KEYS
+            .iter()
+            .chain(ACCOUNT_KEYS)
+            .filter(|key| !LOAD_KEYS.contains(key))
+        {
             let dir = tempfile::tempdir().unwrap();
             let roots = roots_in(dir.path());
             write(&roots.project, ".env.local", &format!("{key}=$(command)\n"));
             if let Err(e) = load(&roots, &env(&[]), &FLAGS) {
                 refused.push(format!("{key} private file: {}", e.key()));
-            }
-            if JUDGED_IN_LOAD.contains(&key) {
-                continue;
             }
             let dir = tempfile::tempdir().unwrap();
             let roots = roots_in(dir.path());

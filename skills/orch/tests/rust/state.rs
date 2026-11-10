@@ -1929,26 +1929,111 @@ fn state_remove_archives_a_relative_path_from_the_callers_directory() {
     assert_eq!(archived_file(&archive, &log), "kept\n");
 }
 
-/// A relative `ORCH_ARCHIVE_ROOT` refuses the archive write alone, never
-/// the settings load every verb and hook reads through. A relative root:
-/// `state path --fleet` answers, `state init` writes, and `state remove`,
-/// which writes an archive, refuses it by key and value with the record
-/// standing.
+/// A state setting outside its form refuses the state verb that reads it
+/// alone, never the settings load every verb and hook reads through:
+/// `state path --fleet` answers and `state init` writes under each. A
+/// relative `ORCH_ARCHIVE_ROOT` and a retention of none refuse `state
+/// remove`, which writes an archive and, where no fleet stands, prunes,
+/// with the record standing; the takeover window, the row bound and the
+/// round caps refuse the read or the write that uses them.
 #[test]
 fn a_relative_archive_root_refuses_the_archive_write_alone() {
-    let store = Store::new();
-    let env = [("ORCH_ARCHIVE_ROOT", "archives")];
-    let fleet = store.ok_env(&["state", "path", "--fleet"], &env);
-    assert_eq!(fleet["path"], store.fleet_path().display().to_string());
-    store.ok_env(&["state", "init", "--item", ITEM], &env);
-    let out = store.run_env(&["state", "remove", "--item", ITEM], &env);
-    let answer = reply(&out);
-    assert_eq!(answer["refusal"]["key"], "setting-invalid", "{answer}");
-    assert_eq!(
-        answer["refusal"]["fields"],
-        json!([["key", "ORCH_ARCHIVE_ROOT"], ["value", "archives"]])
-    );
-    assert!(store.item_path(ITEM).exists());
+    let remove = |_: &Store| {
+        vec![
+            "state".to_owned(),
+            "remove".into(),
+            "--item".into(),
+            ITEM.into(),
+        ]
+    };
+    type Args = Box<dyn Fn(&Store) -> Vec<String>>;
+    let cases: Vec<(&str, &str, bool, Args)> = vec![
+        ("ORCH_ARCHIVE_ROOT", "archives", false, Box::new(remove)),
+        ("ORCH_RECORD_RETENTION_DAYS", "0", false, Box::new(remove)),
+        (
+            "ORCH_TAKEOVER_ROWS",
+            "x",
+            true,
+            Box::new(|_| {
+                ["state", "log", "takeover", "--fleet"]
+                    .map(str::to_owned)
+                    .to_vec()
+            }),
+        ),
+        (
+            "ORCH_FLEET_LOG_ROW_BYTES",
+            "-1",
+            true,
+            Box::new(|store| {
+                let row = store.write_file("row.json", r#"{"kind":"ruling","text":"t"}"#);
+                vec![
+                    "state".into(),
+                    "log".into(),
+                    "append".into(),
+                    "--fleet".into(),
+                    row,
+                ]
+            }),
+        ),
+        (
+            "REVIEW_MAX_CYCLES",
+            "1.5",
+            false,
+            Box::new(|_| {
+                ["state", "cap", "REVIEW_MAX_CYCLES"]
+                    .map(str::to_owned)
+                    .to_vec()
+            }),
+        ),
+        (
+            "REVIEW_MAX_EXTERNAL_ROUNDS",
+            "two",
+            false,
+            Box::new(|_| {
+                ["state", "cap", "REVIEW_MAX_EXTERNAL_ROUNDS"]
+                    .map(str::to_owned)
+                    .to_vec()
+            }),
+        ),
+        (
+            "CI_FIX_MAX_CYCLES",
+            "+6",
+            false,
+            Box::new(|_| {
+                ["state", "cap", "CI_FIX_MAX_CYCLES", "--count", "5"]
+                    .map(str::to_owned)
+                    .to_vec()
+            }),
+        ),
+    ];
+    for (key, value, fleet_stands, args) in cases {
+        let store = Store::new();
+        let env = [(key, value)];
+        let fleet = store.ok_env(&["state", "path", "--fleet"], &env);
+        assert_eq!(
+            fleet["path"],
+            store.fleet_path().display().to_string(),
+            "{key}"
+        );
+        store.ok_env(&["state", "init", "--item", ITEM], &env);
+        if fleet_stands {
+            store.ok_env(&["state", "init", "--fleet"], &env);
+        }
+        let args = args(&store);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = store.run_env(&args, &env);
+        let answer = reply(&out);
+        assert_eq!(
+            answer["refusal"]["key"], "setting-invalid",
+            "{key}: {answer}"
+        );
+        assert_eq!(
+            answer["refusal"]["fields"],
+            json!([["key", key], ["value", value]]),
+            "{key}"
+        );
+        assert!(store.item_path(ITEM).exists(), "{key}: the record stands");
+    }
 }
 
 /// Several pointer pairs are one write: every pair lands, or a refused

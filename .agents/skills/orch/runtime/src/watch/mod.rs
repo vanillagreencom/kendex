@@ -196,7 +196,8 @@ fn due_from_row(
 impl<'a> Runner<'a> {
     /// A runner over the fleet state `paths` name, claiming as `identity`,
     /// with the heartbeat registered; every other duty is registered by its
-    /// owner through [`Runner::register`].
+    /// owner through [`Runner::register`]. The watch's settings are judged
+    /// here, before the claim, so a value outside its form refuses the run.
     pub fn new(
         paths: Paths,
         clock: &'a dyn Clock,
@@ -204,12 +205,9 @@ impl<'a> Runner<'a> {
         flags: Flags,
         identity: Identity,
         record: Recorded,
-    ) -> Runner<'a> {
-        let cadences = Cadences::of_settings(
-            settings.watch.mail_interval,
-            flags.interval,
-            flags.max_loops,
-        );
+    ) -> Result<Runner<'a>> {
+        let watch = settings.watch.get()?;
+        let cadences = Cadences::of_settings(watch.mail_interval, flags.interval, flags.max_loops);
         let heartbeat = Event::Heartbeat {
             loops: flags.max_loops,
             interval: flags.interval,
@@ -222,7 +220,7 @@ impl<'a> Runner<'a> {
             record,
             flags,
             cadences,
-            mark_repeat: settings.watch.mark_repeat,
+            mark_repeat: watch.mark_repeat,
             bodies: Vec::new(),
         };
         // The heartbeat's line with the fields the runner holds; its pass
@@ -237,7 +235,7 @@ impl<'a> Runner<'a> {
                 })
             }),
         );
-        runner
+        Ok(runner)
     }
 
     /// Register `body` for `duty`, replacing one registered before.
@@ -757,7 +755,8 @@ mod tests {
                 script: "/w/orch-runtime".into(),
                 cwd: "/w".into(),
             },
-        );
+        )
+        .unwrap();
         let taken = runner.claim();
         let loop_ran = matches!(held.try_wait(), Ok(None));
         let _ = held.kill();

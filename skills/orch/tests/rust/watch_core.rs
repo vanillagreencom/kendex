@@ -88,6 +88,7 @@ fn runner<'a>(
         identity,
         recorded(),
     )
+    .unwrap()
 }
 
 fn log_lines(paths: &Paths) -> Vec<String> {
@@ -605,7 +606,7 @@ fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
     let dir = tempfile::tempdir().unwrap();
     let paths = paths_in(dir.path());
     let settings = settings_in(dir.path(), 0);
-    assert_eq!(settings.watch.mail_interval, Duration::ZERO);
+    assert_eq!(settings.watch.get().unwrap().mail_interval, Duration::ZERO);
     let clock = FakeClock::new();
     let mail = Counting::new();
     let mut runner = runner(dir.path(), &clock, &settings, me());
@@ -1863,6 +1864,57 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
         "auth status\n",
         "each candidate probed once: the env token absent, the keyring once, the bot token unloadable"
     );
+    // A watch setting outside its form refuses the run before its claim,
+    // and `watch status`, which reads none, answers under it.
+    for (key, value) in [
+        ("ORCH_WATCH_MAIL_INTERVAL", "x"),
+        ("ORCH_OVERSEER_MARK_REPEAT", "0"),
+        ("ORCH_OVERSEER_DEAD_PASSES", "two"),
+        ("ORCH_WATCH_TAIL_LINES", "-1"),
+        ("ORCH_WATCH_PREPARE_SECS", "1m"),
+        ("ORCH_DIRECTIVE_UNREAD_SECS", "5s"),
+        ("ORCH_WATCH_START_STALL_SECS", "0"),
+        ("ORCH_WATCH_LANE_STALL_SECS", "07"),
+        ("ORCH_CLOUD_STALL_MINUTES", "0"),
+        ("ORCH_WATCH_LANE_AGE_SECS", "x"),
+        ("ORCH_WALL_RELAUNCH", "maybe"),
+        ("ORCH_MAIN_WORKFLOWS", "owner/repo"),
+        ("ORCH_SECURITY_ALERTS", "yes"),
+        ("ORCH_EXTERNAL_TRIAGE", "1"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+        let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+        assert!(init.status.success(), "init: {}", stderr(&init));
+        let mut command = watch_run_command(&state_dir, &["--interval", "240"]);
+        command.env(key, value);
+        let out = bounded_output(
+            command.spawn().unwrap(),
+            secs(30),
+            "the watch ran on under a setting outside its form",
+        );
+        let err = stderr(&out);
+        assert_eq!(out.status.code(), Some(1), "{key}: {err}");
+        assert!(
+            err.contains(&format!(
+                "orch-runtime: setting-invalid key={key} value={value}"
+            )),
+            "{key}: {err}"
+        );
+        let paths = paths_in(&state_dir);
+        assert!(
+            std::fs::metadata(&paths.pid).is_err() && std::fs::metadata(&paths.log).is_err(),
+            "{key}: the watch claimed before it judged its settings"
+        );
+        let mut status = isolated();
+        status
+            .args(["--state-dir", &state_dir.display().to_string()])
+            .args(["watch", "status", "--fleet"])
+            .env(key, value)
+            .current_dir(&state_dir);
+        let status = status.output().unwrap();
+        assert!(status.status.success(), "{key}: {}", stderr(&status));
+    }
 }
 
 /// An open intent the reconcile cannot complete or mark (a close whose lane

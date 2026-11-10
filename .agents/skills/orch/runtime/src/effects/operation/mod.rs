@@ -705,9 +705,9 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
 }
 
 /// The host facts a lane transition judges live processes against: the
-/// settings' cap and the kernel's own read, private to `ops`.
-pub(in crate::effects) fn host(run: &Run) -> ops::Host<'static> {
-    ops::Host::kernel(run.settings.lane_cap)
+/// kernel's own read, private to `ops`.
+pub(in crate::effects) fn host() -> ops::Host<'static> {
+    ops::Host::kernel()
 }
 
 /// Read a state file for the effect files: their one entry to the store's
@@ -731,7 +731,7 @@ pub(in crate::effects) fn persist_close(
         &Request::CloseOwnedResources(close.clone()),
         run.env,
         run.locking,
-        &host(run),
+        &host(),
     )
 }
 

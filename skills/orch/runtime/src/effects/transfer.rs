@@ -323,7 +323,9 @@ impl Successor {
             &cwd,
             agent_runtime::launch::full_bypass(
                 harness,
-                pending.permission.unwrap_or(settings.permission),
+                pending
+                    .permission
+                    .map_or_else(|| settings.permission.get(), Ok)?,
                 &pending.extra_args,
             ),
         )?;
@@ -397,7 +399,7 @@ impl Successor {
             .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
         Ok(Successor {
             harness,
-            target: Target::new(settings, harness),
+            target: Target::new(settings, harness)?,
             home,
             named: homes.named,
             cleared: homes.cleared,
@@ -436,7 +438,7 @@ impl Successor {
                 cwd: &self.cwd,
                 brief: None,
                 permission: self.permission,
-                question_tool: settings.question_tool.for_overseer(),
+                question_tool: settings.question_tool.get()?.for_overseer(),
                 compaction,
                 session_id: match &self.resume {
                     Some(_) => None,
@@ -486,7 +488,7 @@ impl Successor {
                 },
             );
         }
-        Ok(operation.appeared_session(self.harness, &self.home, &self.cwd, opened))
+        operation.appeared_session(self.harness, &self.home, &self.cwd, opened)
     }
 }
 
@@ -874,7 +876,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     operation.begin_retirement(&overseer)?;
     let retired_by = match predecessor {
         Predecessor::Identity(identity) => {
-            let predecessor_target = overseer_target_of(run.settings, &overseer);
+            let predecessor_target = overseer_target_of(run.settings, &overseer)?;
             let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
             // The predecessor's identity stands in the set from the start of
             // retirement; its stop acts only through that token.
@@ -1488,7 +1490,7 @@ pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<Effec
     let mut operation = Operation::open(run, &intent)?;
     operation.await_caller_gone()?;
     let overseer = read_overseer(run.path)?;
-    let target = overseer_target_of(run.settings, &overseer);
+    let target = overseer_target_of(run.settings, &overseer)?;
     operation.begin_retirement(&overseer)?;
     match operation::predecessor_identity(&overseer) {
         Some(identity) => {
@@ -1818,7 +1820,7 @@ fn moved_target(
     if !operation.signalled() {
         return Ok(operation.refuse("target-moved", observation));
     }
-    let target = overseer_target_of(run.settings, overseer);
+    let target = overseer_target_of(run.settings, overseer)?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
         observation["stop"] = json!(cause);
@@ -1885,7 +1887,7 @@ fn judge_resolved(
                 // its stop is run again through the signalling method; one
                 // that ends it lets the succession go on from the runner, any
                 // other answer holds.
-                let predecessor_target = overseer_target_of(run.settings, overseer);
+                let predecessor_target = overseer_target_of(run.settings, overseer)?;
                 let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
                 let token = operation::predecessor_identity(overseer)
                     .and_then(|id| operation.standing_process(&id));

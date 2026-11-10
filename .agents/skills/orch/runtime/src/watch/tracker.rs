@@ -751,7 +751,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     };
     let mut tracker = None;
     let mut ask_failed = None;
-    if let (Some(team), None) = (&ctx.settings.watch.linear_team, &held) {
+    if let (Some(team), None) = (&ctx.settings.linear_team, &held) {
         match read_tracker(&linear, team, &fleet, ctx, tick, &mut ask_failed)? {
             Answered::Value(read) => tracker = Some(read),
             Answered::Quota(quota) => {
@@ -1691,7 +1691,10 @@ fn close_one(
         identity: None,
         cycle,
     });
-    let host = ops::Host::kernel(ctx.settings.lane_cap);
+    // The close's bounds are judged before its intent persists, as the
+    // command's admission judges them.
+    ops::judge_effect_settings(&request, &ctx.settings)?;
+    let host = ops::Host::kernel();
     let applied = ops::apply_on(&ctx.fleet, &request, env, ctx.locking, &host)?;
     let effected = crate::effects::run(
         &ctx.fleet,

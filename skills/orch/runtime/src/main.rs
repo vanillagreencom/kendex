@@ -1506,7 +1506,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                                         Settled::Job(effects::await_job(
                                             &path,
                                             &started.intent,
-                                            settings.verify * 2 + JOB_ANSWER_MARGIN,
+                                            settings.verify.get()? * 2 + JOB_ANSWER_MARGIN,
                                             &schedule::SystemClock,
                                         )?)
                                     }
@@ -1950,9 +1950,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 pr,
                 poll: std::time::Duration::from_secs(poll),
                 max_wait: std::time::Duration::from_secs(max_wait),
-                arm_grace: settings.queue_watch.arm_grace,
-                confirm_polls: settings.queue_watch.confirm_polls,
-                probe_interval: settings.queue_watch.probe_interval,
+                arm_grace: settings.queue_watch.arm_grace.get()?,
+                confirm_polls: settings.queue_watch.confirm_polls.get()?,
+                probe_interval: settings.queue_watch.probe_interval.get()?,
                 check_probe: !no_check_probe,
                 guard: !no_guard,
                 reach_cmd: settings.queue_watch.reach_cmd.clone(),
@@ -2110,7 +2110,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 },
                 identity,
                 record,
-            );
+            )?;
             // The tracker read duty: the inventories once per pass, the
             // terminal closes, the heartbeat's inputs; the GitHub duty shares
             // its slot.
@@ -2194,6 +2194,8 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
 )]
 fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
+    // Every accounts verb runs the judge, which reads the account settings.
+    settings.accounts.get()?;
     let now = system_env()?.now_secs;
     match op {
         AccountsOp::Pick {
@@ -2211,7 +2213,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             env,
         } => {
             let path = target_path(&target, &settings);
-            let host = ops::Host::kernel(settings.lane_cap);
+            let host = ops::Host::kernel();
             let request = ops::accounts::PickRequest {
                 harness,
                 model: native_model,
@@ -2274,7 +2276,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             keep_unmeasured,
         } => {
             let path = target_path(&target, &settings);
-            let host = ops::Host::kernel(settings.lane_cap);
+            let host = ops::Host::kernel();
             let request = ops::walk::WalkRequest {
                 scope: if overseer {
                     ops::walk::Scope::Overseer
@@ -2490,6 +2492,12 @@ fn remove_item(
     let cwd = std::env::current_dir()
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", Path::new("."), e)))?;
     let archive: Vec<PathBuf> = archive.iter().map(|path| cwd.join(path)).collect();
+    // The retention pass this verb runs where no fleet state stands reads
+    // its days before anything is removed: a refusal after the removal
+    // would answer refused over files already gone.
+    if std::fs::metadata(state::fleet_path(&settings.state_dir)).is_err() {
+        settings.retention_days.get()?;
+    }
     let closed = orch_runtime::archive::close_out(
         &settings.archive_root,
         project,
@@ -2792,12 +2800,12 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
         StateOp::Log { op } => match op {
             LogOp::Takeover { target } => {
                 let doc = store::read_if_standing(&path_of(&target))?;
-                let rows = store::log_rows(doc.as_ref(), store_settings, LogReader::Takeover);
+                let rows = store::log_rows(doc.as_ref(), store_settings, LogReader::Takeover)?;
                 Ok(serde_json::json!({"rows": rows}))
             }
             LogOp::Audit { target } => {
                 let doc = store::read(&path_of(&target))?;
-                let rows = store::log_rows(Some(&doc), store_settings, LogReader::Audit);
+                let rows = store::log_rows(Some(&doc), store_settings, LogReader::Audit)?;
                 Ok(serde_json::json!({"rows": rows}))
             }
             LogOp::Append { target, source } => write(&target, Write::LogAppend { file: source }),
@@ -3017,7 +3025,7 @@ fn persist(
     ops::apply_on(path, request, env, locking, &host)
 }
 
-/// The host a fleet transition judges against: the cap, the claim store, the
+/// The host a fleet transition judges against: the caps a launch judges, the
 /// kernel's reads, the programs the admission reads through and the settings
 /// the accounts judge reads a launch's account under.
 #[allow(
@@ -3025,8 +3033,8 @@ fn persist(
     reason = "the command's one construction of the kernel host, handed to the store entries alone"
 )]
 fn kernel_host(settings: &Settings) -> ops::Host<'_> {
-    ops::Host::kernel(settings.lane_cap)
-        .cloud_cap(settings.cloud_lane_cap)
+    ops::Host::kernel()
+        .caps(settings)
         .admitting(ops::Clis {
             tracker: settings.reads.tracker_cli.clone(),
             gh: PathBuf::from("gh"),

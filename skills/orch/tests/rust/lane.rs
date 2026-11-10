@@ -933,6 +933,50 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
         );
         assert_eq!(fleet.fleet(), before, "{word}: a refusal writes nothing");
     }
+    // A launch setting outside its form is refused by key and value before
+    // any record: the bounds, posture and programs the launch's effect
+    // reads, and the cap its admission judges; so is a lane close's grace
+    // before the close reads anything; `state path` answers under each.
+    for (key, value, request) in [
+        ("ORCH_TMUX_VERIFY_SECS", "0", "launch"),
+        ("ORCH_LANE_CLOSE_SECS", "x", "launch"),
+        ("ORCH_LAUNCH_PERMISSION", "yes", "launch"),
+        ("ORCH_HARNESS_BINARIES", "claude", "launch"),
+        ("ORCH_OVERSEER_LANES", "03", "launch"),
+        ("ORCH_OVERSEER_CLOUD_LANES", "0", "cloud"),
+        ("ORCH_LANE_CLOSE_SECS", "0", "close"),
+    ] {
+        let mut fleet = Fleet::new(4);
+        fleet.init_fleet();
+        fleet.env.push((key.into(), value.into()));
+        let before = fleet.fleet();
+        let request = match request {
+            "close" => json!({"op": "close-lane", "item": "KEN-A"}),
+            kind => {
+                let mut request = launch("KEN-A", fleet.state_dir());
+                if kind == "cloud" {
+                    request["host"] = json!("claude-cloud");
+                    request["account"] = json!(fleet.state_dir().display().to_string());
+                    request["model"] = json!("opus");
+                    request["effort"] = json!("high");
+                }
+                request
+            }
+        };
+        let answer = reply(&fleet.op(&request));
+        assert_eq!(
+            answer["refusal"]["key"], "setting-invalid",
+            "{key}: {answer}"
+        );
+        assert_eq!(
+            answer["refusal"]["fields"],
+            json!([["key", key], ["value", value]]),
+            "{key}"
+        );
+        assert_eq!(fleet.fleet(), before, "{key}: a refusal writes nothing");
+        let control = fleet.run(&["state", "path", "--fleet"]);
+        assert!(control.status.success(), "{key}: {}", stderr(&control));
+    }
 }
 
 /// A launch on a named account that names no model runs the harness's

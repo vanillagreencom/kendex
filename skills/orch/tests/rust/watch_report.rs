@@ -380,6 +380,7 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
             cwd: "/w".into(),
         },
     )
+    .unwrap()
 }
 
 /// The recorded answers on the owed suite's own worlds, recorded once: the

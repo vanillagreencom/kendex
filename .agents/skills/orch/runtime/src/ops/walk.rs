@@ -643,6 +643,7 @@ pub fn walk(
     req: &WalkRequest,
     now: u64,
 ) -> Result<Walked> {
+    let accounts = settings.accounts.get()?;
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
         Scope::Lane => settings.lane_preference.clone().unwrap_or_default(),
         Scope::Overseer => settings.overseer_preference.clone(),
@@ -665,7 +666,7 @@ pub fn walk(
     };
     let trigger = req
         .min_headroom_pct
-        .unwrap_or(settings.accounts.overseer_headroom_pct);
+        .unwrap_or(accounts.overseer_headroom_pct);
     let caller_model = req
         .caller
         .as_ref()
@@ -794,7 +795,7 @@ pub fn walk(
         // The host the entry is judged under: a lane's own, else the
         // fleet's; an overseer runs here, so only a provider sharing the
         // Claude plan's pool over ssh reads for it.
-        let fleet_host = settings.accounts.host.as_deref();
+        let fleet_host = accounts.host.as_deref();
         let (judge_host, launch) = match req.scope {
             Scope::Lane => {
                 let host = host.as_deref().or(fleet_host).filter(|h| *h != LOCAL);

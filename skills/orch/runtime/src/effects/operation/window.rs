@@ -406,7 +406,7 @@ impl Operation<'_> {
         recorded: Option<&Identity>,
         accept: &dyn Fn(&State) -> bool,
     ) -> Result<Polled> {
-        let deadline = self.now() + self.run.settings.verify;
+        let deadline = self.now() + self.run.settings.verify.get()?;
         loop {
             let polled = match self.read_pane(pane, harness, owns, recorded)? {
                 Reading::Gone => return Ok(Polled::Gone),
@@ -440,7 +440,7 @@ impl Operation<'_> {
         file: &Path,
         turns_before: u64,
     ) -> Result<TurnConfirm> {
-        let deadline = self.now() + self.run.settings.verify;
+        let deadline = self.now() + self.run.settings.verify.get()?;
         loop {
             if self.user_turns(harness, file)? > turns_before {
                 return Ok(TurnConfirm::Recorded);
@@ -540,7 +540,8 @@ impl Operation<'_> {
                 };
                 match tmux::pane_fields(&server, pane_id) {
                     Reading::Live(fields) => {
-                        if within_bound(opening, self.clock.wall(), self.run.settings.verify) {
+                        if within_bound(opening, self.clock.wall(), self.run.settings.verify.get()?)
+                        {
                             Recovered::Pending {
                                 note: "receipt-pending",
                                 cause: None,

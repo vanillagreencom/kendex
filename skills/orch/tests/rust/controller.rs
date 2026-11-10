@@ -839,6 +839,35 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
         "no job request was written"
     );
     assert!(live(predecessor.pid()));
+    // A key the transfer's effect reads, outside its form, refuses the
+    // transfer the same way before any transition; `state path`, which
+    // reads none, answers under it.
+    for (key, value) in [
+        ("ORCH_OVERSEER_SUCCESSION", "maybe"),
+        ("ORCH_QUESTION_TOOL", "lane"),
+        ("ORCH_JOB_CLAIM_SECS", "0"),
+        ("ORCH_TMUX_VERIFY_SECS", "1.5"),
+        ("ORCH_LANE_CLOSE_SECS", "-1"),
+        ("ORCH_LAUNCH_PERMISSION", "yes"),
+        ("ORCH_HARNESS_BINARIES", "claude=bin/claude"),
+    ] {
+        let env = [(key, value)];
+        let out = runner.op_fleet_env(&transfer_request(&server, runner.state_dir()), &env);
+        let answer = reply(&out);
+        assert_eq!(
+            answer["refusal"]["key"], "setting-invalid",
+            "{key}: {answer}"
+        );
+        assert_eq!(
+            answer["refusal"]["fields"],
+            json!([["key", key], ["value", value]]),
+            "{key}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), before, "{key}");
+        assert!(!runner.state_dir().join("intents").exists(), "{key}");
+        let control = runner.run_env(&["state", "path", "--fleet"], &env);
+        assert!(control.status.success(), "{key}: {}", stderr(&control));
+    }
     let started = reply(&runner.op_fleet_env(
         &json!({"op": "stop-controller"}),
         &[("ORCH_OVERSEER_SUCCESSION", "off")],
@@ -919,6 +948,22 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     assert_eq!(refusal_key(&out), "job-unclaimed", "{}", stderr(&out));
     let job = standing_job_pid(&runner);
     assert!(live(job), "the job the launcher recorded runs");
+    // A job whose own settings put its effect's bound outside its form
+    // refuses by key and value before its claim: the intent stays its
+    // caller's, unclaimed.
+    let before = runner.fleet();
+    let intent = before["intents"][0]["id"].as_str().unwrap().to_owned();
+    let refused = runner.run_env(
+        &["job", "--fleet", "--intent", &intent],
+        &[("ORCH_JOB_CLAIM_SECS", "0")],
+    );
+    let refusal = &reply(&refused)["refusal"];
+    assert_eq!(refusal["key"], "setting-invalid", "{}", stderr(&refused));
+    assert_eq!(
+        refusal["fields"],
+        json!([["key", "ORCH_JOB_CLAIM_SECS"], ["value", "0"]])
+    );
+    assert_eq!(runner.fleet(), before, "the refused job claimed nothing");
     // The repeated stop reconciles the standing job and starts no second one.
     let out2 = runner.op_fleet(&json!({"op": "stop-controller"}));
     let report = effect_report(&out2);
@@ -7076,7 +7121,7 @@ fn the_hook_suites_plant_the_marks_verbs_own_replies() {
                     },
                 )
                 .unwrap();
-                let host = orch_runtime::ops::Host::kernel(settings.lane_cap);
+                let host = orch_runtime::ops::Host::kernel();
                 let reading = Reading::Live(Some(Memory {
                     current: memory[0].as_u64().unwrap(),
                     max: memory[1].as_u64().unwrap(),
@@ -7224,6 +7269,8 @@ fn a_memory_mark_set_to_zero_is_no_mark_rather_than_one_every_pass_crosses() {
         .unwrap()
         .marks
         .memory_pct
+        .get()
+        .unwrap()
     };
     for (value, expected) in [(None, None), (Some("0"), None), (Some("80"), Some(80))] {
         assert_eq!(memory_pct(value), expected, "{value:?}");
@@ -7420,6 +7467,62 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
         json!("below-mark"),
         "the named harness judges: {named}"
     );
+    // A mark, the succession switch or an account setting outside its form
+    // refuses `marks --fleet` by key and value, and an account setting the
+    // accounts judge's `accounts pick` too; a lane's `marks --item`, which
+    // reads the context mark alone, answers under each but that mark, and
+    // `state path --fleet` under that one.
+    world.write_fleet(&world.dir("eclaude"));
+    let dir = world.dir("eclaude");
+    let refusal = |out: &std::process::Output| {
+        let refusal = &reply(out)["refusal"];
+        json!({"key": refusal["key"], "fields": refusal["fields"]})
+    };
+    for (key, value, judge) in [
+        ("ORCH_OVERSEER_WALL_MINUTES", "-5", false),
+        ("ORCH_OVERSEER_MEMORY_PCT", "101", false),
+        ("ORCH_HANDOFF_CONTEXT_PCT", "0", false),
+        ("ORCH_OVERSEER_SUCCESSION", "maybe", false),
+        ("ORCH_LANE_RETIRE", "a=2027-02-30", true),
+        ("ORCH_LANE_CLOUD_REPOS", "a=repo", true),
+        ("ORCH_LANE_COPILOT_POOL", "/p=1/0", true),
+        ("ORCH_LANE_EXCLUDE", "~/x", true),
+        ("ORCH_LANE_MAX_PCT", "101", true),
+        ("ORCH_LANE_BURN_PCT_PER_HOUR", "five", true),
+        ("ORCH_OVERSEER_HEADROOM_PCT", "-1", true),
+        ("ORCH_LANE_CODEX_CREDIT_FLOOR", "1.5", true),
+        ("ORCH_LANE_CLOUD_CREDIT_FLOOR", "x", true),
+        ("ORCH_LANES_USAGE_TTL", "5m", true),
+        ("ORCH_LANES_USAGE_MAX_AGE", "+1", true),
+        ("ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S", "-30", true),
+    ] {
+        let env = [(key, value)];
+        let want = json!({"key": "setting-invalid", "fields": [["key", key], ["value", value]]});
+        let fleet = world.run(&["marks", "--fleet", "--context", "100000:1000000"], &env);
+        assert_eq!(refusal(&fleet), want, "{key}: {}", stderr(&fleet));
+        if judge {
+            let pick = world.run(
+                &[
+                    "accounts",
+                    "pick",
+                    "--fleet",
+                    "--lane",
+                    &dir,
+                    "--harness",
+                    "claude",
+                ],
+                &env,
+            );
+            assert_eq!(refusal(&pick), want, "{key}: {}", stderr(&pick));
+        }
+        let control: &[&str] = if key == "ORCH_HANDOFF_CONTEXT_PCT" {
+            &["state", "path", "--fleet"]
+        } else {
+            &["marks", "--item", "KEN-1", "--context", "100000:1000000"]
+        };
+        let out = world.run(control, &env);
+        assert_eq!(reply(&out)["ok"], json!(true), "{key}: {}", stderr(&out));
+    }
 }
 
 #[test]
@@ -7538,7 +7641,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     };
     let judge = |extra: &[(&str, &str)], reading: Reading<Option<Memory>>| {
         let settings = settings(extra);
-        let host = orch_runtime::ops::Host::kernel(settings.lane_cap);
+        let host = orch_runtime::ops::Host::kernel();
         let memory = |_: &Identity| reading.clone();
         judge_marks(&MarksAsk {
             settings: &settings,
@@ -8807,6 +8910,36 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
     let result = answer["result"].clone();
     assert_eq!(result["successor"]["handoff"], handoff, "{answer}");
     assert_eq!(result["brief"], brief.as_str(), "{answer}");
+    // The posture the successor launches under and the account judge's
+    // settings, outside their form, refuse the verb by key and value.
+    for (key, value) in [
+        ("ORCH_LAUNCH_PERMISSION", "yes"),
+        ("ORCH_LANE_MAX_PCT", "101"),
+    ] {
+        let refused = runner.run_env(
+            &[
+                "successor",
+                "--fleet",
+                "--cwd",
+                &work.display().to_string(),
+                "--predecessor",
+                &pane,
+            ],
+            &[(key, value)],
+        );
+        let refusal = &reply(&refused)["refusal"];
+        assert_eq!(
+            refusal["key"],
+            "setting-invalid",
+            "{key}: {}",
+            stderr(&refused)
+        );
+        assert_eq!(
+            refusal["fields"],
+            json!([["key", key], ["value", value]]),
+            "{key}"
+        );
+    }
     runner.snapshot(&work.join(handoff));
     runner.transfer_started(&json!({
         "op": "request-transfer",

@@ -80,6 +80,11 @@ fn agent_runtime() -> &'static Path {
 /// the mail interval the scheduler's cadence is read from; the paste bound
 /// is the production one, and nothing is read from the test's own tree.
 fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
+    settings_with(dir, agent_runtime, &[])
+}
+
+/// [`settings_in`] with `extra` over its environment.
+fn settings_with(dir: &Path, agent_runtime: &Path, extra: &[(&str, &str)]) -> Settings {
     let roots = Roots {
         project: dir.to_path_buf(),
         common: dir.to_path_buf(),
@@ -89,20 +94,22 @@ fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
         stub("stub-turns").display(),
         fixtures().join("stub-turns/codex").display()
     );
+    let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
+        (
+            "ORCH_AGENT_RUNTIME".into(),
+            agent_runtime.as_os_str().into(),
+        ),
+        ("ORCH_HARNESS_BINARIES".into(), binaries.into()),
+        (
+            "LANE_MAIL_CLI".into(),
+            dir.join("lane-mail").as_os_str().into(),
+        ),
+        ("ORCH_WATCH_MAIL_INTERVAL".into(), "20".into()),
+    ];
+    environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
     settings::load(
         &roots,
-        &[
-            (
-                "ORCH_AGENT_RUNTIME".into(),
-                agent_runtime.as_os_str().into(),
-            ),
-            ("ORCH_HARNESS_BINARIES".into(), binaries.into()),
-            (
-                "LANE_MAIL_CLI".into(),
-                dir.join("lane-mail").as_os_str().into(),
-            ),
-            ("ORCH_WATCH_MAIL_INTERVAL".into(), "20".into()),
-        ],
+        &environment,
         &SettingsFlags {
             state_dir: Some(dir.to_path_buf()),
             private_env: false,
@@ -345,7 +352,8 @@ impl Fleet {
             flags(),
             me(),
             recorded(),
-        );
+        )
+        .unwrap();
         wake::register(&mut runner, &self.fleet_file(), &self.settings);
         runner
     }
@@ -928,6 +936,26 @@ fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     release_hold(&hold, secs(5), || state_of(&state));
     await_state(&state, "idle");
     assert_eq!(fleet.turns("lead-4").len(), 1, "the held line alone");
+    // The delivery's bound or the harness programs outside their form fail
+    // the pass by key and value before any mark or keystroke.
+    for (key, value) in [
+        ("ORCH_TMUX_VERIFY_SECS", "0"),
+        ("ORCH_HARNESS_BINARIES", "claude=bin/claude"),
+    ] {
+        let settings = settings_with(&fleet.root, agent_runtime(), &[(key, value)]);
+        let mut judged = wake::body(&fleet.fleet_file(), &settings);
+        let failed = run_once(&mut judged, &unread(&[("KEN-8", "m-1")]), &clock)
+            .map(|p| rendered(&p))
+            .unwrap_err();
+        assert_eq!(failed.key(), "setting-invalid", "{key}: {failed}");
+        assert_eq!(
+            failed.fields(),
+            vec![("key".into(), key.into()), ("value".into(), value.into())],
+            "{key}"
+        );
+        assert_eq!(fleet.mark("KEN-8"), None, "{key}");
+    }
+    assert_eq!(fleet.turns("lead-8"), Vec::<String>::new());
     std::fs::write(fleet.fleet_file(), "{ not json").unwrap();
     let unparsed = run_once(&mut body, &unread(&[("KEN-8", "m-1")]), &clock);
     assert!(unparsed.is_err(), "{:?}", unparsed.map(|p| rendered(&p)));

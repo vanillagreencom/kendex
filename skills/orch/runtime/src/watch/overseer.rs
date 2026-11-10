@@ -57,7 +57,7 @@ use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::walk::{self, WalkRequest};
 use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
-use crate::settings::{MarkSettings, Settings, Succession, WatchSettings};
+use crate::settings::{Settings, Succession, WatchSettings};
 use crate::state::{FleetState, Pending, TransferCause};
 
 /// The gap alert's notice file under the state directory.
@@ -381,7 +381,7 @@ pub fn lane_marks(
             &[("value", context)],
         ))
     })?;
-    let pct = settings.marks.context_pct;
+    let pct = settings.marks.context_pct.get()?;
     let judged = |reserve: Option<u64>| {
         let context = match handoff_due(tokens, window, pct, reserve) {
             Some(true) => "due",
@@ -490,9 +490,9 @@ impl Caller {
         settings: &Settings,
         fleet_path: &Path,
         host: &crate::ops::Host<'_>,
+        trigger: u32,
         now: u64,
     ) -> AccountRead {
-        let trigger = settings.accounts.overseer_headroom_pct;
         match self.account.as_deref() {
             Some(account) => {
                 let answer = accounts::pick_fleet(
@@ -541,10 +541,12 @@ impl Caller {
         fleet_path: &Path,
         host: &crate::ops::Host<'_>,
         now: u64,
-    ) -> (AccountState, Option<MarkKind>) {
-        let read = self.own_account(harness, settings, fleet_path, host, now);
-        let reached = read.reached(&settings.marks);
-        (read.state, reached)
+    ) -> crate::error::Result<(AccountState, Option<MarkKind>)> {
+        let wall_minutes = settings.marks.wall_minutes.get()?;
+        let trigger = settings.accounts.get()?.overseer_headroom_pct;
+        let read = self.own_account(harness, settings, fleet_path, host, trigger, now);
+        let reached = read.reached(wall_minutes);
+        Ok((read.state, reached))
     }
 
     /// The pending the walk's choice opens: its harness, account, model,
@@ -616,15 +618,15 @@ impl AccountRead {
     /// The account mark this reading reaches: the headroom trigger, else a
     /// wall the measured rate projects inside the setting. Headroom leads,
     /// since it names the account to leave.
-    fn reached(&self, marks: &MarkSettings) -> Option<MarkKind> {
+    fn reached(&self, wall_minutes: u32) -> Option<MarkKind> {
         if self.state == AccountState::AtTrigger {
             return Some(MarkKind::Headroom);
         }
-        (marks.wall_minutes > 0
+        (wall_minutes > 0
             && self.rate_state == "measured"
             && self
                 .projected
-                .is_some_and(|projected| projected <= u64::from(marks.wall_minutes)))
+                .is_some_and(|projected| projected <= u64::from(wall_minutes)))
         .then_some(MarkKind::Rate)
     }
 
@@ -717,8 +719,11 @@ pub struct MarksAsk<'a> {
 /// a mark that lifted and never zero.
 pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let settings = ask.settings;
-    let marks = &settings.marks;
-    let succession = settings.succession;
+    let context_pct = settings.marks.context_pct.get()?;
+    let wall_minutes = settings.marks.wall_minutes.get()?;
+    let memory_pct = settings.marks.memory_pct.get()?;
+    let succession = settings.succession.get()?;
+    let trigger = settings.accounts.get()?.overseer_headroom_pct;
     let context = match ask.context {
         Some(text) => Some(parse_context(text).ok_or_else(|| {
             crate::error::Error::from(agent_runtime::Error::refused(
@@ -731,8 +736,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let (context_read, decision) = match context {
         None => (ContextRead::Unjudged, None),
         Some((tokens, window)) => {
-            let decision = handoff_decision(tokens, window, marks.context_pct, None);
-            let read = match handoff_due(tokens, window, marks.context_pct, None) {
+            let decision = handoff_decision(tokens, window, context_pct, None);
+            let read = match handoff_due(tokens, window, context_pct, None) {
                 Some(true) => ContextRead::Due { tokens, window },
                 Some(false) => ContextRead::Room {
                     tokens,
@@ -748,7 +753,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     if let ContextRead::Due { tokens, .. } = &context_read {
         let mut m = Marks::new(MarkKey::Reached(MarkKind::Context), succession);
         m.value = tokens.to_string();
-        m.mark = marks.context_pct.min(CONTEXT_PCT_CEILING).to_string();
+        m.mark = context_pct.min(CONTEXT_PCT_CEILING).to_string();
         m.headroom = "unreadable".to_owned();
         m.context = context_read;
         m.decision = decision;
@@ -757,11 +762,15 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let Some(harness) = ask.caller.harness else {
         return Err(agent_runtime::Error::refused("harness-unnamed", &[]).into());
     };
-    let trigger = settings.accounts.overseer_headroom_pct;
-    let account = ask
-        .caller
-        .own_account(harness, settings, ask.fleet_path, ask.host, ask.now);
-    let memory = match (marks.memory_pct, &ask.caller.identity) {
+    let account = ask.caller.own_account(
+        harness,
+        settings,
+        ask.fleet_path,
+        ask.host,
+        trigger,
+        ask.now,
+    );
+    let memory = match (memory_pct, &ask.caller.identity) {
         (None, _) => MemoryRead::Inert,
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
         (Some(pct), Some(identity)) => match (ask.memory)(identity) {
@@ -797,7 +806,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         m.decision = decision.clone();
         m
     };
-    let account_mark = account.reached(marks);
+    let account_mark = account.reached(wall_minutes);
     if account_mark == Some(MarkKind::Headroom) {
         let mut m = reached(
             MarkKind::Headroom,
@@ -816,7 +825,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         let mut m = reached(
             MarkKind::Rate,
             projected.to_string(),
-            marks.wall_minutes.to_string(),
+            wall_minutes.to_string(),
         );
         m.resets = String::new();
         return Ok(m);
@@ -849,8 +858,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     if context_read == ContextRead::Unmeasured {
         return Ok(unmeasured(MarkKind::Context, "window-unnamed".to_owned()));
     }
-    if marks.wall_minutes > 0 && account.rate_state != "measured" && account.rate_state != "credits"
-    {
+    if wall_minutes > 0 && account.rate_state != "measured" && account.rate_state != "credits" {
         let reason = if account.rate_state.is_empty() {
             "unreadable".to_owned()
         } else {
@@ -863,7 +871,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     }
     let mut m = Marks::new(MarkKey::Below, succession);
     m.headroom = headroom_field;
-    m.mark = marks.context_pct.min(CONTEXT_PCT_CEILING).to_string();
+    m.mark = context_pct.min(CONTEXT_PCT_CEILING).to_string();
     m.context = context_read;
     m.decision = decision;
     Ok(m)
@@ -2429,7 +2437,7 @@ pub fn marks_verb(
     let mut caller = Caller::of(&record);
     caller.harness = caller.harness.or(harness);
     caller.account = caller.account.or_else(|| account.map(str::to_owned));
-    let host = crate::ops::Host::kernel(settings.lane_cap);
+    let host = crate::ops::Host::kernel();
     let memory = |identity: &Identity| {
         agent_runtime::process::memory_of(
             Path::new("/proc"),
@@ -2465,10 +2473,10 @@ pub fn run_transfer(
     clock: &dyn crate::schedule::Clock,
     mut request: RequestTransfer,
 ) -> crate::error::Result<String> {
-    crate::ops::successor::posture(&mut request.successor, settings);
+    crate::ops::successor::posture(&mut request.successor, settings)?;
     let request = crate::ops::Request::RequestTransfer(Box::new(request));
     crate::ops::admit(&request, settings)?;
-    let host = crate::ops::Host::kernel(settings.lane_cap);
+    let host = crate::ops::Host::kernel();
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;
     let crate::ops::Report::RequestTransfer(report) = &applied.report else {
         unreachable!("a transfer request reports its transfer")
@@ -2543,11 +2551,13 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         };
         let fleet =
             <crate::state::FleetState as crate::state::Record>::view(&ctx.path, &snapshot.doc)?;
+        let watch = ctx.settings.watch.get()?;
+        let succession = ctx.settings.succession.get()?;
         let readers = LaneReaders::kernel();
         // The accounts judge over the fleet's own state and the kernel's
         // identity reader: the marks, the overseer walk and the wall
         // route's pick, each a verdict this duty receives.
-        let occupancy_host = crate::ops::Host::kernel(ctx.settings.lane_cap);
+        let occupancy_host = crate::ops::Host::kernel();
         let memory = |identity: &Identity| {
             agent_runtime::process::memory_of(
                 Path::new("/proc"),
@@ -2634,8 +2644,8 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 readers: &readers,
                 judges: &judges,
                 baseline: tick.baseline,
-                settings: &ctx.settings.watch,
-                succession: ctx.settings.succession,
+                settings: &watch,
+                succession,
                 preference: ctx
                     .settings
                     .overseer_preference_set
@@ -2654,7 +2664,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             relaunch_outcomes(
                 watch_state_dir(&ctx.settings.claim_store),
                 &fleet,
-                ctx.settings.watch.prepare,
+                watch.prepare,
                 tick.wall,
                 tick.baseline,
             ),
@@ -2670,7 +2680,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             };
             let start = |r: &Relaunch| (judges.relaunch)(&ctx.settings.job_unit, r);
             let route = WallRoute {
-                relaunch: ctx.settings.watch.wall_relaunch,
+                relaunch: watch.wall_relaunch,
                 pick: &wall_pick,
                 start: &start,
             };
@@ -2691,12 +2701,12 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 roster: &roster,
                 repos: &ctx.settings.reads.connected_repos,
             };
-            let copilot_home = super::lanes::copilot_home(&ctx.settings.accounts);
+            let copilot_home = super::lanes::copilot_home(&ctx.settings);
             let lanes = super::lanes::observe(&super::lanes::Pass {
                 fleet: &fleet,
                 readers: &readers,
                 baseline: tick.baseline,
-                settings: &ctx.settings.watch,
+                settings: &watch,
                 now: tick.wall,
                 session: ctx.settings.tmux_session.as_deref(),
                 own_panes: &own,

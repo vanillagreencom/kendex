@@ -449,6 +449,10 @@ impl World {
 
     /// One call of the binary, the fakes ahead of the inherited PATH.
     fn binary(&self, repo: &str, args: &[&str]) -> Output {
+        self.binary_env(repo, args, &[])
+    }
+
+    fn binary_env(&self, repo: &str, args: &[&str], env: &[(&str, &str)]) -> Output {
         self.write();
         let root = self.root();
         support::isolated()
@@ -462,6 +466,7 @@ impl World {
             )
             .env("GH_FAKE_REPLIES", root.join("gh.json"))
             .env("GH_FAKE_LOG", root.join("gh.log"))
+            .envs(env.iter().copied())
             .current_dir(&root)
             .output()
             .unwrap()
@@ -864,6 +869,40 @@ fn a_poll_interval_past_the_budget_is_refused_before_any_read() {
         support::stderr(&out)
     );
     assert!(world.gh_log().is_empty(), "no read before the refusal");
+    // A wait setting outside its form is refused by key and value before
+    // any read; `state path`, which reads none, answers under it.
+    for (key, value) in [
+        ("QUEUE_WAIT_ARM_GRACE", "0"),
+        ("QUEUE_WAIT_CONFIRM_POLLS", "02"),
+        ("QUEUE_WAIT_PROBE_INTERVAL", "x"),
+    ] {
+        let world = World::new();
+        let out = world.binary_env(REPO, &[], &[(key, value)]);
+        assert_eq!(out.status.code(), Some(1), "{key}");
+        assert!(
+            support::stderr(&out).contains(&format!(
+                "orch-runtime: setting-invalid key={key} value={value}"
+            )),
+            "{key}: {}",
+            support::stderr(&out)
+        );
+        assert!(
+            world.gh_log().is_empty(),
+            "{key}: no read before the refusal"
+        );
+        let control = support::isolated()
+            .args(["--state-dir", &world.root().display().to_string()])
+            .args(["state", "path", "--fleet"])
+            .env(key, value)
+            .current_dir(world.root())
+            .output()
+            .unwrap();
+        assert!(
+            control.status.success(),
+            "{key}: {}",
+            support::stderr(&control)
+        );
+    }
 }
 
 /// The repository is the request's own `owner/name`: one outside that form

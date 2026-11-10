@@ -236,7 +236,7 @@ pub fn run(
         cli: &settings.reads.tracker_cli,
     };
     let mut args = vec!["issues", "list", "--max"];
-    if let Some(team) = &settings.watch.linear_team {
+    if let Some(team) = &settings.linear_team {
         args.extend(["--team", team]);
     }
     args.push("--format=safe");

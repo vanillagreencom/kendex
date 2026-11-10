@@ -307,7 +307,7 @@ impl Wake {
             Some(socket) => socket,
             None => tmux::ambient_socket()?,
         };
-        let host = crate::ops::Host::kernel(self.settings.lane_cap);
+        let host = crate::ops::Host::kernel();
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet.overseer.as_ref().and_then(overseer_target)
@@ -517,7 +517,7 @@ impl Wake {
 
     /// Read the target through `deliver --no-paste`.
     fn read(&self, target: &Target) -> Result<Read> {
-        let mut args = self.target_args(target);
+        let mut args = self.target_args(target)?;
         args.push("--no-paste".to_owned());
         match self.call(&args)? {
             Answer::Refused => Ok(Read::Refused),
@@ -540,7 +540,7 @@ impl Wake {
     /// Type `line` into the target through `deliver`, confirmed by a user
     /// turn beyond `turns_before`.
     fn paste(&self, target: &Target, line: &str, turns_before: u64) -> Result<Paste> {
-        let mut args = self.target_args(target);
+        let mut args = self.target_args(target)?;
         args.extend([
             "--turns-before".to_owned(),
             turns_before.to_string(),
@@ -566,7 +566,7 @@ impl Wake {
         }
     }
 
-    fn target_args(&self, target: &Target) -> Vec<String> {
+    fn target_args(&self, target: &Target) -> Result<Vec<String>> {
         let mut args = vec![
             "deliver".to_owned(),
             "--harness".to_owned(),
@@ -580,12 +580,12 @@ impl Wake {
             "--cwd".to_owned(),
             target.cwd.display().to_string(),
             "--bound-secs".to_owned(),
-            self.settings.verify.as_secs().to_string(),
+            self.settings.verify.get()?.as_secs().to_string(),
         ];
         if let Some(start) = target.server_start {
             args.extend(["--server-start".to_owned(), start.to_string()]);
         }
-        if let Some(program) = self.settings.harness_binaries.get(&target.harness) {
+        if let Some(program) = self.settings.harness_binaries.get()?.get(&target.harness) {
             args.extend(["--program".to_owned(), program.display().to_string()]);
         }
         if let Some((pid, start)) = &target.identity {
@@ -602,7 +602,7 @@ impl Wake {
         if let Some(id) = &target.session_id {
             args.extend(["--session-id".to_owned(), id.clone()]);
         }
-        args
+        Ok(args)
     }
 
     /// One run of agent-runtime's `deliver`, its reply read whole: a result,
@@ -620,7 +620,7 @@ impl Wake {
             &self.settings.agent_runtime,
             "deliver",
             &args,
-            self.settings.verify + ANSWER_MARGIN,
+            self.settings.verify.get()? + ANSWER_MARGIN,
         )?;
         let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
             Error::Runtime(agent_runtime::Error::External {

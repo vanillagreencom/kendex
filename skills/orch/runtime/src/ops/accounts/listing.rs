@@ -75,7 +75,7 @@ pub fn list(
     named: Option<(&str, &str)>,
     now: u64,
 ) -> Result<Listing, String> {
-    let accounts = &settings.accounts;
+    let accounts = &settings.accounts.get().map_err(|e| e.to_string())?;
     let usage_dir = settings
         .claim_store
         .parent()
@@ -202,7 +202,7 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
     }
     for entry in &accounts.lane_dirs {
         let relative = entry.strip_prefix("~/").unwrap_or(entry);
-        let dir = match (entry.starts_with('/'), &accounts.home) {
+        let dir = match (entry.starts_with('/'), &ctx.settings.home) {
             (true, _) => entry.clone(),
             (false, Some(home)) => Path::new(home).join(relative).display().to_string(),
             (false, None) => {
@@ -232,7 +232,7 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
             .codex_home
             .as_deref()
             .map(|h| ("codex", usage::home_account(h))),
-        accounts
+        ctx.settings
             .copilot_home
             .as_deref()
             .map(|h| ("copilot", h.to_owned())),
@@ -1695,9 +1695,10 @@ mod tests {
     #[test]
     fn a_providers_row_is_read_field_by_field_and_dropped_on_one_nobody_can_parse() {
         let (dir, settings) = world();
+        let accounts = settings.accounts.get().unwrap();
         let mut ctx = Ctx {
             settings: &settings,
-            accounts: &settings.accounts,
+            accounts: &accounts,
             usage_dir: dir.path().join("usage"),
             serve_max_age: 300,
             now: 1_800_000_000,
@@ -1741,9 +1742,10 @@ mod tests {
     #[test]
     fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {
         let (_dir, settings) = world();
+        let accounts = settings.accounts.get().unwrap();
         let ctx = Ctx {
             settings: &settings,
-            accounts: &settings.accounts,
+            accounts: &accounts,
             usage_dir: PathBuf::new(),
             serve_max_age: 300,
             now: 1_800_000_000,

@@ -359,7 +359,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // The occupancy reader the owed verdicts' judge charges live lanes
     // through, as the overseer duty's walk and the `accounts pick` verb
     // build it.
-    let host = Host::kernel(ctx.settings.lane_cap);
+    let host = Host::kernel();
     let (owed, quota, open, github) = {
         let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
         (
@@ -415,8 +415,16 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         }
     }
     let mut listings: BTreeMap<String, Option<Roster>> = BTreeMap::new();
-    let roster_host = ctx.settings.accounts.host.as_deref().unwrap_or(LOCAL);
-    listings.insert(roster_host.to_owned(), roster.ok());
+    // A refused account setting left the roster unread above, with its
+    // cause; the fleet's own host then names that unread entry.
+    let roster_host = ctx
+        .settings
+        .accounts
+        .get()
+        .ok()
+        .and_then(|accounts| accounts.host)
+        .unwrap_or_else(|| LOCAL.to_owned());
+    listings.insert(roster_host, roster.ok());
     for line in ctx
         .verifying
         .lock()

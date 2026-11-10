@@ -280,7 +280,7 @@ impl LaneDriver<'_> {
             Ok(())
         };
         let route = WallRoute {
-            relaunch: self.settings.watch.wall_relaunch,
+            relaunch: self.settings.watch.get().unwrap().wall_relaunch,
             pick: &pick,
             start: &start,
         };
@@ -310,7 +310,7 @@ impl LaneDriver<'_> {
             fleet,
             readers: &self.readers,
             baseline: &self.baseline,
-            settings: &self.settings.watch,
+            settings: &self.settings.watch.get().unwrap(),
             now: self.now,
             session: Some(&self.session),
             // The session's first window is the runner's own pane.
@@ -1473,7 +1473,7 @@ impl OverseerDriver<'_> {
                 readers: &self.readers,
                 judges: &self.judges,
                 baseline: &self.baseline,
-                settings: &self.settings.watch,
+                settings: &self.settings.watch.get().unwrap(),
                 succession: self.succession,
                 preference: self
                     .settings
@@ -3166,7 +3166,9 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
                "credits": {"remaining_dollars": 0, "locked_reason": "spend-limit"}}),
     ]
     .iter()
-    .map(|raw| orch_runtime::ops::accounts::AccountRow::parse(raw, &driver.settings.accounts))
+    .map(|raw| {
+        orch_runtime::ops::accounts::AccountRow::parse(raw, &driver.settings.accounts.get().unwrap())
+    })
     .collect::<Option<Vec<_>>>()
     .map(|rows| Roster {
         rows,
@@ -4417,7 +4419,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         let outcomes = overseer::relaunch_outcomes(
             lanes::watch_state_dir(&driver.settings.claim_store),
             &fleet.read(),
-            driver.settings.watch.prepare,
+            driver.settings.watch.get().unwrap().prepare,
             driver.now,
             &driver.baseline,
         );
@@ -4507,7 +4509,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
             let produced = overseer::relaunch_outcomes(
                 lanes::watch_state_dir(&driver.settings.claim_store),
                 &fleet.read(),
-                driver.settings.watch.prepare,
+                driver.settings.watch.get().unwrap().prepare,
                 driver.now,
                 &driver.baseline,
             );

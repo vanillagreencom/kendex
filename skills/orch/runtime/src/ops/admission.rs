@@ -616,7 +616,7 @@ fn bind(
             }
         }
         (Some("linear"), _) if binding == Binding::Own => {
-            let Some(team) = settings.and_then(|s| s.watch.linear_team.as_deref()) else {
+            let Some(team) = settings.and_then(|s| s.linear_team.as_deref()) else {
                 return Ok(());
             };
             let key = (reads.team_key)(&reads.clis, team)
@@ -1503,7 +1503,7 @@ mod tests {
     impl Planted {
         fn host<'a>(&'a self, still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>) -> Host<'a> {
             Host {
-                lane_cap: 4,
+                lane_cap: Some(crate::settings::Judged::valid(4)),
                 cloud_lane_cap: None,
                 still_runs,
                 accounts: None,

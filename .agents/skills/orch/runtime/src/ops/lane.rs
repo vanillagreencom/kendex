@@ -762,6 +762,7 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
     let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
         return Ok(());
     };
+    settings.accounts.get()?;
     let model = r.model.clone().unwrap_or_default();
     let refused = |cause: &str| Error::AccountUnjudged {
         item: r.item.clone(),
@@ -934,17 +935,21 @@ pub(super) fn launch_lane(
     choice_named(r)?;
     let cloud = kind == CLOUD_KIND;
     // The cap the request's kind is bounded by: a cloud session the cloud
-    // cap, every other lane the lane cap.
-    let (cap, setting) = if cloud {
-        let cap = host.cloud_lane_cap.ok_or_else(|| Error::CapUnreadable {
-            read: "cloud-cap",
-            path: path.to_path_buf(),
-            cause: "no cloud cap on this host".to_owned(),
-        })?;
-        (cap, CLOUD_LANE_CAP_KEY)
+    // cap, every other lane the lane cap, judged here before the transition
+    // writes.
+    let (cap, setting, read) = if cloud {
+        (&host.cloud_lane_cap, CLOUD_LANE_CAP_KEY, "cloud-cap")
     } else {
-        (host.lane_cap, LANE_CAP_KEY)
+        (&host.lane_cap, LANE_CAP_KEY, "lane-cap")
     };
+    let cap = cap
+        .as_ref()
+        .ok_or_else(|| Error::CapUnreadable {
+            read,
+            path: path.to_path_buf(),
+            cause: "no cap on this host".to_owned(),
+        })?
+        .get()?;
     let lanes = lanes(path, doc)?;
     let intents = intents(path, doc)?;
     let position = lanes.iter().position(|l| l.item == r.item);
@@ -964,7 +969,7 @@ pub(super) fn launch_lane(
     let admission = if cloud {
         occupancy::cloud_occupancy(&lanes, &intents, replacing, env.now_secs, host, cap)
     } else {
-        occupancy::occupancy(&lanes, &intents, replacing, env.now_secs, host)
+        occupancy::occupancy(&lanes, &intents, replacing, env.now_secs, host, cap)
     };
     if let Some(intent) = same_open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
         let index = position.ok_or_else(|| Error::LaneMissing {
@@ -1076,7 +1081,7 @@ pub(super) fn launch_lane(
     // What the launch states of the lane beyond its selection: the Copilot
     // grant its line carries and the tier its brief names, as the record
     // reads them.
-    let allow_all = r.allow_all(host.accounts.map(|s| s.permission));
+    let allow_all = r.allow_all(host.accounts.map(|s| s.permission.get()).transpose()?);
     let brief = match &r.brief_file {
         Some(file) => fs::read_to_string(file).map_err(|e| {
             Error::from(agent_runtime::Error::refused(
@@ -1967,6 +1972,7 @@ mod tests {
     use crate::error::Error;
     use crate::ops::occupancy::{ChargeReason, ChargeSource};
     use crate::ops::{Effect, Report, Request, apply_on};
+    use crate::settings::Judged;
     use crate::state::{self, EffectOp, LaneStatus, Phase, fixtures};
 
     #[test]
@@ -2306,8 +2312,8 @@ mod tests {
     /// The production host: the kernel's own reader.
     fn kernel(cap: u32) -> Host<'static> {
         Host {
-            lane_cap: cap,
-            cloud_lane_cap: Some(cap),
+            lane_cap: Some(Judged::valid(cap)),
+            cloud_lane_cap: Some(Judged::valid(cap)),
             still_runs: &process::still_runs,
             admission: Some(no_reads()),
             accounts: None,
@@ -2528,7 +2534,7 @@ mod tests {
             cause: "stat-unreadable",
         };
         let host = Host {
-            lane_cap: 1,
+            lane_cap: Some(Judged::valid(1)),
             cloud_lane_cap: None,
             admission: Some(no_reads()),
             still_runs: &unread,

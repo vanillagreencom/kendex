@@ -681,11 +681,11 @@ struct Target {
 }
 
 impl Target {
-    fn new(settings: &Settings, harness: Harness) -> Target {
-        Target {
+    fn new(settings: &Settings, harness: Harness) -> Result<Target> {
+        Ok(Target {
             harness,
-            program: settings.harness_binaries.get(&harness).cloned(),
-        }
+            program: settings.harness_binaries.get()?.remove(&harness),
+        })
     }
 
     fn owns(&self, name: &str) -> bool {
@@ -702,7 +702,9 @@ impl Target {
 /// `bypass` the words are preserved as given and the builder adds no
 /// duplicate permission word.
 fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, LaunchCommand)> {
-    let permission = spec.permission.unwrap_or(settings.permission);
+    let permission = spec
+        .permission
+        .map_or_else(|| settings.permission.get(), Ok)?;
     if permission == Permission::Native
         && let Some(word) = spec.harness.bypass_word_in(spec.extra_args)
     {
@@ -736,7 +738,7 @@ fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, Launc
         env: Default::default(),
         env_remove: Vec::new(),
         extra_args: spec.extra_args.to_vec(),
-        program: settings.harness_binaries.get(&spec.harness).cloned(),
+        program: settings.harness_binaries.get()?.remove(&spec.harness),
     };
     let command = agent_runtime::launch::build(&intent)?;
     Ok((intent, command))
@@ -1089,13 +1091,14 @@ fn overseer_identity(overseer: &Overseer) -> Option<Identity> {
 
 /// The predecessor's harness and configured program, the processes its
 /// exact stop may name below the recorded root.
-fn overseer_target_of(settings: &Settings, overseer: &Overseer) -> Option<Target> {
+fn overseer_target_of(settings: &Settings, overseer: &Overseer) -> Result<Option<Target>> {
     overseer
         .extra
         .get("harness")
         .and_then(Value::as_str)
         .and_then(Harness::parse)
         .map(|h| Target::new(settings, h))
+        .transpose()
 }
 
 /// A pid a record carries as the number the runtime writes or the string a

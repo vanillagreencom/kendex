@@ -1254,7 +1254,7 @@ fn refresh(
     produced: &mut Produced,
     inventory: &mut Inventory,
 ) -> Result<()> {
-    let mark_repeat = inputs.settings.watch.mark_repeat;
+    let mark_repeat = inputs.settings.watch.get()?.mark_repeat;
     for repo in repos {
         let path = format!(
             "repos/{repo}/actions/workflows/{REFRESH_WORKFLOW}/runs?status=completed&per_page=2"
@@ -1494,7 +1494,8 @@ fn main_push(
     inventory: &mut Inventory,
 ) -> Result<BTreeSet<String>> {
     let mut budget_absent = BTreeSet::new();
-    let declared = &inputs.settings.watch.main_workflows;
+    let watch = inputs.settings.watch.get()?;
+    let declared = &watch.main_workflows;
     let absent_line = |repo: &str, workflow: &str, cause: &str, produced: &mut Produced| {
         let key = format!("{repo}:{workflow}");
         if baseline.get(MAIN_ABSENT_ROW, &key) != Some(cause) {

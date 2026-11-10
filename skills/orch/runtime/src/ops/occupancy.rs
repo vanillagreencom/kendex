@@ -41,7 +41,7 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 
 use super::admission::{AdmissionReads, Clis};
-use crate::settings::Settings;
+use crate::settings::{Judged, Settings};
 use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
@@ -58,11 +58,11 @@ pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 /// primitive function pointer. No read takes a pid alone: a pid alone is
 /// no identity.
 pub struct Host<'a> {
-    pub lane_cap: u32,
-    /// The cloud sessions the overseer holds at once, bounding a
-    /// `claude-cloud` launch alone. `None` on a host built for an entry
-    /// that launches no lane, which judges no cloud cap.
-    pub cloud_lane_cap: Option<u32>,
+    /// The lane cap and the cloud cap, the second bounding a `claude-cloud`
+    /// launch alone, each judged by the launch that reads it. `None` on a
+    /// host built for an entry that launches no lane, which judges no cap.
+    pub lane_cap: Option<Judged<u32>>,
+    pub cloud_lane_cap: Option<Judged<u32>>,
     /// Whether a recorded identity still runs under its recorded start.
     pub(super) still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>,
     /// The admission's reads: the item read
@@ -84,9 +84,9 @@ impl Host<'static> {
         clippy::disallowed_methods,
         reason = "the one site that hands the kernel's identity reader to a fleet transition, which judges live processes beside the record and never acts on one"
     )]
-    pub fn kernel(lane_cap: u32) -> Host<'static> {
+    pub fn kernel() -> Host<'static> {
         Host {
-            lane_cap,
+            lane_cap: None,
             cloud_lane_cap: None,
             still_runs: &process::still_runs,
             admission: None,
@@ -96,11 +96,11 @@ impl Host<'static> {
 }
 
 impl<'a> Host<'a> {
-    /// The host with the cloud cap a `claude-cloud` launch is judged
-    /// against.
-    pub fn cloud_cap(self, cap: u32) -> Host<'a> {
+    /// The host with the caps a launch is judged against.
+    pub fn caps(self, settings: &Settings) -> Host<'a> {
         Host {
-            cloud_lane_cap: Some(cap),
+            lane_cap: Some(settings.lane_cap.clone()),
+            cloud_lane_cap: Some(settings.cloud_lane_cap.clone()),
             ..self
         }
     }
@@ -376,7 +376,7 @@ pub(super) fn cloud_charge(lane: &Lane, launch_open: bool, now_secs: u64) -> Opt
     }
 }
 
-/// What charges the lane cap now: every lane but the cloud sessions,
+/// What charges the lane cap `cap` now: every lane but the cloud sessions,
 /// judged by [`lane_charge`] from identities read once each, except the
 /// lane a relaunch replaces (`replacing`: its item and the identities the
 /// caller read), which charges only what the relaunch does not replace.
@@ -386,16 +386,19 @@ pub(super) fn occupancy(
     replacing: Option<(&str, &Identities)>,
     now_secs: u64,
     host: &Host,
+    cap: u32,
 ) -> Occupancy {
-    counted(
-        lanes,
-        intents,
-        replacing,
-        now_secs,
-        host,
-        host.lane_cap,
-        false,
-    )
+    counted(lanes, intents, replacing, now_secs, host, cap, false)
+}
+
+/// The lanes charging the lane cap now, the cap aside.
+pub(super) fn lane_charges(
+    lanes: &[Lane],
+    intents: &[Intent],
+    now_secs: u64,
+    host: &Host,
+) -> Vec<Charge> {
+    counted(lanes, intents, None, now_secs, host, 0, false).charges
 }
 
 /// What charges the cloud cap `cap` now: every cloud session's record
@@ -521,7 +524,7 @@ mod tests {
         ]);
         let reader = planted(&answers);
         let host = Host {
-            lane_cap: 4,
+            lane_cap: None,
             cloud_lane_cap: None,
             still_runs: &reader,
             admission: Some(no_reads()),
@@ -669,7 +672,7 @@ mod tests {
         let answers = HashMap::from([live(100, "ticks:1")]);
         let reader = planted(&answers);
         let host = Host {
-            lane_cap: 4,
+            lane_cap: None,
             cloud_lane_cap: None,
             still_runs: &reader,
             admission: Some(no_reads()),
@@ -719,8 +722,8 @@ mod tests {
         let answers = HashMap::from([live(100, "ticks:1")]);
         let reader = planted(&answers);
         let host = Host {
-            lane_cap: 1,
-            cloud_lane_cap: Some(1),
+            lane_cap: None,
+            cloud_lane_cap: None,
             still_runs: &reader,
             admission: Some(no_reads()),
             accounts: None,
@@ -736,7 +739,7 @@ mod tests {
             cloud("S", LaneStatus::Stopped),
             cloud("P", LaneStatus::Preparing),
         ];
-        let local = occupancy(&lanes, &[], None, 0, &host);
+        let local = occupancy(&lanes, &[], None, 0, &host, 1);
         assert_eq!((local.cap, local.occupancy), (1, 1));
         assert_eq!(local.charges[0].source, lane_source(&lanes[0]));
         let cloud_count = cloud_occupancy(&lanes, &[], None, 0, &host, 1);

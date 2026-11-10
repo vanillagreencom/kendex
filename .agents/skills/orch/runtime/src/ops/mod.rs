@@ -61,7 +61,8 @@ pub(crate) use controller::apply_adoption;
 pub use controller::{
     AdoptController, AdoptionRead, ClaimIntent, ControllerAdopted, ControllerStarted, DeathCause,
     IntentClaimed, OverseerExpected, Progress, ProgressRecorded, RecordProgress, RequestTransfer,
-    StartController, StopController, StopRequested, TransferRequested, admit, overseer_target,
+    StartController, StopController, StopRequested, TransferRequested, admit,
+    judge_effect_settings, overseer_target,
 };
 pub use item::{
     AcceptResult, Attempt, BeginRound, EndSource, HandoffRecorded, HandoffResumed, OpenRun,

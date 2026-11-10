@@ -70,7 +70,7 @@ use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
-use crate::settings::{self, AccountSettings, Settings, WallRelaunch, WatchSettings};
+use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, Document, FleetState, Lane, LaneStatus, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
@@ -1342,13 +1342,13 @@ fn keyed(key: String, note: Option<&str>) -> String {
 /// The account a Copilot record naming none runs on, as the lane's own
 /// readers name it: the runtime's `COPILOT_HOME`, else `.copilot` under its
 /// home.
-pub fn copilot_home(accounts: &AccountSettings) -> Option<PathBuf> {
-    accounts
+pub fn copilot_home(settings: &Settings) -> Option<PathBuf> {
+    settings
         .copilot_home
         .as_deref()
         .map(PathBuf::from)
         .or_else(|| {
-            accounts
+            settings
                 .home
                 .as_deref()
                 .map(|home| Path::new(home).join(".copilot"))

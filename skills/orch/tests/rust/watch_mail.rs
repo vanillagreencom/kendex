@@ -231,7 +231,7 @@ impl World {
     fn duty(&self) -> MailDuty {
         MailDuty::new(
             Mailbox::new(self.settings.lane_mail_cli.clone()),
-            Config::of(&self.settings, &self.paths),
+            Config::of(&self.settings, &self.paths).unwrap(),
         )
     }
 
@@ -252,7 +252,8 @@ impl World {
                 script: "/w/orch-runtime".into(),
                 cwd: "/w".into(),
             },
-        );
+        )
+        .unwrap();
         mail::register_duty(&mut runner, self.duty());
         runner
     }

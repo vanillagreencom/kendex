@@ -432,16 +432,14 @@ pub(in crate::effects) fn pending_ask(
 }
 
 /// The close verb's transitions, its one close and its park record, applied
-/// as the command applies a request: with the kernel's readers under the
-/// settings' lane cap.
+/// as the command applies a request: with the kernel's readers.
 pub(in crate::effects) fn apply_request(
     path: &Path,
     request: &ops::Request,
-    settings: &Settings,
     env: &ops::Env,
     locking: Locking,
 ) -> Result<Applied> {
-    let host = ops::Host::kernel(settings.lane_cap);
+    let host = ops::Host::kernel();
     ops::apply_on(path, request, env, locking, &host)
 }
 
@@ -453,7 +451,7 @@ pub(in crate::effects) fn pick_account(
     request: &ops::accounts::PickRequest,
     now: u64,
 ) -> ops::accounts::PickAnswer {
-    let host = ops::Host::kernel(settings.lane_cap);
+    let host = ops::Host::kernel();
     ops::accounts::pick_fleet(settings, path, &host, request, now)
 }
 
@@ -1241,7 +1239,7 @@ impl Operation<'_> {
         self.check_process_token(&target)?;
         let id = target.key().clone();
         self.signal()?;
-        let answer = process::stop_tree(&id, owns, self.run.settings.close_grace)?;
+        let answer = process::stop_tree(&id, owns, self.run.settings.close_grace.get()?)?;
         match &answer {
             Stop::IdentityStale => {
                 self.note_stale(&id)?;
@@ -1389,7 +1387,7 @@ impl Operation<'_> {
         let pane = pane.key();
         let _ = tmux::send_key(pane, "C-c");
         let _ = tmux::send_line(pane, "/exit");
-        let deadline = self.now() + self.run.settings.close_grace;
+        let deadline = self.now() + self.run.settings.close_grace.get()?;
         while self.now() < deadline {
             if tmux::pane_fields(&pane.server, &pane.id) == Reading::Gone {
                 break;
@@ -1615,7 +1613,7 @@ impl Operation<'_> {
             pid,
             start: caller.start,
         };
-        let deadline = self.now() + self.run.settings.verify;
+        let deadline = self.now() + self.run.settings.verify.get()?;
         while self.now() < deadline {
             match process::still_runs(&identity) {
                 Reading::Live(_) => self.sleep(POLL),
@@ -1662,18 +1660,18 @@ impl Operation<'_> {
         home: &Path,
         cwd: &Path,
         opened: &OpenedPane,
-    ) -> Binding {
+    ) -> Result<Binding> {
         let since = std::time::UNIX_EPOCH + Duration::from_millis(opened.since_ms);
-        let deadline = self.now() + self.run.settings.verify;
+        let deadline = self.now() + self.run.settings.verify.get()?;
         let mut found = loop {
             match session::new_leads(harness, home, cwd, since, &opened.baseline) {
                 Reading::Live(found) if !found.is_empty() => break found,
                 Reading::Live(_) | Reading::Gone if self.now() < deadline => self.sleep(POLL),
                 Reading::Live(_) | Reading::Gone => break Vec::new(),
-                Reading::Unreadable { cause } => return Binding::Unreadable { cause },
+                Reading::Unreadable { cause } => return Ok(Binding::Unreadable { cause }),
             }
         };
-        match found.len() {
+        Ok(match found.len() {
             0 => Binding::Absent,
             1 => {
                 let lead = found.remove(0);
@@ -1683,7 +1681,7 @@ impl Operation<'_> {
                 })
             }
             _ => Binding::Ambiguous(found.into_iter().map(|s| s.id).collect()),
-        }
+        })
     }
 
     /// Type `text` and Enter into the standing pane: the held brief delivered
@@ -2220,7 +2218,7 @@ pub(in crate::effects) fn adopt_controller(
     };
     let server = tmux::server(&socket)?;
     let fields = pane_read(&server, &r.pane)?;
-    let target = super::super::Target::new(settings, harness);
+    let target = super::super::Target::new(settings, harness)?;
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => identity,
         ProcessReading::Unread { cause } => {
@@ -2462,7 +2460,7 @@ fn foreground_harness(
         Harness::Codex,
         Harness::Pi,
     ] {
-        let target = super::super::Target::new(settings, harness);
+        let target = super::super::Target::new(settings, harness)?;
         match observe::foreground(pane_pid, &|name| target.owns(name), None) {
             ProcessReading::Harness { identity } => return Ok((harness, identity)),
             ProcessReading::Unread { cause } => {

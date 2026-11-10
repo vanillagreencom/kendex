@@ -609,7 +609,7 @@ pub(super) fn pass(
     baseline: &Baseline,
     produced: &mut Produced,
 ) -> Result<BTreeMap<String, String>> {
-    if settings.reads.security_alerts == Audit::Off {
+    if settings.watch.get()?.security_alerts == Audit::Off {
         return Ok(BTreeMap::new());
     }
     let mut unread = Unread::default();

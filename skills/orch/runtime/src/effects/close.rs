@@ -454,16 +454,18 @@ impl Close<'_> {
             .filter(|pid| *pid > 0)
             .and_then(|pid| u32::try_from(pid).ok())
         {
-            operation::stop_released_prepare(pid, self.settings.close_grace).map_err(|cause| {
-                refused(
-                    "prepare-stop-failed",
-                    &[
-                        ("item", self.item()),
-                        ("pid", &pid.to_string()),
-                        ("cause", &cause),
-                    ],
-                )
-            })?;
+            operation::stop_released_prepare(pid, self.settings.close_grace.get()?).map_err(
+                |cause| {
+                    refused(
+                        "prepare-stop-failed",
+                        &[
+                            ("item", self.item()),
+                            ("pid", &pid.to_string()),
+                            ("cause", &cause),
+                        ],
+                    )
+                },
+            )?;
         }
         let mut notes = Vec::new();
         let ground = if self.keep() {
@@ -823,9 +825,12 @@ impl Close<'_> {
             | LaneState::Working
             | LaneState::Idle { .. } => None,
         };
-        if let Some(answer) =
-            operation::poll_until(self.clock, self.settings.close_grace, EXIT_POLL, read)
-        {
+        if let Some(answer) = operation::poll_until(
+            self.clock,
+            self.settings.close_grace.get()?,
+            EXIT_POLL,
+            read,
+        ) {
             return answer;
         }
         let harness = self.who.harness.as_deref().unwrap_or("unknown");
@@ -973,8 +978,7 @@ impl Close<'_> {
             identity: Some(self.r.identity.clone()),
             cycle,
         });
-        let applied =
-            operation::apply_request(self.path, &request, self.settings, self.env, self.locking)?;
+        let applied = operation::apply_request(self.path, &request, self.env, self.locking)?;
         let effected = super::run(
             self.path,
             &request,
@@ -1364,7 +1368,6 @@ impl Close<'_> {
         let applied = operation::apply_request(
             self.path,
             &Request::ParkLane(park.clone()),
-            self.settings,
             self.env,
             self.locking,
         )?;

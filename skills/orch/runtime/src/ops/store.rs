@@ -260,16 +260,17 @@ impl Cap {
 
     /// The resolved cap, held to the small ceiling where `tier` is `small`.
     /// The ceiling lowers a cap and never raises one.
-    pub fn limit(self, store: &StoreSettings, tier: Option<&str>) -> u64 {
+    pub fn limit(self, store: &StoreSettings, tier: Option<&str>) -> Result<u64> {
         let limit = match self {
-            Cap::ReviewMaxCycles => store.review_max_cycles,
-            Cap::ReviewMaxExternalRounds => store.review_max_external_rounds,
-            Cap::CiFixMaxCycles => store.ci_fix_max_cycles,
-        };
-        match (tier, self.small()) {
+            Cap::ReviewMaxCycles => &store.review_max_cycles,
+            Cap::ReviewMaxExternalRounds => &store.review_max_external_rounds,
+            Cap::CiFixMaxCycles => &store.ci_fix_max_cycles,
+        }
+        .get()?;
+        Ok(match (tier, self.small()) {
             (Some("small"), Some(ceiling)) if limit > ceiling => ceiling,
             _ => limit,
-        }
+        })
     }
 }
 
@@ -290,14 +291,14 @@ pub fn cap(path: &Path, store: &StoreSettings, cap: Cap, source: &CapSource<'_>)
     let setting = cap.setting();
     let (count, limit, fix_round_pending) = match source {
         CapSource::Bare => {
-            return Ok(json!({"setting": setting, "limit": cap.limit(store, None)}));
+            return Ok(json!({"setting": setting, "limit": cap.limit(store, None)?}));
         }
-        CapSource::Count(count) => (*count, cap.limit(store, None), false),
+        CapSource::Count(count) => (*count, cap.limit(store, None)?, false),
         CapSource::Item(doc) => {
             let Some(field) = cap.field() else {
                 return Err(refused("cap-count-required", &[("setting", setting)]));
             };
-            let limit = cap.limit(store, tier(doc));
+            let limit = cap.limit(store, tier(doc))?;
             let fix_round_set = doc
                 .get("review_fix_round")
                 .is_some_and(|v| !v.is_null() && *v != Value::Bool(false));
@@ -693,7 +694,7 @@ fn rereview_entry(
     panel: Value,
 ) -> Result<Value> {
     let entered = count_at(path, doc, "/rereview_cycles")?;
-    let limit = Cap::ReviewMaxCycles.limit(store, tier(doc));
+    let limit = Cap::ReviewMaxCycles.limit(store, tier(doc))?;
     if entered >= limit {
         return Err(refused(
             "cycle-cap",
@@ -861,7 +862,7 @@ fn head_budget_take(
     kind: BudgetKind,
     head: &str,
 ) -> Result<Value> {
-    let limit = kind.cap().limit(store, tier(doc));
+    let limit = kind.cap().limit(store, tier(doc))?;
     let saved = doc
         .get("post_pr_budgets")
         .and_then(|b| b.get(kind.field()))
@@ -1010,13 +1011,11 @@ fn log_append(
         Some(Value::String(text)) => text.len(),
         Some(other) => other.to_string().len(),
     } as u64;
-    if bytes > store.fleet_log_row_bytes {
+    let cap = store.fleet_log_row_bytes.get()?;
+    if bytes > cap {
         return Err(refused(
             "fleet-log-row-bytes",
-            &[
-                ("bytes", &bytes.to_string()),
-                ("cap", &store.fleet_log_row_bytes.to_string()),
-            ],
+            &[("bytes", &bytes.to_string()), ("cap", &cap.to_string())],
         ));
     }
     let row = Value::Object(row);
@@ -1125,7 +1124,11 @@ pub enum LogReader {
     Audit,
 }
 
-pub fn log_rows(doc: Option<&Document>, store: &StoreSettings, reader: LogReader) -> Vec<Value> {
+pub fn log_rows(
+    doc: Option<&Document>,
+    store: &StoreSettings,
+    reader: LogReader,
+) -> Result<Vec<Value>> {
     let rows: Vec<&Value> = doc
         .and_then(|doc| doc.get("fleet_log"))
         .and_then(Value::as_array)
@@ -1134,13 +1137,13 @@ pub fn log_rows(doc: Option<&Document>, store: &StoreSettings, reader: LogReader
     fn kind(row: &Value) -> &str {
         row.get("kind").and_then(Value::as_str).unwrap_or("")
     }
-    match reader {
+    Ok(match reader {
         LogReader::Takeover => {
             let kept: Vec<&Value> = rows
                 .into_iter()
                 .filter(|row| !matches!(kind(row), "cycle" | "token"))
                 .collect();
-            let n = usize::try_from(store.takeover_rows).unwrap_or(usize::MAX);
+            let n = usize::try_from(store.takeover_rows.get()?).unwrap_or(usize::MAX);
             let skip = kept.len().saturating_sub(n);
             kept.into_iter().skip(skip).cloned().collect()
         }
@@ -1149,7 +1152,7 @@ pub fn log_rows(doc: Option<&Document>, store: &StoreSettings, reader: LogReader
             .filter(|row| matches!(kind(row), "proposal" | "ruling"))
             .cloned()
             .collect(),
-    }
+    })
 }
 
 /// The key a workflow mints for work whose branch and pull request name no

@@ -132,7 +132,7 @@ pub(super) fn pass(
     baseline: &Baseline,
     produced: &mut Produced,
 ) -> Result<()> {
-    if settings.reads.external_triage == Audit::Off {
+    if settings.watch.get()?.external_triage == Audit::Off {
         return Ok(());
     }
     let mut verdicts = BTreeMap::new();

@@ -17,6 +17,7 @@ use super::{
     RecordOutcome, Report, Request, RequestTransfer, apply_on,
 };
 use crate::error::Result;
+use crate::settings::Judged;
 use crate::state::{
     self, Document, FleetState, ItemState, Lane, LaunchIdentity, Locking, Owner, Pending, Record,
     TransferCause, fixtures,
@@ -62,8 +63,8 @@ fn gone(_: &Identity) -> Reading<Identity> {
 /// liveness hold their own children or plant their readings.
 pub(super) fn host() -> Host<'static> {
     Host {
-        lane_cap: 4,
-        cloud_lane_cap: Some(4),
+        lane_cap: Some(Judged::valid(4)),
+        cloud_lane_cap: Some(Judged::valid(4)),
         still_runs: &gone,
         admission: Some(no_reads()),
         accounts: None,

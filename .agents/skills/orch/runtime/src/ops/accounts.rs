@@ -542,14 +542,14 @@ fn roster_naming(
     named: Option<(&str, &str)>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
+    let accounts = settings.accounts.get().map_err(|e| e.to_string())?;
     let host = host
-        .or(settings.accounts.host.as_deref())
+        .or(accounts.host.as_deref())
         .filter(|h| *h != LOCAL && !h.is_empty());
     let host_word = host.unwrap_or(LOCAL);
     let listing = listing::list(settings, host, named, now)
         .map_err(|cause| format!("host={host_word} {cause}"))?;
-    Roster::from_listing(listing, &settings.accounts)
-        .ok_or_else(|| format!("host={host_word} parse=failed"))
+    Roster::from_listing(listing, &accounts).ok_or_else(|| format!("host={host_word} parse=failed"))
 }
 
 /// Whether a row is a provider's reading (`measured_through` `host`, or a
@@ -1813,8 +1813,8 @@ pub fn fleet_facts(
     {
         facts.seats.push(wall::canon(account));
     }
-    let occupancy = occupancy::occupancy(&fleet.lanes, &fleet.intents, None, now, host);
-    for charge in occupancy.charges {
+    let charges = occupancy::lane_charges(&fleet.lanes, &fleet.intents, now, host);
+    for charge in charges {
         let ChargeSource::Lane { item } = charge.source;
         if replaces == Some(item.as_str()) {
             continue;
@@ -1856,6 +1856,7 @@ pub fn fleet_facts(
 )]
 fn cloud_repo(
     settings: &Settings,
+    accounts: &AccountSettings,
     host: &str,
     rows: &[AccountRow],
 ) -> std::result::Result<Option<Vec<String>>, String> {
@@ -1889,7 +1890,7 @@ fn cloud_repo(
     let admitted = rows
         .iter()
         .filter(|row| {
-            settings.accounts.cloud_repos.iter().any(|entry| {
+            accounts.cloud_repos.iter().any(|entry| {
                 names(&row.alias, &row.config_dir, &entry.name)
                     && entry.repo.eq_ignore_ascii_case(&origin)
             })
@@ -1918,8 +1919,16 @@ pub fn pick_fleet(
     if let Some(answer) = unbilled(req) {
         return answer;
     }
+    let accounts = match settings.accounts.get() {
+        Ok(accounts) => accounts,
+        Err(e) => {
+            return PickAnswer::Unjudged {
+                cause: e.to_string(),
+            };
+        }
+    };
     let req = &PickRequest {
-        host: req.host.clone().or_else(|| settings.accounts.host.clone()),
+        host: req.host.clone().or_else(|| accounts.host.clone()),
         ..req.clone()
     };
     let lane_host = req.host.as_deref().filter(|h| *h != LOCAL && !h.is_empty());
@@ -1965,12 +1974,12 @@ pub fn pick_fleet(
         }
     };
     if let Some(lane_host) = lane_host {
-        facts.cloud_repo = match cloud_repo(settings, lane_host, &rows) {
+        facts.cloud_repo = match cloud_repo(settings, &accounts, lane_host, &rows) {
             Ok(admitted) => admitted,
             Err(cause) => return PickAnswer::Unjudged { cause },
         };
     }
-    pick(&rows, req, &facts, &settings.accounts, now)
+    pick(&rows, req, &facts, &accounts, now)
 }
 
 #[cfg(test)]
@@ -1994,11 +2003,8 @@ mod tests {
             exclude: Vec::new(),
             aliases: Vec::new(),
             host: None,
-            home: None,
             lane_dirs: Vec::new(),
             codex_home: None,
-            copilot_home: None,
-            pi_root: None,
             usage_ttl: 300,
             usage_max_age: 0,
             accounts_timeout: 30,

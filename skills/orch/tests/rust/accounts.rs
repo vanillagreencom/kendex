@@ -406,7 +406,9 @@ fn roster_of(rows: Vec<AccountRow>) -> Roster {
 fn rows(listing: &[Value], settings: &Settings) -> Vec<AccountRow> {
     listing
         .iter()
-        .map(|raw| AccountRow::parse(raw, &settings.accounts).expect("a listing row"))
+        .map(|raw| {
+            AccountRow::parse(raw, &settings.accounts.get().unwrap()).expect("a listing row")
+        })
         .collect()
 }
 
@@ -510,7 +512,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
         &rows,
         &req,
         &FleetFacts::default(),
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -522,7 +524,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
         &rows[..1],
         &req,
         &FleetFacts::default(),
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(picked(&alone), None);
@@ -682,7 +684,7 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
             &rows,
             &claude(model),
             &facts,
-            &world.settings.accounts,
+            &world.settings.accounts.get().unwrap(),
             now(),
         )
     };
@@ -1244,7 +1246,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &rows,
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -1271,7 +1273,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &rows,
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -1283,7 +1285,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &rows[1..2],
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -1324,14 +1326,26 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         &[api, unread.clone(), measured("plan", 10, 5)],
         &world.settings,
     );
-    let chosen = accounts::pick(&rows, &pi, &facts, &world.settings.accounts, now());
+    let chosen = accounts::pick(
+        &rows,
+        &pi,
+        &facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    );
     assert_eq!(
         picked(&chosen).as_deref(),
         Some("/home/me/.grant"),
         "{chosen:?}"
     );
     let rows = self::rows(&[unread], &world.settings);
-    let unmeasured = accounts::pick(&rows, &pi, &facts, &world.settings.accounts, now());
+    let unmeasured = accounts::pick(
+        &rows,
+        &pi,
+        &facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    );
     assert!(
         matches!(&unmeasured, PickAnswer::ProviderUnmeasured { harness, model } if harness == "pi" && model == "anthropic/claude-opus-5"),
         "{unmeasured:?}"
@@ -1360,7 +1374,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         &rows,
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(picked(&loose).as_deref(), Some("/home/me/.aclaude"));
@@ -1368,7 +1382,13 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
         min_headroom_pct: Some(20),
         ..claude(None)
     };
-    let tight = accounts::pick(&rows, &trigger, &facts, &world.settings.accounts, now());
+    let tight = accounts::pick(
+        &rows,
+        &trigger,
+        &facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    );
     assert!(
         matches!(&tight, PickAnswer::None { walled: 1, .. }),
         "the trigger's bound, 80 used, refuses the account at 85: {tight:?}"
@@ -1380,7 +1400,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
             ..trigger
         },
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert!(
@@ -1398,7 +1418,13 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
     ]);
     let rows = self::rows(&[split], &world.settings);
     let sonnet = claude(Some("claude-sonnet-5-5"));
-    let open = accounts::pick(&rows, &sonnet, &facts, &world.settings.accounts, now());
+    let open = accounts::pick(
+        &rows,
+        &sonnet,
+        &facts,
+        &world.settings.accounts.get().unwrap(),
+        now(),
+    );
     assert_eq!(
         picked(&open).as_deref(),
         Some("/home/me/.split"),
@@ -1411,7 +1437,7 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
             ..sonnet
         },
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert!(
@@ -1442,7 +1468,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &rows,
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -1471,7 +1497,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &rows,
         &named("/home/me/.late", claude(None)),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     let PickAnswer::Lane(late_judged) = &late_judged else {
@@ -1488,7 +1514,7 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
         &rows,
         &claude(None),
         &facts,
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -2162,7 +2188,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         &rows,
         &req,
         &FleetFacts::default(),
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -2174,7 +2200,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
         &rows[..1],
         &req,
         &FleetFacts::default(),
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(picked(&alone), None);
@@ -2189,7 +2215,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
             ..req.clone()
         },
         &FleetFacts::default(),
-        &world.settings.accounts,
+        &world.settings.accounts.get().unwrap(),
         now(),
     );
     assert_eq!(
@@ -2256,15 +2282,16 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),
         };
-        let refused = settings::load(
+        let loaded = settings::load(
             &roots,
             &[(OsString::from(key), OsString::from(value))],
             &SettingsFlags {
                 state_dir: Some(dir.path().to_path_buf()),
                 private_env: false,
             },
-        );
-        let Err(error) = refused else {
+        )
+        .unwrap_or_else(|e| panic!("{key}={value} refused the load: {e}"));
+        let Err(error) = loaded.accounts.get() else {
             panic!("{key}={value} admitted");
         };
         assert_eq!(error.key(), "setting-invalid", "{key}={value}: {error}");
@@ -2287,12 +2314,17 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
             " pi1 = work ,bare,=nameless,empty=, .pi2=second",
         ),
     ]);
-    assert_eq!(world.settings.accounts.max_pct, 80);
-    assert_eq!(world.settings.accounts.overseer_headroom_pct, 5);
+    assert_eq!(world.settings.accounts.get().unwrap().max_pct, 80);
+    assert_eq!(
+        world.settings.accounts.get().unwrap().overseer_headroom_pct,
+        5
+    );
     assert_eq!(
         world
             .settings
             .accounts
+            .get()
+            .unwrap()
             .retire
             .iter()
             .map(|r| (r.name.as_str(), r.date.as_str()))
@@ -2303,6 +2335,8 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
         world
             .settings
             .accounts
+            .get()
+            .unwrap()
             .cloud_repos
             .iter()
             .map(|r| (r.name.as_str(), r.repo.as_str()))
@@ -2313,19 +2347,26 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
         world
             .settings
             .accounts
+            .get()
+            .unwrap()
             .copilot_pool
             .iter()
             .map(|p| (p.dir.as_str(), p.used, p.granted))
             .collect::<Vec<_>>(),
         vec![("/h/.pi1", 100_000, 1_000_000), ("/h/.pi2", 10, 10)]
     );
-    assert_eq!(world.settings.accounts.exclude, vec!["sclaude", "pi2"]);
+    assert_eq!(
+        world.settings.accounts.get().unwrap().exclude,
+        vec!["sclaude", "pi2"]
+    );
     // The alias overlay as `lanes` reads it: an item without `=` or with
     // an empty side is passed over, never refused.
     assert_eq!(
         world
             .settings
             .accounts
+            .get()
+            .unwrap()
             .aliases
             .iter()
             .map(|a| (a.name.as_str(), a.alias.as_str()))

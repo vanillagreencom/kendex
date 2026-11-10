@@ -549,16 +549,17 @@ CONTEXT_PCT_ENV='' stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" "the package default keeps the independent absolute cap"
 # The runtime's one settings reader takes the mark: a whole percent of up to
 # three digits is read as its number, so 050 is 50; a value outside 1 to 100
-# refuses every verb the runtime answers, the handoff's own read among them,
-# so the turn end passes with the runtime's words naming the value rather
-# than holding the lane on a refusal no record could clear.
+# refuses the marks verbs, which read it, and no other, so the handoff's
+# record read answers and the turn end passes with the marks unjudged and
+# the runtime's words naming the value, rather than holding the lane on a
+# refusal no record could clear.
 stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=050"
 expect 2 "lane-mail-check: context=500000" "a context mark of 050 is read as 50"
 for VALUE in 101 0; do
   stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=$VALUE"
   assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "setting-invalid key=ORCH_HANDOFF_CONTEXT_PCT value=$VALUE" "$ERR_FILE")" \
-    "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime named=1" \
-    "a context mark of $VALUE, outside whole percents 1 to 100, refuses the runtime, and the turn end passes naming the value"
+    "RC=0 first=lane-mail-check: marks=unjudged named=1" \
+    "a context mark of $VALUE, outside whole percents 1 to 100, refuses the marks verb, and the turn end passes naming the value"
 done
 
 new_handoff_lane handoff_subagent KEN-52

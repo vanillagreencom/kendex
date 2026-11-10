@@ -40,8 +40,11 @@ pub fn brief(harness: Harness, handoff: &str) -> String {
 
 /// The posture a successor launches under: the one it carries, else the
 /// settings', so its record names the posture the next walk reads.
-pub fn posture(pending: &mut Pending, settings: &Settings) {
-    pending.permission.get_or_insert(settings.permission);
+pub fn posture(pending: &mut Pending, settings: &Settings) -> Result<()> {
+    if pending.permission.is_none() {
+        pending.permission = Some(settings.permission.get()?);
+    }
+    Ok(())
 }
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
@@ -85,11 +88,11 @@ fn walk_request(
     harness: Harness,
     mark: MarkKind,
     now: u64,
-) -> WalkRequest {
+) -> Result<WalkRequest> {
     let (state, reached) = match mark {
         MarkKind::Headroom | MarkKind::Rate => (None, None),
         MarkKind::Context | MarkKind::Memory => {
-            let (state, reached) = caller.account_departure(harness, settings, path, host, now);
+            let (state, reached) = caller.account_departure(harness, settings, path, host, now)?;
             (Some(state), reached)
         }
     };
@@ -105,7 +108,7 @@ fn walk_request(
         ),
         MarkKind::Memory => (Vec::new(), None),
     };
-    WalkRequest {
+    Ok(WalkRequest {
         scope: Scope::Overseer,
         preference,
         lane: None,
@@ -116,7 +119,7 @@ fn walk_request(
         source: Some(source(caller, harness)),
         caller: Some(entry),
         keep_unmeasured: mark == MarkKind::Context,
-    }
+    })
 }
 
 /// The `successor` verb: the overseer walk for the fleet at `path`, for its
@@ -183,10 +186,10 @@ pub fn successor(
                 .and_then(|(caller, _, _)| caller.handoff.clone())
         })
         .unwrap_or_else(|| HANDOFF.to_owned());
-    let host = crate::ops::Host::kernel(settings.lane_cap);
+    let host = crate::ops::Host::kernel();
     let request = match (recorded.as_ref(), mark) {
         (Some((caller, harness, _)), Some(mark)) => {
-            walk_request(settings, path, &host, caller, *harness, mark, now)
+            walk_request(settings, path, &host, caller, *harness, mark, now)?
         }
         (recorded, _) => WalkRequest {
             scope: Scope::Overseer,
@@ -207,12 +210,12 @@ pub fn successor(
             let mut pending = match &recorded {
                 None => {
                     let mut pending = Caller::default().successor_of(chosen);
-                    pending.permission = Some(settings.permission);
+                    pending.permission = Some(settings.permission.get()?);
                     pending
                 }
                 Some((caller, _, _)) => {
                     let mut pending = caller.successor_of(chosen);
-                    posture(&mut pending, settings);
+                    posture(&mut pending, settings)?;
                     pending
                 }
             };
@@ -257,7 +260,7 @@ pub fn recovery(settings: &Settings, path: &Path, predecessor: &str) -> Result<V
         .own_successor()
         .ok_or_else(|| refused("harness-unnamed", &[("pane", predecessor)]))?;
     successor.handoff.get_or_insert_with(|| HANDOFF.to_owned());
-    posture(&mut successor, settings);
+    posture(&mut successor, settings)?;
     let mut expected = record.expected();
     expected.pane = json!(predecessor);
     let launch = snapshot.doc.get("overseer").cloned().unwrap_or(Value::Null);

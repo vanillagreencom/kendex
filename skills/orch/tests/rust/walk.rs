@@ -107,7 +107,7 @@ fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
     let home = world.path().join("home").display().to_string();
     let settings = world.settings();
     let fleet = world.path().join(FLEET_FILE_NAME);
-    let host = Host::kernel(settings.lane_cap);
+    let host = Host::kernel();
     let mut drifted = Vec::new();
     for (harness, trigger, excluded) in [
         ("claude", 50, "claude"),

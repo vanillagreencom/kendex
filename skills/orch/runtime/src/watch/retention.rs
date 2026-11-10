@@ -717,15 +717,6 @@ pub struct Pruned {
     pub unlocked: Vec<String>,
 }
 
-/// The overseer's mailbox directory, as the mail duty names it.
-fn overseer_dir(settings: &Settings, paths: &Paths) -> PathBuf {
-    crate::watch::mail::Config::of(settings, paths)
-        .overseer_box()
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
-}
-
 /// What the fleet transition confirmed: the items whose rows still equal
 /// the plan's, and the items whose rows left.
 struct Confirmed {
@@ -773,9 +764,9 @@ fn judged_pass(
         &settings.roots.project,
         &Places {
             progress: settings.store.progress_report_dir.clone(),
-            overseer: overseer_dir(settings, paths),
+            overseer: crate::watch::mail::overseer_dir(&settings.roots.common),
         },
-        settings.retention_days,
+        settings.retention_days.get()?,
         now,
     )?;
     crate::archive::records_locked(&plan.records, locking, |unlocked| {
@@ -942,12 +933,18 @@ mod tests {
     }
 
     fn settings(root: &Path) -> Settings {
+        settings_with(root, &[])
+    }
+
+    fn settings_with(root: &Path, extra: &[(&str, &str)]) -> Settings {
+        let mut environment = vec![("FLEET_DIR".into(), root.join("fleet").into_os_string())];
+        environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
         crate::settings::load(
             &crate::settings::Roots {
                 project: root.to_path_buf(),
                 common: root.to_path_buf(),
             },
-            &[("FLEET_DIR".into(), root.join("fleet").into_os_string())],
+            &environment,
             &crate::settings::Flags {
                 state_dir: Some(root.to_path_buf()),
                 private_env: false,
@@ -1028,6 +1025,20 @@ mod tests {
         for path in [&kept, &late, &log] {
             assert!(path.exists(), "{} stands", path.display());
         }
+        // A retention of none fails the pass by key and value before it
+        // plans or removes anything.
+        plant(&record, "{}\n");
+        let failed = pass(
+            &fleet,
+            &Paths::of(&fleet).unwrap(),
+            &settings_with(&root, &[("ORCH_RECORD_RETENTION_DAYS", "0")]),
+            Locking::FLOCK,
+            NOW,
+        )
+        .map(|p| p.paths)
+        .unwrap_err();
+        assert_eq!(failed.key(), "setting-invalid", "{failed}");
+        assert!(record.exists(), "nothing removed");
     }
 
     #[test]

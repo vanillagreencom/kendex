@@ -307,7 +307,7 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, Unread> {
             "--max",
             "--format=safe",
         ];
-        if let Some(team) = ctx.settings.watch.linear_team.as_deref() {
+        if let Some(team) = ctx.settings.linear_team.as_deref() {
             args.extend(["--team", team]);
         }
         let text = command(root, tracker, &args, 120).map_err(|f| match f {
