@@ -42,7 +42,7 @@ test("registered log tool result rows", () => {
 				procIdent: { pid: 4242, startToken: "private-start", comm: "private-command" },
 			},
 		}));
-		const child = spawnSync(process.execPath, [join(import.meta.dir, "fixtures", "registered-log.ts")], {
+		const child = spawnSync(process.execPath, ["--no-install", join(import.meta.dir, "fixtures", "registered-log.ts")], {
 			cwd: root, env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent"), PI_BG_TASK_DIR: join(root, "logs") },
 			input: JSON.stringify(inputs), encoding: "utf8", timeout: SPAWN_FIXTURE_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: 2_000_000,
 		});
