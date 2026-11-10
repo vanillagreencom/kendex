@@ -1412,8 +1412,32 @@ fn break_s(f: &Fixture) {
     .unwrap();
 }
 
+/// The catalog stops offering S.
+#[allow(clippy::unwrap_used)]
+fn withdraw_s(f: &Fixture) {
+    fs::remove_dir_all(f.source.join("skills/S")).unwrap();
+}
+
 fn repair_s(f: &Fixture) {
     skill(&f.source, "S", "dependencies:\n  required: [mid]\n");
+}
+
+/// S drops mid and requires ghost, which no catalog offers, and loopa,
+/// which with loopb requires the other: the catalog reads, no reading
+/// roots mid, the walk cannot satisfy ghost, and the cycle is noted
+/// without being short of anything.
+fn require_ghost_beside_a_cycle(f: &Fixture) {
+    skill(
+        &f.source,
+        "S",
+        "dependencies:\n  required: [ghost, loopa]\n",
+    );
+    skill(&f.source, "loopa", "dependencies:\n  required: [loopb]\n");
+    skill(&f.source, "loopb", "dependencies:\n  required: [loopa]\n");
+}
+
+fn offer_ghost(f: &Fixture) {
+    skill(&f.source, "ghost", "");
 }
 
 /// held_mid's world with crew swapped for crew2, a second set carrying
@@ -1547,6 +1571,17 @@ struct HeldRow {
     kept: &'static [&'static str],
     /// The record gone once the removal decides and the catalog applies.
     gone: &'static str,
+    /// What the online retry-readable refusal names as a cause: each item
+    /// here is a word of one of its entries, and no item of `unnamed` is.
+    named: &'static [&'static str],
+    unnamed: &'static [&'static str],
+}
+
+/// Whether `entry` names `item` as a word of its own, not inside a path.
+fn mentions(entry: &str, item: &str) -> bool {
+    entry
+        .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
+        .any(|word| word == item)
 }
 
 fn held(name: &str, harness: HarnessId) -> ProvenanceStep {
@@ -1591,6 +1626,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Retry,
             kept: &["mid"],
             gone: "skill:mid:claude",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "held entry, its carrier's frontmatter unread",
@@ -1605,6 +1642,40 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Repair(repair_s),
             kept: &["mid"],
             gone: "skill:mid:claude",
+            named: &["S"],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "held entry, its carrier skill no longer offered",
+            world: || {
+                let f = held_mid("");
+                withdraw_s(&f);
+                f
+            },
+            removing: &["mid"],
+            kind: Some(ItemKind::Skill),
+            refusal: held_mid_refusal(false),
+            then: Then::Repair(repair_s),
+            kept: &["mid"],
+            gone: "skill:mid:claude",
+            named: &["S"],
+            unnamed: &[],
+        },
+        HeldRow {
+            name: "held entry no reading roots, the read short of a dependency beside a cycle",
+            world: || {
+                let f = held_mid("");
+                require_ghost_beside_a_cycle(&f);
+                f
+            },
+            removing: &["mid"],
+            kind: Some(ItemKind::Skill),
+            refusal: held_mid_refusal(false),
+            then: Then::Repair(offer_ghost),
+            kept: &[],
+            gone: "skill:mid:claude",
+            named: &["ghost"],
+            unnamed: &["loopa", "loopb"],
         },
         HeldRow {
             name: "held entry, its carrier set no longer offered",
@@ -1619,6 +1690,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Repair(offer_crew2),
             kept: &["mid"],
             gone: "skill:mid:claude",
+            named: &["crew2"],
+            unnamed: &[],
         },
         HeldRow {
             name: "held entry beside a row its unread source holds",
@@ -1629,6 +1702,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Retry,
             kept: &["mid"],
             gone: "skill:mid:claude",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "dependency of a held entry beside a row its unread source holds",
@@ -1639,6 +1714,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Retry,
             kept: &["leaf"],
             gone: "skill:leaf:claude",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "held record names a requirer the catalog dropped",
@@ -1649,6 +1726,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::DiscardEdits,
             kept: &[],
             gone: "skill:guards:codex",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "held record names a requirer whose carrier left",
@@ -1659,6 +1738,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::DiscardEdits,
             kept: &[],
             gone: "skill:guards:codex",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "left-over record",
@@ -1669,6 +1750,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Apply,
             kept: &[],
             gone: "skill:guards:codex",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "edited left-over record",
@@ -1679,6 +1762,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::DiscardEdits,
             kept: &[],
             gone: "skill:guards:codex",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "held orphan from before the field",
@@ -1695,6 +1780,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::DiscardEdits,
             kept: &[],
             gone: "skill:github:claude",
+            named: &[],
+            unnamed: &[],
         },
         HeldRow {
             name: "held orphan after the field",
@@ -1705,6 +1792,8 @@ fn held_rows() -> Vec<HeldRow> {
             then: Then::Retry,
             kept: &[],
             gone: "skill:github:claude",
+            named: &[],
+            unnamed: &[],
         },
     ]
 }
@@ -1752,6 +1841,20 @@ fn a_removal_resting_on_a_held_record_names_the_hold_and_the_step_that_ends_it()
                                 !unread.is_empty(),
                                 "{case}: the refusal names what its read could not"
                             );
+                            if !offline {
+                                for item in row.named {
+                                    assert!(
+                                        unread.iter().any(|entry| mentions(entry, item)),
+                                        "{case}: {item} unnamed in {unread:?}"
+                                    );
+                                }
+                                for item in row.unnamed {
+                                    assert!(
+                                        !unread.iter().any(|entry| mentions(entry, item)),
+                                        "{case}: {item} named in {unread:?}"
+                                    );
+                                }
+                            }
                             ProvenanceStep::RetryReadable { unread: Vec::new() }
                         }
                         step => step,

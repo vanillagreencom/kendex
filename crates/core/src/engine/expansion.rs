@@ -648,6 +648,7 @@ impl Expansion {
             let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
             chosen || kept.is_none() || kept != side(&one.source, &one.refused_owner, &one.refused)
         });
+        let mut short = Vec::new();
         for Disagreement {
             kind,
             name,
@@ -667,22 +668,27 @@ impl Expansion {
                     .unwrap_or_else(|| "the source's own revision".to_owned())
             };
             let disagreement = (*kind, name.clone(), resolved(kept), resolved(refused));
+            let message = format!(
+                "wanted at {} and also at {} — nothing was changed",
+                show(kept),
+                show(refused),
+            );
             state.rev_conflicts.insert((*kind, name.clone()));
+            short.push(format!("{} '{name}': {message}", kind.name()));
             state.rev_disagreements.push(disagreement);
             state.warnings.push(super::ItemWarning {
                 kind: *kind,
                 name: name.clone(),
                 harness: None,
-                message: format!(
-                    "wanted at {} and also at {} — nothing was changed",
-                    show(kept),
-                    show(refused),
-                ),
+                message,
                 remediation: Some(
                     "pin the items that bring it in to the same revision, or unpin them".into(),
                 ),
                 detail: None,
             });
+        }
+        for why in short {
+            state.read_short(why);
         }
     }
 }
@@ -926,9 +932,9 @@ impl Catalogs<'_> {
             ) {
                 Ok(resolution) => resolution,
                 Err(problem) => {
+                    let note = problem.to_string();
                     state.unreadable_catalogs.insert(source.into());
-                    state.mark_incomplete();
-                    state.notes.push(problem.to_string());
+                    state.note_incomplete(note);
                     return None;
                 }
             }
@@ -981,7 +987,7 @@ impl Catalogs<'_> {
         let (config, sealed) = match opened {
             Ok(opened) => opened,
             Err(problem) if problem.is_catalog_compatibility() => {
-                state.mark_incomplete();
+                state.mark_incomplete_for(format!("source '{source}': {problem}"));
                 state.catalog_refusal.get_or_insert(problem);
                 return None;
             }
@@ -991,16 +997,19 @@ impl Catalogs<'_> {
             // that keeps a broken catalog's files while saying nothing is
             // the silence this whole read exists to end.
             Err(problem) => {
-                state.unreadable_catalogs.insert(source.to_owned());
-                state.notes.push(format!(
+                let note = format!(
                     "the catalog '{source}' could not be read — {}",
                     super::origin::said(problem)
-                ));
+                );
+                state.unreadable_catalogs.insert(source.to_owned());
+                state.read_short(note.clone());
+                state.notes.push(note);
                 return None;
             }
         };
-        if config.hides_content() {
+        if let Some(hidden) = config.hidden_content() {
             state.unreadable_catalogs.insert(source.to_owned());
+            state.read_short(format!("source '{source}': {hidden}"));
         }
         Some(OpenCatalog {
             sealed,

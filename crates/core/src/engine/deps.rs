@@ -356,8 +356,13 @@ fn withheld_past_pin(
 /// What the walk came to, on the state the planner reads: every finding,
 /// and every withholding under the hook and tool it is asked about.
 fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
-    if wanted.values().any(|found| !found.findings.is_empty()) {
-        state.mark_incomplete();
+    for finding in wanted.values().flat_map(|found| &found.findings) {
+        state.mark_incomplete_for(format!(
+            "{} '{}': {}",
+            finding.kind.name(),
+            finding.name,
+            finding.message
+        ));
     }
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
@@ -1009,9 +1014,11 @@ fn wanted_by(
 
 /// What `parent` declares it needs, and the directory its catalog offers
 /// it at: an agent's assignment ([`agent_assignment`]), every other kind's
-/// own frontmatter. `None` where the catalog does not offer it or that
-/// frontmatter will not read or parse: what it requires went unread, so
-/// this pass derives less than the catalog carries, a short read
+/// own frontmatter. `None` where its catalog does not offer it or did not
+/// read. Where that frontmatter will not read or parse, `parent` goes on
+/// as declaring nothing, so a choice made of it is still weighed
+/// ([`chosen_extras`]). Either way what it requires went unread, so this
+/// pass derives less than the catalog carries, a short read
 /// ([`DesiredState::short_reads`]). An apply reports each where it meets
 /// it, the item pass the offer and the renderer the frontmatter.
 fn declared_by(
@@ -1036,9 +1043,14 @@ fn declared_by(
                     .ok()
                     .flatten(),
             };
-            declared
-                .map(|declared| (declared, dir))
-                .ok_or("its frontmatter will not read or parse")
+            let declared = declared.unwrap_or_else(|| {
+                state.read_short(format!(
+                    "{} '{parent}': its frontmatter will not read or parse",
+                    kind.name()
+                ));
+                Dependencies::default()
+            });
+            Ok((declared, dir))
         }
         Offer::Retired(_) | Offer::NotOffered => Err("its catalog does not offer it"),
         Offer::Silent => Err("its catalog did not read"),

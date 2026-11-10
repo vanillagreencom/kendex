@@ -877,9 +877,9 @@ pub enum ProvenanceStep {
     /// one an apply makes at the recorded revisions, so the refusal names
     /// what it could not account for.
     RetryReadable {
-        /// What the read noted where it fell short, each naming what it
-        /// could not read; empty where it noted nothing, as on a
-        /// dependency the walk reports only as a finding.
+        /// Each cause the read fell short on, as it met it: a catalog,
+        /// item or set it could not read, a dependency it could not
+        /// satisfy or a revision conflict.
         unread: Vec<String>,
     },
 }
@@ -910,7 +910,7 @@ impl ProvenanceStep {
             Self::RetryReadable { unread } => {
                 let mut remedy = "a local edit holds this installation's record, which cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
                 if !unread.is_empty() {
-                    remedy.push_str("; this read noted: ");
+                    remedy.push_str("; this read could not account for: ");
                     remedy.push_str(&unread.join("; "));
                 }
                 remedy

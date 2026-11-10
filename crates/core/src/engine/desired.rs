@@ -514,15 +514,16 @@ pub struct DesiredState {
     /// What one derived this pass is short through no choice of the
     /// person's, so no removal is decided on it.
     pub unreadable_catalogs: BTreeSet<String>,
-    /// What the expansion could not read that [`super::DeclarationStatus`]
-    /// leaves out, each naming it: a source that did not resolve, or not to
-    /// a catalog, and an item its catalog does not offer or whose
-    /// frontmatter will not read. Only the removal read takes these as
-    /// short (`ops::read_ancestry`): a removal decided on less than the
-    /// catalogs carry could return once they read, while a lookup of one
-    /// readable item stands on its own catalog. An apply reports each
-    /// where it meets it, the source pass the catalog and the renderer the
-    /// frontmatter.
+    /// Why the expansion read less than the catalogs carry, each cause
+    /// named where it is met. Some also make [`super::DeclarationStatus`]
+    /// incomplete: a walk finding, a set or catalog that would not read,
+    /// a revision conflict. The rest it leaves out: a source that did not
+    /// resolve, or not to a catalog, and an item its catalog does not
+    /// offer or whose frontmatter will not read, since a lookup of one
+    /// readable item stands on its own catalog. Only the removal read
+    /// takes all of them as short and names them (`ops::read_ancestry`):
+    /// a removal decided on less than the catalogs carry could return once
+    /// they read. An apply reports each where it meets it.
     pub(super) short_reads: BTreeSet<String>,
     /// Compatibility stops the whole plan; ordinary unreadable sources do not.
     pub(super) catalog_refusal: Option<crate::error::CoreError>,
@@ -717,6 +718,20 @@ impl DesiredState {
     /// Records one read [`DesiredState::short_reads`] holds.
     pub(super) fn read_short(&mut self, what: String) {
         self.short_reads.insert(crate::names::shown(&what));
+    }
+
+    /// [`DesiredState::mark_incomplete`] for the expansion, naming why for
+    /// the removal read.
+    pub(super) fn mark_incomplete_for(&mut self, why: String) {
+        self.mark_incomplete();
+        self.read_short(why);
+    }
+
+    /// [`DesiredState::mark_incomplete_for`] with the cause also a note,
+    /// which an apply reports.
+    pub(super) fn note_incomplete(&mut self, note: String) {
+        self.mark_incomplete_for(note.clone());
+        self.notes.push(note);
     }
 
     /// Records a declaration whose item was found and read: the provenance

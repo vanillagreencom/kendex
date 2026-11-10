@@ -286,6 +286,44 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
     }
 }
 
+/// An optional dependency chosen of a skill that does not offer it is a
+/// finding, and the declarations read incomplete, whether or not the
+/// skill's frontmatter reads: one that will not parse offers nothing, so
+/// the choice is still weighed rather than dropped unsaid.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_chosen_extra_the_skill_does_not_offer_is_a_finding_whatever_its_frontmatter() {
+    let rows: [(&str, &str); 2] = [
+        (
+            "frontmatter reads",
+            "---\nname: dev\ndescription: the dev skill\n---\nBody.\n",
+        ),
+        (
+            "frontmatter unterminated",
+            "---\nname: dev\ndescription: the dev skill\nBody.\n",
+        ),
+    ];
+    for (case, text) in rows {
+        let f =
+            fixture("[skills.dev]\nsource = \"cat\"\n[optional-dependencies]\ndev = [\"extra\"]\n");
+        fs::write(f.source.join("skills/dev/SKILL.md"), text).unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert!(
+            report.warnings.iter().any(|w| w.kind == ItemKind::Skill
+                && w.name == "dev"
+                && w.message.contains("extra")),
+            "{case}: {:?}",
+            report.warnings
+        );
+        let (_, status) = kendex_core::engine::planned_closure(&f.env, &f.scope, &manifest_of(&f));
+        assert_eq!(
+            status,
+            kendex_core::engine::DeclarationStatus::Incomplete,
+            "{case}"
+        );
+    }
+}
+
 /// A skill's tools can hold agents at different scopes. Dependencies use
 /// the capability table and report an unavailable companion on the skill.
 #[test]

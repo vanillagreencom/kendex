@@ -456,7 +456,7 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
 /// declared at, and, where the read did not account for every
-/// declaration, what it noted it could not read.
+/// declaration, each cause it met.
 fn read_ancestry(
     env: &Env,
     scope: &Scope,
@@ -481,17 +481,17 @@ fn read_ancestry(
         .collect();
     // A read that cannot account for every declaration, a catalog, item or
     // set it could not read or a dependency it could not satisfy, says
-    // nothing of what would root an installation once it can: the
-    // declaration status counts what every reader of the expansion does,
-    // the short reads what only a removal does.
+    // nothing of what would root an installation once it can. Each cause
+    // is named where the expansion meets it, those the declaration status
+    // counts among them; the expansion refuses no declaration, which only
+    // the item passes do.
     let complete = super::DeclarationStatus::of(&state) == super::DeclarationStatus::Complete;
-    let unread = (!complete || !state.short_reads.is_empty()).then(|| {
-        let mut unread: Vec<String> = state.short_reads.into_iter().collect();
-        if !complete {
-            unread.extend(state.notes);
-        }
-        unread
-    });
+    debug_assert!(
+        complete || !state.short_reads.is_empty(),
+        "an incomplete removal read names no cause"
+    );
+    let unread = (!complete || !state.short_reads.is_empty())
+        .then(|| state.short_reads.into_iter().collect());
     (expansion.requirer_provenance(&read), unread)
 }
 
