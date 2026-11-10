@@ -76,7 +76,7 @@ Codex starts no turn for output that arrives after a turn ended, from a detached
 
 ## Validation wait
 
-A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses every Codex lane (§ Lane mailbox).
+A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake duty types into no Codex lane (§ Lane mailbox).
 
 Start and Resume each return an `exit_code` once the command ended inside their yield, or a `session_id` while it still runs. A return that carries an `exit_code` ended the command: read its lines and do not poll. Only a return that carries a `session_id` takes the Wait step, repeated until a return carries an `exit_code`.
 
@@ -138,7 +138,7 @@ sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "
 
 ## Lane mailbox
 
-A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. Codex publishes no idle signal, so no route resumes a live Codex session beside itself: the wake refuses a Codex lane as `wake-invalid` before any read ([lane-reach.md § Wake refusals](lane-reach.md#wake-refusals)), and the watch reads an idle Codex lane with unread mail as `wake-limit` and types nothing. Mail to a Codex lane waits for its next turn or its relaunch; mail that cannot wait takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
+A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor](watch-delivery.md#lane-mailbox-monitor)): a lane idle at its prompt holds no turn, and Codex starts none for a monitor's output. Codex publishes no idle signal, so no route resumes a live Codex session beside itself: the watch's wake duty reads an idle Codex lane with unread mail as `wake-limit` and types nothing ([oversee-lanes.md § Talking to a lane](oversee-lanes.md#talking-to-a-lane)). Mail to a Codex lane waits for its next turn or its relaunch; mail that cannot wait takes [lane-reach.md § Mail the wake cannot deliver](lane-reach.md#mail-the-wake-cannot-deliver).
 
 ## Spawning Codex collaboration agents
 

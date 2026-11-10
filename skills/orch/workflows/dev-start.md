@@ -231,7 +231,7 @@ The request names no `authorization`: this close is the lane's own acceptance of
 
 ### Store Proposed Rules
 
-Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet. It is this file's one write through the `workflow-state` store: no runtime state verb appends to an array without repeating a value it holds.
+Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet. `--unique` appends nothing where the array already holds that value.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] --unique /pr_comment_review/proposed_rules tmp/proposed-rule-[ISSUE_ID].json
@@ -281,7 +281,7 @@ The implement path only; a fix round has no QA signals or sub-issue set to recor
 .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /qa_labels '[QA_LABELS_ARRAY]' /sub_issues '[SUB_ISSUE_IDS_ARRAY]'
 ```
 
-Map each Done-when item to the files serving it, in the PR body; every round measures against that map, never against its own last state, and an unmapped hunk is cut unless it is a [landing enabler](../../dev/SKILL.md#engineering-rules).
+Map each Done-when item to the files serving it in the PR body's `## Done-when evidence` section, one `N: text` line per branch-provable box ([submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 3); every round measures against that map, never against its own last state, and an unmapped hunk is cut unless it is a [landing enabler](../../dev/SKILL.md#engineering-rules).
 
 ## 4. Return
 

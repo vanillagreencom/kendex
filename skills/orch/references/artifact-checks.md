@@ -7,7 +7,7 @@ Cross-verb routing behind the artifact rows in [../SKILL.md](../SKILL.md), and t
 | `orch-runtime review-artifact check` | Validates a reviewer's on-disk JSON artifact — the sole reviewer completion condition; review-pr.md § 3.1 relays a rejection's `detail` on the single permitted re-delegation. With `--text` it prints the result object alone and exits 0 accepted, 1 rejected, 2 refused, the refusal a `review-artifact-check: KEY` line on stderr. |
 | `orch-runtime dev-return write` | Writes a dev round's completion artifact atomically. Schema and refusals: [`../schemas/dev-return.md`](../schemas/dev-return.md). |
 | `orch-runtime round stamp` | Orchestrator-side twin persisting a fix round's delegated item set at stamp time; immutable per round. Schema and refusals: [`../schemas/dev-round.md`](../schemas/dev-round.md). |
-| `orch-runtime dev-return check` | Validates a dev round's artifact by round id and answers `accept`/`wait`/`retry` ([§ Receipt check answers](#receipt-check-answers)). Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
+| `orch-runtime dev-return check` | Validates a dev round's artifact by round id and answers `accept`/`no-change`/`wait`/`retry` ([§ Receipt check answers](#receipt-check-answers)). Tracker corroboration and exact-commit acceptance binding stay in the orch acceptance tables. |
 | `orch-runtime round recover` | Accepts a stalled round from its transcript, or mints its replacement ([§ Recovery answers](#recovery-answers)); [skill-rules.md](skill-rules.md) § Round Closure routes its line. |
 
 ## Validation command output
@@ -58,7 +58,7 @@ A start records two kinds of fallback on its `start` record, which `--record` re
 
 ## Receipt check answers
 
-`orch-runtime dev-return --text check` prints one result object: `verdict`, `ok`, `path`, `reason`, and the receipt's echoed validation fields. `ok` is true only for `reason: valid`, and the exit is 0 for `ok` true and 1 otherwise. `accept` is a valid receipt whose `validate` is `pass` or `no-verdict`; `wait` is `reason: missing`; every other answer is `retry`.
+`orch-runtime dev-return --text check` prints one result object: `verdict`, `ok`, `path`, `reason`, and the receipt's echoed validation fields. `ok` is true only for `reason: valid`, and the exit is 0 for `ok` true and 1 otherwise. `accept` is a valid receipt whose `validate` is `pass` or `no-verdict`; `no-change` is a valid receipt whose `validate` is `not-run` ([dev-return.md § No-change receipt](../schemas/dev-return.md#no-change-receipt)); `wait` is `reason: missing`; every other answer is `retry`.
 
 | `reason` | Meaning |
 |----------|---------|
@@ -69,6 +69,7 @@ A start records two kinds of fallback on its `start` record, which `--record` re
 | `commit_unverifiable` | The receipt's repository cannot be read as the worktree's own checkout |
 | `commit_unresolvable` | The receipt's commit names no commit object |
 | `ci_head_mismatch` | A `ci` receipt's commit is not the current HEAD |
+| `head_moved` | A `not-run` receipt's commit is not the current HEAD: a no-change answer holds only at the HEAD the round left unmoved |
 | `comparison_failed` | Git cannot compare the round's base against HEAD |
 | `additions_unattributable` | A rebase moved the round's base off the branch and the rebase map proves no rewritten base |
 | `unapproved_additions` | The round added protected paths its record does not authorize; `files` lists them |
@@ -129,4 +130,4 @@ A `redelegate` or `exhausted` line's `reason` is `no-transcript`, `no-report`, `
 
 ## Dev-vs-reviewer asymmetry (intentional — do not "align")
 
-A reviewer invalid artifact after a return is `incomplete` and gets one re-delegation. Dev's verdict distinguishes a still-running round (`wait`, routed by the sentence ahead of the acceptance table in `dev-start.md` § 3 and `dev-fix.md` § 2, a stalled round to `orch-runtime round --text recover` first) from a present-but-failing receipt (`retry` — never accepted, never treated as absent). Neither branch re-runs the work, and neither accepts without the round-scoped artifact.
+A reviewer invalid artifact after a return is `incomplete` and gets one re-delegation. Dev's verdict distinguishes a still-running round (`wait`, routed by the sentence ahead of the acceptance table in `dev-start.md` § 3 and `dev-fix.md` § 2, a stalled round to `orch-runtime round --text recover` first) from a present-but-failing receipt (`retry` — never accepted, never treated as absent) and from a round its item permits ending with no change (`no-change`), which `dev-start.md` § 3's row judges. Neither branch re-runs the work, and neither accepts without the round-scoped artifact.

@@ -1,6 +1,6 @@
 # Oversee lanes
 
-Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) to park a hosted lane's merge wait, or to answer, direct, wake, paste into or resume a lane.
+Load from [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) to park a hosted lane's merge wait, or to answer, direct, paste into or resume a lane.
 
 ## Parking a merge wait
 
@@ -60,13 +60,13 @@ A `session` lane, a Claude cloud session, takes a directive alone, through the r
 
 The record reads `sent`, `archived` (a session the operator archived) or `failed` with the CLI's words and the account's credit at the send; the watch's stall close reads it ([oversee-events.md § Event kinds](oversee-events.md#event-kinds), `cloud-stall-closed`). No `directive-read` follows a session send: the lane's next push or its pull request body shows it acted, and a session that does not act shows as `lane-stalled`. A send whose outcome the runtime could not read stands owed, and every later send to that lane is refused `directive-send-owed` until the operator settles it as the watch's `directive-send-unsettled` line directs. `--re` and `--halt` have no session form.
 
-Wake a Claude or Pi mailbox lane after the send where [watch-delivery.md](watch-delivery.md#lane-mailbox-monitor) says. Pass its harness and `[WAKE_ITEM]`: `[ISSUE_ID]` for a Linear item, and for a GitHub item the bare issue number, never its `issue-N` key, with `--tracker github --repo [OWNER/REPO]`; the woken turn spends the account the lane record names, or the one `--lane [DIR]` names, and keeps the record's `live_display`. The wake hands the lane's own session one line that runs `lane-mail inbox`, and reaches only lanes on this host, run from the checkout the send used, because the wake resolves the lane's tree from the caller's own project. A Claude lane takes it as a second process in print mode, only where no turn an earlier wake started still runs and the runtime's lane status reads the lane `idle`; any other state refuses as `wake-refused reason=[STATE]`. A Pi lane takes it through pi-bridge into its live session. A Codex or Copilot lane takes no wake: its mail waits for its next turn or its relaunch. Never send a lane text by keystroke.
+The watch's wake duty wakes a lane. For a running lane on this host whose mailbox holds mail it has not read, the duty reads the lane's pane positively idle and types one line that runs `lane-mail inbox`, confirmed by a new user turn in the session file the lane record binds. A Claude, Copilot or Pi lane takes that line. A Codex lane is typed nothing and reported `wake-limit`: its mail waits for its next turn or its relaunch. A hosted or cloud lane, a lane not running, and a lane whose record's `wake` names a detached turn that still runs are not woken. The duty's lines are the `wake-` entries of [oversee-events.md § Event kinds](oversee-events.md#event-kinds). The overseer sends the mail and wakes nothing; it never types mail into a lane's pane.
 
-After a directive, wait for the watch's `directive-read` for its id: the lane's own mailbox cursor passing it, whichever read path moved it, on every harness and on a hosted lane. Never read a pane to confirm a delivery. `directive-unread` is the directive still unread past `ORCH_DIRECTIVE_UNREAD_SECS`: wake the lane, reach it by Pane paste, or relaunch it, by the lane's state and [lane-reach.md](lane-reach.md).
+After a directive, wait for the watch's `directive-read` for its id: the lane's own mailbox cursor passing it, whichever read path moved it, on every harness and on a hosted lane. Never read a pane to confirm a delivery. `directive-unread` is the directive still unread past `ORCH_DIRECTIVE_UNREAD_SECS`: reach the lane by its state, under [lane-reach.md § Lane states](lane-reach.md#lane-states).
 
-**A refusal is a state, not a remedy.** A halt or an answer to a lane with no monitor that the wake refuses lands only where the Lane mail rule above says. Send where the reason allows it; mail that cannot wait takes [lane-reach.md](lane-reach.md#mail-the-wake-cannot-deliver).
+**A lane state is not a remedy.** A halt or an answer to a lane with no monitor that the wake does not reach lands only where the Lane mail rule above says. Mail that cannot wait takes [lane-reach.md](lane-reach.md#mail-the-wake-cannot-deliver).
 
-[lane-reach.md](lane-reach.md) holds what each wake refusal reason licenses and, per harness, how a lane is launched, how its state is read and how its harness dialogs are answered.
+[lane-reach.md](lane-reach.md) holds what each lane state licenses and, per harness, how a lane is launched, how its state is read and how its harness dialogs are answered.
 
 **Pane paste.** Write harness input to a file with the harness file tool, then type it with the one pane writer, the `pane_write` function of `scripts/lib/pane-write.sh`, run from the lane's repository checkout. `[WINDOW]` is the lane record's `window`, and `[PROCESS]` is the record's `harness`, or `ssh` for a record carrying `host`:
 

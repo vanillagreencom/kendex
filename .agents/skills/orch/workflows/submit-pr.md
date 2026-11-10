@@ -172,7 +172,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
    [Before-and-after evidence: the test that failed before and passes now, or the command output before and after.]
    ```
 
-   Keep `## Merge decision`, and keep `## Merge danger`: every change has a Door answer. For an existing PR, preserve its recorded head and route through body updates; use pending text only before any attempt is recorded. Omit other empty sections. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
+   Keep `## Merge decision`, and keep `## Merge danger`: every change has a Door answer. For an existing PR, preserve its recorded head and route through body updates; use pending text only before any attempt is recorded. Omit other empty sections. Write one `N: text` line under `## Done-when evidence` for each branch-provable Done-when box, `N` its number in section order from 1 and the text its proving artifact at the head, and keep the section current on every body update: the runtime's close reads it where the lane cannot complete the item. Include each proposed rule once and do not perform it. Decision paths come only from `decisions search --issue [ISSUE_ID]`, each verified with `test -f [DECISION_FILE_PATH]` (one command per path) and omitted on failure. Every published SHA must be post-reconciliation.
 
    Include qualified started bundle children in the child `Closes` lines. Their implementation is in this PR. Merge-pr completes each child again after merge and hands its remaining checks to the overseer.
 

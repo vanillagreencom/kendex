@@ -150,7 +150,8 @@ ORCH_WALL_RELAUNCH = "auto"
 
 # Lane pane output. "quiet" prints one line per completed step and writes
 # each <output_format> block the lane fills itself to a file instead;
-# "normal" prints every block as written, and any other value is quiet. Why
+# "normal" prints every block as written; any other value refuses the launch
+# as setting-invalid. Why
 # no lane narrates, each destination and what the mode never touches:
 # skills/orch/references/skill-rules.md, Lane Output.
 ORCH_LANE_OUTPUT = "quiet"
@@ -382,9 +383,8 @@ KENDEX_GITHUB_AUTH_TIMEOUT = "10"
 # Seconds a single `pr-view` read may take.
 KENDEX_GITHUB_PR_VIEW_TIMEOUT = "30"
 
-# Path to the worktree CLI the wake and the runtime drive. Empty resolves the
-# installed worktree skill's `scripts/worktree`; a value that is not
-# executable stops the launch with that path named.
+# Path to the worktree CLI the orch runtime drives. Empty resolves the
+# installed worktree skill's `scripts/worktree`.
 WORKTREE_CLI = ""
 
 # A file a Jarvis session touches while it answers the overseer; the hold it

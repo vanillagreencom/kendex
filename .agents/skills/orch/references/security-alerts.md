@@ -29,9 +29,9 @@ Load from [oversee-events.md § Event kinds](oversee-events.md#event-kinds) at a
 
 ## Unread alerts
 
-`security-alerts-unread reads=[SOURCE]:[CAUSE]` prints on the long pass whose set of failed reads differs from the last pass's, and not again while that set stands, so each line is new. By cause:
+`security-alerts-unread reads=[SOURCE]:[CAUSE]` names each source whose read failed on two consecutive long passes with the same cause, on the second, and not again while that source keeps failing with that cause. One clean read, or one that answers off, clears the source, and a changed cause counts from one again. By cause:
 
 - `permission` means `vanillagreen-overseer` lacks one of § Credential's alert permissions, an owner step on the app or installation: tell the owner once.
 - `credential`, source `installation-token`, means the fleet has not supplied a usable token through `ORCH_SECURITY_ALERT_TOKEN_FILE`: the control VM for a hosted overseer, the fleet worker for a local one. Restore the token supply. The watch makes no alert API call and retains the prior rows.
 - `feature-off` is Dependabot alerts turned off on that repository: tell the owner once, whose call turning it on is. Code or secret scanning answering `feature-off`, as on a private repository without GitHub's paid security products, is off rather than unread: the watch prints no line for it, and its rows stand. A repository with the feature on, a licensed private one included, keeps its alerts.
-- Any other cause is named in GitHub's or the runtime's words on the stderr line beside it.
+- Any other cause names how the read failed: `http-NNN` for GitHub's HTTP status, `exit-N` for gh's exit where it named no status, `killed` for gh ended by a signal, `not-started` for gh that never started, `no-answer` for gh that gave no answer within its bound, and `invalid`, `invalid-html` or `invalid-text` for a reply that is no alert list. The cause carries none of the reply's text; gh's own words for a failed read stand on the watch's stderr.

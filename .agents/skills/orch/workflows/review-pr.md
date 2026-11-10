@@ -573,7 +573,7 @@ Record each created issue:
 .agents/skills/linear/scripts/linear.sh issues add-relation [CHILD_ID] --related [ISSUE_ID]
 ```
 
-After delegating children, apply the § 4 bounded re-review rule to their diff.
+A `no-change` return from dev-start ends that child's round with no commit; the child's tracker end stays merge-pr's. After delegating children, apply the § 4 bounded re-review rule to their diff.
 
 ## 9. Return
 
