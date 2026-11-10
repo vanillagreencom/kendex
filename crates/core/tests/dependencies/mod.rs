@@ -286,41 +286,51 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
     }
 }
 
-/// An optional dependency chosen of a skill that does not offer it is a
-/// finding, and the declarations read incomplete, whether or not the
-/// skill's frontmatter reads: one that will not parse offers nothing, so
-/// the choice is still weighed rather than dropped unsaid.
+/// An optional dependency chosen of a skill is weighed against what the
+/// skill's SKILL.md offers. One whose frontmatter will not parse offers
+/// nothing, so a choice of it is a finding and the declarations read
+/// incomplete rather than the choice dropping unsaid. One whose file will
+/// not read at all is not weighed: what it offers is unknown, so no choice
+/// of it is reported as unoffered, as on main.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_chosen_extra_the_skill_does_not_offer_is_a_finding_whatever_its_frontmatter() {
-    let rows: [(&str, &str); 2] = [
+fn a_chosen_extra_is_weighed_against_what_the_skill_offers() {
+    use kendex_core::engine::DeclarationStatus::{Complete, Incomplete};
+    let rows: [(&str, &[u8], bool, kendex_core::engine::DeclarationStatus); 3] = [
         (
             "frontmatter reads",
-            "---\nname: dev\ndescription: the dev skill\n---\nBody.\n",
+            b"---\nname: dev\ndescription: the dev skill\n---\nBody.\n",
+            true,
+            Incomplete,
         ),
         (
             "frontmatter unterminated",
-            "---\nname: dev\ndescription: the dev skill\nBody.\n",
+            b"---\nname: dev\ndescription: the dev skill\nBody.\n",
+            true,
+            Incomplete,
+        ),
+        (
+            "file not text",
+            b"---\nname: dev\ndescription: the dev skill\ndependencies:\n  optional: [extra]\n---\nBody \xFF\xFE.\n",
+            false,
+            Complete,
         ),
     ];
-    for (case, text) in rows {
+    for (case, bytes, unoffered, expected) in rows {
         let f =
             fixture("[skills.dev]\nsource = \"cat\"\n[optional-dependencies]\ndev = [\"extra\"]\n");
-        fs::write(f.source.join("skills/dev/SKILL.md"), text).unwrap();
+        fs::write(f.source.join("skills/dev/SKILL.md"), bytes).unwrap();
         let report = audit(&f.env, &f.scope).unwrap();
-        assert!(
+        assert_eq!(
             report.warnings.iter().any(|w| w.kind == ItemKind::Skill
                 && w.name == "dev"
                 && w.message.contains("extra")),
+            unoffered,
             "{case}: {:?}",
             report.warnings
         );
         let (_, status) = kendex_core::engine::planned_closure(&f.env, &f.scope, &manifest_of(&f));
-        assert_eq!(
-            status,
-            kendex_core::engine::DeclarationStatus::Incomplete,
-            "{case}"
-        );
+        assert_eq!(status, expected, "{case}");
     }
 }
 

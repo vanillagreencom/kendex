@@ -1015,10 +1015,12 @@ fn wanted_by(
 /// What `parent` declares it needs, and the directory its catalog offers
 /// it at: an agent's assignment ([`agent_assignment`]), every other kind's
 /// own frontmatter. `None` where its catalog does not offer it or did not
-/// read. Where that frontmatter will not read or parse, `parent` goes on
-/// as declaring nothing, so a choice made of it is still weighed
-/// ([`chosen_extras`]). Either way what it requires went unread, so this
-/// pass derives less than the catalog carries, a short read
+/// read, or where its file will not read: what it offers is then unknown,
+/// so no choice made of it is weighed. Where the file reads but its
+/// frontmatter will not parse, or an agent will not read or parse,
+/// `parent` goes on as declaring nothing, so a choice made of it is still
+/// weighed ([`chosen_extras`]). Each way what it requires went unread, so
+/// this pass derives less than the catalog carries, a short read
 /// ([`DesiredState::short_reads`]). An apply reports each where it meets
 /// it, the item pass the offer and the renderer the frontmatter.
 fn declared_by(
@@ -1031,8 +1033,12 @@ fn declared_by(
 ) -> Option<(Dependencies, std::path::PathBuf)> {
     let read = match offer {
         Offer::Item(_, dir) => {
+            // The outer `Err` is a file that will not read, which is not
+            // weighed; the inner one a frontmatter that will not parse,
+            // which declares nothing.
             let declared = match kind {
-                ItemKind::Agent => agent_assignment(catalog, manifest, parent, &dir),
+                ItemKind::Agent => Ok(agent_assignment(catalog, manifest, parent, &dir)
+                    .ok_or("its frontmatter will not read or parse")),
                 ItemKind::Skill
                 | ItemKind::Hook
                 | ItemKind::Command
@@ -1040,17 +1046,16 @@ fn declared_by(
                 | ItemKind::Plugin
                 | ItemKind::PiExtension
                 | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, &dir)
-                    .ok()
-                    .flatten(),
+                    .map(|declared| declared.ok_or("its frontmatter will not parse"))
+                    .map_err(|_| "its file will not read"),
             };
-            let declared = declared.unwrap_or_else(|| {
-                state.read_short(format!(
-                    "{} '{parent}': its frontmatter will not read or parse",
-                    kind.name()
-                ));
-                Dependencies::default()
-            });
-            Ok((declared, dir))
+            declared.map(|declared| {
+                let declared = declared.unwrap_or_else(|why| {
+                    state.read_short(format!("{} '{parent}': {why}", kind.name()));
+                    Dependencies::default()
+                });
+                (declared, dir)
+            })
         }
         Offer::Retired(_) | Offer::NotOffered => Err("its catalog does not offer it"),
         Offer::Silent => Err("its catalog did not read"),
