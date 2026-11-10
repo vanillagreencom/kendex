@@ -35,6 +35,8 @@ class TaskContract(unittest.TestCase):
         self.script = self.skills / "jarvis/scripts/task"
         self.account = self.root / "picked account"
         self.account.mkdir()
+        # The account has finished Claude Code's first-run setup.
+        self.account.joinpath(".claude.json").write_text('{"hasCompletedOnboarding": true}')
         self.bin = self.root / "bin"
         self.bin.mkdir()
         # Managed-session recovery reads the platform manager; this task
@@ -63,6 +65,7 @@ class TaskContract(unittest.TestCase):
                   + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_BROWSER_PORT','JARVIS_TASK_SCRATCH'}\n"
                   + "row={'harness':Path(sys.argv[0]).name,'cwd':str(Path.cwd()),'argv':sys.argv[1:],'env_keys':list(os.environ),'env':{k:os.environ[k] for k in keys if k in os.environ}}\n"
                   + "Path(" + repr(str(self.home)) + ",'ack-'+os.environ['JARVIS_TASK_ID']+'.json').write_text(json.dumps(row))\n"
+                  + "print('\\u276f\\u00a0', flush=True)\n"
                   + "while True: signal.pause()\n")
         for harness in ("claude", "codex", "copilot", "pi"):
             self.bin.joinpath(harness).write_text(native)
@@ -200,6 +203,78 @@ class TaskContract(unittest.TestCase):
         pane = self.tmux("display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_pid}").stdout.split()
         self.assertEqual(created.read_text().split(), pane)
 
+    def bounded_launch(self, harness, name, seconds):
+        # The startup bound restarts at the task window, so a pane that never
+        # draws a prompt answers in seconds rather than at CALL_SECONDS.
+        code = """
+import sys,time
+sys.path.insert(0,sys.argv[1])
+import task
+original=task.Task.tmux
+seconds=float(sys.argv[2])
+def bound(self,*args,**kwargs):
+    answer=original(self,*args,**kwargs)
+    if args[0]=='new-window':
+        self.deadline=time.monotonic()+seconds
+    return answer
+task.Task.tmux=bound
+sys.argv=[sys.argv[0],*sys.argv[3:]]
+sys.exit(task.main())
+"""
+        args = ["launch", "--home", str(self.home), "--harness", harness,
+                "--model", "github-copilot/gpt-5" if harness == "pi" else "standard",
+                "--name", name, "--task-file", str(self.task_file),
+                "--result-file", str(self.home / (name + ".md")), "--account", str(self.account)]
+        return subprocess.run([sys.executable, "-B", "-c", code, str(self.skills / "jarvis/scripts/lib"),
+                               str(seconds), *args], env=dict(self.env, JARVIS_BASH=self.env["JARVIS_TEST_BASH"]),
+                              capture_output=True, text=True, timeout=60)
+
+    def test_setup_screen_refuses(self):
+        # Claude Code's first-run theme picker, whose numbered row takes the
+        # plain space rather than the composer's U+00A0.
+        setup = self.root / "setup"
+        setup.write_text("#!" + sys.executable + "\nimport signal\n"
+                         + "print('Choose the text style that looks best with your terminal\\n\\n"
+                         + "\\u276f 1. Dark mode \\u2714\\n  2. Light mode', flush=True)\n"
+                         + "while True: signal.pause()\n")
+        setup.chmod(0o755)
+        marker = self.account / ".claude.json"
+        rows = (("claude", None, "harness-setup-pending"),
+                ("claude", "{}", "harness-setup-pending"),
+                ("claude", '{"hasCompletedOnboarding": false}', "harness-setup-pending"),
+                ("claude", '{"hasCompletedOnboarding": true}', "harness-not-ready"),
+                ("codex", None, "harness-not-ready"))
+        for index, (harness, config, reason) in enumerate(rows):
+            with self.subTest(harness=harness, config=config):
+                marker.unlink(missing_ok=True)
+                if config is not None:
+                    marker.write_text(config)
+                path = self.bin / harness
+                original = path.read_text()
+                shutil.copyfile(setup, path)
+                try:
+                    result = self.bounded_launch(harness, "setup-" + str(index), 4)
+                finally:
+                    path.write_text(original)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                record = next(row for row in self.saved_tasks() if row["name"] == "setup-" + str(index))
+                lines = result.stderr.splitlines()
+                self.assertEqual(lines[0], "jarvis-task: refused=" + reason + " id=" + record["id"])
+                self.assertTrue(lines[1].startswith("fix="), result.stderr)
+                self.assertEqual((record["state"], record["failure"]["reason"], record["completion"]["outcome"]),
+                                 ("failed", reason, "failed"))
+                self.assertNotIn("launched_at", record)
+                self.assertEqual(record["cleanup"]["state"], "done")
+                if reason == "harness-setup-pending":
+                    # Refused before the window opens or the harness config is written.
+                    self.assertIsNone(record["terminal"])
+                    self.assertIn("CLAUDE_CONFIG_DIR=" + str(self.account), lines[1].replace("\\ ", " "))
+                    self.assertEqual(marker.read_text() if marker.exists() else None, config)
+                else:
+                    self.assertIn("Dark mode", record["failure"]["detail"])
+                self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
+                                 [self.terminal["window"]])
+
     def test_launch_directory_contract(self):
         selected = self.root / "project 'quoted' $folder#{pid};"
         selected.mkdir()
@@ -275,12 +350,14 @@ class TaskContract(unittest.TestCase):
         for harness in ("claude", "codex", "copilot", "pi"):
             path = self.bin / harness
             original = path.read_text()
-            for mode in ("missing", "early-exit"):
+            # A late exit ends after the startup receipt, during the wait for a prompt.
+            for mode in ("missing", "early-exit", "late-exit"):
                 with self.subTest(harness=harness, mode=mode):
                     if mode == "missing":
                         path.unlink()
                     else:
-                        path.write_text("#!" + sys.executable + "\nimport sys\nsys.exit(23)\n")
+                        path.write_text("#!" + sys.executable + "\nimport sys,time\n"
+                                        + ("time.sleep(1.5)\n" if mode == "late-exit" else "") + "sys.exit(23)\n")
                         path.chmod(0o755)
                     failed = self.launch(harness, mode, success=False,
                                          model="gpt-5" if harness in ("codex", "copilot") else None)
@@ -290,7 +367,9 @@ class TaskContract(unittest.TestCase):
                     self.assertEqual(record["state"], "failed")
                     self.assertEqual(record["failure"]["reason"], "app-missing" if mode == "missing" else "native-exited")
                     if mode == "early-exit":
-                        self.assertEqual(record["failure"]["exit"], 23)
+                        self.assertEqual(record["failure"].get("exit"), 23)
+                    if mode == "late-exit":
+                        self.assertEqual(record["failure"]["detail"].splitlines()[0], "exit=23")
                     self.assertEqual(record["completion"]["outcome"], "failed")
                     self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
                     path.write_text(original)
@@ -833,6 +912,7 @@ path=Path('ack-'+os.environ['JARVIS_TASK_ID']+'.json')
 def ack(stage):
     path.write_text(json.dumps({'stage':stage,'ignored':signal.getsignal(signal.SIGINT)==signal.SIG_IGN}))
 ack('started')
+print('\u276f\u00a0', flush=True)
 if Path('suspend-native').exists():
     saved=termios.tcgetattr(0)
     tty.setraw(0)
@@ -916,6 +996,9 @@ while True: signal.pause()
             ("rollback", "task.py", (("self.deadline = time.monotonic() + 3",
                 "self.deadline = time.monotonic() + 3 if False else self.deadline"),),
              "test_expired_launch_retains_rollback_ownership"),
+            ("setup-marker", "session-backend.sh", (('if [[ "$onboarded" != true ]]; then', 'if false; then'),),
+             "test_setup_screen_refuses"),
+            ("ready-wait", "task.py", (("if ready.returncode == 0:", "if True:"),), "test_setup_screen_refuses"),
             ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
                 'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
             ("controller", "session.py", (("        elif not window:\n            self.end_task_session()\n",
