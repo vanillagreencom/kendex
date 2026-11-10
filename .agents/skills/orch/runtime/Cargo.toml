@@ -65,6 +65,10 @@ name = "verify"
 path = "../tests/rust/verify.rs"
 
 [[test]]
+name = "ci_proof"
+path = "../tests/rust/ci_proof.rs"
+
+[[test]]
 name = "lane"
 path = "../tests/rust/lane.rs"
 

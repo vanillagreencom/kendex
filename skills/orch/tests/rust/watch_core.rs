@@ -1581,7 +1581,7 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     );
     std::fs::write(
         bin.join("gh.json"),
-        json!({"repos/o/r/pulls?head=o:cc-1&state=open": {"body": [{"number": 1, "state": "open", "title": "cloud work", "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": "aaa111", "ref": "cc-1", "repo": null}, "base": {"ref": "main"}, "user": null, "body": "", "draft": true}]}})
+        json!({"repos/o/r/pulls?head=o:cc-1&state=open": {"body": [{"number": 1, "state": "open", "title": "cloud work", "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": "aaa111", "ref": "cc-1", "repo": null}, "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null, "body": "", "draft": true}]}})
             .to_string(),
     )
     .unwrap();

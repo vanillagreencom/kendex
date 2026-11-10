@@ -16,7 +16,10 @@
           "started_at": null,
           "completed_at": null,
           "html_url": "https://github.com/owner/repo/runs/1",
-          "details_url": "https://github.com/owner/repo/runs/1"
+          "details_url": "https://github.com/owner/repo/runs/1",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }

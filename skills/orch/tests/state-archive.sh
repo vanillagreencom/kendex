@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Surface: lib/state-archive.sh archive_write and archive_root.
-# Inputs: scripts/orch-env, scripts/workflow-state, scripts/git-context and their libraries.
+# Inputs: scripts/orch-env, scripts/git-context and their libraries.
 # State cleanup and mailbox compaction share this writer. The archive root
 # follows project settings and preserves the compatible fallback and modes.
 set -euo pipefail
@@ -63,7 +63,7 @@ environment|environment|environment archive
 empty|empty|fleet/archive
 ROWS
 
-# Keep the reader present but restore the old root choice. The same folder
+# Keep the reader present but write under the fallback root. The same folder
 # assertion then rejects the writer's loss of the configured location.
 MUTANT="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-root lib/state-archive.sh)" || exit 1
 mutate_file "$MUTANT/lib/state-archive.sh" 'ARCHIVE_DIR="$root/${repo_root##*/}/oversee"' \
@@ -81,6 +81,7 @@ REFUSED="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts refused-reader orch-env)" || 
 cat > "$REFUSED/orch-env" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "$1" == ORCH_ARCHIVE_ROOT ]] || { printf '%s\n' "$2"; exit 0; }
 printf '%s\n' "$PWD/refused archive"
 exit 1
 STUB
@@ -164,9 +165,10 @@ ln -s "$lane" "$TMP_ROOT/lane-link"
 [[ -L "$TMP_ROOT/lane-link" ]] || exit 1
 
 root_refusal() { # SCRIPTS ROOT LABEL
-    local rc=0
+    local rc=0 state=()
+    [[ -z "${ARCHIVE_TEST_STATE_DIR:-}" ]] || state=("ORCH_STATE_DIR=$ARCHIVE_TEST_STATE_DIR")
     (cd -- "$project" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="${ARCHIVE_TEST_PATH:-$PATH}" ARCHIVE_REAL_GIT="$(command -v git)" ARCHIVE_GIT_FAILURE="${ARCHIVE_GIT_FAILURE:-listing}" HOME="$project/home" ORCH_ARCHIVE_ROOT="$2" \
-        ARCHIVE_TEST_REPO="${ARCHIVE_TEST_REPO:-$project}" ARCHIVE_TEST_REMOVED="$removed" \
+        ARCHIVE_TEST_REPO="${ARCHIVE_TEST_REPO:-$project}" ARCHIVE_TEST_REMOVED="$removed" ${state[@]+"${state[@]}"} \
         "$BASH" "$TMP_ROOT/write.sh" "$1") > "$TMP_ROOT/root.out" 2> "$TMP_ROOT/root.err" || rc=$?
     assert_eq "$rc" 1 "$3: refuses an archive that cannot survive removal"
     [[ ! -s "$TMP_ROOT/root.out" ]] && pass "$3: writes no archive" || fail "$3: writes no archive"
@@ -230,23 +232,23 @@ non-git
 ROWS
 
 unset ARCHIVE_TEST_PATH ARCHIVE_TEST_REPO ARCHIVE_GIT_FAILURE
-mutant="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts failed-state-path workflow-state)" || exit 1
-cat > "$mutant/workflow-state" <<'STATE'
-#!/usr/bin/env bash
-printf '%s\n' "$PWD/tmp/workflow-state-oversee.json"
-exit 1
-STATE
-root_refusal "$mutant" "$TMP_ROOT/safe-state-archives" 'unreadable state path'
-control="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-state-path lib/state-archive.sh)" || exit 1
-rm -- "$control/workflow-state"
-cp -- "$mutant/workflow-state" "$control/workflow-state"
-mutate_file "$control/lib/state-archive.sh" \
-    'state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || return 1' \
-    'state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || true'
-before="$FAIL"
-root_refusal "$control" "$TMP_ROOT/safe-state-archives" 'ignored state path' > "$TMP_ROOT/state-control.out"
-if [[ "$FAIL" -gt "$before" ]]; then FAIL="$before"; pass 'control: a failed state lookup cannot authorize removal'
-else fail 'control: a failed state lookup cannot authorize removal'; fi
+# The state directory ORCH_STATE_DIR names, a relative value joined to the
+# main checkout, is a removal root the archive must outlive.
+control="$(TMP_ROOT="$CONTROL_ROOT" mutant_scripts ignored-state-dir lib/state-archive.sh)" || exit 1
+mutate_file "$control/lib/state-archive.sh" '"$2" "$state_dir" "${@:3}"' '"$2" "" "${@:3}"'
+while IFS='|' read -r setting root; do
+    ARCHIVE_TEST_STATE_DIR="$setting"
+    root_refusal "$SCRIPTS" "$root" "state directory $setting"
+    assert_contains "$(cat "$TMP_ROOT/root.err")" 'archive-root-overlap' "state directory $setting: names the overlap"
+    before="$FAIL"
+    root_refusal "$control" "$root" "state directory $setting: ignored" > "$TMP_ROOT/state-control.out"
+    if [[ "$FAIL" -gt "$before" ]]; then FAIL="$before"; pass "control: state directory $setting cannot hold the archive"
+    else fail "control: state directory $setting cannot hold the archive"; fi
+done <<ROWS
+$TMP_ROOT/fleet-state|$TMP_ROOT/fleet-state/archives
+lane-state|$project/lane-state/archives
+ROWS
+unset ARCHIVE_TEST_STATE_DIR
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

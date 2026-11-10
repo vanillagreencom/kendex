@@ -56,8 +56,8 @@ pub struct ApprovedHead {
     pub reason: String,
     pub review: Option<Value>,
     /// gh's words for a POST GitHub refused, an answer lost or a read-back
-    /// that failed; on the POST's own confirmation, the review's login where
-    /// the configured one differs.
+    /// that failed; on a confirmation, the review's login where the
+    /// configured one differs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -93,6 +93,21 @@ const COMMENT_UNCONFIRMED: &str = "comment-unconfirmed";
 
 fn refuse(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
+}
+
+fn login_changed(recorded: &str, configured: &str) -> Error {
+    refuse(
+        "approval-login-changed",
+        &[("recorded", recorded), ("configured", configured)],
+    )
+}
+
+/// The confirmation's detail where the review's login is not the one the
+/// setting names: the setting is what every read-back matches.
+fn login_differs(review: &Value, login: &str) -> Option<String> {
+    reviewer(review)
+        .filter(|named| *named != login)
+        .map(|named| format!("login-differs configured={login} review={named}"))
 }
 
 /// The remedy a `review-replies` refusal names.
@@ -150,12 +165,17 @@ fn update<T>(
             },
         };
         // An entry that holds no act binds no login: the configured one
-        // replaces it, so a login corrected after a refused POST approves.
+        // replaces it, so a login corrected after a refused POST approves. A
+        // confirmed approval stands whoever the setting names; an act still
+        // unsettled was read back under its own login alone.
         if entry.login != login {
-            if entry.attempt.is_some() || entry.comment.is_some() {
-                return Err(refuse("approval-login-changed", &[]));
+            match (&entry.attempt, &entry.comment) {
+                (Some(Attempt::Confirmed { .. }), _) => {}
+                (None, None) => entry.login = login.into(),
+                (Some(Attempt::Attempted), _) | (None, Some(_)) => {
+                    return Err(login_changed(&entry.login, login));
+                }
             }
-            entry.login = login.into();
         }
         let answer = f(&mut entry)?;
         records.insert(head.into(), serde_json::to_value(entry)?);
@@ -486,7 +506,6 @@ pub fn run(
         .review
         .approval_login
         .as_deref()
-        .filter(|s| !s.is_empty())
         .ok_or_else(|| refuse("approval-login", &[]))?;
     let mut doc = loaded(path)?.doc;
     let matching: Vec<_> = entries(&mut doc, r)?
@@ -501,8 +520,8 @@ pub fn run(
     if let [(head, entry)] = matching.as_slice()
         && let Some(attempt) = &entry.attempt
     {
-        if entry.login != login {
-            return Err(refuse("approval-login-changed", &[]));
+        if entry.login != login && *attempt == Attempt::Attempted {
+            return Err(login_changed(&entry.login, login));
         }
         return standing_answer(path, r, head, login, &token, settings, locking, attempt);
     }
@@ -552,9 +571,7 @@ pub fn run(
             if let Ok(value) = serde_json::from_slice::<Value>(&stdout)
                 && approves(&value, &head)
             {
-                let differs = reviewer(&value)
-                    .filter(|review| *review != login)
-                    .map(|review| format!("login-differs configured={login} review={review}"));
+                let differs = login_differs(&value, login);
                 let mut confirmed = confirm(path, r, &head, login, locking, value)?;
                 confirmed.detail = differs;
                 return Ok(confirmed);
@@ -595,12 +612,11 @@ fn standing_answer(
     attempt: &Attempt,
 ) -> Result<ApprovedHead> {
     match attempt {
-        Attempt::Confirmed { review } => Ok(reply(
-            Status::Confirmed,
-            head,
-            "approved",
-            Some(review.clone()),
-        )),
+        Attempt::Confirmed { review } => {
+            let mut confirmed = reply(Status::Confirmed, head, "approved", Some(review.clone()));
+            confirmed.detail = login_differs(review, login);
+            Ok(confirmed)
+        }
         Attempt::Attempted => settle(path, r, head, login, token, settings, locking, NOT_LANDED),
     }
 }

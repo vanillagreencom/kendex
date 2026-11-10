@@ -30,7 +30,8 @@
       ],
       "run_started_at": "2026-01-29T15:09:00Z",
       "repository": { "id": 1296269, "name": "repo", "full_name": "owner/repo" },
-      "head_repository": { "id": 1296269, "name": "repo", "full_name": "owner/repo" }
+      "head_repository": { "id": 1296269, "name": "repo", "full_name": "owner/repo" },
+      "pull_requests": []
     }
   ]
 }

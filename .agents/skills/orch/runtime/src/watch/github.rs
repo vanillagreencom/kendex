@@ -1987,6 +1987,7 @@ mod tests {
             },
             base: PullBase {
                 branch: "main".into(),
+                sha: "0123456789abcdef0123456789abcdef01234567".into(),
             },
             user: Nullable::Null,
         }

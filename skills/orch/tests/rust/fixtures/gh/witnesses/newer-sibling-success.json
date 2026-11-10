@@ -16,7 +16,10 @@
           "started_at": "2026-07-18T06:55:24Z",
           "completed_at": "2026-07-18T06:55:24Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 88057237008,
@@ -31,7 +34,10 @@
           "started_at": "2026-07-18T06:55:25Z",
           "completed_at": "2026-07-18T06:55:25Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 88057237015,
@@ -46,7 +52,10 @@
           "started_at": "2026-07-18T06:55:27Z",
           "completed_at": "2026-07-18T06:55:27Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -100,7 +109,12 @@
           "check_suite_id": 29639837179,
           "check_suite_node_id": "CS_29639837179",
           "created_at": "2026-07-18T06:55:23Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         },
         {
           "id": 29634837074,
@@ -119,7 +133,12 @@
           "check_suite_id": 29639837074,
           "check_suite_node_id": "CS_29639837074",
           "created_at": "2026-07-18T06:55:23Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         }
       ]
     }
@@ -265,7 +284,10 @@
           "started_at": "2026-07-18T06:55:24Z",
           "completed_at": "2026-07-18T06:55:24Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 88057237008,
@@ -280,7 +302,10 @@
           "started_at": "2026-07-18T06:55:25Z",
           "completed_at": "2026-07-18T06:55:25Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 88057237015,
@@ -295,7 +320,10 @@
           "started_at": "2026-07-18T06:55:27Z",
           "completed_at": "2026-07-18T06:55:27Z",
           "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
-          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015"
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }

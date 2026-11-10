@@ -5,7 +5,7 @@
 //! The record reads the merged pull request's stamps from the github skill's
 //! `pr-timeline`, or a direct push's commit and the push that reached the
 //! base branch from GitHub's activity log; the merged diff's class from the
-//! classifier's merged reader (`refresh-ci-proof --merged`), over the merge
+//! merge-group producer's evidence ([`ci_proof::merged`]), over the merge
 //! commit's first parent to the merge commit, from the project checkout; and
 //! the round counts and stages from the lane's own workflow state, live, the
 //! copy the merge saved, or the archive its host close kept. An unread class
@@ -26,7 +26,7 @@ use super::Delivery;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane};
-use crate::verify::Answer;
+use crate::verify::{Answer, ci_proof};
 use crate::watch::hosted::{self, Answer as HostAnswer};
 
 /// The class bases, lane-controlled seconds; only a clean final-head CI run
@@ -171,7 +171,7 @@ pub fn record(
             (timeline, resolved)
         }
     };
-    let class = classify(settings, gh, lane, &checkout, repo.as_deref(), &merge);
+    let class = classify(gh, lane, &checkout, repo.as_deref(), &merge);
     let pauses = pauses_of(lane)?;
     notes.extend(negative_notes(item, &timeline));
     let cycle = compute(&Inputs {
@@ -422,9 +422,14 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 
 /// The state member of the archive the fleet log's last `kept=PATH` row for
 /// the item since its session began names: the member its `lane-host-state`
-/// member names, or, where that is the empty line a close writes once no
-/// live state remained, the copy the merge `pr` saved, the clone's before
-/// the worktree's, never another merge's.
+/// member names; where that is the empty line a close writes once no live
+/// state remained, the copy the merge `pr` saved, never another merge's;
+/// where the archive holds no such member, as a close writes it from a clone
+/// whose state cannot be resolved, the member named for the item, then the
+/// one named for the merge. Among several copies the clone's comes before
+/// the worktree's, then name order, and the first that reads as an object
+/// answers: a file archived twice is a hard-link entry the second time,
+/// which `tar -O` prints empty.
 #[allow(
     clippy::disallowed_methods,
     reason = "the cycle record's reads of a kept archive through tar and the one runner, streamed"
@@ -463,30 +468,46 @@ fn kept_state(
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let member = |name: &str| tar(&["-xzOf", &kept, name]);
-    let marker = member("lane-host-state")?;
-    let name = match marker.trim() {
-        "" => {
-            let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
-            let worktree = format!(
-                "{}/",
-                lane.mail_root
-                    .as_deref()
-                    .unwrap_or("")
-                    .trim_start_matches('/')
-            );
-            let listing = tar(&["-tzf", &kept])?;
-            listing
-                .lines()
-                .filter(|name| name.ends_with(&suffix))
-                .min_by_key(|name| (name.starts_with(&worktree), *name))?
-                .to_owned()
-        }
-        name => name.to_owned(),
+    let listing = tar(&["-tzf", &kept])?;
+    let names: Vec<&str> = listing.lines().collect();
+    let worktree = format!(
+        "{}/",
+        lane.mail_root
+            .as_deref()
+            .unwrap_or("")
+            .trim_start_matches('/')
+    );
+    let copies = |matches: &dyn Fn(&str) -> bool| {
+        let mut found: Vec<&str> = names.iter().copied().filter(|name| matches(name)).collect();
+        found.sort_by_key(|name| (name.starts_with(&worktree), *name));
+        found
     };
-    match serde_json::from_str::<Value>(&member(&name)?) {
-        Ok(Value::Object(doc)) => Some(doc),
-        Ok(_) | Err(_) => None,
-    }
+    let candidates: Vec<&str> = if names.contains(&"lane-host-state") {
+        match member("lane-host-state")?.trim() {
+            "" => {
+                let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
+                copies(&|name| name.ends_with(&suffix))
+            }
+            name => names
+                .iter()
+                .copied()
+                .filter(|member| *member == name)
+                .collect(),
+        }
+    } else {
+        let mut keyed = vec![format!("workflow-state-{}.json", lane.item)];
+        keyed.extend(pr.map(|pr| format!("workflow-state-pr-{pr}.json")));
+        keyed
+            .iter()
+            .flat_map(|file| copies(&|name| name.rsplit('/').next() == Some(file.as_str())))
+            .collect()
+    };
+    candidates
+        .into_iter()
+        .find_map(|name| match serde_json::from_str::<Value>(&member(name)?) {
+            Ok(Value::Object(doc)) => Some(doc),
+            Ok(_) | Err(_) => None,
+        })
 }
 
 // --- the reads --------------------------------------------------------------------
@@ -629,16 +650,9 @@ fn checkout_repo(gh: &Path, checkout: &Path) -> Option<String> {
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the cycle record's one run of the classifier's merged reader through the one runner, from the checkout"
+    reason = "the cycle record's read of whether a local lane's recorded root stands as a directory, which decides whose origin the checkout is judged against"
 )]
-fn classify(
-    settings: &Settings,
-    gh: &Path,
-    lane: &Lane,
-    checkout: &Path,
-    repo: Option<&str>,
-    merge: &str,
-) -> Class {
+fn classify(gh: &Path, lane: &Lane, checkout: &Path, repo: Option<&str>, merge: &str) -> Class {
     if git(checkout, &["rev-parse", "--show-toplevel"]).is_err() {
         return Class::unread("checkout-absent");
     }
@@ -678,60 +692,27 @@ fn classify(
     let Some(evidence_repo) = checkout_repo(gh, checkout) else {
         return Class::unread("repo-unresolved");
     };
-    let reader =
-        crate::watch::overseer::scripts_dir(&settings.roots.project).join("refresh-ci-proof");
-    let out = match host::run_tagged_in(
-        TAG,
-        "refresh-ci-proof",
-        &reader,
-        "merged",
-        &["--merged", base.trim(), merge, "--repo", &evidence_repo],
-        host::Place {
-            cwd: Some(checkout),
-            env: &[],
-        },
-        BOUND,
-    ) {
-        Ok(out) => out,
-        Err(_) => return Class::unread("ci-proof-missing"),
-    };
-    read_class(out.status.success(), &host::stderr_text(&out), &out.stdout)
+    class_of(ci_proof::merged_class(
+        gh,
+        checkout,
+        base.trim(),
+        merge,
+        &evidence_repo,
+    ))
 }
 
-/// The merged reader's answer as a class: its one `cause=` line where it
-/// refused, kept as the cycle's cause, never overridden; a measured class of
-/// the target table with its reason word and evidence; anything else
-/// `ci-proof-missing`.
-fn read_class(succeeded: bool, stderr: &str, stdout: &[u8]) -> Class {
-    if !succeeded {
-        let causes: Vec<&str> = stderr
-            .lines()
-            .filter_map(|l| l.strip_prefix("refresh-ci-proof: cause="))
-            .collect();
-        return match causes.as_slice() {
-            [cause] if !cause.is_empty() => Class::unread(cause),
-            _ => Class::unread("ci-proof-missing"),
-        };
-    }
-    let answer: Value = serde_json::from_slice(stdout).unwrap_or(Value::Null);
-    let (Some(class), Some(true), Some(evidence)) = (
-        answer.get("class").and_then(Value::as_str),
-        answer.get("measured").and_then(Value::as_bool),
-        answer.get("evidence").and_then(Value::as_str),
-    ) else {
-        return Class::unread("ci-proof-missing");
-    };
-    let reason = evidence.split(' ').next().map(str::to_owned);
-    let (class, cause) = if target_of(class).is_some() {
-        (Some(class.to_owned()), None)
-    } else {
-        (None, Some(format!("class-unknown-{class}")))
-    };
-    Class {
-        class,
-        cause,
-        reason,
-        evidence: evidence.to_owned(),
+/// The merged evidence as a class: the reader's refusal kept as the cycle's
+/// cause, never overridden; a measured class with its reason word, the
+/// cause the producer named, and its evidence.
+fn class_of(read: std::result::Result<ci_proof::Measured, ci_proof::Refusal>) -> Class {
+    match read {
+        Ok(measured) => Class {
+            class: Some(measured.class),
+            cause: None,
+            reason: Some(measured.cause),
+            evidence: measured.evidence,
+        },
+        Err(refusal) => Class::unread(refusal.cause()),
     }
 }
 
@@ -2819,67 +2800,24 @@ mod tests {
 
     #[test]
     fn an_unread_class_keeps_its_cause_and_its_durations() {
-        let cases = [
+        let refused = class_of(Err(ci_proof::Refusal::OriginUntrusted));
+        assert_eq!(
+            (refused.class.as_deref(), refused.cause.as_deref()),
+            (None, Some("origin-untrusted"))
+        );
+        let measured = class_of(Ok(ci_proof::Measured {
+            class: "small".to_owned(),
+            cause: "production-past-micro".to_owned(),
+            evidence: "production-past-micro production=90".to_owned(),
+        }));
+        assert_eq!(
             (
-                "a brokered checkout's origin",
-                false,
-                "refresh-ci-proof: cause=origin-untrusted\n",
-                Value::Null,
-                None,
-                Some("origin-untrusted"),
+                measured.class.as_deref(),
+                measured.cause.as_deref(),
+                measured.reason.as_deref()
             ),
-            (
-                "two causes",
-                false,
-                "refresh-ci-proof: cause=a\nrefresh-ci-proof: cause=b\n",
-                Value::Null,
-                None,
-                Some("ci-proof-missing"),
-            ),
-            (
-                "no cause",
-                false,
-                "boom\n",
-                Value::Null,
-                None,
-                Some("ci-proof-missing"),
-            ),
-            (
-                "unmeasured",
-                true,
-                "",
-                json!({"class": "small", "measured": false, "evidence": "x"}),
-                None,
-                Some("ci-proof-missing"),
-            ),
-            (
-                "a class off the table",
-                true,
-                "",
-                json!({"class": "huge", "measured": true, "evidence": "x"}),
-                None,
-                Some("class-unknown-huge"),
-            ),
-            (
-                "measured",
-                true,
-                "",
-                json!({"class": "small", "measured": true, "evidence": "production-past-micro production=90"}),
-                Some("small"),
-                None,
-            ),
-        ];
-        for (name, ok, stderr, stdout, want_class, want_cause) in cases {
-            let read = read_class(ok, stderr, stdout.to_string().as_bytes());
-            assert_eq!(
-                (read.class.as_deref(), read.cause.as_deref()),
-                (want_class, want_cause),
-                "{name}"
-            );
-            if want_class.is_some() {
-                assert_eq!(read.reason.as_deref(), Some("production-past-micro"));
-            }
-        }
+            (Some("small"), None, Some("production-past-micro"))
+        );
         let brokered = Class::unread("origin-untrusted");
         let c = cycle(
             &lane("KEN-1", json!({})),

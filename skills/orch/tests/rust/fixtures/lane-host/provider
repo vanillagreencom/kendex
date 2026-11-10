@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# A provider standing for a remote host behind the real `lane-host`
+# dispatcher: the hosted rows name this file as a record's host. Its world
+# is the directory `LANE_HOST_WORLD` names, which the rows' dispatcher
+# wrapper sets. `cat --item I PATH` serves `disk/PATH` there, exit 2 for a
+# file the host has not; `touch` answers 0; `status` reads the harness
+# running; `capabilities` the SSH kind with a local pane. Every other verb, and any argv that answers otherwise, is
+# answered from the JSON map `provider.json` there, keyed by the argv joined
+# with one space, or by `<ORCH_LANE_HOST> <argv>`, or by either with `#N`
+# appended for the Nth call of that argv: `{exit?, stdout?, stderr?,
+# signal?}`, `stdout` the exact bytes printed, the status 0 when absent and
+# `signal` one this call ends itself by after its output. A verb the map
+# lacks is exit 64 with `lane-host-provider: unplanned argv=[...]`. Each
+# call appends `ORCH_LANE_HOST=<value|unset> <argv>` to `provider.log`
+# there. Bash 3.2.
+set -u
+world="${LANE_HOST_WORLD:-}"
+if [ -z "$world" ] || [ ! -d "$world" ]; then
+  printf 'lane-host-provider: world-unset\n' >&2
+  exit 64
+fi
+host="${ORCH_LANE_HOST-unset}"
+line="ORCH_LANE_HOST=$host $*"
+prior=0
+[ ! -f "$world/provider.log" ] || prior="$(grep -cxF -- "$line" "$world/provider.log")" || prior=0
+printf '%s\n' "$line" >> "$world/provider.log"
+key="$*"
+nth="#$((prior + 1))"
+reply=""
+if [ -f "$world/provider.json" ]; then
+  reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] // .[$k + $n] // .[$h] // .[$k] // empty' -- "$world/provider.json" 2>/dev/null)" || reply=""
+fi
+if [ -z "$reply" ]; then
+  case "${1:-}" in
+    capabilities)
+      printf 'kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local\n'
+      exit 0 ;;
+    cat)
+      [ -f "$world/disk${4:-}" ] || exit 2
+      exec cat -- "$world/disk${4:-}" ;;
+    touch) exit 0 ;;
+    status) printf 'running\n'; exit 0 ;;
+  esac
+  printf 'lane-host-provider: unplanned argv=[%s]\n' "$key" >&2
+  exit 64
+fi
+jq -rj '.stderr // empty' <<<"$reply" >&2
+jq -rj '.stdout // empty' <<<"$reply"
+signal="$(jq -r '.signal // empty' <<<"$reply")"
+[ -z "$signal" ] || kill -s "$signal" "$$"
+exit "$(jq -r '.exit // 0' <<<"$reply")"

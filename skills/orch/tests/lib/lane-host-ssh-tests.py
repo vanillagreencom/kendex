@@ -675,7 +675,7 @@ signal.sigwait({signal.SIGTERM})
                 self.assertTrue(stop_done.exists(), "stop attempt produced no completion receipt")
                 self.assertTrue(fault_reached.exists(), "stop fault was not reached")
             state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
-            read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", "TEST-1")
+            read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
             self.assertEqual(read.returncode, 0, read.stderr)
             self.assertEqual(json.loads(read.stdout), state)
             if recovery_fault == "handoff":
@@ -950,46 +950,24 @@ ORCH_RUNTIME_CLI=@RUNTIME@ "$scripts/round-recover" --worktree "$PWD" --issue TE
         self.assertTrue((self.root / "control-state/workflow-state-TEST-1.json").is_file())
         self.assertFalse((path / "tmp/workflow-state-TEST-1.json").exists())
 
-    def hosted_state_read(self, path, library, state_key=""):
+    def hosted_state_read(self, path, library):
         scratch = self.root / "state-read"
         scratch.mkdir(exist_ok=True)
         child_env = {key: self.env[key] for key in
                      ("HOME", "PATH", "REAL_GIT", "SSH_TEST_SOURCE", "SSH_TEST_LOG",
                       "LANE_HOST_SSH_SOURCE", "LANE_HOST_SSH_INVENTORY")}
         return subprocess.run([shutil.which("bash", path=self.env["PATH"]), "-c",
-                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4" "$5"; printf "%s" "$LANE_ITEM_STATE"',
-                               "hosted-reader", str(library), str(self.script), str(path), str(scratch), state_key],
+                               'set -euo pipefail; . "$1"; lane_hosted_item_state "$2" TEST-1 "$3" "$4"; printf "%s" "$LANE_ITEM_STATE"',
+                               "hosted-reader", str(library), str(self.script), str(path), str(scratch)],
                               env=child_env, capture_output=True, timeout=60)
 
     def test_hosted_state_read_and_archive_keep_the_prefix_state(self):
         fields, path, run = self.hosted_state_launch()
         self.assert_hosted_state(fields, path, run)
         expected = json.loads((path / "tmp/workflow-state-TEST-1.json").read_bytes())
-        for state_key in ("", "pr-7"):
-            with self.subTest(state_key=state_key):
-                original = path / "tmp/workflow-state-TEST-1.json"
-                selected = path / f"tmp/workflow-state-{state_key or 'TEST-1'}.json"
-                original.rename(selected)
-                try:
-                    read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh", state_key)
-                    self.assertEqual(read.returncode, 0, read.stderr)
-                    self.assertEqual(json.loads(read.stdout), expected)
-                    if state_key:
-                        with tempfile.TemporaryDirectory() as control:
-                            lib = Path(control) / "orch/scripts/lib"
-                            self.copy_tree(PACKAGE / "scripts/lib", lib)
-                            self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
-                            library = lib / "lane-gitfile.sh"
-                            text = library.read_text()
-                            rule = 'state_key="${5:-$2}"'
-                            self.assertEqual(text.count(rule), 1)
-                            library.write_text(text.replace(rule, 'state_key="$2"'))
-                            read = self.hosted_state_read(path, library, state_key)
-                            self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
-                            with self.assertRaises(AssertionError):
-                                self.assertEqual(json.loads(read.stdout or b"null"), expected)
-                finally:
-                    selected.rename(original)
+        read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
+        self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(json.loads(read.stdout), expected)
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
@@ -1007,9 +985,9 @@ ORCH_RUNTIME_CLI=@RUNTIME@ "$scripts/round-recover" --worktree "$PWD" --issue TE
             self.copy_tree(PACKAGE.parent / "github/scripts/lib", Path(control) / "github/scripts/lib")
             library = lib / "lane-gitfile.sh"
             original = library.read_text()
-            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$state_key"'
+            rule = 'lane_hosted_state_path "$LANE_HOSTED_CLONE" "$3/tmp" "$2"'
             self.assertEqual(original.count(rule), 1)
-            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$state_key"'))
+            library.write_text(original.replace(rule, 'lane_hosted_state_path "$LANE_HOSTED_CLONE" tmp "$2"'))
             read = self.hosted_state_read(path, library)
             self.assertEqual((read.returncode, read.stdout), (0, b""), read.stderr)
 
@@ -2686,9 +2664,6 @@ fi
         # its close archives the item's state there, which oversee-cycle reads
         # once the sandbox is gone.
         state_dir = self.root / "lane-state"
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text(f'[env]\nORCH_STATE_DIR = "{state_dir}"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2712,9 +2687,6 @@ fi
         # kept= path is absolute though FLEET_DIR is relative, since tempfile
         # makes the archive's directory absolute, which oversee-cycle's read
         # of the kept= row relies on.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "../lane-state"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2736,9 +2708,6 @@ fi
         # the filesystem follows it; collapsing link/.. first names
         # tmp/lane-state, which here holds another copy, so the record would
         # name a file that is not the lane's state.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         (self.source / "kendex.settings.toml").write_text('[env]\nORCH_STATE_DIR = "tmp/link/../lane-state"\n')
         for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state dir")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -2761,20 +2730,16 @@ fi
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 2}')
 
     def test_close_archives_the_state_the_lane_private_env_places(self):
-        # The lane's workflow-state loads its private env file over its
-        # settings; close resolves the state the way the lane does.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context"):
-            self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "state reader")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        # The lane loads its private env file over its settings; close
+        # resolves the state the way the lane does, and a retired setting the
+        # file still carries refuses nothing here.
         created = self.create()
         self.assertEqual(created.returncode, 0, created.stderr)
         path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
         state_dir = (self.root / "private-state").resolve()
         state_dir.mkdir()
         (state_dir / "workflow-state-TEST-1.json").write_text('{"cycles": 5}')
-        (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\n')
+        (path / ".env.local").write_text(f'ORCH_STATE_DIR="{state_dir}"\nORCH_CONSUMER_REPOS=owner/other\n')
         closed = self.call("close", "--item", "TEST-1")
         self.assertEqual(closed.returncode, 0, closed.stderr)
         archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
@@ -2784,15 +2749,13 @@ fi
             self.assertEqual(saved.extractfile(member).read(), b'{"cycles": 5}')
 
     def test_close_stops_when_the_state_directory_does_not_resolve(self):
-        # A clone whose workflow-state fails leaves the item's state unplaced:
-        # close stops before the worktree goes, rather than archive without it.
-        scripts = self.source / ".agents/skills/orch/scripts"
-        self.executable(scripts / "workflow-state", "#!/usr/bin/env bash\necho 'workflow-state: settings broken' >&2\nexit 1\n")
-        for args in (("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "broken state")):
-            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        # A checkout whose settings the loader refuses leaves the item's state
+        # unplaced: close stops before the worktree goes, rather than archive
+        # without it. A private env file that is no regular file is refused.
         created = self.create()
         self.assertEqual(created.returncode, 0, created.stderr)
         path = Path(dict(field.split("=", 1) for field in created.stdout.decode().strip().split("\t"))["path"])
+        (path / ".env.local").mkdir()
         closed = self.call("close", "--item", "TEST-1")
         self.assertNotEqual(closed.returncode, 0, closed.stderr)
         self.assertIn(b"lane-host-ssh: state-unresolved item=TEST-1", closed.stderr)

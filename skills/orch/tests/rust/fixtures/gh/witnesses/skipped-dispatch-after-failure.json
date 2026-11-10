@@ -16,7 +16,10 @@
           "started_at": null,
           "completed_at": null,
           "html_url": null,
-          "details_url": null
+          "details_url": null,
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -66,7 +69,12 @@
           "check_suite_id": 37742962683,
           "check_suite_node_id": "CS_37742962683",
           "created_at": "2026-10-08T06:31:23Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         },
         {
           "id": 37737962684,
@@ -85,7 +93,12 @@
           "check_suite_id": 37742962684,
           "check_suite_node_id": "CS_37742962684",
           "created_at": "2026-10-08T06:31:23Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         }
       ]
     }

@@ -38,6 +38,7 @@
 //! gate's reads (`review`) name the pull request too: its verdict is the
 //! reviewers' state on the head the pull request answers.
 
+pub mod ci_proof;
 mod evidence;
 mod judge;
 pub mod review;

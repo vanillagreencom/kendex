@@ -4088,9 +4088,13 @@ fn rounds_state(fix: u64) -> Value {
 /// names, else the copy its merge saved there, which the clone the watch
 /// kept still names once the merge's close-out removed the worktree, else
 /// the archive the fleet log's last `kept=` row names, whose empty state
-/// marker selects this merge's saved copy and never another's; with none,
-/// the rounds are null and the close's notes name the paths tried. The
-/// class stays unread with its cause, the checkout no repository.
+/// marker selects this merge's saved copy and never another's, and which,
+/// with no marker at all, answers from the member named for the item before
+/// the merge's copy, passing over the empty hard-link entry a twice-archived
+/// file leaves; with none, the rounds are null and the close's notes name
+/// the paths tried. The class stays unread with its cause, the checkout no
+/// repository. The archives are planted in the three forms
+/// `lane-host-ssh::archive_tmp` writes, as `main` wrote them.
 #[test]
 fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
     for (case, fix) in [
@@ -4099,6 +4103,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("the saved copy after the worktree's removal", Some(4)),
         ("the archive its close kept", Some(6)),
         ("the archive's saved copy alone", Some(6)),
+        ("the archive with no state marker", Some(8)),
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
@@ -4137,24 +4142,34 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             )
             .unwrap();
         };
-        // The archive a close kept, `marker` its `lane-host-state` member,
-        // and the fleet log's row naming it.
-        let archive = |marker: &str, members: &[(&str, Value)]| {
+        // The archive a close kept, `marker` its `lane-host-state` member
+        // where it has one, each `linked` member a hard link to the member it
+        // names, archived after it, and the fleet log's row naming it.
+        let archive = |marker: Option<&str>, members: &[(&str, Value)], linked: &[(&str, &str)]| {
             let kept = fleet.state_dir().join("kept");
             for (member, state) in members {
                 let at = kept.join(member);
                 std::fs::create_dir_all(at.parent().unwrap()).unwrap();
                 std::fs::write(at, state.to_string()).unwrap();
             }
-            std::fs::write(kept.join("lane-host-state"), marker).unwrap();
+            for (link, target) in linked {
+                let at = kept.join(link);
+                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+                std::fs::hard_link(kept.join(target), at).unwrap();
+            }
+            let mut names: Vec<&str> = members.iter().map(|(member, _)| *member).collect();
+            names.extend(linked.iter().map(|(link, _)| *link));
+            if let Some(marker) = marker {
+                std::fs::write(kept.join("lane-host-state"), marker).unwrap();
+                names.insert(0, "lane-host-state");
+            }
             let archive = fleet.state_dir().join("kept.tgz");
             let out = program("tar")
                 .arg("-czf")
                 .arg(&archive)
                 .arg("-C")
                 .arg(&kept)
-                .arg("lane-host-state")
-                .args(members.iter().map(|(member, _)| member))
+                .args(&names)
                 .output()
                 .unwrap();
             assert!(out.status.success(), "tar: {}", stderr(&out));
@@ -4180,15 +4195,30 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 put(&saved(7), &rounds_state(fix).to_string());
             }
             ("the archive its close kept", Some(fix)) => log.push(archive(
-                "clone/tmp/workflow-state-KEN-1.json\n",
+                Some("clone/tmp/workflow-state-KEN-1.json\n"),
                 &[("clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
+                &[],
             )),
             ("the archive's saved copy alone", Some(fix)) => log.push(archive(
-                "\n",
+                Some("\n"),
                 &[
                     (&saved(6)[1..], rounds_state(9)),
                     (&saved(7)[1..], rounds_state(fix)),
                 ],
+                &[],
+            )),
+            // The worktree's tmp linked to the clone's archives one state file
+            // under both paths, the clone's as the hard-link entry.
+            ("the archive with no state marker", Some(fix)) => log.push(archive(
+                None,
+                &[
+                    ("w/ken-1/tmp/workflow-state-KEN-1.json", rounds_state(fix)),
+                    (&saved(7)[1..], rounds_state(9)),
+                ],
+                &[(
+                    "w/clone/tmp/workflow-state-KEN-1.json",
+                    "w/ken-1/tmp/workflow-state-KEN-1.json",
+                )],
             )),
             _ => retained(),
         }

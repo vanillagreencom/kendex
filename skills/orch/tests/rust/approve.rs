@@ -175,12 +175,26 @@ fn run_stepped(
     request: &ApproveHead,
     between: &(dyn Fn(u32) + Sync),
 ) -> (orch_runtime::Result<approve::ApprovedHead>, u32) {
+    run_in(
+        root,
+        request,
+        &std::env::vars_os().collect::<Vec<_>>(),
+        between,
+    )
+}
+
+fn run_in(
+    root: &Path,
+    request: &ApproveHead,
+    vars: &[(std::ffi::OsString, std::ffi::OsString)],
+    between: &(dyn Fn(u32) + Sync),
+) -> (orch_runtime::Result<approve::ApprovedHead>, u32) {
     let settings = settings::load(
         &Roots {
             project: root.into(),
             common: root.into(),
         },
-        &std::env::vars_os().collect::<Vec<_>>(),
+        vars,
         &Flags {
             state_dir: None,
             private_env: true,
@@ -204,6 +218,34 @@ fn run_stepped(
 
 fn run(root: &Path, request: &ApproveHead) -> orch_runtime::Result<approve::ApprovedHead> {
     run_stepped(root, request, &|_| {}).0
+}
+
+/// One approval under the row's environment with `ORCH_OVERSEER_REVIEW_LOGIN`
+/// set to `login`, or absent where it is `None`.
+fn run_as(
+    root: &Path,
+    request: &ApproveHead,
+    login: Option<&str>,
+) -> orch_runtime::Result<approve::ApprovedHead> {
+    let mut vars: Vec<_> = std::env::vars_os()
+        .filter(|(key, _)| key != "ORCH_OVERSEER_REVIEW_LOGIN")
+        .collect();
+    if let Some(login) = login {
+        vars.push(("ORCH_OVERSEER_REVIEW_LOGIN".into(), login.into()));
+    }
+    run_in(root, request, &vars, &|_| {}).0
+}
+
+/// The head's `head_approvals` entry, replaced by `entry`.
+fn plant_entry(root: &Path, entry: Value) {
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+    record["head_approvals"] = json!({"o/r#42": {HEAD: entry}});
+    fs::write(root.join("item.json"), record.to_string()).unwrap();
+}
+
+fn refusal_fields(e: &orch_runtime::Error) -> (&'static str, Vec<(String, String)>) {
+    (e.key(), e.fields())
 }
 
 #[test]
@@ -469,7 +511,39 @@ fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
                     Some("login-differs configured=review-app review=review-app[bot]")
                 )
             );
-            assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+            let standing = run(&root, &r).unwrap();
+            assert_eq!(
+                (standing.status, standing.detail.as_deref()),
+                (
+                    Status::Confirmed,
+                    Some("login-differs configured=review-app review=review-app[bot]")
+                )
+            );
+            // The setting corrected: the approval it confirmed stands.
+            let corrected = run_as(&root, &r, Some("review-app[bot]")).unwrap();
+            assert_eq!(
+                (corrected.status, corrected.detail.as_deref()),
+                (Status::Confirmed, None)
+            );
+            assert_eq!(posts(&root), 1);
+            // An attempt still unsettled under another login is not read
+            // back under the corrected one, even where no read-back answers.
+            answer(&root, json!({"read_back": "fail"}));
+            plant_entry(
+                &root,
+                json!({"login": "review-app", "attempt": {"state": "attempted"}}),
+            );
+            let refused = run_as(&root, &r, Some("review-app[bot]")).unwrap_err();
+            assert_eq!(
+                refusal_fields(&refused),
+                (
+                    "approval-login-changed",
+                    vec![
+                        ("recorded".to_owned(), "review-app".to_owned()),
+                        ("configured".to_owned(), "review-app[bot]".to_owned())
+                    ]
+                )
+            );
             assert_eq!(posts(&root), 1);
             return;
         }
@@ -566,6 +640,23 @@ fn a_refused_post_clears_its_claim_so_the_next_request_posts_again() {
     record["head_approvals"] = json!({"o/r#42": {HEAD: {"login": "review-app", "attempt": null}}});
     fs::write(root.join("item.json"), record.to_string()).unwrap();
     assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 7);
+    // A comment that stands under the earlier spelling is an act: it refuses.
+    plant_entry(
+        &root,
+        json!({"login": "review-app", "attempt": null, "comment": {"state": "posted", "id": 9}}),
+    );
+    let refused = run(&root, &r).unwrap_err();
+    assert_eq!(
+        refusal_fields(&refused),
+        (
+            "approval-login-changed",
+            vec![
+                ("recorded".to_owned(), "review-app".to_owned()),
+                ("configured".to_owned(), "review-app[bot]".to_owned())
+            ]
+        )
+    );
     assert_eq!(posts(&root), 7);
 }
 
@@ -768,6 +859,13 @@ fn invalid_credentials_refuse_without_any_github_call() {
     }
     let root = root();
     let r = request(&root);
+    for login in [None, Some("")] {
+        assert_eq!(
+            run_as(&root, &r, login).unwrap_err().key(),
+            "approval-login",
+            "{login:?}"
+        );
+    }
     fs::set_permissions(root.join("token"), fs::Permissions::from_mode(0o640)).unwrap();
     assert_eq!(run(&root, &r).unwrap_err().key(), "credential");
     assert!(!root.join("gh.log").exists());
@@ -781,7 +879,11 @@ fn an_unstarted_post_clears_its_claim_and_can_retry() {
     let root = root();
     let r = request(&root);
     answer(&root, json!({"remove_gh_after_replies":true}));
-    assert_eq!(run(&root, &r).unwrap().status, Status::Refused);
+    let refused = run(&root, &r).unwrap();
+    assert_eq!(
+        (refused.status, refused.reason.as_str()),
+        (Status::Refused, "not-started")
+    );
     assert_eq!(posts(&root), 0);
     support::write_executable(&root.join("bin/gh"), include_str!("fixtures/approve-gh"));
     answer(&root, json!({}));
@@ -843,6 +945,23 @@ fn invalid_requests_and_unread_bodies_never_read_github() {
         r.head = head.into();
         r.body_file = root.join(file);
         assert_eq!(run(&root, &r).unwrap_err().key(), key);
+    }
+    // A record the approvals cannot be read from refuses before any call.
+    let r = request(&root);
+    for approvals in [
+        json!([]),
+        json!({"o/r#42": []}),
+        json!({"o/r#42": {HEAD: {"login": 5}}}),
+    ] {
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        record["head_approvals"] = approvals.clone();
+        fs::write(root.join("item.json"), record.to_string()).unwrap();
+        assert_eq!(
+            run(&root, &r).unwrap_err().key(),
+            "approval-record",
+            "{approvals}"
+        );
     }
     assert!(!root.join("gh.log").exists());
 }

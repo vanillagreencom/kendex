@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# change-class.sh — dev-validate-run's, item-tier's and oversee-cycle's reader
-# of the change classifier, and the owner of the class order item-tier ranks
+# change-class.sh — dev-validate-run's and item-tier's reader of the change
+# classifier, and the owner of the class order item-tier ranks
 # by. CI's .github/actions/change-class reads the shipped scripts from its own
 # trusted checkout. Sourced; it defines the functions below and sets nothing
 # until one runs.
@@ -47,8 +47,7 @@
 # the same path rules as branch classification, without proving a render.
 #
 # The readers append stderr to STDERR_FILE and write no workflow outputs.
-# Executable readers use the classifier. The merged reader uses its measured
-# Actions record. No argument here carries a class.
+# Executable readers use the classifier. No argument here carries a class.
 
 CHANGE_CLASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CHANGE_SCOPE_SCRIPTS="$CHANGE_CLASS_LIB_DIR/../../../change-scope/scripts"
@@ -161,25 +160,6 @@ change_class_read() { # BASE HEAD REPO STDERR_FILE
       CHANGE_CLASS_QUEUE_ONLY="${CHANGE_CLASS_QUEUE_ONLY%% *}" ;;
     *) CHANGE_CLASS_QUEUE_ONLY="" ;;
   esac
-}
-
-# Stored Actions evidence only. Executable lane/CI readers stay separate.
-change_class_merged() { # BASE HEAD CHECKOUT REPOSITORY STDERR_FILE
-  local answer status=0 reader="$CHANGE_CLASS_LIB_DIR/../refresh-ci-proof"
-  CHANGE_CLASS="" CHANGE_CLASS_CAUSE=ci-proof-missing CHANGE_CLASS_MEASURED="" CHANGE_CLASS_EVIDENCE=""
-  [[ -x $reader ]] || { CHANGE_CLASS_CAUSE=ci-proof-missing; return 1; }
-  answer="$(cd -- "$3" && "$reader" --merged "$1" "$2" --repo "$4" 2>>"$5")" || status=$?
-  if (( status != 0 )); then
-    CHANGE_CLASS_CAUSE="$(sed -n 's/^refresh-ci-proof: cause=//p' "$5")" || CHANGE_CLASS_CAUSE=""
-    [[ -n $CHANGE_CLASS_CAUSE && $CHANGE_CLASS_CAUSE != *$'\n'* ]] || CHANGE_CLASS_CAUSE=ci-proof-missing
-    return 1
-  fi
-  jq -e '(.class | type) == "string" and .measured == true and
-    (.evidence | type) == "string"' >/dev/null <<<"$answer" || { CHANGE_CLASS_CAUSE=ci-proof-missing; return 1; }
-  CHANGE_CLASS="$(jq -r '.class' <<<"$answer")" || return 1
-  CHANGE_CLASS_MEASURED=true
-  CHANGE_CLASS_EVIDENCE="$(jq -r '.evidence' <<<"$answer")" || return 1
-  CHANGE_CLASS_CAUSE=""
 }
 
 change_class_docs() { # BASE HEAD REPO PATHS_FILE STDERR_FILE

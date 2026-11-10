@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Surface: lane_host_fetch and lane_item_state. Inputs: scripts/lib/lane-gitfile.sh,
+# scripts/lib/kendex-env.sh, scripts/git-context,
 # scripts/lib/lane-host-read.sh, scripts/lib/lane-capabilities.sh,
 # scripts/lib/lane-host-slots.sh, tests/lib/.
 # Isolated fixtures install the single-read
@@ -68,41 +69,40 @@ missing_provider() {
 rc=0
 lane_item_state '' missing_provider unused KEN-1 box /gone "$TMP_ROOT" || rc=$?
 assert_eq "$rc:$LANE_ITEM_STATE_REASON:$LANE_ITEM_STATE" '0:state-absent:' 'a gone hosted worktree stays absent for advisory callers'
-rc=0
-lane_item_state '' missing_provider unused KEN-1 box /gone "$TMP_ROOT" '' KEN-1 false '' pr-7 || rc=$?
-assert_eq "$rc" 2 'a required cycle read with no saved state or archive refuses'
-assert_file_contains "$TMP_ROOT/state.err" 'lane-gitfile: state-unread item=KEN-1 cause=no-state' 'the direct library refusal names its item'
-assert_file_contains "$TMP_ROOT/state.err" 'lane-gitfile: state-tried item=KEN-1 path=/gone/.git' 'the direct library refusal names the gone worktree path'
 
-mkdir -p "$TMP_ROOT/clone/tmp/cycle-state" "$TMP_ROOT/live"
-printf '{"cycles":9,"post_pr_stop":{"reason":"old gate"}}' > "$TMP_ROOT/clone/tmp/cycle-state/workflow-state-pr-7.json"
-# An earlier merge of the item, saved under its item key, beside PR 7's copy.
-printf '{"cycles":1}' > "$TMP_ROOT/clone/tmp/cycle-state/workflow-state-KEN-1.json"
-state_path() { printf '%s/live/workflow-state-KEN-1.json\n' "$TMP_ROOT"; }
-saved_provider() {
-  case "$1" in
-    capabilities) printf 'kind=ssh\tfiles=verb\n' ;;
-    cat)
-      case "$4" in
-        /live/.git) printf 'gitdir: %s/clone/.git/worktrees/KEN-1\n' "$TMP_ROOT" ;;
-        "$TMP_ROOT/clone/tmp/cycle-state/"*) cat -- "$4" ;;
-        *) return 2 ;;
-      esac ;;
-    touch) return 0 ;;
-    *) return 1 ;;
-  esac
+# A local lane's state is read as data: ORCH_STATE_DIR as its checkout's
+# settings set it, a relative value joined to the main checkout, else tmp.
+repo="$TMP_ROOT/repo" lane="$TMP_ROOT/lane"
+git init -q "$repo"
+git -C "$repo" config gc.auto 0
+git -C "$repo" config maintenance.auto false
+git -C "$repo" -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m fixture
+git -C "$repo" worktree add -q --detach "$lane"
+mkdir -p "$repo/lane-state" "$repo/tmp"
+printf '{"cycles":3}' > "$repo/lane-state/workflow-state-KEN-1.json"
+printf '{"cycles":4}' > "$repo/tmp/workflow-state-KEN-1.json"
+local_read() { # LIB FORM
+  rm -f -- "$lane/kendex.settings.toml"
+  [[ "$2" != settings ]] || printf '[env]\nORCH_STATE_DIR = "lane-state"\n' > "$lane/kendex.settings.toml"
+  env -u ORCH_STATE_DIR "$BASH" -eu -c '
+    source "$1"
+    lane_item_state "" "" unused KEN-1 "" "$2" "$3"
+    printf "%s" "$LANE_ITEM_STATE"
+  ' sh "$1" "$lane" "$TMP_ROOT" 2>"$TMP_ROOT/local.err"
 }
-for form in local hosted; do
-  host='' root="$TMP_ROOT/live"
-  [[ "$form" != hosted ]] || { host=box; root=/live; }
-  lane_item_state state_path saved_provider unused KEN-1 "$host" "$root" "$TMP_ROOT" '' KEN-1 false "$TMP_ROOT/clone"
-  assert_eq "$LANE_ITEM_STATE_REASON:$LANE_ITEM_STATE" 'state-absent:' "$form advisory reads ignore a previous cycle snapshot"
-  lane_item_state state_path saved_provider unused KEN-1 "$host" "$root" "$TMP_ROOT" '' KEN-1 false "$TMP_ROOT/clone" pr-7
-  assert_eq "$(jq -r .cycles <<<"$LANE_ITEM_STATE")" 9 "$form recorder reads the copy its merge names"
-  rc=0
-  lane_item_state state_path saved_provider unused KEN-1 "$host" "$root" "$TMP_ROOT" '' KEN-1 false "$TMP_ROOT/clone" pr-8 || rc=$?
-  assert_eq "$rc:$LANE_ITEM_STATE" '2:' "$form recorder of a merge with no saved copy refuses past the item's copy"
-done
+while IFS='|' read -r form cycles; do
+  assert_eq "$(local_read "$TEST_DIR/../scripts/lib/lane-gitfile.sh" "$form" | jq -r .cycles)" "$cycles" \
+    "a local lane's $form state is read where its checkout's settings place it" "$TMP_ROOT/local.err"
+done <<'ROWS'
+settings|3
+default|4
+ROWS
+mkdir -p "$TMP_ROOT/joined"
+cp "$TEST_DIR/../scripts/lib/"*.sh "$TMP_ROOT/joined/"
+cp "$TEST_DIR/../scripts/git-context" "$TMP_ROOT/"
+mutate_file "$TMP_ROOT/joined/lane-gitfile.sh" '    dir="$common/$dir"' '    dir="$1/$dir"'
+assert_eq "$(local_read "$TMP_ROOT/joined/lane-gitfile.sh" settings)" '' \
+  "control: a relative setting joined to the lane's worktree reads no state"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

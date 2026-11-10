@@ -10,7 +10,7 @@ ARCHIVE="" ARCHIVE_DIR="" ARCHIVE_ERR=""
 # Keep the compatible default here so local and SSH close-out share it.
 # This is a storage setting, below the decision-record bar.
 archive_root() { # REPO_ROOT DESTINATION_SUFFIX [REMOVAL_ROOT_OR_ARCHIVE_INPUT...]
-    local root state_file
+    local root state_dir common
     root="$("$SCRIPT_DIR/orch-env" ORCH_ARCHIVE_ROOT "")" || return 1
     if [[ -z "$root" ]]; then
         root="${FLEET_DIR:-$HOME/.fleet}/archive"
@@ -19,13 +19,22 @@ archive_root() { # REPO_ROOT DESTINATION_SUFFIX [REMOVAL_ROOT_OR_ARCHIVE_INPUT..
         return 0
     fi
     command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'state-archive: dependency-missing command=python3 key=ORCH_ARCHIVE_ROOT' >&2; return 1; }
-    # `workflow-state path` owns ORCH_STATE_DIR resolution for every caller:
-    # the mailbox's compaction and the SSH provider's close-out source this
-    # library, and neither builds the orch runtime.
-    state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || return 1
+    # The state directory is read as data, by the layout every reader
+    # resolves: ORCH_STATE_DIR, else tmp, a relative value joined to the main
+    # checkout. The mailbox's compaction and the SSH provider's close-out
+    # source this library, and neither builds the orch runtime.
+    state_dir="$("$SCRIPT_DIR/orch-env" ORCH_STATE_DIR tmp)" || return 1
+    if [[ "$state_dir" != /* ]]; then
+        if git rev-parse --show-toplevel >/dev/null 2>&1; then
+            common="$("$SCRIPT_DIR/git-context" common-root "$PWD")" || return 1
+        else
+            common="$PWD"
+        fi
+        state_dir="$common/$state_dir"
+    fi
     # merge-pr removes linked checkouts; prune removes state subdirectories.
     # A configured archive must outlive both, including through directory links.
-    python3 - "$root" "$1" "$2" "${state_file%/*}" "${@:3}" <<'PY'
+    python3 - "$root" "$1" "$2" "$state_dir" "${@:3}" <<'PY'
 import pathlib
 import subprocess
 import sys

@@ -2925,27 +2925,28 @@ fn an_unreadable_relaunch_marker_is_the_pass_s_failure_not_a_gone_window() {
 
 /// The `local` and `claude-cloud` lines the dispatcher answers, and a static
 /// ssh provider's (`schemas/lane-host.md` § Host kinds).
-const CLOUD_LINE: &str =
-    "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none";
-const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb";
-/// A provider path, the host a hosted record names.
-const PROVIDER: &str = "/w/provider";
+const SSH_LINE: &str = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane";
 
-/// A row's world for the hosted reads: the `lane-host`, runtime-entry
-/// (`orch-runtime`, the close verb's) and `gh` fixtures linked under one
-/// scripts directory, their planted answers
-/// and logs beside them, as the production runner finds them from the
-/// pass's scripts directory and the `gh` path the pass carries.
+/// The shared provider standing for a remote host behind the real
+/// dispatcher: the host a hosted record names.
+fn provider() -> String {
+    fixtures().join("lane-host/provider").display().to_string()
+}
+
+/// A row's world for the hosted reads: the real `lane-host` dispatcher
+/// ([`real_lane_host`]) over the shared provider, with the runtime-entry
+/// (`orch-runtime`, the close verb's) and `gh` fixtures linked beside it in
+/// one scripts directory, their planted answers and logs there too, as the
+/// production runner finds them from the pass's scripts directory and the
+/// `gh` path the pass carries.
 struct HostedWorld {
     scripts: PathBuf,
 }
 
 impl HostedWorld {
     fn new(dir: &Path) -> HostedWorld {
-        let scripts = dir.join("scripts");
-        std::fs::create_dir_all(&scripts).unwrap();
+        let scripts = real_lane_host(dir);
         for (fixture, name) in [
-            ("lane-host/lane-host", "lane-host"),
             ("runtime-close/orch-runtime", "orch-runtime"),
             ("gh/gh", "gh"),
         ] {
@@ -2962,15 +2963,38 @@ impl HostedWorld {
         self.scripts.join("gh")
     }
 
-    /// The `lane-host` answers, by argv (or `<host> <argv>`); of two answers
-    /// to one argv, the later stands.
+    /// What the host answers, by argv (or `<host> <argv>`), the later of two
+    /// answers to one argv standing: a `cat` that reads is the file at its
+    /// path on the host's disk and one answering 2 a file the host has not,
+    /// a `touch` answering 0 the provider's own answer, and every other
+    /// answer planted on the provider. The disk is planted afresh.
     fn plant_host(&self, answers: &[(&str, Value)]) {
-        let map: serde_json::Map<String, Value> = answers
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), value.clone()))
-            .collect();
+        let disk = self.scripts.join("disk");
+        if disk.exists() {
+            std::fs::remove_dir_all(&disk).unwrap();
+        }
+        std::fs::create_dir_all(&disk).unwrap();
+        let mut map = serde_json::Map::new();
+        for (key, value) in answers {
+            let exit = value.get("exit").and_then(Value::as_i64).unwrap_or(0);
+            let plain = value.get("signal").is_none() && value.get("stderr").is_none();
+            let words: Vec<&str> = key.split(' ').collect();
+            map.remove(*key);
+            match (words.as_slice(), exit) {
+                (["cat", "--item", _, path], 0) if plain => {
+                    on_disk(&disk, path, value["stdout"].as_str().unwrap_or(""));
+                }
+                (["cat", "--item", _, path], 2) if plain => {
+                    let _ = std::fs::remove_file(disk.join(path.trim_start_matches('/')));
+                }
+                (["touch", "--item", _], 0) if plain => {}
+                _ => {
+                    map.insert((*key).to_owned(), value.clone());
+                }
+            }
+        }
         std::fs::write(
-            self.scripts.join("lane-host.json"),
+            self.scripts.join("provider.json"),
             Value::Object(map).to_string(),
         )
         .unwrap();
@@ -3067,7 +3091,7 @@ fn close_call(state_dir: &Path, request: &str) -> String {
 
 /// `gh api repos/O/R/pulls?head=O:B&state=open`'s one open pull request.
 fn open_pull(sha: &str, body: &str, draft: Option<bool>) -> Value {
-    json!({"body": [{"number": 1, "state": "open", "title": "cloud work", "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": sha, "ref": "cloud-work", "repo": null}, "base": {"ref": "main"}, "user": null, "body": body, "draft": draft}]})
+    json!({"body": [{"number": 1, "state": "open", "title": "cloud work", "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": sha, "ref": "cloud-work", "repo": null}, "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null, "body": body, "draft": draft}]})
 }
 
 /// The body digest as the stall row keeps it (`cksum` over the body and
@@ -3090,7 +3114,7 @@ fn cloud_lane(item: &str, account: &str, now: u64) -> Value {
 /// A running lane on the ssh provider, its worktree at `root` on the host.
 fn hosted_lane(item: &str, window: &str, root: &str) -> Value {
     json!({
-        "item": item, "window": window, "harness": "claude", "host": PROVIDER, "kind": "ssh",
+        "item": item, "window": window, "harness": "claude", "host": provider(), "kind": "ssh",
         "mail_root": root, "status": "running",
     })
 }
@@ -3123,7 +3147,6 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
     ]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
     let body = "## Lane status\nStep: implement";
     let pulls = |sha: &str| {
         json!({
@@ -3221,7 +3244,6 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     fleet.set_lanes(vec![lane.clone()]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
     world.plant_gh(json!({
         "repos/o/r/pulls?head=o:cc-1&state=open": open_pull("aaa111", "", Some(true)),
     }));
@@ -3567,15 +3589,18 @@ fn a_hosted_lane_s_status_file_is_read_through_the_provider_and_a_failed_fetch_i
     let log = world.host_log();
     assert!(
         log.iter()
-            .all(|l| l.starts_with("ORCH_LANE_HOST=/w/provider ")),
+            .all(|l| l.starts_with(&format!("ORCH_LANE_HOST={} ", provider()))),
         "{log:?}"
     );
     assert!(
-        log.contains(&"ORCH_LANE_HOST=/w/provider touch --item KEN-3".to_owned()),
+        log.contains(&format!("ORCH_LANE_HOST={} touch --item KEN-3", provider())),
         "{log:?}"
     );
     assert!(
-        log.contains(&"ORCH_LANE_HOST=/w/provider cat --item KEN-5 /remote/KEN-5/.git".to_owned()),
+        log.contains(&format!(
+            "ORCH_LANE_HOST={} cat --item KEN-5 /remote/KEN-5/.git",
+            provider()
+        )),
         "{log:?}"
     );
 }
@@ -3607,7 +3632,7 @@ fn a_lane_out_of_flight_s_gone_provider_is_not_asked_and_hides_no_live_lane_s_li
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
-        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         ("status --item KEN-1 --harness claude", ok("running\n")),
         (
             "cat --item KEN-1 /remote/KEN-1/tmp/lane-status-KEN-1.md",
@@ -3650,7 +3675,6 @@ fn a_cloud_session_with_no_pull_request_is_quiet_once_pushed_and_lane_stalled_wh
     ]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
     world.plant_gh(json!({
         "repos/o/r/pulls?head=o:cc-1&state=open": {"body": []},
         "repos/o/r/branches/cc-1": {"body": {"protected": false, "commit": {"sha": "bbb222", "commit": {"committer": {"date": clock::iso_utc(now - 100)}}}}},
@@ -3714,8 +3738,7 @@ fn a_long_hosted_lane_s_stage_and_counters_are_read_through_the_provider() {
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
-        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
-        ("claude-cloud capabilities", ok(CLOUD_LINE)),
+        (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         ("status --item KEN-1 --harness claude", ok("running\n")),
         ("status --item KEN-2 --harness claude", ok("running\n")),
         (
@@ -4007,7 +4030,7 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             ),
             dir.path(),
         );
-        record["host"] = json!(PROVIDER);
+        record["host"] = json!(provider());
         record["kind"] = json!("ssh");
         // A record the runtime's launch wrote: the lane's root is on its
         // host, and the checkout the launch ran from, where the relaunch
@@ -4033,7 +4056,10 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         driver.scripts = world.scripts.clone();
         driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
         let produced = driver.pass(&state);
-        let stop_line = "ORCH_LANE_HOST=/w/provider stop --item KEN-4 --harness claude".to_owned();
+        let stop_line = format!(
+            "ORCH_LANE_HOST={} stop --item KEN-4 --harness claude",
+            provider()
+        );
         assert!(
             world.host_log().contains(&stop_line),
             "{:?}",
@@ -4069,7 +4095,7 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
                 &std::fs::read_to_string(started[0].args.last().unwrap()).unwrap(),
             )
             .unwrap();
-            assert_eq!(request["host"], PROVIDER, "{request}");
+            assert_eq!(request["host"], provider(), "{request}");
             assert_eq!(request["kind"], "ssh", "{request}");
             assert_eq!(
                 request["mail_root"],
@@ -4091,7 +4117,7 @@ fn the_prepare_records_are_said_once_per_key() {
         if let Some(reason) = reason {
             record["reason"] = json!(reason);
         }
-        json!({"item": item, "harness": "claude", "host": PROVIDER, "kind": "ssh", "status": status, "prepare": record})
+        json!({"item": item, "harness": "claude", "host": provider(), "kind": "ssh", "status": status, "prepare": record})
     };
     let lanes = vec![
         prepare("KEN-1", "preparing", now - 1801, "/l1", None),
@@ -4304,7 +4330,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             std::os::unix::fs::symlink(&world.scripts, package.join("scripts")).unwrap();
             let remote = dir.path().join("remote-worktree").display().to_string();
             record.as_object_mut().unwrap().remove("recovery");
-            record["host"] = json!(PROVIDER);
+            record["host"] = json!(provider());
             record["kind"] = json!("ssh");
             record["repo"] = json!("o/r");
             record["checkout"] = json!(checkout.display().to_string());
@@ -4314,10 +4340,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
                 "create --item KEN-4 --repo o/r --harness claude --account {account} --relaunch"
             );
             world.plant_host(&[
-                (
-                    "capabilities",
-                    ok(&format!("{SSH_LINE}\tpane=local\tpool=plan\taccounts=none")),
-                ),
+                ("capabilities", ok(&format!("{SSH_LINE}\tpane=local"))),
                 ("status --item KEN-4 --harness claude", ok("running\n")),
                 (status.as_str(), ok("Step: start\n")),
                 (
@@ -4974,7 +4997,7 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
-        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         ("status --item KEN-1 --harness codex", ok("running\n")),
     ]);
     lane_driver!(server, fleet, readers, driver);
@@ -4995,37 +5018,20 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     assert!(!log.iter().any(|l| l.contains("capture")), "{log:?}");
 }
 
-/// A provider standing for a remote host, for the rows that run the real
-/// `lane-host`: it declares the SSH kind with a local pane, reads its lanes'
-/// harness as running, serves `cat` of a host path from `disk` (the host's
-/// disk, the path under it; exit 2 for a file it has not), answers `touch`
-/// and logs every argv to the log beside it; the path to name as the
-/// record's host and the log.
-fn file_provider(dir: &Path, disk: &Path) -> (PathBuf, PathBuf) {
-    let path = dir.join("provider");
-    let log = dir.join("provider.log");
-    write_executable(
-        &path,
-        format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  capabilities) printf '{SSH_LINE}\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  status) echo running ;;\n  cat) [ -f '{disk}'\"$4\" ] || exit 2; exec cat -- '{disk}'\"$4\" ;;\n  touch) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
-            log = log.display(),
-            disk = disk.display(),
-        ),
-    );
-    (path, log)
-}
-
 /// The scripts directory a row runs the shipped `lane-host` dispatcher
-/// from: a `lane-host` that starts it under the test child's isolation (the
-/// scratch home its call slots count under, git's ceiling at the temporary
-/// root) from a directory no checkout holds, so it loads no project's
-/// settings, with `ORCH_LANE_HOST` as the duty sets it.
+/// from: a `lane-host` that logs each call as `ORCH_LANE_HOST=<value|unset>
+/// <argv>` to `lane-host.log` beside it, then starts the dispatcher under the
+/// test child's isolation (the row's scratch home its call slots count
+/// under, git's ceiling at the temporary root) from a directory no checkout
+/// holds, so it loads no project's settings, with `ORCH_LANE_HOST` as the
+/// duty sets it and the shared provider's world (its `disk`, `provider.json`
+/// and `provider.log`) this directory.
 fn real_lane_host(dir: &Path) -> PathBuf {
     let scripts = dir.join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     let root = std::env::temp_dir();
-    let cwd = root.join("isolated-cwd");
-    let home = root.join("isolated-home");
+    let cwd = dir.join("isolated-cwd");
+    let home = dir.join("isolated-home");
     for made in [&cwd, &home] {
         std::fs::create_dir_all(made).unwrap();
     }
@@ -5033,11 +5039,13 @@ fn real_lane_host(dir: &Path) -> PathBuf {
     write_executable(
         &path,
         format!(
-            "#!/bin/sh\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
+            "#!/bin/sh\nprintf 'ORCH_LANE_HOST=%s %s\\n' \"${{ORCH_LANE_HOST-unset}}\" \"$*\" >> '{log}'\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' LANE_HOST_WORLD='{world}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
+            log = scripts.join("lane-host.log").display(),
             cwd = cwd.display(),
             path = tool_path(&[]),
             root = root.display(),
             home = home.display(),
+            world = scripts.display(),
             lane_host = orch_scripts().join("lane-host").display(),
         ),
     );
@@ -5074,13 +5082,13 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
         "{\"harness\":\"pi\",\"event\":\"PreToolUse\",\"at\":2}\n",
     )
     .unwrap();
-    let disk = dir.path().join("host-disk");
+    let scripts = real_lane_host(dir.path());
+    let disk = scripts.join("disk");
     on_disk(
         &disk,
         &rows.display().to_string(),
         "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n",
     );
-    let (provider, log) = file_provider(dir.path(), &disk);
     let mut record = lane_record(
         "KEN-5",
         "gh-5",
@@ -5090,13 +5098,13 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
         Some(&identity),
         dir.path(),
     );
-    record["host"] = json!(provider.display().to_string());
+    record["host"] = json!(provider());
     record["kind"] = json!("ssh");
     record["mail_root"] = json!(root.display().to_string());
     fleet.set_lanes(vec![record]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
-    driver.scripts = real_lane_host(dir.path());
+    driver.scripts = scripts.clone();
     let produced = driver.pass(&state);
     assert_eq!(
         event_lines(&produced),
@@ -5105,11 +5113,14 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
         lines(&produced),
         produced.failed
     );
-    let asked = std::fs::read_to_string(&log).unwrap_or_default();
+    let asked = std::fs::read_to_string(scripts.join("provider.log")).unwrap_or_default();
     assert!(
-        asked
-            .lines()
-            .any(|l| l == format!("cat --item KEN-5 {}", rows.display())),
+        asked.lines().any(|l| l
+            == format!(
+                "ORCH_LANE_HOST={} cat --item KEN-5 {}",
+                provider(),
+                rows.display()
+            )),
         "{asked}"
     );
 }
@@ -5141,14 +5152,14 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
         let line = format!("printf 'working\\n'; exec {} 600", claude.display());
         let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
         let identity = await_named(&server, &pane, "claude");
-        let disk = dir.path().join("host-disk");
+        let scripts = real_lane_host(dir.path());
+        let disk = scripts.join("disk");
         on_disk(
             &disk,
             "/remote/KEN-4/.git",
             "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
         );
         on_disk(&disk, place, text);
-        let (provider, _) = file_provider(dir.path(), &disk);
         let mut record = lane_record(
             "KEN-4",
             "gh-4",
@@ -5158,13 +5169,13 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
             Some(&identity),
             dir.path(),
         );
-        record["host"] = json!(provider.display().to_string());
+        record["host"] = json!(provider());
         record["kind"] = json!("ssh");
         record["mail_root"] = json!("/remote/KEN-4");
         fleet.set_lanes(vec![record]);
         let state = fleet.read();
         lane_driver!(server, fleet, readers, driver);
-        driver.scripts = real_lane_host(dir.path());
+        driver.scripts = scripts.clone();
         let first = driver.pass(&state);
         if text == record_doc {
             let said: Vec<String> = lines(&first)
@@ -5234,7 +5245,7 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
-        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         ("status --item KEN-4 --harness codex", ok("exited\n")),
     ]);
     world.plant_close(verb_reply("KEN-4", "stopped", json!({"identity": "none"})));
@@ -5274,7 +5285,7 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
-        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         (
             "status --item KEN-4 --harness codex",
             json!({"exit": 1, "stderr": "provider down\n"}),

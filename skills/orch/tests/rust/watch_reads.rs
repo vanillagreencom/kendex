@@ -482,7 +482,7 @@ fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_invento
                 // A completed run whose conclusion is null: a member the
                 // judgement cannot read.
                 w.gh("repos/owner/repo/actions/workflows/kendex-refresh.yml/runs?status=completed&per_page=2",
-                    json!({"body": {"total_count": 1, "workflow_runs": [{"id": 9, "run_attempt": 1, "conclusion": null, "created_at": "2026-10-01T00:00:00Z", "status": "completed", "path": ".github/workflows/kendex-refresh.yml", "head_sha": "0000000000000000000000000000000000000000", "head_branch": "main", "workflow_id": 1, "event": "schedule", "updated_at": "2026-10-01T00:00:00Z"}]}}));
+                    json!({"body": {"total_count": 1, "workflow_runs": [{"id": 9, "run_attempt": 1, "conclusion": null, "created_at": "2026-10-01T00:00:00Z", "status": "completed", "path": ".github/workflows/kendex-refresh.yml", "head_sha": "0000000000000000000000000000000000000000", "head_branch": "main", "workflow_id": 1, "event": "schedule", "updated_at": "2026-10-01T00:00:00Z", "repository": {"id": 1296269, "full_name": "owner/repo"}, "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []}]}}));
             }),
         ),
     ];
@@ -986,7 +986,7 @@ fn the_merged_index_matches_the_legacys_recorded_lines() {
                 body: &str,
                 merged_at: &str| {
         json!({"number": number, "state": "closed", "title": title, "body": body, "merged_at": merged_at, "merge_commit_sha": null,
-            "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+            "author_association": "NONE", "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
             "head": {"sha": "0000000000000000000000000000000000000000", "ref": branch, "repo": {"full_name": format!("{owner}/repo"), "owner": {"login": owner, "type": "User"}}}})
     };
     world.gh(
@@ -1311,7 +1311,7 @@ fn cycle_lane(world: &World, hosted: bool) -> Value {
 /// index reads it.
 fn merged_pull(number: u64, branch: &str) -> Value {
     json!({"number": number, "state": "closed", "title": "work", "body": "", "merged_at": "2026-09-20T11:20:00Z", "merge_commit_sha": null,
-        "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+        "author_association": "NONE", "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
         "head": {"sha": "0000000000000000000000000000000000000000", "ref": branch, "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}})
 }
 
@@ -1910,7 +1910,7 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     world.reducer(repo, json!({"exit": 0}));
     let pull = |state: &str, merged_at: Value| {
         json!({"body": {"number": 1144, "state": state, "title": "refresh", "body": "", "merged_at": merged_at, "merge_commit_sha": null,
-            "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+            "author_association": "NONE", "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": null,
             "head": {"sha": "0000000000000000000000000000000000000000", "ref": "kendex/refresh", "repo": {"full_name": "vanillagreencom/hyprtrade", "owner": {"login": "vanillagreencom", "type": "Organization"}}}}})
     };
     world.gh(
@@ -2198,7 +2198,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
 fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_head() {
     let head_a = "a".repeat(40);
     let head_b = "b".repeat(40);
-    let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "state": "open", "title": "a contribution", "body": null, "merged_at": null, "merge_commit_sha": null, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head, "ref": "contribution", "repo": null}, "base": {"ref": "main"}});
+    let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "state": "open", "title": "a contribution", "body": null, "merged_at": null, "merge_commit_sha": null, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head, "ref": "contribution", "repo": null}, "base": {"ref": "main", "sha": "0123456789abcdef0123456789abcdef01234567"}});
     let issue = |number: u64, login: &str, kind: &str, association: &str, pr: bool| {
         let mut v = json!({"number": number, "state": "open", "user": {"login": login, "type": kind}, "author_association": association});
         if pr {
@@ -2335,7 +2335,7 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
         quiet_main(&mut world);
         world.gh(
             "repos/owner/repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=1",
-            json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": "completed", "head_branch": branch, "event": event_name, "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": "success", "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z"}]}}),
+            json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": "completed", "head_branch": branch, "event": event_name, "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": "success", "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z", "repository": {"id": 1296269, "full_name": "owner/repo"}, "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []}]}}),
         );
         world.gh(
             "repos/owner/repo/actions/runs/202/jobs?per_page=100&page=1",
@@ -2397,7 +2397,7 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
     let mut world = world_for("push", "main");
     world.gh(
         "repos/owner/repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=1",
-        json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": null, "head_branch": "main", "event": "push", "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": null, "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z"}]}}),
+        json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": null, "head_branch": "main", "event": "push", "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": null, "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z", "repository": {"id": 1296269, "full_name": "owner/repo"}, "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []}]}}),
     );
     let mut body = github::body(world.github_context(
         world.settings(&[]),

@@ -50,7 +50,8 @@ if a == ['api', 'repos/o/r/commits/' + cfg.get('view_head', head) + '/check-runs
         sys.exit(0)
     status = 'in_progress' if work == 'settled' else work
     rows = [] if not work else [{
-        'id': 72, 'node_id': 'CR_72', 'name': copilot, 'status': status, 'conclusion': None,
+        'id': 72, 'node_id': 'CR_72', 'name': copilot, 'head_sha': cfg.get('view_head', head),
+        'app': None, 'status': status, 'conclusion': None,
         'check_suite': None, 'started_at': started, 'completed_at': None,
         'html_url': None, 'details_url': None}]
     out({'total_count': len(rows), 'check_runs': rows})

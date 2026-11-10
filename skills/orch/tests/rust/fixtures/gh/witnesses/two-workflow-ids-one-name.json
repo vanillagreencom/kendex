@@ -16,7 +16,10 @@
           "started_at": "2026-07-26T10:00:00Z",
           "completed_at": "2026-07-26T10:00:00Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 2001,
@@ -31,7 +34,10 @@
           "started_at": "2026-07-26T10:30:00Z",
           "completed_at": "2026-07-26T10:30:00Z",
           "html_url": "https://github.com/owner/repo/actions/runs/200/job/2001",
-          "details_url": "https://github.com/owner/repo/actions/runs/200/job/2001"
+          "details_url": "https://github.com/owner/repo/actions/runs/200/job/2001",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -80,7 +86,12 @@
           "run_attempt": 1,
           "run_started_at": "2026-07-26T10:00:00Z",
           "created_at": "2026-07-26T10:00:00Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         },
         {
           "id": 200,
@@ -101,7 +112,12 @@
           "run_attempt": 1,
           "run_started_at": "2026-07-26T10:30:00Z",
           "created_at": "2026-07-26T10:30:00Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         }
       ]
     }
@@ -244,7 +260,10 @@
           "started_at": "2026-07-26T10:00:00Z",
           "completed_at": "2026-07-26T10:00:00Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -266,7 +285,10 @@
           "started_at": "2026-07-26T10:30:00Z",
           "completed_at": "2026-07-26T10:30:00Z",
           "html_url": "https://github.com/owner/repo/actions/runs/200/job/2001",
-          "details_url": "https://github.com/owner/repo/actions/runs/200/job/2001"
+          "details_url": "https://github.com/owner/repo/actions/runs/200/job/2001",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }

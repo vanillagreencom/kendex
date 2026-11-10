@@ -148,7 +148,7 @@ fn check_run_in(
         Some(run) => format!("https://github.com/{REPO}/actions/runs/{run}/job/{id}"),
         None => format!("https://github.com/{REPO}/runs/{id}"),
     };
-    json!({"id": id, "node_id": check_node_id(id), "name": name, "status": status, "conclusion": conclusion, "head_sha": HEAD, "check_suite": check_suite, "started_at": STARTED, "completed_at": COMPLETED, "html_url": html_url, "details_url": html_url})
+    json!({"id": id, "node_id": check_node_id(id), "name": name, "status": status, "conclusion": conclusion, "head_sha": HEAD, "app": {"slug": "github-actions"}, "check_suite": check_suite, "started_at": STARTED, "completed_at": COMPLETED, "html_url": html_url, "details_url": html_url})
 }
 
 fn check_node_id(check: u64) -> String {
@@ -279,6 +279,7 @@ fn execution(
         "workflow_id": WORKFLOW_ID, "check_suite_id": id, "check_suite_node_id": suite_node_id(id),
         "run_attempt": attempt, "run_started_at": started, "created_at": started,
         "updated_at": started, "head_branch": null,
+        "repository": {"id": REPO_ID, "full_name": REPO}, "head_repository": {"id": REPO_ID, "full_name": REPO}, "pull_requests": [],
     })
 }
 
@@ -3895,7 +3896,7 @@ fn threads_page(unresolved: usize) -> Value {
 }
 
 fn rest_pull(draft: bool, branch: &str, login: &str, kind: &str) -> Value {
-    json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": draft, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": HEAD, "ref": branch, "repo": null}, "base": {"ref": BASE}, "user": {"login": login, "type": kind}})
+    json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": draft, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": HEAD, "ref": branch, "repo": null}, "base": {"ref": BASE, "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": {"login": login, "type": kind}})
 }
 
 /// One review by Copilot on the head.
@@ -7394,7 +7395,7 @@ fn a_head_that_moved_between_the_view_and_the_pull_read_is_pending_with_no_reque
     let mut gh = Github::review_world();
     gh.answer(
         &pull_path(),
-        json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": false, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": NEXT, "ref": "feat", "repo": null}, "base": {"ref": BASE}, "user": {"login": "lane-app[bot]", "type": "Bot"}}),
+        json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": false, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": NEXT, "ref": "feat", "repo": null}, "base": {"ref": BASE, "sha": "0123456789abcdef0123456789abcdef01234567"}, "user": {"login": "lane-app[bot]", "type": "Bot"}}),
     );
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["status"], "pending", "{result}");

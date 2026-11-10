@@ -16,7 +16,10 @@
           "started_at": "2026-07-16T04:08:13Z",
           "completed_at": "2026-07-16T04:08:13Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 1002,
@@ -31,7 +34,10 @@
           "started_at": "2026-07-16T04:08:50Z",
           "completed_at": "2026-07-16T04:08:50Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1002",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1002"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1002",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 3001,
@@ -46,7 +52,10 @@
           "started_at": "2026-07-16T04:19:24Z",
           "completed_at": "2026-07-16T04:19:24Z",
           "html_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
-          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001"
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 3002,
@@ -61,7 +70,10 @@
           "started_at": "2026-07-16T04:19:25Z",
           "completed_at": "2026-07-16T04:19:25Z",
           "html_url": "https://github.com/owner/repo/actions/runs/300/job/3002",
-          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3002"
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3002",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -116,7 +128,12 @@
           "check_suite_node_id": "CS_5000100",
           "run_started_at": "2026-07-16T04:08:13Z",
           "created_at": "2026-07-16T04:08:13Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         },
         {
           "id": 300,
@@ -136,7 +153,12 @@
           "check_suite_node_id": "CS_5000300",
           "run_started_at": "2026-07-16T04:19:24Z",
           "created_at": "2026-07-16T04:19:24Z",
-          "head_branch": null
+          "head_branch": null,
+          "head_repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "pull_requests": []
         }
       ]
     }
@@ -289,7 +311,10 @@
           "started_at": "2026-07-16T04:08:13Z",
           "completed_at": "2026-07-16T04:08:13Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 1002,
@@ -304,7 +329,10 @@
           "started_at": "2026-07-16T04:08:50Z",
           "completed_at": "2026-07-16T04:08:50Z",
           "html_url": "https://github.com/owner/repo/actions/runs/100/job/1002",
-          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1002"
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1002",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }
@@ -326,7 +354,10 @@
           "started_at": "2026-07-16T04:19:24Z",
           "completed_at": "2026-07-16T04:19:24Z",
           "html_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
-          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001"
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 3002,
@@ -341,7 +372,10 @@
           "started_at": "2026-07-16T04:19:25Z",
           "completed_at": "2026-07-16T04:19:25Z",
           "html_url": "https://github.com/owner/repo/actions/runs/300/job/3002",
-          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3002"
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3002",
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }

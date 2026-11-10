@@ -158,6 +158,22 @@ enum Verb {
         #[arg(allow_hyphen_values = true)]
         parent: String,
     },
+    /// The change classifier's render proof for a consumer refresh pull
+    /// request, read from GitHub in the project checkout and judged, writing
+    /// no approval: one stdout line `ci-proof: head=SHA class=render
+    /// measured=true version=VERSION job=ID` at exit 0, else one stderr line
+    /// `ci-proof: cause=WORD` at exit 1.
+    CiProof {
+        /// The pull request's number.
+        #[arg(allow_hyphen_values = true)]
+        pr: String,
+        /// The pull request's full lowercase head SHA.
+        #[arg(allow_hyphen_values = true)]
+        head: String,
+        /// OWNER/REPO.
+        #[arg(long, allow_hyphen_values = true)]
+        repo: String,
+    },
     /// The merge cycles the fleet record holds, printed as text lines: the
     /// per-class totals, or a running lane's stage rows. No fleet record
     /// prints nothing.
@@ -1659,6 +1675,19 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     }
                     let _ = writeln!(err, "{}", refused.line());
                     std::process::exit(refused.exit);
+                }
+            }
+        }
+        Verb::CiProof { pr, head, repo } => {
+            let settings = resolve_settings(&flags)?;
+            match verify::ci_proof::refresh_verb(&settings, &pr, &head, &repo) {
+                Ok(line) => {
+                    let _ = writeln!(std::io::stdout().lock(), "{line}");
+                    std::process::exit(0);
+                }
+                Err(cause) => {
+                    let _ = writeln!(std::io::stderr().lock(), "ci-proof: cause={cause}");
+                    std::process::exit(1);
                 }
             }
         }

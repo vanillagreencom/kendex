@@ -16,7 +16,10 @@
           "started_at": "2026-07-26T10:00:00Z",
           "completed_at": "2026-07-26T10:00:00Z",
           "html_url": null,
-          "details_url": null
+          "details_url": null,
+          "app": {
+            "slug": "github-actions"
+          }
         },
         {
           "id": 1002,
@@ -31,7 +34,10 @@
           "started_at": "2026-07-26T10:09:00Z",
           "completed_at": "2026-07-26T10:09:00Z",
           "html_url": null,
-          "details_url": null
+          "details_url": null,
+          "app": {
+            "slug": "github-actions"
+          }
         }
       ]
     }

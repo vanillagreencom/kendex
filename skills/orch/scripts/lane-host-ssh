@@ -825,9 +825,10 @@ exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
 def archive_tmp(row, item, worktree_path):
     """Preserve remaining lane records locally before close removes their worktree.
 
-    The item's workflow state goes with them under the launch environment's
-    rule in workflow-state --help. Older launches can keep it where their
-    settings and private env file placed it. The archive's
+    The item's workflow state goes with them: the launch environment puts it
+    in the worktree's tmp, and older launches can keep it in the directory
+    their checkout's ORCH_STATE_DIR names, read by the clone's own settings
+    loader with no runtime on the host. The archive's
     `lane-host-state` member names that file's member, or is an empty line
     when no live state remains. With an empty marker, a reader takes only
     the saved cycle copy of the merge it records, if present. A resolution
@@ -842,18 +843,22 @@ for base in "$1" "$2"; do
 done
 state="" member="" from="$2"
 test -d "$from" || from="$1"
-states="$1/.agents/skills/orch/scripts/workflow-state"
-if test -x "$states"; then
+loader="$1/.agents/skills/orch/scripts/lib/kendex-env.sh"
+if test -r "$loader"; then
   state="$2/tmp/workflow-state-$3.json"
   if ! test -f "$state"; then
-    if ! state=$(cd "$from" && "$states" path "$3"); then
+    # ORCH_STATE_DIR as the checkout's settings and private env file set it,
+    # else tmp; a relative value joins the clone.
+    if ! dir=$(cd "$from" && . "$loader" && kendex_load_project_env "$(git rev-parse --show-toplevel 2>/dev/null || pwd)" && printf '%s\\n' "${ORCH_STATE_DIR:-tmp}"); then
       printf 'lane-host-ssh: state-unresolved item=%s\\n' "$3" >&2
       exit 1
     fi
+    case "$dir" in /*) ;; *) dir="$1/$dir" ;; esac
+    state="$dir/workflow-state-$3.json"
   fi
   names=(lane-host-state)
   if test -f "$state"; then
-    # workflow-state joins a relative setting such as ../lane-state as given,
+    # A relative setting such as ../lane-state joins the clone as given,
     # and tar cuts a member name at its last .. component, so the record names
     # the file's physical path: the one test -f found, a symlink before ..
     # followed as the filesystem follows it, and the root directory kept.

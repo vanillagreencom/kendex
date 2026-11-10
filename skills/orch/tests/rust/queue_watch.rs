@@ -233,7 +233,7 @@ impl World {
                     .enumerate()
                     .map(|(i, (status, conclusion))| {
                         json!({"id": i + 1, "node_id": format!("CR_{}", i + 1), "name": format!("check-{}", i + 1),
-                            "status": status, "conclusion": conclusion, "check_suite": {"id": 1},
+                            "status": status, "conclusion": conclusion, "head_sha": QUEUE_HEAD, "app": {"slug": "github-actions"}, "check_suite": {"id": 1},
                             "started_at": null, "completed_at": null, "html_url": null, "details_url": null})
                     })
                     .collect();
@@ -2054,7 +2054,7 @@ impl World {
             .enumerate()
             .map(|(i, (name, conclusion))| {
                 json!({"id": i + 1, "node_id": format!("CR_{}", i + 1), "name": name,
-                    "status": "completed", "conclusion": conclusion, "check_suite": {"id": 1},
+                    "status": "completed", "conclusion": conclusion, "head_sha": QUEUE_HEAD, "app": {"slug": "github-actions"}, "check_suite": {"id": 1},
                     "started_at": "2026-07-24T10:00:00Z", "completed_at": "2026-07-24T10:05:00Z",
                     "html_url": format!("https://github.com/{REPO}/runs/{}", i + 1),
                     "details_url": format!("https://github.com/{REPO}/actions/runs/9/job/{}", i + 1)})

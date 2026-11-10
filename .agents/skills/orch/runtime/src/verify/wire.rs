@@ -23,7 +23,8 @@
 //!
 //! Value sets are from docs.github.com/en/rest: checks/runs,
 //! checks/suites, commits/statuses, actions/workflow-runs,
-//! actions/workflows, repos/rules, repos/repos and branches/branches, API
+//! actions/workflow-jobs, actions/workflows, pulls/pulls, repos/rules,
+//! repos/repos and branches/branches, API
 //! version 2022-11-28, and from docs.github.com/en/graphql/reference for
 //! the source proof's objects; each field's form cites the schema line it
 //! follows. A word outside a documented set refuses the reply, except in
@@ -316,6 +317,12 @@ pub(crate) struct CheckRun {
     pub(super) node_id: String,
     /// Required (checks/runs, `name`: string).
     pub(crate) name: String,
+    /// Required (checks/runs, `head_sha`: string): the commit the check
+    /// ran on.
+    pub(crate) head_sha: String,
+    /// Required, nullable (checks/runs, `app`: integration or null): the App
+    /// that made the check run; the classifier's proof is the Actions App's.
+    pub(crate) app: Nullable<App>,
     /// Required, not nullable (checks/runs, `status`: enum).
     pub(crate) status: RunStatus,
     /// Required, nullable (checks/runs, `conclusion`: enum or null).
@@ -397,6 +404,15 @@ impl CheckRun {
             Nullable::Present(url) => Some(url),
         }
     }
+}
+
+/// The App a check run names (checks/runs, `app`: `integration`, whose
+/// `slug` is documented optional).
+#[derive(Debug, Deserialize)]
+pub(crate) struct App {
+    /// Optional (integration, `slug`: string).
+    #[serde(default)]
+    pub(crate) slug: Optional<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -564,6 +580,88 @@ pub(crate) struct WorkflowRun {
     /// attempt.
     #[serde(default)]
     pub(super) run_started_at: Optional<String>,
+    /// Required (actions/workflow-runs, `repository`: minimal-repository):
+    /// the repository the run ran in.
+    pub(super) repository: Repository,
+    /// Required (actions/workflow-runs, `head_repository`:
+    /// minimal-repository): the repository the run's head came from.
+    pub(super) head_repository: Repository,
+    /// Required, nullable (actions/workflow-runs, `pull_requests`: array of
+    /// pull-request-minimal or null): the pull requests GitHub links the
+    /// run to, which follow a live retarget.
+    pub(super) pull_requests: Nullable<Vec<RunPull>>,
+}
+
+/// A pull request a workflow run links (actions/workflow-runs,
+/// `pull-request-minimal`: `number` and `head` required).
+#[derive(Debug, Deserialize)]
+pub(crate) struct RunPull {
+    /// Required (pull-request-minimal, `number`: integer).
+    pub(crate) number: u64,
+    /// Required (pull-request-minimal, `head`: `ref`, `sha`, `repo`).
+    pub(crate) head: RunPullHead,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct RunPullHead {
+    /// Required (pull-request-minimal, `head.sha`: string).
+    pub(crate) sha: String,
+}
+
+// --- actions/workflow-jobs ---------------------------------------------------------
+
+/// A workflow job (actions/workflow-jobs, "Get a job for a workflow run"):
+/// the job a check run's id names, read for its run and its outcome.
+#[derive(Debug, Deserialize)]
+pub(crate) struct Job {
+    /// Required (actions/workflow-jobs, `id`: integer).
+    pub(crate) id: u64,
+    /// Required (actions/workflow-jobs, `run_id`: integer).
+    pub(crate) run_id: u64,
+    /// Required (actions/workflow-jobs, `name`: string).
+    pub(crate) name: String,
+    /// Required (actions/workflow-jobs, `head_sha`: string).
+    pub(crate) head_sha: String,
+    /// Required, not nullable (actions/workflow-jobs, `status`: enum).
+    pub(crate) status: RunStatus,
+    /// Required, nullable (actions/workflow-jobs, `conclusion`: enum or
+    /// null).
+    pub(crate) conclusion: Nullable<RunConclusion>,
+    /// Required (actions/workflow-jobs, `check_run_url`: string): the check
+    /// run the job reports as.
+    pub(crate) check_run_url: String,
+    /// Optional (actions/workflow-jobs, `steps`: array, not in the required
+    /// list).
+    #[allow(
+        dead_code,
+        reason = "documented: a job's steps decode so the reply is the documented shape"
+    )]
+    #[serde(default)]
+    pub(crate) steps: Optional<Vec<JobStep>>,
+}
+
+/// One step of a job (actions/workflow-jobs, `steps[]`: `name`, `status`,
+/// `conclusion` and `number` required).
+#[allow(
+    dead_code,
+    reason = "documented: a job's steps decode so the reply is the documented shape"
+)]
+#[derive(Debug, Deserialize)]
+pub(crate) struct JobStep {
+    /// Required (`steps[].name`: string).
+    pub(crate) name: String,
+    /// Required, not nullable (`steps[].status`: enum).
+    pub(crate) status: RunStatus,
+    /// Required, nullable (`steps[].conclusion`: string or null).
+    pub(crate) conclusion: Nullable<RunConclusion>,
+    /// Required (`steps[].number`: integer).
+    pub(crate) number: u64,
+    /// Optional, nullable (`steps[].started_at`: date-time or null).
+    #[serde(default)]
+    pub(crate) started_at: Nullable<String>,
+    /// Optional, nullable (`steps[].completed_at`: date-time or null).
+    #[serde(default)]
+    pub(crate) completed_at: Nullable<String>,
 }
 
 impl WorkflowRun {
@@ -780,7 +878,8 @@ pub(super) struct WorkflowsParameters {
 
 /// A repository by name (repos/repos, "Get a repository"): the lookup that
 /// turns a source proof's `repositoryName` into the id a `workflows` rule
-/// names.
+/// names; a workflow run's repositories are its minimal form, the same two
+/// fields required.
 #[derive(Debug, Deserialize)]
 pub(super) struct Repository {
     /// Required (repos/repos, `id`: integer).
@@ -1142,6 +1241,20 @@ pub struct HeadRepo {
 pub struct PullBase {
     #[serde(rename = "ref")]
     pub branch: String,
+    /// Required (pulls/pulls, `base.sha`: string): the base branch's commit
+    /// as the pull request records it.
+    pub sha: String,
+}
+
+/// One changed file of a pull request (pulls/pulls, "List pull requests
+/// files", `diff-entry`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct PullFile {
+    /// Required (diff-entry, `filename`: string).
+    pub(crate) filename: String,
+    /// Optional (diff-entry, `previous_filename`: string), on a rename.
+    #[serde(default)]
+    pub(crate) previous_filename: Optional<String>,
 }
 
 /// A simple user (users, `simple-user`: `login` and `type` required): the
@@ -1417,11 +1530,13 @@ mod tests {
         use Form::*;
         catalogue::<CheckSuiteRef>(json!({"id": 5}), &[("id", Required)]);
         catalogue::<CheckRun>(
-            json!({"id": 4, "node_id": "CR_4", "name": "build", "status": "completed", "conclusion": "success", "check_suite": {"id": 5}, "started_at": "2026-01-29T15:10:00Z", "completed_at": "2026-01-29T15:15:00Z", "html_url": "https://github.com/o/r/actions/runs/700/job/4", "details_url": "https://github.com/o/r/actions/runs/700/job/4"}),
+            json!({"id": 4, "node_id": "CR_4", "name": "build", "head_sha": "abc", "app": {"slug": "github-actions"}, "status": "completed", "conclusion": "success", "check_suite": {"id": 5}, "started_at": "2026-01-29T15:10:00Z", "completed_at": "2026-01-29T15:15:00Z", "html_url": "https://github.com/o/r/actions/runs/700/job/4", "details_url": "https://github.com/o/r/actions/runs/700/job/4"}),
             &[
                 ("id", Required),
                 ("node_id", Required),
                 ("name", Required),
+                ("head_sha", Required),
+                ("app", Nullable),
                 ("status", Required),
                 ("conclusion", Nullable),
                 ("check_suite", Nullable),
@@ -1431,6 +1546,7 @@ mod tests {
                 ("details_url", Nullable),
             ],
         );
+        catalogue::<App>(json!({"slug": "github-actions"}), &[("slug", Optional)]);
         catalogue::<CheckRunsPage>(
             json!({"total_count": 0, "check_runs": []}),
             &[("total_count", Required), ("check_runs", Required)],
@@ -1458,7 +1574,10 @@ mod tests {
                 "workflow_id": 1, "event": "push", "created_at": "2026-01-29T15:08:00Z",
                 "updated_at": "2026-01-29T15:16:00Z",
                 "check_suite_id": 5, "check_suite_node_id": "MDEwOkNoZWNrU3VpdGU1", "run_attempt": 1,
-                "run_started_at": "2026-01-29T15:09:00Z"
+                "run_started_at": "2026-01-29T15:09:00Z",
+                "repository": {"id": 7, "full_name": "o/r"},
+                "head_repository": {"id": 7, "full_name": "o/r"},
+                "pull_requests": []
             }),
             &[
                 ("id", Required),
@@ -1475,6 +1594,43 @@ mod tests {
                 ("check_suite_node_id", Optional),
                 ("run_attempt", Optional),
                 ("run_started_at", Optional),
+                ("repository", Required),
+                ("head_repository", Required),
+                ("pull_requests", Nullable),
+            ],
+        );
+        catalogue::<RunPull>(
+            json!({"number": 42, "head": {"sha": "abc"}}),
+            &[("number", Required), ("head", Required)],
+        );
+        catalogue::<RunPullHead>(json!({"sha": "abc"}), &[("sha", Required)]);
+        catalogue::<Job>(
+            json!({
+                "id": 72, "run_id": 20, "name": "Classify the diff", "head_sha": "abc",
+                "status": "completed", "conclusion": "success",
+                "check_run_url": "https://api.github.com/repos/o/r/check-runs/72", "steps": []
+            }),
+            &[
+                ("id", Required),
+                ("run_id", Required),
+                ("name", Required),
+                ("head_sha", Required),
+                ("status", Required),
+                ("conclusion", Nullable),
+                ("check_run_url", Required),
+                ("steps", Optional),
+            ],
+        );
+        catalogue::<JobStep>(
+            json!({"name": "classify", "status": "completed", "conclusion": "success", "number": 1,
+                   "started_at": "2026-01-29T15:10:00Z", "completed_at": "2026-01-29T15:11:00Z"}),
+            &[
+                ("name", Required),
+                ("status", Required),
+                ("conclusion", Nullable),
+                ("number", Required),
+                ("started_at", OptionalNullable),
+                ("completed_at", OptionalNullable),
             ],
         );
         catalogue::<RunsPage>(
@@ -1610,7 +1766,14 @@ mod tests {
             json!({"sha": "abc", "ref": "feat", "repo": null}),
             &[("sha", Required), ("ref", Required), ("repo", Nullable)],
         );
-        catalogue::<PullBase>(json!({"ref": "main"}), &[("ref", Required)]);
+        catalogue::<PullBase>(
+            json!({"ref": "main", "sha": "abc"}),
+            &[("ref", Required), ("sha", Required)],
+        );
+        catalogue::<PullFile>(
+            json!({"filename": "a", "previous_filename": "b"}),
+            &[("filename", Required), ("previous_filename", Optional)],
+        );
         catalogue::<Issue>(
             json!({"number": 7, "state": "open", "state_reason": null, "user": null, "author_association": "NONE", "pull_request": {}}),
             &[
@@ -1630,7 +1793,7 @@ mod tests {
             json!({
                 "number": 7, "state": "open", "title": "feat", "body": null, "draft": false,
                 "merged_at": null, "merge_commit_sha": null, "changed_files": 1, "author_association": "NONE",
-                "head": {"sha": "abc", "ref": "feat", "repo": null}, "base": {"ref": "main"},
+                "head": {"sha": "abc", "ref": "feat", "repo": null}, "base": {"ref": "main", "sha": "def"},
                 "user": null
             }),
             &[
