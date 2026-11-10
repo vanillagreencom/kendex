@@ -1047,7 +1047,10 @@ fn declared_by(
                 | ItemKind::PiExtension
                 | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, &dir)
                     .map(|declared| declared.ok_or("its frontmatter will not parse"))
-                    .map_err(|_| "its file will not read"),
+                    .map_err(|_| {
+                        state.mark_incomplete();
+                        "its file will not read"
+                    }),
             };
             declared.map(|declared| {
                 let declared = declared.unwrap_or_else(|why| {
