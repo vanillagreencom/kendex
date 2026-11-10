@@ -3799,17 +3799,17 @@ CALL_ENV=()
 assert_eq "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id')|$(jq -r '[.session_id,.tokens]|@csv' "$LANE/tmp/lane-mail/overseer/context.json")" \
   's1|"s1",100000' 'the native session heals its binding and records its own reading'
 
-# Register is the existing recovery route for a native resume with another id.
+# A native resume under another id rebinds through the register, which clears
+# the binding (held by tests/rust/controller.rs's
+# a_hand_opened_session_registers_from_its_start_row_or_its_pane_and_registering_again_rebinds_it).
+# The binding is cleared here as the register writes it, so these rows hold the
+# hook's half: the resumed session binds at its next turn and gets its waiting
+# mail once.
 CALL_ENV=("${SESSION_ENV[@]}")
 ARM_ARGS=(start)
 run_payload '{"session_id":"resumed","source":"resume"}'
 ARM_ARGS=()
-register_rc=0
-(cd "$LANE" && env -u ORCH_STATE_DIR -u CODEX_HOME -u COPILOT_HOME \
-  "${SESSION_ENV[@]}" "HOME=$OFFLINE_HOME" "LANES_HOME=$OFFLINE_HOME" \
-  "$REPO_ROOT/skills/orch/scripts/oversee" register > "$TMP_ROOT/register.out" 2> "$TMP_ROOT/register.err") || register_rc=$?
-assert_eq "rc=$register_rc session=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee '.overseer.session_id // "none"')" \
-  'rc=0 session=none' 'register clears the binding from the previous native session'
+(cd "$LANE" && "$ORCH_RUNTIME" state set --fleet /overseer/session_id null >/dev/null)
 peer_send 'After native resume.'
 ARM_ARGS=(deliver)
 run_payload '{"session_id":"resumed","tool_name":"Bash","tool_input":{"command":"git status"}}'
