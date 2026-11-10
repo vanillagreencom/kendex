@@ -775,22 +775,33 @@ fn a_carrier_only_the_catalog_read_now_sees_keeps_the_removal() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
-    for (offline, set_recorded, carried_now) in [
-        (false, false, true),
-        (false, false, false),
-        (true, true, true),
-        (true, false, true),
+    #[derive(Clone, Copy, Debug)]
+    enum SetNow {
+        Empty,
+        Carries,
+        Drops,
+        NotOffered,
+        Unreadable,
+    }
+    for (offline, set_recorded, set_now) in [
+        (false, false, SetNow::Empty),
+        (false, false, SetNow::Carries),
+        (false, false, SetNow::Drops),
+        (false, false, SetNow::NotOffered),
+        (false, false, SetNow::Unreadable),
+        (true, true, SetNow::Carries),
+        (true, false, SetNow::Carries),
     ] {
         let f = fixture("");
         let other = f.source.with_file_name("other");
         skill(&other, "github", "");
         fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
-        let set = |member: &str| {
+        let set = |members: &str| {
             format!(
-                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [\"{member}\"]\n"
+                "is_source_catalog = true\n[bundles.crew]\ndescription = \"crew\"\nskills = [{members}]\n"
             )
         };
-        fs::write(f.source.join("kendex.toml"), set("github")).unwrap();
+        fs::write(f.source.join("kendex.toml"), set("\"github\"")).unwrap();
         fs::write(
             f.project.join("kendex.toml"),
             format!(
@@ -826,15 +837,36 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
             );
             kendex_core::lock::save(&lock_path(&f.env, &f.scope), &lock).unwrap();
         }
-        if !carried_now {
-            skill(&f.source, "lint", "");
-            fs::write(f.source.join("kendex.toml"), set("lint")).unwrap();
-        }
+        let current = match set_now {
+            SetNow::Carries => set("\"github\""),
+            SetNow::Drops => {
+                skill(&f.source, "lint", "");
+                set("\"lint\"")
+            }
+            SetNow::Empty => set(""),
+            SetNow::NotOffered | SetNow::Unreadable => {
+                // Reading another set in this open catalog proves nothing
+                // about crew's missing or unreadable body.
+                edit_manifest(&f, |manifest| {
+                    manifest
+                        .bundles
+                        .insert("spare".into(), manifest.bundles["crew"].clone());
+                });
+                let mut catalog =
+                    "is_source_catalog = true\n[bundles.spare]\nskills = []\n".to_owned();
+                if matches!(set_now, SetNow::Unreadable) {
+                    catalog.push_str("[bundles.crew]\nskills = 1\n");
+                }
+                catalog
+            }
+        };
+        fs::write(f.source.join("kendex.toml"), current).unwrap();
         let hidden = f.source.with_file_name("catalog-offline");
         if offline {
             fs::rename(&f.source, &hidden).unwrap();
         }
-        let refuses = !set_recorded && (offline || !carried_now);
+        let refuses = !set_recorded
+            && (offline || matches!(set_now, SetNow::NotOffered | SetNow::Unreadable));
         if refuses {
             assert!(
                 matches!(
@@ -842,27 +874,25 @@ fn a_set_roots_a_member_declared_from_another_catalog_by_its_own_reading() {
                     Err(CoreError::RemovalSetReadingMissing { catalog, set })
                         if catalog == "cat" && set == "crew"
                 ),
-                "offline={offline} carried_now={carried_now}"
+                "offline={offline} set_now={set_now:?}"
             );
         }
         if offline && refuses {
             fs::rename(&hidden, &f.source).unwrap();
         }
-        // The remedy: retry while the set still carries github, or remove
-        // the set with it.
-        let (names, expected): (&[&str], _) = if refuses && !carried_now {
-            (&["github", "crew"], BTreeSet::new())
-        } else {
-            (
+        let (names, expected): (&[&str], _) = match set_now {
+            SetNow::NotOffered | SetNow::Unreadable => (&["github", "crew"], BTreeSet::new()),
+            SetNow::Empty | SetNow::Drops => (&["github"], BTreeSet::new()),
+            SetNow::Carries => (
                 &["github"],
                 BTreeSet::from([(ItemKind::Skill, "github".to_owned())]),
-            )
+            ),
         };
         let kind = (names.len() == 1).then_some(ItemKind::Skill);
         assert_eq!(
             removed(&f, names, kind),
             expected,
-            "offline={offline} set_recorded={set_recorded} carried_now={carried_now}"
+            "offline={offline} set_recorded={set_recorded} set_now={set_now:?}"
         );
         if offline && !refuses {
             fs::rename(&hidden, &f.source).unwrap();

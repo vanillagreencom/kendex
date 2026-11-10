@@ -396,7 +396,11 @@ fn kept_removed(
     kind: Option<ItemKind>,
     options: &PlanOptions,
 ) -> Result<BTreeSet<(ItemKind, String)>> {
-    let (read, unread) = read_ancestry(env, scope, manifest);
+    let ReadAncestry {
+        installations,
+        bundles,
+        unread,
+    } = read_ancestry(env, scope, manifest);
     let captured = captured_rows(lock);
     let roots = |facts| RemovalRoots {
         env,
@@ -407,10 +411,11 @@ fn kept_removed(
         kind,
         options,
         facts,
+        read_bundles: &bundles,
     };
     let mut decisions = BTreeMap::new();
     roots(Facts::Recorded(&captured)).decide(&mut decisions);
-    roots(Facts::Read(&read)).decide(&mut decisions);
+    roots(Facts::Read(&installations)).decide(&mut decisions);
     let named = unread
         .is_some()
         .then(|| recorded_edges(lock, names, options));
@@ -490,18 +495,17 @@ fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::Cor
     }
 }
 
+struct ReadAncestry {
+    installations: BTreeMap<InstallRef, RequirerProvenance>,
+    bundles: BTreeSet<crate::lock::BundleRef>,
+    unread: Option<Vec<String>>,
+}
+
 /// Every installation the catalogs derive now from the edited manifest,
 /// with its per-tool reasons, read under the identity each source is
 /// declared at, and, where the read did not account for every
 /// declaration, each cause it met.
-fn read_ancestry(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-) -> (
-    BTreeMap<InstallRef, RequirerProvenance>,
-    Option<Vec<String>>,
-) {
+fn read_ancestry(env: &Env, scope: &Scope, manifest: &Manifest) -> ReadAncestry {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let read = super::expansion::PLANNED_KINDS
@@ -529,7 +533,11 @@ fn read_ancestry(
     );
     let unread = (!complete || !state.short_reads.is_empty())
         .then(|| state.short_reads.into_iter().collect());
-    (expansion.requirer_provenance(&read), unread)
+    ReadAncestry {
+        installations: expansion.requirer_provenance(&read),
+        bundles: state.read_bundles,
+        unread,
+    }
 }
 
 enum Reach {
@@ -693,6 +701,7 @@ struct RemovalRoots<'a> {
     kind: Option<ItemKind>,
     options: &'a PlanOptions,
     facts: Facts<'a>,
+    read_bundles: &'a BTreeSet<crate::lock::BundleRef>,
 }
 
 impl RemovalRoots<'_> {
@@ -782,7 +791,8 @@ impl RemovalRoots<'_> {
     /// the member's tool from the catalog it was read from. Two readings
     /// bind the set's catalog to this edge: the member's own, when it was
     /// read from the set's source, and the set's record. Either one that
-    /// matches roots it; with neither, the set's reading is unknown.
+    /// matches roots it. With neither, a successful live set read lets the
+    /// live ancestry decide; without that read, its membership is unknown.
     fn member(&self, node: &InstallRef, repo: &str, bundle: &crate::lock::BundleRef) -> Reach {
         let installs = self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
             decl.source == bundle.source
@@ -809,7 +819,11 @@ impl RemovalRoots<'_> {
                 .collect(),
         };
         if readings.is_empty() {
-            Reach::Missing(Unread::Set(bundle.clone()))
+            if self.read_bundles.contains(bundle) {
+                Reach::Unrooted
+            } else {
+                Reach::Missing(Unread::Set(bundle.clone()))
+            }
         } else if readings
             .iter()
             .any(|read_under| self.same_source(&bundle.source, read_under))

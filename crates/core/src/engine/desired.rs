@@ -461,6 +461,9 @@ pub struct DesiredState {
     /// Declared sets this pass could not expand whose installed members it
     /// keeps as recorded, each with why.
     pub(super) kept_bundles: BTreeMap<crate::lock::BundleRef, KeptBundle>,
+    /// Offered sets successfully read under this manifest's declarations,
+    /// including empty sets: absence of derived members proves no read.
+    pub(super) read_bundles: BTreeSet<crate::lock::BundleRef>,
     /// The records a set in `kept_bundles` keeps, its members and what
     /// they require, by entry key, each with the edges tying it to them it
     /// was recorded under (`bundles::kept_members`). The item pass adds

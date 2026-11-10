@@ -1,0 +1,1 @@
+- Removing an item that a readable folder-catalog set no longer carries now succeeds without removing the set. Unreadable or missing sets still refuse the removal.
