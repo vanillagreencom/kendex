@@ -118,7 +118,8 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
             )
         });
         let declared = crate::engine::deps::declared_dependencies(&sealed, member.kind, &dir)
-            .expect("a member's frontmatter reads");
+            .expect("a member's frontmatter reads")
+            .expect("a member's frontmatter parses");
         for (kind, required) in declared
             .required
             .iter()
@@ -165,7 +166,8 @@ fn the_mail_hook_requires_the_session_row_hooks() {
     let hook = find_item(&sealed, &config, ItemKind::Hook, "lane-mail-check")
         .unwrap_or_else(|| panic!("the catalog offers hook 'lane-mail-check'"));
     let declared = crate::engine::deps::declared_dependencies(&sealed, ItemKind::Hook, &hook)
-        .expect("the mail hook's header reads");
+        .expect("the mail hook's header reads")
+        .expect("the mail hook's header parses");
     for row in ["session-start-row", "session-end-row", "stop-failure-row"] {
         assert!(
             declared.required.iter().any(|name| name == row),

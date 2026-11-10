@@ -730,6 +730,7 @@ mod tests {
     /// gain.
     fn judged() -> UnmanagedCopies {
         let proven = LockEntry {
+            requirer_provenance: None,
             name: "scout".into(),
             kind: ItemKind::Agent,
             harness: HarnessId::Claude,

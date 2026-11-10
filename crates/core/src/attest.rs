@@ -588,10 +588,16 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
         registration,
         output_style,
         reasons,
+        requirer_provenance,
         machine: _,
     } = recorded;
     [
         ("source", *source != would_record.source),
+        (
+            "requirerProvenance",
+            requirer_provenance.is_some()
+                && *requirer_provenance != would_record.requirer_provenance,
+        ),
         ("sourceRepo", *source_repo != would_record.source_repo),
         ("sourceHash", *source_hash != would_record.source_hash),
         ("renderedHash", *rendered_hash != would_record.rendered_hash),

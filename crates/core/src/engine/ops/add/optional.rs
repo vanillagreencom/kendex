@@ -42,8 +42,7 @@ pub(super) fn optional_choices(
                 continue;
             };
             if crate::engine::deps::declared_dependencies(sealed, ItemKind::Skill, &dir)?
-                .optional
-                .contains(wanted)
+                .is_some_and(|declared| declared.optional.contains(wanted))
             {
                 chosen.push((parent.clone(), wanted.clone()));
             }

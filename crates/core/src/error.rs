@@ -6,6 +6,32 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
+    /// The record cannot say what requires this installation: pre-field
+    /// locks can lack the carrier of a withheld requirer, and a record a
+    /// hold kept, a local edit's or a source's that would not read, keeps
+    /// reasons older than the catalog's. Guessing here can make a user's
+    /// removal return on the next readable apply.
+    #[error(
+        "removal-provenance-missing source={} kind={} name={} harness={} step={}: {}", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name(), step.key(), step.remedy()
+    )]
+    RemovalProvenanceMissing {
+        catalog: String,
+        kind: ItemKind,
+        name: String,
+        harness: HarnessId,
+        step: ProvenanceStep,
+    },
+    /// A set carries a member declared from another catalog, and the
+    /// record binds no reading of the set to that edge: a path catalog's
+    /// set records none, so no apply repairs it. A removal still decides
+    /// while the set read at that moment carries the member, or when the
+    /// set leaves with it.
+    #[error(
+        "removal-set-reading-missing source={} set={}: retry the removal while this catalog is readable and its set still carries the item, or remove the set with it",
+        crate::names::shown(catalog),
+        crate::names::shown(set)
+    )]
+    RemovalSetReadingMissing { catalog: String, set: String },
     #[error("catalog-needs-engine min={min} engine={engine}")]
     CatalogNeedsEngine { min: String, engine: &'static str },
 
@@ -825,6 +851,74 @@ impl std::fmt::Display for Version10Stop {
             Version10Stop::NoDeclarations => out.write_str(
                 "this place's manifest is missing or does not read, and a recovery rebuilds the record from what the manifest lists; put back a readable manifest first",
             ),
+        }
+    }
+}
+
+/// What ends a removal-provenance refusal, read off the record the
+/// refusal rests on. A hold is known here by an installed copy a local
+/// edit moved off what apply last wrote (`engine::edit_holds`), or by the
+/// mark a pass leaves on a record it kept older than its reading
+/// ([`crate::lock::RequirerAncestry::held`]), which outlasts an edit
+/// undone by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvenanceStep {
+    /// An apply with the catalog readable either records the reading in
+    /// the record whose edge names the installation, or takes that record
+    /// away as left over.
+    Apply,
+    /// A local edit holds the record whose edge names the installation, so
+    /// no apply rewrites that record until the edit is resolved or
+    /// discarded.
+    ResolveEdit(crate::lock::InstallRef),
+    /// A hold kept the named installation's record as it was, known by its
+    /// local edit or by the mark the hold left, so its reasons may predate
+    /// the catalog's, and no reading roots what is removed; a read of the
+    /// catalogs where they sit now that accounts for every declaration
+    /// decides in its place. One that does not leaves the refusal standing,
+    /// whether a catalog would not read, an item or set it carries would
+    /// not, or a dependency could not be satisfied. That read is not the
+    /// one an apply makes at the recorded revisions, so the refusal names
+    /// what it could not account for.
+    RetryReadable {
+        /// Each cause the read fell short on, as it met it: a catalog,
+        /// item or set it could not read, a dependency it could not
+        /// satisfy or a revision conflict.
+        unread: Vec<String>,
+    },
+}
+
+impl ProvenanceStep {
+    fn key(&self) -> String {
+        match self {
+            Self::Apply => "apply".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "resolve-edit held={}:{}:{}",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable { .. } => "retry-readable".to_owned(),
+        }
+    }
+
+    fn remedy(&self) -> String {
+        match self {
+            Self::Apply => "apply with the catalog readable using a build that records requirer provenance, removing what it reports left over, then retry removal".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "a local edit holds {} {} on {}, so no apply records what requires it: resolve the edit or apply with --discard-edits, with the catalog readable, then retry removal",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable { unread } => {
+                let mut remedy = "a hold kept this installation's record as it was, so it cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
+                if !unread.is_empty() {
+                    remedy.push_str("; this read could not account for: ");
+                    remedy.push_str(&unread.join("; "));
+                }
+                remedy
+            }
         }
     }
 }

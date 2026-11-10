@@ -8,6 +8,7 @@ use crate::manifest::Method;
 
 fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
     LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind,
         harness: HarnessId::Claude,

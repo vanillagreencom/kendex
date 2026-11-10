@@ -280,7 +280,7 @@ fn collect_command_dependencies(
         .iter()
         .find(|(path, _)| crate::render::skill::carries_name(path))
         .unwrap_or_else(|| unreachable!("validated skill tree has no skill entry"));
-    let declared = super::deps::declared_in(&String::from_utf8_lossy(bytes));
+    let declared = super::deps::declared_in(&String::from_utf8_lossy(bytes)).unwrap_or_default();
     state
         .command_dependencies
         .insert(ctx.name.to_owned(), declared.commands);

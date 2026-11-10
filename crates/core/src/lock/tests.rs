@@ -5,6 +5,7 @@ use crate::error::CoreError;
 
 fn entry(emitted: Option<EmittedArtifact>) -> LockEntry {
     LockEntry {
+        requirer_provenance: None,
         registration: None,
         output_style: None,
         name: "gh".into(),
@@ -33,6 +34,61 @@ fn skill_at(paths: Vec<PathBuf>) -> Option<EmittedArtifact> {
         name: "gh".into(),
         paths,
     })
+}
+
+#[test]
+fn requirer_provenance_distinguishes_unknown_and_per_tool_carriers() {
+    let by = |harness| InstallRef {
+        source: "cat".into(),
+        kind: ItemKind::Hook,
+        name: "judge".into(),
+        harness,
+    };
+    for ancestry in [
+        None,
+        Some(RequirerAncestry {
+            rows: Vec::new(),
+            held: true,
+        }),
+        Some(vec![
+            RequirerProvenance {
+                installation: by(HarnessId::Claude),
+                source_repo: "./catalog".into(),
+                reasons: BTreeSet::new(),
+            },
+            RequirerProvenance {
+                installation: by(HarnessId::Codex),
+                source_repo: "./catalog".into(),
+                reasons: BTreeSet::from([
+                    Reason::MemberOf {
+                        bundle: BundleRef {
+                            source: "cat".into(),
+                            name: "crew".into(),
+                        },
+                    },
+                    Reason::RequiredBy {
+                        by: InstallRef {
+                            source: "cat".into(),
+                            kind: ItemKind::Skill,
+                            name: "S".into(),
+                            harness: HarnessId::Codex,
+                        },
+                    },
+                ]),
+            },
+        ])
+        .map(|rows| RequirerAncestry { rows, held: false }),
+    ] {
+        let mut original = entry(None);
+        original.requirer_provenance = ancestry;
+        let value = serde_json::to_value(&original).unwrap();
+        assert_eq!(
+            value.get("requirerProvenance").is_some(),
+            original.requirer_provenance.is_some()
+        );
+        let read: LockEntry = serde_json::from_value(value).unwrap();
+        assert_eq!(read.requirer_provenance, original.requirer_provenance);
+    }
 }
 
 #[test]

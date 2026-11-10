@@ -256,6 +256,7 @@ fn record(
     // is the record's to answer for in `attest::record`.
     let rendered_hash = rendered_hash(item);
     Ok(LockEntry {
+        requirer_provenance: None,
         name: item.name.clone(),
         kind: item.kind,
         harness: item.harness,

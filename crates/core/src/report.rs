@@ -196,6 +196,7 @@ mod tests {
 
     fn entry(name: &str, kind: ItemKind, source_repo: &str) -> LockEntry {
         LockEntry {
+            requirer_provenance: None,
             name: name.to_owned(),
             kind,
             harness: crate::model::HarnessId::Claude,

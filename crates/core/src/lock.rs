@@ -84,6 +84,15 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// deletes the default and an older build writes the lock, a later build
 /// can insert `switchModelsOnFlag=true` again. This mixed-version loss is
 /// accepted rather than requiring lock recovery for the added default.
+///
+/// Version 11 also gained [`LockEntry::requirer_provenance`] without a bump.
+/// Older writers discard it, its hold mark with it. A later removal refuses
+/// where the remaining record cannot prove whether a withheld requirer
+/// stays, and names the step that ends it: an apply with a readable catalog
+/// that rebuilds the facts, or, where a local edit holds the record those
+/// facts belong in, resolving or discarding that edit first. Older
+/// verification can reject a record carrying the field because its
+/// serialization omits it.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -244,8 +253,8 @@ impl DeclaredSelector {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct InstallRef {
-    /// Declared source name — dependencies stay inside one catalog, so this
-    /// is the source both ends share.
+    /// Declared source name of the requirer. A dependency may be declared
+    /// from a different catalog.
     pub source: String,
     pub kind: ItemKind,
     pub name: String,
@@ -267,7 +276,8 @@ pub struct BundleRef {
 /// The set is a cache, not intent: the manifest records the choices (what
 /// was requested, which optional dependencies were taken, what is kept
 /// removed) and the plan derives the closure again from those choices plus
-/// the catalogs. A lost lock therefore loses nothing.
+/// the catalogs. Losing the lock preserves intent, but loses the evidence
+/// an offline removal needs until readable catalogs rebuild it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
 #[serde(tag = "reason", rename_all = "kebab-case")]
 pub enum Reason {
@@ -277,6 +287,34 @@ pub enum Reason {
     RequiredBy { by: InstallRef },
     /// An installed bundle carries it as a member.
     MemberOf { bundle: BundleRef },
+}
+
+/// An ancestor's per-tool derivation, including ancestors withheld from
+/// rendering. This is dependency evidence, never an ownership record.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RequirerProvenance {
+    pub installation: InstallRef,
+    /// Portable catalog identity, as [`LockEntry::source_repo`] records it.
+    pub source_repo: String,
+    pub reasons: BTreeSet<Reason>,
+}
+
+/// What an entry records of its ancestry ([`LockEntry::requirer_provenance`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RequirerAncestry {
+    /// One row per ancestor of the entry's recorded edges.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<RequirerProvenance>,
+    /// A pass kept this record as it was while it read the installation,
+    /// or an ancestor its rows hold, with an edge the record lacks: a hold
+    /// such as a local edit or a source that would not read. The edit can
+    /// be undone by hand after, so only this says the reasons and rows are
+    /// older than the catalogs'. It stays until a pass writes the entry
+    /// afresh.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held: bool,
 }
 
 /// One installation the engine wrote: item × harness within this scope's
@@ -353,6 +391,22 @@ pub struct LockEntry {
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+    /// The ancestors explaining these reasons at the last successful read,
+    /// and whether a hold kept them older than the catalogs'.
+    /// Missing rows mean unknown evidence; an empty reason set proves that
+    /// ancestor has no carrier. `None` where no row is recorded and no hold
+    /// mark: a reader looks rows up one by one, so an empty list would tell
+    /// it nothing more. A pass that writes the entry assigns the rows
+    /// `DesiredState::ancestry` builds: one row per ancestor, this pass's
+    /// reading where it read one, else the previous row, and a row never
+    /// widened with another's reasons. A full apply that holds the entry as
+    /// it was keeps its reasons and still writes this when it read the
+    /// entry's item from the recorded source, since the rows describe the
+    /// graph, not the held bytes. An add's kept entries keep their rows
+    /// unless the add gives them a new edge, and records kept for orphans
+    /// keep theirs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requirer_provenance: Option<RequirerAncestry>,
     /// What only this machine knows about the installation. Never written
     /// into the committed record ([`MACHINE_FILE`] holds it), and `None`
     /// where this machine holds nothing about it: a clone whose install was
@@ -361,6 +415,44 @@ pub struct LockEntry {
     /// agent fork refuses when it needs the recorded delivery.
     #[serde(skip)]
     pub machine: Option<MachineRecord>,
+}
+
+impl LockEntry {
+    /// The recorded ancestry rows; none where none is recorded.
+    pub fn requirer_rows(&self) -> &[RequirerProvenance] {
+        self.requirer_provenance
+            .as_ref()
+            .map_or(&[], |ancestry| ancestry.rows.as_slice())
+    }
+
+    /// [`RequirerAncestry::held`].
+    pub fn held_reading(&self) -> bool {
+        self.requirer_provenance
+            .as_ref()
+            .is_some_and(|ancestry| ancestry.held)
+    }
+
+    /// Assigns the rows whole, keeping the hold mark.
+    pub(crate) fn assign_requirer_rows(&mut self, rows: Option<Vec<RequirerProvenance>>) {
+        let held = self.held_reading();
+        self.assign_ancestry(rows.unwrap_or_default(), held);
+    }
+
+    /// Sets the hold mark, keeping the rows; `engine::scope_writes` is its
+    /// one writer.
+    pub(crate) fn mark_held_reading(&mut self, held: bool) {
+        let rows = self
+            .requirer_provenance
+            .take()
+            .map(|ancestry| ancestry.rows)
+            .unwrap_or_default();
+        self.assign_ancestry(rows, held);
+    }
+
+    fn assign_ancestry(&mut self, rows: Vec<RequirerProvenance>, held: bool) {
+        self.requirer_provenance =
+            (!rows.is_empty() || held).then_some(RequirerAncestry { rows, held });
+    }
 }
 
 /// The shared position one output-style installation owns.

@@ -233,6 +233,7 @@ mod tests {
 
     fn entry(kind: ItemKind, name: &str, upstream_skills: Option<&[&str]>) -> LockEntry {
         LockEntry {
+            requirer_provenance: None,
             name: name.to_owned(),
             kind,
             harness: HarnessId::Claude,

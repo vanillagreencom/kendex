@@ -385,6 +385,12 @@ fn recorded_wrappers_stay_armed_with_their_revision_conflicted_judge() {
         assert_eq!(report.declaration_status, DeclarationStatus::Incomplete);
         apply::execute(&w.env, &report.plan).unwrap();
         let after = kendex_core::lock::load(&lock_path).unwrap();
+        // A held entry's requirer rows refresh where this pass read its
+        // source; the rest of the entry is what it held.
+        let held_part = |entry: &kendex_core::lock::LockEntry| kendex_core::lock::LockEntry {
+            requirer_provenance: None,
+            ..entry.clone()
+        };
         for name in held {
             let key = kendex_core::lock::entry_key(
                 kendex_core::model::ItemKind::Hook,
@@ -392,11 +398,26 @@ fn recorded_wrappers_stay_armed_with_their_revision_conflicted_judge() {
                 kendex_core::model::HarnessId::Claude,
             );
             assert_eq!(
-                after.entries.get(&key).unwrap(),
-                before.entries.get(&key).unwrap()
+                held_part(after.entries.get(&key).unwrap()),
+                held_part(before.entries.get(&key).unwrap()),
+                "{name}"
             );
             assert!(armed(&w, name), "{name} lost its recorded installation");
         }
+        let verified = kendex_core::attest::record(
+            &w.env,
+            &w.scope,
+            &after,
+            &audit(&w.env, &w.scope).unwrap(),
+            &kendex_core::attest::Floor::Open,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            verified.problems,
+            Vec::<String>::new(),
+            "{removed:?} {held:?}"
+        );
         for name in absent {
             assert!(
                 !armed(&w, name),

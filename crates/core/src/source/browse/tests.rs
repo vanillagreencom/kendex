@@ -38,6 +38,7 @@ fn project(tmp: &Path, manifest: &str) -> (Env, Scope) {
 
 fn lock_entry(kind: ItemKind, name: &str, source: &str) -> LockEntry {
     LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind,
         harness: HarnessId::Claude,

@@ -184,27 +184,47 @@ pub(super) struct RecordReadings {
     sets: BTreeMap<String, Reading<BundleRev>>,
 }
 
-/// A conflict keeps the old selector with its bytes. Synthetic holds
-/// also read under that selector, even when the source was redeclared
-/// beside a targeted update; recording the new one would apply no edit.
-pub(super) fn record_entry_selectors(
+/// The selector each successfully planned entry was read under, and the
+/// ancestry of every edge it records. A conflict keeps the old selector
+/// with its bytes, hashes and reasons. Synthetic holds also read under
+/// that selector, even when the source was redeclared beside a targeted
+/// update; recording the new one would apply no edit.
+///
+/// The ancestry describes the dependency graph, not the held bytes, so an
+/// entry held as it was takes this pass's reading of its edges when this
+/// pass read its item from the source it records; one whose source went
+/// unread keeps its rows. Either way its reasons stay as they were, so
+/// where this pass read an edge they or its rows lack, the record is marked
+/// held ([`crate::lock::RequirerAncestry::held`]), which only an entry
+/// written afresh drops. An add's kept entries are `plan_items`' to write,
+/// and keep their mark.
+pub(super) fn record_entry_readings(
     state: &DesiredState,
+    lock: &Lock,
     new_lock: &mut Lock,
     pass: &super::plan_pass::ItemPass,
     kept: &super::item_plan::KeptAsIs,
 ) {
     for (key, entry) in &mut new_lock.entries {
-        if entry.kind != crate::model::ItemKind::PiExtension
-            && pass
-                .planned
-                .contains(&(entry.kind, entry.name.clone(), entry.harness))
-            && !kept.contains(key)
-        {
-            let Some(basis) = state.selector_bases.get(&(entry.kind, entry.name.clone())) else {
+        if entry.kind == crate::model::ItemKind::PiExtension || state.addition_kept.contains(key) {
+            continue;
+        }
+        let item = (entry.kind, entry.name.clone());
+        let written = pass
+            .planned
+            .contains(&(entry.kind, entry.name.clone(), entry.harness))
+            && !kept.contains(key);
+        if written {
+            let Some(basis) = state.selector_bases.get(&item) else {
                 unreachable!("a successfully planned item has its reading owner's selector basis");
             };
             entry.selector = basis.recorded();
         }
+        if written || kept.contains(key) && state.processed.get(&item) == Some(&entry.source_repo) {
+            entry.assign_requirer_rows(state.ancestry(&entry.reasons, lock.entries.get(key)));
+        }
+        let held = entry.held_reading() || state.read_otherwise(entry);
+        entry.mark_held_reading(held);
     }
 }
 

@@ -448,6 +448,8 @@ pub struct DesiredState {
     /// another catalog installed it, invariant 4's conflict
     /// (`plan_pass::plan_rebound`).
     pub processed: BTreeMap<(ItemKind, String), String>,
+    pub(super) requirer_provenance:
+        BTreeMap<crate::lock::InstallRef, crate::lock::RequirerProvenance>,
     /// Items their catalog retired that this pass met, declared or derived
     /// ([`DesiredState::retire`]); `EngineReport::retired`.
     pub retired: BTreeMap<(ItemKind, String), Retirement>,
@@ -512,6 +514,17 @@ pub struct DesiredState {
     /// What one derived this pass is short through no choice of the
     /// person's, so no removal is decided on it.
     pub unreadable_catalogs: BTreeSet<String>,
+    /// Why the expansion read less than the catalogs carry, each cause
+    /// named where it is met. Some also make [`super::DeclarationStatus`]
+    /// incomplete: a walk finding, a set or catalog that would not read,
+    /// a revision conflict. The rest it leaves out: a source that did not
+    /// resolve, or not to a catalog, and an item its catalog does not
+    /// offer or whose frontmatter will not read, since a lookup of one
+    /// readable item stands on its own catalog. Only the removal read
+    /// takes all of them as short and names them (`ops::read_ancestry`):
+    /// a removal decided on less than the catalogs carry could return once
+    /// they read. An apply reports each where it meets it.
+    pub(super) short_reads: BTreeSet<String>,
     /// Compatibility stops the whole plan; ordinary unreadable sources do not.
     pub(super) catalog_refusal: Option<crate::error::CoreError>,
     /// Resolutions for item-level pins, keyed `(source, rev)` — kept apart
@@ -658,6 +671,60 @@ impl Withholding {
 }
 
 impl DesiredState {
+    /// The snapshot of these edges: the value of
+    /// [`crate::lock::LockEntry::requirer_provenance`], assigned whole.
+    /// Only ancestors of these edges belong in it, one row each: this
+    /// pass's reading where it read one, else the previous row, and with
+    /// neither it stays missing, never an invented empty row. A row is
+    /// never widened with another's reasons. No rows is `None`: a reader
+    /// looks rows up one by one.
+    pub(super) fn ancestry(
+        &self,
+        reasons: &BTreeSet<crate::lock::Reason>,
+        previous: Option<&crate::lock::LockEntry>,
+    ) -> Option<Vec<crate::lock::RequirerProvenance>> {
+        let mut pending = reasons.iter().cloned().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        let mut rows = BTreeMap::new();
+        while let Some(reason) = pending.pop() {
+            if let crate::lock::Reason::RequiredBy { by } = reason
+                && visited.insert(by.clone())
+                && let Some(row) = self.requirer_provenance.get(&by).or_else(|| {
+                    previous?
+                        .requirer_rows()
+                        .iter()
+                        .find(|row| row.installation == by)
+                })
+            {
+                pending.extend(row.reasons.iter().cloned());
+                rows.insert(by, row.clone());
+            }
+        }
+        (!rows.is_empty()).then(|| rows.into_values().collect())
+    }
+
+    /// Whether this pass read the record's installation, or an ancestor a
+    /// row of it holds, with an edge the record lacks: only a missing edge
+    /// can make a removal decided on the record lose a root.
+    pub(super) fn read_otherwise(&self, record: &crate::lock::LockEntry) -> bool {
+        let installation = crate::lock::InstallRef {
+            source: record.source.clone(),
+            kind: record.kind,
+            name: record.name.clone(),
+            harness: record.harness,
+        };
+        let lacks = |by: &crate::lock::InstallRef, recorded: &BTreeSet<crate::lock::Reason>| {
+            self.requirer_provenance
+                .get(by)
+                .is_some_and(|read| !read.reasons.is_subset(recorded))
+        };
+        lacks(&installation, &record.reasons)
+            || record
+                .requirer_rows()
+                .iter()
+                .any(|row| lacks(&row.installation, &row.reasons))
+    }
+
     pub(super) fn refuse_catalog(&mut self) -> Result<()> {
         match self.catalog_refusal.take() {
             Some(error) => Err(error),
@@ -667,6 +734,25 @@ impl DesiredState {
 
     pub(super) fn mark_incomplete(&mut self) {
         self.declaration_status = super::DeclarationStatus::Incomplete;
+    }
+
+    /// Records one read [`DesiredState::short_reads`] holds.
+    pub(super) fn read_short(&mut self, what: String) {
+        self.short_reads.insert(crate::names::shown(&what));
+    }
+
+    /// [`DesiredState::mark_incomplete`] for the expansion, naming why for
+    /// the removal read.
+    pub(super) fn mark_incomplete_for(&mut self, why: String) {
+        self.mark_incomplete();
+        self.read_short(why);
+    }
+
+    /// [`DesiredState::mark_incomplete_for`] with the cause also a note,
+    /// which an apply reports.
+    pub(super) fn note_incomplete(&mut self, note: String) {
+        self.mark_incomplete_for(note.clone());
+        self.notes.push(note);
     }
 
     /// Records a declaration whose item was found and read: the provenance
@@ -809,6 +895,8 @@ pub(crate) use places::{IN_PLACE_DISABLED, effective_method, in_place_source, sk
 pub(crate) use places::{harnesses_for, names_the_default, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
+#[cfg(test)]
+mod tests;
 
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,
@@ -1007,6 +1095,7 @@ fn compute(
     }
     manifest_changed |= settle_retired(env, scope, manifest, &mut state, &mut updated_manifest);
     inline(env, scope, manifest, &mut state);
+    state.requirer_provenance = expansion.requirer_provenance(&state.processed);
 
     if manifest_changed {
         state.manifest_update = Some(updated_manifest);

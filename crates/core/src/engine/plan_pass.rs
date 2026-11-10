@@ -59,19 +59,25 @@ pub(super) fn plan_items(
     for item in &state.items {
         if state.addition_kept.contains(&item.key) {
             if let Some(entry) = new_lock.entries.get_mut(&item.key) {
-                entry.reasons.extend(
-                    item.reasons
-                        .iter()
-                        .filter(|reason| match reason {
-                            Reason::RequiredBy { by } => {
-                                state.additions.as_ref().is_some_and(|reached| {
-                                    reached.contains(&(by.kind, by.name.clone()))
-                                })
-                            }
-                            Reason::Requested | Reason::MemberOf { .. } => false,
-                        })
-                        .cloned(),
-                );
+                let added = item
+                    .reasons
+                    .iter()
+                    .filter(|reason| match reason {
+                        Reason::RequiredBy { by } => state
+                            .additions
+                            .as_ref()
+                            .is_some_and(|reached| reached.contains(&(by.kind, by.name.clone()))),
+                        Reason::Requested | Reason::MemberOf { .. } => false,
+                    })
+                    .cloned()
+                    .collect::<BTreeSet<_>>();
+                if !added.is_empty() {
+                    // The snapshot of every edge the entry now records, as a
+                    // full pass would write it.
+                    let edges = entry.reasons.union(&added).cloned().collect();
+                    entry.assign_requirer_rows(state.ancestry(&edges, Some(entry)));
+                }
+                entry.reasons.extend(added);
             }
             continue;
         }

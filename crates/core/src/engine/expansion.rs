@@ -149,6 +149,35 @@ struct Disagreement {
 }
 
 impl Expansion {
+    /// Per-tool ancestry before render withholding, bound only to items
+    /// whose catalog identity the desired pass successfully read.
+    pub(super) fn requirer_provenance(
+        &self,
+        processed: &BTreeMap<(ItemKind, String), String>,
+    ) -> BTreeMap<crate::lock::InstallRef, crate::lock::RequirerProvenance> {
+        self.reasons
+            .iter()
+            .filter_map(|((kind, name, harness), reasons)| {
+                let planned = self.items.get(&(*kind, name.clone()))?;
+                let source_repo = processed.get(&(*kind, name.clone()))?;
+                let installation = crate::lock::InstallRef {
+                    source: planned.decl.source.clone(),
+                    kind: *kind,
+                    name: name.clone(),
+                    harness: *harness,
+                };
+                Some((
+                    installation.clone(),
+                    crate::lock::RequirerProvenance {
+                        installation,
+                        source_repo: source_repo.clone(),
+                        reasons: reasons.clone(),
+                    },
+                ))
+            })
+            .collect()
+    }
+
     pub(super) fn selector_bases(
         &self,
         manifest: &Manifest,
@@ -212,10 +241,6 @@ impl Expansion {
             .filter(|((of_kind, of_name, _), _)| *of_kind == kind && of_name == name)
             .flat_map(|(_, reasons)| reasons.iter().cloned())
             .collect()
-    }
-
-    pub(super) fn contains(&self, kind: ItemKind, name: &str) -> bool {
-        self.items.contains_key(&(kind, name.to_owned()))
     }
 
     /// The declaration an item in this expansion installs under — the
@@ -623,6 +648,7 @@ impl Expansion {
             let chosen = one.by_a_set && one.kept_owner.is_none() && one.refused_owner.is_none();
             chosen || kept.is_none() || kept != side(&one.source, &one.refused_owner, &one.refused)
         });
+        let mut short = Vec::new();
         for Disagreement {
             kind,
             name,
@@ -642,22 +668,27 @@ impl Expansion {
                     .unwrap_or_else(|| "the source's own revision".to_owned())
             };
             let disagreement = (*kind, name.clone(), resolved(kept), resolved(refused));
+            let message = format!(
+                "wanted at {} and also at {} — nothing was changed",
+                show(kept),
+                show(refused),
+            );
             state.rev_conflicts.insert((*kind, name.clone()));
+            short.push(format!("{} '{name}': {message}", kind.name()));
             state.rev_disagreements.push(disagreement);
             state.warnings.push(super::ItemWarning {
                 kind: *kind,
                 name: name.clone(),
                 harness: None,
-                message: format!(
-                    "wanted at {} and also at {} — nothing was changed",
-                    show(kept),
-                    show(refused),
-                ),
+                message,
                 remediation: Some(
                     "pin the items that bring it in to the same revision, or unpin them".into(),
                 ),
                 detail: None,
             });
+        }
+        for why in short {
+            state.read_short(why);
         }
     }
 }
@@ -730,6 +761,7 @@ struct CatalogRead {
     unreadable: bool,
     incomplete: bool,
     notes: Vec<String>,
+    short_reads: BTreeSet<String>,
     refusal: Option<Compatibility>,
 }
 
@@ -804,6 +836,7 @@ impl CatalogRead {
         if self.incomplete {
             state.mark_incomplete();
         }
+        state.short_reads.extend(self.short_reads.iter().cloned());
         if let Some(refusal) = &self.refusal {
             state.catalog_refusal.get_or_insert_with(|| refusal.error());
         }
@@ -837,6 +870,7 @@ impl Catalogs<'_> {
                     unreadable: evidence.unreadable_catalogs.contains(source),
                     incomplete: evidence.declaration_status == super::DeclarationStatus::Incomplete,
                     notes: evidence.notes,
+                    short_reads: evidence.short_reads,
                     refusal: evidence.catalog_refusal.map(Compatibility::of),
                 },
             );
@@ -858,6 +892,27 @@ impl Catalogs<'_> {
         catalog.offer(kind, name)
     }
 
+    /// What `source`, at `rev` where an item pins one, resolves to now:
+    /// once per pass, since resolving a remote reads its checkout.
+    fn resolve_now(
+        &self,
+        source: &str,
+        rev: Option<&str>,
+        state: &DesiredState,
+    ) -> crate::error::Result<SourceState> {
+        let resolved = match rev {
+            Some(rev) => state.pinned.get(&(source.to_owned(), rev.to_owned())),
+            None => state.sources.get(source),
+        };
+        match (resolved, rev) {
+            (Some(resolution), _) => Ok(resolution.clone()),
+            (None, Some(rev)) => {
+                crate::source::resolve_at(self.env, self.scope, source, self.manifest, Some(rev))
+            }
+            (None, None) => crate::source::resolve(self.env, self.scope, source, self.manifest),
+        }
+    }
+
     fn read(
         &self,
         source: &str,
@@ -877,42 +932,20 @@ impl Catalogs<'_> {
             ) {
                 Ok(resolution) => resolution,
                 Err(problem) => {
+                    let note = problem.to_string();
                     state.unreadable_catalogs.insert(source.into());
-                    state.mark_incomplete();
-                    state.notes.push(problem.to_string());
+                    state.note_incomplete(note);
                     return None;
                 }
             }
         } else {
-            match rev {
-                Some(rev) => {
-                    let key = (source.to_owned(), rev.to_owned());
-                    match state.pinned.get(&key) {
-                        Some(resolution) => resolution.clone(),
-                        None => {
-                            let resolution = crate::source::resolve_at(
-                                self.env,
-                                self.scope,
-                                source,
-                                self.manifest,
-                                Some(rev),
-                            )
-                            .ok()?;
-                            state.pinned.insert(key, resolution.clone());
-                            resolution
-                        }
-                    }
+            match self.resolve_now(source, rev, state) {
+                Ok(resolution) => resolution,
+                Err(problem) => {
+                    let at = rev.map(|rev| format!(" at {rev}")).unwrap_or_default();
+                    state.read_short(format!("source '{source}'{at} did not resolve: {problem}"));
+                    return None;
                 }
-                None => match state.sources.get(source) {
-                    Some(resolution) => resolution.clone(),
-                    None => {
-                        let resolution =
-                            crate::source::resolve(self.env, self.scope, source, self.manifest)
-                                .ok()?;
-                        state.sources.insert(source.to_owned(), resolution.clone());
-                        resolution
-                    }
-                },
             }
         };
         match rev {
@@ -925,8 +958,17 @@ impl Catalogs<'_> {
                 state.sources.insert(source.to_owned(), resolution.clone());
             }
         }
-        let SourceState::Ready(ready) = resolution else {
-            return None;
+        // A source that did not resolve, or not to a catalog, derived
+        // nothing, which says nothing of what it carries. The source pass
+        // reports why for an apply; a lookup of an item another catalog
+        // carries stands on that catalog, so this is a short read only to
+        // the removal read.
+        let ready = match catalog_of(source, resolution) {
+            Ok(ready) => ready,
+            Err(short) => {
+                state.read_short(short);
+                return None;
+            }
         };
         // Everything derived — a set's members, a skill's dependencies —
         // reaches its catalog through here, so this is where the removal pass
@@ -945,7 +987,7 @@ impl Catalogs<'_> {
         let (config, sealed) = match opened {
             Ok(opened) => opened,
             Err(problem) if problem.is_catalog_compatibility() => {
-                state.mark_incomplete();
+                state.mark_incomplete_for(format!("source '{source}': {problem}"));
                 state.catalog_refusal.get_or_insert(problem);
                 return None;
             }
@@ -955,22 +997,44 @@ impl Catalogs<'_> {
             // that keeps a broken catalog's files while saying nothing is
             // the silence this whole read exists to end.
             Err(problem) => {
-                state.unreadable_catalogs.insert(source.to_owned());
-                state.notes.push(format!(
+                let note = format!(
                     "the catalog '{source}' could not be read — {}",
                     super::origin::said(problem)
-                ));
+                );
+                state.unreadable_catalogs.insert(source.to_owned());
+                state.read_short(note.clone());
+                state.notes.push(note);
                 return None;
             }
         };
-        if config.hides_content() {
+        if let Some(hidden) = config.hidden_content() {
             state.unreadable_catalogs.insert(source.to_owned());
+            state.read_short(format!("source '{source}': {hidden}"));
         }
         Some(OpenCatalog {
             sealed,
             config,
             offered: super::deps::OfferedSkills::default(),
         })
+    }
+}
+
+/// The catalog `source` resolved to, or, where it did not resolve to
+/// one, the short read that names why ([`DesiredState::short_reads`]).
+fn catalog_of(
+    source: &str,
+    resolution: SourceState,
+) -> std::result::Result<crate::source::ResolvedSource, String> {
+    match resolution {
+        SourceState::Ready(ready) => Ok(ready),
+        SourceState::Disabled { .. } => Err(format!("source '{source}' is disabled")),
+        SourceState::Pending { repo, .. } => {
+            Err(format!("source '{source}' ({repo}) is not fetched yet"))
+        }
+        SourceState::Missing { path, .. } => Err(format!(
+            "source '{source}' is missing at {}",
+            path.display()
+        )),
     }
 }
 

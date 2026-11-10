@@ -256,6 +256,7 @@ fn lock_entry(
             machine.installed_at.clone()
         });
     Ok(crate::lock::LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind: crate::model::ItemKind::PiExtension,
         harness: crate::model::HarnessId::Pi,

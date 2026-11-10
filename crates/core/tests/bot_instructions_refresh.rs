@@ -119,6 +119,7 @@ fn record_named_install(env: &Env, root: &Path, harness: HarnessId, name: &str, 
     lock.entries.insert(
         kendex_core::lock::entry_key(ItemKind::Skill, name, harness),
         LockEntry {
+            requirer_provenance: None,
             name: name.to_owned(),
             kind: ItemKind::Skill,
             harness,
