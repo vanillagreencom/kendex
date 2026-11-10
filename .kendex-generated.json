@@ -834,7 +834,6 @@
   ".agents/skills/orch/scripts/lib/state-archive.sh",
   ".agents/skills/orch/scripts/lib/tmux-server.sh",
   ".agents/skills/orch/scripts/lib/toml.sh",
-  ".agents/skills/orch/scripts/lib/verifying.sh",
   ".agents/skills/orch/scripts/lib/watch-pid.sh",
   ".agents/skills/orch/scripts/orch-env",
   ".agents/skills/orch/scripts/orch-runtime",

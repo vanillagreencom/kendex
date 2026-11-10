@@ -1,4 +1,6 @@
-//! The watch and reconciliation share one checklist, merge and release judgment.
+//! The one box judge: an item's post-merge checklist judged on its merge
+//! and its releases, for the watch's verifying duty and for
+//! `reconcile-items`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -121,7 +123,7 @@ struct ParsedBox {
     release_glob: Option<String>,
 }
 
-/// One box under judgement (`verifying_parse`'s output row).
+/// One box under judgement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Judged {
     number: u64,
@@ -146,7 +148,8 @@ impl Judged {
             || (self.trigger_kind == "merge" && self.deadline_hours.is_some())
     }
 
-    /// `VERIFYING_LINE_JQ`'s line.
+    /// The `verifying` line a reader of the watch log and of
+    /// `reconcile-items`' `result.lines` parses, its fields in this order.
     fn line(&self, id: &str, blocked: &[String]) -> String {
         let blocked = if blocked.is_empty() {
             "-".to_owned()
@@ -186,7 +189,7 @@ fn json_text(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
-/// `verifying_parse`: the boxes the item is judged on, or `None` for an
+/// The boxes the item is judged on, or `None` for an
 /// item the parser cannot read as Verifying (branch work open, a malformed
 /// box).
 fn judged_boxes(parsed: &Parsed, container: bool) -> Option<Vec<Judged>> {
@@ -467,7 +470,7 @@ fn class_holds(name: &str, c: char) -> bool {
 }
 
 /// The releases of `repo`, every page, as `(published epoch, tag)` for the
-/// published ones (`verifying_judge`'s release read).
+/// published ones.
 fn releases(
     gh: &Path,
     repo: &str,

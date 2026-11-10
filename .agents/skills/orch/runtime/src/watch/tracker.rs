@@ -150,8 +150,8 @@ pub struct VerifyingItem {
     pub description: String,
     pub priority: String,
     pub container: bool,
-    /// The open items blocking this one, which the judge reads as
-    /// `blocked` and the line carries (`lib/verifying.sh`).
+    /// The open items blocking this one, which the box judge
+    /// (`watch::verifying`) reads as `blocked` and its line carries.
     pub blocked_by_open: Vec<String>,
 }
 
