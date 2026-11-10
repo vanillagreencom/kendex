@@ -256,8 +256,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               and marks a step report Jarvis may speak or hold. --attach
               names a file the relay carries beside the text: a regular
               file, not itself a symlink, whose directory resolves
-              physically to the progress-report directory workflow-state
-              names, recorded at that physical path; refused
+              physically to the progress-report directory orch's
+              ORCH_PROGRESS_REPORT_DIR names, recorded at that physical
+              path; refused
               `attach-outside` otherwise
   resolve --item overseer --id MSGID [--text PATH | --default] [--delivery-id KEY]
               closes any ask this overseer sent with a separate `resolution` envelope,
@@ -290,8 +291,9 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               An answer leaves the ask pending until resolve closes it.
               The lock judges repeats before closure, so a replay after close
               still names its original answer. New answers after close refuse.
-  ask|send --item ITEM ... --delivery-id KEY
-              an ask or send whose envelope carries KEY, the sender's own name for
+  ask|send|notice --item ITEM ... --delivery-id KEY
+              an ask, send or lane notice whose envelope carries KEY, the
+              sender's own name for
               this delivery. Under the mailbox lock a KEY the file already
               holds refuses it as `delivery-repeated=<KEY> id=<id>`,
               naming the envelope that landed, so a retry after a crash
@@ -322,8 +324,9 @@ Peer side, one other repository's overseer mailbox per call:
               its `overseer` member (orch schemas/workflow-state.md). A local
               send, an answer included, refuses before appending where no
               overseer is recorded here: `lane-mail: overseer-absent=<root>`
-              names `oversee register` in the session that should read that
-              checkout's mail. For an overseer on another host, send from
+              names `orch-runtime register --fleet` in the session that
+              should read that checkout's mail. For an overseer on another
+              host, send from
               that host's checkout. The
               owner form, `send --item overseer`, requires the same record.
               An unreadable record refuses as `overseer-unreadable`. Where
@@ -332,8 +335,9 @@ Peer side, one other repository's overseer mailbox per call:
               `server_start` names, or on that server pid where it carries
               no `server_start`, stderr
               opens `lane-mail: no-reader=<REPO root> cause=unnamed|pane-gone`
-              with a `fix=` line naming `oversee register`; where that cannot
-              be judged from here, `lane-mail: reader-unjudged=<REPO root>
+              with a `fix=` line naming `orch-runtime register --fleet`;
+              where that cannot be judged from here,
+              `lane-mail: reader-unjudged=<REPO root>
               cause=hosted|server`. Either is a notice after the
               receipt, at exit 0: the note landed. Only ORCH_STATE_DIR is
               read from REPO's settings files, as data, to place its record,
@@ -392,7 +396,8 @@ Options:
   --text PATH   resolve only: the owner's answer, read as --file is
   --default     resolve only: close at deadline; recommend only if unanswered
   --delivery-id KEY
-                ask, send and resolve only: the sender's name for this delivery
+                ask, send, resolve and a lane's notice only: the sender's name
+                for this delivery
   --thread-ts TS --parent PATH
                 send --item overseer --directive only: the thread pointer
   --timeout S   seconds before `wait` exits 124; 0 never times out
@@ -473,7 +478,7 @@ the same envelope again. The repeat rules below apply locally and on hosts
 whose append library has the repeat guard.
 
 A send, ask or notice repeating an envelope the mailbox already holds is a retry of a delivery
-that landed, not a second message. An ask or send carrying --delivery-id is judged by
+that landed, not a second message. An ask, send or lane notice carrying --delivery-id is judged by
 that key alone, under the lock, and never by this window. What is compared is the envelope whole,
 every field of it but the id it is minted with and the stamp, which the window
 judges instead; a generated deadline is compared as its offset from the stamp.
@@ -598,7 +603,7 @@ lm_message() { # KEY VALUE
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
     no-reader) text='The note or ask landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so it waits unread until one is named, and an ask'\''s answer with it.
-fix=run `oversee register` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with `oversee launch`' ;;
+fix=run `orch-runtime register --fleet` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with `oversee launch`' ;;
     reader-unjudged) text='The note or ask landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
     overseer-unreadable) text='The checkout overseer record could not be read. Nothing was appended.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
@@ -850,7 +855,15 @@ for given in $OPTS_GIVEN; do
       [ "$VERB:$ITEM:$EVENT_BOX:$HOST" = events:overseer:to-overseer:0 ] || refuse option-unknown --mark-read
       ;;
     --text | --default) [ "$VERB" = resolve ] || refuse option-unknown "$given" ;;
-    --delivery-id) case "$VERB" in ask | send | resolve) ;; *) refuse option-unknown --delivery-id ;; esac ;;
+    --delivery-id)
+      # An owner notice is judged on its text for a day, which a key would
+      # replace; the overseer's own notice takes none.
+      case "$VERB:$ITEM" in
+        ask:* | send:* | resolve:*) ;;
+        notice:overseer) refuse option-unknown --delivery-id ;;
+        notice:*) ;;
+        *) refuse option-unknown --delivery-id ;;
+      esac ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
@@ -914,7 +927,7 @@ fi
 if [ "$VERB" = compact ]; then
   lm_require_orch orch-env lib/state-archive.sh
 fi
-[ -z "$ATTACH" ] || lm_require_orch workflow-state
+[ -z "$ATTACH" ] || lm_require_orch orch-env
 
 # Nested subshells keep each mutex's lifetime separate on hosts without flock.
 # A reader can hold the cursor lock while taking a mailbox snapshot.
@@ -1037,16 +1050,13 @@ lm_send_record() { # RESULT CAUSE
 # lane never asks, so an answer has nothing to reach, and no hook enforces a
 # halt there.
 lm_send_channel() {
-  local state_args=() rc=0 exists record host channel files harness account session root out answer cause
-  [ -z "$STATE_DIR" ] || state_args=(--state-dir "$STATE_DIR")
-  if ! exists="$("$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} exists --json oversee 2>"$WORK_DIR/state.err")" ||
-    ! exists="$(jq -er '.exists | tostring' <<<"$exists")"; then
+  local rc=0 fleet record host channel files harness account session root out answer cause
+  fleet="$(mailbox_fleet_record full . "$STATE_DIR" 2>"$WORK_DIR/state.err")" ||
     refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
-  fi
   record='{}'
-  if [ "$exists" = true ]; then
-    record="$("$ORCH_SCRIPTS/workflow-state" ${state_args[@]+"${state_args[@]}"} get oversee \
-      '[.lanes[]? | objects | select(.item == "'"$ITEM"'")] | first // {}' 2>"$WORK_DIR/state.err")" ||
+  if [ -f "$fleet" ]; then
+    record="$(jq -r --arg item "$ITEM" '[.lanes[]? | objects | select(.item == $item)] | first // {}' \
+      -- "$fleet" 2>"$WORK_DIR/state.err")" ||
       refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
   fi
   if [ "$record" = '{}' ]; then
@@ -1105,7 +1115,7 @@ lm_send_channel() {
   exit 0
 }
 if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
-  lm_require_orch workflow-state lane-host lanes lib/lane-capabilities.sh lib/lane-launch.sh
+  lm_require_orch lane-host lanes lib/lane-capabilities.sh lib/lane-launch.sh
   # shellcheck source=../../orch/scripts/lib/lane-capabilities.sh
   . "$ORCH_SCRIPTS/lib/lane-capabilities.sh"
   # shellcheck source=../../orch/scripts/lib/lane-launch.sh
@@ -1614,40 +1624,38 @@ lm_peer_reader() {
 
 # Owner sends use full resolution; peer asks and replies share data-only
 # resolution, so the caller cannot accept a record its replying peer misses.
-lm_overseer_state() { # full|data ROOT ARGS...
-  local scope="$1" root="$2"
-  shift 2
-  if [ "$scope" = data ]; then
-    (cd -- "$root" && env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" --no-private-env "$@") 2>"$WORK_DIR/reader.err"
+lm_overseer_path() { # full|data ROOT
+  if [ "$1" = data ]; then
+    (unset ORCH_STATE_DIR; mailbox_fleet_record data "$2") 2>"$WORK_DIR/reader.err"
   else
-    (cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" "$@") 2>"$WORK_DIR/reader.err"
+    mailbox_fleet_record full "$2" 2>"$WORK_DIR/reader.err"
   fi
 }
 
-# `oversee register` and the runtime's controller start or transfer
+# `orch-runtime register --fleet` and the runtime's controller start or transfer
 # (`orch-runtime op --fleet`) write the checkout-local fleet record.
 # A missing record requires registration in the session that reads this
 # checkout's mail. Remote overseers send from their host's checkout because
 # this shell cannot read that host's fleet state.
 lm_overseer_absent() { # ROOT
-    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run oversee register in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout\n' "$1" >&2
+    printf 'lane-mail: overseer-absent=%s no overseer is recorded here; run orch-runtime register --fleet in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout\n' "$1" >&2
 }
 LM_OVERSEER_RECORD=""
 lm_require_overseer() { # full|data ROOT
   local scope="$1" root="$2" path
-  if [ ! -f "$ORCH_SCRIPTS/workflow-state" ]; then
+  if [ ! -f "$ORCH_SCRIPTS/lib/overseer-launch.sh" ]; then
     lm_overseer_absent "$root"
     printf '%s\n' 'Orch is not installed beside this package, so no session reads this mailbox.' >&2
     exit 2
   fi
   lm_require_orch lib/overseer-launch.sh lib/tmux-server.sh
-  if ! path="$(lm_overseer_state "$scope" "$root" path oversee)"; then
+  if ! path="$(lm_overseer_path "$scope" "$root")"; then
     refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
   [ -n "$path" ] || refuse overseer-unreadable "$root"
   LM_OVERSEER_RECORD=null
   if [ -e "$path" ]; then
-    LM_OVERSEER_RECORD="$(lm_overseer_state "$scope" "$root" get oversee '.overseer // null')" ||
+    LM_OVERSEER_RECORD="$(jq -r '.overseer // null' -- "$path" 2>"$WORK_DIR/reader.err")" ||
       refuse overseer-unreadable "$root" "$(cat -- "$WORK_DIR/reader.err")"
   fi
   if [ "$LM_OVERSEER_RECORD" = null ]; then
@@ -1872,7 +1880,7 @@ lm_resolved() { # ASK_ID BY ANSWER_ID
 # An owner ask's deadline: --wait as given, else ORCH_ASK_WAIT_MINUTES from
 # the kendex settings ladder, else 120. Read only for an owner ask, whose
 # deadline the owner-channel ask help gives its meaning, and the ladder is
-# loaded here for the deadline. Record reads use lm_overseer_state, with the
+# loaded here for the deadline. Record reads use lm_overseer_path, with the
 # peer's settings read as data, never sourcing a file of the peer's.
 lm_wait_minutes() {
   if [ "$WAIT_GIVEN" -eq 1 ]; then
@@ -1932,14 +1940,19 @@ lm_draft() {
 
 # The attachment, judged where it stands: a regular file, not itself a
 # symlink, whose directory resolves physically to the progress-report
-# directory workflow-state names, which is one rule at the one point the relay
-# would otherwise carry any path it was handed. ATTACH is rewritten to the
-# physical path so the relay opens what was judged.
+# directory ORCH_PROGRESS_REPORT_DIR names, a relative one under the main
+# checkout, which is one rule at the one point the relay would otherwise carry
+# any path it was handed. ATTACH is rewritten to the physical path so the
+# relay opens what was judged.
 lm_attach_confined() {
   local reports dir base
-  reports="$("$ORCH_SCRIPTS/workflow-state" progress-report-path 2>"$WORK_DIR/reports.err")" ||
+  reports="$("$ORCH_SCRIPTS/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports 2>"$WORK_DIR/reports.err")" ||
     refuse attach-outside "$ATTACH" "$(cat -- "$WORK_DIR/reports.err")"
-  reports="$(cd -- "${reports%/*}" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
+  case "$reports" in
+    /*) ;;
+    *) reports="${OWN_ROOT:-$PWD}/$reports" ;;
+  esac
+  reports="$(cd -- "$reports" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
   { [ ! -L "$ATTACH" ] && [ -f "$ATTACH" ]; } || refuse attach-outside "$ATTACH"
   case "$ATTACH" in
     */*) dir="${ATTACH%/*}"; base="${ATTACH##*/}" ;;

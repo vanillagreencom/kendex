@@ -232,6 +232,10 @@ On surface 2, whose launcher is the harness's own, append the same record after 
 
 For an existing surface-2 item, merge into its record with the store's `workflow-state update-report`, its one merge of a record found by item under the record's lock; no `orch-runtime state` verb merges a record by item. Judge the supplied mapping against the retained binding in that same update: refuse a conflict without changing state, preserve a known binding for absent/null input, and bind a previously unknown value only from the accepted directive. Never append a duplicate item or replace its record wholesale. Relaunch, wake and handoff keep `launched_at`; a fresh ordinary launch can renew it while retaining the obligation and previous cycle.
 
+```bash
+.agents/skills/orch/scripts/orch-runtime state merge --fleet --lane [ITEM_KEY] tmp/lane-merge-[ITEM_KEY].json
+```
+
 `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it timestamps and never after, because the earliest `launched_at` is the fleet start the watch takes as `--since`:
 
 ```bash

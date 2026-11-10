@@ -826,17 +826,34 @@ impl Mailbox {
     /// lane's worktree `root`: the program roots a lane verb at the checkout
     /// it runs in (`git rev-parse --show-toplevel`), so the envelope lands in
     /// `root`'s `tmp/lane-mail/ITEM/to-overseer.jsonl`, the box the watch
-    /// drains. A lane notice carries no delivery id: only the program's
-    /// minute window reads a replay as `Noticed::Repeated`.
-    pub fn notice(&self, item: &str, root: &Path, file: &Path) -> Result<Noticed, Refusal> {
+    /// drains. Under `delivery_id` the mailbox reads a replay as
+    /// `Noticed::Repeated` whenever it comes; without one, only inside its
+    /// minute window.
+    pub fn notice(
+        &self,
+        item: &str,
+        root: &Path,
+        file: &Path,
+        delivery_id: Option<&str>,
+    ) -> Result<Noticed, Refusal> {
         const VERB: &str = "notice";
         let file = file.display().to_string();
-        let answer = self.call_on(VERB, &["--item", item, "--file", &file], None, Some(root))?;
+        let mut args = vec!["--item", item, "--file", &file];
+        if let Some(key) = delivery_id {
+            args.push("--delivery-id");
+            args.push(key);
+        }
+        let answer = self.call_on(VERB, &args, None, Some(root))?;
         if !answer.success {
-            if let Some(keyed) = answer.keyed()
-                && let Some(id) = keyed.strip_prefix("duplicate id=")
-            {
-                return Ok(Noticed::Repeated { id: id.to_owned() });
+            if let Some(keyed) = answer.keyed() {
+                if let Some(id) = keyed.strip_prefix("duplicate id=") {
+                    return Ok(Noticed::Repeated { id: id.to_owned() });
+                }
+                if let Some(rest) = keyed_value(&keyed, "delivery-repeated")
+                    && let Some(id) = id_field(rest)
+                {
+                    return Ok(Noticed::Repeated { id });
+                }
             }
             return Err(answer.refused(VERB));
         }

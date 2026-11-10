@@ -236,7 +236,8 @@ fn a_pointer_write_waits_on_the_records_lock_and_two_writers_keep_each_others_ke
 
 /// Reviewer text with newlines, quotes, backticks and `$` reaches the record
 /// byte for byte through a file, the array created where absent; a file
-/// holding none or two values, or no file, refuses with the record untouched.
+/// holding none or two values, or no file, refuses with the record untouched;
+/// under `--unique` a value the array holds is not appended again.
 #[test]
 fn append_file_carries_bytes_the_shell_would_split_and_refuses_what_is_not_one_value() {
     let store = Store::new();
@@ -280,6 +281,41 @@ fn append_file_carries_bytes_the_shell_would_split_and_refuses_what_is_not_one_v
             "{name}"
         );
     }
+
+    // The proposed rules as `main`'s deduplicating update left them, sorted;
+    // a `--unique` append adds a new rule after them and a held one never.
+    let rules = "/pr_comment_review/proposed_rules";
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        rules,
+        r#"["a rule","b rule"]"#,
+    ]);
+    let rule = store.write_file("rule.json", r#""0 rule""#);
+    let unique = |file: &str| {
+        store.ok(&[
+            "state",
+            "append-file",
+            "--item",
+            ITEM,
+            "--unique",
+            rules,
+            file,
+        ])["appended"]
+            .clone()
+    };
+    assert_eq!(unique(&rule), json!(true));
+    assert_eq!(unique(&rule), json!(false), "a held rule is not appended");
+    assert_eq!(
+        unique(&store.write_file("held.json", r#""a rule""#)),
+        json!(false)
+    );
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["pr_comment_review"]["proposed_rules"],
+        json!(["a rule", "b rule", "0 rule"])
+    );
 }
 
 /// `set` never parses a JSON string literal: a quoted word stores its
@@ -1984,6 +2020,121 @@ fn upsert_replaces_the_element_its_key_names_and_refuses_a_value_without_it() {
         "state", "upsert", "--item", ITEM, "/heads", "--key", "head", &keyless,
     ]);
     assert_eq!(key, "upsert-key");
+}
+
+/// The fleet record as `main` wrote it for a surface-2 fleet: its store's
+/// `init oversee` object, then three lanes its overseer appended with the
+/// store's `append oversee lanes`, two with their lineage unknown and one
+/// bound.
+const SURFACE_TWO_FLEET: &str = r#"{"issue_id":"oversee","sub_issues":[],"agent":"","worktree":"","branch":"","qa_labels":[],"near_ceiling":[],"finding_occurrences":{"prior":"none","records":[]},"child_sessions":{},"review_agents":[],"review_agent_ids":{},"review_agent_runtime_types":{},"pre_delegate_sha":null,"skip_qa":false,"cycles":0,"rereview_cycles":0,"json_paths":[],"fixed_items":[],"escalated_items":[],"audit_issues_created":[],"pr_review_baseline":null,"pr_comment_review":{"iterations":0,"fixes":[],"issues_created":[],"skipped":[]},"post_pr_budgets":{"review_wait":null,"ci_fix":null},"post_pr_stop":null,"lanes":[{"item":"KEN-1","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-1","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:00:00Z","status":"running","obligation":null},{"item":"KEN-2","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-2","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:05:00Z","status":"running","obligation":{"repo":"o/r","item":"KEN-2","parent_repo":null,"parent_item":null}},{"item":"KEN-3","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-3","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:10:00Z","status":"running","obligation":null}]}"#;
+
+/// A surface-2 lane's merge writes the fields it names into the lane its
+/// item finds and binds the lineage once: an absent or null obligation
+/// keeps the lane's, an unknown one binds, a known one differing refuses
+/// with nothing written, and an obligation of another shape refuses.
+#[test]
+fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
+    let store = Store::new();
+    fs::create_dir_all(store.state_dir()).unwrap();
+    fs::write(store.fleet_path(), SURFACE_TWO_FLEET).unwrap();
+    let merge = |lane: &str, name: &str, mapping: &str| {
+        let file = store.write_file(name, mapping);
+        store.ok(&["state", "merge", "--fleet", "--lane", lane, &file])
+    };
+    let refused = |lane: &str, name: &str, mapping: &str| {
+        let file = store.write_file(name, mapping);
+        store
+            .refused(&["state", "merge", "--fleet", "--lane", lane, &file])
+            .0
+    };
+    let bound = r#"{"repo":"o/r","item":"KEN-1","parent_repo":"o/r","parent_item":"KEN-0"}"#;
+    let lane = |item: &str| {
+        store.doc(&store.fleet_path())["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|l| l["item"] == item)
+            .cloned()
+            .unwrap()
+    };
+
+    let merged = merge(
+        "KEN-1",
+        "wake.json",
+        r#"{"status":"stopped","session_id":"s-1","obligation":null}"#,
+    );
+    assert_eq!(merged["pointer"], "/lanes/0");
+    let one = lane("KEN-1");
+    assert_eq!(
+        (&one["status"], &one["session_id"], &one["obligation"]),
+        (&json!("stopped"), &json!("s-1"), &Value::Null)
+    );
+    assert_eq!(
+        one["launched_at"], "2026-10-24T19:00:00Z",
+        "an unnamed field stands"
+    );
+
+    merge(
+        "KEN-1",
+        "bind.json",
+        &format!(r#"{{"obligation":{bound}}}"#),
+    );
+    let known: Value = serde_json::from_str(bound).unwrap();
+    assert_eq!(
+        lane("KEN-1")["obligation"],
+        known,
+        "an unknown lineage binds"
+    );
+
+    let other = r#"{"repo":"o/r","item":"KEN-1","parent_repo":null,"parent_item":null}"#;
+    let before = store.doc(&store.fleet_path());
+    let key = refused(
+        "KEN-1",
+        "conflict.json",
+        &format!(r#"{{"status":"running","obligation":{other}}}"#),
+    );
+    assert_eq!(key, "obligation-conflict");
+    assert_eq!(
+        store.doc(&store.fleet_path()),
+        before,
+        "a conflict writes nothing"
+    );
+
+    merge(
+        "KEN-2",
+        "keep.json",
+        r#"{"model":"gpt-6","obligation":null}"#,
+    );
+    let two = lane("KEN-2");
+    assert_eq!(two["model"], "gpt-6");
+    assert_eq!(
+        two["obligation"],
+        json!({"repo": "o/r", "item": "KEN-2", "parent_repo": null, "parent_item": null}),
+        "a null obligation keeps the known binding"
+    );
+
+    let key = refused(
+        "KEN-3",
+        "half.json",
+        r#"{"obligation":{"repo":"o/r","item":"KEN-3","parent_repo":"o/r"}}"#,
+    );
+    assert_eq!(key, "obligation-invalid");
+    assert_eq!(lane("KEN-3")["obligation"], Value::Null);
+    assert_eq!(
+        refused("KEN-3", "item.json", r#"{"item":"KEN-2"}"#),
+        "merge-item"
+    );
+    assert_eq!(
+        refused("KEN-9", "missing.json", r#"{"status":"done"}"#),
+        "lane-missing"
+    );
+    assert_eq!(
+        store.doc(&store.fleet_path())["lanes"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
 }
 
 /// A bucket write moves a finding: out of every `--drop` array by its

@@ -385,8 +385,15 @@ pub enum Write {
         pointer: String,
         value: Value,
     },
+    /// Under `unique`, a value the array already holds is not appended.
     AppendFile {
         pointer: String,
+        file: PathBuf,
+        unique: bool,
+    },
+    /// The file's one object merged into the fleet record's lane `lane`.
+    LaneMerge {
+        lane: String,
         file: PathBuf,
     },
     Increment {
@@ -527,8 +534,13 @@ fn transition(
     match write {
         Write::Set { pointer, value } => set(path, doc, store, env, pointer, value.clone()),
         Write::SetFile { pointer, file } => set(path, doc, store, env, pointer, one_value(file)?),
-        Write::Append { pointer, value } => append(path, doc, pointer, value.clone()),
-        Write::AppendFile { pointer, file } => append(path, doc, pointer, one_value(file)?),
+        Write::Append { pointer, value } => append(path, doc, pointer, value.clone(), false),
+        Write::AppendFile {
+            pointer,
+            file,
+            unique,
+        } => append(path, doc, pointer, one_value(file)?, *unique),
+        Write::LaneMerge { lane, file } => lane_merge(path, doc, lane, one_value(file)?),
         Write::Increment { pointer } => increment(path, doc, pointer),
         Write::HeadBudget { kind, head } => head_budget_take(path, doc, store, *kind, head),
         Write::PostPrStop {
@@ -699,7 +711,13 @@ fn rereview_entry(
 /// Append to the array at `pointer`, created when absent. The fleet log row
 /// is `log append`'s, which stamps and bounds it; a `triaged` row is held
 /// to the shape the watch rebuilds its acknowledged keys from.
-fn append(path: &Path, doc: &mut Document, pointer: &str, value: Value) -> Result<Value> {
+fn append(
+    path: &Path,
+    doc: &mut Document,
+    pointer: &str,
+    value: Value,
+    unique: bool,
+) -> Result<Value> {
     let tokens = tokens(pointer)?;
     if tokens[0] == "fleet_log" {
         return Err(refused(
@@ -722,9 +740,68 @@ fn append(path: &Path, doc: &mut Document, pointer: &str, value: Value) -> Resul
             format!("found {}", json_type(slot)),
         ));
     };
-    items.push(value.clone());
+    let appended = !(unique && items.contains(&value));
+    if appended {
+        items.push(value.clone());
+    }
     let length = items.len();
-    Ok(json!({"pointer": pointer, "value": value, "length": length}))
+    Ok(json!({"pointer": pointer, "value": value, "length": length, "appended": appended}))
+}
+
+/// A lane record's merge: the lane is found by its `item` inside the
+/// transition, every field the mapping names replaces the lane's, and the
+/// item's lineage is bound once, as the launch binds it: an absent or null
+/// `obligation` keeps the lane's, one differing from a known binding refuses
+/// `obligation-conflict`, and an unknown binding takes the one stated, held
+/// to the launch request's shape.
+fn lane_merge(path: &Path, doc: &mut Document, lane: &str, value: Value) -> Result<Value> {
+    let Value::Object(mapping) = value else {
+        return Err(refused("merge-value", &[("lane", lane)]));
+    };
+    if let Some(item) = mapping.get("item")
+        && item.as_str() != Some(lane)
+    {
+        let named = item
+            .as_str()
+            .map_or_else(|| item.to_string(), str::to_owned);
+        return Err(refused("merge-item", &[("lane", lane), ("item", &named)]));
+    }
+    let index = doc
+        .get("lanes")
+        .and_then(Value::as_array)
+        .and_then(|lanes| {
+            lanes
+                .iter()
+                .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
+        })
+        .ok_or_else(|| Error::LaneMissing {
+            item: lane.to_owned(),
+        })?;
+    let pointer = format!("/lanes/{index}");
+    let Value::Object(record) = slot_mut(path, doc, &pointer, &tokens(&pointer)?)? else {
+        return Err(shape(path, &pointer, ShapeReason::NotObject, "a lane"));
+    };
+    for (key, stated) in mapping {
+        if key == "obligation" {
+            if stated.is_null() {
+                continue;
+            }
+            serde_json::from_value::<super::lane::Obligation>(stated.clone()).map_err(|e| {
+                refused(
+                    "obligation-invalid",
+                    &[("lane", lane), ("cause", &e.to_string())],
+                )
+            })?;
+            if record
+                .get("obligation")
+                .is_some_and(|known| !known.is_null() && *known != stated)
+            {
+                return Err(refused("obligation-conflict", &[("item", lane)]));
+            }
+        }
+        record.insert(key, stated);
+    }
+    Ok(json!({"pointer": pointer, "value": record.clone()}))
 }
 
 /// A triage row names the issue, the reason and a verdict the watch reads;

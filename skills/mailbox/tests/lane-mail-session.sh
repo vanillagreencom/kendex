@@ -72,6 +72,9 @@ jq -n --arg account "$TMP_ROOT/.eclaude" --arg root "$CHECKOUT" --arg foreign "$
   {item: "SSH-1", harness: "claude", host: $host, kind: "ssh", account: $account,
    mail_root: $host_root, window: null, status: "running"}]}' > "$STATE/workflow-state-oversee.json"
 jq '.lanes |= map(select(.item == "CC-2"))' "$STATE/workflow-state-oversee.json" > "$OTHER_STATE/workflow-state-oversee.json"
+BAD_STATE="$TMP_ROOT/bad-state"
+mkdir -p "$BAD_STATE"
+printf '{"lanes": [\n' > "$BAD_STATE/workflow-state-oversee.json"
 printf 'Rebase on main, then push.\n' > "$TMP_ROOT/directive"
 
 RC=0
@@ -83,7 +86,7 @@ lm() { # [ENV=VALUE...] -- ARGS...
   shift
   rm -f -- "$TMP_ROOT/claude.log"
   RC=0
-  OUT="$(cd "$CHECKOUT" && env PATH="$BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" \
+  OUT="$(cd "${LM_CWD:-$CHECKOUT}" && env PATH="$BIN:$PATH" STUB_CLAUDE_LOG="$TMP_ROOT/claude.log" \
     LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOST_DISK" \
     LANE_HOST_OTHER_DISK="$OTHER_HOST_DISK" LANE_HOST_OTHER_LOG="$TMP_ROOT/other-host.log" \
     LANE_HOST_RECORDED_PROVIDER="$HOST_PROVIDER" \
@@ -113,6 +116,17 @@ session_delivered() {
 }
 for hosted in 0 1; do session_delivered "$hosted"; done
 
+echo "=== a send from a linked worktree reads the main checkout's fleet record ==="
+# The default state directory is relative, so it is the main checkout's
+# whichever worktree the sender stands in.
+git -C "$CHECKOUT" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+git -C "$CHECKOUT" worktree add -q "$TMP_ROOT/checkout-wt" 2>/dev/null
+cp -- "$STATE/workflow-state-oversee.json" "$CHECKOUT/tmp/workflow-state-oversee.json"
+LM_CWD="$TMP_ROOT/checkout-wt" lm -- send --item CC-1 --directive --file "$TMP_ROOT/directive"
+assert_eq "rc=$RC out=$OUT" "rc=0 out=lane-mail: sent item=CC-1 channel=session session=session_01CLOUD" \
+  "a send from a linked worktree finds the lane in the main checkout's fleet record"
+rm -f -- "$CHECKOUT/tmp/workflow-state-oversee.json"
+
 echo "=== what a session send cannot deliver refuses, reaching no session ==="
 ARCHIVED='{"ok":false,"error":"Session session_01CLOUD is archived"}'
 MISSING='{"ok":false,"error":"Session not found"}'
@@ -124,7 +138,8 @@ for row in \
   "an archived session refuses|STUB_CLAUDE_OUT=$ARCHIVED|CC-1|--directive|$STATE|lane-mail: session-archived=session_01CLOUD|yes" \
   "a session not found is no archived one|STUB_CLAUDE_OUT=$MISSING|CC-1|--directive|$STATE|lane-mail: session-send-failed=session_01CLOUD|yes" \
   "a session lane of another repository is foreign||CC-3|--directive|$STATE|lane-mail: lane-foreign=$FOREIGN|no" \
-  "a state holding no record for the lane refuses||CC-1|--directive|$OTHER_STATE|lane-mail: lane-unrecorded=CC-1|no"; do
+  "a state holding no record for the lane refuses||CC-1|--directive|$OTHER_STATE|lane-mail: lane-unrecorded=CC-1|no" \
+  "a fleet record that does not parse refuses||CC-1|--directive|$BAD_STATE|lane-mail: state-unreadable=CC-1|no"; do
   IFS='|' read -r label env item opt state want call <<<"$row"
   envs=()
   [[ -z "$env" ]] || envs=("$env")
@@ -140,27 +155,20 @@ done
 echo "=== every session send prints its result and the account's credit, and writes no fleet record ==="
 # A scripts tree whose lane-mail is a copy, OLD replaced by NEW where given,
 # and whose lanes is a stub: it logs ORCH_LANE_DIRS and its argv, prints
-# STUB_LANES_OUT and exits STUB_LANES_RC. Its workflow-state logs every call
-# it takes to STUB_STATE_LOG before the real one answers it. Its path lands
-# in LANE_MAIL_BIN.
+# STUB_LANES_OUT and exits STUB_LANES_RC. Its path lands in LANE_MAIL_BIN.
 credit_scripts() { # NAME [OLD NEW]
   local dir orch
   dir="$(mutant_scripts "$1" lane-mail)" || exit 1
   [[ $# -lt 3 ]] || mutate_file "$dir/lane-mail" "$2" "$3"
   orch="$dir/../../orch/scripts"
-  rm -- "${orch:?}/lanes" "${orch:?}/workflow-state"
+  rm -- "${orch:?}/lanes"
   cat > "$orch/lanes" <<'EOF'
 #!/usr/bin/env bash
 printf 'dirs=%s argv=%s\n' "${ORCH_LANE_DIRS:-}" "$*" >> "$STUB_LANES_LOG"
 printf '%s\n' "${STUB_LANES_OUT:-[]}"
 exit "${STUB_LANES_RC:-0}"
 EOF
-  cat > "$orch/workflow-state" <<EOF
-#!/usr/bin/env bash
-[[ -z "\${STUB_STATE_LOG:-}" ]] || printf '%s\n' "\$*" >> "\$STUB_STATE_LOG"
-exec "$REPO_ROOT/skills/orch/scripts/workflow-state" "\$@"
-EOF
-  chmod +x "$orch/lanes" "$orch/workflow-state"
+  chmod +x "$orch/lanes"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 ACCOUNT="$TMP_ROOT/.eclaude"
@@ -176,16 +184,13 @@ receipt() { # CLI-WORDS
   [[ -n "$record" ]] || { printf 'none'; return 0; }
   jq -c --arg cli "$1" '[.result, .credit, (.text | contains($cli))]' <<<"$record"
 }
-# The fleet record's bytes against the copy taken before the send, and the
-# workflow-state verbs the send asked (`--state-dir DIR VERB ...`), sorted
-# and unique: the mailbox reads the lane's channel and writes nothing.
+# The fleet record's bytes against the copy taken before the send: the
+# mailbox reads the lane's channel there and writes nothing.
 state_after() {
-  local verbs
-  verbs="$(cut -d' ' -f3 "$TMP_ROOT/state.log" 2>/dev/null | sort -u | paste -sd,)"
   if cmp -s -- "$TMP_ROOT/state.before" "$STATE/workflow-state-oversee.json"; then
-    printf 'state=same verbs=%s' "$verbs"
+    printf 'state=same'
   else
-    printf 'state=changed verbs=%s' "$verbs"
+    printf 'state=changed'
   fi
 }
 credit_scripts credit
@@ -198,11 +203,11 @@ for row in \
   "a failed send and a failed credit read|$MISSING|[]|1|2|Session not found|failed|\"unread\"" \
   "a listing with no credit body|{\"ok\":true}|$(listing null)|0|0||sent|\"unread\""; do
   IFS='|' read -r label answer lanes lanes_rc want_rc cli result credit <<<"$row"
-  rm -f -- "${TMP_ROOT:?}/lanes.log" "${TMP_ROOT:?}/state.log"
+  rm -f -- "${TMP_ROOT:?}/lanes.log"
   cp -- "$STATE/workflow-state-oversee.json" "$TMP_ROOT/state.before"
-  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" STUB_STATE_LOG="$TMP_ROOT/state.log" -- "${DIRECTIVE[@]}"
+  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
   assert_eq "rc=$RC receipt=$(receipt "$cli") $(state_after)" \
-    "rc=$want_rc receipt=[\"$result\",$credit,true] state=same verbs=exists,get" \
+    "rc=$want_rc receipt=[\"$result\",$credit,true] state=same" \
     "$label: the receipt holds the send's result, its words and the credit reading, and the fleet record is read, never written"
   assert_eq "$(cat "$TMP_ROOT/lanes.log")" "dirs=$ACCOUNT argv=list --harness claude --local --json" \
     "$label: the credit is read for the record's account alone"

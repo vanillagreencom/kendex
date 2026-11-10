@@ -155,8 +155,13 @@ import sys
 import time
 
 bash, script, lane, box, path, stdout, stderr, entered, interval, phase, step = sys.argv[1:]
-env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
+env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL") if key in os.environ}
 env["PATH"] = path
+# The watch's work directory under the lane, so a watch the row's cleanup
+# kills leaves it where the suite's own cleanup removes it.
+work = Path(lane) / "work-tmp"
+work.mkdir(exist_ok=True)
+env["TMPDIR"] = str(work)
 ps = shutil.which("ps", path=path)
 assert ps is not None, "watch process reader is absent"
 marker = Path(box) / "to-lane.watch"

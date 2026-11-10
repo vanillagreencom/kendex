@@ -520,6 +520,7 @@ fn review(
             &item,
             Path::new(&worktree),
             &file,
+            None,
         ) {
             Ok(Noticed::Sent { id } | Noticed::Repeated { id }) => {
                 json!({"state": "sent", "id": id})

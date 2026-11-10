@@ -621,31 +621,18 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
 }
 
 /// The mailbox-only contract: the runtime is the one writer of orch state,
-/// so through the verb every `workflow-state` call the program makes is a
-/// read (`exists`, `get`); a bare `lane-mail send` to the same lane prints
-/// the `sent` receipt on stdout and the record line on stderr and leaves
-/// the fleet file byte for byte as it was.
+/// so through the verb the program reads the fleet record as data and runs
+/// no `workflow-state` at all; a bare `lane-mail send` to the same lane
+/// prints the `sent` receipt on stdout and the record line on stderr and
+/// leaves the fleet file byte for byte as it was.
 #[test]
 fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
     let w = world();
     let out = w.send(CLOUD, &[]);
     result(&out);
-    let verbs: Vec<String> = w
-        .log(&w.state_log)
-        .iter()
-        .map(|line| {
-            let words: Vec<&str> = line.split(' ').collect();
-            // `--state-dir <dir> <verb> ...`
-            words.get(2).unwrap_or(&"").to_string()
-        })
-        .collect();
     assert!(
-        !verbs.is_empty(),
-        "the program read the fleet for the channel"
-    );
-    assert!(
-        verbs.iter().all(|v| v == "exists" || v == "get"),
-        "reads alone: {:?}",
+        w.log(&w.state_log).is_empty(),
+        "the program reads the record as data: {:?}",
         w.log(&w.state_log)
     );
     let before = std::fs::read(w.fleet_path()).unwrap();

@@ -124,12 +124,13 @@ session_rows_controller_pane() ( # DIR HARNESS SESSION
   local scripts="${BASH_SOURCE[0]%/lib/*}" pane="" record fields server home live_start
   [ -n "${TMUX:-}" ] && [ -n "$3" ] || return 1
   . "$scripts/lib/overseer-launch.sh" || return 1
+  . "$scripts/../../mailbox/scripts/lib/common-root.sh" || return 1
   home=$(lane_context_caller_home "$2") || home=""
-  record=$(cd -- "$1" && SESSION_ROWS_NATIVE=$3 SESSION_ROWS_HARNESS=$2 SESSION_ROWS_HOME=$home \
-    "$scripts/workflow-state" --no-private-env get oversee "$OL_JQ_DEFS"'
+  record=$(fleet=$(mailbox_fleet_record data "$1" 2>/dev/null) &&
+    SESSION_ROWS_NATIVE=$3 SESSION_ROWS_HARNESS=$2 SESSION_ROWS_HOME=$home jq -r "$OL_JQ_DEFS"'
     .overseer | select(.session_id == $ENV.SESSION_ROWS_NATIVE
       and ol_native_match($ENV.SESSION_ROWS_HARNESS; $ENV.SESSION_ROWS_HOME; $ENV.SESSION_ROWS_NATIVE))
-    ' 2>/dev/null) || record=""
+    ' -- "$fleet" 2>/dev/null) || record=""
   if [ -n "$record" ]; then
     fields=$(jq -r '[.server, .pane] | @tsv' <<<"$record") || return 1
     IFS=$'\t' read -r server pane <<<"$fields"

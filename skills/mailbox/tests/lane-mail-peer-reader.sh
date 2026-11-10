@@ -4,11 +4,11 @@
 # reader is the one session the peer's fleet record names by tmux server and
 # pane, bound to the server by its start time; each row builds a sender and a peer checkout, writes the peer's
 # record, and drives the real script with a tmux stub whose pane list the row
-# sets. What the pane judgement itself answers is tmux-pane-live.sh's subject,
-# and what workflow-state --no-private-env reads is
-# workflow-state-no-private-env.sh's; these rows assert how the send and the
-# ask report each answer. The must-fail controls close the file, one per rule,
-# each on a private copy of lane-mail.
+# sets. What the pane judgement itself answers is tmux-pane-live.sh's subject;
+# these rows assert where the send and the ask find each checkout's record,
+# by the full and the data scope of the mailbox's one record resolver, and how
+# they report each answer. The must-fail controls close the file, one per
+# rule, each on a private copy of lane-mail.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd -P)"
@@ -18,7 +18,7 @@ source "$REPO_ROOT/skills/orch/tests/lib/git-env.sh"
 source "$REPO_ROOT/skills/orch/tests/lib/named-process.sh"
 
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
-WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+ORCH_RUNTIME="$REPO_ROOT/skills/orch/scripts/orch-runtime"
 FIXTURE_HOST="$REPO_ROOT/skills/orch/tests/fixtures/lane-host"
 # mktemp alone, so set -e stops the suite on its failure: nested in the cd,
 # a failed mktemp would resolve to this directory and the trap would remove it.
@@ -68,9 +68,22 @@ checkout() { # NAME
   git -C "$TMP_ROOT/$1" config maintenance.auto false
   git -C "$TMP_ROOT/$1" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
 }
+# The fleet record as main's store wrote it, `init oversee` and then `set
+# oversee overseer OVERSEER`, into the state directory DIR; `-` is the init
+# object alone. The readers under test read it as data.
+plant_record() { # DIR OVERSEER|-
+  mkdir -p "$1"
+  jq -n --arg overseer "$2" '{issue_id: "oversee", sub_issues: [], agent: "", worktree: "", branch: "",
+    qa_labels: [], near_ceiling: [], finding_occurrences: {prior: "none", records: []}, child_sessions: {},
+    review_agents: [], review_agent_ids: {}, review_agent_runtime_types: {}, pre_delegate_sha: null,
+    skip_qa: false, cycles: 0, rereview_cycles: 0, json_paths: [], fixed_items: [], escalated_items: [],
+    audit_issues_created: [], pr_review_baseline: null,
+    pr_comment_review: {iterations: 0, fixes: [], issues_created: [], skipped: []},
+    post_pr_budgets: {review_wait: null, ci_fix: null}, post_pr_stop: null}
+    + (if $overseer == "-" then {} else {overseer: ($overseer | fromjson)} end)' > "$1/workflow-state-oversee.json"
+}
 checkout sender
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null &&
-  "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
 PEER="$TMP_ROOT/peer"
 
 # The peer's fleet record: `none` for no state file, `bad` for a state file
@@ -86,13 +99,10 @@ record() { # none|bad|bad-settings|JSON
     none) ;;
     bad-settings) printf '[env]\nX = unquoted\n' > "$PEER/kendex.settings.toml" ;;
     bad)
-      (cd "$PEER" && "$WORKFLOW_STATE" --no-private-env init oversee >/dev/null)
-      printf '{ not json\n' > "$(cd "$PEER" && "$WORKFLOW_STATE" --no-private-env path oversee)"
+      mkdir -p "$PEER/tmp"
+      printf '{ not json\n' > "$PEER/tmp/workflow-state-oversee.json"
       ;;
-    *)
-      (cd "$PEER" && "$WORKFLOW_STATE" --no-private-env init oversee >/dev/null &&
-        "$WORKFLOW_STATE" --no-private-env set oversee overseer "$1" >/dev/null)
-      ;;
+    *) plant_record "$PEER/tmp" "$1" ;;
   esac
 }
 
@@ -117,7 +127,7 @@ peer_call() { # VERB TEXT [ARGS...]
 send() { peer_call send "$@"; }
 first_err() { awk 'NR == 1' "$TMP_ROOT/err"; }
 err_lines() { wc -l < "$TMP_ROOT/err" | tr -d ' '; }
-fix_lines() { grep -c '^fix=.*oversee register' "$TMP_ROOT/err" || :; }
+fix_lines() { grep -c '^fix=.*orch-runtime register --fleet' "$TMP_ROOT/err" || :; }
 sourced() { if [ -e "$SENTINEL" ]; then echo sourced; else echo unsourced; fi; }
 live_record() {
   record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
@@ -165,7 +175,7 @@ while IFS='|' read -r verb args; do
   fi
   error="$(first_err)"
   route=missing
-  case "$error" in *'oversee register'*) route=register ;; esac
+  case "$error" in *'orch-runtime register --fleet'*) route=register ;; esac
   case "$error" in *owner-note*) route=consumer-tool ;; esac
   appended=absent
   [ ! -e "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ] || appended=present
@@ -184,7 +194,7 @@ caller_ask() { # default|process|private
   local mode="$1" state="$TMP_ROOT/caller-$1-state"
   live_record
   rm -rf -- "$state" "$TMP_ROOT/sender/tmp/lane-mail/overseer"
-  (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" --no-private-env init oversee >/dev/null)
+  plant_record "$TMP_ROOT/sender/tmp" -
   SEND_ENV=()
   case "$mode" in
     default) ;;
@@ -193,10 +203,7 @@ caller_ask() { # default|process|private
   esac
   if [ "$mode" != default ]; then
     # register and launch use the full loader, unlike the replying peer.
-    (cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
-      "$WORKFLOW_STATE" init oversee >/dev/null &&
-      env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
-      "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+    plant_record "$state" '{"window":"@1"}'
   fi
   peer_call ask 'No return reader.'
   OWN_LINES=0
@@ -213,24 +220,21 @@ for mode in default process private; do
     "2  lane-mail: overseer-absent=$TMP_ROOT/sender lines=1 peer=0 own=0" \
     "a caller without a reply-visible record refuses before either append: $mode" "$TMP_ROOT/err"
 done
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
 
 # Own record reads use the same environment as register and launch writers.
 # Each state directory is non-default and the default has no record.
 own_state_send() { # process|private
   local mode="$1" state="$TMP_ROOT/own-$1-state"
   rm -rf -- "$state" "$TMP_ROOT/sender/tmp/lane-mail/overseer"
-  (cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" init oversee >/dev/null)
+  plant_record "$TMP_ROOT/sender/tmp" -
   SEND_ENV=()
   if [ "$mode" = process ]; then
     SEND_ENV=("ORCH_STATE_DIR=$state")
   else
     printf 'export ORCH_STATE_DIR=%q\n' "$state" > "$TMP_ROOT/sender/.env.local"
   fi
-  (cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
-    "$WORKFLOW_STATE" init oversee >/dev/null &&
-    env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
-    "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+  plant_record "$state" '{"window":"@1"}'
   printf 'Own %s note.\n' "$mode" > "$TMP_ROOT/msg.txt"
   RC=0
   OUT="$(cd "$TMP_ROOT/sender" && env -u ORCH_STATE_DIR ${SEND_ENV[@]+"${SEND_ENV[@]}"} \
@@ -250,7 +254,21 @@ for mode in process private; do
     "an owner send finds the writer's record through $mode environment" "$TMP_ROOT/err"
 done
 rm -rf -- "$TMP_ROOT/sender/tmp/lane-mail/overseer"
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
+
+# The record the runtime writes, under the state directory the peer's
+# settings file names: the reader places it where the writer did.
+record none
+printf '[env]\nORCH_STATE_DIR = "fleet-state"\n' > "$PEER/kendex.settings.toml"
+(cd "$PEER" && "$ORCH_RUNTIME" --no-private-env state init --fleet >/dev/null &&
+  "$ORCH_RUNTIME" --no-private-env state set --fleet /overseer \
+    "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}" >/dev/null) ||
+  { echo "lane-mail-peer-reader: the runtime wrote no record" >&2; exit 1; }
+printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
+send 'Runtime record.'
+assert_eq "$RC ${OUT%% id=*} lines=$LINES $(first_err) $(sourced)" \
+  "0 lane-mail: sent item=overseer lines=1  unsourced" \
+  "a record the runtime wrote under the settings file's state directory names its live reader" "$TMP_ROOT/err"
 
 # A dependency failure refuses before the append.
 for rec in bad bad-settings; do
@@ -316,11 +334,11 @@ mutant() {
   LANE_MAIL_BIN="$dir/lane-mail"
 }
 
-mutant consumer-route 'run oversee register in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout' 'use the owner-note tool for a remote overseer'
+mutant consumer-route 'run orch-runtime register --fleet in the session that should read this checkout\x27s mail; for an overseer on another host, send from that host\x27s checkout' 'use the owner-note tool for a remote overseer'
 record none
 send 'Route control.'
 route=missing
-case "$(first_err)" in *'oversee register'*) route=register ;; esac
+case "$(first_err)" in *'orch-runtime register --fleet'*) route=register ;; esac
 case "$(first_err)" in *owner-note*) route=consumer-tool ;; esac
 assert_eq "$route" consumer-tool 'control: the former refusal does not name the portable registration route'
 
@@ -348,12 +366,12 @@ send 'Startless.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
   "control: a reader that asks no ol_unstarted reads a record carrying no start as naming nobody"
 
-mutant sources-peer '"$ORCH_SCRIPTS/workflow-state" --no-private-env "$@"' '"$ORCH_SCRIPTS/workflow-state" "$@"'
+mutant sources-peer '(unset ORCH_STATE_DIR; mailbox_fleet_record data "$2")' '(unset ORCH_STATE_DIR; mailbox_fleet_record full "$2")'
 live_record
 send 'Sourced.'
 assert_eq "$(sourced)" "sourced" "control: a reader loading the peer's full ladder runs its private env file"
 
-mutant sender-state-dir '(cd -- "$root" && env -u ORCH_STATE_DIR ' '(cd -- "$root" && env '
+mutant sender-state-dir '(unset ORCH_STATE_DIR; mailbox_fleet_record data "$2")' '(mailbox_fleet_record data "$2")'
 live_record
 SEND_ENV=("ORCH_STATE_DIR=$TMP_ROOT/sender-state")
 send 'Sender state dir.'
@@ -371,16 +389,16 @@ for mode in process private; do
   assert_eq "$RC ${OUT%%=*} peer=$LINES own=$OWN_LINES" "0 id peer=1 own=1" \
     "control: full caller resolution accepts a record the reply cannot find: $mode" "$TMP_ROOT/err"
 done
-(cd "$TMP_ROOT/sender" && "$WORKFLOW_STATE" set oversee overseer '{"window":"@1"}' >/dev/null)
+plant_record "$TMP_ROOT/sender/tmp" '{"window":"@1"}'
 
-mutant own-state-cleared '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" "$@")' '(cd -- "$root" && env -u ORCH_STATE_DIR "$ORCH_SCRIPTS/workflow-state" "$@")'
+mutant own-state-cleared '    mailbox_fleet_record full "$2" 2>' '    (unset ORCH_STATE_DIR; mailbox_fleet_record full "$2") 2>'
 own_state_send process
 error="$(first_err)"
 assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \
   "2 lane-mail: overseer-absent=$TMP_ROOT/sender lines=0" \
   "control: clearing own ORCH_STATE_DIR loses the writer's record" "$TMP_ROOT/err"
 
-mutant own-private-skipped '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" "$@")' '(cd -- "$root" && "$ORCH_SCRIPTS/workflow-state" --no-private-env "$@")'
+mutant own-private-skipped '    mailbox_fleet_record full "$2" 2>' '    mailbox_fleet_record data "$2" 2>'
 own_state_send private
 error="$(first_err)"
 assert_eq "$RC ${error%% no overseer*} lines=$OWN_LINES" \

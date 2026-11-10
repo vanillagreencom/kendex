@@ -390,8 +390,11 @@ cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
 printf '#!/bin/sh\ncase "$1 $2" in\n  "marks --fleet") echo %s ;;\n  *) exec %s "$@" ;;\nesac\n' \
   "'{\"ok\":true,\"result\":{\"key\":\"below-mark\",\"context\":\"room\",\"tokens\":1,\"mark\":\"500000\",\"headroom\":\"80\"}}'" \
   "'$REPO_ROOT/skills/orch/scripts/orch-runtime'" > "$CHECKOUT/.agents/skills/orch/scripts/orch-runtime"
-(cd "$CHECKOUT" && .agents/skills/orch/scripts/workflow-state init oversee >/dev/null \
-  && .agents/skills/orch/scripts/workflow-state set oversee overseer '{"server":"7000","server_start":1790000000,"pane":"%9"}' >/dev/null)
+# The fleet record as main's store wrote it: `init oversee`, then `set oversee
+# overseer`.
+MAIN_INIT='{"issue_id":"oversee","sub_issues":[],"agent":"","worktree":"","branch":"","qa_labels":[],"near_ceiling":[],"finding_occurrences":{"prior":"none","records":[]},"child_sessions":{},"review_agents":[],"review_agent_ids":{},"review_agent_runtime_types":{},"pre_delegate_sha":null,"skip_qa":false,"cycles":0,"rereview_cycles":0,"json_paths":[],"fixed_items":[],"escalated_items":[],"audit_issues_created":[],"pr_review_baseline":null,"pr_comment_review":{"iterations":0,"fixes":[],"issues_created":[],"skipped":[]},"post_pr_budgets":{"review_wait":null,"ci_fix":null},"post_pr_stop":null}'
+jq -c '. + {overseer: {server: "7000", server_start: 1790000000, pane: "%9"}}' <<<"$MAIN_INIT" \
+  > "$CHECKOUT/tmp/workflow-state-oversee.json"
 run stop-failure-row "$WALL"
 RC=0
 printf '%s' '{"session_id":"5f0c","stop_hook_active":false}' |
@@ -401,6 +404,27 @@ printf '%s' '{"session_id":"5f0c","stop_hook_active":false}' |
   >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 assert_eq "RC=$RC rows=$(row_count) last=$(last_row .event)" "RC=0 rows=2 last=Stop" \
   "the overseer's turn end, whose payload names no event, writes the Stop over its wall"
+
+# A session whose environment lost TMUX_PANE takes its pane from the fleet
+# record that binds its native session: read as data where the checkout's
+# settings file places it, over the caller's ORCH_STATE_DIR, and with the
+# checkout's private env file never sourced.
+new_checkout controller_pane
+printf '[env]\nORCH_STATE_DIR = "fleet-state"\n' > "$CHECKOUT/kendex.settings.toml"
+printf 'touch %q\n' "$TMP_ROOT/pane-sourced" > "$CHECKOUT/.env.local"
+mkdir -p "$CHECKOUT/fleet-state"
+jq -c '. + {overseer: {server: "7000", server_start: 1790000000, pane: "%9", harness: "claude", session_id: "s-pane"}}' \
+  <<<"$MAIN_INIT" > "$CHECKOUT/fleet-state/workflow-state-oversee.json"
+controller_pane() {
+  (cd "$CHECKOUT" && env "PATH=$TMUX_BIN:$PATH" TMUX=fake TMUX_SERVER_ID=7000 \
+    ORCH_STATE_DIR="$TMP_ROOT/caller-state" CLAUDE_CONFIG_DIR=/accounts/one bash -euo pipefail -c '
+      . "$1/lib/lane-context.sh" && . "$1/lib/session-rows.sh" &&
+      session_rows_controller_pane "$2" claude s-pane' _ "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT" \
+    2>/dev/null) || echo none
+}
+assert_eq "$(controller_pane) $([ -e "$TMP_ROOT/pane-sourced" ] && echo sourced || echo unsourced)" \
+  '{"controller":"overseer","pane":"%9"} unsourced' \
+  "the pane recovery reads the record the settings file places, sourcing no private env file"
 
 # The lock wait against the hooks that write rows. A writer is a hook under
 # ROOT/hooks whose body runs a session_rows writer or lane-mail-check's row

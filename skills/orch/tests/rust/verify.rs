@@ -5023,7 +5023,8 @@ fn copilot_work_in_flight_holds_an_unapproved_heads_period_answers_within_the_ho
 /// mark ends itself by a signal once the program has answered, on a
 /// `kill-self` mark ends itself by a signal before the program starts, on a
 /// `kill-caller` mark ends its caller before the program starts, each mark
-/// taken by the one run that meets it.
+/// taken by the one run that meets it; under a standing `late` mark the
+/// program's clock reads two minutes ahead, past its repeat window.
 struct LaneWorld {
     main: PathBuf,
     root: PathBuf,
@@ -5093,10 +5094,15 @@ impl LaneWorld {
             .canonicalize()
             .unwrap();
         let cli = dir.join("lane-mail");
+        fs::create_dir_all(dir.join("clock")).unwrap();
+        support::write_executable(
+            &dir.join("clock/date"),
+            "#!/bin/sh\nif [ \"$*\" = '-u +%s' ]; then echo $(( $(\"$REAL_DATE\" -u +%s) + 120 )); else exec \"$REAL_DATE\" \"$@\"; fi\n",
+        );
         support::write_executable(
             &cli,
             format!(
-                "#!/bin/sh\nd='{dir}'\nn=$(wc -l < \"$d/calls\" 2>/dev/null || echo 0)\ncp '{item}' \"$d/state.$((n + 0)).json\"\necho \"$*\" >> \"$d/calls\"\nif [ -e \"$d/kill-caller\" ]; then rm -f \"$d/kill-caller\"; kill -KILL \"$PPID\"; exit 1; fi\nif [ -e \"$d/kill-self\" ]; then rm -f \"$d/kill-self\"; kill -KILL $$; fi\n'{real}' \"$@\"\nrc=$?\nif [ -e \"$d/kill-after\" ]; then rm -f \"$d/kill-after\"; kill -KILL $$; fi\nexit $rc\n",
+                "#!/bin/sh\nd='{dir}'\nn=$(wc -l < \"$d/calls\" 2>/dev/null || echo 0)\ncp '{item}' \"$d/state.$((n + 0)).json\"\necho \"$*\" >> \"$d/calls\"\nif [ -e \"$d/late\" ]; then REAL_DATE=$(command -v date); export REAL_DATE; PATH=\"$d/clock:$PATH\"; export PATH; fi\nif [ -e \"$d/kill-caller\" ]; then rm -f \"$d/kill-caller\"; kill -KILL \"$PPID\"; exit 1; fi\nif [ -e \"$d/kill-self\" ]; then rm -f \"$d/kill-self\"; kill -KILL $$; fi\n'{real}' \"$@\"\nrc=$?\nif [ -e \"$d/kill-after\" ]; then rm -f \"$d/kill-after\"; kill -KILL $$; fi\nexit $rc\n",
                 dir = dir.display(),
                 item = gh.item().display(),
                 real = real.display(),
@@ -5250,15 +5256,30 @@ fn a_fallback_recorded_beside_an_approval_sends_its_notice_into_the_lanes_box_on
 /// program ran leaves it `owed` and the box empty; the next call sends it
 /// once and marks it `sent`. A send whose program ended by a signal after
 /// it answered is `unanswered`, the notice perhaps landed; the next call
-/// sends it once more, and the program reads that repeat inside its minute
-/// window as the notice that landed, so the box holds it once. A repeat
-/// past that window would be a second notice: no row claims the notice
-/// lands exactly once. After either, a third call sends nothing.
+/// sends it once more under the notice's delivery key, and the program reads
+/// that repeat as the notice that landed, inside its minute window or past
+/// it, so the box holds it once. After any, a third call sends nothing.
 #[test]
 fn an_owed_or_unanswered_notice_is_sent_once_more_by_the_next_call() {
-    for (case, mark, first_owner) in [
-        ("the call killed before its send", "kill-caller", "owed"),
-        ("the send ended with no answer", "kill-after", "unanswered:"),
+    for (case, mark, first_owner, late) in [
+        (
+            "the call killed before its send",
+            "kill-caller",
+            "owed",
+            false,
+        ),
+        (
+            "the send ended with no answer",
+            "kill-after",
+            "unanswered:",
+            false,
+        ),
+        (
+            "the send ended with no answer, resent past the minute",
+            "kill-after",
+            "unanswered:",
+            true,
+        ),
     ] {
         let mut gh = Github::review_world();
         gh.answer(
@@ -5288,6 +5309,9 @@ fn an_owed_or_unanswered_notice_is_sent_once_more_by_the_next_call() {
             }
         };
         assert_eq!(lane.box_notices(&lane.root).len(), landed, "{case}");
+        if late {
+            lane.mark("late");
+        }
         let second = lane.review(&gh, &lane.root, REQUESTS_OFF);
         let line = fallback_line("off");
         assert_eq!(

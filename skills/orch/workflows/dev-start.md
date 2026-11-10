@@ -232,7 +232,7 @@ The request names no `authorization`: this close is the lane's own acceptance of
 Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet. It is this file's one write through the `workflow-state` store: no runtime state verb appends to an array without repeating a value it holds.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile rule tmp/proposed-rule-[ISSUE_ID].json '.pr_comment_review.proposed_rules = (((.pr_comment_review.proposed_rules // []) + [$rule[0]]) | unique)'
+.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] --unique /pr_comment_review/proposed_rules tmp/proposed-rule-[ISSUE_ID].json
 ```
 
 After all rules are stored, resolve the PR from the worktree:

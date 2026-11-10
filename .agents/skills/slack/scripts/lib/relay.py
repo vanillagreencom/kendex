@@ -133,7 +133,12 @@ ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
 # The package's code: the launcher and the modules it loads.
 SCRIPTS = Path(__file__).resolve().parents[1]
 LAUNCHER = SCRIPTS / "slack"
-WORKFLOW_STATE = Path(".agents/skills/orch/scripts/workflow-state")
+# The root's overseer generation, read from its fleet record as data.
+GENERATION_READ = r'''
+. "$1" || exit 1
+fleet="$(mailbox_fleet_record full "$2")" || exit 1
+exec jq -r '.overseer.generation // 0' -- "$fleet"
+'''
 # Seconds the relay waits for Slack's `hello` on a new connection.
 HELLO_SECONDS = 10
 # Seconds of silence on the connection before it pings, and as many again
@@ -323,13 +328,15 @@ def author_of(message: Dict, owner_ids: Iterable[str], bot_user: str = "") -> Op
 def reader_generation(root: Path) -> int:
     """The generation the root's registered overseer record names, read as
     lane-mail's own overseer check reads that record: from the root, in the
-    relay's environment. A record from before generations reads as 0. A
-    failed read refuses as a refused lane-mail write does, so the message is
-    read again on the next poll."""
-    command = "workflow-state get oversee .overseer.generation"
+    relay's environment, the record file where the mailbox's own resolver
+    places it. A record from before generations reads as 0. A failed read,
+    an absent record among them, refuses as a refused lane-mail write does,
+    so the message is read again on the next poll."""
+    command = "fleet record .overseer.generation"
     try:
-        proc = subprocess.run([str(root / WORKFLOW_STATE), "get", "oversee", ".overseer.generation // 0"], cwd=str(root),
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=LANE_MAIL_TIMEOUT_SECONDS)
+        proc = subprocess.run(["bash", "-c", GENERATION_READ, "reader-generation", str(MAILBOX_READ_FILES[2]), str(root)],
+                              cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                              timeout=LANE_MAIL_TIMEOUT_SECONDS)
     except (OSError, subprocess.TimeoutExpired) as err:
         raise Refusal("lane-mail-failed", f"{command} ({err})") from err
     generation = proc.stdout.strip()

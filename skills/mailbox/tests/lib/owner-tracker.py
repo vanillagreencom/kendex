@@ -68,7 +68,7 @@ def run(source, scratch, bash):
                 subprocess.run(["git", "-C", str(root), "config", key, value], check=True)
             message = root / "question"
             message.write_text("Approve this change?\nMore detail.\n")
-            env = {"PATH": os.environ["PATH"], "HOME": str(root),
+            env = {"PATH": os.environ["PATH"], "HOME": str(root), "TMPDIR": str(root),
                    "ORCH_OWNER_EMAIL": "owner@example.test", "ORCH_OWNER_ASK_LABEL": "owner-gated",
                    "TRACKER_CASE": str(root), "TRACKER_ROW": row}
             clock = root / "clock"

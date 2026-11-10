@@ -808,11 +808,25 @@ enum StateOp {
         session: String,
     },
     /// Append the one JSON value a file holds to the array at a JSON
-    /// pointer, created when absent.
+    /// pointer, created when absent; under `--unique`, nothing where the
+    /// array already holds that value.
     AppendFile {
         #[command(flatten)]
         target: Target,
         pointer: String,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+        #[arg(long)]
+        unique: bool,
+    },
+    /// Merge the one JSON object a file holds into the fleet record's lane
+    /// `--lane`: each field it names replaces the lane's, and its
+    /// `obligation` binds only where the lane names none.
+    Merge {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        lane: String,
         #[arg(value_name = "FILE")]
         source: PathBuf,
     },
@@ -2635,13 +2649,20 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             target,
             pointer,
             source,
+            unique,
         } => write(
             &target,
             Write::AppendFile {
                 pointer,
                 file: source,
+                unique,
             },
         ),
+        StateOp::Merge {
+            target,
+            lane,
+            source,
+        } => write(&target, Write::LaneMerge { lane, file: source }),
         StateOp::Increment { target, pointer } => write(&target, Write::Increment { pointer }),
         StateOp::SetNow { target, pointer } => {
             let now = system_env()?.now_secs;

@@ -35,7 +35,7 @@ source "$REPO_ROOT/skills/orch/tests/lib/assertions.sh"
 
 # A fresh overseer checkout: a repository whose `.agents` tree holds the orch
 # scripts, so `--item overseer` resolves its own mailbox and `--attach` finds
-# workflow-state beside lane-mail.
+# orch-env beside lane-mail.
 LANE=""
 BOX=""
 new_repo() { # NAME
@@ -295,8 +295,8 @@ owner_repeat() { # NAME
   new_repo "repeat_$name"
   file="$LANE/tmp/lane-mail/$box/to-overseer.jsonl"
   mkdir -p "${file%/*}"
-  reports="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" progress-report-path)" || exit 1
-  reports="${reports%/*}"
+  reports="$LANE/tmp/progress-reports"
+  mkdir -p "$reports"
   echo "a report" > "$reports/10-02-03-10.md"
   at="$(jq -rn --argjson age "$age" '(now | floor) - $age | todate')" || exit 1
   jq -cn --arg at "$at" '{id: "planted", kind: "notice", at: $at, from: "overseer", to: "owner", text: "Report."}' >> "$file"
@@ -533,8 +533,9 @@ assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" "$ASK_BINDING")" "0=$OWNER_NOTE|
 
 # --- the attachment's confinement --------------------------------------------
 new_repo attach
-REPORTS="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" progress-report-path)"
-REPORTS="${REPORTS%/*}"
+# The directory ORCH_PROGRESS_REPORT_DIR names by default, under the checkout.
+REPORTS="$LANE/tmp/progress-reports"
+mkdir -p "$REPORTS"
 echo "a report" > "$REPORTS/09-26-01-00.md"
 mkdir -p "$REPORTS/deeper" "$LANE/elsewhere"
 echo "nested" > "$REPORTS/deeper/09-26-01-01.md"
@@ -1234,7 +1235,7 @@ lm events --item overseer --box sideways
 assert_eq "$RC" 0 'control: without the value rule an unknown box reaches a mailbox read'
 
 new_repo control_attach
-mkdir -p "$LANE/elsewhere"
+mkdir -p "$LANE/elsewhere" "$LANE/tmp/progress-reports"
 echo "outside" > "$LANE/elsewhere/x.md"
 mutant attach-anywhere '[ "$dir" = "$reports" ] || refuse attach-outside "$ATTACH"' ':'
 lm notice --item overseer --to owner --file "$(text n 'R.')" --attach "$LANE/elsewhere/x.md"

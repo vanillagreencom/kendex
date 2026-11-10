@@ -1408,8 +1408,8 @@ impl Gate<'_> {
     /// once more, whose second send with no answer is final as `unsent`.
     /// The send follows the write that owed it, so a send whose answer or
     /// mark is lost leaves the notice for the next call; the mailbox reads a
-    /// repeat inside its minute window as the notice that landed, and a
-    /// repeat past it is a second notice. A lane whose marker is gone by
+    /// repeat of the notice's delivery key as the notice that landed. A lane
+    /// whose marker is gone by
     /// the send marks the notice unsent; one that cannot be read leaves it
     /// as it stands.
     fn deliver_notices(&mut self) -> Result<()> {
@@ -1467,8 +1467,10 @@ impl Gate<'_> {
     }
 
     /// Send `notice` into the lane's mailbox at `root`, its second line the
-    /// lane's status file there, and answer the mark the send earns: `sent`
-    /// on the receipt or the program's repeat refusal; `unsent:<cause>`
+    /// lane's status file there, under the notice's first line as its
+    /// delivery key, which no other notice of the head carries, and answer
+    /// the mark the send earns: `sent` on the receipt or the program's repeat
+    /// refusal; `unsent:<cause>`
     /// where the program never started or refused by its own key before
     /// the append; `unanswered:<cause>` where it gave no answer, exited
     /// with no key or printed no receipt, since the append may stand. The
@@ -1497,7 +1499,7 @@ impl Gate<'_> {
             return format!("unsent:notice-write:{e}");
         }
         drop(handle);
-        let mark = match self.mail.notice(item, root, &file) {
+        let mark = match self.mail.notice(item, root, &file, Some(&notice.text)) {
             Ok(Noticed::Sent { .. } | Noticed::Repeated { .. }) => "sent".to_owned(),
             Err(
                 refusal @ (Refusal::NotStarted { .. }
