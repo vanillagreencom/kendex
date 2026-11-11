@@ -9,7 +9,7 @@ use test_util::{rooted, source_path};
 
 use std::fs;
 
-use kendex_app::audit::{replace_unmanaged, view};
+use kendex_app::audit::{adopt, replace_unmanaged, view};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::{ItemKind, Scope};
 
@@ -443,4 +443,65 @@ fn apply_and_replace_hold_a_moved_sibling_catalog() {
             "replace={replace}"
         );
     }
+}
+
+/// Keeping one row's files moves them into the local source before the
+/// scope settles. A settle that then fails leaves that move written: the
+/// answer is the scope's standing with the failure beside it, never an
+/// error that reads as files nobody took over.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
+    let f = fixture();
+    // A declared agent nothing has installed yet: the settle behind the
+    // keep is what writes it, into a folder that refuses the write.
+    let catalog = f.project.join("../../catalog/agents");
+    fs::create_dir_all(&catalog).unwrap();
+    fs::write(
+        catalog.join("extra.md"),
+        "---\nname: extra\ndescription: does extra\n---\nUpstream.\n",
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{declared}\n[agents.extra]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let agents = f.project.join(".claude/agents");
+    fs::create_dir_all(&agents).unwrap();
+    let Some(unwritable) = test_util::unwritable_dir(&agents) else {
+        return;
+    };
+
+    let kept = adopt(
+        &f.env,
+        &f.scope,
+        ItemKind::Skill,
+        "deploy",
+        &[kendex_core::model::HarnessId::Claude],
+    );
+    drop(unwritable);
+    let kept =
+        kept.unwrap_or_else(|error| panic!("the kept files were reported as refused: {error}"));
+
+    assert_eq!(
+        fs::read_to_string(f.project.join(".agents/skills/deploy/SKILL.md")).unwrap(),
+        "the tool that came before",
+        "the keep did not move the files into the local source"
+    );
+    assert!(
+        !agents.join("extra.md").exists(),
+        "the settle wrote, so this fixture proves nothing"
+    );
+    assert!(kept.error.is_none(), "the kept scope did not read");
+    assert!(
+        !kept.plan.is_empty(),
+        "the standing lost the work the settle left undone"
+    );
+    assert!(
+        kept.unfinished.is_some(),
+        "the settle's failure was dropped from the answer"
+    );
 }

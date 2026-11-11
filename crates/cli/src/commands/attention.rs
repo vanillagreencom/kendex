@@ -10,7 +10,7 @@
 //! the same consequence across many packages is one row naming each of
 //! them.
 
-use kendex_core::engine::{DriftRow, EngineReport, ExcludedHook};
+use kendex_core::engine::{DriftRow, EngineReport, ExcludedHook, ItemSafety};
 use kendex_core::env::Env;
 
 use super::advisory::{Listing, safety_section};
@@ -28,8 +28,8 @@ pub struct Attention {
     /// closing ledger's count alike.
     pub blocked: Vec<Blocked>,
     /// Whether a compact report left out anything a verbose run draws.
-    /// Read off the two drawings themselves, never counted beside them, so
-    /// it cannot miss a kind of line the verbose drawing adds. False on a
+    /// Read off the drawings themselves, never counted beside them, so it
+    /// cannot miss a kind of line the verbose drawing adds. False on a
     /// verbose run, which draws it all.
     pub folded: bool,
     /// The declared Pi packages the plan left, for `update-pi` or
@@ -40,14 +40,17 @@ pub struct Attention {
 
 /// Draw the report on stderr, as much of it as `listing` asks for. A
 /// verbose run lists every drift row where the others list the conflicts,
-/// and the hook exclusions as one line.
+/// and the hook exclusions as one line. `shown` is the safety rows an
+/// earlier drawing of the same run already showed, which this one leaves
+/// out.
 pub fn print_attention(
     env: &Env,
     report: &EngineReport,
     listing: Listing,
     reached: Reached,
+    shown: &[ItemSafety],
 ) -> Attention {
-    let (lines, attention) = attention(&ui::style(), env, report, listing, reached);
+    let (lines, attention) = attention(&ui::style(), env, report, listing, reached, shown);
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
@@ -61,8 +64,15 @@ fn attention(
     report: &EngineReport,
     listing: Listing,
     reached: Reached,
+    shown: &[ItemSafety],
 ) -> (Vec<String>, Attention) {
     let rows = conflict_rows(report);
+    let safety: Vec<_> = report
+        .safety
+        .iter()
+        .filter(|row| !shown.contains(row))
+        .cloned()
+        .collect();
     let finish = finish(report, reached);
     let blocked = blocked_items(env, &rows, finish);
     let left = left_for_update_pi(report);
@@ -75,7 +85,7 @@ fn attention(
         };
         lines.extend(update_pi_section(style, &left, reached));
         lines.extend(unsettled_section(style, &unsettled));
-        lines.extend(safety_section(style, &report.safety, listing));
+        lines.extend(safety_section(style, &safety, listing));
         lines.extend(super::engine_common::warning_lines(style, &report.warnings));
         lines.extend(notes_section(
             style,

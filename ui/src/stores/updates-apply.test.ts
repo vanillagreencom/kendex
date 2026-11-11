@@ -34,6 +34,10 @@ vi.mock("sonner", () => ({
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 
+/** A place's last folder name, which these fixtures keep distinct. */
+const placeName = (scope: Scope): string =>
+  scope.scope === "global" ? "global" : (scope.root.split("/").at(-1) ?? "");
+
 const row = (overrides: Partial<UpdateRow>): UpdateRow =>
   updateRow("gh", null, {
     repo: "owner/catalog",
@@ -116,7 +120,13 @@ describe("what a bulk run says it did", () => {
       data: [],
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
   };
 
@@ -127,20 +137,35 @@ describe("what a bulk run says it did", () => {
   const bothRows = () =>
     useUpdatesStore.getState().updateRows([row({}), row({ name: "lint" })]);
 
-  // A place the plan refused to write over is the half somebody has to
-  // act on, so it is the half the toast carries: a count over it would
-  // leave the held copy unmentioned and be a lie besides.
-  it("says what it held back rather than counting it as updated", async () => {
+  // A copy the plan refused to write over, or took to the trash, is the
+  // half somebody has to act on, and the packages it did move are the
+  // other half: each is said, and the count names only what moved. The
+  // toasts stack newest in front, so the copy to act on is raised last.
+  it.each([
+    {
+      name: "held back",
+      lint: { heldBack: [rendering("lint", "codex")] },
+      said: toast.info,
+      line: "The copy in Codex was left as it is and is waiting on a decision from you on the package page",
+    },
+    {
+      name: "taken to the trash",
+      lint: { removed: [rendering("lint", "codex")] },
+      said: toast.error,
+      line: "The copy in Codex went to the trash and nothing replaced it",
+    },
+  ])("says a copy $name beside the packages it moved", async (one) => {
     placeSays(
       answered("gh", { moved: [rendering("gh", "claude")] }),
-      answered("lint", { heldBack: [rendering("lint", "codex")] }),
+      answered("lint", one.lint),
     );
 
     await bothRows();
 
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      "The copy in Codex was left as it is and is waiting on a decision from you on the package page",
+    expect(toast.success).toHaveBeenCalledWith("Updated 1 package");
+    expect(one.said).toHaveBeenCalledWith(one.line);
+    expect(vi.mocked(one.said).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(toast.success).mock.invocationCallOrder[0],
     );
   });
 
@@ -168,6 +193,124 @@ describe("what a bulk run says it did", () => {
 
     expect(toast.success).toHaveBeenCalledWith(ALREADY_CURRENT_TOAST);
     expect(useProblemsStore.getState().dialog.open).toBe(false);
+  });
+
+  // A place whose apply committed and whose render behind it failed wrote
+  // its packages: they count as updated, and the failure is said beside
+  // the count rather than turning the place into one more refusal.
+  it("counts a place whose later step failed as written, and says the step", async () => {
+    placeAnswers({
+      status: "ok",
+      data: {
+        view: { ...view, unfinished: "render bot instructions: disk full" },
+        packages: [answered("gh", { moved: [rendering("gh", "claude")] })],
+      },
+    });
+
+    await useUpdatesStore.getState().updateRows([row({})]);
+
+    expect(toast.success).toHaveBeenCalledWith("Updated 1 package");
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
+    expect(dialog.title).toContain("gh");
+  });
+
+  // A run that goes on past a failure can fail again. Two places, one
+  // apply each, in every order of the two kinds — a write whose later step
+  // failed and a refusal — and a package its own place left out of an
+  // answer that also says a later step failed: a later failure taking an
+  // earlier one's place on screen would leave that one unsaid.
+  it("keeps every failure of one run on screen, in any order", async () => {
+    const OTHER: Scope = { scope: "project", root: "/work/other" };
+    type Says = { unfinished: string } | { refused: string };
+    const rows: {
+      name: string;
+      places: Record<string, Says>;
+      wanted: UpdateRow[];
+      subjects: string[];
+      messages: string[];
+    }[] = [
+      {
+        name: "later step failed, then later step failed",
+        places: {
+          vg: { unfinished: "render: vg" },
+          other: { unfinished: "render: other" },
+        },
+        wanted: [row({ scope: VG }), row({ name: "lint", scope: OTHER })],
+        subjects: ["gh", "lint"],
+        messages: ["render: vg", "render: other"],
+      },
+      {
+        name: "later step failed, then refused",
+        places: {
+          vg: { unfinished: "render: vg" },
+          other: { refused: "other is locked" },
+        },
+        wanted: [row({ scope: VG }), row({ name: "lint", scope: OTHER })],
+        subjects: ["gh"],
+        messages: ["render: vg", "other is locked"],
+      },
+      {
+        name: "refused, then later step failed",
+        places: {
+          vg: { refused: "vg is locked" },
+          other: { unfinished: "render: other" },
+        },
+        wanted: [row({ scope: VG }), row({ name: "lint", scope: OTHER })],
+        subjects: ["lint"],
+        messages: ["vg is locked", "render: other"],
+      },
+      {
+        name: "later step failed, and a package left out of the answer",
+        places: { vg: { unfinished: "render: vg" } },
+        wanted: [row({ scope: VG }), row({ name: "lint", scope: VG })],
+        subjects: ["gh"],
+        messages: ["render: vg", unansweredPackageError("lint")],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const one of rows) {
+      placeAnswers(null);
+      vi.mocked(commands.packageUpdateMany).mockImplementation(
+        async (scope) => {
+          const says = one.places[placeName(scope)];
+          if ("refused" in says)
+            return { status: "error", error: says.refused };
+          // Answers for the place's first package alone, so a second row
+          // there is one the answer left out.
+          const first = one.wanted.find(
+            (wanted) => placeName(wanted.scope) === placeName(scope),
+          );
+          const name = first?.name ?? "";
+          return {
+            status: "ok",
+            data: {
+              view: { ...view, scope, unfinished: says.unfinished },
+              packages: [
+                answered(name, { moved: [rendering(name, "claude")] }),
+              ],
+            },
+          } as never;
+        },
+      );
+
+      await useUpdatesStore.getState().updateRows(one.wanted);
+
+      const { dialog } = useProblemsStore.getState();
+      const said = [dialog, ...dialog.joined];
+      expect(dialog.open, one.name).toBe(true);
+      expect(
+        said.map((failure) => failure.message),
+        one.name,
+      ).toEqual(one.messages);
+      for (const subject of one.subjects) {
+        expect(
+          said.some((failure) => failure.title.includes(subject)),
+          `${one.name}: ${subject}`,
+        ).toBe(true);
+      }
+    }
   });
 
   // The count is packages, not renderings: one package written in two

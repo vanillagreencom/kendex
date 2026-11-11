@@ -39,3 +39,14 @@ export function isWidePage(page: string): boolean {
 // sidebar, they are a broken one, so the column scrolls instead.
 export const SIDEBAR_ROW =
   "flex h-9 shrink-0 items-center gap-2.5 rounded-lg border border-transparent px-2";
+
+// A dialog bounded to the window, its body scrolling inside, stops above
+// the toast stack. App.tsx's Toaster sits 2rem above the window's bottom
+// edge in the bottom-right corner, and at the 900x600 minimum window a
+// dialog at the old 85vh reached into it. A one-line toast is 3.375rem
+// tall, and the two toasts sonner stacks behind it show about 1.6rem above
+// it, so a full stack ends 7rem above the bottom edge. The dialog ends
+// 7.75rem above it and starts 1.5rem below the top, centred in that band
+// rather than in the window, which leaves it 452px at the minimum window.
+export const BOUNDED_DIALOG =
+  "top-[calc(50%-3.125rem)] max-h-[calc(100vh-9.25rem)]";

@@ -11,7 +11,7 @@ import { adoptedToastLabel } from "@/lib/copy";
 import { replacedToastLabel } from "@/lib/copy-in-the-way";
 import { writingRepo } from "@/lib/rescan";
 import { sameScope } from "@/lib/scope";
-import { sayUndone } from "@/lib/undone";
+import { sayUndone, sayUnfinished } from "@/lib/undone";
 import { type ErrorAction, useProblemsStore } from "./problems";
 
 /** One scope's view, swapped for the fresh one a command handed back.
@@ -67,6 +67,9 @@ type AuditAction = () => Promise<
 
 interface RunOpts {
   title: string;
+  /** What the action is about, as the person named it: the item. Heads
+   *  the account of a step behind the write that failed. */
+  subject: string;
   successMessage?: string;
   steps?: string[];
 }
@@ -116,6 +119,10 @@ export function auditRunner(
           // What the removal ran in the repository, said whatever the action
           // was called: every command here answers with the same view.
           sayUndone(response.data.undone);
+          // A step behind the write that failed is said beside it, and the
+          // answer is still that it worked: the write stands, and a run
+          // over a page carries on against the fresh view it handed back.
+          sayUnfinished(opts.subject, response.data.unfinished);
           return true;
         }
         // The dialog and nowhere else: the audit store's `read` is the
@@ -144,15 +151,20 @@ export function itemActions(run: Run): ItemActions {
     adopt: (scope, kind, name, harnesses, quiet) =>
       run(() => commands.adoptItem(scope, kind, name, harnesses), {
         title: `Couldn't start managing ${name}`,
+        subject: name,
         successMessage: quiet ? undefined : adoptedToastLabel(name),
         steps: ["Try again"],
       }),
     replaceUnmanaged: (scope, kind, name) =>
       run(() => commands.replaceUnmanagedItem(scope, kind, name), {
         title: `Couldn't replace ${name}'s files`,
+        subject: name,
         successMessage: replacedToastLabel(name),
+        // No "nothing was changed": an error is no account of what is on
+        // disk (`lib/rescan.ts`), and a call that failed on its way back can
+        // follow a replacement that landed. The page read behind it is.
         steps: [
-          "Nothing was changed — try again",
+          "Try again",
           "If it keeps failing, check the project folder is writable",
         ],
       }),
@@ -162,12 +174,14 @@ export function itemActions(run: Run): ItemActions {
           commands.toggleItem(scope, kind, name, enabled, fileState ?? null),
         {
           title: `Couldn't ${enabled ? "switch on" : "switch off"} ${name}`,
+          subject: name,
           steps: ["Try again"],
         },
       ),
     removeItem: (scope, kind, name) =>
       run(() => commands.removeItem(scope, kind, name), {
         title: `Couldn't remove ${name}`,
+        subject: name,
         steps: ["Try again"],
       }),
   };

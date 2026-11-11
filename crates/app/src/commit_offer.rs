@@ -17,9 +17,10 @@ use std::path::{Path, PathBuf};
 use std::collections::{BTreeMap, BTreeSet};
 
 use kendex_core::commit_offer::{
-    self, Attribution, Baseline, Before, Branch, Changes, Committed, Failed, Held, Offer, Pending,
-    Probe, RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
+    self, Attribution, Baseline, Before, Branch, Changes, Choice, Committed, Failed, Held, Offer,
+    Pending, Probe, RestorePlan, Selection, Stale, Staleness, Step, Tangled, Unavailable,
 };
+use kendex_core::decision::Need;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
 use kendex_core::package::diff::PackageDiff;
@@ -154,11 +155,16 @@ pub struct ProjectOffer {
     pub others: u32,
     pub branch: String,
     pub remote: Option<String>,
+    /// The choices this offer carries, in the order they are drawn, each
+    /// bound to what it changes: `commit_offer::Offer::choices`, the list
+    /// the terminal keys. Leave is last and is the default.
+    pub choices: Vec<Choice>,
+    /// Whether a refused push can be recovered by opening a pull request
+    /// from a branch of its own.
+    pub recovers_refused_push: bool,
     /// `null` where the choice stands; the reason otherwise.
     pub push: Option<Why>,
     pub pull_request: Option<Why>,
-    /// The pull request already open for this branch.
-    pub open_number: Option<u32>,
     pub message: String,
     pub new_branch: String,
     /// The repository every `gh` call is bound to, from the chosen remote.
@@ -271,6 +277,9 @@ impl Opened {
 pub struct ProjectFlag {
     pub root: String,
     pub count: u32,
+    /// What the state needs from the person, as core classes it: every
+    /// state that allows no offer is blocked until it changes.
+    pub need: Need,
     pub reason: FlagReason,
 }
 
@@ -438,6 +447,7 @@ fn read(
             return Ok(Some(Err(ProjectFlag {
                 root: key.to_owned(),
                 count: 0,
+                need: Offer::unbuilt_need(),
                 reason: FlagReason::Unreadable {
                     said: failed.said().to_vec(),
                 },
@@ -447,6 +457,7 @@ fn read(
     let flag = |reason: FlagReason| ProjectFlag {
         root: key.to_owned(),
         count: counted(scan.count()),
+        need: scan.branch.need(),
         reason,
     };
     match &scan.branch {
@@ -478,6 +489,7 @@ fn read(
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
+            need: Offer::unbuilt_need(),
             reason: FlagReason::Unreadable {
                 said: failed.said().to_vec(),
             },
@@ -602,9 +614,10 @@ fn drawn(
             .collect(),
         manifest,
         others: counted(scan.others),
+        choices: offer.choices(),
+        recovers_refused_push: offer.recovers_refused_push(),
         push: offer.push.as_ref().err().map(Why::from),
         pull_request: offer.pull_request.as_ref().err().map(Why::from),
-        open_number: offer.open.as_ref().map(|open| whole(open.number)),
         message: offer.message.clone(),
         new_branch: offer.new_branch.clone(),
         repo: offer.remote.as_ref().map(|remote| remote.url.clone()),

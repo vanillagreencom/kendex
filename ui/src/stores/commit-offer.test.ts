@@ -12,7 +12,6 @@ import {
   canSetUp,
   heldBy,
   ready,
-  routesFor,
   selectionOf,
   useCommitOfferStore,
 } from "./commit-offer";
@@ -68,9 +67,31 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   others: 0,
   branch: "main",
   remote: "origin",
+  choices: [
+    {
+      route: "commit",
+      effect: { kind: "commit", branch: "main" },
+      default: false,
+    },
+    {
+      route: "push",
+      effect: { kind: "push", remote: "origin", branch: "main" },
+      default: false,
+    },
+    {
+      route: "pullRequest",
+      effect: {
+        kind: "openPullRequest",
+        branch: "kendex/renders",
+        base: "main",
+      },
+      default: false,
+    },
+    { route: "leave", effect: { kind: "leave" }, default: true },
+  ],
+  recoversRefusedPush: true,
   push: null,
   pullRequest: null,
-  openNumber: null,
   message: "chore: kendex refresh",
   newBranch: "kendex/renders",
   repo: "acme/site",
@@ -79,44 +100,6 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   stale: [],
   staleAction: [],
   ...over,
-});
-
-// The rows of the design's state table that decide which segments the
-// offer draws, the post-refresh commit flow design attached to KEN-1027, § State table.
-describe("the choices an offer carries", () => {
-  it("offers the routes allowed by each offer", () => {
-    const rows: { name: string; offer: ProjectOffer; routes: string[] }[] = [
-      { name: "all routes", offer: offer(), routes: ["commit", "push", "pr"] },
-      {
-        name: "no remote",
-        offer: offer({
-          remote: null,
-          repo: null,
-          push: { kind: "noRemote" },
-          pullRequest: { kind: "noRemote" },
-        }),
-        routes: ["commit"],
-      },
-      {
-        name: "gh missing",
-        offer: offer({ repo: null, pullRequest: { kind: "ghMissing" } }),
-        routes: ["commit", "push"],
-      },
-      {
-        name: "pull request open",
-        offer: offer({ openNumber: 41 }),
-        routes: ["commit", "push"],
-      },
-      {
-        name: "the branch's rules require a pull request",
-        offer: offer({ push: { kind: "pullRequestRequired" } }),
-        routes: ["commit", "pr"],
-      },
-    ];
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows)
-      expect(routesFor(row.offer), row.name).toEqual(row.routes);
-  });
 });
 
 // kendex asks at most once per run per project: a project already in the
@@ -289,7 +272,7 @@ describe("the line of projects to ask", () => {
       data: [offer(), second],
     });
     await useCommitOfferStore.getState().enqueue(["/a", "/b"]);
-    useCommitOfferStore.getState().pick("pr");
+    useCommitOfferStore.getState().pick("pullRequest");
     useCommitOfferStore.getState().leave();
     const state = useCommitOfferStore.getState();
     expect(state.queue.map((each) => each.root)).toEqual([
@@ -560,12 +543,17 @@ describe("answering an offer", () => {
 
   // A push GitHub refused for want of a pull request carries the commands
   // that open one by hand, built from what the recovery runs. Any other
-  // refusal carries none, and neither does the `pr` route, whose commit is
-  // already on a branch of its own.
+  // refusal carries none, and neither does the `pullRequest` route, whose
+  // commit is already on a branch of its own.
   it.each([
     { name: "the rules refused it", route: "push", rule: true, shown: true },
     { name: "another refusal", route: "push", rule: false, shown: false },
-    { name: "the pr route", route: "pr", rule: true, shown: false },
+    {
+      name: "the pull-request route",
+      route: "pullRequest",
+      rule: true,
+      shown: false,
+    },
   ] as const)("carries the way on by hand: $name", async (row) => {
     const lines = ["git 'push' 'origin' 'HEAD:refs/heads/kendex/renders'"];
     vi.mocked(commands.commitOfferScan).mockResolvedValue({
@@ -612,6 +600,56 @@ describe("answering an offer", () => {
         "chore: kendex refresh",
         1,
       );
+  });
+
+  // Putting a refused push's commit on a branch of its own is offered where
+  // core says the offer can recover it that way, and never on the
+  // `pullRequest` route, whose commit is already on such a branch.
+  it.each([
+    { name: "core says it recovers", route: "push", recovers: true, can: true },
+    {
+      name: "core says it does not",
+      route: "push",
+      recovers: false,
+      can: false,
+    },
+    {
+      name: "the pull-request route",
+      route: "pullRequest",
+      recovers: true,
+      can: false,
+    },
+  ] as const)("offers the pull-request recovery: $name", async (row) => {
+    vi.mocked(commands.commitOfferScan).mockResolvedValue({
+      status: "ok",
+      data: [offer({ recoversRefusedPush: row.recovers })],
+    });
+    vi.mocked(commands.commitOfferStartBranch).mockResolvedValue({
+      status: "ok",
+      data: { kind: "done" },
+    });
+    vi.mocked(commands.commitOfferPush).mockResolvedValue({
+      status: "ok",
+      data: {
+        kind: "refused",
+        refused: {
+          step: "the push",
+          said: ["! [remote rejected] main -> main (protected branch hook)"],
+          timedOut: false,
+          seconds: 3,
+          gh: false,
+          pullRequestRequired: false,
+        },
+      },
+    });
+    await useCommitOfferStore.getState().enqueue(["/home/method/dev/site"]);
+    useCommitOfferStore.setState({ route: row.route });
+    await useCommitOfferStore.getState().run();
+
+    const stage = useCommitOfferStore.getState().stage;
+    expect(stage.at).toBe("pushRefused");
+    if (stage.at !== "pushRefused") return;
+    expect(stage.canOpen).toBe(row.can);
   });
 
   // Every path the reader picked changed back before the commit ran, so
@@ -935,17 +973,27 @@ describe("setting up a package that holds the commit", () => {
       byWrite: true,
       armed: { status: "error", error: "bot-instructions: render exited 2" },
       read: read([]),
-      stage: { at: "setUpFailed", error: "bot-instructions: render exited 2" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "installer", name: "bot-instructions" },
+        armed: [],
+        error: "bot-instructions: render exited 2",
+      },
       open: null,
       head: [held("notSetUp")],
       toast: false,
     },
     {
-      name: "the read after it failed",
+      name: "the offer after it failed",
       byWrite: true,
       armed: applied,
       read: { status: "error", error: "fatal: index.lock exists" },
-      stage: { at: "setUpFailed", error: "fatal: index.lock exists" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "offerAgain" },
+        armed: [{ name: "bot-instructions", said: [] }],
+        error: "fatal: index.lock exists",
+      },
       open: [root, since],
       head: [held("notSetUp")],
       toast: false,
@@ -968,7 +1016,12 @@ describe("setting up a package that holds the commit", () => {
         status: "ok",
         data: {
           kind: "blocked",
-          flag: { root, count: 1, reason: { kind: "noBranch" } },
+          flag: {
+            root,
+            count: 1,
+            need: "blocked",
+            reason: { kind: "noBranch" },
+          },
         },
       },
       stage: { at: "offer" },
@@ -1048,6 +1101,43 @@ describe("setting up a package that holds the commit", () => {
       kind: "only",
       paths: ["one.md", "two.md"],
     });
+  });
+
+  // Two packages hold the commit and the second's installer fails: the
+  // first is set up in the repository all the same, so the failure names
+  // it, with its installer's words, beside the second's error.
+  it("keeps a package set up before a later one failed", async () => {
+    const guards: StalePackage = {
+      ...held("notSetUp"),
+      name: "commit-guards",
+      disclosure: {
+        ...held("notSetUp").disclosure,
+        declared: { ...declared, name: "commit-guards" },
+        name: "commit-guards",
+      },
+    };
+    useCommitOfferStore.setState({
+      queue: [heldOffer([guards, held("notSetUp")])],
+    });
+    vi.mocked(commands.repoEffectsApply)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { stdout: ["hooks armed"], stderr: ["a note"] },
+      })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: "bot-instructions: render exited 2",
+      });
+
+    await useCommitOfferStore.getState().setUp();
+
+    expect(useCommitOfferStore.getState().stage).toEqual({
+      at: "setUpFailed",
+      step: { kind: "installer", name: "bot-instructions" },
+      armed: [{ name: "commit-guards", said: ["a note", "hooks armed"] }],
+      error: "bot-instructions: render exited 2",
+    });
+    expect(commands.commitOfferOpen).not.toHaveBeenCalled();
   });
 });
 

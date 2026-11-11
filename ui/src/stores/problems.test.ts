@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { AuditView } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { deriveProblems } from "./problems";
+import { deriveProblems, useProblemsStore } from "./problems";
 
 const globalScope = { scope: "global" as const };
 const projectScope = { scope: "project" as const, root: "/home/dana/api" };
@@ -75,5 +75,64 @@ describe("deriveProblems", () => {
       "manifest-invalid",
       "scan-failure",
     ]);
+  });
+});
+
+describe("the error dialog's join rule", () => {
+  beforeEach(() => {
+    useProblemsStore.getState().closeError();
+  });
+
+  const fail = (title: string) =>
+    useProblemsStore.getState().showError({ title, message: `${title} why` });
+  const close = () => useProblemsStore.getState().closeError();
+
+  // Every state a failure can arrive in: over a closed dialog, over one
+  // still up, and over one the person dismissed. Two loops' failures in
+  // flight at once are the same as one loop's: nothing tells them apart.
+  it("keeps every failure said until the person dismisses the dialog", () => {
+    const rows: { name: string; act: () => void; shown: string[] }[] = [
+      { name: "over a closed dialog", act: () => fail("a"), shown: ["a"] },
+      {
+        name: "over a dialog still up",
+        act: () => {
+          fail("a");
+          fail("b");
+          fail("c");
+        },
+        shown: ["a", "b", "c"],
+      },
+      {
+        name: "after the dialog was dismissed",
+        act: () => {
+          fail("a");
+          close();
+          fail("b");
+        },
+        shown: ["b"],
+      },
+      {
+        name: "joined, then dismissed, then failed again",
+        act: () => {
+          fail("a");
+          fail("b");
+          close();
+          fail("c");
+          fail("d");
+        },
+        shown: ["c", "d"],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      close();
+      row.act();
+      const { dialog } = useProblemsStore.getState();
+      expect(dialog.open, row.name).toBe(true);
+      expect(
+        [dialog, ...dialog.joined].map((one) => [one.title, one.message]),
+        row.name,
+      ).toEqual(row.shown.map((title) => [title, `${title} why`]));
+    }
   });
 });

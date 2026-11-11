@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type {
   ProjectOffer,
   Refused,
+  RouteEffect,
   StalePackage,
   TangledFile,
 } from "@/bindings";
@@ -87,7 +88,11 @@ import {
   resetCommand,
   SCAN_FAILED_STEPS,
   SCAN_FAILED_TITLE,
+  SET_UP_ARMED_LABEL,
   SET_UP_FAILED_TITLE,
+  SET_UP_NOTHING_COMMITTED,
+  SET_UP_OFFER_AGAIN_FAILED_TITLE,
+  SET_UP_OFFER_AGAIN_SAID_LABEL,
   SETTING_UP_LABEL,
   STALE_LABEL,
   STALE_NOTE,
@@ -103,13 +108,15 @@ import {
   WHAT_TO_DO_LABEL,
   WHICH_CHANGES_LABEL,
 } from "@/lib/copy-commit-offer";
+import { repoEffectsFailedTitle } from "@/lib/copy-repo-effects";
 import { cn } from "@/lib/utils";
 import {
   canSetUp,
   heldBy,
-  type Route,
+  type Picked,
+  type PickedChoice,
+  pickable,
   ready,
-  routesFor,
   type Scoped,
   type Stage,
   useCommitOfferStore,
@@ -181,7 +188,7 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "settingUp":
       return <HeldState offer={offer} busy />;
     case "setUpFailed":
-      return <SetUpFailedState error={stage.error} />;
+      return <SetUpFailedState stage={stage} />;
     case "stillHeld":
       return <StillHeldState />;
     case "commitRefused":
@@ -314,7 +321,7 @@ function OfferState({
   // the reader has not said yes to, so the primary action waits on that
   // answer rather than the reader finding out afterwards.
   const held = useCommitOfferStore(ready);
-  const routes = routesFor(offer);
+  const choices = pickable(offer);
   const busy = stage.at === "busy";
   return (
     <>
@@ -352,8 +359,8 @@ function OfferState({
           </Section>
         ) : null}
         <Section title={WHAT_TO_DO_LABEL}>
-          <Segments routes={routes} route={route} busy={busy} pick={pick} />
-          <p className="text-muted-foreground">{under(offer, route)}</p>
+          <Segments choices={choices} route={route} busy={busy} pick={pick} />
+          <Under choices={choices} route={route} />
           {offer.push !== null ? (
             <Row label={PUSH_ROW_LABEL}>{unavailableReason(offer.push)}</Row>
           ) : null}
@@ -483,19 +490,54 @@ function StillHeldState() {
   );
 }
 
-/** The setup chosen at a held offer did not run through: its installer,
- *  or the read after it, failed. Nothing was committed. */
-function SetUpFailedState({ error }: { error: string }) {
+/** The setup chosen at a held offer did not run through: a package's
+ *  installer, or offering the commit again after every installer ran,
+ *  failed. The packages set up before it come first, each with its
+ *  installer's words: a reader just told the setup failed needs to know
+ *  those repository changes are made anyway. Then what went wrong.
+ *  Nothing was committed. */
+function SetUpFailedState({
+  stage,
+}: {
+  stage: Extract<Stage, { at: "setUpFailed" }>;
+}) {
   const leave = useCommitOfferStore((s) => s.leave);
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{SET_UP_FAILED_TITLE}</DialogTitle>
+        <DialogTitle>
+          {stage.step.kind === "offerAgain"
+            ? SET_UP_OFFER_AGAIN_FAILED_TITLE
+            : SET_UP_FAILED_TITLE}
+        </DialogTitle>
+        <DialogDescription>{SET_UP_NOTHING_COMMITTED}</DialogDescription>
       </DialogHeader>
       <div className="space-y-4 text-sm">
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
-          {error}
-        </pre>
+        {stage.armed.length > 0 ? (
+          <Section title={SET_UP_ARMED_LABEL}>
+            {stage.armed.map((one) => (
+              <div key={one.name} className="space-y-1.5">
+                <p className="font-medium">{one.name}</p>
+                {one.said.some((line) => line.trim() !== "") ? (
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+                    {one.said.join("\n").trimEnd()}
+                  </pre>
+                ) : null}
+              </div>
+            ))}
+          </Section>
+        ) : null}
+        <Section
+          title={
+            stage.step.kind === "installer"
+              ? repoEffectsFailedTitle(stage.step.name)
+              : SET_UP_OFFER_AGAIN_SAID_LABEL
+          }
+        >
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+            {stage.error}
+          </pre>
+        </Section>
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={leave}>
@@ -620,23 +662,24 @@ function Tangles({ tangled }: { tangled: TangledFile[] }) {
   );
 }
 
-/** The segmented control. Where every segment but `Commit` is gone it is
- *  not drawn: one segment is not a choice. */
+/** The segmented control, one segment per choice core put on offer.
+ *  Where every segment but `Commit` is gone it is not drawn: one segment
+ *  is not a choice. */
 function Segments({
-  routes,
+  choices,
   route,
   busy,
   pick,
 }: {
-  routes: Route[];
-  route: Route;
+  choices: PickedChoice[];
+  route: Picked;
   busy: boolean;
-  pick: (route: Route) => void;
+  pick: (route: Picked) => void;
 }) {
-  if (routes.length < 2) return null;
+  if (choices.length < 2) return null;
   return (
     <div className="flex w-fit rounded-md border border-border p-0.5">
-      {routes.map((each) => (
+      {choices.map(({ route: each }) => (
         <button
           key={each}
           type="button"
@@ -656,50 +699,60 @@ function Segments({
   );
 }
 
-function segmentLabel(route: Route): string {
+function segmentLabel(route: Picked): string {
   switch (route) {
     case "commit":
       return COMMIT_SEGMENT;
     case "push":
       return PUSH_SEGMENT;
-    case "pr":
+    case "pullRequest":
       return PR_SEGMENT;
   }
 }
 
-function primaryLabel(route: Route): string {
+function primaryLabel(route: Picked): string {
   switch (route) {
     case "commit":
       return COMMIT_LABEL;
     case "push":
       return PUSH_LABEL;
-    case "pr":
+    case "pullRequest":
       return PR_LABEL;
   }
 }
 
-function busyLabel(route: Route): string {
+function busyLabel(route: Picked): string {
   switch (route) {
     case "commit":
       return COMMITTING_LABEL;
     case "push":
       return PUSHING_LABEL;
-    case "pr":
+    case "pullRequest":
       return OPENING_LABEL;
   }
 }
 
-/** What the picked segment does, said under the segments. */
-function under(offer: ProjectOffer, route: Route): string {
-  switch (route) {
+/** What the picked segment does, said under the segments: the effect core
+ *  bound to that choice, so the line names the target the step runs on. */
+function Under({ choices, route }: { choices: PickedChoice[]; route: Picked }) {
+  const picked = choices.find((choice) => choice.route === route);
+  if (!picked) return null;
+  return <p className="text-muted-foreground">{effectLine(picked.effect)}</p>;
+}
+
+function effectLine(effect: RouteEffect): string | null {
+  switch (effect.kind) {
     case "commit":
       return COMMIT_STAYS;
     case "push":
-      return offer.openNumber !== null
-        ? addsToPullRequest(offer.openNumber)
-        : pushesTo(offer.remote ?? "", offer.branch);
-    case "pr":
-      return prMoves(offer.newBranch, offer.branch);
+      return pushesTo(effect.remote, effect.branch);
+    case "addToPullRequest":
+      return addsToPullRequest(effect.number);
+    case "openPullRequest":
+      return prMoves(effect.branch, effect.base);
+    // Leave is the dialog's dismiss, never a segment, so it has no line.
+    case "leave":
+      return null;
   }
 }
 
@@ -776,7 +829,7 @@ function CommitRefusedState({
   );
 }
 
-/** Nothing was left to commit on the `pr` route and the switch back then
+/** Nothing was left to commit on the `pullRequest` route and the switch back then
  *  refused: no commit to report, the checkout still on the branch kendex
  *  made, and kendex stops there. */
 function NotPutBackState({ refused }: { refused: Refused }) {
@@ -799,7 +852,7 @@ function NotPutBackState({ refused }: { refused: Refused }) {
   );
 }
 
-/** The `pr` route's first step refused: nothing has moved, and the same
+/** The `pullRequest` route's first step refused: nothing has moved, and the same
  *  offer stands without the segment that failed. */
 function BranchRefusedState({
   offer,
@@ -812,8 +865,11 @@ function BranchRefusedState({
   const pick = useCommitOfferStore((s) => s.pick);
   const run = useCommitOfferStore((s) => s.run);
   const leave = useCommitOfferStore((s) => s.leave);
-  // The store moved the picked route off `pr` when it entered this state.
-  const routes = routesFor(offer).filter((each) => each !== "pr");
+  // The store moved the picked route off `pullRequest` when it entered
+  // this state.
+  const choices = pickable(offer).filter(
+    (choice) => choice.route !== "pullRequest",
+  );
   return (
     <>
       <DialogHeader>
@@ -827,8 +883,8 @@ function BranchRefusedState({
         <Said refused={refused} />
         <p>{BRANCH_REFUSED_LINE}</p>
         <Section title={WHAT_TO_DO_LABEL}>
-          <Segments routes={routes} route={route} busy={false} pick={pick} />
-          <p className="text-muted-foreground">{under(offer, route)}</p>
+          <Segments choices={choices} route={route} busy={false} pick={pick} />
+          <Under choices={choices} route={route} />
         </Section>
       </div>
       <DialogFooter>

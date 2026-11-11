@@ -278,6 +278,81 @@ impl std::fmt::Debug for Op {
 }
 
 impl Op {
+    /// Whether `other` makes the change this op makes: the same kind of
+    /// write, at the same landed position, putting the same thing there.
+    /// The precondition is left out: it is what the op checks before it
+    /// writes, read from the disk as the plan found it, and a write earlier
+    /// in the same run moves it without changing what the op writes.
+    ///
+    /// What a yes binds to (`decision::Approved`). The install record is
+    /// bound by its position alone: what it records is the plan's account
+    /// of the other ops beside it and of a settle that wrote earlier in the
+    /// run, so a record holding something new holds it because another op
+    /// or an approved settle put it there.
+    pub fn same_effect(&self, other: &Op) -> bool {
+        match self {
+            Op::WriteFile { path, bytes, .. } => matches!(
+                other,
+                Op::WriteFile { path: p, bytes: b, .. } if p == path && b == bytes
+            ),
+            Op::WriteTree { root, files, .. } => matches!(
+                other,
+                Op::WriteTree { root: r, files: f, .. } if r == root && f == files
+            ),
+            Op::Symlink { link, target, .. } => matches!(
+                other,
+                Op::Symlink { link: l, target: t, .. } if l == link && t == target
+            ),
+            Op::Rename { from, to, .. } => matches!(
+                other,
+                Op::Rename { from: f, to: t, .. } if f == from && t == to
+            ),
+            Op::Trash { path, .. } => matches!(other, Op::Trash { path: p, .. } if p == path),
+            Op::PiRemove {
+                scope_root,
+                name,
+                package,
+                ..
+            } => matches!(
+                other,
+                Op::PiRemove { scope_root: r, name: n, package: p, .. }
+                    if r == scope_root && n == name && p == package
+            ),
+            Op::EditFile { path, edits, .. } => matches!(
+                other,
+                Op::EditFile { path: p, edits: e, .. } if p == path && e == edits
+            ),
+            Op::WriteLock { path, .. } => {
+                matches!(other, Op::WriteLock { path: p, .. } if p == path)
+            }
+            Op::WriteManifest { path, manifest, .. } => matches!(
+                other,
+                Op::WriteManifest { path: p, manifest: m, .. } if p == path && m == manifest
+            ),
+            Op::WriteExecutable { path, bytes, .. } => matches!(
+                other,
+                Op::WriteExecutable { path: p, bytes: b, .. } if p == path && b == bytes
+            ),
+            Op::WritePrivateFile {
+                path,
+                bytes,
+                ignored_under,
+                ..
+            } => matches!(
+                other,
+                Op::WritePrivateFile { path: p, bytes: b, ignored_under: i, .. }
+                    if p == path && b == bytes && i == ignored_under
+            ),
+            Op::GitConfigSwap {
+                file, key, value, ..
+            } => matches!(
+                other,
+                Op::GitConfigSwap { file: f, key: k, value: v, .. }
+                    if f == file && k == key && v == value
+            ),
+        }
+    }
+
     /// Every path this op mutates — journaled before execution.
     pub fn touched(&self) -> Vec<PathBuf> {
         match self {

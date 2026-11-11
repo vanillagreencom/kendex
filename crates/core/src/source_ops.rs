@@ -13,9 +13,8 @@ use crate::lock::{load as load_lock, lock_path};
 use crate::manifest::{self, Manifest};
 use crate::model::Scope;
 
-/// Everything the Sources page shows for one declared source in one scope.
-#[derive(Debug, Clone, PartialEq, Serialize, Type)]
-#[serde(rename_all = "camelCase")]
+/// One declared source in one scope, as `kendex source list` prints it.
+#[derive(Debug, Clone, PartialEq)]
 pub struct SourceRow {
     pub scope: Scope,
     pub name: String,

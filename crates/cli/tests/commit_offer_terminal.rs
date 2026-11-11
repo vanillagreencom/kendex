@@ -131,10 +131,26 @@ fn installed_then_changed(home: &Path, check: &str) -> PathBuf {
     project
 }
 
+/// How a held offer's run ends.
+#[derive(Clone, Copy, Debug)]
+enum HeldEnds {
+    /// The setup ran and the commit was offered and taken.
+    Committed,
+    /// The package's check still fails after its setup.
+    NotReady,
+    /// Every setup finished, and reading back what it renders failed.
+    RendersUnread,
+}
+
+/// The fixture launcher's discovery answer, which a row may replace.
+const DISCOVERS: &str = "    echo 'would write .github/copilot-instructions.md'\n    exit 0\n";
+
 /// The held offer at a terminal. Set up, the package renders, its file
 /// joins the offer and the commit is then offered and carries it. Where
 /// its check still fails after the setup, the run says so, commits
-/// nothing, and does not offer the setup a second time.
+/// nothing, and does not offer the setup a second time. Where the setup
+/// finished and its renders could not be read back, the run says that
+/// step failed, not the setup, and commits nothing.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files() {
@@ -143,11 +159,21 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
     let set_up_and_commit: &[(&str, &str)] =
         &[("[s]", "s"), ("[c]", "c"), ("[e]", "\n"), ("[y]", "\n")];
     let set_up: &[(&str, &str)] = &[("[s]", "s"), ("[y]", "\n")];
-    for (check, answers, committed) in [("", set_up_and_commit, true), ("  exit 1", set_up, false)]
-    {
+    let unreadable = "    echo 'discover: renders unreadable' >&2\n    exit 1\n";
+    for (check, discovers, answers, ends) in [
+        ("", DISCOVERS, set_up_and_commit, HeldEnds::Committed),
+        ("  exit 1", DISCOVERS, set_up, HeldEnds::NotReady),
+        ("", unreadable, set_up, HeldEnds::RendersUnread),
+    ] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = installed_then_changed(&home, check);
+        // The run's apply carries the catalog's launcher into the installed
+        // copy, which the setup and its read back both run.
+        let launcher = project.join("catalog/skills/bot-instructions/scripts/bot-instructions");
+        let written = fs::read_to_string(&launcher).unwrap();
+        assert_eq!(written.matches(DISCOVERS).count(), 1, "{ends:?}");
+        write(&launcher, &written.replace(DISCOVERS, discovers));
 
         let (output, text) = at_a_terminal(&home, &project, &["apply", "--yes"], answers);
 
@@ -156,20 +182,28 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
             "bot-instructions changes how this repository works, beyond the files above:",
             "Renders the fixture review file in this repository.",
         ] {
-            assert!(text.contains(line), "{check:?}: missing {line:?}:\n{text}");
+            assert!(text.contains(line), "{ends:?}: missing {line:?}:\n{text}");
         }
         assert_eq!(
             text.matches("[s] set up bot-instructions here, then offer the commit with its files")
                 .count(),
             1,
-            "{check:?}: the setup was offered other than once:\n{text}"
+            "{ends:?}: the setup was offered other than once:\n{text}"
         );
         assert!(
             project.join(".github/copilot-instructions.md").is_file(),
-            "{check:?}: the setup did not render:\n{text}"
+            "{ends:?}: the setup did not render:\n{text}"
         );
-        match committed {
-            true => {
+        // The run refused to commit, saying which step stopped it.
+        let nothing_committed = |said: &str| {
+            assert_eq!(output.status.code(), Some(1), "{text}");
+            assert!(text.contains(said), "{ends:?}: missing {said:?}:\n{text}");
+            assert!(!text.contains("the setup did not finish"), "{text}");
+            assert!(!text.contains("[c] commit them"), "{text}");
+            assert_eq!(head_subject(&project), "install", "{text}");
+        };
+        match ends {
+            HeldEnds::Committed => {
                 assert_eq!(output.status.code(), Some(0), "{text}");
                 assert!(text.contains("[c] commit them"), "{text}");
                 let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
@@ -183,16 +217,14 @@ fn the_held_offer_sets_the_package_up_once_and_offers_the_commit_with_its_files(
                     );
                 }
             }
-            false => {
-                assert_eq!(output.status.code(), Some(1), "{text}");
-                assert!(
-                    text.contains(
-                        "it is still not ready after its setup ran; nothing was committed"
-                    ),
-                    "{text}"
+            HeldEnds::NotReady => nothing_committed(
+                "it is still not ready after its setup ran; nothing was committed",
+            ),
+            HeldEnds::RendersUnread => {
+                nothing_committed(
+                    "the setup finished, but what it renders could not be read back; nothing was committed",
                 );
-                assert!(!text.contains("[c] commit them"), "{text}");
-                assert_eq!(head_subject(&project), "install", "{text}");
+                assert!(text.contains("discover: renders unreadable"), "{text}");
             }
         }
     }
@@ -415,6 +447,55 @@ fn the_offer_is_answered_by_its_keys() {
             "{what}: no closing ledger:\n{text}"
         );
     }
+}
+
+/// A push the remote refuses after the commit was made, then a cancel at
+/// the question whether to open a pull request instead: the commit stays,
+/// the closing ledger still names it, and the run exits as a cancel.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_cancel_after_a_refused_push_keeps_the_commit_on_the_ledger() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_without_packages(&home);
+    let bare = crate::commit_offer_cli::origin(&project, "plain-origin");
+    write(
+        &bare.join("hooks/pre-receive"),
+        "#!/bin/sh\necho 'GH006: Protected branch update failed for refs/heads/main.' >&2\nexit 1\n",
+    );
+    fs::set_permissions(
+        bare.join("hooks/pre-receive"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    let before = git(&project, &["rev-parse", "HEAD"]);
+    let mut command = command(&home, &project, &["apply", "--yes"]);
+    // A `gh` that answers, so a pull request is on offer and the refused
+    // push asks whether to open one.
+    command.env("PATH", crate::commit_offer_cli::path_with_fake_gh(&home));
+
+    let output = pty::conversation(
+        command,
+        &[("[p]", "p"), ("[e]", "\n"), ("leave it here", "\x1b")],
+        pty::Stderr::Terminal,
+    );
+    let text = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    assert_eq!(output.status.code(), Some(130), "{text}");
+    assert!(
+        text.contains("GH006: Protected branch update failed"),
+        "{text}"
+    );
+    assert_ne!(git(&project, &["rev-parse", "HEAD"]), before, "{text}");
+    assert_eq!(
+        git(&project, &["rev-parse", "origin/main"]),
+        before,
+        "{text}"
+    );
+    assert!(
+        text.contains("applied 1 change") && text.contains("committed, not pushed"),
+        "the closing ledger lost the commit:\n{text}"
+    );
 }
 
 /// Choosing a different message after a refused commit reads it straight

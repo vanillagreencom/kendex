@@ -96,7 +96,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
 /// A bare repository the project calls `origin`, under a name the fake
 /// `gh` reads its answer from.
 #[allow(clippy::unwrap_used)]
-fn origin(project: &Path, name: &str) -> PathBuf {
+pub(crate) fn origin(project: &Path, name: &str) -> PathBuf {
     let bare = project.parent().unwrap().join(format!("{name}.git"));
     git(
         project,
@@ -136,7 +136,7 @@ fn executable(path: &Path, body: &str) {
 /// `--repo`, or `GH_REPO` for `gh api`, which has no `--repo`. The
 /// directory holds nothing but `gh`, so git resolves as before.
 #[allow(clippy::unwrap_used)]
-fn path_with_fake_gh(home: &Path) -> String {
+pub(crate) fn path_with_fake_gh(home: &Path) -> String {
     let dir = home.join("fake-bin");
     executable(&dir.join("gh"), FAKE_GH);
     format!(
@@ -932,12 +932,6 @@ fn a_package_whose_check_fails_holds_the_commit() {
 /// candidate index is written under is made unwritable.
 #[test]
 fn a_commit_the_packages_cannot_be_asked_about_refuses_a_flag() {
-    // Root writes through a mode bit, so the candidate is built and the
-    // state this case is about is never reached on such a runner.
-    if rustix::process::geteuid().is_root() {
-        eprintln!("skipped: root writes through the unwritable git directory this case needs");
-        return;
-    }
     for (flags, code, refused) in [
         (&["--commit"][..], Some(1), true),
         (&[][..], Some(0), false),
@@ -949,13 +943,12 @@ fn a_commit_the_packages_cannot_be_asked_about_refuses_a_flag() {
             "# App\n\n## Code Review Rules\n\nold generated rules\n",
             "# App\n\n## Code Review Rules\n\nold generated rules\n",
         );
-        let git_dir = project.join(".git");
-        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o555)).unwrap();
+        let Some(unwritable) = test_util::unwritable_dir(&project.join(".git")) else {
+            return;
+        };
 
         let (output, text) = apply(&home, &project, flags);
-        // Writable again before any assertion can fail: a directory left
-        // 0555 is one the temp dir cannot clean up.
-        fs::set_permissions(&git_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        drop(unwritable);
 
         assert_eq!(output.status.code(), code, "{flags:?}: {text}");
         assert!(

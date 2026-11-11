@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use kendex_core::decision::{PiChange, PiSettle};
 use kendex_core::engine::PlanOptions;
 use kendex_core::env::Env;
 use kendex_core::manifest::ManifestFile;
@@ -37,27 +38,8 @@ enum Status {
 
 /// Packages eligible for settlement, split at the process boundary.
 enum Settlement {
-    Copy {
-        status: Status,
-        change: PendingChange,
-    },
+    Copy { status: Status, change: PiChange },
     Process,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(super) enum PendingChange {
-    Missing,
-    Stale {
-        from_version: Option<String>,
-        to_version: Option<String>,
-        from: String,
-        to: String,
-    },
-}
-
-pub(super) struct Pending {
-    pub name: String,
-    pub change: PendingChange,
 }
 
 struct Row {
@@ -189,13 +171,13 @@ pub(super) fn pending_settle(
     scope: &Scope,
     options: &PlanOptions,
     targeted: &[Scope],
-) -> Result<Vec<Pending>, Box<dyn std::error::Error>> {
+) -> Result<Vec<PiSettle>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     Ok(settleable(env, scope, &root, &other_roots, options)?
         .into_iter()
         .filter_map(|(name, settlement)| match settlement {
-            Settlement::Copy { change, .. } => Some(Pending { name, change }),
+            Settlement::Copy { change, .. } => Some(PiSettle { name, change }),
             Settlement::Process => None,
         })
         .collect())
@@ -228,18 +210,45 @@ pub(super) fn deferred_settle(
 /// run instead of failing until `update-pi` is run by hand; a name no
 /// longer settleable under the lock is left as it stands.
 ///
-/// Says what it installed and returns how many: the plan the caller
-/// derives next reports every package still unsettled as drift, and that
-/// row is the run's failure. Only the scope lock and the install record
-/// can stop the scope. The lock is held for the install alone; the
-/// caller's own write takes it again.
+/// Says what it installed and returns the names that landed: the plan the
+/// caller derives next reports every package still unsettled as drift, and
+/// that row is the run's failure. Only the scope lock and the install record
+/// can stop the scope, and a stop still hands back what landed before it,
+/// since those packages are on disk whatever the record says. The lock is
+/// held for the install alone; the caller's own write takes it again.
 pub fn settle_scope(
     env: &Env,
     scope: &Scope,
     names: &[String],
     options: &PlanOptions,
     targeted: &[Scope],
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, SettleStopped> {
+    let mut installed = Installed::default();
+    match settle_rows(env, scope, names, options, targeted, &mut installed) {
+        Ok(()) => Ok(installed.landed),
+        Err(error) => Err(SettleStopped {
+            landed: installed.landed,
+            error,
+        }),
+    }
+}
+
+/// A settle that stopped on `error`, and the packages that landed before
+/// it did.
+#[derive(Debug)]
+pub struct SettleStopped {
+    pub landed: Vec<String>,
+    pub error: Box<dyn std::error::Error>,
+}
+
+fn settle_rows(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+    options: &PlanOptions,
+    targeted: &[Scope],
+    installed: &mut Installed,
+) -> CliResult {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
@@ -263,9 +272,7 @@ pub fn settle_scope(
         notes: Vec::new(),
         shadows: pi_ext::ShadowScan::default(),
     };
-    let mut installed = Installed::default();
-    install_rows(env, &plan, options, &mut installed)?;
-    Ok(installed.count)
+    install_rows(env, &plan, options, installed)
 }
 
 /// What a settle may install, decided once and here: a declared package
@@ -386,8 +393,8 @@ fn settleable(
         let settlement = match pi_ext::declares_runtime_deps(&package.source_dir) {
             Ok(false) => {
                 let change = match installed_from {
-                    None => PendingChange::Missing,
-                    Some(from) => PendingChange::Stale {
+                    None => PiChange::Missing,
+                    Some(from) => PiChange::Stale {
                         from_version: installed_version(root, name),
                         to_version: pi_ext::read(&package.source_dir)?.version,
                         from,
@@ -677,11 +684,11 @@ fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> 
         }
         let mut installed = Installed::default();
         let pass = install_rows(env, plan, &PlanOptions::current(), &mut installed);
-        if installed.count > 0 {
+        if !installed.landed.is_empty() {
             wrote.push(&plan.scope);
         }
         pass?;
-        updated += installed.count;
+        updated += installed.landed.len();
         failures.extend(
             installed
                 .failed
@@ -704,11 +711,11 @@ fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> 
     Err(format!("update failed for: {}", failures.join(", ")).into())
 }
 
-/// What one scope's install pass did: how many packages landed, and the
+/// What one scope's install pass did: the packages that landed, and the
 /// names of the ones that did not, each already said with its cause.
 #[derive(Default)]
 struct Installed {
-    count: usize,
+    landed: Vec<String>,
     failed: Vec<String>,
 }
 
@@ -718,8 +725,9 @@ struct Installed {
 /// and no completion, so the next pass finds it stale again. The record
 /// compares each package with its source read at the commit a plan under
 /// `options` reads it at, the commit the plan's rows were installed from.
-/// What landed is counted into `installed` as it lands, so a pass that
-/// stops on an error still says what it wrote.
+/// What landed is counted into `installed` and said as it lands, before
+/// its record is written, so a pass that stops on an error, the record's
+/// included, still says what it wrote.
 fn install_rows(
     env: &Env,
     plan: &ScopePlan,
@@ -744,8 +752,7 @@ fn install_rows(
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
-                installed.count += 1;
-                record_pi_installs(env, plan, &readings, Some(&row.name))?;
+                installed.landed.push(row.name.clone());
                 out(&format!(
                     "  {verb} {} -> {}",
                     row.name,
@@ -757,6 +764,7 @@ fn install_rows(
                         row.name
                     ));
                 }
+                record_pi_installs(env, plan, &readings, Some(&row.name))?;
             }
             Err(error) => {
                 say(&format!("  failed {}: {}", row.name, error));
@@ -990,7 +998,7 @@ mod tests {
                     .collect::<Vec<_>>(),
                 ["pi-consent"]
             );
-            assert_eq!(missing[0].change, PendingChange::Missing);
+            assert_eq!(missing[0].change, PiChange::Missing);
             settle_scope(
                 &env,
                 &scope,
@@ -1017,7 +1025,7 @@ mod tests {
             );
             assert_eq!(
                 stale[0].change,
-                PendingChange::Stale {
+                PiChange::Stale {
                     from_version: Some("1.0.0".into()),
                     to_version: Some("2.0.0".into()),
                     from,

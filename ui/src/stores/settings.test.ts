@@ -66,7 +66,13 @@ describe("settings store", () => {
       backgroundFailureAnnounced: false,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.clearAllMocks();
     vi.mocked(commands.scanMachine).mockResolvedValue({
@@ -454,6 +460,7 @@ describe("settings store", () => {
     ] as const;
     expect(rows.length).toBeGreaterThan(0);
     for (const [_what, breakRead, message] of rows) {
+      useProblemsStore.getState().closeError();
       vi.mocked(commands.getSettings).mockResolvedValue({
         status: "ok",
         data: { settings, base: freshBase },

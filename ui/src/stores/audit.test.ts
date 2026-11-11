@@ -1,8 +1,10 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView } from "@/bindings";
+import type { AuditView, DriftRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { adoptAll } from "@/lib/adopt-all";
 import { ADOPTABLE } from "@/lib/adoptable";
+import type { MergedDriftRow } from "@/lib/drift-merge";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled } from "@/lib/rescan";
 import { useAuditStore } from "./audit";
@@ -16,6 +18,7 @@ vi.mock("@/bindings", () => ({
     }),
     auditAll: vi.fn(),
     adoptItem: vi.fn(),
+    replaceUnmanagedItem: vi.fn(),
     toggleItem: vi.fn(),
     removeItem: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -226,7 +229,13 @@ describe("audit store run() actions", () => {
       backgroundFailureAnnounced: false,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.clearAllMocks();
     // Every one of these actions reads the machine again behind itself, on
@@ -328,6 +337,188 @@ describe("audit store run() actions", () => {
     await useAuditStore.getState().removeItem(globalScope, "skill", "deploy");
 
     expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  // Each of these writes and then renders the project's configuration, and
+  // an adopt settles the scope after its move. A step behind the write that
+  // fails leaves the write standing: the action answers that it worked, the
+  // scope's fresh view lands, and the failure is said beside it rather
+  // than swallowed under a success or turned into a refusal.
+  it("says a step behind a landed write that failed, beside the write", async () => {
+    const actions = [
+      {
+        name: "adopt",
+        command: commands.adoptItem,
+        act: () =>
+          useAuditStore
+            .getState()
+            .adopt(globalScope, "hook", "lint", ["claude"]),
+      },
+      {
+        name: "replace",
+        command: commands.replaceUnmanagedItem,
+        act: () =>
+          useAuditStore
+            .getState()
+            .replaceUnmanaged(globalScope, "hook", "lint"),
+      },
+      {
+        name: "toggle",
+        command: commands.toggleItem,
+        act: () =>
+          useAuditStore.getState().toggle(globalScope, "hook", "lint", false),
+      },
+      {
+        name: "remove",
+        command: commands.removeItem,
+        act: () =>
+          useAuditStore.getState().removeItem(globalScope, "hook", "lint"),
+      },
+    ];
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      useProblemsStore.getState().closeError();
+      useAuditStore.setState({ views: [emptyView] });
+      const written = {
+        ...emptyView,
+        plan: ["Install hook lint for Claude Code"],
+        unfinished: "render bot instructions: permission denied",
+      };
+      vi.mocked(action.command).mockResolvedValue({
+        status: "ok",
+        data: written,
+      });
+
+      expect(await action.act(), action.name).toBe(true);
+
+      expect(useAuditStore.getState().views, action.name).toEqual([written]);
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, action.name).toBe(true);
+      expect(dialog.message, action.name).toBe(
+        "render bot instructions: permission denied",
+      );
+      expect(dialog.title, action.name).toContain("lint");
+    }
+    // The success the surface says for the write still stands beside it.
+    expect(toast.success).toHaveBeenCalledWith("Now managing lint");
+  });
+
+  // "Start managing all" goes on past an item whose write landed with a
+  // step behind it failing, so the next item can still be refused. The
+  // reverse order never arises: a refusal stops the run.
+  it("keeps a landed item's failed step on screen when the next is refused", async () => {
+    vi.mocked(commands.adoptItem).mockImplementation(async (_s, _k, name) =>
+      name === "deploy"
+        ? { status: "ok", data: { ...emptyView, unfinished: "settle: denied" } }
+        : { status: "error", error: "lint is locked" },
+    );
+    const item = (name: string): MergedDriftRow => ({
+      kind: "hook",
+      name,
+      state: "unmanaged",
+      installations: [
+        {
+          kind: "hook",
+          name,
+          harness: "claude",
+          scope: globalScope,
+          state: "unmanaged",
+          detail: "",
+        },
+      ] as DriftRow[],
+    });
+
+    await adoptAll(
+      [item("deploy"), item("lint")],
+      () => null,
+      (kind, name, harnesses, quiet) =>
+        useAuditStore
+          .getState()
+          .adopt(globalScope, kind, name, harnesses, quiet),
+    );
+
+    const { dialog } = useProblemsStore.getState();
+    const said = [dialog, ...dialog.joined];
+    expect(said.map((failure) => failure.message)).toEqual([
+      "settle: denied",
+      "lint is locked",
+    ]);
+    expect(said[0].title).toContain("deploy");
+    expect(said[1].title).toContain("lint");
+  });
+
+  // Switching a package off or deleting it writes once per place it is in,
+  // and goes on past a place whose write landed with a step behind it
+  // failing. No caller wraps those writes: the second place's failure,
+  // a refusal or another failed step, keeps the first place's on screen.
+  it("keeps the first place's failed step on screen past the second place's failure", async () => {
+    const project = { scope: "project" as const, root: "/work/vg" };
+    const actions = [
+      {
+        name: "toggle",
+        command: commands.toggleItem,
+        act: (scope: typeof globalScope | typeof project) =>
+          useAuditStore.getState().toggle(scope, "hook", "lint", false),
+      },
+      {
+        name: "remove",
+        command: commands.removeItem,
+        act: (scope: typeof globalScope | typeof project) =>
+          useAuditStore.getState().removeItem(scope, "hook", "lint"),
+      },
+    ];
+    type Answer = { unfinished: string } | { refused: string };
+    const seconds: { name: string; second: Answer; message: string }[] = [
+      {
+        name: "then refused",
+        second: { refused: "vg is locked" },
+        message: "vg is locked",
+      },
+      {
+        name: "then a failed step again",
+        second: { unfinished: "render: vg" },
+        message: "render: vg",
+      },
+    ];
+    expect(actions.length * seconds.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      for (const { name, second, message } of seconds) {
+        const row = `${action.name}, ${name}`;
+        useProblemsStore.getState().closeError();
+        vi.mocked(action.command).mockImplementation(async (scope) => {
+          const answer: Answer =
+            scope.scope === "global" ? { unfinished: "render: home" } : second;
+          return "refused" in answer
+            ? { status: "error", error: answer.refused }
+            : {
+                status: "ok",
+                data: { ...emptyView, scope, unfinished: answer.unfinished },
+              };
+        });
+
+        expect(await action.act(globalScope), row).toBe(true);
+        await action.act(project);
+
+        const { dialog } = useProblemsStore.getState();
+        expect(
+          [dialog, ...dialog.joined].map((failure) => failure.message),
+          row,
+        ).toEqual(["render: home", message]);
+      }
+    }
+  });
+
+  it("says nothing more about a write whose every step finished", async () => {
+    vi.mocked(commands.adoptItem).mockResolvedValue({
+      status: "ok",
+      data: emptyView,
+    });
+
+    await useAuditStore
+      .getState()
+      .adopt(globalScope, "hook", "lint", ["claude"]);
+
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
   });
 
   it("a refused action surfaces as an error, never a silent success", async () => {

@@ -846,20 +846,23 @@ fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
         fs::read_to_string(&skill).unwrap()
     );
 }
+/// One question covers the Pi settle and the plan after it, and the
+/// safety report of what that plan writes comes before it. A yes writes
+/// both with no second question, since the plan after the settle writes
+/// nothing the yes did not list; a no or a cancel writes neither.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
+fn a_risky_plan_and_its_settle_are_one_question_after_the_safety_report() {
     use kendex_core::drift::snapshot::{SnapshotFile, load};
     use kendex_core::{env::Env, model::Scope};
-    // The settle's consent, then the final one.
-    type Steps = &'static [(&'static str, &'static str)];
-    let rows: [(Steps, i32, bool, &str); 3] = [
-        (&[("[y]", "y"), ("[y]", "\n")], 0, false, "plain"),
-        (&[("[y]", "y"), ("[y]", "y")], 0, true, "plain"),
-        (&[("[y]", "y"), ("[y]", "\x1b")], 130, false, "pretty"),
+    // (answer, exit, written, look)
+    let rows: [(&str, i32, bool, &str); 3] = [
+        ("\n", 0, false, "plain"),
+        ("y", 0, true, "plain"),
+        ("\x1b", 130, false, "pretty"),
     ];
-    for (answers, status, installed, mode) in rows {
+    for (answer, status, written, mode) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = declared_consumer(&home, NO_DEPENDENCIES);
@@ -879,23 +882,226 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
             .envs(test_util::fixture_env(&home))
             .env("KENDEX_UI", mode)
             .env("PATH", std::env::var("PATH").unwrap_or_default());
-        let output = pty::conversation(command, answers, pty::Stderr::Terminal);
+        let output = pty::conversation(command, &[("[y]", answer)], pty::Stderr::Terminal);
         let printed = said(&output);
         assert_eq!(output.status.code(), Some(status), "{printed}");
-        let committed = project.join(".git/refs/heads/main").is_file();
-        assert_eq!(committed, status != 130, "{printed}");
-        assert!(!printed.contains("settling added"), "{printed}");
-        let partial = printed.contains("refreshed 1 change");
-        assert_eq!(partial, !installed, "{printed}");
+        assert_eq!(printed.matches("[y]").count(), 1, "{printed}");
         let safety = printed.find("[critical]").unwrap();
-        let confirm = printed.rfind("[y]").unwrap();
+        let confirm = printed.find("[y]").unwrap();
         assert!(safety < confirm, "{printed}");
+        let committed = project.join(".git/refs/heads/main").is_file();
+        assert_eq!(committed, written, "{printed}");
         let target = project.join(".claude/skills/deploy/SKILL.md");
-        assert_eq!(target.is_file(), installed, "{printed}");
+        assert_eq!(target.is_file(), written, "{printed}");
+        let settled = project.join(".pi/packages/pi-widgets/index.js");
+        assert_eq!(settled.is_file(), written, "{printed}");
         let env = Env::host_rooted(&home);
         let scope = Scope::Project { root: project };
-        assert!(matches!(load(&env, &scope), SnapshotFile::Current(_)));
+        assert_eq!(
+            matches!(load(&env, &scope), SnapshotFile::Current(_)),
+            written,
+            "{printed}"
+        );
     }
+}
+
+/// The settle lands the Pi hook carrier, and the plan derived after it adds
+/// the Pi hook the first yes never listed. Declining that further question
+/// keeps the landed settle, still counted on the closing line, and writes
+/// none of the scope's plan: neither the added hook nor the ops the first
+/// yes covered.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declining_what_the_settle_added_keeps_the_settle_and_writes_no_plan() {
+    use kendex_core::model::ItemKind::PiExtension;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_consumer(&home, NO_DEPENDENCIES);
+    let path = project.join("kendex.toml");
+    let text = fs::read_to_string(&path).unwrap()
+        + "\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo guarded\"\nagents = \"all\"\nharnesses = [\"pi\"]\n";
+    write(&path, &text);
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
+    );
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "declare hook"]);
+    let clone = fresh_clone(&home, &project);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "project", "--leave"])
+        .current_dir(&clone)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(
+        command,
+        &[("[y]", "y"), ("[y]", "n")],
+        pty::Stderr::Terminal,
+    );
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert_eq!(printed.matches("[y]").count(), 2, "{printed}");
+    // The settle's own writes and nothing else: no skill, no hook and no
+    // inventory, and the record, which this consumer's git ignores, holds
+    // the two settled packages alone.
+    assert_eq!(
+        git(
+            &home,
+            &clone,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        " M .pi/settings.json\n?? .pi/packages/@vanillagreen/pi-hooks/package.json\n",
+        "{printed}"
+    );
+    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let mut recorded: Vec<_> = record
+        .entries
+        .values()
+        .map(|entry| (entry.kind, entry.name.as_str()))
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        [
+            (PiExtension, "@vanillagreen/pi-hooks"),
+            (PiExtension, "pi-widgets")
+        ],
+        "{printed}"
+    );
+    assert!(
+        printed.contains("refreshed 2 changes"),
+        "the two landed Pi installs are counted: {printed}"
+    );
+}
+
+/// A settle's question comes after the safety drawing of the plan it is
+/// asked over, and a compact drawing there sorts out the clean package. The
+/// report after the settle does not draw that row again, and the closing
+/// line still says the run left detail behind `--verbose`.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_settle_that_folded_its_safety_closes_saying_verbose_shows_more() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_consumer(&home, NO_DEPENDENCIES);
+    write(
+        &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "project", "--leave"])
+        .current_dir(&project)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(command, &[("[y]", "y")], pty::Stderr::Terminal);
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert!(
+        !printed.lines().any(|line| line.trim_end() == "safety:"),
+        "the clean row is folded: {printed}"
+    );
+    let ledger = printed.find("refreshed 1 change").unwrap();
+    assert!(printed[ledger..].contains("--verbose"), "{printed}");
+}
+
+/// A global refresh whose settle and plan both write, the defect a person
+/// met: the question counted the plan's ops without listing them. One
+/// question lists every change before it asks, counts exactly the rows it
+/// listed, and is asked once, and the closing line counts what landed.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_refresh_lists_and_counts_its_changes_in_one_question() {
+    use kendex_core::{env::Env, model::Scope};
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::host_rooted(&home);
+    let catalog = home.join("catalog");
+    let package = |version: &str| {
+        let root = catalog.join("pi-extensions/pi-one");
+        write(
+            &root.join("package.json"),
+            &format!(
+                "{{\"name\":\"pi-one\",\"version\":\"{version}\",\"pi\":{{\"extensions\":[\"index.js\"]}}}}\n"
+            ),
+        );
+        write(
+            &root.join("index.js"),
+            &format!("export const version = \"{version}\";\n"),
+        );
+    };
+    let skill = |body: &str| {
+        write(
+            &catalog.join("skills/ship/SKILL.md"),
+            &format!("---\nname: ship\ndescription: ship it\n---\n{body}\n"),
+        );
+    };
+    package("1.0.0");
+    skill("Ship it.");
+    write(
+        &kendex_core::manifest::manifest_path(&env, &Scope::Global),
+        "schema = 7\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[sources.cat]\npath = 'catalog'\n[skills.ship]\nsource = 'cat'\n[pi-extensions.pi-one]\nsource = 'cat'\n",
+    );
+    let installed = kendex(&home, &home, &["refresh", "--scope", "global", "--yes"]);
+    assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
+    package("1.1.0");
+    skill("Ship it twice.");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "global"])
+        .current_dir(&home)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(command, &[("[y]", "y")], pty::Stderr::Terminal);
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert_eq!(printed.matches("[y]").count(), 1, "{printed}");
+    // The rows the plain question lists sit directly above it, one `  - `
+    // line each, and the question counts exactly those: the one Pi
+    // package, and the plan's ops beside it.
+    let lines: Vec<&str> = printed.lines().collect();
+    let keys = lines.iter().position(|line| line.contains("[y]")).unwrap();
+    let question = lines[keys - 1];
+    let listed: Vec<&str> = lines[..keys - 1]
+        .iter()
+        .rev()
+        .take_while(|line| line.starts_with("  - "))
+        .copied()
+        .collect();
+    assert!(
+        question.ends_with(&format!("write {} changes?", listed.len())),
+        "{printed}"
+    );
+    let pi: Vec<_> = listed
+        .iter()
+        .filter(|row| row.contains("update Pi extension pi-one:"))
+        .collect();
+    assert_eq!(pi.len(), 1, "{printed}");
+    assert!(
+        listed.len() > pi.len(),
+        "the plan's ops are listed: {printed}"
+    );
+    let bytes = fs::read_to_string(home.join(".pi/agent/packages/pi-one/index.js"));
+    assert_eq!(bytes.unwrap(), "export const version = \"1.1.0\";\n");
+    let copy = fs::read_to_string(home.join(".claude/skills/ship/SKILL.md")).unwrap();
+    assert!(copy.contains("Ship it twice."), "{copy}");
+    assert!(
+        printed.contains(&format!("global: refreshed {} changes", listed.len())),
+        "{printed}"
+    );
 }
 
 /// A later user-package choice cannot erase the project's write or commit.
@@ -1407,4 +1613,46 @@ fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own(
     assert_eq!(status, "", "{output}\n{diff}");
     let checked = kendex(&home, &clone, &["check"]);
     assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
+}
+
+/// A settle that installed a package and then could not save the install
+/// record still accounts for that package: the install is on disk, so the
+/// run says it installed it and the scope's closing ledger names it before
+/// the record failure ends the run. The record's machine half sits under a
+/// directory the run may not write, so the save fails after the install
+/// that preceded it.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_settle_whose_record_save_fails_keeps_what_it_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = declared_consumer(&home, NO_DEPENDENCIES);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "declare"]);
+    let clone = fresh_clone(&home, &origin);
+    let cache = clone.join(".cache/kendex");
+    fs::create_dir_all(&cache).unwrap();
+    let Some(unwritable) = test_util::unwritable_dir(&cache) else {
+        return;
+    };
+
+    let output = kendex(
+        &home,
+        &clone,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    drop(unwritable);
+    let printed = said(&output);
+
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(clone.join(".pi/packages/pi-widgets/index.js").is_file());
+    for line in [
+        "  installed pi-widgets -> 1.0.0\n",
+        "  - installed Pi extension pi-widgets\n",
+    ] {
+        assert_eq!(printed.matches(line).count(), 1, "{line}: {printed}");
+    }
 }

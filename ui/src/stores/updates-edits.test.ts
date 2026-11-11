@@ -4,6 +4,7 @@ import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { FORK_ERROR_TITLE } from "@/lib/copy";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useProblemsStore } from "./problems";
@@ -54,14 +55,23 @@ describe("updates store: edited places", () => {
     vi.clearAllMocks();
   });
 
-  // A transport rejection never assigns work's error — only the applier
-  // sees it, and dropping its return would let the fork and discard flows
-  // carry on to their success paths over an IPC failure.
+  // The bindings answer a transport failure as the command's own error,
+  // a bare string like a fork's refusal: it must not carry the fork or the
+  // discard on to its success path.
   it("a fork whose transport failed does not proceed as success", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
-    vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageFork).mockResolvedValue({
+      status: "error",
+      error: "ipc down",
+    });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
@@ -77,18 +87,25 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    // The machine is read anyway: the call never answered, so nothing says
-    // whether the apply ran.
+    expect(toast.success).not.toHaveBeenCalled();
+    // The machine is read anyway: nothing says whether the apply ran.
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
   it("a discard whose transport failed surfaces the failure", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
-    vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
-      new Error("ipc down"),
-    );
+    vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
+      status: "error",
+      error: "ipc down",
+    });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
@@ -103,13 +120,85 @@ describe("updates store: edited places", () => {
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
+  // Keeping the edits settles the scope after the fork lands, and taking
+  // the new version renders behind its apply. Either step failing leaves
+  // the write standing, and the failure is said beside it.
+  it("says a step behind a landed fork or discard that failed", async () => {
+    const written = {
+      scope: { scope: "global" as const },
+      drift: [],
+      plan: [],
+      notes: [],
+      warnings: [],
+      safety: [],
+      adoptable: ADOPTABLE,
+      exits: [],
+      unfinished: "settle the scope: permission denied",
+    };
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+    const edited = row({
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude"],
+      forkableHarness: "claude",
+    });
+    const writes = [
+      {
+        name: "keep as my own",
+        answer: () =>
+          vi
+            .mocked(commands.packageFork)
+            .mockResolvedValue({ status: "ok", data: written }),
+        act: () => keepAsOwn(edited),
+      },
+      {
+        name: "take the new version",
+        answer: () =>
+          vi
+            .mocked(commands.applyDiscardEdits)
+            .mockResolvedValue({ status: "ok", data: written }),
+        act: () => takeNewVersion(edited),
+      },
+    ];
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      useProblemsStore.setState({
+        dialog: {
+          open: false,
+          title: "",
+          steps: [],
+          actions: [],
+          joined: [],
+        },
+      });
+      write.answer();
+
+      await write.act();
+
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, write.name).toBe(true);
+      expect(dialog.message, write.name).toBe(
+        "settle the scope: permission denied",
+      );
+      expect(dialog.title, write.name).not.toBe(FORK_ERROR_TITLE);
+    }
+  });
+
   // The action boundary owns the guarantee: a confirmation opened before
   // a check failed still holds a retained row whose latest nobody
   // confirmed — the store refuses it however the dialog got there.
   it("refuses to discard edits from rows a failed check left behind", async () => {
     useUpdatesStore.setState({ read: READ_PENDING });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
 
     await takeNewVersion(
@@ -235,7 +324,13 @@ describe("updates store: installing beside an edited place", () => {
       read: READ_LANDED,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.clearAllMocks();
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -318,27 +413,65 @@ describe("updates store: installing beside an edited place", () => {
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
-  // An error in neither phase — Tauri rejecting an unknown command or bad
-  // args hands back a plain string — must never read as "your fork was
-  // recorded": it presents as a refusal, claiming nothing happened.
-  it("fails closed on an error shape that names no phase", async () => {
+  // A call that failed on its way never answered: the fork may have
+  // landed, so it reads as neither a recorded fork nor a refusal. Handed
+  // back as a refusal, the name dialog would stay open for another name,
+  // and a second one sent over a fork that did land installs the package
+  // twice. The dialog closes, the error dialog says nothing is known, and
+  // the rows are read again behind it.
+  it("reads a call that never answered as unknown, not as refused", async () => {
+    // The bindings' shape for a transport failure: a plain string, which
+    // names no phase.
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
-      error: "invalid args `newName`" as never,
+      error: "the IPC channel closed" as never,
     });
 
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
-      "invalid args `newName`",
-    );
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("the IPC channel closed");
+    expect(dialog.title).not.toBe(FORK_ERROR_TITLE);
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
+    expect(commands.updatesOverview).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
     expect(useUpdatesStore.getState().busy).toBe(false);
   });
 
+  // The fork and its install both landed; the render behind them did not.
+  // The install is said, and so is the step.
+  it("says a step behind a landed install that failed, beside it", async () => {
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+        unfinished: "render bot instructions: disk full",
+      },
+    });
+
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith(
+      "Installed gh — your edited copy is now gh-mine",
+    );
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
+  });
+
   // A fork the scope recorded but could not render is not a refusal:
   // another name would not help, and the rows now carry the drift. The
-  // dialog gets null and closes; the toast says what landed.
+  // dialog gets null and closes. The error dialog the commit offer waits
+  // behind is the one account: its title is the install that did not
+  // happen, its step the copy that did land, and no toast says either half
+  // in other words, since a toast fades and the dialog stays.
   it("treats a failure after the fork was recorded as a partial result, not a refusal", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
@@ -346,11 +479,16 @@ describe("updates store: installing beside an edited place", () => {
     });
 
     expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
-    expect(toast.info).toHaveBeenCalledWith(
-      "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full.",
-    );
+    expect(toast.info).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
-    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    expect(toast.error).not.toHaveBeenCalled();
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.title).toBe("gh didn't install");
+    expect(dialog.message).toBe("render refused: disk full");
+    expect(dialog.steps).toEqual([
+      "Your edited copy is now gh-mine, and the page shows what is on disk now.",
+    ]);
     // The refreshes run: what landed is on disk and the rows must say so.
     expect(commands.updatesOverview).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();

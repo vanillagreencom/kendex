@@ -268,6 +268,77 @@ pub fn no_record_on_this_runner() -> bool {
     false
 }
 
+/// Holds `dir` at mode 0555 for a case that needs a write into it refused,
+/// or answers `None` when this runner writes through mode bits anyway.
+///
+/// Root, or any account holding `CAP_DAC_OVERRIDE` as a root dev container
+/// does, is never refused that write, so the case would fail on a write
+/// that landed rather than on the defect it guards. The runner is asked by
+/// trying the write, not by its uid: the capability is what lets the write
+/// through, and a uid check is one more thing each case can forget. On
+/// `None` the skip is said and the mode is already back; the case returns.
+///
+/// The guard puts the old mode back when it drops, a failed assertion
+/// included, so the temp dir can clean the directory up.
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    clippy::expect_used,
+    clippy::print_stderr,
+    reason = "every test binary includes this whole module and uses the part it needs; the mode change is a fixture precondition, and a skipped case has to say so"
+)]
+pub fn unwritable_dir(dir: &Path) -> Option<Unwritable> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::metadata(dir).expect("the directory to hold unwritable exists");
+    assert!(metadata.is_dir(), "{} is not a directory", dir.display());
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o555))
+        .expect("the fixture directory takes mode 0555");
+    let held = Unwritable {
+        dir: dir.to_owned(),
+        before: metadata.permissions(),
+    };
+    let probe = dir.join(".kendex-test-unwritable-probe");
+    match std::fs::File::create_new(&probe) {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => Some(held),
+        Ok(_) => {
+            std::fs::remove_file(&probe).expect("the probe this runner wrote is removable");
+            eprintln!(
+                "skipped: this runner writes through the unwritable {} this case needs",
+                dir.display()
+            );
+            None
+        }
+        Err(error) => panic!(
+            "probing whether {} refuses a write: {error}",
+            probe.display()
+        ),
+    }
+}
+
+/// The directory [`unwritable_dir`] holds at 0555, and the mode it had.
+#[cfg(unix)]
+#[allow(
+    dead_code,
+    reason = "every test binary includes this whole module and uses the part it needs"
+)]
+pub struct Unwritable {
+    dir: PathBuf,
+    before: std::fs::Permissions,
+}
+
+#[cfg(unix)]
+impl Drop for Unwritable {
+    fn drop(&mut self) {
+        let restored = std::fs::set_permissions(&self.dir, self.before.clone());
+        // A second panic while unwinding aborts the run and hides the first.
+        if let Err(error) = restored
+            && !std::thread::panicking()
+        {
+            panic!("restoring the mode of {}: {error}", self.dir.display());
+        }
+    }
+}
+
 /// What a fixture puts on `PATH` so a run of `install.sh` cannot reach past
 /// its own temp directory.
 ///

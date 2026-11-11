@@ -49,6 +49,18 @@ impl Style {
         self.report_row(Status::Decision, &[Span::Prose(text)], "warning: ")
     }
 
+    /// A warning about the run as a block of its own: rich wraps its text
+    /// under its own first word and sets the next block off with a blank
+    /// line; plain keeps the one `warning: ` line scripts read.
+    pub fn warning_block(&self, text: &str) -> Vec<String> {
+        let mut lines = self.report_warning(text);
+        match self.look {
+            Look::Plain => {}
+            Look::Rich { .. } => lines.push(String::new()),
+        }
+        lines
+    }
+
     /// Detail under a report row, retaining the script's indentation.
     pub fn report_detail(&self, spans: &[Span<'_>], prefix: &'static str) -> Vec<String> {
         match self.look {
@@ -246,7 +258,7 @@ pub fn print(status: Status, draw: impl FnOnce(&Style) -> Vec<String>) {
 
 /// A warning about the run, retaining the plain warning key.
 pub fn warning(text: &str) {
-    print(Status::Decision, |style| style.report_warning(text));
+    print(Status::Decision, |style| style.warning_block(text));
 }
 
 /// Whether a render warning describes the model substitution for the run,
@@ -284,6 +296,31 @@ mod tests {
     use super::*;
     use crate::ui::testing::{plain, rich, tagged};
     use crate::width::visible_width;
+
+    /// A long warning wraps under its own text, never under its glyph, and
+    /// the block after it starts past a blank line; plain is the one line a
+    /// script reads.
+    #[test]
+    fn a_warning_is_a_block_of_its_own() {
+        let text = "cat: could not bring the marketplace current, so its packages refresh from the snapshot already on this machine";
+        let drawn = rich(60).warning_block(text);
+        let (last, wrapped) = drawn.split_last().expect("a warning draws lines");
+        assert_eq!(last, "", "{drawn:?}");
+        assert!(wrapped.len() > 1, "{drawn:?}");
+        let opens = wrapped[0]
+            .find("cat:")
+            .expect("the first line carries the text");
+        let text_at = visible_width(&wrapped[0][..opens]);
+        for line in &wrapped[1..] {
+            let indent = line.len() - line.trim_start().len();
+            assert_eq!(indent, text_at, "{drawn:?}");
+            assert!(visible_width(line) <= 60, "{drawn:?}");
+        }
+        assert_eq!(
+            plain().warning_block(text),
+            vec![format!("warning: {text}")]
+        );
+    }
 
     #[test]
     fn report_verdict_snapshots() {

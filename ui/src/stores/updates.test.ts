@@ -65,7 +65,7 @@ describe("updates store", () => {
   // `updates-standing.ts` moves it, for every landing kind, and a store
   // that quietly dropped it would leave
   // the page saying "Not checked for updates yet" over a check that ran.
-  const CHECKED_AT = 1_700_000_000;
+  const CheckedAt = 1_700_000_000;
 
   it("lands the age reported by a read or a check", async () => {
     const rows = [
@@ -89,26 +89,24 @@ describe("updates store", () => {
           rows: [row({})],
           warnings: [],
           unreadable: [],
-          lastFetched: CHECKED_AT,
+          lastFetched: CheckedAt,
         },
       });
       await test.read();
-      expect(useUpdatesStore.getState().lastFetched, test.name).toBe(
-        CHECKED_AT,
-      );
+      expect(useUpdatesStore.getState().lastFetched, test.name).toBe(CheckedAt);
     }
   });
 
   // A check that failed fetched nothing, so the age it had is still when
   // these rows were last true — dropping it would report a check nobody ran.
   it("keeps the age it had when a check fails", async () => {
-    useUpdatesStore.setState({ lastFetched: CHECKED_AT });
+    useUpdatesStore.setState({ lastFetched: CheckedAt });
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "error",
       error: "no network",
     });
     await useUpdatesStore.getState().check();
-    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+    expect(useUpdatesStore.getState().lastFetched).toBe(CheckedAt);
   });
 
   it("counts only unmuted updates for the badge — held ones still count", () => {
@@ -304,7 +302,13 @@ describe("updates store", () => {
     // state nothing in `read` tells apart from a settled one.
     expect(useUpdatesStore.getState().read.status).toBe("landed");
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
 
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
@@ -336,7 +340,13 @@ describe("updates store", () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, read: READ_LANDED });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "error",
@@ -392,7 +402,13 @@ describe("updates store", () => {
   // silent about a write that never happened.
   it("surfaces an update whose transport failed instead of staying silent", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -413,6 +429,41 @@ describe("updates store", () => {
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
+  // The single-package apply landed and the render behind it failed: the
+  // update is said, and so is the step, rather than one swallowing the
+  // other.
+  it("says a step behind a landed update that failed, beside the update", async () => {
+    useProblemsStore.setState({
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
+    });
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: {
+        view: { unfinished: "render bot instructions: disk full" },
+        heldBack: [],
+        removed: [],
+        moved: [],
+      },
+    } as never);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+
+    await useUpdatesStore.getState().updateOne(row({}));
+
+    expect(toast.success).toHaveBeenCalledWith("Updated gh");
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
+  });
+
   // A check in flight is about to replace the rows: an update accepted
   // now would queue behind it on the chain and apply the latest captured
   // before it — refused at the action boundary, not just on the buttons.
@@ -428,7 +479,13 @@ describe("updates store", () => {
     const checking = useUpdatesStore.getState().check();
 
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
@@ -452,7 +509,13 @@ describe("updates store", () => {
   // that landed. The rows say they are last-known, which is the truth.
   it("reports an update that committed even when the read behind it fails", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
@@ -539,7 +602,13 @@ describe("updates store", () => {
     expect(rows.length).toBeGreaterThan(0);
     for (const [_what, subject, command, error] of rows) {
       useProblemsStore.setState({
-        dialog: { open: false, title: "", steps: [], actions: [] },
+        dialog: {
+          open: false,
+          title: "",
+          steps: [],
+          actions: [],
+          joined: [],
+        },
       });
       machineAnswers();
       vi.mocked(command).mockResolvedValue({ status: "error", error } as never);
@@ -581,7 +650,13 @@ describe("updates store", () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, read: READ_LANDED });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+      },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "error",

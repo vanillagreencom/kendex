@@ -292,11 +292,13 @@ fn a_refusing_uninstaller_stops_the_removal() {
 }
 
 /// A package uninstaller has already changed the repository when the
-/// automatic bot render starts. If that render fails, the app must keep the
-/// uninstall account in the returned error.
+/// automatic bot render starts. A render that then fails leaves the removal
+/// written: the answer is the written scope's standing with the uninstall
+/// account and the render's failure beside it, never an error that reads
+/// as a removal that did not happen.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_renderer_failure_after_removal_keeps_the_uninstall_account() {
+fn a_renderer_failure_after_removal_answers_with_the_written_removal() {
     let f = fixture();
     let installed = install_skills(&f, &["commit-guards", "bot-instructions"], None);
     let guards = installed
@@ -317,19 +319,26 @@ fn a_renderer_failure_after_removal_keeps_the_uninstall_account() {
     let existing = fs::read_to_string(&manifest).unwrap();
     fs::write(&manifest, format!("{existing}\n[bot-instructions]\n")).unwrap();
 
-    let error = match kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "commit-guards")
-    {
-        Err(error) => error,
-        Ok(_) => panic!("the incomplete bot manifest rendered"),
-    };
+    let removed = kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "commit-guards")
+        .unwrap_or_else(|error| panic!("the written removal was reported as refused: {error}"));
 
     assert!(
-        error.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
-        "the render failure dropped what the uninstaller did: {error}"
+        !f.project.join(".agents/skills/commit-guards").exists(),
+        "the removal did not write"
     );
+    assert!(removed.error.is_none(), "the written scope did not read");
+    assert_eq!(
+        removed.undone.first().map(String::as_str),
+        Some("commit-guards: running scripts/install-git-hooks --uninstall"),
+        "the render failure dropped what the uninstaller did: {:?}",
+        removed.undone
+    );
+    let unfinished = removed
+        .unfinished
+        .expect("the render failure rides on the answer");
     assert!(
-        error.contains("bot-instructions: render-failed="),
-        "the render failure itself was lost: {error}"
+        unfinished.contains("bot-instructions: render-failed="),
+        "the render failure itself was lost: {unfinished}"
     );
 }
 

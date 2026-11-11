@@ -94,12 +94,22 @@ export interface ErrorAction {
   onClick: () => void;
 }
 
-interface ErrorDialogState {
-  open: boolean;
+/** One failure the error dialog states: what failed, the error it gave,
+ *  what to do about it, and the controls that act on it. */
+export interface Failure {
   title: string;
   message?: string;
   steps: string[];
   actions: ErrorAction[];
+}
+
+/** What the dialog shows: the failure that opened it, and every later
+ *  failure said while it was still up. */
+interface ErrorDialogState extends Failure {
+  open: boolean;
+  /** Failures said after the one heading the dialog and before it was
+   *  dismissed, in the order they arrived. */
+  joined: Failure[];
 }
 
 interface ProblemsStore {
@@ -118,14 +128,29 @@ const CLOSED: ErrorDialogState = {
   title: "",
   steps: [],
   actions: [],
+  joined: [],
 };
 
 /** The one error modal for the whole app. A user-initiated action calls
  *  showError instead of toasting, so a failure always states what broke and
- *  how to fix it rather than flashing past in a corner. */
+ *  how to fix it rather than flashing past in a corner.
+ *
+ *  A failure said while the dialog is up joins it rather than replacing
+ *  it, whatever said it. The dialog is modal, so whatever fails while it
+ *  is up was already under way: a later write of the same run over several
+ *  places, or another action still out. Replacing would drop a failure the
+ *  person never read, so the rule is the dialog's own and no caller opts
+ *  in. Closing the dialog drops them all, and a control acts only after
+ *  closing it, so its own failure opens the dialog afresh. */
 export const useProblemsStore = create<ProblemsStore>((set) => ({
   dialog: CLOSED,
   showError: ({ title, message, steps = [], actions = [] }) =>
-    set({ dialog: { open: true, title, message, steps, actions } }),
+    set(({ dialog }) => {
+      const failure: Failure = { title, message, steps, actions };
+      if (dialog.open) {
+        return { dialog: { ...dialog, joined: [...dialog.joined, failure] } };
+      }
+      return { dialog: { ...failure, open: true, joined: [] } };
+    }),
   closeError: () => set({ dialog: CLOSED }),
 }));

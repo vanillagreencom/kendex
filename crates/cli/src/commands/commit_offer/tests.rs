@@ -10,10 +10,11 @@ use kendex_core::commit_offer::{
     Step, Unavailable,
 };
 
+use super::Outcome;
 use super::block;
-use super::{Choice, Outcome};
 use crate::ui::Style;
 use crate::ui::testing::{asked, plain, rich, tagged};
+use kendex_core::commit_offer::Route;
 
 fn scan() -> Scan {
     Scan {
@@ -55,7 +56,7 @@ fn offer() -> Offer {
     }
 }
 
-fn labels(choices: &[(Choice, String)]) -> Vec<&str> {
+fn labels(choices: &[(Route, String)]) -> Vec<&str> {
     choices.iter().map(|(_, label)| label.as_str()).collect()
 }
 
@@ -162,7 +163,7 @@ type ReasonRow = (
     &'static str,
     fn(&mut Offer),
     &'static [&'static str],
-    &'static [(Choice, Option<&'static str>)],
+    &'static [(Route, Option<&'static str>)],
 );
 
 fn reason_rows() -> [ReasonRow; 7] {
@@ -171,7 +172,7 @@ fn reason_rows() -> [ReasonRow; 7] {
             "everything available",
             |_| {},
             &[],
-            &[(Choice::Push, None), (Choice::Pr, None)],
+            &[(Route::Push, None), (Route::PullRequest, None)],
         ),
         (
             "no remote",
@@ -196,7 +197,7 @@ fn reason_rows() -> [ReasonRow; 7] {
                 "no pull request: this branch tracks no remote and the repository has more than one",
             ],
             &[(
-                Choice::Push,
+                Route::Push,
                 Some("no push: this branch tracks no remote and the repository has more than one"),
             )],
         ),
@@ -204,7 +205,10 @@ fn reason_rows() -> [ReasonRow; 7] {
             "gh missing",
             |offer| offer.pull_request = Err(Unavailable::GhMissing),
             &["no pull request: gh is not installed"],
-            &[(Choice::Pr, Some("no pull request: gh is not installed"))],
+            &[(
+                Route::PullRequest,
+                Some("no pull request: gh is not installed"),
+            )],
         ),
         (
             "gh said why",
@@ -229,10 +233,10 @@ fn reason_rows() -> [ReasonRow; 7] {
             &[],
             &[
                 (
-                    Choice::Pr,
+                    Route::PullRequest,
                     Some("no pull request: pull request #41 is already open for this branch"),
                 ),
-                (Choice::Push, None),
+                (Route::Push, None),
             ],
         ),
         (
@@ -241,12 +245,12 @@ fn reason_rows() -> [ReasonRow; 7] {
             &["no push: this branch's rules on GitHub accept changes only through a pull request"],
             &[
                 (
-                    Choice::Push,
+                    Route::Push,
                     Some(
                         "no push: this branch's rules on GitHub accept changes only through a pull request",
                     ),
                 ),
-                (Choice::Pr, None),
+                (Route::PullRequest, None),
             ],
         ),
     ]
@@ -294,16 +298,16 @@ fn each_choice_is_taken_by_its_key() {
     taken(
         &block::keyed(&everything),
         &[
-            (vec![Pressed::Char('c')], Choice::Commit),
-            (vec![Pressed::Char('p')], Choice::Push),
-            (vec![Pressed::Char('r')], Choice::Pr),
-            (vec![Pressed::Enter], Choice::Leave),
+            (vec![Pressed::Char('c')], Route::Commit),
+            (vec![Pressed::Char('p')], Route::Push),
+            (vec![Pressed::Char('r')], Route::PullRequest),
+            (vec![Pressed::Enter], Route::Leave),
         ],
     );
     let without = block::without_pull_request(&offer());
     taken(
         &block::keyed(&without),
-        &[(vec![Pressed::Char('r'), Pressed::Char('c')], Choice::Commit)],
+        &[(vec![Pressed::Char('r'), Pressed::Char('c')], Route::Commit)],
     );
     taken(
         &block::after_refusal_choices(true),
@@ -388,7 +392,7 @@ fn the_offer_draws_accept_and_decline() {
     type Row = (
         &'static str,
         Pressed,
-        Choice,
+        Route,
         &'static [&'static str],
         &'static [&'static str],
     );
@@ -396,14 +400,14 @@ fn the_offer_draws_accept_and_decline() {
         (
             "accept",
             Pressed::Char('c'),
-            Choice::Commit,
+            Route::Commit,
             &["  <34>›</> <1>commit them</>"],
             &["  › commit them"],
         ),
         (
             "decline",
             Pressed::Enter,
-            Choice::Leave,
+            Route::Leave,
             &["  <34>›</> <1>leave them as diffs</>"],
             &["  › leave them as diffs"],
         ),
@@ -429,12 +433,12 @@ fn the_offer_draws_accept_and_decline() {
 }
 
 /// A refusal in both renderings: a flag naming a choice the offer lost,
-/// and a commit the repository's check refused, its findings first and
-/// the rest behind the show key.
+/// headed as the failure it is, and a commit the repository's check
+/// refused, its findings first and the rest behind the show key.
 #[test]
 fn a_refusal_draws_its_reason_and_the_programs_words() {
     let offered = small();
-    let reason = block::not_on_offer(&offered, Choice::Pr).expect("gh is missing");
+    let reason = block::not_on_offer(&offered, Route::PullRequest).expect("gh is missing");
     let failed = Failed {
         step: Step::Commit,
         refusal: Refusal::Said(vec![
@@ -449,7 +453,7 @@ fn a_refusal_draws_its_reason_and_the_programs_words() {
             rich(100),
             &[
                 "",
-                "<33>!</> <1>/home/method/dev/site: 2 files kendex wrote are not committed</>",
+                "<31>✗</> <1>/home/method/dev/site: 2 files kendex wrote are not committed</>",
                 "  <31>✗</> no pull request: gh is not installed",
                 "  <31>✗</> the commit was refused",
                 "  <36>•</> the repository's commit check found problems:",
@@ -463,7 +467,7 @@ fn a_refusal_draws_its_reason_and_the_programs_words() {
         (
             plain(),
             &[
-                "! /home/method/dev/site: 2 files kendex wrote are not committed",
+                "✗ /home/method/dev/site: 2 files kendex wrote are not committed",
                 "  no pull request: gh is not installed",
                 "  the commit was refused",
                 "  the repository's commit check found problems:",
@@ -475,7 +479,7 @@ fn a_refusal_draws_its_reason_and_the_programs_words() {
         ),
     ];
     for (style, want) in rows {
-        let mut drawn = block::flag_refused(&style, &offered, Choice::Pr, &reason);
+        let mut drawn = block::flag_refused(&style, &offered, Route::PullRequest, &reason);
         let (lines, more) = block::commit_refused(&style, &failed, super::Asking::Yes);
         assert!(more, "the rest of the check's words did not wait");
         drawn.extend(lines);
@@ -627,7 +631,7 @@ fn the_flags_are_read_off_the_verb_the_person_ran() {
     let flags = super::CommitFlags::from_matches(&matches);
     assert!(flags.push && !flags.commit && !flags.pull_request && !flags.leave);
     assert_eq!(flags.message.as_deref(), Some("m"));
-    assert_eq!(flags.answered(), Some(Choice::Push));
+    assert_eq!(flags.answered(), Some(Route::Push));
     assert_eq!(flags.allow_repo_effects, None, "a verb without the flag");
 
     let none =
@@ -769,7 +773,12 @@ fn every_head_prints_the_count_of_what_the_commit_carries() {
         ("held", block::stale(&plain(), &carried, &[])),
         (
             "a flag refused",
-            block::flag_refused(&plain(), &offered, Choice::Pr, "gh is not installed"),
+            block::flag_refused(
+                &plain(),
+                &offered,
+                Route::PullRequest,
+                "gh is not installed",
+            ),
         ),
         ("the offer", block::offer(&plain(), &offered)),
     ];

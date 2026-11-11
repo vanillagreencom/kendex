@@ -17,7 +17,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use kendex_core::commit_offer::{self, Before, Branch, Offer, Probe};
+use kendex_core::commit_offer::{self, Before, Branch, Offer, Probe, Route};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -96,23 +96,14 @@ impl CommitFlags {
     }
 }
 
-/// One of the four choices.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Choice {
-    Commit,
-    Push,
-    Pr,
-    Leave,
-}
-
 impl CommitFlags {
     /// The choice a flag named, or `None` where the person is to be asked.
-    fn answered(&self) -> Option<Choice> {
+    fn answered(&self) -> Option<Route> {
         match (self.commit, self.push, self.pull_request, self.leave) {
-            (true, _, _, _) => Some(Choice::Commit),
-            (_, true, _, _) => Some(Choice::Push),
-            (_, _, true, _) => Some(Choice::Pr),
-            (_, _, _, true) => Some(Choice::Leave),
+            (true, _, _, _) => Some(Route::Commit),
+            (_, true, _, _) => Some(Route::Push),
+            (_, _, true, _) => Some(Route::PullRequest),
+            (_, _, _, true) => Some(Route::Leave),
             _ => None,
         }
     }
@@ -205,6 +196,11 @@ pub fn cancelled() -> bool {
     CANCELLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The person cancelled at the offer: skip it from here on and exit 130.
+fn cancel() {
+    CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Record the run before any verb dispatches: the command the person
 /// typed, without its flags and arguments, and the flag that answers the
 /// offer.
@@ -271,7 +267,7 @@ pub fn after_writing(
         Ok(None) => return Ok(()),
         Ok(Some(outcome)) => outcome,
         Err(error) if ui::cancelled(error.as_ref()) => {
-            CANCELLED.store(true, std::sync::atomic::Ordering::Relaxed);
+            cancel();
             Outcome::Nothing
         }
         Err(error) => return Err(error),
@@ -332,7 +328,7 @@ fn make(
             }
             Branch::On(_) => {}
         }
-        if answered == Some(Choice::Leave) {
+        if answered == Some(Route::Leave) {
             return Ok(Some(Outcome::Nothing));
         }
         // The setting turns off the asking, not the choices — which is why
@@ -387,8 +383,8 @@ fn make(
         // `push` is, so a push the rules would refuse is refused before the
         // commit rather than after it.
         let probe = match answered {
-            Some(Choice::Commit) => Probe::Skip,
-            Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
+            Some(Route::Commit) => Probe::Skip,
+            Some(Route::Push) | Some(Route::PullRequest) | Some(Route::Leave) | None => Probe::Gh,
         };
         let offer = match commit_offer::offer(scan, &session.command, probe) {
             Ok(offer) => offer,
@@ -407,7 +403,7 @@ fn answer(
     offer: &Offer,
     generated: &GeneratedPaths,
     before: &Before,
-    answered: Option<Choice>,
+    answered: Option<Route>,
     message: Option<String>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
     let Some(choice) = answered else {
@@ -431,7 +427,7 @@ struct Held {
     /// A setup already ran in this offer.
     set_up: bool,
     /// The choice a flag named, if one did.
-    answered: Option<Choice>,
+    answered: Option<Route>,
     /// Who gives the setup its yes.
     yes: Yes,
     /// The verb carries `--allow-repo-effects`.
@@ -488,8 +484,8 @@ fn hold(
         block::Held::Leave => Ok(Hold::Ended(Outcome::Nothing)),
         block::Held::SetUp => match set_up_here(env, scope, stale, generated) {
             Ok(()) => Ok(Hold::SetUp),
-            Err(error) => {
-                ui::stderr(&block::set_up_failed(&style, &error.to_string()));
+            Err((step, error)) => {
+                ui::stderr(&block::set_up_failed(&style, step, &error.to_string()));
                 Ok(Hold::Ended(Outcome::CommitRefused))
             }
         },
@@ -501,18 +497,21 @@ fn hold(
 ///
 /// The setup is the package's declared installer, the same run the
 /// package page and an install's separate yes make, relayed the same way.
-/// kendex reads that owner's rendered files back through its discovery listing.
+/// kendex reads that owner's rendered files back through its discovery
+/// listing. A failure names its step: after every installer finished, the
+/// setup stands in the repository whatever the read back answers.
 fn set_up_here(
     env: &Env,
     scope: &Scope,
     stale: &[commit_offer::Stale],
     generated: &mut GeneratedPaths,
-) -> CliResult {
+) -> Result<(), (block::SetUpStep, Box<dyn std::error::Error>)> {
     for held in stale {
-        super::repo_effects::apply(env, scope, &held.disclosure.declared)?;
+        super::repo_effects::apply(env, scope, &held.disclosure.declared)
+            .map_err(|error| (block::SetUpStep::Installer, error))?;
     }
-    kendex_core::bot_instructions::add_to_generated(env, scope, generated)?;
-    Ok(())
+    kendex_core::bot_instructions::add_to_generated(env, scope, generated)
+        .map_err(|error| (block::SetUpStep::ReadBack, error.into()))
 }
 
 /// Whether the person is at the prompt: a flag's answer takes its route
