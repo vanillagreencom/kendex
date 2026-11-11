@@ -197,10 +197,13 @@ class Session:
         result = subprocess.run(argv, input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
-            print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
-            print(result.stderr, file=sys.stderr)
-            raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
+            self.refuse(result)
         return result
+
+    def refuse(self, result):
+        print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
 
     def failure_log(self, key, failure):
         # A signal's own handler frame names no operation: the frame it interrupted does.
@@ -1064,8 +1067,22 @@ os.execvpe(argv[0],argv,env)
                 process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(record["process"]["pid"]) + "}}"
                 condition = "#{&&:" + condition + "," + process_binding + "}"
             action = "kill-pane" if adopted else "kill-window" if window else "kill-session"
-            self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=record["terminal"]["server"])
-            if (window or adopted) and self.terminal(record):
+            socket = record["terminal"]["server"]
+            closed = self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=socket, check=False)
+            # The pane can end, and its server with it, between the read
+            # above and this close: a failed successor's runner exits by
+            # design once it hands over. tmux's own answer that the pane or
+            # its server is gone is a close done; any other failure refuses.
+            # tmux 3.8 prints these for a missing pane, a server that exited
+            # leaving its socket file, and a socket file that is gone.
+            gone = closed.returncode != 0 and closed.stderr.strip() in (
+                "can't find pane: " + pane, "no server running on " + socket,
+                "error connecting to " + socket + " (No such file or directory)")
+            if closed.returncode and not gone:
+                self.refuse(closed)
+            if gone and not window:
+                self.end_task_session()
+            elif not gone and (window or adopted) and self.terminal(record):
                 raise Refusal("handover-failed", "The predecessor's terminal remains open. Retry jarvis-session succeed for this home.", "failed")
             if (window or adopted) and record.get("process"):
                 while self.worker_live({"worker": record["process"]}):

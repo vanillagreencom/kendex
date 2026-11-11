@@ -2182,6 +2182,58 @@ class SessionContract(unittest.TestCase):
                         self.fail("refusal=" + refusal.reason)
                 self.assertIsNone(terminal)
 
+    def test_owned_close_of_a_pane_already_gone(self):
+        # A failed successor's runner exits by design once it hands over: its
+        # pane, and with no other session its server, can end between
+        # end_owned's liveness read and its close. Each row ends the pane or
+        # the server right after that read. The close is done either way, and
+        # a session end (window=False) also ends the task windows left behind.
+        tmux = ["tmux", "-L", self.label]
+        for gone, window in (("pane", False), ("server", False), ("pane", True), ("server", True)):
+            with self.subTest(gone=gone, window=window):
+                # A failed row leaves its server; each row starts on none.
+                subprocess.run([*tmux, "kill-server"], capture_output=True, env=self.env)
+                pane, window_id = subprocess.run(
+                    [*tmux, "new-session", "-d", "-s", "jarvis", "-P", "-F", "#{pane_id} #{window_id}",
+                     self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                    check=True, capture_output=True, text=True, env=self.env).stdout.split()
+                subprocess.run([*tmux, "set-option", "-p", "-t", pane, "@jarvis-generation", "1"], check=True, env=self.env)
+                task = subprocess.run([*tmux, "new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{pane_id}",
+                                       self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                      check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+                subprocess.run([*tmux, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"], check=True, env=self.env)
+                socket, server, started = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{socket_path} #{pid} #{start_time}"],
+                                                         check=True, capture_output=True, text=True, env=self.env).stdout.split()
+                record = {"terminal": {"server": socket, "session": "jarvis", "window": window_id, "pane": pane},
+                          "server_pid": int(server), "server_started_at": int(started), "generation": 1,
+                          "pending": {"generation": 1}}
+                with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+                    runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+                    session = runtime["Session"](self.home)
+                    read = session.terminal
+                    reads = []
+
+                    def raced(owner):
+                        answer = read(owner)
+                        if answer and not reads:
+                            subprocess.run([*tmux, "kill-pane", "-t", pane] if gone == "pane" else [*tmux, "kill-server"],
+                                           check=True, env=self.env)
+                        reads.append(answer)
+                        return answer
+
+                    session.terminal = raced
+                    errors = io.StringIO()
+                    try:
+                        with redirect_stderr(errors):
+                            session.end_owned(record, window=window)
+                    except runtime["Refusal"] as refusal:
+                        self.fail("refusal=" + refusal.reason + "\n" + errors.getvalue())
+                self.assertTrue(reads[0])
+                windows = subprocess.run([*tmux, "list-panes", "-s", "-t", "=jarvis", "-F", "#{pane_id}"],
+                                         capture_output=True, text=True, env=self.env)
+                # A window end leaves the task window to the successor.
+                self.assertEqual(windows.stdout.split(), [task] if gone == "pane" and window else [])
+
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],
                           ["start", "--home", str(self.home), "--harness", "unknown"],
