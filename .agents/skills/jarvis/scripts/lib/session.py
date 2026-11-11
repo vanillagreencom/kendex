@@ -398,9 +398,9 @@ os.execvpe(argv[0],argv,env)
         if not terminal:
             raise Refusal("no-controller")
         argv = ["tmux", "-S", terminal["server"], "attach-session", "-t", "=" + terminal["session"]]
-        # The caller's own environment holds its live desktop and its
-        # $TERMINAL. A window holding its TMUX or TMUX_PANE reads as a pane of
-        # the caller's server, so the terminal starts without them.
+        # The caller's own environment holds its live desktop. A window
+        # holding its TMUX or TMUX_PANE reads as a pane of the caller's
+        # server, so the terminal starts without them.
         own = {key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_PANE")}
         if os.environ.get("TMUX"):
             # A client inside the caller's pane would nest, so the user's
@@ -410,20 +410,11 @@ os.execvpe(argv[0],argv,env)
                 opened = self.backend("open-window", terminal["server"], terminal["session"], check=False, env=own)
             except (OSError, subprocess.TimeoutExpired) as failure:
                 raise Refusal("terminal-launch-failed", str(failure))
-            if opened.returncode == 4:
+            if opened.returncode == 3:
                 raise Refusal("terminal-unresolved", opened.stderr.strip())
-            if opened.returncode not in (0, 3):
+            if opened.returncode != 0:
                 raise Refusal("terminal-launch-failed", opened.stderr.strip())
-            print(opened.stderr, end="", file=sys.stderr)
-            if opened.returncode == 0:
-                return
-            print("No terminal is set in TERMINAL and xdg-terminal-exec is not on PATH, so Jarvis opens inside this tmux pane.",
-                  file=sys.stderr)
-        # tmux refuses a client only from a pane of the server it attaches to
-        # (server_client_check_nested), so the caller's TMUX stays: the nested
-        # client crosses servers, and a pane on the home's own server is
-        # refused rather than shown inside itself.
-        sys.stderr.flush()
+            return
         os.execvp("tmux", argv)
 
     def _emit(self, answer):
