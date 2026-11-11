@@ -286,13 +286,18 @@ fn finish_scopes(
 /// landed and each op the plan wrote, in the order they landed. A compact
 /// run names the first few and how many more, and answers whether it named
 /// every one; `--verbose` names every one.
+///
+/// The list opens on a headline of its own, as `remove` draws its writes:
+/// a run that skipped a conflict draws that section just above, and
+/// `refresh/refresh-consumer.sh` reads every indented line after
+/// `conflicts:` up to the next unindented one as a conflict record.
 fn say_done(done: &[Effect], verbose: bool) -> bool {
     let shown = match verbose {
         true => done.len(),
         false => done.len().min(DONE_SHOWN),
     };
-    let mut lines = Vec::new();
     let style = ui::style();
+    let mut lines = style.report_row(ui::Status::Done, &[Span::Prose("changes:")], "");
     for effect in &done[..shown] {
         let said = match effect {
             Effect::Pi(settle) => pi_done(settle),

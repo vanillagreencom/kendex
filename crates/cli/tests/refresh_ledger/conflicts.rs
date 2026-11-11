@@ -295,3 +295,71 @@ fn a_hook_that_skips_a_tool_is_said_only_where_the_declaration_names_it() {
         );
     }
 }
+
+/// A refresh that skips an edited item and writes the rest sets the list
+/// of what it wrote under a headline of its own. `refresh/refresh-consumer.sh`
+/// reads every indented line after `conflicts:`, up to the next unindented
+/// one, as a conflict record, and stops on one it does not know: a change
+/// line drawn straight under that block reads as a conflict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_changes_a_skipping_refresh_wrote_are_not_drawn_as_conflicts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = home.join("dev/app");
+    let catalog = home.join("catalog");
+    skill(&catalog, "probe", "Read the plan first.\n");
+    skill(&catalog, "other", "Tidy up.\n");
+    manifest(
+        &project,
+        &catalog,
+        "[\"claude\"]",
+        "copy",
+        "[skills.probe]\nsource = \"cat\"\n\n[skills.other]\nsource = \"cat\"\n",
+    );
+    let first = kendex(home, &project, &["refresh", "-y", "--scope", "project"]);
+    assert!(first.status.success(), "{}", said(&first));
+    fs::write(
+        project.join(".claude/skills/probe/SKILL.md"),
+        "---\nname: probe\ndescription: does probe\n---\nMine.\n",
+    )
+    .unwrap();
+    skill(&catalog, "probe", "Read the diff first.\n");
+    skill(&catalog, "other", "Tidy up, then stop.\n");
+
+    let printed = said(&kendex(
+        home,
+        &project,
+        &["refresh", "-y", "--scope", "project"],
+    ));
+    let lines: Vec<&str> = printed.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| *line == "conflicts:")
+        .unwrap_or_else(|| panic!("the fixture needs a conflict: {printed}"));
+    let section: Vec<&str> = lines[at + 1..]
+        .iter()
+        .copied()
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    assert_eq!(
+        section,
+        [
+            "  skill probe for Claude Code: edited on disk and changed upstream — keep your edits as a fork, or apply with edits discarded"
+        ],
+        "the conflicts block holds only its records: {printed}"
+    );
+    let changes = lines
+        .iter()
+        .position(|line| line.starts_with("  - ") && line.contains("skill other"))
+        .unwrap_or_else(|| panic!("the run names what it wrote: {printed}"));
+    let headline = lines[..changes]
+        .iter()
+        .rev()
+        .find(|line| !line.starts_with("  "))
+        .unwrap();
+    assert_ne!(
+        *headline, "conflicts:",
+        "the changes sit under the conflicts headline: {printed}"
+    );
+}
