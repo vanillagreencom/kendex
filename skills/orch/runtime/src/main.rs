@@ -72,6 +72,12 @@ enum Verb {
         #[command(subcommand)]
         op: StateOp,
     },
+    /// Archive what a caller removes outside the state verbs, or name the
+    /// archive root it files under.
+    Archive {
+        #[command(subcommand)]
+        op: orch_runtime::archive::Verb,
+    },
     /// Apply one operation request to a state file, run the live effect its
     /// intent names, and print the committed transition.
     Op {
@@ -1276,6 +1282,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
         Verb::State { op } => state_verb(op, &flags, locking)?,
+        Verb::Archive { op } => orch_runtime::archive::verb(op, &resolve_settings(&flags)?)?,
         Verb::Report {
             action,
             state,

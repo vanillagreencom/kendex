@@ -546,7 +546,7 @@ impl Close<'_> {
                     None => return Err(self.live("idle")),
                 }
             }
-            LaneState::Unjudged { .. } if judged.answered && self.merged_and_gone()? => {
+            LaneState::Unjudged { .. } if judged.answered && self.merged_and_done()? => {
                 self.by_verdict(Ground::Ended("merged"), &mut notes)?
             }
             LaneState::Unjudged { .. } => return Err(self.live("unjudged")),
@@ -630,14 +630,14 @@ impl Close<'_> {
     }
 
     /// The ground a lane whose work may be over closes on: its item ended
-    /// by its tracker, else its merge landed with its worktree gone; `None`
-    /// is a lane still at work on an open item. A tracker that does not
-    /// answer refuses.
+    /// by its tracker, else its merge landed with its work over
+    /// ([`Self::merged_and_done`]); `None` is a lane still at work on an
+    /// open item. A tracker that does not answer refuses.
     fn finished(&self, notes: &mut Vec<String>) -> Result<Option<Ground>> {
         if let Some(t) = terminal(verdict(self.settings, &self.lane, &self.who, false)?) {
             return Ok(Some(Ground::Terminal(t)));
         }
-        if !self.merged_and_gone()? {
+        if !self.merged_and_done()? {
             return Ok(None);
         }
         notes.push("item-files-kept cause=open".to_owned());
@@ -750,15 +750,21 @@ impl Close<'_> {
     }
 
     /// Whether the record's merge cycle, or the delivery the request names,
-    /// stands and the lane's worktree is gone: the lane's last work landed.
-    /// A worktree read that fails refuses.
-    fn merged_and_gone(&self) -> Result<bool> {
+    /// stands and the lane's last work is over. A hosted lane's proof is its
+    /// worktree gone on its host. A local lane's is its item closed out or
+    /// its worktree gone: the close-out removes the live state record only
+    /// once the project's verification passed, and the close stops the
+    /// session before it releases the worktree, so a lane need not remove
+    /// the directory it runs in. A recorded merge alone is no proof: a lane
+    /// resumed on a merged item works on with its record standing. A read
+    /// that fails refuses.
+    fn merged_and_done(&self) -> Result<bool> {
         if !(super::stop::record_merged(&self.lane) || self.r.delivery.is_some()) {
             return Ok(false);
         }
         let root = self.lane.mail_root.as_deref().unwrap_or("");
         if !self.hosted() {
-            return Ok(std::fs::symlink_metadata(root).is_err());
+            return Ok(std::fs::symlink_metadata(root).is_err() || self.closed_out()?);
         }
         match hosted::worktree(self.scripts, &self.lane) {
             HostAnswer::Gone => Ok(true),
@@ -770,6 +776,23 @@ impl Close<'_> {
                     "worktree-read-failed"
                 },
                 &[("item", self.item()), ("root", root), ("cause", &cause)],
+            )),
+        }
+    }
+
+    /// Whether the item's close-out removed its live state record.
+    fn closed_out(&self) -> Result<bool> {
+        let path = state::item_path(&self.settings.state_dir, self.item());
+        match std::fs::metadata(&path) {
+            Ok(_) => Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(e) => Err(refused(
+                "state-unreadable",
+                &[
+                    ("item", self.item()),
+                    ("path", &path.display().to_string()),
+                    ("cause", &e.to_string()),
+                ],
             )),
         }
     }

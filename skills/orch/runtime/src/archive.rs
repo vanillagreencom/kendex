@@ -1,12 +1,13 @@
-//! The archive before a removal. The retention duty's prune and an item's
-//! close-out each put every path they are about to remove, and the records
-//! the prune drops, into one private tarball under the archive root first,
-//! so nothing leaves the state directory as its only copy. The root is
-//! `ORCH_ARCHIVE_ROOT`, else `archive/` under the fleet directory; a
-//! configured root is refused where a removal would take the archive with
-//! it: inside the state directory, an archived path or a linked worktree,
-//! which a merge removes. A configured value that is not absolute refuses
-//! here, at the write, so a verb that archives nothing still runs.
+//! The archive before a removal. The retention duty's prune, an item's
+//! close-out and the callers of the `archive` verbs each put every path
+//! they are about to remove, and the records the prune drops, into one
+//! private tarball under the archive root first, so nothing leaves as its
+//! only copy. The root is `ORCH_ARCHIVE_ROOT`, else `archive/` under the
+//! fleet directory; a configured root is refused where a removal would take
+//! the archive with it: inside the state directory, a removal root, an
+//! archived path or a linked worktree, which a merge removes. A configured
+//! value that is not absolute refuses here, at the write, so a verb that
+//! archives nothing still runs.
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
@@ -135,8 +136,23 @@ pub fn linked_worktrees(project: &Path) -> Result<Vec<Worktree>> {
     Ok(trees.into_iter().skip(1).collect())
 }
 
-fn directory(root: &Path, project: &Path) -> PathBuf {
-    root.join(name_of(project)).join("oversee")
+/// Where under the root `project`'s archives are filed.
+fn oversee(project: &Path) -> PathBuf {
+    PathBuf::from(name_of(project)).join("oversee")
+}
+
+/// The archive root for a destination `suffix` under it. A configured root
+/// is judged against `removed` first, the paths the caller's removal takes,
+/// and `project`'s linked worktrees.
+fn judged(root: &ArchiveRoot, suffix: &Path, project: &Path, removed: &[&Path]) -> Result<PathBuf> {
+    match root {
+        ArchiveRoot::Default(path) => Ok(path.clone()),
+        ArchiveRoot::Configured(configured) => {
+            check_root(configured, &configured.join(suffix), project, removed)?;
+            Ok(configured.clone())
+        }
+        ArchiveRoot::Invalid(value) => Err(value_refusal(ARCHIVE_ROOT_KEY, value)),
+    }
 }
 
 /// A configured root a removal would take along is refused before anything
@@ -249,10 +265,6 @@ fn build(stage: &Path, tarball: &Path, records: Option<&Value>, paths: &[PathBuf
 /// where given and every path in `paths`, each as it stands on disk. A
 /// build that fails leaves no partial tarball. `removal_root` is the
 /// directory the removal acts in, which a configured root may not share.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the archive directory made under the root and the stage removed once the tarball stands or the build failed"
-)]
 pub fn write(
     root: &ArchiveRoot,
     project: &Path,
@@ -261,17 +273,27 @@ pub fn write(
     records: Option<&Value>,
     paths: &[PathBuf],
 ) -> Result<PathBuf> {
-    let dir = match root {
-        ArchiveRoot::Default(path) => directory(path, project),
-        ArchiveRoot::Configured(configured) => {
-            let dir = directory(configured, project);
-            let mut removed: Vec<&Path> = vec![removal_root];
-            removed.extend(paths.iter().map(PathBuf::as_path));
-            check_root(configured, &dir, project, &removed)?;
-            dir
-        }
-        ArchiveRoot::Invalid(value) => return Err(value_refusal(ARCHIVE_ROOT_KEY, value)),
-    };
+    archived(root, project, &[removal_root], stem, records, paths).map(|(_, tarball)| tarball)
+}
+
+/// [`write`] for a removal out of each of `removal_roots`: the archive's
+/// directory and the tarball.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the archive directory made under the root and the stage removed once the tarball stands or the build failed"
+)]
+fn archived(
+    root: &ArchiveRoot,
+    project: &Path,
+    removal_roots: &[&Path],
+    stem: &str,
+    records: Option<&Value>,
+    paths: &[PathBuf],
+) -> Result<(PathBuf, PathBuf)> {
+    let suffix = oversee(project);
+    let mut removed = removal_roots.to_vec();
+    removed.extend(paths.iter().map(PathBuf::as_path));
+    let dir = judged(root, &suffix, project, &removed)?.join(suffix);
     std::fs::create_dir_all(&dir).map_err(|e| io("mkdir", &dir, e))?;
     std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
         .map_err(|e| io("chmod", &dir, e))?;
@@ -283,7 +305,74 @@ pub fn write(
         let _ = std::fs::remove_file(&tarball);
         return Err(e);
     }
-    Ok(tarball)
+    Ok((dir, tarball))
+}
+
+/// The archive verbs, for the callers that remove files outside any state
+/// verb: the mailbox's compaction archives the rows it drops through
+/// `write`, and the SSH provider's close-out files a hosted clone's records
+/// under `root`. Each judges a configured root against the state directory
+/// too, which the retention pass removes from.
+#[derive(Debug, clap::Subcommand)]
+pub enum Verb {
+    /// Archive PATHS before the caller removes them from its removal root,
+    /// filed under the project's name; the reply is `{archive, dir}`.
+    Write {
+        /// The checkout the archive is filed for, by its directory's name;
+        /// a configured root may not sit in one of its linked worktrees.
+        #[arg(long)]
+        project: PathBuf,
+        /// The directory the caller's removal acts in.
+        #[arg(long)]
+        removal_root: PathBuf,
+        /// The tarball's name before its unique suffix.
+        #[arg(long)]
+        stem: String,
+        /// The paths archived, each as it stands; a relative path is the
+        /// caller's working directory's.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
+    /// The archive root a caller files under SUFFIX; the reply is `{root}`.
+    Root {
+        #[arg(long)]
+        suffix: PathBuf,
+    },
+}
+
+/// Run one archive verb under `settings`: its archive root, its state
+/// directory and the project the caller runs in.
+pub fn verb(verb: Verb, settings: &crate::settings::Settings) -> Result<Value> {
+    let state_dir = settings.state_dir.as_path();
+    match verb {
+        Verb::Write {
+            project,
+            removal_root,
+            stem,
+            paths,
+        } => {
+            let cwd = std::env::current_dir().map_err(|e| io("cwd", Path::new("."), e))?;
+            let paths: Vec<PathBuf> = paths.iter().map(|path| cwd.join(path)).collect();
+            let (dir, archive) = archived(
+                &settings.archive_root,
+                &project,
+                &[&removal_root, state_dir],
+                &stem,
+                None,
+                &paths,
+            )?;
+            Ok(serde_json::json!({"archive": archive, "dir": dir}))
+        }
+        Verb::Root { suffix } => {
+            let root = judged(
+                &settings.archive_root,
+                &suffix,
+                &settings.roots.project,
+                &[state_dir],
+            )?;
+            Ok(serde_json::json!({ "root": root }))
+        }
+    }
 }
 
 /// Remove each path, a file or a tree, then read each back: a path still

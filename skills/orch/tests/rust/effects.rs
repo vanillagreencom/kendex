@@ -4764,6 +4764,95 @@ fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on(
     }
 }
 
+/// An idle local lane whose merge landed, its item still open on its
+/// tracker and its worktree standing: while the item's live state record
+/// stands the lane may be at work on it, so `close-lane` refuses
+/// `lane-live state=idle` and touches neither the harness nor the
+/// worktree. Once the item's close-out removed that record the close ends
+/// the lane on its merge, its harness stopped before the worktree is
+/// released, so the session never runs on in a removed directory.
+#[test]
+fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_released() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    let replies = runner.state_dir().join("linear.json");
+    let open = json!({"issues bulk-get": {"body": {"issues": {"nodes": [
+        {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
+    ]}}}});
+    std::fs::write(&replies, open.to_string()).unwrap();
+    runner.env = vec![
+        (
+            "OVERSEE_WATCH_TRACKER".to_owned(),
+            fixtures()
+                .join("linear-fixture/linear.sh")
+                .display()
+                .to_string(),
+        ),
+        (
+            "LINEAR_FAKE_REPLIES".to_owned(),
+            replies.display().to_string(),
+        ),
+        (
+            "LINEAR_FAKE_LOG".to_owned(),
+            runner.state_dir().join("linear.log").display().to_string(),
+        ),
+    ];
+    runner.init_fleet();
+    let (_repo, wt) = worktree_fixture(dir.path());
+    let launched = effect_report(&runner.op_fleet(&launch_request("KEN-W", runner.state_dir())));
+    assert_eq!(launched["intent"]["outcome"], "confirmed", "{launched}");
+    let pid = launched["lane"]["launch"]["pid"].as_u64().unwrap() as u32;
+    let mut fleet = runner.fleet();
+    fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
+    fleet["lanes"][0]["cycle"] = json!({"pr": 7});
+    runner.write_fleet(&fleet);
+    let record = runner.state_dir().join("workflow-state-KEN-W.json");
+    std::fs::write(&record, "{}\n").unwrap();
+    let close = json!({"op": "close-lane", "item": "KEN-W"});
+    let cli = worktree_cli();
+    let worktree = [("WORKTREE_CLI", cli.as_str())];
+
+    let answer = reply(&runner.op_fleet_env(&close, &worktree));
+    assert_eq!(answer["refusal"]["key"], "lane-live", "{answer}");
+    assert_eq!(
+        refusal_field(&answer, "state"),
+        Some("idle".to_owned()),
+        "{answer}"
+    );
+    assert!(live(pid), "a refused close stops nothing");
+    assert!(wt.exists(), "a refused close removes nothing");
+
+    std::fs::remove_file(&record).unwrap();
+    let answer = reply(&runner.op_fleet_env(&close, &worktree));
+    let result = &answer["result"];
+    assert_eq!(result["word"], "closed", "{answer}");
+    assert!(!live(pid), "the harness is stopped");
+    assert!(!wt.exists(), "the clean merged worktree is released");
+    let discharged: Vec<&str> = result["effect"]["report"]["intent"]["obligations"]["discharged"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["obligation"]["kind"].as_str())
+        .collect();
+    let process = discharged.iter().position(|k| *k == "process");
+    let worktree = discharged.iter().position(|k| *k == "worktree");
+    assert!(
+        process.is_some() && process < worktree,
+        "the harness's stop is settled before the worktree's release: {discharged:?}"
+    );
+}
+
+/// The value of the refusal's field `name`.
+fn refusal_field(answer: &Value, name: &str) -> Option<String> {
+    answer["refusal"]["fields"]
+        .as_array()?
+        .iter()
+        .find(|pair| pair[0] == name)
+        .and_then(|pair| pair[1].as_str())
+        .map(str::to_owned)
+}
+
 /// The dirty read lists every untracked file whatever the repository's
 /// `status.showUntrackedFiles` setting, so a draft that setting hides from
 /// a plain `git status` still keeps the worktree: a listing that obeys the

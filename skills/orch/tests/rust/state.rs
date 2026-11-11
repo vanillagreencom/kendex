@@ -2036,6 +2036,208 @@ fn a_relative_archive_root_refuses_the_archive_write_alone() {
     }
 }
 
+/// The archive verbs a caller runs before a removal no state verb makes.
+/// `archive write` files its paths as one private tarball under
+/// `<root>/<project's name>/oversee` and answers the tarball and that
+/// directory; `archive root` answers the root a caller files under. A
+/// configured root the caller's removal root, the state directory or a
+/// linked worktree of the project would take refuses before anything is
+/// written there: an archive inside what is removed next is no copy. Each
+/// verb runs from a directory that is no checkout, so the project the write
+/// names, not the caller's directory, files the archive.
+#[test]
+fn the_archive_verbs_file_under_a_root_no_removal_takes() {
+    let store = Store::new();
+    let tmp = fs::canonicalize(store.dir.path()).unwrap();
+    let project = tmp.join("project");
+    fs::create_dir_all(&project).unwrap();
+    let git = |args: &[&str]| {
+        let out = support::program("git")
+            .arg("-C")
+            .arg(&project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            support::stderr(&out)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "init"]);
+    let worktree = tmp.join("lane");
+    git(&[
+        "worktree",
+        "add",
+        "-q",
+        &worktree.display().to_string(),
+        "-b",
+        "lane",
+    ]);
+    let state = tmp.join("state");
+    fs::create_dir_all(&state).unwrap();
+    let removal = tmp.join("box");
+    fs::create_dir_all(&removal).unwrap();
+    let input = removal.join("to-lane.jsonl");
+    fs::write(&input, "{\"id\":\"1\"}\n").unwrap();
+    let elsewhere = tmp.join("elsewhere");
+    fs::create_dir_all(&elsewhere).unwrap();
+    let fleet = tmp.join("fleet");
+    let path = |p: &Path| p.display().to_string();
+    let write = [
+        "archive".to_owned(),
+        "write".into(),
+        "--project".into(),
+        path(&project),
+        "--removal-root".into(),
+        path(&removal),
+        "--stem".into(),
+        "compact-KEN-1-7".into(),
+        path(&input),
+    ];
+    let root = ["archive", "root", "--suffix", "repo/KEN-1"].map(str::to_owned);
+    /// The case, the verb's words, its working directory, the configured
+    /// root, then the archive root answered or the path an overlap names.
+    type Case<'a> = (
+        &'a str,
+        &'a [String],
+        &'a Path,
+        Option<PathBuf>,
+        Result<PathBuf, PathBuf>,
+    );
+    let cases: Vec<Case> = vec![
+        (
+            "write, default",
+            &write,
+            &elsewhere,
+            None,
+            Ok(fleet.join("archive")),
+        ),
+        (
+            "write, configured",
+            &write,
+            &elsewhere,
+            Some(tmp.join("archives")),
+            Ok(tmp.join("archives")),
+        ),
+        (
+            "write, inside the removal root",
+            &write,
+            &elsewhere,
+            Some(removal.join("archives")),
+            Err(removal.clone()),
+        ),
+        (
+            "write, inside the state directory",
+            &write,
+            &elsewhere,
+            Some(state.join("archives")),
+            Err(state.clone()),
+        ),
+        (
+            "write, inside a linked worktree",
+            &write,
+            &elsewhere,
+            Some(worktree.join("archives")),
+            Err(worktree.clone()),
+        ),
+        (
+            "root, default",
+            &root,
+            &project,
+            None,
+            Ok(fleet.join("archive")),
+        ),
+        (
+            "root, configured",
+            &root,
+            &project,
+            Some(tmp.join("archives")),
+            Ok(tmp.join("archives")),
+        ),
+        (
+            "root, inside the state directory",
+            &root,
+            &project,
+            Some(state.join("archives")),
+            Err(state.clone()),
+        ),
+        (
+            "root, inside a linked worktree",
+            &root,
+            &project,
+            Some(worktree.join("archives")),
+            Err(worktree.clone()),
+        ),
+    ];
+    for (case, words, cwd, configured, want) in cases {
+        let mut command = support::isolated();
+        command
+            .arg("--state-dir")
+            .arg(&state)
+            .args(words)
+            .env("FLEET_DIR", &fleet)
+            .current_dir(cwd);
+        if let Some(configured) = &configured {
+            command.env("ORCH_ARCHIVE_ROOT", configured);
+        }
+        let out = command.output().unwrap();
+        let answer = reply(&out);
+        match want {
+            Ok(want) if words[1] == "root" => {
+                assert!(out.status.success(), "{case}: {}", support::stderr(&out));
+                assert_eq!(answer["result"]["root"], path(&want), "{case}: {answer}");
+            }
+            Ok(want) => {
+                assert!(out.status.success(), "{case}: {}", support::stderr(&out));
+                let dir = want.join("project").join("oversee");
+                assert_eq!(answer["result"]["dir"], path(&dir), "{case}: {answer}");
+                let archive = PathBuf::from(answer["result"]["archive"].as_str().unwrap());
+                assert_eq!(archive.parent(), Some(dir.as_path()), "{case}");
+                let name = archive.file_name().unwrap().to_string_lossy();
+                assert!(
+                    name.starts_with("compact-KEN-1-7-") && name.ends_with(".tgz"),
+                    "{case}: {name}"
+                );
+                use std::os::unix::fs::PermissionsExt;
+                assert_eq!(
+                    fs::metadata(&archive).unwrap().permissions().mode() & 0o777,
+                    0o600,
+                    "{case}: a private tarball"
+                );
+                assert_eq!(
+                    fs::read_dir(&dir).unwrap().count(),
+                    1,
+                    "{case}: the tarball alone, its stage removed"
+                );
+                assert_eq!(
+                    archived_file(&path(&archive), &input),
+                    "{\"id\":\"1\"}\n",
+                    "{case}"
+                );
+            }
+            Err(removed) => {
+                assert_eq!(out.status.code(), Some(1), "{case}: {answer}");
+                assert_eq!(
+                    answer["refusal"]["key"], "archive-root-overlap",
+                    "{case}: {answer}"
+                );
+                assert_eq!(
+                    answer["refusal"]["fields"][1],
+                    json!(["removed", path(&removed)]),
+                    "{case}: {answer}"
+                );
+                let configured = configured.unwrap();
+                assert!(
+                    fs::symlink_metadata(&configured).is_err(),
+                    "{case}: nothing is written under the refused root"
+                );
+            }
+        }
+    }
+}
+
 /// Several pointer pairs are one write: every pair lands, or a refused
 /// pair or a pointer left without its value writes nothing at all.
 #[test]
