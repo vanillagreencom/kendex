@@ -4364,17 +4364,18 @@ fn no_handoff(item: &str) -> Vec<(String, Value)> {
     answers
 }
 
-/// A merged lane's own close-out removes its worktree, so a worktree that
-/// stands is a close-out still running. A hosted lane the provider's status
-/// verb reads exited is `lane-exited` on the second pass; one whose item
-/// the GitHub duty read merged and whose `.git` the host has not is closed
-/// through the close verb then, its request naming the merge as the
-/// delivery, `lane-closed` with its archive line under it; one whose
-/// worktree stands is not; one with no merged row is closed with its
-/// sandbox kept (`keep-sandbox`, `kept=sandbox`); the next pass, the closed
-/// records read stopped, says nothing.
+/// A merged lane's close-out removes its item's live record, so a record
+/// that stands in the clone is a close-out still running or a lane resumed.
+/// A hosted lane the provider's status verb reads exited is `lane-exited`
+/// on the second pass; one whose item the GitHub duty read merged and whose
+/// `.git` the host has not, or whose `.git` stands with the item's record
+/// gone from the clone it names, is closed through the close verb then, its
+/// request naming the merge as the delivery, `lane-closed` with its archive
+/// line under it; one whose record stands is not; one with no merged row is
+/// closed with its sandbox kept (`keep-sandbox`, `kept=sandbox`); the next
+/// pass, the closed records read stopped, says nothing.
 #[test]
-fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited_and_a_standing_one_is_not()
+fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_exited_and_one_whose_record_stands_is_not()
  {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -4382,10 +4383,11 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     let (one, _) = hosted_pane_lane(&server, "KEN-1", "gh-1", dir.path());
     let (two, _) = hosted_pane_lane(&server, "KEN-2", "gh-2", dir.path());
     let (three, _) = hosted_pane_lane(&server, "KEN-3", "gh-3", dir.path());
-    fleet.set_lanes(vec![one.clone(), two.clone(), three.clone()]);
+    let (four, _) = hosted_pane_lane(&server, "KEN-4", "gh-4", dir.path());
+    fleet.set_lanes(vec![one.clone(), two.clone(), three.clone(), four.clone()]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    let mut answers: Vec<(String, Value)> = ["KEN-1", "KEN-2", "KEN-3"]
+    let mut answers: Vec<(String, Value)> = ["KEN-1", "KEN-2", "KEN-3", "KEN-4"]
         .into_iter()
         .flat_map(no_handoff)
         .collect();
@@ -4395,11 +4397,18 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
             ("status --item KEN-1 --harness claude", ok("exited\n")),
             ("status --item KEN-2 --harness claude", ok("exited\n")),
             ("status --item KEN-3 --harness claude", ok("exited\n")),
+            ("status --item KEN-4 --harness claude", ok("exited\n")),
             ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
             ("touch --item KEN-1", ok("")),
             // No merged row: the gate alone keeps it open, its worktree gone.
             ("cat --item KEN-3 /remote/KEN-3/.git", answer(2, "")),
             ("touch --item KEN-3", ok("")),
+            // Its worktree stands and its close-out removed its record.
+            (
+                "cat --item KEN-4 /x/tmp/workflow-state-KEN-4.json",
+                answer(2, ""),
+            ),
+            ("touch --item KEN-4", ok("")),
         ]
         .map(|(argv, answer)| (argv.to_owned(), answer)),
     );
@@ -4407,10 +4416,11 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     world.plant_close(json!({
         "KEN-1": verb_reply("KEN-1", "closed", json!({"host_close": "kept=/archive/KEN-1"})),
         "KEN-3": verb_reply("KEN-3", "stopped", json!({"identity": "none"})),
+        "KEN-4": verb_reply("KEN-4", "closed", json!({"host_close": "kept=/archive/KEN-4"})),
     }));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
-    for (item, key) in [("KEN-1", "o/r#7"), ("KEN-2", "o/r#8")] {
+    for (item, key) in [("KEN-1", "o/r#7"), ("KEN-2", "o/r#8"), ("KEN-4", "o/r#9")] {
         driver.baseline.apply(Change::Set {
             kind: "merged".into(),
             identity: item.into(),
@@ -4431,6 +4441,9 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
             "EVENT lane-exited gh-3",
             "EVENT lane-closed KEN-3",
             "kept=sandbox",
+            "EVENT lane-exited gh-4",
+            "EVENT lane-closed KEN-4",
+            "kept=/archive/KEN-4",
         ]
     );
     assert_eq!(second.failed, None);
@@ -4444,6 +4457,10 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
             close_call(
                 &driver.state_dir,
                 r#"{"item":"KEN-3","mode":"keep-sandbox","op":"close-lane"}"#
+            ),
+            close_call(
+                &driver.state_dir,
+                r#"{"delivery":{"pr":{"pr":9,"repo":"o/r"}},"item":"KEN-4","op":"close-lane"}"#
             ),
         ]
     );
@@ -4460,11 +4477,13 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     closed["status"] = json!("stopped");
     let mut kept = three;
     kept["status"] = json!("stopped");
-    fleet.set_lanes(vec![closed, two, kept]);
+    let mut done = four;
+    done["status"] = json!("stopped");
+    fleet.set_lanes(vec![closed, two, kept, done]);
     let third = driver.pass(&fleet.read());
     assert!(event_lines(&third).is_empty(), "{:?}", lines(&third));
     assert_eq!(third.failed, None);
-    assert_eq!(world.close_log().len(), 2);
+    assert_eq!(world.close_log().len(), 3);
     assert!(std::fs::metadata(&marker).is_err());
 }
 

@@ -2040,9 +2040,7 @@ pub(crate) fn configured_state_dir(
 ) -> Result<Option<(PathBuf, PathBuf)>, String> {
     let host = host_of(lane);
     let clone = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
-        Answer::Live(gitfile) => match marker::git_dirs_of(&gitfile)
-            .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
-        {
+        Answer::Live(gitfile) => match clone_of(&gitfile) {
             Some(clone) => clone,
             None => return Err(format!("gitfile-unread path={root}/.git")),
         },
@@ -2073,6 +2071,46 @@ pub(crate) fn configured_state_dir(
         clone.join(dir)
     };
     Ok(Some((dir, clone)))
+}
+
+/// The clone a linked worktree's `.git` file names: its common directory's
+/// parent.
+fn clone_of(gitfile: &str) -> Option<PathBuf> {
+    marker::git_dirs_of(gitfile).and_then(|(_, common)| common.parent().map(Path::to_path_buf))
+}
+
+/// What a hosted lane's work leaves on its host, the proof a merged lane is
+/// done: its worktree's `.git`, then the item's live state record
+/// `<clone>/tmp/workflow-state-<ITEM>.json`, each through `cat`, the clone the
+/// one that `.git` names. `Gone` is the close-out done, the worktree gone or
+/// the record removed; `Live` the record standing, a close-out still running
+/// or a lane resumed; `Unreadable` a read that failed, the provider's cause
+/// kept, or a `.git` naming no linked worktree's clone. The host's state
+/// directory is read as the clone's `tmp/`, the default: a state directory
+/// set elsewhere on the host is not seen from the control machine, and its
+/// item reads closed out once the worktree's `.git` stands without a record
+/// there.
+pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
+    let Some(root) = root_of(lane) else {
+        return Answer::Gone;
+    };
+    let host = host_of(lane);
+    let gitfile = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
+        Answer::Live(gitfile) => gitfile,
+        Answer::Gone => return Answer::Gone,
+        Answer::Unreadable { cause } => return Answer::Unreadable { cause },
+    };
+    let Some(clone) = clone_of(&gitfile) else {
+        return Answer::Unreadable {
+            cause: format!("gitfile-unread path={root}/.git"),
+        };
+    };
+    let record = state::item_path(&clone.join("tmp"), &lane.item);
+    match fetch(scripts, host, &lane.item, &record.display().to_string()) {
+        Answer::Live(_) => Answer::Live(()),
+        Answer::Gone => Answer::Gone,
+        Answer::Unreadable { cause } => Answer::Unreadable { cause },
+    }
 }
 
 /// The clone [`CLONE_ROW`] keeps for `item` in the watch's baseline beside
@@ -2152,10 +2190,11 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 
 /// The finished-hosted close at a hosted lane's
 /// `lane-exited` or `lane-idle` line: a lane whose item the GitHub duty read
-/// merged and whose worktree the host no longer has is closed through the
-/// one close; one whose worktree stands is inside its merge close-out or
-/// resumed and is left. A lane its provider's status verb read exited on
-/// two passes (`lane-exited`) whose item has no merge is closed with its
+/// merged and whose work left nothing on its host ([`record_left`]) is
+/// closed through the one close; one whose item's record stands is inside
+/// its merge close-out or resumed and is left. A lane its provider's status
+/// verb read exited on two passes (`lane-exited`) whose item has no merge
+/// is closed with its
 /// sandbox kept: the attempt ends and its record stops charging a slot,
 /// the sandbox standing for a relaunch; a host whose status read fails
 /// reads no exit and keeps the slot. A failed close un-reports the
@@ -2185,7 +2224,7 @@ pub fn close_finished(
         if caps.files != Files::Verb {
             return;
         }
-        match worktree(pass.scripts, lane) {
+        match record_left(pass.scripts, lane) {
             Answer::Live(()) => return,
             Answer::Gone => {}
             Answer::Unreadable { cause } => {

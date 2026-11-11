@@ -13,7 +13,7 @@
 //! sandbox with its disk kept and records the park. Every read that does not
 //! answer refuses with its cause; nothing past a refusal runs.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -149,11 +149,13 @@ fn terminal(state: TerminalState) -> Option<Terminal> {
     })
 }
 
+/// The item's one lane record, with the tmux socket the controller record
+/// names.
 #[allow(
     clippy::disallowed_methods,
     reason = "the close verb's one read of the fleet record before it acts, a snapshot it judges; the close transition re-reads under the lock"
 )]
-fn read_lane(path: &Path, item: &str) -> Result<Lane> {
+fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>)> {
     let fleet = state::load(path)?
         .map(|snapshot| snapshot.view::<FleetState>(path))
         .transpose()?
@@ -161,7 +163,10 @@ fn read_lane(path: &Path, item: &str) -> Result<Lane> {
     let records: Vec<&Lane> = fleet.lanes.iter().filter(|l| l.item == item).collect();
     match records.as_slice() {
         [] => Err(refused("lane-missing", &[("item", item)])),
-        [lane] => Ok((*lane).clone()),
+        [lane] => Ok((
+            (*lane).clone(),
+            fleet.overseer.as_ref().and_then(super::overseer_socket),
+        )),
         many => Err(refused(
             "lane-duplicate",
             &[("item", item), ("count", &many.len().to_string())],
@@ -179,7 +184,7 @@ pub fn close_lane(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Closed> {
-    let lane = read_lane(path, &r.item)?;
+    let (lane, socket) = read_lane(path, &r.item)?;
     let who = Identity::of(&lane, &r.identity)?;
     let answer = |word: Word, status: Option<LaneStatus>| Closed {
         item: r.item.clone(),
@@ -246,6 +251,7 @@ pub fn close_lane(
         caps,
         who,
         lane,
+        socket,
     };
     match caps.stop {
         Some(StopKind::None) => close.cloud(),
@@ -277,6 +283,9 @@ struct Close<'a> {
     caps: Capabilities,
     who: Identity,
     lane: Lane,
+    /// The controller record's tmux socket, where the lane's server is
+    /// looked for first.
+    socket: Option<PathBuf>,
 }
 
 /// What the wall's account reading said: the `account=` word of a
@@ -503,7 +512,8 @@ impl Close<'_> {
     /// A running lane: judged by its state, its harness stopped through its
     /// provider where it is hosted, then closed, kept or parked.
     fn running(self) -> Result<Closed> {
-        let mut judged = lanes::judge(self.settings, &self.lane, None);
+        let socket = self.socket.as_deref();
+        let mut judged = lanes::judge(self.settings, &self.lane, socket, None);
         // A limit banner stays on a parked lane's screen after its window
         // resets, since the lane takes no turn to scroll it away: a usage
         // wall is weighed against the record's account and lifts only where
@@ -517,7 +527,7 @@ impl Close<'_> {
         {
             let read = self.wall(banner);
             if read.lifts() {
-                judged = lanes::judge(self.settings, &self.lane, Some(true));
+                judged = lanes::judge(self.settings, &self.lane, socket, Some(true));
             }
             wall = Some(read);
         }
@@ -750,14 +760,14 @@ impl Close<'_> {
     }
 
     /// Whether the record's merge cycle, or the delivery the request names,
-    /// stands and the lane's last work is over. A hosted lane's proof is its
-    /// worktree gone on its host. A local lane's is its item closed out or
-    /// its worktree gone: the close-out removes the live state record only
-    /// once the project's verification passed, and the close stops the
-    /// session before it releases the worktree, so a lane need not remove
-    /// the directory it runs in. A recorded merge alone is no proof: a lane
-    /// resumed on a merged item works on with its record standing. A read
-    /// that fails refuses.
+    /// stands and the lane's last work is over: its item closed out or its
+    /// worktree gone, read on its host through the provider where it is
+    /// hosted ([`hosted::record_left`]). The close-out removes the live state
+    /// record only once the project's verification passed, and the close
+    /// stops the session before it releases the worktree, so a lane need not
+    /// remove the directory it runs in. A recorded merge alone is no proof:
+    /// a lane resumed on a merged item works on with its record standing. A
+    /// read that fails refuses.
     fn merged_and_done(&self) -> Result<bool> {
         if !(super::stop::record_merged(&self.lane) || self.r.delivery.is_some()) {
             return Ok(false);
@@ -766,7 +776,7 @@ impl Close<'_> {
         if !self.hosted() {
             return Ok(std::fs::symlink_metadata(root).is_err() || self.closed_out()?);
         }
-        match hosted::worktree(self.scripts, &self.lane) {
+        match hosted::record_left(self.scripts, &self.lane) {
             HostAnswer::Gone => Ok(true),
             HostAnswer::Live(()) => Ok(false),
             HostAnswer::Unreadable { cause } => Err(refused(
@@ -898,7 +908,8 @@ impl Close<'_> {
         if pane.is_none() && self.caps.pane != PaneKind::Verb {
             return Ok(());
         }
-        let read = || match lanes::judge(self.settings, &self.lane, None).state {
+        let socket = self.socket.as_deref();
+        let read = || match lanes::judge(self.settings, &self.lane, socket, None).state {
             LaneState::Exited | LaneState::Gone => Some(Ok(())),
             LaneState::Unreadable { cause } => Some(Err(refused(
                 "pane-read-failed",

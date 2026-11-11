@@ -2204,6 +2204,132 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
     assert_eq!(row["disposition"], "ended", "{row}");
 }
 
+/// A merged hosted lane whose worktree stands is done once its item's
+/// close-out removed the item's live record from the clone the worktree's
+/// `.git` names, both read on the provider's disk through the real
+/// dispatcher: with the record standing the close refuses `pane-missing`
+/// and stops nothing; with it removed the lane ends on the merge, its
+/// harness stopped and the provider's close asked; a record the host cannot
+/// read refuses by the close's unreadable or busy key with the provider's
+/// cause.
+#[test]
+fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left_the_clone() {
+    const RECORD: &str = "/w/clone/tmp/workflow-state-KEN-1.json";
+    for (case, standing, cat_status, refused) in [
+        ("record standing", true, None, Some(("pane-missing", None))),
+        (
+            "record unreadable",
+            true,
+            Some("1"),
+            Some(("worktree-read-failed", Some("cat exit=1"))),
+        ),
+        (
+            "record read capped",
+            true,
+            Some("69"),
+            Some(("lane-host-busy", Some("cat exit=69"))),
+        ),
+        ("record removed", false, None, None),
+    ] {
+        let mut fleet = Fleet::hosted(4);
+        let disk = fleet.state_dir().join("provider-disk");
+        let worktree = disk.join(REMOTE_ROOT.trim_start_matches('/'));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            "gitdir: /w/clone/.git/worktrees/ken-1\n",
+        )
+        .unwrap();
+        if standing {
+            let record = disk.join(RECORD.trim_start_matches('/'));
+            std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+            std::fs::write(&record, "{}").unwrap();
+        }
+        if let Some(status) = cat_status {
+            fleet.answer("CAT_STATUS", status);
+            fleet.answer("CAT_PATH", RECORD);
+        }
+        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.plant_tracker("KEN-1", "started");
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let calls = fleet.provider_calls();
+        assert!(
+            calls.contains(&format!("cat --item KEN-1 {RECORD}")),
+            "{case}: the record is read in the clone: {calls:?}"
+        );
+        match refused {
+            Some((key, cause)) => {
+                assert_eq!(answer["refusal"]["key"], key, "{case}: {answer}");
+                if let Some(cause) = cause {
+                    let fields = refusal_fields(&answer);
+                    assert!(fields["cause"].starts_with(cause), "{case}: {fields:?}");
+                }
+                assert!(
+                    !calls.iter().any(|l| l.starts_with("stop ")),
+                    "{case}: a refused close stops nothing: {calls:?}"
+                );
+                assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
+            }
+            None => {
+                assert_eq!(answer["result"]["word"], "closed", "{case}: {answer}");
+                assert!(
+                    calls.contains(&"stop --item KEN-1 --harness claude".to_owned()),
+                    "{case}: {calls:?}"
+                );
+                assert_eq!(
+                    calls.last().map(String::as_str),
+                    Some("close --item KEN-1"),
+                    "{case}"
+                );
+                assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
+            }
+        }
+    }
+}
+
+/// The close reads a lane where the watch does: on the tmux server the
+/// controller record names before the caller's own. A lane whose pane is an
+/// idle shell on the controller's server, its harness ended and the
+/// caller's server unreachable, is read exited there and closes, its window
+/// closed on that server.
+#[test]
+fn a_close_reads_its_lane_on_the_controllers_recorded_server() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let dir = tempfile::tempdir().unwrap();
+    let controller = Server::start(dir.path(), "fleet");
+    let pane = controller.open_window("gh-c", fleet.state_dir(), "bash --norc --noprofile");
+    let mut harness = Owned::sleep();
+    let start = harness.start();
+    end(&mut harness);
+    let mut state = fleet.fleet();
+    state["overseer"] = json!({"server_socket": controller.socket.display().to_string()});
+    state["intents"] = json!([]);
+    state["lanes"] = json!([{
+        "item": "KEN-C", "window": "fleet:gh-c", "harness": "claude",
+        "mail_root": fleet.state_dir().display().to_string(), "status": "running",
+        "launched_at": "2026-01-29T15:00:00Z", "session_since": "2026-01-29T15:00:00Z",
+        "launch": {
+            "pane": pane, "server": controller.pid, "server_start": controller.start,
+            "pid": harness.pid(), "start": start,
+        },
+    }]);
+    std::fs::write(
+        fleet.fleet_path(),
+        serde_json::to_string_pretty(&state).unwrap(),
+    )
+    .unwrap();
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-C"}));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    let intent = &answer["result"]["effect"]["report"]["intent"];
+    assert_eq!(intent["close"]["ground"], "exited", "{answer}");
+    assert_eq!(fleet.lane("KEN-C")["status"], "done");
+    assert!(
+        !controller.panes().contains(&pane),
+        "the lane's window is closed on the controller's server"
+    );
+}
+
 /// `keep-sandbox` on a hosted lane its provider reads exited ends the
 /// attempt and keeps the sandbox: nothing is stopped or closed through the
 /// provider, the record reads stopped with its work kept.

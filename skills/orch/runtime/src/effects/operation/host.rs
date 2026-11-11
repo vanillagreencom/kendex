@@ -253,10 +253,9 @@ fn observe_pane(opened: &OpenedPane) -> Observed<Pane> {
     observe_fields(&server, &opened.pane)
 }
 
-/// The pane `key` names, on the caller's ambient server.
-fn observe_key(key: &PaneRef) -> Observed<Pane> {
-    let ambient: Vec<PathBuf> = tmux::ambient_socket().into_iter().collect();
-    match server_at(&ambient, key.server, key.server_start) {
+/// The pane `key` names, on the server among `sockets` its key names.
+fn observe_key(sockets: &[PathBuf], key: &PaneRef) -> Observed<Pane> {
+    match server_at(sockets, key.server, key.server_start) {
         Observed::Present(server) => observe_fields(&server, &key.pane),
         Observed::Gone { cause } => Observed::Gone { cause },
         Observed::Unobservable { cause } => Observed::Unobservable { cause },
@@ -1068,15 +1067,19 @@ impl Operation<'_> {
     }
 
     /// The standing pane of the set under the harness role as it reads on the
-    /// ambient server: `None` where the set holds none; present as its token;
-    /// gone, discharged by that read; or unobservable, standing.
+    /// server its key names among [`Self::sockets`], the socket `overseer`
+    /// records before the ambient one: `None` where the set holds none;
+    /// present as its token; gone, discharged by that read; or unobservable,
+    /// standing.
     pub(in crate::effects) fn observe_lane_pane(
         &mut self,
+        overseer: Option<&Overseer>,
     ) -> Result<Option<Observed<Standing<Pane>>>> {
         let Some(key) = self.obligations.pane(Role::Harness) else {
             return Ok(None);
         };
-        Ok(Some(match observe_key(&key) {
+        let sockets = self.sockets(overseer);
+        Ok(Some(match observe_key(&sockets, &key) {
             Observed::Present(pane) => match self.standing_pane(pane) {
                 Ok(token) => Observed::Present(token),
                 Err(_) => unreachable!("the pane read by its standing key stands"),
@@ -1221,12 +1224,16 @@ impl Operation<'_> {
         Ok(close)
     }
 
-    /// Close the window of the set's standing pane on the ambient server: one
+    /// Close the window of the set's standing pane on the server
+    /// [`Self::observe_lane_pane`] reads it on: one
     /// present is killed by its token; one gone stands no more; none standing
     /// is no window to close; one the host did not answer for stands with
     /// that cause.
-    pub(in crate::effects) fn close_lane_window(&mut self) -> Result<WindowClose> {
-        Ok(match self.observe_lane_pane()? {
+    pub(in crate::effects) fn close_lane_window(
+        &mut self,
+        overseer: Option<&Overseer>,
+    ) -> Result<WindowClose> {
+        Ok(match self.observe_lane_pane(overseer)? {
             None => WindowClose::Unrecorded,
             Some(Observed::Gone { cause }) => WindowClose::Gone { cause },
             Some(Observed::Present(pane)) => WindowClose::Window(self.close_window(pane)?),

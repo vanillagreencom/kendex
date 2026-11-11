@@ -22,9 +22,9 @@ use super::operation::{
     EffectOutcome, Foreground, Identity, Observed, Operation, ProcessRead, ProcessReading, Reading,
     State, Stop, Word, WorktreeRelease,
 };
-use super::{Run, Target, lane_for_intent, launch_intent_of, pane_harness, read_intent};
+use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Intent, Lane, TerminalVerdict};
+use crate::state::{CloseGround, Intent, Lane, Overseer, TerminalVerdict};
 use crate::watch::hosted::{Asked, HostClosed};
 
 /// `stale` is what the reconcile of the same request already read stale,
@@ -32,6 +32,7 @@ use crate::watch::hosted::{Asked, HostClosed};
 pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, intent_id)?;
     let intent = read_intent(run.path, intent_id)?;
+    let overseer = fleet(run.path)?.overseer;
     let harness = pane_harness(&lane, launch_intent_of(run.path, &item)?.as_ref());
     // The lane's recorded handles as the durable set, read from the intent
     // where it stands, else bootstrapped from the lane's launch record and
@@ -45,13 +46,14 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         target: harness.map(|h| Target::new(run.settings, h)).transpose()?,
         ground: intent.close.as_ref(),
         cycle: intent.cycle.as_ref().map(|row| &row.cycle),
+        overseer: overseer.as_ref(),
     };
     // A lane whose stamp or launch keys are not the intent's is a moved lane
     // (the one judgement the store applies too): before any signal the close
     // refuses with no effect; after one it retries on the recorded set alone
     // and never acts on the new session.
     if operation.lane_moved(&lane) {
-        return moved_lane(run, operation, close.observed(json!({})));
+        return moved_lane(run, operation, close.overseer, close.observed(json!({})));
     }
     // The worktree's validation runs are owed from the close's start,
     // acquired before the first signal; so is the worktree itself, except
@@ -107,7 +109,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     // Copilot writes its session totals on `/exit`; give it that before the
     // signal. Best effort: the stop below handles a pane that did not exit.
     if close.harness() == Some(Harness::Copilot)
-        && let Some(Observed::Present(pane)) = operation.observe_lane_pane()?
+        && let Some(Observed::Present(pane)) = operation.observe_lane_pane(close.overseer)?
     {
         operation.copilot_exit(&pane)?;
     }
@@ -145,6 +147,9 @@ struct Close<'a> {
     ground: Option<&'a CloseGround>,
     /// The merge cycle this close records on the lane when it confirms.
     cycle: Option<&'a Value>,
+    /// The controller record, whose tmux socket the lane's pane is looked
+    /// for on before the ambient one, as the close's own read looks.
+    overseer: Option<&'a Overseer>,
 }
 
 impl Close<'_> {
@@ -238,7 +243,7 @@ impl Close<'_> {
             let Some(target) = &self.target else {
                 return Ok(Err(("harness-unknown", json!({}))));
             };
-            let pane = match operation.observe_lane_pane()? {
+            let pane = match operation.observe_lane_pane(self.overseer)? {
                 Some(Observed::Present(pane)) => pane,
                 Some(Observed::Gone { cause } | Observed::Unobservable { cause }) => {
                     return Ok(Err(("idle-unproved", json!({"pane": cause}))));
@@ -353,7 +358,7 @@ impl Close<'_> {
                 }
             }
         }
-        let window = operation.close_lane_window()?;
+        let window = operation.close_lane_window(self.overseer)?;
         observation["window"] = json!(window.word());
         // The run's diagnostic of the release; the set's discharge word and
         // the lane's `kept` and `kept_mail` are the reading.
@@ -389,7 +394,7 @@ impl Close<'_> {
             }
             Ok(())
         };
-        let pane = match operation.observe_lane_pane()? {
+        let pane = match operation.observe_lane_pane(self.overseer)? {
             // No addressable pane stands: the wake and validation runs are
             // what remains to end.
             None => {
@@ -570,6 +575,7 @@ fn with_pane(operation: &Operation, mut observation: Value) -> Value {
 fn moved_lane(
     run: &Run,
     mut operation: Operation,
+    overseer: Option<&Overseer>,
     mut observation: Value,
 ) -> Result<EffectOutcome> {
     observation["lane"] = json!("moved");
@@ -581,13 +587,13 @@ fn moved_lane(
         .map(|h| Target::new(run.settings, h))
         .transpose()?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
-    operation.read_standing(None)?;
+    operation.read_standing(overseer)?;
     operation.release_validation_moved()?;
     operation.release_worktree_moved()?;
     if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
         observation["cause"] = json!(cause);
     }
-    operation.close_standing_panes(None)?;
+    operation.close_standing_panes(overseer)?;
     let mut outcome = operation.settle(Word::Confirmed, observation);
     if !outcome.ended() {
         outcome.annotate("stop", json!("pending"));
@@ -617,13 +623,20 @@ fn reconcile_observation(item: &str, observation: Value) -> Value {
 /// processes by token and closing its own panes.
 pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, &intent.id)?;
+    let overseer = fleet(run.path)?.overseer;
+    let overseer = overseer.as_ref();
     let mut operation = Operation::open(run, intent)?;
     // Every standing handle is read by its own key first: a wake the lane's
     // writer replaced, or a replacement foreground whose pane is gone, is read
     // here whatever the lane record names now.
-    operation.read_standing(None)?;
+    operation.read_standing(overseer)?;
     if operation.lane_moved(&lane) {
-        return moved_lane(run, operation, reconcile_observation(&item, json!({})));
+        return moved_lane(
+            run,
+            operation,
+            overseer,
+            reconcile_observation(&item, json!({})),
+        );
     }
     let hold = |operation: Operation, observation: Value| {
         operation.hold(reconcile_observation(&item, observation))
@@ -632,7 +645,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     // pane gone or none stands is what the close judges beside the recorded
     // process's end, a pane present or unobservable settles nothing here.
     let pane = |operation: &mut Operation, observation: &mut Value| -> Result<bool> {
-        let (word, cause, judged) = match operation.observe_lane_pane()? {
+        let (word, cause, judged) = match operation.observe_lane_pane(overseer)? {
             None => ("unrecorded", None, true),
             Some(Observed::Gone { cause }) => ("gone", Some(cause), true),
             Some(Observed::Present(_)) => ("present", None, false),

@@ -837,7 +837,14 @@ pub(crate) struct Judged {
     pub answered: bool,
 }
 
-pub(crate) fn judge(settings: &Settings, lane: &Lane, account_room: Option<bool>) -> Judged {
+/// `socket` is the one the controller record names, where the lane's server
+/// is looked for first, as the observation duty looks.
+pub(crate) fn judge(
+    settings: &Settings,
+    lane: &Lane,
+    socket: Option<&Path>,
+    account_room: Option<bool>,
+) -> Judged {
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
     let (host, answered) = match hosts.of(lane) {
@@ -858,7 +865,7 @@ pub(crate) fn judge(settings: &Settings, lane: &Lane, account_room: Option<bool>
     };
     let readers = Readers::kernel();
     Judged {
-        state: read_lane(lane, &readers, None, host, account_room).state,
+        state: read_lane(lane, &readers, socket, host, account_room).state,
         answered,
     }
 }
