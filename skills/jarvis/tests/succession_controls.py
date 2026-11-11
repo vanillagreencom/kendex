@@ -1,5 +1,6 @@
 """Reject planted succession and adoption defects in a disposable source copy."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
@@ -125,6 +126,12 @@ def main():
                       'the retry opens.\n                    if not self.terminal(predecessor):\n'
                       '                        self.end_task_session()\n'),),
                     "test_reaped_predecessor_scope"))
+        # The row a late-failing defect turns red. Its run takes that row
+        # alone, through succession_test.py's selected().
+        rows = {"retry brief": {"phase": "confirmed", "edge": "after", "abandoned": True},
+                "transfer taken during Start": {"phase": "brief-delivered", "edge": "after"},
+                "tasks end with a failed taken transfer": {"walled": "every"},
+                "tasks end with a live failed runner": {"walled": "first"}}
         # The rows the latest change added, which its pre-change revision fails.
         cases = ("test_successor_setup_readiness", "test_failed_start_recovers_or_notifies", "test_failed_transfer_retries_after_predecessor_end")
         if args.case and args.case not in {case for _, _, _, case in defects}:
@@ -134,8 +141,9 @@ def main():
 
         def rejected(name, case):
             nonlocal completed
+            row = {"SUCCESSION_CONTROL_ROW": json.dumps(rows[name])} if name in rows else {}
             result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(ROOT / "skills/jarvis/tests/succession.test.sh"),
-                                     "--failfast", "SuccessionContract." + case], env=env, capture_output=True, text=True, timeout=180)
+                                     "--failfast", "SuccessionContract." + case], env=env | row, capture_output=True, text=True, timeout=180)
             print(result.stdout, end="", flush=True)
             print(result.stderr, end="", flush=True)
             assert result.returncode != 0, name + " passed its planted defect"

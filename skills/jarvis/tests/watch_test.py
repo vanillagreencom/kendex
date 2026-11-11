@@ -2,6 +2,7 @@
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
 import errno
+import hashlib
 import importlib.util
 import io
 import json
@@ -1089,8 +1090,12 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
             def retained(watch):
                 data = watch.log.read_bytes()
-                self.assertEqual([data[span[0]:span[1]] for span in watch.state["spans"]],
-                                 [body for body, _ in expected], "retained event bytes")
+                # Digests, not the 32 KB blocks: unittest's diff of two such
+                # lists takes tens of seconds when the comparison fails.
+                def digest(block):
+                    return hashlib.sha256(block).hexdigest()
+                self.assertEqual([digest(data[span[0]:span[1]]) for span in watch.state["spans"]],
+                                 [digest(body) for body, _ in expected], "retained event bytes")
                 self.assertEqual([span[2:] for span in watch.state["spans"]],
                                  [[origin] if origin else [] for _, origin in expected])
                 return data
