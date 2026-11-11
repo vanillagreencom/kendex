@@ -75,9 +75,9 @@ adds over what this repository's refs for the remote last recorded — and not
 a claim about the destination. Those refs record a past fetch and nothing
 local dates them, so after a `git remote set-url` they still describe the
 previous repository and an oversized file can read there as pre-existing.
-Where the commits those refs bound the branch at do not descend from one
-another, the base is HEAD's merge base with the remote's default branch.
+Where those refs give no single base, the remote's default branch picks it.
 With no base at all, the whole tree is the scope.
+references/hooks-and-settings.md § Pre-push scope states when each applies.
 
 Two refusals keep the verdict about the thing being pushed. Every range scope
 here ends at HEAD, byte-ceiling's and the markdown lanes' alike, so a branch
@@ -231,11 +231,9 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 # inside a hook, buying back the new-branch case alone.
 #
 # Where no boundary can be established at all the caller falls to the whole
-# tree, three lines below this one. That happens on a push by direct URL, on
-# a push URL these refs do not describe, on a branch nothing of which has
-# reached the remote, and on incomparable boundaries with no default branch
-# recorded: in each, nothing on it has been vetted against the destination,
-# and the whole tree is the only honest scope left.
+# tree: nothing on the branch has been vetted against the destination, and the
+# whole tree is the only honest scope left. The cases that land there are
+# listed once, in ../references/hooks-and-settings.md § Pre-push scope.
 #
 # When byte-ceiling is enabled in COMMIT_GUARDS_CHECKS, its `--all` run has
 # no source blob. It holds an oversized binary file to its row in the byte
@@ -288,8 +286,10 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
 # HEAD's merge base with the remote's default branch: git's record of the
 # remote's HEAD, which a caller reads only where tracking_describes_push holds.
 # Past it, HEAD's commits are not the default branch's, which is what the
-# pull request for this branch will carry.
-default_base() { # VAR — VAR gets the merge base; 1 when no default branch is recorded
+# pull request for this branch will carry. A record git keeps after a prune
+# deleted the ref it names resolves no merge base, so it counts as none;
+# `git remote set-head <remote> --auto` repairs it.
+default_base() { # VAR — VAR gets the merge base; 1 when no usable default branch resolves
   local __v="$1" __ref="" __mb=""
   __ref="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
   __mb="$(git merge-base "$__ref" HEAD 2>/dev/null)" || return 1
@@ -547,13 +547,10 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   if local_boundary base "$local_oid"; then
     judge "base:$base" "$ref" --base "$base"
   else
-    # No base this lane can vouch for: nothing on this branch has ever reached
-    # the remote, the refs this repository holds for the remote describe
-    # somewhere other than where the push is going, or the branch builds on
-    # incomparable published commits with no default branch to choose between
-    # them. Either way no single commit on it has been vetted against the
-    # destination, and the whole tree is the only honest scope.
-    gg_message base-none "$ref" "=== pre-push: no base to vouch for — nothing $ref builds on has reached this remote, this repository's refs for the remote describe somewhere else, or $ref builds on published branches none of which contains the others and the remote's default branch is not recorded. Judging the whole tree."
+    # local_boundary states why no base means the whole tree. The message
+    # names the outcome, not a cause: several causes end here, and the
+    # contract the message points at lists them.
+    gg_message base-none "$ref" "=== pre-push: no usable base found for $ref at this remote; the causes are in commit-guards references/hooks-and-settings.md § Pre-push scope. Judging the whole tree."
     judge "all" "$ref"
   fi
 done <"$GG_TMP/refs"

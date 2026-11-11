@@ -121,9 +121,11 @@ printf '%s\n' "$gg_suite"
 # an unjudged release bump. The topic preserves the donor as its second parent.
 # Both O and P bound the unpublished history; traversal order is not ancestry.
 # The incomparable modes cut the donor from a published side branch instead,
-# so neither its boundary nor P descends from the other; `incomparable`
-# records the remote's default branch and `unrecorded` does not.
-first_push_merge() { # VAR NAME MODE(clean|own-major|incomparable|unrecorded|disconnected) [SKILL-SOURCE]
+# so neither its boundary nor P descends from the other. `main-default` and
+# `side-default` record the remote's default branch as named; `unrecorded`
+# records none. Each default gives a different merge base, so the pair holds
+# whatever order git lists the incomparable boundaries in.
+first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|unrecorded|disconnected) [SKILL-SOURCE]
   local __v="$1" r="" donor=""
   new_repo r "$2" "${4:-}"
   q git -C "$r" config gc.auto 0
@@ -144,13 +146,14 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|incomparable|unrecorded|dis
     eval "$__v=\$r"
     return 0
   fi
-  if [ "$3" = incomparable ] || [ "$3" = unrecorded ]; then
+  case "$3" in main-default | side-default | unrecorded)
     q git -C "$r" checkout -q -b side
     printf 'side base\n' >"$r/side.txt"
     q git -C "$r" add side.txt
     GIT_COMMITTER_DATE='2030-01-02T00:00:00Z' q git -C "$r" commit -q -m "feat: side base"
     q git -C "$r" push -q origin side
-  fi
+    ;;
+  esac
   q git -C "$r" checkout -q -b donor
   mkdir -p "$r/changelog.d/fixed"
   printf -- '- A fix.\n' >"$r/changelog.d/fixed/donor.md"
@@ -167,7 +170,10 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|incomparable|unrecorded|dis
   # This invalid release belongs to the prerequisite, not to the topic.
   GIT_COMMITTER_DATE='2030-01-03T00:00:00Z' q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: prerequisite major"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  [ "$3" != incomparable ] || q git -C "$r" remote set-head origin main
+  case "$3" in
+    main-default) q git -C "$r" remote set-head origin main ;;
+    side-default) q git -C "$r" remote set-head origin side ;;
+  esac
   q git -C "$r" checkout -q -b topic
   GIT_COMMITTER_DATE='2030-01-05T00:00:00Z' q git -C "$r" merge -q --no-ff "$donor" -m "fix: preserve donor ancestry"
   if [ "$3" = own-major ]; then
@@ -186,13 +192,14 @@ first_push_judgment() { # REPO -> status and machine-readable scope/finding fiel
   printf 'rc=%s scope=%s major=%s' "$rc" "$scope" "$major"
 }
 
-for FIRST_MODE in clean own-major incomparable unrecorded disconnected; do
+for FIRST_MODE in clean own-major main-default side-default unrecorded disconnected; do
   FIRST=""
   first_push_merge FIRST "first-$FIRST_MODE" "$FIRST_MODE"
   FIRST_BASE="$(git -C "$FIRST" rev-parse origin/main)" || exit 2
   FIRST_BOUNDARIES="$(git -C "$FIRST" rev-list --boundary HEAD --not --remotes=origin \
     | sed -n 's/^-//p')" || exit 2
-  if [ "$FIRST_MODE" = incomparable ] || [ "$FIRST_MODE" = unrecorded ]; then
+  if [ "$FIRST_MODE" = main-default ] || [ "$FIRST_MODE" = side-default ] \
+    || [ "$FIRST_MODE" = unrecorded ]; then
     FIRST_SIDE="$(git -C "$FIRST" rev-parse origin/side)" || exit 2
     assert_eq "first-push $FIRST_MODE reaches both remote boundaries" \
       "$(printf '%s\n%s' "$FIRST_SIDE" "$FIRST_BASE" | LC_ALL=C sort)" \
@@ -203,10 +210,13 @@ for FIRST_MODE in clean own-major incomparable unrecorded disconnected; do
       git -C "$FIRST" merge-base --is-ancestor "$FIRST_LEFT" "$FIRST_RIGHT" || FIRST_ANCESTRY=$?
       assert_eq "first-push $FIRST_MODE fixture has incomparable boundaries: $FIRST_PAIR" 1 "$FIRST_ANCESTRY"
     done
-    # The default branch's merge base excludes the prerequisite's major; with
-    # none recorded there is no base, and the whole tree is judged.
+    # The default branch's merge base is the base. main's excludes the
+    # prerequisite's major; side's leaves it to be judged, as a pull request
+    # into side carries it. With none recorded there is no base, and the whole
+    # tree is judged.
     case "$FIRST_MODE" in
-      incomparable) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major=" ;;
+      main-default) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major=" ;;
+      side-default) FIRST_EXPECT="rc=1 scope=base:$FIRST_SIDE major=app.json:1.0.0:2.0.0" ;;
       unrecorded) FIRST_EXPECT='rc=0 scope=all major=' ;;
     esac
   elif [ "$FIRST_MODE" = disconnected ]; then
@@ -237,6 +247,20 @@ first_push_merge UNSAFE_FIRST unsafe-first own-major "$UNSAFE_BOUNDARY"
 UNSAFE_TIP="$(git -C "$UNSAFE_FIRST" rev-parse HEAD)" || exit 2
 assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
   "rc=0 scope=base:$UNSAFE_TIP major=" "$(first_push_judgment "$UNSAFE_FIRST")"
+
+# Keeping the incomparable survivor git lists last, not the default branch's
+# merge base, takes main's tip under a side default and hides the
+# prerequisite's major. The side-default row above refuses that answer.
+SURVIVOR_BOUNDARY="$TMP/.survivor-boundary/commit-guards"
+mkdir -p "$(dirname "$SURVIVOR_BOUNDARY")"
+cp -R "$SKILL_TEMPLATE" "$SURVIVOR_BOUNDARY"
+gg_mutant SURVIVOR_LANE pre-push 'default_base selected || return 1' 'default_base gg_unused || return 1'
+cp -- "$SURVIVOR_LANE" "$SURVIVOR_BOUNDARY/scripts/pre-push"
+SURVIVOR_FIRST=""
+first_push_merge SURVIVOR_FIRST survivor-first side-default "$SURVIVOR_BOUNDARY"
+SURVIVOR_MAIN="$(git -C "$SURVIVOR_FIRST" rev-parse origin/main)" || exit 2
+assert_eq "must-fail: the last listed survivor hides the prerequisite's major" \
+  "rc=0 scope=base:$SURVIVOR_MAIN major=" "$(first_push_judgment "$SURVIVOR_FIRST")"
 
 # --------------------------------------------------------------- the ref lines
 #
