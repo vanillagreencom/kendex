@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# overseer-run COMMAND [ARG]...: runs COMMAND in its place, with its stdin,
+# output and exit, for a launch line that names this path. The runtime
+# records every session it launches itself, so no exit is written here.
+# COMMAND is a session whose own launches print their model lines, so the
+# hold a launcher's child inherits is dropped.
+set -euo pipefail
+[[ $# -gt 0 ]] || { printf 'overseer-run: usage=COMMAND\n' >&2; exit 2; }
+unset ORCH_MODEL_LINES_HELD
+exec "$@"

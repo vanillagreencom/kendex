@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Surface: lane_model_recovery's consecutive successful replacement bound and
-# how it records the runtime's answer to the replacement's launch.
+# how it records the runtime's answer to the replacement's launch, and the
+# exit lib/lane-relaunch.sh gives the hosted session lookup form.
 # Inputs: skills/orch/scripts/** skills/github/scripts/lib/** skills/mailbox/scripts/** skills/orch/tests/fixtures/lane-model-recovery-base.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
+source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)" || { echo 'lane_model_recovery: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'lane_model_recovery: scratch=not-a-directory' >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'lane_model_recovery: scratch=resolve-failed' >&2; exit 1; }
@@ -127,6 +129,22 @@ RC=0
 ' _ "$CASE" "$S" "$RECORD" > "$CASE/out" 2> "$CASE/err" || RC=$?
 assert_eq "$RC|$(cat "$CASE/out")" "0|--permission-mode dontAsk" "a runtime record's permission words are the replacement request's"
 assert_eq "$(jq -r 'has("recovery")' <<<"$RECORD")" false "the runtime's record carries no released recovery object to read them from"
+
+echo "=== the hosted session lookup a released launcher runs answers lookup-failed ==="
+# A released launcher runs `lane-relaunch.sh HARNESS ITEM FLAGS` on a host
+# clone, takes stdout as the id to resume, exit 1 as no session to resume and
+# exit 2 as a failed lookup that never permits a fresh start.
+lookup() { # LIBRARY
+  RC=0
+  (cd -- "$TMP_ROOT" && "$BASH" "$1" claude KEN-4033 '--model opus') > "$TMP_ROOT/lookup.out" 2>/dev/null || RC=$?
+  LOOKUP="$RC|$(cat "$TMP_ROOT/lookup.out")"
+}
+lookup "$S/lib/lane-relaunch.sh"
+assert_eq "$LOOKUP" '2|' 'the hosted lookup form exits 2 with no session id'
+cp -p -- "$S/lib/lane-relaunch.sh" "$TMP_ROOT/lane-relaunch-control.sh"
+mutate_file "$TMP_ROOT/lane-relaunch-control.sh" 'SESSION\n'\'' >&2; exit 2; }' 'SESSION\n'\'' >&2; exit 1; }'
+lookup "$TMP_ROOT/lane-relaunch-control.sh"
+assert_eq "$LOOKUP" '1|' 'control: a dispatch answering 1 tells the launcher to start fresh'
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -1149,6 +1149,37 @@ pub fn load(
             values.insert(STATE_DIR_KEY.to_owned(), state_dir.clone());
         }
     }
+    // Keys a consumer's settings may still set that no verb reads: one
+    // notice per load for each one set, naming the key that does its job
+    // where one does, so the value is not dropped in silence. Never a
+    // refusal: such a line in a settings file stops no verb.
+    {
+        const RETIRED: [(&str, Option<&str>); 7] = [
+            ("CI_WAIT_NO_CHECKS_GRACE", None),
+            ("ORCH_LANE_SSH_PROMPT_SECS", None),
+            ("ORCH_MERGE_BYPASS", None),
+            (
+                "ORCH_OVERSEER_SEAT_RESERVE_PCT",
+                Some(OVERSEER_HEADROOM_PCT_KEY),
+            ),
+            ("ORCH_OVERSEER_SUCCESSOR_ACCOUNTS", None),
+            ("ORCH_OVERSEER_SYNC_TIMEOUT_S", None),
+            ("ORCH_WORKTREE_BIN", Some(WORKTREE_CLI_KEY)),
+        ];
+        use std::io::Write as _;
+        for (key, stand_in) in RETIRED {
+            if values.get(key).is_none_or(String::is_empty) {
+                continue;
+            }
+            let _ = match stand_in {
+                Some(stand_in) => writeln!(
+                    std::io::stderr(),
+                    "settings-retired key={key} stand-in={stand_in}"
+                ),
+                None => writeln!(std::io::stderr(), "settings-retired key={key}"),
+            };
+        }
+    }
     let get = |key: &str| {
         values
             .get(key)
