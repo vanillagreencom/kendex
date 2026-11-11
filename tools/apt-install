@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Installs Ubuntu packages on a GitHub-hosted Linux runner for CI's "System
+# dependencies" steps, from one mirror and then, only on failure, another.
+#
+# The first try reads archive.ubuntu.com, because the image's Azure mirror is
+# slow. When its update or its install fails, the second try reads the image's
+# own sources, its mirror list included, so an archive.ubuntu.com outage does
+# not fail the job. Each try runs apt-get once, bounded by apt's own acquire
+# options from APT_ACQUIRE_OPTIONS; nothing here waits or loops on a dead
+# mirror.
+#
+# Both tries keep the image's suites and signing key and leave out the
+# runner's third-party sources. The image's sources file is read, never
+# changed: the first try reads a rewritten copy under RUNNER_TEMP.
+#
+# Usage: tools/apt-install PACKAGE...
+# Environment: APT_ACQUIRE_OPTIONS (apt-get -o options, word-split), RUNNER_TEMP,
+#   APT_IMAGE_SOURCES (the image's sources file; the suite points it at a
+#   fixture).
+# Exit: 0 installed, 1 neither mirror installed, 2 usage.
+# A refusal opens with `apt-install: <key>=<value>` on stderr. A fallback
+# prints a `::warning` annotation for the run's summary.
+set -euo pipefail
+
+[ "$#" -gt 0 ] || { echo 'apt-install: usage=tools/apt-install PACKAGE...' >&2; exit 2; }
+image_sources="${APT_IMAGE_SOURCES:-/etc/apt/sources.list.d/ubuntu.sources}"
+read -r -a acquire <<<"$APT_ACQUIRE_OPTIONS"
+
+official="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")" || {
+  echo 'apt-install: scratch=mktemp-failed' >&2; exit 1; }
+trap 'rm -f -- "$official"' EXIT
+sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+  -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+  -- "$image_sources" >"$official" || {
+  printf 'apt-install: sources=unreadable path=%s\n' "$image_sources" >&2; exit 1; }
+
+install_from() { # SOURCES PACKAGE...
+  local options=("${acquire[@]}" -o "Dir::Etc::sourcelist=$1" -o Dir::Etc::sourceparts=/dev/null)
+  shift
+  sudo apt-get "${options[@]}" update && sudo apt-get "${options[@]}" install -y "$@"
+}
+
+install_from "$official" "$@" && exit 0
+echo '::warning title=apt mirror::archive.ubuntu.com failed; installing from the runner image mirror list'
+install_from "$image_sources" "$@" && exit 0
+echo 'apt-install: install=failed mirrors=archive.ubuntu.com,image' >&2
+exit 1

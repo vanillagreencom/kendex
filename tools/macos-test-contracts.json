@@ -496,6 +496,7 @@
     "skills/worktree/tests/worktree_symlink_shadows_tracked.sh": "linux-duplicate",
     "skills/xcode-run/tests/install.test.sh": "linux-duplicate",
     "skills/youtube-publish/tests/publish.test.sh": "linux-duplicate",
+    "tools/tests/apt-install.test.sh": "linux-only",
     "tools/tests/bash32-lint.test.sh": "linux-duplicate",
     "tools/tests/bash32-parse.test.sh": "mixed",
     "tools/tests/bot-instructions.test.sh": "linux-duplicate",
