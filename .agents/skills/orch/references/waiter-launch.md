@@ -12,7 +12,7 @@ Use the harness file-write tool to save this script as `[RUN_DIR]/launch.sh`:
 run_path=$1
 shift
 run_dir=${run_path%/*}
-.agents/skills/orch/scripts/lib/job-unit.sh launch "${run_path##*/}-${run_dir##*/waiter.}" "$run_path.runner" -- sh -c 'sed -n "s/^line=//p" "$0.runner" > "$0.log"; "$@" >> "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" < /dev/null
+.agents/skills/orch/scripts/orch-runtime launch-job --name "${run_path##*/}-${run_dir##*/waiter.}" --record "$run_path.runner" -- sh -c 'sed -n "s/^line=//p" "$0.runner" > "$0.log"; "$@" >> "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" < /dev/null
 ```
 
 The job is the launch shell, whose argv carries the run path as its own word and which leads the process group of everything the job starts. `[WORD]` is the run path's last word: `wait`, or `review` for a [process-owned Codex reviewer](codex-runtime.md#process-owned-reviewers). The job's name, job-units.md's `NAME`, is `[WORD]-[RUN_ID]`, so every launch names a unit no other launch has. The launch passes no `--cap`: each waiter ends on its own budget, a `verify-pr` or review call ends when the operation answers, `queue-watch` ends at its `--max-wait`, and `copilot-wait` at the bound [review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse) states. The runner records how the job runs in `[RUN_DIR]/[WORD].runner`, and the launch shell writes that record's runner line as the first line of `[RUN_DIR]/[WORD].log`.

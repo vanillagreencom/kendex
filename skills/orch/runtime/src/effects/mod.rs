@@ -66,9 +66,9 @@ pub use close::{Closed, Word as CloseWord, close_lane};
 pub(crate) use operation::Recorded;
 pub(crate) use operation::job::{
     Bounds, group_reading, launch_recorded, own_cgroup_dir, pgid_reading, read_handle,
-    recorded_live, stop_group, stop_recorded,
+    recorded_live, stop_group,
 };
-pub use operation::job::{JobStarted, NoticeUnmarked};
+pub use operation::job::{JobStarted, NoticeUnmarked, launch_command, stop_recorded};
 pub(crate) use operation::{JobHandle, SidecarRead};
 pub use operation::{Observed, fleet_sockets, overseer_socket, server_at};
 

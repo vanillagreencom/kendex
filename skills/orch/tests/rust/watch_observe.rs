@@ -1613,7 +1613,7 @@ fn no_wall_pick(_: &Path, _: Harness, _: &str, _: &str) -> Pick {
     panic!("the wall route's pick is the lanes pass's, never the overseer's")
 }
 
-fn no_relaunch(_: &Path, _: &Relaunch) -> Result<(), String> {
+fn no_relaunch(_: &Relaunch) -> Result<(), String> {
     panic!("the wall relaunch is the lanes pass's, never the overseer's")
 }
 
@@ -5095,42 +5095,6 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         assert!(
             outcomes(&mut driver).is_empty(),
             "confirms={confirms}: said once"
-        );
-    }
-}
-
-#[test]
-fn a_relaunch_the_launcher_answers_possibly_started_is_read_as_started_and_one_never_started_as_refused()
- {
-    let dir = tempfile::tempdir().unwrap();
-    // A launcher of the tree that exits with the relaunch's last word: no
-    // launcher is written while rows run, since another row's child between
-    // its fork and its exec would hold a file just written open (ETXTBSY).
-    let answering = fixtures().join("job-unit-exit/job-unit");
-    let absent = dir.path().join("job-unit-absent");
-    // (the launcher, the status it answers, read as started)
-    for (launcher, status, started) in [
-        (&answering, 0, true),
-        (&answering, 6, true),
-        (&answering, 4, false),
-        (&absent, 0, false),
-    ] {
-        let relaunch = Relaunch {
-            item: "KEN-4".to_owned(),
-            window: "gh-4".to_owned(),
-            to: "/a".to_owned(),
-            spent: "/b".to_owned(),
-            cwd: dir.path().to_path_buf(),
-            session: "fleet".to_owned(),
-            args: vec![status.to_string()],
-            marker: dir.path().join("wall-relaunch.gh-4"),
-            log: dir.path().join("wall-relaunch-KEN-4.log"),
-        };
-        assert_eq!(
-            overseer::relaunch_through_launcher(launcher, &relaunch).is_ok(),
-            started,
-            "launcher={} status={status}",
-            launcher.display()
         );
     }
 }

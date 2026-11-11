@@ -129,6 +129,32 @@ enum Verb {
         #[arg(long)]
         intent: String,
     },
+    /// Start a command detached as a recorded job: a transient user unit
+    /// where the user manager lingers, else a `setsid` group, the record
+    /// written whole before the start. Exit 0 started, 75 possibly started
+    /// (keep the record and start nothing again), 1 `job-launch-failed`
+    /// with nothing started. Reads no settings.
+    LaunchJob {
+        /// The job's name, which names its unit.
+        #[arg(long)]
+        name: String,
+        /// The record naming how the job runs.
+        #[arg(long)]
+        record: PathBuf,
+        /// A file the job's standard error is appended to.
+        #[arg(long)]
+        stderr: Option<PathBuf>,
+        /// The command and its arguments, after `--`.
+        #[arg(last = true, required = true)]
+        argv: Vec<String>,
+    },
+    /// Stop the job a `launch-job` record names, by its unit or its recorded
+    /// group identity: `stopped` is the runner it stopped, null where the
+    /// job had already ended. Reads no settings.
+    StopJob {
+        #[arg(long)]
+        record: PathBuf,
+    },
     /// Judge, render or publish the owner progress report.
     Report {
         #[arg(value_parser = ["due", "render", "write"])]
@@ -1626,6 +1652,32 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 locking,
                 &schedule::SystemClock,
             )?)?
+        }
+        Verb::LaunchJob {
+            name,
+            record,
+            stderr,
+            argv,
+        } => {
+            let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
+            let launch = effects::launch_command(&name, &record, &argv, stderr.as_deref());
+            let status = match &launch {
+                ops::validate::Launch::Started { .. } => 0,
+                ops::validate::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
+                ops::validate::Launch::Refused { cause } => {
+                    return Err(agent_runtime::Error::refused(
+                        "job-launch-failed",
+                        &[("cause", cause)],
+                    )
+                    .into());
+                }
+            };
+            let mut value = serde_json::to_value(&launch)?;
+            value["record"] = serde_json::json!(record);
+            replied(value, status)?
+        }
+        Verb::StopJob { record } => {
+            serde_json::json!({"stopped": effects::stop_recorded(&record)?})
         }
         Verb::ReconcileItems {
             stale_hours,

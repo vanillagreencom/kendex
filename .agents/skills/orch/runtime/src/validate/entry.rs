@@ -439,7 +439,7 @@ fn entry(
                 },
                 &SystemClock,
             );
-            match super::launch_answer(launch.read, launch.line, launch.failed, launch.unanswered) {
+            match launch.answer() {
                 crate::ops::validate::Launch::Started { .. } => {}
                 crate::ops::validate::Launch::Refused { cause } => {
                     return Err(files::unreadable("launch-failed", cause));

@@ -14,7 +14,7 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::effects::{self, JobHandle, SidecarRead};
+use crate::effects;
 use crate::error::{Error, Result};
 use crate::ops::validate::{
     Launch, RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
@@ -1750,7 +1750,7 @@ fn ask_launcher(
         bounds,
         &crate::schedule::SystemClock,
     );
-    launch_answer(answer.read, answer.line, answer.failed, answer.unanswered)
+    answer.answer()
 }
 
 /// The runner line of a run in the caller's own process tree, which no
@@ -1790,45 +1790,6 @@ fn attached(run_dir: &Path, env: &Env, memory: Option<u64>) -> Launch {
         pid: u32::try_from(owner.pid).ok(),
         start: Some(owner.start.clone()),
         line,
-    }
-}
-
-fn launch_answer(
-    read: SidecarRead,
-    line: String,
-    failed: Option<String>,
-    unanswered: bool,
-) -> Launch {
-    if unanswered || (failed.is_some() && matches!(read, SidecarRead::Present(_))) {
-        return Launch::Unanswered {
-            cause: failed.unwrap_or(line),
-        };
-    }
-    match read {
-        SidecarRead::Present(JobHandle::Unit { unit }) => Launch::Started {
-            runner: "systemd".to_owned(),
-            unit: Some(unit),
-            pid: None,
-            start: None,
-            line,
-        },
-        SidecarRead::Present(JobHandle::Group(identity)) => Launch::Started {
-            runner: "setsid".to_owned(),
-            unit: None,
-            pid: Some(identity.pid),
-            start: Some(identity.start),
-            line,
-        },
-        SidecarRead::Present(JobHandle::Pgid(pgid)) => Launch::Unanswered {
-            cause: format!("pgid={pgid}"),
-        },
-        SidecarRead::Failed { status } => Launch::Refused {
-            cause: failed.unwrap_or(status),
-        },
-        SidecarRead::Absent => Launch::Refused {
-            cause: failed.unwrap_or_else(|| "launcher-unrecorded".to_owned()),
-        },
-        SidecarRead::Unreadable { cause } => Launch::Unanswered { cause },
     }
 }
 

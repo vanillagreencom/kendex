@@ -234,6 +234,54 @@ pub(crate) struct Launched {
     pub(crate) failed: Option<String>,
 }
 
+impl Launched {
+    /// What the launch answers its caller, the one reading every caller
+    /// takes: started by the unit or the group identity the record names;
+    /// unanswered where the job may run (a lost manager answer, a failure
+    /// after the fork that left a group standing, a record that cannot be
+    /// read), so no caller starts it twice; refused where nothing runs.
+    pub(crate) fn answer(self) -> ops::validate::Launch {
+        use ops::validate::Launch;
+        let Launched {
+            unanswered,
+            read,
+            line,
+            failed,
+        } = self;
+        if unanswered || (failed.is_some() && matches!(read, SidecarRead::Present(_))) {
+            return Launch::Unanswered {
+                cause: failed.unwrap_or(line),
+            };
+        }
+        match read {
+            SidecarRead::Present(JobHandle::Unit { unit }) => Launch::Started {
+                runner: "systemd".to_owned(),
+                unit: Some(unit),
+                pid: None,
+                start: None,
+                line,
+            },
+            SidecarRead::Present(JobHandle::Group(identity)) => Launch::Started {
+                runner: "setsid".to_owned(),
+                unit: None,
+                pid: Some(identity.pid),
+                start: Some(identity.start),
+                line,
+            },
+            SidecarRead::Present(JobHandle::Pgid(pgid)) => Launch::Unanswered {
+                cause: format!("pgid={pgid}"),
+            },
+            SidecarRead::Failed { status } => Launch::Refused {
+                cause: failed.unwrap_or(status),
+            },
+            SidecarRead::Absent => Launch::Refused {
+                cause: failed.unwrap_or_else(|| "launcher-unrecorded".to_owned()),
+            },
+            SidecarRead::Unreadable { cause } => Launch::Unanswered { cause },
+        }
+    }
+}
+
 pub(crate) struct Launcher<'a> {
     clock: &'a dyn crate::schedule::Clock,
 }
@@ -341,7 +389,10 @@ impl Launcher<'_> {
                 words.push(format!("MemoryHigh={cap}"));
             }
         }
+        // The manager takes an `append:` file by its absolute path only, and
+        // a caller of `launch-job` names it relative to its own directory.
         if let Some(err) = stderr {
+            let err = std::path::absolute(err).unwrap_or_else(|_| err.to_path_buf());
             words.push("-p".to_owned());
             words.push(format!("StandardError=append:{}", err.display()));
         }
@@ -710,6 +761,27 @@ pub(crate) fn launch_recorded(
     launcher.launch_setsid(record, &reason, argv, stderr, bounds.memory)
 }
 
+/// A caller's own command started as a recorded job: `orch-runtime
+/// launch-job`, which the watch and waiter fences run. The unit is keyed by
+/// this process's pid, so two launches of one name never share a unit.
+pub fn launch_command(
+    name: &str,
+    record: &Path,
+    argv: &[&str],
+    stderr: Option<&Path>,
+) -> ops::validate::Launch {
+    launch_recorded(
+        name,
+        &std::process::id().to_string(),
+        record,
+        argv,
+        stderr,
+        Bounds::default(),
+        &crate::schedule::SystemClock,
+    )
+    .answer()
+}
+
 /// The cgroup v2 directory of this process, where it runs under this
 /// user's manager (`own_cgroup`).
 pub(crate) fn own_cgroup_dir() -> Option<std::path::PathBuf> {
@@ -780,7 +852,7 @@ pub(crate) fn recorded_live(record: &Path) -> Reading<()> {
     }
 }
 
-pub(crate) fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
+pub fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
     match read_handle(record) {
         SidecarRead::Present(JobHandle::Unit { unit }) => {
             let out = host::run_tagged(
@@ -1387,8 +1459,8 @@ fn table_reading(matches: impl Fn(&process::Row) -> bool) -> Reading<()> {
 /// on every reconcile from here: by the leader's identity where the
 /// launcher read its start, else by the group key `pgid=` alone, which
 /// every post-fork path holds; no start is ever made up for it. The one
-/// reader of the record, the runtime's launcher's and `lib/job-unit.sh`'s
-/// alike, so every consumer reads one launch three-valued the same way.
+/// reader of the record, so every consumer reads one launch three-valued
+/// the same way.
 pub(crate) fn read_handle(record: &Path) -> SidecarRead {
     let text = match std::fs::read_to_string(record) {
         Ok(text) => text,
@@ -2228,6 +2300,9 @@ mod tests {
         );
         assert!(first.starts_with("orch-transfer-"), "{first}");
         assert_ne!(first, second);
+        // A caller's own name reaches the unit only in what a unit name
+        // can carry.
+        assert_eq!(unit_name("a b/c", "7"), "orch-a_b_c-7");
     }
 
     /// The launcher's record names a unit or the setsid group the launcher

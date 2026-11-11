@@ -919,8 +919,8 @@ enum MemoryRead {
 
 /// The calls the duty makes beyond its own reads, injected so a row plants
 /// the answers; production assembles them in [`register`]'s body from
-/// [`judge_marks`], the walk, the accounts judge, the job-unit launcher and
-/// the one runner.
+/// [`judge_marks`], the walk, the accounts judge, the runtime's job launcher
+/// and the one runner.
 pub struct Judges<'a> {
     /// The directory the lanes pass's scripts run from.
     pub scripts: PathBuf,
@@ -932,8 +932,7 @@ pub struct Judges<'a> {
     /// excluded.
     pub wall_pick: WallPickRead<'a>,
     /// The wall relaunch, the walled lane's close and its `launch-lane`
-    /// (`lanes::Relaunch`), started detached through the job-unit launcher
-    /// at the path given.
+    /// (`lanes::Relaunch`), started as a detached job.
     pub relaunch: RelaunchStart<'a>,
     /// The succession command a controller's own owner recorded, run in
     /// place of a transfer; `Err` is its failure.
@@ -948,8 +947,8 @@ pub type MarksRead<'a> = &'a dyn Fn(&Caller, Option<&str>) -> Result<Marks, Stri
 pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> Result<walk::Walked, String>;
 /// The walk's pick for a harness and model, the spent account excluded.
 pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
-/// The relaunch started through the job-unit launcher; `Err` its refusal.
-pub type RelaunchStart<'a> = &'a dyn Fn(&Path, &Relaunch) -> Result<(), String>;
+/// The relaunch started as a detached job; `Err` the launcher's refusal.
+pub type RelaunchStart<'a> = &'a dyn Fn(&Relaunch) -> Result<(), String>;
 pub type SuccessionRun<'a> = &'a dyn Fn(&[String]) -> Result<SuccessionAnswer, String>;
 pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<Memory>>;
 
@@ -992,15 +991,14 @@ pub fn picked_by_judge(answer: PickAnswer) -> Pick {
     }
 }
 
-/// The bound on the detached relaunch's start and a recorded succession
-/// command, each one process.
+/// The bound on a recorded succession command.
 const RUNNER_BOUND: Duration = Duration::from_secs(120);
 
 /// How long after the pass that ran it a succession command that gave no
 /// answer has to move the record: its own bound, then as long again.
 const SUCCESSION_SETTLE: Duration = Duration::from_secs(2 * RUNNER_BOUND.as_secs());
 
-/// The job-unit name and record of a wall relaunch, beside its log.
+/// The job name and record of a wall relaunch, beside its log.
 fn relaunch_record(r: &Relaunch) -> (String, PathBuf) {
     (
         format!("wall-relaunch-{}", r.item),
@@ -1063,23 +1061,20 @@ pub fn succeed_through_runner(words: &[String]) -> Result<SuccessionAnswer, Stri
     }
 }
 
-/// The wall relaunch through the job-unit launcher at `job_unit`: the
-/// record's own line, detached, its exit status landing beside the marker.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the wall relaunch started detached through the one runner and the job-unit launcher"
-)]
-pub fn relaunch_through_launcher(job_unit: &Path, r: &Relaunch) -> Result<(), String> {
+/// The wall relaunch as a job of the runtime's launcher: the record's own
+/// line, detached, its exit status landing beside the marker. The unit is
+/// keyed by the pass's wall second, so a relaunch never takes the name of
+/// an earlier one of the same item that still runs.
+fn relaunch_through_runtime(
+    r: &Relaunch,
+    now: u64,
+    clock: &dyn crate::schedule::Clock,
+) -> Result<(), String> {
     let (name, record) = relaunch_record(r);
-    let record = record.display().to_string();
     let log = r.log.display().to_string();
     let exit = relaunch_exit_path(&r.marker).display().to_string();
     let cwd = r.cwd.display().to_string();
-    let mut args = vec![
-        "launch",
-        &name,
-        &record,
-        "--",
+    let mut argv = vec![
         "bash",
         "-c",
         RELAUNCH_WRAPPER,
@@ -1089,28 +1084,27 @@ pub fn relaunch_through_launcher(job_unit: &Path, r: &Relaunch) -> Result<(), St
         &cwd,
         &r.session,
     ];
-    args.extend(r.args.iter().map(String::as_str));
-    let out = host::run_tagged(
-        "wall-relaunch",
-        "job-unit",
-        job_unit,
-        "launch",
-        &args,
-        RUNNER_BOUND,
+    argv.extend(r.args.iter().map(String::as_str));
+    let launched = crate::effects::launch_recorded(
+        &name,
+        &now.to_string(),
+        &record,
+        &argv,
+        None,
+        crate::effects::Bounds::default(),
+        clock,
     );
-    // A launch the launcher answers possibly started, or that gave no
-    // answer, is read as started: the marker written before it owns its
-    // outcome, said from the relaunch's status or as stuck past the prepare
-    // bound. One that never started, or a refusal, ran nothing.
-    let out = match out {
-        Ok(out) => out,
-        Err(e @ agent_runtime::Error::NotStarted { .. }) => return Err(e.to_string()),
-        Err(_) => return Ok(()),
-    };
-    match out.status.code() {
-        Some(0) | None => Ok(()),
-        Some(crate::validate::JOB_UNIT_UNCONFIRMED) => Ok(()),
-        Some(_) => Err(host::stderr_text(&out)),
+    relaunch_started(launched.answer())
+}
+
+/// A launch that may have started is read as started: the marker written
+/// before it owns its outcome, said from the relaunch's status or as stuck
+/// past the prepare bound. A refused launch ran nothing.
+fn relaunch_started(launch: crate::ops::validate::Launch) -> Result<(), String> {
+    use crate::ops::validate::Launch;
+    match launch {
+        Launch::Started { .. } | Launch::Unanswered { .. } => Ok(()),
+        Launch::Refused { cause } => Err(cause),
     }
 }
 
@@ -2733,12 +2727,13 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         let pane_memory = |pid: u32| {
             agent_runtime::process::memory_of(Path::new("/proc"), Path::new("/sys/fs/cgroup"), pid)
         };
+        let relaunch = |r: &Relaunch| relaunch_through_runtime(r, tick.wall, tick.clock);
         let judges = Judges {
             scripts: scripts_dir(&ctx.settings.roots.project),
             marks: &marks,
             walk: &walk,
             wall_pick: &wall_pick,
-            relaunch: &relaunch_through_launcher,
+            relaunch: &relaunch,
             succeed: &succeed_through_runner,
             memory: &pane_memory,
         };
@@ -2806,11 +2801,10 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             let wall_pick = |harness: Harness, model: &str, spent: &str| {
                 (judges.wall_pick)(&judges.scripts, harness, model, spent)
             };
-            let start = |r: &Relaunch| (judges.relaunch)(&ctx.settings.job_unit, r);
             let route = WallRoute {
                 relaunch: watch.wall_relaunch,
                 pick: &wall_pick,
-                start: &start,
+                start: judges.relaunch,
             };
             let wall_pauses = |request| {
                 let request = crate::ops::Request::RecordWallPauses(request);
@@ -2865,6 +2859,33 @@ fn absorb(into: &mut Produced, from: Produced) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A relaunch the launcher may have started is never refused, since its
+    /// marker already owns the outcome; a launch that started nothing is the
+    /// route's refusal with the launcher's cause.
+    #[test]
+    fn a_relaunch_that_may_have_started_is_started_and_one_that_started_nothing_is_refused() {
+        use crate::ops::validate::Launch;
+        let started = Launch::Started {
+            runner: "setsid".to_owned(),
+            unit: None,
+            pid: Some(7),
+            start: Some("ticks:1".to_owned()),
+            line: "runner=setsid reason=no-linger pid=7 start=ticks:1".to_owned(),
+        };
+        let unanswered = Launch::Unanswered {
+            cause: "runner=systemd unit=u start-unconfirmed detail=signal".to_owned(),
+        };
+        let refused = Launch::Refused {
+            cause: "launch-failed status=setsid-unrun".to_owned(),
+        };
+        assert_eq!(relaunch_started(started), Ok(()));
+        assert_eq!(relaunch_started(unanswered), Ok(()));
+        assert_eq!(
+            relaunch_started(refused),
+            Err("launch-failed status=setsid-unrun".to_owned())
+        );
+    }
 
     /// Room is never read past the token cap, at the window share itself,
     /// under a share the ceiling forbids, or for a reading with no window.

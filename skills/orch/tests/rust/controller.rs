@@ -3682,6 +3682,188 @@ fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
     );
 }
 
+/// `orch-runtime launch-job` and `stop-job` in `dir` with `path` as `PATH`
+/// where a row names one.
+fn job_verb(dir: &Path, path: Option<&Path>, args: &[&str]) -> std::process::Output {
+    let mut command = isolated();
+    command.args(args).current_dir(dir);
+    if let Some(path) = path {
+        command.env("PATH", path);
+    }
+    command.output().unwrap()
+}
+
+/// A job `launch-job` starts where no manager lingers runs as a `setsid`
+/// group: the reply names the identity the record holds, the command's
+/// standard error lands in `--stderr`, and `stop-job` ends the group by
+/// that record, then answers `stopped: null` once nothing runs. A record
+/// naming no identity, as an unread launch leaves it, is refused, never
+/// read as stopped.
+#[test]
+fn a_launched_job_runs_as_its_recorded_group_and_stop_job_ends_it_by_that_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let record = dir.path().join("wait.runner");
+    let err = dir.path().join("wait.err");
+    let out = job_verb(
+        dir.path(),
+        None,
+        &[
+            "launch-job",
+            "--name",
+            "wait-row",
+            "--record",
+            "wait.runner",
+            "--stderr",
+            "wait.err",
+            "--",
+            "sh",
+            "-c",
+            "printf '%s\\n' job-stderr >&2; exec sleep 60",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = reply(&out)["result"].clone();
+    assert_eq!(job["launch"], "started", "{job}");
+    assert_eq!(job["runner"], "setsid", "{job}");
+    let pid = job["pid"].as_u64().expect("the group's pid") as u32;
+    assert_eq!(job["start"], start_of(pid), "{job}");
+    let text = std::fs::read_to_string(&record).unwrap();
+    assert!(
+        text.contains(&format!("pid={pid}\nstart={}\n", start_of(pid))),
+        "{text}"
+    );
+    wait_until("the job's stderr", secs(10), || {
+        std::fs::read_to_string(&err).is_ok_and(|t| t.lines().any(|l| l == "job-stderr"))
+    });
+    let stop = |record: &str| job_verb(dir.path(), None, &["stop-job", "--record", record]);
+    let out = stop("wait.runner");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(reply(&out)["result"]["stopped"], "setsid");
+    wait_until("the stopped job ended", secs(10), || !live(pid));
+    let out = stop("wait.runner");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        reply(&out)["result"]["stopped"].is_null(),
+        "{}",
+        stderr(&out)
+    );
+    std::fs::write(
+        dir.path().join("unread.runner"),
+        "runner=setsid\nline=runner=setsid reason=no-linger\n",
+    )
+    .unwrap();
+    assert_eq!(refusal_key(&stop("unread.runner")), "stop-unreadable");
+}
+
+/// Under a lingering manager `launch-job` starts a unit and answers 0 with
+/// the unit its record names, which `stop-job` stops; a start whose answer
+/// is lost while the manager cannot say whether it holds the unit answers
+/// 75, possibly started, so its caller starts nothing again.
+#[test]
+fn a_launched_unit_is_started_or_possibly_started_and_never_refused_while_the_manager_may_hold_it()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        write_executable(
+            &bin.join(fake),
+            std::fs::read_to_string(fixtures().join("cutover-fakes").join(fake)).unwrap(),
+        );
+    }
+    let path = tool_path(&[bin.as_path()]);
+    let launch = || {
+        job_verb(
+            dir.path(),
+            Some(Path::new(&path)),
+            &[
+                "launch-job",
+                "--name",
+                "wait-row",
+                "--record",
+                "wait.runner",
+                "--",
+                "sleep",
+                "60",
+            ],
+        )
+    };
+    let out = launch();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let job = reply(&out)["result"].clone();
+    assert_eq!(job["launch"], "started", "{job}");
+    assert_eq!(job["runner"], "systemd", "{job}");
+    let unit = job["unit"].as_str().unwrap().to_owned();
+    assert!(unit.starts_with("orch-wait-row-"), "{unit}");
+    assert!(bin.join("units").join(&unit).is_file(), "{unit}");
+    let out = job_verb(
+        dir.path(),
+        Some(Path::new(&path)),
+        &["stop-job", "--record", "wait.runner"],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(reply(&out)["result"]["stopped"], "systemd");
+    // The manager starts the unit and its reply is lost: the start answers
+    // a failure, and the manager refuses the state read that follows.
+    let launcher = bin.join("systemd-run");
+    let text = std::fs::read_to_string(&launcher).unwrap();
+    let started = text
+        .strip_suffix("exit 0\n")
+        .expect("the fake ends on its answer");
+    write_executable(&launcher, format!("{started}exit 1\n"));
+    write_executable(&bin.join("systemctl"), "#!/bin/bash\nexit 1\n");
+    let out = launch();
+    let units: Vec<std::path::PathBuf> = std::fs::read_dir(bin.join("units"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(units.len(), 1, "the manager started one unit: {units:?}");
+    let pid: u32 = std::fs::read_to_string(&units[0])
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    end_sleeper(pid);
+    assert_eq!(out.status.code(), Some(75), "{}", stderr(&out));
+    assert_eq!(reply(&out)["result"]["launch"], "unanswered");
+}
+
+/// A launch that starts nothing is refused `job-launch-failed` at exit 1:
+/// a host with neither `systemd-run` nor `setsid`, whose record the
+/// launcher closes as nothing started, and a record that cannot be written.
+#[test]
+fn a_launch_that_starts_nothing_is_refused_and_its_record_says_nothing_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let empty = dir.path().join("no-tools");
+    std::fs::create_dir_all(&empty).unwrap();
+    for (record, path) in [
+        ("wait.runner", Some(empty.as_path())),
+        ("missing/wait.runner", None),
+    ] {
+        let out = job_verb(
+            dir.path(),
+            path,
+            &[
+                "launch-job",
+                "--name",
+                "wait-row",
+                "--record",
+                record,
+                "--",
+                "sleep",
+                "60",
+            ],
+        );
+        assert_eq!(out.status.code(), Some(1), "{record}: {}", stderr(&out));
+        assert_eq!(refusal_key(&out), "job-launch-failed", "{record}");
+    }
+    let text = std::fs::read_to_string(dir.path().join("wait.runner")).unwrap();
+    assert!(
+        text.lines().any(|l| l == "status=setsid-unrun"),
+        "the record says nothing runs: {text}"
+    );
+}
+
 /// A released `oversee-watch` repeat loop the row runs, its process group
 /// killed on drop where it still runs; a row that fails also stops the
 /// runtime watch a pass of the loop started, so neither outlives the row.

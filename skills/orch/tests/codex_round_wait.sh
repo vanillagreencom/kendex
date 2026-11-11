@@ -26,7 +26,7 @@ cleanup() {
   for runner in "$TMP_ROOT"/*/wait.runner "$TMP_ROOT/process-work/tmp"/*/review.runner "$TMP_ROOT"/native-*/tmp/job/review.runner; do
     [[ -f "$runner" ]] || continue
     leader="$(pgrep -f "${runner%.runner} " || true)"
-    [[ -z "$leader" || "$leader" == *$'\n'* ]] || "$SKILL_DIR/scripts/lib/job-unit.sh" stop-job "$runner" "$leader" "*${runner%.runner}*" >/dev/null 2>&1 || true
+    [[ -z "$leader" || "$leader" == *$'\n'* ]] || "$SKILL_DIR/scripts/orch-runtime" stop-job --record "$runner" >/dev/null 2>&1 || true
   done
   rm -rf -- "${TMP_ROOT:?}"
 }
@@ -143,7 +143,7 @@ awk '/^## Reviewer round wait$/ { section=1; next } /^## / && section { section=
 # The completion command has one owner. Execute it, rather than reproducing
 # the poll in this fixture.
 awk 'match($0, /foreground poll `[^`]+`/) { print substr($0, RSTART + 17, RLENGTH - 18); hits++ } END { if (hits != 1) exit 1 }' \
-  "$SKILL_DIR/../reviewer/SKILL.md" > "$TMP_ROOT/poll"
+  "$SKILL_DIR/../reviewer/workflows/mutation-stability.md" > "$TMP_ROOT/poll"
 mkdir -p "$TMP_ROOT/bin"
 cat > "$TMP_ROOT/bin/systemd-run" <<'SH'
 #!/bin/sh
@@ -219,15 +219,20 @@ while IFS='|' read -r name kind caller dependency poll_source lands verdict cont
   [[ "$kind" == dev ]] || stub=orch-runtime
   mkdir -p "$case_dir/.agents/skills/orch/scripts"
   ln -s "$SKILL_DIR/scripts/lib" "$case_dir/.agents/skills/orch/scripts/lib"
+  # The launch script starts its job through the installed runtime's
+  # `launch-job`, which the real runtime answers; the reviewer's stub stands
+  # at the same path and passes that verb through.
+  printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$SKILL_DIR/scripts/orch-runtime" > "$case_dir/.agents/skills/orch/scripts/orch-runtime"
   cat > "$case_dir/.agents/skills/orch/scripts/$stub" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "${1:-}" != launch-job ]] || exec "$ROUND_RUNTIME" "$@"
 : > "$ROUND_CASE/check-waiting"
 while [[ ! -f "$ROUND_CASE/release" ]]; do "$REAL_SLEEP" 0.01; done
 if [[ "$ROUND_LANDS" == yes ]]; then cp "$ROUND_CASE/receipt" "$ROUND_CASE/tmp/$ROUND_ARTIFACT"; fi
 exec "$ROUND_CHECK" "$@"
 SH
-  chmod +x "$case_dir/.agents/skills/orch/scripts/$stub"
+  chmod +x "$case_dir/.agents/skills/orch/scripts/$stub" "$case_dir/.agents/skills/orch/scripts/orch-runtime"
   cp "$TMP_ROOT/launch.sh" "$case_dir/launch.sh"
   case "$kind" in
     dev)
@@ -254,7 +259,7 @@ SH
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
     AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-$HOME/.cache/kendex/agent-runtime}" ROUND_CHECK="$check" \
     ORCH_STATE_DIR="$case_dir/tmp" ROUND_COMMAND="$command_source" ROUND_ARTIFACT="$artifact" ROUND_RESULT="$result_filter" \
-    ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" \
+    ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" ROUND_RUNTIME="$SKILL_DIR/scripts/orch-runtime" \
     ROUND_POLL_PATH="$TMP_ROOT/$dependency-bin" ROUND_POLL_SOURCE="$poll_source" \
     "$TIMEOUT" 60 "$BASH" "$TMP_ROOT/$caller.sh" > "$case_dir/caller.log" 2>&1 &
   caller_pid=$!
@@ -371,6 +376,7 @@ PY
     process_flags='--model gpt-6.1-sol -c model_reasoning_effort=high --dangerously-bypass-approvals-and-sandbox'
     launch="${launch//\[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS\]/$process_flags}"
     (cd "$process_work" && env -i PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT" CODEX_HOME="$TMP_ROOT/process-account" \
+      AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-$HOME/.cache/kendex/agent-runtime}" \
       PROCESS_JOB="$job" PROCESS_ARTIFACT="$artifact" PROCESS_RESULT="$result" \
       "$TIMEOUT" 60 "$BASH" -c "$launch") > "$job/launch.log" 2>&1
     await_file "$job/review.exit" nonempty
