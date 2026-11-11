@@ -386,6 +386,8 @@ UNIV="$TMP/universe"
     # REVISIT(D026): the CI denominator subtracts the complete orch corpus.
     case "$f" in skills/orch/tests/*) continue ;; esac
     case "$f" in "$LINEAR_PREFIX"*) continue ;; esac
+    # A package's run-all.sh runs its suites through the orch runner; it is none.
+    case "$f" in */tests/run-all.sh) continue ;; esac
     printf '%s\n' "$f"
   done
 ) | sort > "$UNIV"
@@ -1586,10 +1588,10 @@ check "must-fail: the old linear roster loses its unresolved suite" \
 # on both loses the rest of the family on macOS; releasing on neither runs
 # each suite twice on Linux; a macOS rest blind to those paths runs the two
 # twice there. A deleted path step returns its suite to macOS rest.
-jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;'
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.test.sh" ;;'
 jarvis_skip='                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")'
 jarvis_moved="$(printf '%s\n' skills/jarvis/tests/session.test.sh skills/jarvis/tests/succession.test.sh | sort)"
-(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.sh) > "$TMP/jarvis-suites"
+(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.test.sh) > "$TMP/jarvis-suites"
 grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
   bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
 jarvis_universe() { # OS ; the eligible Jarvis suites, unresolved ones included, into os-universe
@@ -1620,7 +1622,7 @@ while IFS='|' read -r os major fault target expected replacement; do
   check "must-fail: a Jarvis rest $target changed leaves the $expected Jarvis suites $fault on $os" \
     "$want" "$got"
 done <<'ROWS'
-macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.sh" ;;
+macos-latest|3|lost|arm|unmoved|              jarvis) needle="skills/$x/tests/*.test.sh" ;;
 ubuntu-latest|4|duplicated|arm|family|              jarvis) needle="" ;;
 macos-latest|3|duplicated|skip|moved|                unclaimed+=("$t")
 ROWS
