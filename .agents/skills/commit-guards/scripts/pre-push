@@ -75,6 +75,8 @@ adds over what this repository's refs for the remote last recorded — and not
 a claim about the destination. Those refs record a past fetch and nothing
 local dates them, so after a `git remote set-url` they still describe the
 previous repository and an oversized file can read there as pre-existing.
+Where the commits those refs bound the branch at do not descend from one
+another, the base is HEAD's merge base with the remote's default branch.
 With no base at all, the whole tree is the scope.
 
 Two refusals keep the verdict about the thing being pushed. Every range scope
@@ -230,9 +232,10 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 #
 # Where no boundary can be established at all the caller falls to the whole
 # tree, three lines below this one. That happens on a push by direct URL, on
-# a push URL these refs do not describe, and on a branch nothing of which has
-# reached the remote: in each, nothing on it has been vetted against the
-# destination, and the whole tree is the only honest scope left.
+# a push URL these refs do not describe, on a branch nothing of which has
+# reached the remote, and on incomparable boundaries with no default branch
+# recorded: in each, nothing on it has been vetted against the destination,
+# and the whole tree is the only honest scope left.
 #
 # When byte-ceiling is enabled in COMMIT_GUARDS_CHECKS, its `--all` run has
 # no source blob. It holds an oversized binary file to its row in the byte
@@ -245,6 +248,8 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   eval "$__v=''"
   # One baseline must descend from every reached boundary. Traversal order
   # cannot establish that: a merge can also reach an older donor boundary.
+  # Where none does — a branch cut from one published branch that merged
+  # another — the default branch decides, as history_boundary has it.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # matches no tracking refs, so nothing is excluded, the walk reaches the
@@ -262,7 +267,7 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   done <"$GG_TMP/boundary"
   [ "${#boundaries[@]}" -gt 0 ] || return 1
   # Independent removes supplied ancestors. A sole survivor therefore bounds
-  # all the reached history; incomparable survivors have no single baseline.
+  # all the reached history; incomparable survivors have no single one.
   git merge-base --independent "${boundaries[@]}" \
     >"$GG_TMP/independent" 2>"$GG_TMP/boundary.err" || status=$?
   [ "$status" -eq 0 ] \
@@ -274,9 +279,21 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   done <"$GG_TMP/independent"
   case "$count" in
     0) gg_fail boundary-empty "$local_oid" "git merge-base returned no independent boundary from a nonempty set." ;;
-    1) eval "$__v=\$selected" ;;
-    *) gg_fail boundary-ambiguous "$local_oid" "The reached remote boundaries are incomparable, so no single branch baseline can be established." ;;
+    1) ;;
+    *) default_base selected || return 1 ;;
   esac
+  eval "$__v=\$selected"
+}
+
+# HEAD's merge base with the remote's default branch: git's record of the
+# remote's HEAD, which a caller reads only where tracking_describes_push holds.
+# Past it, HEAD's commits are not the default branch's, which is what the
+# pull request for this branch will carry.
+default_base() { # VAR — VAR gets the merge base; 1 when no default branch is recorded
+  local __v="$1" __ref="" __mb=""
+  __ref="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
+  __mb="$(git merge-base "$__ref" HEAD 2>/dev/null)" || return 1
+  eval "$__v=\$__mb"
 }
 
 # The baseline for the lanes that ask what the branch changed over its base
@@ -295,11 +312,10 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
 # answer the caller keeps the remote head for these lanes too: wider, never
 # narrower.
 history_boundary() { # VAR REMOTE-OID — VAR gets the boundary; 1 when there is none
-  local __v="$1" default="" pushed="" base=""
+  local __v="$1" pushed="" base=""
   tracking_describes_push || return 1
-  default="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
+  default_base base || return 1
   pushed="$(git merge-base "$2" HEAD 2>/dev/null)" || return 1
-  base="$(git merge-base "$default" HEAD 2>/dev/null)" || return 1
   git merge-base --is-ancestor "$base" "$pushed" 2>/dev/null || pushed="$base"
   eval "$__v=\$pushed"
 }
@@ -531,12 +547,13 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
   if local_boundary base "$local_oid"; then
     judge "base:$base" "$ref" --base "$base"
   else
-    # No base this lane can vouch for: either nothing on this branch has ever
-    # reached the remote, or the refs this repository holds for the remote
-    # describe somewhere other than where the push is going. Either way no
-    # commit on it has been vetted against the destination, and the whole tree
-    # is the only honest scope.
-    gg_message base-none "$ref" "=== pre-push: no base to vouch for — either nothing $ref builds on has reached this remote, or this repository's refs for the remote describe somewhere else. Judging the whole tree."
+    # No base this lane can vouch for: nothing on this branch has ever reached
+    # the remote, the refs this repository holds for the remote describe
+    # somewhere other than where the push is going, or the branch builds on
+    # incomparable published commits with no default branch to choose between
+    # them. Either way no single commit on it has been vetted against the
+    # destination, and the whole tree is the only honest scope.
+    gg_message base-none "$ref" "=== pre-push: no base to vouch for — nothing $ref builds on has reached this remote, this repository's refs for the remote describe somewhere else, or $ref builds on published branches none of which contains the others and the remote's default branch is not recorded. Judging the whole tree."
     judge "all" "$ref"
   fi
 done <"$GG_TMP/refs"
