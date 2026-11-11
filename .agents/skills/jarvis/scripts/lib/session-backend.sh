@@ -56,6 +56,23 @@ pi_session_account() {
     *) PI_SESSION_ACCOUNT=foreign ;;
   esac
 }
+# Read before any launch preparation: lane_claude_trust_prepare writes this
+# marker, but only the account owner can finish the harness's first-run UI.
+# claude auth status and doctor report no setup status:
+# https://code.claude.com/docs/en/cli-reference
+# https://code.claude.com/docs/en/settings-reference#global-config-settings
+# https://code.claude.com/docs/en/env-vars
+harness_setup_check() { # HARNESS ACCOUNT; empty when ready, refusal JSON otherwise
+  local onboarded=false fix
+  [[ "$1" == claude ]] || return 0
+  if [[ -e "$2/.claude.json" ]]; then
+    onboarded="$(jq '.hasCompletedOnboarding == true' < "$2/.claude.json")" || return 1
+  fi
+  if [[ "$onboarded" != true ]]; then
+    printf -v fix 'open claude once with CLAUDE_CONFIG_DIR=%q and finish its first-run setup, then launch the task again' "$2"
+    jq -cn --arg fix "$fix" '{refused:"harness-setup-pending",fix:$fix}'
+  fi
+}
 case "$verb" in
   select)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
@@ -124,12 +141,25 @@ case "$verb" in
         fi
         entries+=("$entry")
       done
-      walk_rc=0
       [[ -z "$caller" ]] || entries+=("$caller")
-      ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
-      for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
-        IFS=$'\t' read -r -a fields <<<"$skip"
-        printf 'jarvis-session: %s\n' "${fields[*]}" >&2
+      while :; do
+        walk_rc=0
+        ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
+        for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
+          IFS=$'\t' read -r -a fields <<<"$skip"
+          printf 'jarvis-session: %s\n' "${fields[*]}" >&2
+        done
+        (( walk_rc == 0 )) || break
+        setup="$(harness_setup_check "$OL_HARNESS" "$OL_LANE_DIR")" || exit 1
+        [[ -n "$setup" ]] || break
+        reason="$(jq -er '.refused' <<<"$setup")" || exit 1
+        fix="$(jq -er '.fix' <<<"$setup")" || exit 1
+        printf 'jarvis-session: successor-entry-skipped entry=%s reason=%s fix=%s\n' "$OL_CHOSEN" "$reason" "$fix" >&2
+        remaining=()
+        for entry in ${entries[@]+"${entries[@]}"}; do
+          [[ "$entry" == "$OL_CHOSEN" ]] || remaining+=("$entry")
+        done
+        entries=(${remaining[@]+"${remaining[@]}"})
       done
       if (( walk_rc == 0 )); then
         harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
@@ -138,6 +168,13 @@ case "$verb" in
         [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
         exit 1
       fi
+    fi
+    setup="$(harness_setup_check "$harness" "$account")" || exit 1
+    if [[ -n "$setup" ]]; then
+      reason="$(jq -er '.refused' <<<"$setup")" || exit 1
+      fix="$(jq -er '.fix' <<<"$setup")" || exit 1
+      printf 'jarvis-session: reason=%s account=%s fix=%s\n' "$reason" "$account" "$fix" >&2
+      exit 1
     fi
     jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" --arg spent_account "$exclude" \
       '{harness:$harness,account:$account,model:$model,effort:$effort} + if $spent_account == "" then {} else {spent_account:$spent_account} end' ;;
@@ -175,29 +212,10 @@ case "$verb" in
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
-    # Claude Code records its finished first-run setup as hasCompletedOnboarding
-    # in the account's .claude.json, the file lane_claude_trust_prepare reads.
-    # Without it the task stops on the theme and security screens with nobody
-    # at the pane. Read before ol_command_line, whose trust write sets the key:
-    # the setup is the account owner's to finish at the harness.
-    # No documented interface answers whether that setup is done: `claude auth
-    # status` reports sign-in, `claude doctor` install and settings health, and
-    # neither the settings keys (`theme` among them, plus the documented global
-    # config keys of .claude.json) nor any environment variable records it.
-    # IS_DEMO skips the setup without reporting it, a skip the owner never chose.
-    # https://code.claude.com/docs/en/cli-reference
-    # https://code.claude.com/docs/en/settings-reference#global-config-settings
-    # https://code.claude.com/docs/en/env-vars
-    if [[ "$harness" == claude ]]; then
-      onboarded=false
-      if [[ -e "$account/.claude.json" ]]; then
-        onboarded="$(jq '.hasCompletedOnboarding == true' < "$account/.claude.json")" || exit 1
-      fi
-      if [[ "$onboarded" != true ]]; then
-        printf -v fix 'open claude once with CLAUDE_CONFIG_DIR=%q and finish its first-run setup, then launch the task again' "$account"
-        jq -cn --arg fix "$fix" '{refused:"harness-setup-pending",fix:$fix}'
-        exit 0
-      fi
+    setup="$(harness_setup_check "$harness" "$account")" || exit 1
+    if [[ -n "$setup" ]]; then
+      printf '%s\n' "$setup"
+      exit 0
     fi
     ol_model_line "$OL_ENTRY_WARNING"
     ol_launch_flags --question-off "$harness" "$model" "$effort" "$model" "" || exit 1

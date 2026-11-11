@@ -51,6 +51,9 @@ model_wall = harness == "claude" and "--binding-floor" in args
 # The recorded account's own reading judges its headroom alone; a walk's pick
 # finds an account only on the fixture's harness.
 walled = row["headroom"] <= floor if "--lane" in args else harness != row["harness"] or model_wall
+if "accounts" in row and "--lane" not in args and harness in row["accounts"]:
+    print(json.dumps({"config_dir": row["accounts"][harness]}))
+    sys.exit(0)
 if walled:
     print('{"walled":1,"unmeasured":0}')
     sys.exit(3)
@@ -123,6 +126,101 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.assertEqual(result.returncode, 1)
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
+
+    def test_successor_setup_readiness(self):
+        # A first-run account is emitted by lanes after its weekly reset.
+        self.call("start", harness="codex")
+        original = self.wait()
+        self.handoff()
+        self.model_classes()
+        pending = self.root / "pending-claude"
+        pending.mkdir()
+        (pending / ".claude.json").write_text("{}")
+        calls = self.root / "setup-picks"
+        (self.home / ".lane-fixture.json").write_text(json.dumps({
+            "harness": "claude", "account": str(self.account), "calls": str(calls), "headroom": 100,
+            "accounts": {"claude": str(pending), "codex": str(self.account)}}))
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"\n')
+        # The second pick acknowledges that the predecessor still owns its
+        # pane while selection skips setup, before handover may stop it.
+        picker = self.skills / "orch/scripts/lanes"
+        text = picker.read_text()
+        self.assertEqual(text.count('row = json.loads(config.read_text())'), 1)
+        picker.write_text(text.replace('row = json.loads(config.read_text())',
+            'row = json.loads(config.read_text())\n'
+            'if "--lane" not in args and args[args.index("--harness") + 1] == "codex":\n'
+            ' import subprocess\n'
+            ' live = subprocess.run(["tmux", "-S", ' + repr(original["terminal"]["server"])
+            + ', "display-message", "-p", "-t", ' + repr(original["terminal"]["pane"])
+            + ', "#{pane_id}"], capture_output=True, text=True, check=True)\n'
+            ' assert live.stdout.strip() == ' + repr(original["terminal"]["pane"])))
+        answer, code = self.call("succeed")
+        self.assertEqual((answer["state"], code), ("handing-over", 0))
+        # fix= is the operator-consumed refusal contract, not prose wording.
+        self.assertIn("harness-setup-pending", self.stderr)
+        self.assertIn("fix=", self.stderr)
+        self.assertIn(str(pending), self.stderr)
+        current = self.wait()
+        self.assertEqual((current["harness"], current["account"]), ("codex", str(self.account)))
+        self.assertEqual([row["harness"] for row in self.started()], ["codex", "codex"])
+        self.assertEqual(self.started()[1]["account"], self.started()[0]["account"])
+        self.assertEqual(json.loads((pending / ".claude.json").read_text()), {})
+
+    def test_failed_start_recovers_or_notifies(self):
+        # The harness can refuse Start after the predecessor ends. Recovery
+        # must use the existing launch and brief path, once, without an agent.
+        # Owner notices append to the home's repository mailbox.
+        for arguments in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run(["git", "-C", str(self.home), *arguments], env=self.env,
+                           capture_output=True, check=True, timeout=10)
+        for recover in (True, False):
+            with self.subTest(recover=recover):
+                self.call("start", mode="new")
+                self.wait()
+                before = json.loads(self.record.read_text())
+                contents = self.handoff()
+                trust = self.root / "trust-screen"
+                trust.write_text("Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No, exit\n")
+                fixture = self.home / ".fixture-harness.py"
+                source = fixture.read_text()
+                self.assertEqual(1, source.count('if fixture.get("trust"):'))
+                self.assertEqual(source.count('        sys.stdin.read()\n        return\n'), 1)
+                generation = before["generation"] + 1
+                fixture.write_text(source.replace('if fixture.get("trust"):',
+                    'if fixture.get("trust") and (int(os.environ["JARVIS_GENERATION"]) == '
+                    + str(generation) + ' or ' + repr(not recover) + '):').replace(
+                        '        sys.stdin.read()\n        return\n', '        raise SystemExit(29)\n'))
+                config = self.home / ".fixture.json"
+                setup = json.loads(config.read_text())
+                config.write_text(json.dumps(setup | {"trust": str(trust)}))
+                try:
+                    self.call("succeed")
+                    if recover:
+                        current = self.wait()
+                        self.assertEqual((current["harness"], current["account"]), ("claude", str(self.account)))
+                    else:
+                        self.wait("failed", "handover-failed")
+                    settled = json.loads(self.record.read_text())
+                    self.assertEqual(settled["generation"], before["generation"] + 2)
+                    self.assertEqual(Path(settled["transfer"]["handoff"]).read_text(), contents)
+                    notices = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
+                    if not recover:
+                        try:
+                            self.await_rows(notices, 1)
+                        except AssertionError:
+                            self.fail(self.session_log())
+                    rows = [json.loads(line) for line in notices.read_text().splitlines()] if notices.exists() else []
+                    self.assertEqual([(row["kind"], row["to"]) for row in rows], [] if recover else [("notice", "owner")])
+                    if recover:
+                        self.assertEqual(self.prompts(settled["pending"]["native_session_id"]), self.prompts(before["pending"]["native_session_id"]))
+                    else:
+                        self.assertIsNone(self.call("status")[0]["terminal"])
+                finally:
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    config.write_text(json.dumps(setup))
+                    fixture.write_text(source)
 
     def test_succession_identity(self):
         self.handoff()
@@ -253,6 +351,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 contents = self.handoff()
                 account = self.root / ("next-" + state + "-" + start + "-" + target)
                 account.mkdir()
+                (account / ".claude.json").write_text('{"hasCompletedOnboarding":true}')
                 calls = self.root / ("picks-" + state + "-" + start + "-" + target)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
                                                                           "shared": True}))
@@ -512,7 +611,8 @@ set-hook -g after-new-window "rename-window user-hook"
                     target = "claude" if worker_failure == "trust" else "codex"
                     trust = alternative / ".claude.json"
                     if worker_failure == "trust":
-                        trust.write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+                        trust.write_text(json.dumps({"hasCompletedOnboarding": True,
+                                                     "projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
                     fixture = {"harness": target, "account": str(alternative), "calls": str(calls), "headroom": 20, "read_rc": 0}
                     (self.home / ".lane-fixture.json").write_text(json.dumps(fixture))
                     (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "' + target + ':standard:high"\n')
@@ -578,7 +678,7 @@ set-hook -g after-new-window "rename-window user-hook"
                             self.assertEqual(closed.returncode, 0, closed.stderr)
                         if worker_failure == "trust":
                             self.assertEqual(retained["transfer"]["phase"], "saved")
-                            trust.unlink()
+                            trust.write_text('{"hasCompletedOnboarding":true}')
                     elif phase == "predecessor-ended":
                         self.wait("failed", "handover-failed")
                         self.successor_ended()
@@ -1221,9 +1321,14 @@ set-hook -g after-new-window "rename-window user-hook"
                         if before_end or completed or not abandoned:
                             settled = self.wait("running")
                             owner = previous if before_end else persisted
-                            self.assertEqual(settled["terminal"], owner["terminal"])
+                            current = json.loads(self.record.read_text())
+                            if not (before_end or completed) and current["transfer"].get("recovery"):
+                                self.assertEqual(current["generation"], persisted["generation"] + 1)
+                                self.assertEqual(current["transfer"]["previous_handoff"], persisted["transfer"]["handoff"])
+                            else:
+                                self.assertEqual(settled["terminal"], owner["terminal"])
                             if not (before_end or completed):
-                                self.assertEqual(json.loads(self.record.read_text())["worker_ended"],
+                                self.assertEqual(current["worker_ended"],
                                                  {"pid": identity["pid"], "cause": "unknown"})
                         else:
                             settled = self.wait("failed", "handover-failed")
@@ -1250,6 +1355,6 @@ set-hook -g after-new-window "rename-window user-hook"
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_reaped_predecessor_scope", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
+        unittest.main(defaultTest=["SuccessionContract.test_successor_setup_readiness", "SuccessionContract.test_failed_start_recovers_or_notifies", "SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_reaped_predecessor_scope", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
                                    "SuccessionContract.test_known_wall_selection", "SuccessionContract.test_pi_known_wall_selection", "SuccessionContract.test_known_wall_retry", "SuccessionContract.test_fresh_wall_controller",
                                    "SuccessionContract.test_adoption_contract", "SuccessionContract.test_adoption_refusals", "SuccessionContract.test_adoption_recovery"])

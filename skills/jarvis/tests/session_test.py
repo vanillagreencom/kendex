@@ -1317,6 +1317,8 @@ class SessionContract(unittest.TestCase):
         reserved.mkdir()
         allowed = Path(self.env["HOME"]) / ".2claude"
         allowed.mkdir()
+        for account in (reserved, allowed):
+            (account / ".claude.json").write_text('{"hasCompletedOnboarding":true}')
         # The external meter and model classifier are fixtures. The real
         # selector must skip the reserved account despite its greater room.
         meter = self.root / "bin/meter"
