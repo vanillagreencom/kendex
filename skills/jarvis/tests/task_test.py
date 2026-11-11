@@ -1033,7 +1033,7 @@ while True: signal.pause()
              "test_controller_exit_recovers_task_windows"),
             ("succession", "session.py", (("file=sys.stderr)\n        self.end_task_session(window)\n", "file=sys.stderr)\n        pass\n"),
                 ("                        self.end_task_session(window)\n", "                        pass\n"),
-                ('elif "recovery" in record["transfer"] and not self.terminal(predecessor):', 'elif False:')),
+                ('elif "recovery" in record["transfer"]:', 'elif False:')),
              "test_failed_succession_ends_task_windows"),
             ("foreign-session", "session.py", (('"#{==:" + unmarked + ",}"', '"1"'),),
              "test_foreign_jarvis_session_survives"),
