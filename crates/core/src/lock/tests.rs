@@ -3,6 +3,8 @@ use std::path::Path;
 use super::*;
 use crate::error::CoreError;
 
+mod compact;
+
 fn entry(emitted: Option<EmittedArtifact>) -> LockEntry {
     LockEntry {
         requirer_provenance: None,
@@ -206,7 +208,7 @@ fn recording(path: &Path, key: &str, emitted: &Path) {
     std::fs::write(
         path,
         format!(
-            r#"{{"version":{LOCK_VERSION},"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
+            r#"{{"version":11,"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
             json(emitted)
         ),
     )
@@ -223,27 +225,14 @@ enum Gate {
     TooNew(i64),
 }
 
-/// One row per version a record can name, and the gate's answer, through
-/// `load_file` and `load` alike. The version is the whole gate: a record
-/// naming this build's number loads whatever else it holds, and one naming
-/// any other number — or none — is refused, because every field a later
-/// version introduced is a fact this build reads and an older record does
-/// not carry. A v1 lock (bare-name keys, a `harnesses` array, no singular
-/// `harness`) is a shape this build does not read and nothing converts,
-/// and neither is the version before this one, which spells every
-/// position as a path on the machine that wrote it. Malformed JSON is a
-/// damaged lock, distinct from the older and newer cases. A lock a future
-/// kendex wrote refuses to load rather than being silently misread or
-/// corrupted by an older build; that refusal is what every bump buys, so
-/// it is held at exactly one version above this build's — the version the
-/// next bump hands to the build before it — and against a record this
-/// project could otherwise adopt, leaving the version as the only thing
-/// refusing it.
+/// Supported portable shapes load; pre-portable project recovery and
+/// future-version refusal keep their typed routes.
 #[test]
-fn only_a_record_naming_this_builds_version_loads() {
+fn supported_portable_versions_load() {
     let ahead = i64::from(LOCK_VERSION) + 1;
-    let rows: [(String, Gate); 8] = [
+    let rows: [(String, Gate); 9] = [
         (format!(r#"{{"version":{LOCK_VERSION},"entries":{{}}}}"#), Gate::Loads),
+        (r#"{"version":11,"entries":{}}"#.to_owned(), Gate::Loads),
         (
             r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#.to_owned(),
             Gate::Corrupt,
@@ -251,7 +240,7 @@ fn only_a_record_naming_this_builds_version_loads() {
         (r#"{"version":1,"entries":{}}"#.to_owned(), Gate::Corrupt),
         (r#"{"version":2,"entries":{}}"#.to_owned(), Gate::Corrupt),
         (
-            format!(r#"{{"version":{},"root":ROOT,"entries":{{}}}}"#, LOCK_VERSION - 1),
+            r#"{"version":10,"root":ROOT,"entries":{}}"#.to_owned(),
             Gate::LegacyProject,
         ),
         (
@@ -454,7 +443,7 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
     assert_eq!(machine, root.join(".cache/kendex").join(MACHINE_FILE));
     let held: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&machine).unwrap()).unwrap();
-    assert_eq!(held["version"], LOCK_VERSION);
+    assert_eq!(held["version"], super::file::MACHINE_VERSION);
     assert_eq!(held["written"].as_array().map(Vec::len), Some(1));
     assert_eq!(
         held["written"][0]["root"],
@@ -517,9 +506,7 @@ fn a_committed_record_reads_as_the_project_reading_it() {
         let path = root.join(LOCK_FILE);
         std::fs::write(
             &path,
-            format!(
-                r#"{{"version":{LOCK_VERSION},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":"../catalog","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[".agents/skills/gh"]}}}}}},"sources":{{"cat":{{"repo":".","commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":"../catalog","commit":"abc123"}}}}}}"#
-            ),
+            r#"{"version":11,"entries":{"skill:gh:claude":{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":"../catalog","sourceHash":"abc","enabled":true,"emitted":{"kind":"skill","name":"gh","paths":[".agents/skills/gh"]},"requirerProvenance":{"rows":[{"installation":{"source":"cat","kind":"hook","name":"judge","harness":"codex"},"sourceRepo":"../catalog","reasons":[]}]}}},"sources":{"cat":{"repo":".","commit":"abc123"}},"bundles":{"set":{"source":"cat","sourceRepo":"../catalog","commit":"abc123"}}}"#,
         )
         .unwrap();
 
@@ -591,6 +578,16 @@ fn a_committed_record_reads_as_the_project_reading_it() {
         assert_eq!(
             entry.machine, None,
             "{label}: this machine holds nothing about an install made elsewhere"
+        );
+        assert_eq!(lock.version, 11);
+        save(&path, &lock).unwrap();
+        let mut current = lock;
+        current.version = LOCK_VERSION;
+        assert_eq!(load(&path).unwrap(), current, "{label}");
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains(&crate::paths::slashed(&here))
         );
     }
 }
@@ -761,7 +758,20 @@ fn checkouts_sharing_one_cache_keep_their_own_halves() {
     );
 
     save(&main.join(LOCK_FILE), &at_main).unwrap();
+    let mut legacy = at_main.clone();
+    legacy.version = 11;
+    super::roots::write_under(&main.join(LOCK_FILE), &mut legacy).unwrap();
+    std::fs::write(
+        main.join(LOCK_FILE),
+        serde_json::to_string_pretty(&legacy).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(load(&main.join(LOCK_FILE)).unwrap().version, 11);
     save(&linked.join(LOCK_FILE), &at_linked).unwrap();
+    let mut migrated = load(&main.join(LOCK_FILE)).unwrap();
+    migrated.version = LOCK_VERSION;
+    assert_eq!(migrated, at_main);
+    save(&main.join(LOCK_FILE), &migrated).unwrap();
     assert_eq!(
         std::fs::read_to_string(machine_path(&main.join(LOCK_FILE))).unwrap(),
         std::fs::read_to_string(machine_path(&linked.join(LOCK_FILE))).unwrap(),
@@ -896,11 +906,17 @@ fn an_unreadable_machine_half_reads_as_absent() {
         ("not json", "{not json".to_owned()),
         (
             "a version behind",
-            format!(r#"{{"version":{},"entries":{{}}}}"#, LOCK_VERSION - 1),
+            format!(
+                r#"{{"version":{},"entries":{{}}}}"#,
+                super::file::MACHINE_VERSION - 1
+            ),
         ),
         (
             "a version ahead",
-            format!(r#"{{"version":{},"entries":{{}}}}"#, LOCK_VERSION + 1),
+            format!(
+                r#"{{"version":{},"entries":{{}}}}"#,
+                super::file::MACHINE_VERSION + 1
+            ),
         ),
         ("no version", r#"{"entries":{}}"#.to_owned()),
         ("an empty file", String::new()),

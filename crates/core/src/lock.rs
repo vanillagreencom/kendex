@@ -8,11 +8,10 @@ use crate::env::Env;
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
 
-/// Current lock version, the number every write stamps, and the only one
-/// a read accepts. Nothing converts a record from another format: an older
-/// one is refused as damaged and a newer one as written by a newer build,
-/// and the way out is to move it aside and apply again, except for the
-/// version 10 project record below, which refresh and apply recover.
+/// Current committed version. Reads accept expanded v11 and compact v12
+/// without writing; the next authorized write always records v12. Earlier
+/// records remain refused, except for version 10 project recovery below.
+/// Keep v11 reading through this major release line.
 ///
 /// The floor is not ceremony. Every field a version introduced is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
@@ -93,7 +92,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// facts belong in, resolving or discarding that edit first. Older
 /// verification can reject a record carrying the field because its
 /// serialization omits it.
-pub const LOCK_VERSION: u32 = 11;
+///
+/// Version 12 stores each installation, reason and complete ancestry row
+/// once, with content-derived references. Recorder memberships, their
+/// order and each entry's hold mark remain independent. Machine facts
+/// retain format 11; no offline evidence moves into that cache.
+pub const LOCK_VERSION: u32 = 12;
 
 /// The lock file a project scope carries, committed with the renders it
 /// records. The global lock is `lock.json` under the app's own directory
@@ -555,6 +559,7 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
 pub mod branch;
 mod file;
 mod roots;
+mod wire;
 pub use file::{
     LockFile, committed_text, load, load_file, machine_path, parse_text, save, stated_roots,
 };

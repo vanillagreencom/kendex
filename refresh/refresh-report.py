@@ -145,7 +145,8 @@ def main():
     lock = json.loads(lock_text)
     kinds = {}
     for e in lock["entries"].values():
-        kinds.setdefault(e["name"], set()).add(e["kind"])
+        identity = lock["installations"][e["installation"]] if lock["version"] == 12 else e
+        kinds.setdefault(identity["name"], set()).add(identity["kind"])
     names = set(kinds)
     run = f"https://github.com/{repo}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
     summary = os.environ["GITHUB_STEP_SUMMARY"]

@@ -13,7 +13,6 @@
 
 use kendex_core::attest::Document;
 use kendex_core::engine::Owns;
-use kendex_core::lock::LOCK_VERSION;
 
 use super::verify_records::{
     INSTALLED, RECORD, commit, edit_json, git, retired, said, verify_scope, world,
@@ -114,7 +113,7 @@ fn the_field_is_left_out_wherever_no_base_record_was_read() {
         &["checkout", "-q", "-B", "older", INSTALLED],
     );
     edit_json(&world.project.join(RECORD), |lock| {
-        lock["version"] = (LOCK_VERSION - 1).into();
+        lock["version"] = 10.into();
     });
     commit(&world.project, "the record as an earlier kendex wrote it");
     git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);

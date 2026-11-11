@@ -1,12 +1,11 @@
 //! Reading and writing a lock: the committed record at a path, this
-//! machine's half beside it, and the one version shape that loads. How the
+//! machine's half beside it, and the supported committed shapes. How the
 //! committed record spells what sits under the project is
 //! [`super::roots`]'s question.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
@@ -15,16 +14,19 @@ use crate::fs::{atomic_write_no_follow, read_if_exists};
 use super::roots::{project_root_at, read_against, write_under};
 use super::{LOCK_FILE, LOCK_VERSION, Lock, MACHINE_FILE, MachineRecord, VERSION_10_LOCK_FILE};
 
-/// What sits at a lock path. Only the shape this build writes loads: a
-/// record from an older generation is damaged as far as this build is
-/// concerned, and [`CoreError::LockCorrupt`] names the way out; a version 10
-/// project record is [`CoreError::LegacyProjectLock`], which a refresh or an
-/// apply recovers where `engine::planning_lock` does not refuse it.
+/// What sits at a lock path. Expanded v11 and compact v12 records load
+/// without writing. Older generations are refused; a version 10 project
+/// record is [`CoreError::LegacyProjectLock`], which refresh or apply can
+/// recover through `engine::planning_lock`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LockFile {
     Absent,
     Current(Lock),
 }
+
+// Machine facts did not change with the compact committed representation.
+// Sharing a cache across writer versions must keep every checkout's rows.
+pub(super) const MACHINE_VERSION: u32 = 11;
 
 /// This machine's half of a record: what it knows about each installation
 /// the committed record names, one row per root that wrote through the
@@ -99,7 +101,18 @@ pub fn load_file(path: &Path) -> Result<LockFile> {
 /// `path` gets. This machine's half is read from disk either way: it is
 /// not part of what the importer classifies.
 pub fn parse_text(path: &Path, text: &str) -> Result<Lock> {
-    let mut lock: Lock = parse_versioned(path, text)?;
+    let value = parse_versioned(path, text, LOCK_VERSION, 11)?;
+    let mut lock: Lock = if value["version"] == 11 {
+        serde_json::from_value(value).map_err(|error| CoreError::LockCorrupt {
+            path: path.to_path_buf(),
+            message: error.to_string(),
+        })?
+    } else {
+        super::wire::decode(value).map_err(|message| CoreError::LockCorrupt {
+            path: path.to_path_buf(),
+            message,
+        })?
+    };
     read_against(path, &mut lock)?;
     let root = project_root_at(path);
     if let Some(written) = machine_state(path)?
@@ -157,38 +170,36 @@ fn machine_state(path: &Path) -> Result<Option<MachineState>> {
     let Some(text) = read_if_exists(&machine)? else {
         return Ok(None);
     };
-    match parse_versioned(&machine, &text) {
+    match parse_versioned(&machine, &text, MACHINE_VERSION, MACHINE_VERSION).and_then(|value| {
+        serde_json::from_value(value).map_err(|error| CoreError::LockCorrupt {
+            path: machine.clone(),
+            message: error.to_string(),
+        })
+    }) {
         Ok(state) => Ok(Some(state)),
         Err(CoreError::LockCorrupt { .. } | CoreError::SchemaTooNew { .. }) => Ok(None),
         Err(other) => Err(other),
     }
 }
 
-/// One record as its file spells it, version-checked and parsed. Both
-/// halves go through here, since they are written by one build in one
-/// pass; what a refusal means differs per half, and the caller decides
-/// it.
-fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
+/// Classify before shape decoding. Each half declares its own supported
+/// versions; cache fallback and committed-record recovery remain separate.
+fn parse_versioned(path: &Path, text: &str, latest: u32, floor: u32) -> Result<serde_json::Value> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| CoreError::LockCorrupt {
             path: path.to_path_buf(),
             message: e.to_string(),
         })?;
     let version = value.get("version").and_then(serde_json::Value::as_i64);
-    if version.is_some_and(|version| version > i64::from(LOCK_VERSION)) {
+    if version.is_some_and(|version| version > i64::from(latest)) {
         return Err(CoreError::SchemaTooNew {
             path: path.to_path_buf(),
             found: version.unwrap_or_default(),
         });
     }
-    // The floor, and the reason there is one: every field a later version
-    // introduced is a fact this build reads and an older record simply does not
-    // carry — where an installed set sits, why an installation exists, and
-    // as of version 11 whether a position is a remainder of the project or
-    // a path on the machine that wrote it. Read as absent, each of those
-    // is a wrong answer rather than a missing one. Nothing converts the
-    // older shape, so nothing plans against it either.
-    if version != Some(i64::from(LOCK_VERSION)) {
+    // Pre-portable committed records cannot be read as project remainders.
+    // v11, unlike those records, contains all the facts v12 stores.
+    if !version.is_some_and(|version| (i64::from(floor)..=i64::from(latest)).contains(&version)) {
         if version == Some(10) && path.file_name().is_some_and(|name| name == LOCK_FILE) {
             return Err(CoreError::LegacyProjectLock {
                 path: path.to_path_buf(),
@@ -210,10 +221,7 @@ fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
             ),
         });
     }
-    serde_json::from_value(value).map_err(|e| CoreError::LockCorrupt {
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })
+    Ok(value)
 }
 
 /// Load the current lock for reads or mutations. An absent lock is an empty
@@ -230,11 +238,7 @@ pub fn load(path: &Path) -> Result<Lock> {
 
 /// Put the record down: the committed half at the path, spelled as a
 /// remainder of the project, and this machine's half under the project's
-/// cache, with the version stamped on both here.
-///
-/// The version is a fact about the build that wrote the file, and the read
-/// holds every record to exactly this number — two places deciding it is
-/// how a writer comes to put down something its own reader refuses.
+/// cache, each stamped with its independent format version.
 ///
 /// The committed half replaces whatever sits at the path rather than
 /// being written through a link there. A lock is kendex's own record, the
@@ -263,12 +267,12 @@ pub fn committed_text(path: &Path, lock: &Lock) -> Result<String> {
     let mut lock = lock.clone();
     lock.version = LOCK_VERSION;
     write_under(path, &mut lock)?;
-    document(path, &lock)
+    committed_document(path, &lock)
 }
 
 fn write_halves(path: &Path, root: Option<PathBuf>, lock: &Lock) -> Result<()> {
     let mut machine = machine_state(path)?.unwrap_or_default();
-    machine.version = LOCK_VERSION;
+    machine.version = MACHINE_VERSION;
     machine.written.retain(|row| row.root != root);
     machine.written.push(WrittenUnder {
         root,
@@ -279,9 +283,17 @@ fn write_halves(path: &Path, root: Option<PathBuf>, lock: &Lock) -> Result<()> {
             .collect(),
     });
     machine.written.sort_by(|a, b| a.root.cmp(&b.root));
-    atomic_write_no_follow(path, &document(path, lock)?)?;
+    atomic_write_no_follow(path, &committed_document(path, lock)?)?;
     let beside = machine_path(path);
     atomic_write_no_follow(&beside, &document(&beside, &machine)?)
+}
+
+fn committed_document(path: &Path, lock: &Lock) -> Result<String> {
+    let text = super::wire::text(lock).map_err(|message| CoreError::JsonParse {
+        path: path.to_path_buf(),
+        message,
+    })?;
+    terminated(path, text)
 }
 
 fn document<T: Serialize>(path: &Path, record: &T) -> Result<String> {
@@ -289,6 +301,10 @@ fn document<T: Serialize>(path: &Path, record: &T) -> Result<String> {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
+    terminated(path, text)
+}
+
+fn terminated(path: &Path, text: String) -> Result<String> {
     let current = read_if_exists(path)?.unwrap_or_default();
     let newline = crate::fs::line_terminator(&current);
     Ok(format!("{}{newline}", text.replace('\n', newline)))

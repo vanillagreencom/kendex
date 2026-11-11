@@ -136,7 +136,8 @@ elif name=="kendex":
  if os.environ.get("REAL_KENDEX"):
   os.execv(os.environ["REAL_KENDEX"], ["kendex",*sys.argv[1:]])
  lock=json.loads(Path(".kendex-lock.json").read_text())
- owned=any(e["name"]==sys.argv[3] and e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
+ owned=any((lock["installations"][e["installation"]] if lock["version"]==12 else e)["name"]==sys.argv[3]
+           and e.get("sourceRepo")=="vanillagreencom/kendex" for e in lock["entries"].values())
  # The CLI names --repo only for a kendex-owned package.
  route=" --repo vanillagreencom/kendex --label ci-infra" if owned else ""
  print("would run: gh issue create"+route+" --title test",file=sys.stderr)
@@ -233,6 +234,26 @@ def run(driver=skill/'refresh-report.py', rows=findings, overrides=None):
  assert result.returncode==0,result.stderr
  results[:]=json.loads(result.stdout)
  return json.loads(world.read_text())
+# The historical record and current record can both be compact. Natural
+# fixture keys are deliberately independent of the production hash codec.
+legacy=(root/'.kendex-lock.json').read_text()
+expanded=json.loads(legacy)
+compact={'version':12,'installations':{},'entries':{}}
+for key, value in expanded['entries'].items():
+ compact['installations'][key]={f:value[f] for f in ('name','kind','harness','source')}
+ compact['entries'][key]={f:v for f,v in value.items() if f not in ('name','kind','harness','source')}
+ compact['entries'][key]['installation']=key
+for path in (root/'.kendex-lock.json',root/'historical-lock.json'):
+ path.write_text(json.dumps(compact))
+reset(); compact_result=run()
+assert len(compact_result['writes'])==1 and results[0]['root']==10
+needle='        identity = lock["installations"][e["installation"]] if lock["version"] == 12 else e'
+source=reporter.read_text()
+assert source.count(needle)==1
+mutant=root/'expanded-reader.py'
+mutant.write_text(source.replace(needle,'        identity = e'))
+assert attempt(mutant,findings,None).returncode!=0
+for path in (root/'.kendex-lock.json',root/'historical-lock.json'): path.write_text(legacy)
 reset(); first=run()
 assert len(first['writes'])==1
 issue=first['issues'][0]

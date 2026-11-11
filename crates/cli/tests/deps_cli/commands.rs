@@ -320,7 +320,7 @@ fn check_assesses_recorded_and_unrecorded_copies_once() {
     lock["entries"]
         .as_object_mut()
         .unwrap()
-        .retain(|_, entry| entry["name"] != "unrecorded");
+        .retain(|key, _| !key.starts_with("skill:unrecorded:"));
     fs::write(&path, serde_json::to_vec_pretty(&lock).unwrap()).unwrap();
     let probes = executable.with_extension("probes");
     fs::write(&probes, "").unwrap();
@@ -555,12 +555,16 @@ fn occupied_command_sources_obey_declaration_enablement() {
     let (project, bin) = command_source_fixture(&home);
     let path = project.join(".kendex-lock.json");
     let mut lock: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    let source = lock["entries"]
+    let id = lock["entries"]
         .as_object()
         .unwrap()
         .values()
         .next()
-        .unwrap()["source"]
+        .unwrap()["installation"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let source = lock["installations"][&id]["source"]
         .as_str()
         .unwrap()
         .to_owned();

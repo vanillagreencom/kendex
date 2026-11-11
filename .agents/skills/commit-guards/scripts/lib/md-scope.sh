@@ -278,8 +278,8 @@ gg_md_lock_paths() { # OUTPUT: newline-separated emitted paths
       and (startswith("/") | not)
       and (split("/") | all(. != "" and . != "." and . != ".."));
     if length != 1 then error("expected one lock document") else .[0] end
-    | if type != "object" or .version != 11 or (.entries | type) != "object"
-      then error("expected version 11 lock with entries") else .entries end
+    | if type != "object" or (.version != 11 and .version != 12) or (.entries | type) != "object"
+      then error("expected version 11 or 12 lock with entries") else .entries end
     | [ .[] | if type != "object" then error("expected lock entry")
         elif .emitted == null then empty
         elif (.emitted | type) != "object" or (.emitted.paths | type) != "array"
