@@ -89,7 +89,7 @@ boxes="$TMP_ROOT/boxes.md"
 printf '%s\n' \
   'Problem text.' \
   '' \
-  '- [ ] above the section' \
+  '- [x] above the section' \
   '' \
   '## Done when' \
   '' \
@@ -100,7 +100,7 @@ printf '%s\n' \
   '' \
   '## Notes' \
   '' \
-  '- [ ] outside the section' >"$boxes"
+  '- [x] outside the section' >"$boxes"
 
 proof="$TMP_ROOT/evidence.txt"
 printf '%s\n' '1: first source read' '2: second source read' '3: third source read' >"$proof"
@@ -184,8 +184,8 @@ out="$(run_complete "$boxes" "$log" CC-720 --done-when-met all --evidence-file "
 assert_jq "all counts newly ticked boxes" "$out" '.done_when_checked == 2'
 update="$(updates "$log")"
 assert_jq "the Done update carries the ticked description" "$update" '.variables.input.stateId == "state-done" and (.variables.input.description | contains("- [x] first\n  Evidence: first source read\n- [x] second\n  Evidence: second source read\n  - [x] third\n    Evidence: third source read"))'
-assert_jq "a box above the Done-when section stays unchecked" "$update" '.variables.input.description | startswith("Problem text.\n\n- [ ] above the section")'
-assert_jq "a box outside the Done-when section stays unchecked" "$update" '.variables.input.description | endswith("## Notes\n\n- [ ] outside the section\n")'
+assert_jq "a box above the Done-when section stays as filed" "$update" '.variables.input.description | startswith("Problem text.\n\n- [x] above the section\n\n## Done when")'
+assert_jq "a box outside the Done-when section stays as filed" "$update" '.variables.input.description | endswith("## Notes\n\n- [x] outside the section\n")'
 
 # Selecting only one branch box does not authorize the remaining branch box.
 log="$TMP_ROOT/list.jsonl"

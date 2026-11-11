@@ -114,10 +114,11 @@ build_completion_validation_result() {
 		fi
 		if [[ "$role" == "bundle-child" && "$state_ok" == true ]]; then
 			checklist=$(done_when_parse "$description" '[]') || return 1
+			# A started child passes on the parser's own completion answer, so
+			# the post-merge `issues complete` cannot refuse a child this passed.
 			state_ok=$(jq -r --arg state "$state" '
 				if $state == "Done" then .completion_state == "Done"
-				else (.boxes | length) > 0 and .unmet_branch_boxes == []
-					and .missing_evidence_boxes == [] and .errors == [] end
+				else (.boxes | length) > 0 and .completion_state != null end
 			' <<<"$checklist") || return 1
 		fi
 
@@ -270,11 +271,13 @@ require_issue_reach() {
 }
 
 # require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON
-# error on stderr for the caller to return on. A post-merge Done-when box whose
-# release trigger names no repository, or whose Deadline is outside the window
-# completion enforces, is refused. Nonempty quoted Story and Why blocks must
-# open an authored body after an optional owner action line: overseer create
-# calls that capture stdout can miss a stderr advisory and file no explanation.
+# error on stderr for the caller to return on. A checkbox outside `## Done
+# when` is refused, since no completion reader numbers it. A post-merge
+# Done-when box whose release trigger names no repository, or whose Deadline
+# is outside the window completion enforces, is refused. Nonempty quoted
+# Story and Why blocks must open an authored body after an optional owner
+# action line: overseer create calls that capture stdout can miss a stderr
+# advisory and file no explanation.
 # Linear accepts arbitrary text, so this caller holds the opening requirement.
 # A header over ISSUE_HEADER_MAX characters prints one advisory on stderr and
 # the write proceeds, as does an opening holding machine detail: the
@@ -343,8 +346,12 @@ require_issue_header_shape() {
 			  elif .deadline_rule != null then
 				{rule: "post-merge-deadline", box: .number, fix: "Use Deadline: +Nh with N from 1 through 72, or after a merge or time trigger a real UTC time in YYYY-MM-DDTHH:MM:SSZ form at most 72 hours after it."}
 			  else empty end] | first) as $post
+		| ($parsed.outside_boxes | first) as $outside
 		| if $moves_action then
 			$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)
+		  elif $outside != null then
+			{rule: "checkbox-outside-done-when", line: $outside.line, box: $outside.text, fix: "Move the box under ## Done when."}
+			| . + {error: (.rule + " line=\(.line) box=\(.box)\nfix=" + .fix)} | tojson
 		  elif $post != null then
 			$post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)} | tojson
 		  elif ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening | not) then
@@ -369,11 +376,17 @@ require_issue_header_shape() {
 # container's closer ticks it. `container_open_boxes` lists every other box
 # still open or missing its Evidence: on a container, an outcome that belongs
 # in its own child item.
+# `outside_boxes` lists each checkbox outside the section by line, so the
+# write check and every completion reader see the same boxes: one under a
+# `## Post-merge` heading is otherwise read by nothing (FLT-1650). A quoted
+# line or a line inside a fenced block is not a box there; the section's own
+# grammar is left as it was.
 # Usage: done_when_parse DESCRIPTION MET_JSON [MERGED_AT] [EVIDENCE_JSON]
 done_when_parse() {
     local evidence='{}'
     [[ $# -lt 4 ]] || evidence="$4"
     jq -cn --arg desc "$1" --argjson met "$2" --arg merged "${3:-}" --argjson evidence "$evidence" '
+        def fence_run: (try capture("^[ \\t]*(?<run>`{3,}|~{3,})").run catch null) // null;
         def utc_epoch:
             . as $stamp
             | if test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") then
@@ -382,12 +395,21 @@ done_when_parse() {
         ($merged | if . == "" then null else utc_epoch end) as $merge_epoch
         | ($desc | gsub("\r\n"; "\n") | split("\n")) as $lines
         | reduce range(0; $lines | length) as $i
-            ({out: [], section: false, boxes: [], ticked: 0, changed: false, skip: -1};
+            ({out: [], section: false, boxes: [], outside: [], fence: null, ticked: 0, changed: false, skip: -1};
             $lines[$i] as $line
             | if $i == .skip then . else
             (if ($line | test("^## Done when\\s*$")) then .section = true
              elif ($line | startswith("## ")) then .section = false
              else . end)
+            | ($line | fence_run) as $run
+            | if .fence != null then
+                (if $run != null and $run[0:1] == .fence[0:1] and ($run | length) >= (.fence | length)
+                    and ($line | test("^[ \\t]*[`~]+[ \\t]*$")) then .fence = null else . end)
+              elif $run != null then .fence = $run
+              elif (.section | not) and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
+                .outside += [{line: ($i + 1), checked: ($line | test("^\\s*[-*] \\[[xX]\\]")),
+                              text: ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; ""))}]
+              else . end
             | if .section and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
                 ((.boxes | length) + 1) as $n
                 | ($line | test("^\\s*[-*] \\[ \\]")) as $open
@@ -432,6 +454,7 @@ done_when_parse() {
               else .out += [$line] end end)
         | . as $r
         | {description: ($r.out | join("\n")), ticked: $r.ticked, changed: ($r.changed or $r.ticked > 0), boxes: $r.boxes,
+           outside_boxes: $r.outside,
            unmet_branch_boxes: [$r.boxes[] | select(.checked == false and .post_merge == false) | .number],
            missing_evidence_boxes: [$r.boxes[] | select(.checked and (.evidence | test("\\S") | not)) | .number],
            missing: (if $met == "all" then [] else [$met[] | select(. > ($r.boxes | length))] | unique end),
@@ -447,6 +470,7 @@ done_when_parse() {
         | .missing_evidence_boxes as $missing | .child_box as $child
         | .container_open_boxes = [.boxes[] | select(.number != $child)
             | select((.checked | not) or (.number as $n | $missing | index($n)) != null) | .number]
-        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0 then null
+        | .completion_state = (if (.errors | length) > 0 or (.unmet_branch_boxes | length) > 0 or (.missing_evidence_boxes | length) > 0
+                or any(.outside_boxes[]; .checked | not) then null
             elif any(.boxes[]; .post_merge and (.checked | not)) then "Verifying" else "Done" end)'
 }

@@ -152,7 +152,8 @@ Create Options:
   `--review-born --priority 2` one with no `Symptom:`; a placeholder or null
   token (TBD, n/a, none, -) counts as no line. Rule: project-management SKILL.md, § Disposition.
   Under the same key, create, update --description/--description-file,
-  and bulk-update --description refuse a Post-merge Done-when box whose
+  and bulk-update --description refuse a checkbox outside "## Done when",
+  naming its line and text, and a Post-merge Done-when box whose
   release trigger names no repository or whose Deadline is invalid. They
   also refuse when the body does not open with nonempty quoted blocks starting
   with `> **Story:**` then `> **Why this matters:**`, after any optional owner
@@ -297,7 +298,8 @@ Complete Options:
                         latest merge commit. A merge or time trigger also
                         takes a UTC deadline at most 72 hours after it.
                         Every completion reads the checklist, with or without
-                        this option. Open branch boxes refuse. Post-merge boxes
+                        this option. Open branch boxes, and open boxes outside
+                        "## Done when", refuse. Post-merge boxes
                         follow the phase above. Ticked boxes require a
                         nonblank Evidence: line indented directly below them.
   --done-when-met <all|N[,N...]>
@@ -329,7 +331,8 @@ Validate-Completion:
   state other than Verifying
   when the shared checklist parser proves every branch box and every checked
   box has evidence. A started child needs a checklist; post-merge boxes are
-  optional. Open branch work or invalid post-merge metadata fails state_ok.
+  optional. Open branch work, an open box outside "## Done when", or invalid
+  post-merge metadata fails state_ok.
   Canceled children are excluded from the expansion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or
@@ -3617,6 +3620,14 @@ complete_issue() {
     if [ "$missing_count" -ne 0 ]; then
         jq -c --arg id "$issue_id" \
             '{error: ("Done-when box not found in " + $id + ": " + (.missing | map(tostring) | join(",")) + ". Issue state unchanged."), missing}' <<<"$tick" >&2
+        return 1
+    fi
+    # An item filed before the write check can hold an open box no completion
+    # reader numbers; it holds both Done and Verifying until it is moved.
+    if jq -e 'any(.outside_boxes[]; .checked | not)' <<<"$tick" >/dev/null; then
+        jq -c --arg id "$issue_id" \
+            '{error: "done-when-outside", issue: $id, boxes: [.outside_boxes[] | select(.checked | not) | {line, text}],
+              fix: "Move each box under ## Done when. Issue state unchanged."}' <<<"$tick" >&2
         return 1
     fi
     completion_state=$(jq -r '.completion_state // ""' <<<"$tick") || return 1
