@@ -88,7 +88,11 @@ import {
   resetCommand,
   SCAN_FAILED_STEPS,
   SCAN_FAILED_TITLE,
+  SET_UP_ARMED_LABEL,
   SET_UP_FAILED_TITLE,
+  SET_UP_NOTHING_COMMITTED,
+  SET_UP_READ_BACK_FAILED_TITLE,
+  SET_UP_READ_BACK_SAID_LABEL,
   SETTING_UP_LABEL,
   STALE_LABEL,
   STALE_NOTE,
@@ -104,6 +108,7 @@ import {
   WHAT_TO_DO_LABEL,
   WHICH_CHANGES_LABEL,
 } from "@/lib/copy-commit-offer";
+import { repoEffectsFailedTitle } from "@/lib/copy-repo-effects";
 import { cn } from "@/lib/utils";
 import {
   canSetUp,
@@ -183,7 +188,7 @@ function Body({ offer, stage }: { offer: ProjectOffer; stage: Stage }) {
     case "settingUp":
       return <HeldState offer={offer} busy />;
     case "setUpFailed":
-      return <SetUpFailedState error={stage.error} />;
+      return <SetUpFailedState stage={stage} />;
     case "stillHeld":
       return <StillHeldState />;
     case "commitRefused":
@@ -485,19 +490,53 @@ function StillHeldState() {
   );
 }
 
-/** The setup chosen at a held offer did not run through: its installer,
- *  or the read after it, failed. Nothing was committed. */
-function SetUpFailedState({ error }: { error: string }) {
+/** The setup chosen at a held offer did not run through: a package's
+ *  installer, or the read after every installer ran, failed. The packages
+ *  set up before it come first, each with its installer's words: a reader
+ *  just told the setup failed needs to know those repository changes are
+ *  made anyway. Then what went wrong. Nothing was committed. */
+function SetUpFailedState({
+  stage,
+}: {
+  stage: Extract<Stage, { at: "setUpFailed" }>;
+}) {
   const leave = useCommitOfferStore((s) => s.leave);
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{SET_UP_FAILED_TITLE}</DialogTitle>
+        <DialogTitle>
+          {stage.step.kind === "readBack"
+            ? SET_UP_READ_BACK_FAILED_TITLE
+            : SET_UP_FAILED_TITLE}
+        </DialogTitle>
+        <DialogDescription>{SET_UP_NOTHING_COMMITTED}</DialogDescription>
       </DialogHeader>
       <div className="space-y-4 text-sm">
-        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
-          {error}
-        </pre>
+        {stage.armed.length > 0 ? (
+          <Section title={SET_UP_ARMED_LABEL}>
+            {stage.armed.map((one) => (
+              <div key={one.name} className="space-y-1.5">
+                <p className="font-medium">{one.name}</p>
+                {one.said.some((line) => line.trim() !== "") ? (
+                  <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+                    {one.said.join("\n").trimEnd()}
+                  </pre>
+                ) : null}
+              </div>
+            ))}
+          </Section>
+        ) : null}
+        <Section
+          title={
+            stage.step.kind === "installer"
+              ? repoEffectsFailedTitle(stage.step.name)
+              : SET_UP_READ_BACK_SAID_LABEL
+          }
+        >
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
+            {stage.error}
+          </pre>
+        </Section>
       </div>
       <DialogFooter>
         <Button variant="outline" onClick={leave}>

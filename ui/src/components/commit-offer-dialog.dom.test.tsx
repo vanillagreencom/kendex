@@ -99,8 +99,9 @@ beforeEach(() => {
 // draws with no row here is visible in the table. Held: why each package
 // holds the commit, the disclosure its setup's yes is given against, the
 // setup and leaving, never a commit route. Setting up: the same, both
-// actions disabled. Setup failed: the words, leaving only. Still held: the
-// fresh reading's words, leaving only.
+// actions disabled. Setup failed: the step, the packages set up before it
+// with their words, then the error, leaving only. Still held: the fresh
+// reading's words, leaving only.
 describe("an offer a package holds", () => {
   const held = (
     why: StalePackage["why"],
@@ -172,14 +173,34 @@ describe("an offer a package holds", () => {
       disabled: true,
     },
     {
-      name: "setup failed",
+      name: "setup failed, after another package was set up",
       stage: {
         at: "setUpFailed",
+        step: { kind: "installer", name: "bot-instructions" },
+        armed: [{ name: "commit-guards", said: ["hooks armed"] }],
         error: "bot-instructions: render exited 2",
       } as Stage,
       held: held("notSetUp", []),
       title: "The setup did not finish",
-      words: ["bot-instructions: render exited 2"],
+      words: [
+        "commit-guards",
+        "hooks armed",
+        "bot-instructions: render exited 2",
+      ],
+      actions: ["Leave as diffs"],
+      disabled: false,
+    },
+    {
+      name: "setup finished, the read after it failed",
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "readBack" },
+        armed: [{ name: "bot-instructions", said: [] }],
+        error: "fatal: index.lock exists",
+      } as Stage,
+      held: held("notSetUp", []),
+      title: "The setup finished, but what it renders could not be read back",
+      words: ["bot-instructions", "fatal: index.lock exists"],
       actions: ["Leave as diffs"],
       disabled: false,
     },

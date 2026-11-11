@@ -444,7 +444,12 @@ describe("the setup of a package holding the commit", () => {
     {
       name: "refused",
       armed: { status: "error", error: "the installer exited 1" },
-      stage: { at: "setUpFailed", error: "the installer exited 1" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "installer", name: "guards" },
+        armed: [],
+        error: "the installer exited 1",
+      },
     },
   ] as const)("reads the machine again behind it: $name", async (row) => {
     vi.mocked(commands.repoEffectsApply).mockResolvedValue(row.armed as never);

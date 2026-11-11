@@ -14,7 +14,6 @@ import {
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
-import { caught } from "@/lib/settled";
 import { saying, sayUnfinished } from "@/lib/undone";
 import { readUnsettled, workOut } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
@@ -26,19 +25,17 @@ import { holdingBusy, useUpdatesStore } from "./updates";
  *  update does. Each returns the failure, or what the work answered once
  *  the follow-up refreshes have landed. */
 
-/** What the work answered: a refusal, what it landed, or nothing at all —
- *  the call failed on its way, and nothing says whether the write ran. */
-type Outcome<T> = { error: string } | { unknown: string } | { ok: T };
+/** What the work answered: a refusal, or what it landed. */
+type Outcome<T> = { error: string } | { ok: T };
 
-const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
+/** The work never rejects: the bindings answer a transport failure as the
+ *  command's own error, so whatever went wrong arrives as `work`'s answer. */
+const run = <A>(work: () => Promise<A>): Promise<A> =>
   holdingBusy(async () => {
     // Before the work: the offer at the end is about what this action did,
     // and that is a comparison against how the projects stood before it.
     const roots = await beforeWriting();
-    // A transport failure rejects rather than refusing. That is no answer
-    // about the write — it can fail after the write ran — so it is neither
-    // a refusal nor a success, and the reads below are the only account.
-    const answer = await caught(work());
+    const answer = await work();
     // Whatever the work answered, the standing is read again: it may have
     // committed and then failed, and the rows on screen must be what
     // actually landed.
@@ -47,21 +44,17 @@ const run = <T>(work: () => Promise<Outcome<T>>): Promise<Outcome<T>> =>
     // answered, and inside the busy this wrapper holds.
     await rescanEverything({ updates: "caller-owned" });
     void offerToCommit(roots);
-    return answer.status === "error" ? { unknown: answer.error } : answer.data;
+    return answer;
   });
 
-/** Say a failure, refused or unanswered, about the package `subject`. */
-const report = (outcome: Outcome<unknown>, subject: string) => {
+/** Say a refusal. A fork's and a discard's refusal is a bare string, which
+ *  a transport failure is too: nothing tells the two apart, so both read
+ *  as the refusal they look like. */
+const report = (outcome: Outcome<unknown>) => {
   if ("error" in outcome)
     useProblemsStore
       .getState()
       .showError({ title: FORK_ERROR_TITLE, message: outcome.error });
-  else if ("unknown" in outcome)
-    useProblemsStore.getState().showError({
-      title: unknownCompletionTitle(subject),
-      message: outcome.unknown,
-      steps: [UNKNOWN_COMPLETION_STEP],
-    });
 };
 
 /** Rows kept from a failed check, or about to be replaced by a running
@@ -85,7 +78,7 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
   // would land after it.
   const name = packageDisplayName(row);
   if (running()) {
-    report({ error: UPDATES_ONE_AT_A_TIME_NOTE }, name);
+    report({ error: UPDATES_ONE_AT_A_TIME_NOTE });
     return;
   }
   report(
@@ -98,7 +91,6 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
       sayUnfinished(name, response.data.unfinished);
       return { ok: null };
     }),
-    name,
   );
 };
 
@@ -107,11 +99,11 @@ export const keepAsOwn = async (row: UpdateRow): Promise<void> => {
 export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
   const name = packageDisplayName(row);
   if (running()) {
-    report({ error: UPDATES_ONE_AT_A_TIME_NOTE }, name);
+    report({ error: UPDATES_ONE_AT_A_TIME_NOTE });
     return;
   }
   if (stale()) {
-    report({ error: UPDATE_NEEDS_CHECK_NOTE }, name);
+    report({ error: UPDATE_NEEDS_CHECK_NOTE });
     return;
   }
   report(
@@ -131,7 +123,6 @@ export const takeNewVersion = async (row: UpdateRow): Promise<void> => {
       sayUnfinished(name, response.data.unfinished);
       return { ok: null };
     }),
-    name,
   );
 };
 
@@ -141,13 +132,19 @@ type Beside =
   | { phase: "installed"; unfinished: string | null | undefined }
   | { phase: "recorded"; why: string };
 
+/** What an install beside answered: a refusal, what it landed, or nothing
+ *  at all. Its refusal is typed, so a bare string is the call failing on
+ *  its way, and nothing says whether the write ran. */
+type BesideOutcome = Outcome<Beside> | { unknown: string };
+
 /** Keep an edited place's files as the user's own package under `own`,
  *  and let the source's newest version back in under the original name.
  *  `harness` is the edited rendering the row named as forkable. Returns a
  *  refusal — nothing written, another name may go through — for the
  *  dialog to show at the point of action, or null. A fork the scope
  *  recorded but could not render is not a refusal: the dialog closes, the
- *  toast says what landed, and the refreshed rows carry the rest.
+ *  toast says what landed, the error dialog says the step that failed, and
+ *  the refreshed rows carry the rest.
  *
  *  An error in neither phase — a transport failure, a binary older than
  *  this UI — is the call failing on its way, not the engine answering. It
@@ -163,7 +160,7 @@ export const installAsNew = async (
   if (running()) return UPDATES_ONE_AT_A_TIME_NOTE;
   if (stale()) return UPDATE_NEEDS_CHECK_NOTE;
   const name = packageDisplayName(row);
-  const outcome = await run<Beside>(async () => {
+  const outcome = await run(async (): Promise<BesideOutcome> => {
     const response = saying(
       await commands.packageForkBeside(
         row.scope,
@@ -191,7 +188,11 @@ export const installAsNew = async (
   });
   if ("error" in outcome) return outcome.error;
   if ("unknown" in outcome) {
-    report(outcome, name);
+    useProblemsStore.getState().showError({
+      title: unknownCompletionTitle(name),
+      message: outcome.unknown,
+      steps: [UNKNOWN_COMPLETION_STEP],
+    });
     return null;
   }
   switch (outcome.ok.phase) {
@@ -200,7 +201,8 @@ export const installAsNew = async (
       sayUnfinished(name, outcome.ok.unfinished);
       return null;
     case "recorded":
-      toast.info(installedBesideUnfinishedToast(name, own, outcome.ok.why));
+      toast.info(installedBesideUnfinishedToast(name, own));
+      sayUnfinished(name, outcome.ok.why);
       return null;
   }
 };

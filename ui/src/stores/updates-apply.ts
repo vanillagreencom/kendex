@@ -94,10 +94,16 @@ export const bulkLine = (moved: number, failed: boolean): string | null => {
   return failed ? null : ALREADY_CURRENT_TOAST;
 };
 
-/** Say what an apply did, off its three lists and nothing else. A copy
+/** Say what an apply did, off its three lists and nothing else: a copy
  *  taken to the trash outranks the rest — it is the one outcome that took
  *  something away — then a copy the plan left exactly as it is, then
- *  `done`, the surface's own word for having written the package.
+ *  `done`, the surface's own word for having written the package. Each is
+ *  said beside the others, never in place of them: a run that moved two
+ *  packages and lost a third's copy did both. The toasts stack newest in
+ *  front, so they are raised lowest rank first and the copy taken away
+ *  ends on top. `done` stays unsaid only where the plan wrote nothing and
+ *  a lost or held copy is the whole account, since a word for having
+ *  written the package would claim a move that never ran.
  *
  *  `done` is null only where the surface has nothing to claim because it
  *  could not act: a run whose every apply failed, whose errors are already
@@ -116,16 +122,13 @@ export const sayApply = (
   lost: number,
 ): void => {
   const removed = toolsOf(what.removed);
-  if (removed.length > 0) {
-    toast.error(removedNotReplacedToastLabel(lost, removed));
-    return;
-  }
   const held = toolsOf(what.heldBack);
-  if (held.length > 0) {
-    toast.info(heldBackToastLabel(held));
-    return;
-  }
-  if (done !== null) toast.success(done);
+  const accountedFor = removed.length > 0 || held.length > 0;
+  if (done !== null && (what.moved.length > 0 || !accountedFor))
+    toast.success(done);
+  if (held.length > 0) toast.info(heldBackToastLabel(held));
+  if (removed.length > 0)
+    toast.error(removedNotReplacedToastLabel(lost, removed));
 };
 
 /** Bring one place current. Held packages move by moving the hold;

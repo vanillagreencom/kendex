@@ -106,8 +106,18 @@ export const STALE_NOTE =
 export const setUpLabel = (names: string[]) =>
   `Set up ${names.join(" and ")} here`;
 export const SETTING_UP_LABEL = "Setting up…";
-/** The installer or the read after it failed: nothing was committed. */
+/** A package's installer failed, the terminal's `SetUpStep::Installer`. */
 export const SET_UP_FAILED_TITLE = "The setup did not finish";
+/** Every installer ran and the read after them failed, the terminal's
+ *  `SetUpStep::ReadBack`. */
+export const SET_UP_READ_BACK_FAILED_TITLE =
+  "The setup finished, but what it renders could not be read back";
+/** Heads the packages whose installer ran to the end before the failure:
+ *  their repository changes are made whatever failed after them. */
+export const SET_UP_ARMED_LABEL = "Set up in this repository";
+export const SET_UP_NOTHING_COMMITTED = "Nothing was committed.";
+/** Heads the read's own words under a setup whose installers all ran. */
+export const SET_UP_READ_BACK_SAID_LABEL = "Why it could not be read back";
 /** The setup ran and the package still holds the commit. The fresh
  *  reading's words are drawn under it; one setup per offer, as the
  *  terminal's. */

@@ -973,7 +973,12 @@ describe("setting up a package that holds the commit", () => {
       byWrite: true,
       armed: { status: "error", error: "bot-instructions: render exited 2" },
       read: read([]),
-      stage: { at: "setUpFailed", error: "bot-instructions: render exited 2" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "installer", name: "bot-instructions" },
+        armed: [],
+        error: "bot-instructions: render exited 2",
+      },
       open: null,
       head: [held("notSetUp")],
       toast: false,
@@ -983,7 +988,12 @@ describe("setting up a package that holds the commit", () => {
       byWrite: true,
       armed: applied,
       read: { status: "error", error: "fatal: index.lock exists" },
-      stage: { at: "setUpFailed", error: "fatal: index.lock exists" },
+      stage: {
+        at: "setUpFailed",
+        step: { kind: "readBack" },
+        armed: [{ name: "bot-instructions", said: [] }],
+        error: "fatal: index.lock exists",
+      },
       open: [root, since],
       head: [held("notSetUp")],
       toast: false,
@@ -1091,6 +1101,43 @@ describe("setting up a package that holds the commit", () => {
       kind: "only",
       paths: ["one.md", "two.md"],
     });
+  });
+
+  // Two packages hold the commit and the second's installer fails: the
+  // first is set up in the repository all the same, so the failure names
+  // it, with its installer's words, beside the second's error.
+  it("keeps a package set up before a later one failed", async () => {
+    const guards: StalePackage = {
+      ...held("notSetUp"),
+      name: "commit-guards",
+      disclosure: {
+        ...held("notSetUp").disclosure,
+        declared: { ...declared, name: "commit-guards" },
+        name: "commit-guards",
+      },
+    };
+    useCommitOfferStore.setState({
+      queue: [heldOffer([guards, held("notSetUp")])],
+    });
+    vi.mocked(commands.repoEffectsApply)
+      .mockResolvedValueOnce({
+        status: "ok",
+        data: { stdout: ["hooks armed"], stderr: ["a note"] },
+      })
+      .mockResolvedValueOnce({
+        status: "error",
+        error: "bot-instructions: render exited 2",
+      });
+
+    await useCommitOfferStore.getState().setUp();
+
+    expect(useCommitOfferStore.getState().stage).toEqual({
+      at: "setUpFailed",
+      step: { kind: "installer", name: "bot-instructions" },
+      armed: [{ name: "commit-guards", said: ["a note", "hooks armed"] }],
+      error: "bot-instructions: render exited 2",
+    });
+    expect(commands.commitOfferOpen).not.toHaveBeenCalled();
   });
 });
 

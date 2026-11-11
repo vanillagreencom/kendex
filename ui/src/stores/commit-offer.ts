@@ -39,6 +39,20 @@ export type PickedChoice = Choice & { route: Picked };
  *  reader just did. */
 export type Scoped = "action" | "all";
 
+/** The step of a setup chosen at a held offer that failed, the steps
+ *  the terminal's `block::SetUpStep` names: a package's installer, named,
+ *  or the read after every installer ran. */
+export type SetUpStep =
+  | { kind: "installer"; name: string }
+  | { kind: "readBack" };
+
+/** A package whose installer the setup ran to the end: it is set up in
+ *  the repository whatever failed after it, and these are its words. */
+export interface SetUpArmed {
+  name: string;
+  said: string[];
+}
+
 /** Where the dialog is. Each state carries exactly what its own copy
  *  draws, so no view has to guess which fields apply to it. */
 export type Stage =
@@ -46,9 +60,15 @@ export type Stage =
   | { at: "busy"; step: Picked }
   /** The setup a held offer carries is running. */
   | { at: "settingUp" }
-  /** The setup's installer, or the read after it, failed: what went
-   *  wrong, and nothing was committed. */
-  | { at: "setUpFailed"; error: string }
+  /** A package's installer failed, or the read after every installer
+   *  ran: which step, the packages set up before it with what each
+   *  installer said, and what went wrong. Nothing was committed. */
+  | {
+      at: "setUpFailed";
+      step: SetUpStep;
+      armed: SetUpArmed[];
+      error: string;
+    }
   /** The setup ran and the fresh reading still holds the commit. The
    *  head is that reading, so what [`heldBy`] reads off it is what the
    *  state draws. */
@@ -834,21 +854,34 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
       // refused. The offer that lifecycle asks for reads this project
       // against the same reading as the read below, and leaves the head
       // alone while its answer is on screen.
+      // Each package set up is kept as it lands: one that fails after it
+      // leaves it set up in the repository, and the failure says so.
+      const armed: SetUpArmed[] = [];
       const refused = await writingRepo(
         async () => {
           for (const one of held) {
-            const armed = await commands.repoEffectsApply(
+            const answer = await commands.repoEffectsApply(
               { scope: "project", root: offer.root },
               one.disclosure.declared,
             );
-            if (armed.status === "error") return armed.error;
+            if (answer.status === "error")
+              return { name: one.name, error: answer.error };
+            const { stderr, stdout } = answer.data;
+            armed.push({ name: one.name, said: [...stderr, ...stdout] });
           }
           return null;
         },
         () => set({ stage: { at: "settingUp" } }),
       );
       if (refused !== null) {
-        set({ stage: { at: "setUpFailed", error: refused } });
+        set({
+          stage: {
+            at: "setUpFailed",
+            step: { kind: "installer", name: refused.name },
+            armed,
+            error: refused.error,
+          },
+        });
         return;
       }
       const read = await reread(offer.root, since);
@@ -877,7 +910,14 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
           advance();
           return;
         case "failed":
-          set({ stage: { at: "setUpFailed", error: read.error } });
+          set({
+            stage: {
+              at: "setUpFailed",
+              step: { kind: "readBack" },
+              armed,
+              error: read.error,
+            },
+          });
           return;
       }
     },

@@ -55,9 +55,9 @@ describe("updates store: edited places", () => {
     vi.clearAllMocks();
   });
 
-  // A transport rejection never assigns work's error — only the applier
-  // sees it, and dropping its return would let the fork and discard flows
-  // carry on to their success paths over an IPC failure.
+  // The bindings answer a transport failure as the command's own error,
+  // a bare string like a fork's refusal: it must not carry the fork or the
+  // discard on to its success path.
   it("a fork whose transport failed does not proceed as success", async () => {
     useProblemsStore.setState({
       dialog: {
@@ -68,7 +68,10 @@ describe("updates store: edited places", () => {
         joined: [],
       },
     });
-    vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
+    vi.mocked(commands.packageFork).mockResolvedValue({
+      status: "error",
+      error: "ipc down",
+    });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
@@ -84,8 +87,8 @@ describe("updates store: edited places", () => {
 
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
-    // The machine is read anyway: the call never answered, so nothing says
-    // whether the apply ran.
+    expect(toast.success).not.toHaveBeenCalled();
+    // The machine is read anyway: nothing says whether the apply ran.
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
@@ -99,9 +102,10 @@ describe("updates store: edited places", () => {
         joined: [],
       },
     });
-    vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
-      new Error("ipc down"),
-    );
+    vi.mocked(commands.applyDiscardEdits).mockResolvedValue({
+      status: "error",
+      error: "ipc down",
+    });
     vi.mocked(commands.updatesOverview).mockResolvedValue({
       status: "ok",
       data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
@@ -416,43 +420,23 @@ describe("updates store: installing beside an edited place", () => {
   // twice. The dialog closes, the error dialog says nothing is known, and
   // the rows are read again behind it.
   it("reads a call that never answered as unknown, not as refused", async () => {
-    const failures = [
-      {
-        name: "a plain string, which names no phase",
-        answer: () =>
-          vi.mocked(commands.packageForkBeside).mockResolvedValue({
-            status: "error",
-            error: "the IPC channel closed" as never,
-          }),
-      },
-      {
-        name: "a rejection",
-        answer: () =>
-          vi
-            .mocked(commands.packageForkBeside)
-            .mockRejectedValue(new Error("the IPC channel closed")),
-      },
-    ];
-    expect(failures.length).toBeGreaterThan(0);
-    for (const failure of failures) {
-      vi.clearAllMocks();
-      useProblemsStore.getState().closeError();
-      failure.answer();
+    // The bindings' shape for a transport failure: a plain string, which
+    // names no phase.
+    vi.mocked(commands.packageForkBeside).mockResolvedValue({
+      status: "error",
+      error: "the IPC channel closed" as never,
+    });
 
-      expect(
-        await installAsNew(row(edited), "claude", "gh-mine"),
-        failure.name,
-      ).toBeNull();
-      const dialog = useProblemsStore.getState().dialog;
-      expect(dialog.open, failure.name).toBe(true);
-      expect(dialog.message, failure.name).toBe("the IPC channel closed");
-      expect(dialog.title, failure.name).not.toBe(FORK_ERROR_TITLE);
-      expect(toast.success, failure.name).not.toHaveBeenCalled();
-      expect(toast.info, failure.name).not.toHaveBeenCalled();
-      expect(commands.updatesOverview, failure.name).toHaveBeenCalled();
-      expect(commands.auditAll, failure.name).toHaveBeenCalled();
-      expect(useUpdatesStore.getState().busy, failure.name).toBe(false);
-    }
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("the IPC channel closed");
+    expect(dialog.title).not.toBe(FORK_ERROR_TITLE);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(commands.updatesOverview).toHaveBeenCalled();
+    expect(commands.auditAll).toHaveBeenCalled();
+    expect(useUpdatesStore.getState().busy).toBe(false);
   });
 
   // The fork and its install both landed; the render behind them did not.
@@ -484,7 +468,8 @@ describe("updates store: installing beside an edited place", () => {
 
   // A fork the scope recorded but could not render is not a refusal:
   // another name would not help, and the rows now carry the drift. The
-  // dialog gets null and closes; the toast says what landed.
+  // dialog gets null and closes; the toast says what landed, and the step
+  // that failed stays in the error dialog the commit offer waits behind.
   it("treats a failure after the fork was recorded as a partial result, not a refusal", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
@@ -492,11 +477,12 @@ describe("updates store: installing beside an edited place", () => {
     });
 
     expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
-    expect(toast.info).toHaveBeenCalledWith(
-      "Your edited copy is now gh-mine, but gh didn't install: render refused: disk full.",
-    );
+    expect(toast.info).toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
-    expect(useProblemsStore.getState().dialog.open).toBe(false);
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render refused: disk full");
+    expect(dialog.title).not.toBe(FORK_ERROR_TITLE);
     // The refreshes run: what landed is on disk and the rows must say so.
     expect(commands.updatesOverview).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();

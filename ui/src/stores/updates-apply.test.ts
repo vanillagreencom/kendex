@@ -137,20 +137,35 @@ describe("what a bulk run says it did", () => {
   const bothRows = () =>
     useUpdatesStore.getState().updateRows([row({}), row({ name: "lint" })]);
 
-  // A place the plan refused to write over is the half somebody has to
-  // act on, so it is the half the toast carries: a count over it would
-  // leave the held copy unmentioned and be a lie besides.
-  it("says what it held back rather than counting it as updated", async () => {
+  // A copy the plan refused to write over, or took to the trash, is the
+  // half somebody has to act on, and the packages it did move are the
+  // other half: each is said, and the count names only what moved. The
+  // toasts stack newest in front, so the copy to act on is raised last.
+  it.each([
+    {
+      name: "held back",
+      lint: { heldBack: [rendering("lint", "codex")] },
+      said: toast.info,
+      line: "The copy in Codex was left as it is and is waiting on a decision from you on the package page",
+    },
+    {
+      name: "taken to the trash",
+      lint: { removed: [rendering("lint", "codex")] },
+      said: toast.error,
+      line: "The copy in Codex went to the trash and nothing replaced it",
+    },
+  ])("says a copy $name beside the packages it moved", async (one) => {
     placeSays(
       answered("gh", { moved: [rendering("gh", "claude")] }),
-      answered("lint", { heldBack: [rendering("lint", "codex")] }),
+      answered("lint", one.lint),
     );
 
     await bothRows();
 
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).toHaveBeenCalledWith(
-      "The copy in Codex was left as it is and is waiting on a decision from you on the package page",
+    expect(toast.success).toHaveBeenCalledWith("Updated 1 package");
+    expect(one.said).toHaveBeenCalledWith(one.line);
+    expect(vi.mocked(one.said).mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(toast.success).mock.invocationCallOrder[0],
     );
   });
 
