@@ -1651,11 +1651,11 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
-# HARNESS_CI_TRIVIAL_SETTINGS admits a settings change to trivial and to
-# nothing else: every other answer is the configuration-source refusal, and
-# the admission line names the rule or the answer that held it. The base
-# allowlist names a gate key and a HARNESS_CI_ key on purpose, so only the
-# floor can refuse them.
+# A settings change of keys no CI reads is trivial and nothing else: every
+# other answer is the configuration-source refusal, and the admission line
+# names the rule or the answer that held it. The base's
+# HARNESS_CI_TRIVIAL_SETTINGS names a gate key and a HARNESS_CI_ key on
+# purpose, so only the floor can refuse them.
 settings_repo="$(new_repo change-class-settings)"
 mkdir -p "$settings_repo/.kendex"
 cat >"$settings_repo/kendex.settings.toml" <<'SETTINGS'
@@ -1671,6 +1671,24 @@ HARNESS_CI_STANDARD_PATHS = "docs/held.md"
 SECOND_OPINION_TOOL = "a"
 SETTINGS
 printf '[env]\nSECOND_OPINION_EFFORT = "low"\n' >"$settings_repo/.kendex/settings.toml"
+# The base's readers: a workflow naming a key, a package behind a checkout
+# prefix with its tests and a declared key family, a glob over packages, a
+# repository path behind the workspace variable, and a package nothing names.
+mkdir -p "$settings_repo/.github/workflows" "$settings_repo/.agents/skills/probe/tests" \
+  "$settings_repo/.agents/skills/idle" "$settings_repo/skills/globbed/scripts" "$settings_repo/tools"
+cat >"$settings_repo/.github/workflows/ci.yml" <<'WORKFLOW'
+env:
+  WORKFLOW_KEY: on
+steps:
+  - run: classifier/.agents/skills/probe/scripts/probe
+  - run: skills/*/tests/run.sh
+  - run: $GITHUB_WORKSPACE/tools/check.sh
+WORKFLOW
+printf 'echo "$PROBE_TEST_KEY"\n' >"$settings_repo/.agents/skills/probe/tests/run.sh"
+printf '# keys: PROBE_<NAME>_CMD\n' >"$settings_repo/.agents/skills/probe/kendex.settings.toml.example"
+printf 'echo "$GLOBBED_KEY"\n' >"$settings_repo/skills/globbed/scripts/tool.sh"
+printf 'echo "$TOOL_KEY"\n' >"$settings_repo/tools/check.sh"
+printf 'echo "$IDLE_KEY"\n' >"$settings_repo/.agents/skills/idle/tool.sh"
 commit_paths "$settings_repo" 'settings with no allowlist' seed.txt
 settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
 
@@ -1709,7 +1727,7 @@ settings_edit() { # OP~FILE~LINE~TEXT
   mv -- "$SANDBOX/settings-edit" "$settings_repo/$file"
 }
 
-settings_allow_line='HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* ORCH_SIZE_TEST_PATHS HARNESS_CI_EXTRA"'
+settings_allow_line='HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* ORCH_SIZE_TEST_PATHS HARNESS_CI_EXTRA WORKFLOW_KEY !OTHER_* !SECOND_OPINION_ROOM"'
 settings_edit "after~kendex.settings.toml~[env]~$settings_allow_line"
 git -C "$settings_repo" commit -q -am 'the base allowlists settings keys'
 settings_allow="$(git -C "$settings_repo" rev-parse HEAD)"
@@ -1758,6 +1776,8 @@ done
 
 model_b='swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = "b"'
 admitted='class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml'
+unread='class=trivial measured=true cause=unread-settings settings=kendex.settings.toml'
+removed='reader=HARNESS_CI_TRIVIAL_SETTINGS glob=!OTHER_*'
 refused='class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml'
 refused_dot='class=standard measured=true cause=configuration-source path=.kendex/settings.toml glob=.kendex/settings.toml'
 # label | base | event | edits, `;`-separated | other files as PATH:LINES,
@@ -1768,18 +1788,27 @@ cat >"$SANDBOX/settings-rows" <<ROWS
 an allowlisted key change is trivial|allow|pull_request|$model_b|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=2|-
 an allowlisted key change in a file with no final newline|allow|pull_request|$model_b;chop~kendex.settings.toml~~|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=4|-
 comments beside a changed and an added allowlisted key|allow|pull_request|$model_b;after~kendex.settings.toml~[env]~# The reviewer.;after~kendex.settings.toml~OTHER_KEY = "x"~SECOND_OPINION_TIMEOUT = "30"|-|-|dirty|$admitted keys=SECOND_OPINION_MODEL,SECOND_OPINION_TIMEOUT lines=4|-
-a comment alone changes no key|allow|pull_request|after~kendex.settings.toml~[env]~# Only words.|-|-|dirty|$admitted keys=- lines=1|-
+a comment alone changes no key|allow|pull_request|after~kendex.settings.toml~[env]~# Only words.|-|-|dirty|$unread keys=- lines=1|-
+an unread key with no setting|bare|pull_request|$model_b|-|-|dirty|$unread keys=SECOND_OPINION_MODEL lines=2|-
+a key only a package no workflow names reads|bare|pull_request|after~kendex.settings.toml~[env]~IDLE_KEY = "y"|-|-|dirty|$unread keys=IDLE_KEY lines=1|-
+a key a workflow names|bare|pull_request|after~kendex.settings.toml~[env]~WORKFLOW_KEY = "y"|-|-|dirty|$refused|cause=read-key key=WORKFLOW_KEY reader=.github/workflows/ci.yml
+a key only a prefixed package's tests name|bare|pull_request|after~kendex.settings.toml~[env]~PROBE_TEST_KEY = "y"|-|-|dirty|$refused|cause=read-key key=PROBE_TEST_KEY reader=.agents/skills/probe/tests/run.sh
+a key only a package a workflow glob reaches names|bare|pull_request|after~kendex.settings.toml~[env]~GLOBBED_KEY = "y"|-|-|dirty|$refused|cause=read-key key=GLOBBED_KEY reader=skills/globbed/scripts/tool.sh
+a key only a prefixed repository path names|bare|pull_request|after~kendex.settings.toml~[env]~TOOL_KEY = "y"|-|-|dirty|$refused|cause=read-key key=TOOL_KEY reader=tools/check.sh
+a generated name in a declared key family|bare|pull_request|after~kendex.settings.toml~[env]~PROBE_ANY_NAME_CMD = "y"|-|-|dirty|$refused|cause=read-key key=PROBE_ANY_NAME_CMD reader=.agents/skills/probe/kendex.settings.toml.example
+an addition admits a key a workflow names|allow|pull_request|after~kendex.settings.toml~[env]~WORKFLOW_KEY = "y"|-|-|dirty|$admitted keys=WORKFLOW_KEY lines=1|-
+a removal refuses an unread key|allow|pull_request|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=read-key key=OTHER_KEY $removed
+a removal wins over an addition|allow|pull_request|after~kendex.settings.toml~[env]~SECOND_OPINION_ROOM = "y"|-|-|dirty|$refused|cause=read-key key=SECOND_OPINION_ROOM reader=HARNESS_CI_TRIVIAL_SETTINGS glob=!SECOND_OPINION_ROOM
 an allowlisted key in .kendex/settings.toml|allow|pull_request|swap~.kendex/settings.toml~SECOND_OPINION_EFFORT = "low"~SECOND_OPINION_EFFORT = "high"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=SECOND_OPINION_EFFORT lines=2|-
 one key both settings files change is named once|allow|pull_request|$model_b;after~.kendex/settings.toml~[env]~SECOND_OPINION_MODEL = "c"|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml,kendex.settings.toml keys=SECOND_OPINION_MODEL lines=3|-
 a settings-only rewrite past the trivial ceiling|wide|pull_request|$wide_edits|-|-|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=${wide_keys#,} lines=27|-
 a settings-only rewrite past the ceiling the repository's trivial set keeps|wide|pull_request|$wide_edits|-|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|class=trivial measured=true cause=allowlisted-settings settings=.kendex/settings.toml keys=${wide_keys#,} lines=27|-
-the same rewrite beside a key the allowlist does not name|wide|pull_request|$wide_edits;after~.kendex/settings.toml~[env]~OTHER_KEY = "y"|-|-|dirty|$refused_dot|cause=unadmitted-change path=.kendex/settings.toml
+the same rewrite beside a key a removal names|wide|pull_request|$wide_edits;after~.kendex/settings.toml~[env]~OTHER_KEY = "y"|-|-|dirty|$refused_dot|cause=read-key key=OTHER_KEY $removed
 beside docs-set markdown within the ceiling|allow|pull_request|$model_b|docs/guide.md:5|-|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
 beside a path the repository's trivial set names|allow|pull_request|$model_b|notes/plan.txt:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|$admitted keys=SECOND_OPINION_MODEL lines=7|-
 beside markdown the repository's trivial set replaces|allow|pull_request|$model_b|docs/guide.md:5|HARNESS_CI_TRIVIAL_PATHS=notes/*|dirty|$refused|cause=class-micro rule=production-within-micro
 beside one added script line|allow|pull_request|$model_b|runtime/tool.sh:1|-|dirty|$refused|cause=class-micro rule=production-within-micro
 beside a path the base's standard paths name|allow|pull_request|$model_b|docs/held.md:2|-|dirty|$refused|cause=class-standard rule=repository-standard-path
-a key the allowlist does not name|allow|pull_request|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a gate key the allowlist names|allow|pull_request|swap~kendex.settings.toml~ORCH_SIZE_TEST_PATHS = "none/*"~ORCH_SIZE_TEST_PATHS = "checks/*"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a HARNESS_CI_ key the allowlist names|allow|pull_request|swap~kendex.settings.toml~HARNESS_CI_EXTRA = "x"~HARNESS_CI_EXTRA = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a head the settings reader refuses|allow|pull_request|swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = 'b'c'|-|-|dirty|$refused|cause=settings-unparsed path=kendex.settings.toml side=head
@@ -1789,9 +1818,9 @@ a comment inside a multiline string outside the env table|multiline|pull_request
 a comment inside a literal multiline string outside the env table|literal|pull_request|swap~.kendex/settings.toml~# before~# after|-|-|dirty|$refused_dot|cause=multiline-string path=.kendex/settings.toml side=base
 a NUL byte in a head comment line|allow|pull_request|$model_b;nul~kendex.settings.toml~~|-|-|dirty|$refused|cause=settings-bytes-dropped path=kendex.settings.toml side=head
 an allowlisted name outside the env table|allow|pull_request|swap~kendex.settings.toml~SECOND_OPINION_TOOL = "a"~SECOND_OPINION_TOOL = "b"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
-an allowlist only the head adds|bare|pull_request|after~kendex.settings.toml~[env]~$settings_allow_line;$model_b|-|-|dirty|$refused|cause=allowlist-unset
+an allowlist only the head adds|bare|pull_request|after~kendex.settings.toml~[env]~$settings_allow_line;$model_b|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 an allowlist the head widens|allow|pull_request|swap~kendex.settings.toml~$settings_allow_line~HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* OTHER_KEY";swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
-an allowlist only the caller's environment names|bare|pull_request|$model_b|-|HARNESS_CI_TRIVIAL_SETTINGS=SECOND_OPINION_*|dirty|$refused|cause=allowlist-unset
+a removal only the caller's environment names|bare|pull_request|$model_b|-|HARNESS_CI_TRIVIAL_SETTINGS=!SECOND_OPINION_*|dirty|$unread keys=SECOND_OPINION_MODEL lines=2|-
 a push event|allow|push|$model_b|-|-|dirty|$refused|cause=unsupported-event event=push
 an admitted change over the trivial ceiling|allow|pull_request|$model_b|docs/guide.md:19|-|dirty|$refused|cause=class-micro rule=production-within-micro
 beside an agent instruction file|allow|pull_request|$model_b|AGENTS.md:2|-|dirty|$refused|cause=class-small rule=instruction-file
@@ -1892,10 +1921,63 @@ while IFS='|' read -r control rows line replacement; do
 done <<'CONTROLS'
 no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) return 1 ;;|-
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
-no byte comparison|the same rewrite beside a key the allowlist does not name;a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
+no byte comparison|a gate key the allowlist names;a HARNESS_CI_ key the allowlist names;an allowlisted name outside the env table;an allowlist only the head adds;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
+no package readers|a key only a prefixed package's tests name;a key only a package a workflow glob reaches names;a generated name in a declared key family|        if (("/" pre) ~ /\/$/ && name !~ /^\.*$/)|        if (0)
+no path readers|a key only a prefixed repository path names|        if (path in known) print "path\t:(literal)" path|-
+no family match|a generated name in a declared key family|    case "$1" in $glob) SETTINGS_READER="$path"; return 0 ;; esac|-
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
+
+# A consumer's kendex.toml alone is small, with the light-ci record, at
+# most: every later rule still judges it, and a source catalog's manifest,
+# or one that is not a regular file, keeps the configuration refusal.
+manifest_repo="$(new_repo change-class-manifest)"
+printf 'schema = 7\n\n[skills.demo]\nsource = "cat"\n' >"$manifest_repo/kendex.toml"
+commit_paths "$manifest_repo" 'a consumer manifest' seed.txt
+manifest_base="$(git -C "$manifest_repo" rev-parse HEAD)"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.toml"\n' >"$manifest_repo/kendex.settings.toml"
+git -C "$manifest_repo" add -A
+git -C "$manifest_repo" commit -q -m 'the repository keeps its manifest on the full run'
+manifest_standard="$(git -C "$manifest_repo" rev-parse HEAD)"
+git -C "$manifest_repo" checkout -q -B manifest-case "$manifest_base"
+printf 'is_source_catalog = true\n' >>"$manifest_repo/kendex.toml"
+git -C "$manifest_repo" commit -q -am 'a source catalog manifest'
+manifest_catalog="$(git -C "$manifest_repo" rev-parse HEAD)"
+manifest_refused='class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml'
+# label | base | event | edit: `lines N` appends N lines, `text T` appends
+# T, `link` replaces the file with a symlink | the class line after
+# `class: ` | the light-ci line after `light-ci: ` | the admission line
+# after `admitted=false `; `-` for no line
+manifest_rows=0
+while IFS='|' read -r label from event edit class light note; do
+  manifest_rows=$((manifest_rows + 1))
+  from_var="manifest_$from"
+  git -C "$manifest_repo" checkout -q -B manifest-case "${!from_var}"
+  case "$edit" in
+    lines\ *) write_lines "$manifest_repo" kendex.toml "${edit#lines }" ;;
+    text\ *) printf '%s\n' "${edit#text }" >>"$manifest_repo/kendex.toml" ;;
+    link) rm -- "${manifest_repo:?}/kendex.toml" && ln -s seed.txt "$manifest_repo/kendex.toml" ;;
+  esac
+  git -C "$manifest_repo" add -A
+  git -C "$manifest_repo" commit -q -m "$label"
+  manifest_err=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+    -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS "$CHANGE_CLASS" --repo "$manifest_repo" \
+    --event "$event" --base "${!from_var}" --head HEAD 2>&1 >/dev/null) || true
+  light_got=$(sed -n 's/^light-ci: //p' <<<"$manifest_err")
+  note_got=$(sed -n 's/^manifest-admission: admitted=false //p' <<<"$manifest_err")
+  assert_eq "$label" "$class | $light | $note" \
+    "$(sed -n 's/^class: //p' <<<"$manifest_err") | ${light_got:--} | ${note_got:--}"
+done <<ROWS
+a consumer manifest edit|base|merge_group|lines 2|class=small measured=true cause=consumer-manifest lines=2|kind=manifest|-
+a consumer manifest edit past the small ceiling|base|pull_request|lines 151|class=standard measured=true cause=production-past-small production=151|-|-
+a manifest the repository's standard paths name|standard|merge_group|lines 2|class=standard measured=true cause=repository-standard-path path=kendex.toml glob=kendex.toml|-|-
+a source catalog key at the head, quoted and spaced|base|merge_group|text   "is_source_catalog"=false|$manifest_refused|-|cause=source-catalog side=head
+a source catalog key at the base|catalog|merge_group|lines 2|$manifest_refused|-|cause=source-catalog side=base
+a head manifest that is a symlink|base|merge_group|link|$manifest_refused|-|cause=manifest-not-regular side=head
+a push event|base|push|lines 2|$manifest_refused|-|cause=unsupported-event event=push
+ROWS
+require_rows change-class-manifest "$manifest_rows"
 
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
@@ -2249,8 +2331,8 @@ MANIFEST_EDIT
   git -C "$consumer" commit -q -m 'schema step and changed instructions'
   schema_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$schema_base" --head HEAD)"
-  assert_eq "a real schema refresh with changed instructions requires configuration review" \
-    'class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml' \
+  assert_eq "a real schema refresh with changed instructions is a consumer manifest change" \
+    'class=small measured=true cause=consumer-manifest lines=4' \
     "$(printf '%s\n' "$schema_edit_err" | sed -n 's/^class: //p')"
   git -C "$consumer" checkout -q refreshed
   assert_eq "and a record the catalog has not moved past trails nothing" "" \
