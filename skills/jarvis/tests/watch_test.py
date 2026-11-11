@@ -1080,19 +1080,25 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                                                 [("/srv/same/peer", remote)]))
             watch.path.write_bytes(before)
             watch = self.watch()
+            unreclaimed = watch.log.read_bytes()
             watch.batch(0)
             self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
-            self.assertNotIn(b"retired prefix", watch.log.read_bytes())
+            # Two deferred 32 KB blocks outweigh the delivered 60 KiB filler.
+            self.assertEqual(watch.log.read_bytes(), unreclaimed, "unreclaimed log")
             expected = [(expected_local, ["local", str(self.peer)]),
                         (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
-            # Keep the backlog nonempty across several receipts and restarts.
-            for index in range(3):
+            def retained(watch):
                 data = watch.log.read_bytes()
                 self.assertEqual([data[span[0]:span[1]] for span in watch.state["spans"]],
                                  [body for body, _ in expected], "retained event bytes")
                 self.assertEqual([span[2:] for span in watch.state["spans"]],
                                  [[origin] if origin else [] for _, origin in expected])
-                self.assertTrue(data.startswith(expected[0][0]), "retired prefix bytes")
+                return data
+            retained(watch)
+            # Keep the backlog nonempty across receipts and restarts. The first
+            # receipt retires filler and local, more than the two 32 KB blocks
+            # it retains; the second retires only remote and keeps two blocks.
+            for index, reclaims in enumerate((True, False)):
                 self.settings.update(JARVIS_CONTROL_HOST="beta", JARVIS_REMOTE_HOSTS="gamma" if index == 0 else "gamma alpha")
                 watch = self.watch()
                 self.assertEqual(watch.state["generation"], generation)
@@ -1105,7 +1111,8 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 watch.batch(index + 1)
                 body, _ = expected.pop(0)
                 self.assertEqual(self.inbox()[-1]["text"], body.decode().rstrip("\n"))
-                self.assertTrue(watch.state["spans"])
+                self.assertEqual(retained(self.watch()).startswith(expected[0][0]), reclaims,
+                                 "reclaimed at receipt %d" % index)
             for index, (body, _) in enumerate(expected):
                 watch = self.watch()
                 watch.batch(index + 4)
@@ -1147,12 +1154,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 watch = self.watch()
                 filler_header = "EVENT custom\nretired-" + stage + "\n"
                 filler = filler_header + "x" * (self.module.CAP - len(filler_header) - 1) + "\n"
-                # The suffix exceeds the cut, so its rewrite damages the old
-                # live bytes as well as the retired prefix. Recovery needs undo.
-                retained = ["EVENT custom\nretained-%s-%s\n" % (stage, index) + "r" * 32000 + "\n"
+                # The retained suffix fits within the retired filler, so this receipt reclaims.
+                retained = ["EVENT custom\nretained-%s-%s\n" % (stage, index) + "r" * 16000 + "\n"
                             for index in range(2)]
                 footer = 'cursor: {"side":"local","roots":{"/srv/local":{"to-overseer":{"count":7}}}}\n'
-                self.assertGreater(len(("".join(retained) + footer).encode()) - 1, len(filler.encode()))
                 watch.append(filler + "".join(retained) + footer)
                 original_end = watch.log.stat().st_size
                 inode = watch.log.stat().st_ino

@@ -784,7 +784,9 @@ class Watch:
             if self.state["offset"] != end or self.state.get("cursor_offset", 0) != end:
                 return
             cut = min((span[0] for span in self.state["spans"]), default=end)
-            if not cut:
+            # Each pass copies the retained suffix. Waiting until the retired
+            # prefix is at least that large keeps a backlog drain linear.
+            if not cut or end - cut > cut:
                 return
             source.seek(cut)
             suffix = source.read()
