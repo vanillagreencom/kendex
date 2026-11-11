@@ -2,12 +2,13 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { ChangesState, ProjectFlag } from "@/bindings";
+import { CLASS_TONES, needClass } from "@/components/home/attention-rows";
 import { PageHeader } from "@/components/page-header";
 import { pathEntries } from "@/components/project-changes/change-rows";
 import { ChangedFiles } from "@/components/project-changes/changed-files";
 import { RevertDialog } from "@/components/project-changes/revert-dialog";
 import { Section } from "@/components/section";
-import { StatusNote } from "@/components/status-note";
+import { StatusNote, type StatusTone } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
@@ -86,7 +87,10 @@ export function ProjectChangesPage() {
   // in front of the reader as well as about the whole set.
   const [open, setOpen] = useState<string | null>(null);
   const [reverting, setReverting] = useState<string[] | null>(null);
-  const [unavailable, setUnavailable] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState<{
+    text: string;
+    tone: StatusTone;
+  } | null>(null);
 
   // No project named is no page: every way in names one, so this is a
   // navigation that never happened rather than a state to design for.
@@ -117,13 +121,17 @@ export function ProjectChangesPage() {
     // Every other answer says something. A read that would not run says
     // what it said, a project with nothing left says that, and a state no
     // commit can be made in says which state — from the read that refused,
-    // not from the row this page drew before it.
+    // not from the row this page drew before it — in the tone of the class
+    // core gave it.
     setUnavailable(
       answer.at === "failed"
-        ? answer.error
+        ? { text: answer.error, tone: CLASS_TONES.failed }
         : answer.at === "nothing"
-          ? CHANGES_GONE_NOTE
-          : blockedReason(answer.flag),
+          ? { text: CHANGES_GONE_NOTE, tone: CLASS_TONES.notice }
+          : {
+              text: blockedReason(answer.flag),
+              tone: CLASS_TONES[needClass(answer.flag.need)],
+            },
     );
   };
 
@@ -250,7 +258,7 @@ export function ProjectChangesPage() {
               ) : null}
               {unavailable ? (
                 <StatusNote
-                  tone="warning"
+                  tone={unavailable.tone}
                   title={CHANGES_UNAVAILABLE_TITLE}
                   action={
                     <Button
@@ -265,7 +273,7 @@ export function ProjectChangesPage() {
                     </Button>
                   }
                 >
-                  {unavailable}
+                  {unavailable.text}
                 </StatusNote>
               ) : null}
 

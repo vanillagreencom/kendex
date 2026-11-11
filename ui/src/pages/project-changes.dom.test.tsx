@@ -106,7 +106,7 @@ describe("the review of one project's pending changes", () => {
 
   // A state that allows no commit says which state, in the words the read
   // that refused gave — not in silence, and not from the row this page drew
-  // before that read.
+  // before that read. Core classes it blocked, so it draws as a Problem.
   it("says why a commit could not be opened", async () => {
     vi.mocked(commands.commitOfferOpen).mockResolvedValue({
       status: "ok",
@@ -124,8 +124,9 @@ describe("the review of one project's pending changes", () => {
     await settle();
     await userEvent.click(button(COMMIT_CHANGES_LABEL));
     await settle();
-    expect(body()).toContain(CHANGES_UNAVAILABLE_TITLE);
-    expect(body()).toContain(uncommittedInProgress(2, "a rebase"));
+    const note = document.body.querySelector('[role="alert"]');
+    expect(note?.textContent).toContain(CHANGES_UNAVAILABLE_TITLE);
+    expect(note?.textContent).toContain(uncommittedInProgress(2, "a rebase"));
   });
 
   // Opening the commit is a button, never something this page does by

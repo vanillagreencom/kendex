@@ -8,7 +8,13 @@ import {
   ACCEPT_EARLIER_ONLY,
   ACTION_SEGMENT,
   ALL_SEGMENT,
+  addsToPullRequest,
   COMMIT_LABEL,
+  COMMIT_SEGMENT,
+  LEAVE_LABEL,
+  PR_SEGMENT,
+  PUSH_SEGMENT,
+  prMoves,
   TANGLED_LABEL,
 } from "@/lib/copy-commit-offer";
 import { type Stage, useCommitOfferStore } from "@/stores/commit-offer";
@@ -277,6 +283,82 @@ describe("an offer held for every pending change only", () => {
     await settle();
     expect(buttons()).toContain("Set up bot-instructions here");
     expect(buttons()).toContain(ACTION_SEGMENT);
+  });
+});
+
+// The segments are the choices core put on the offer, in its order, and
+// the line under the picked one names the target core bound to it. The
+// offer's other fields disagree with its choices on purpose: what the
+// dialog draws must follow the choices alone.
+describe("the choices an offer is drawn with", () => {
+  // The segments come before the footer, whose primary button can carry
+  // a segment's words.
+  const segments = () => {
+    const all = buttons();
+    return all
+      .slice(0, all.indexOf(LEAVE_LABEL))
+      .filter((one) =>
+        [COMMIT_SEGMENT, PUSH_SEGMENT, PR_SEGMENT].includes(one ?? ""),
+      );
+  };
+  it.each([
+    {
+      name: "a push that adds to an open pull request",
+      choices: [
+        offer.choices[0],
+        {
+          route: "push",
+          effect: {
+            kind: "addToPullRequest",
+            remote: "origin",
+            branch: "main",
+            number: 41,
+          },
+          default: false,
+        },
+        offer.choices[3],
+      ],
+      route: "push",
+      drawn: [COMMIT_SEGMENT, PUSH_SEGMENT],
+      line: addsToPullRequest(41),
+    },
+    {
+      name: "a pull request from a branch of its own",
+      choices: [
+        offer.choices[0],
+        {
+          route: "pullRequest",
+          effect: {
+            kind: "openPullRequest",
+            branch: "kendex/refresh-2",
+            base: "main",
+          },
+          default: false,
+        },
+        offer.choices[3],
+      ],
+      route: "pullRequest",
+      drawn: [COMMIT_SEGMENT, PR_SEGMENT],
+      line: prMoves("kendex/refresh-2", "main"),
+    },
+    {
+      name: "commit alone",
+      choices: [offer.choices[0], offer.choices[3]],
+      route: "commit",
+      drawn: [],
+      line: "The commit stays in this checkout.",
+    },
+  ] as const)("draws $name", async (row) => {
+    useCommitOfferStore.setState({
+      queue: [{ ...offer, choices: [...row.choices] }],
+      route: row.route,
+    });
+    mount(<CommitOfferDialog />);
+    await settle();
+
+    // One segment is no choice, so a lone commit draws none.
+    expect(segments()).toEqual(row.drawn);
+    expect(document.body.textContent).toContain(row.line);
   });
 });
 
