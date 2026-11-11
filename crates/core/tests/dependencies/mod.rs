@@ -19,6 +19,8 @@ use kendex_core::lock::{Lock, Reason, load as load_lock, lock_path};
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 
+mod compact_lock;
+
 struct Fixture {
     _tmp: tempfile::TempDir,
     env: Env,

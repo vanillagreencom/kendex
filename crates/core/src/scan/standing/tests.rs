@@ -42,7 +42,7 @@ fn record_with_server(harness: HarnessId) -> String {
             "source": "kendex", "sourceRepo": "vanillagreencom/kendex",
             "sourceHash": "abc", "enabled": true
         }}}}}}"#,
-        crate::lock::LOCK_VERSION,
+        11,
         harness = harness.name(),
     )
 }

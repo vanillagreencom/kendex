@@ -51,7 +51,7 @@ fn install_command(home: &Path, catalog: &Path) -> Command {
 
 #[allow(clippy::unwrap_used)]
 fn assert_installed(lock_path: &Path, home: &Path) {
-    let lock: Lock = serde_json::from_slice(&std::fs::read(lock_path).unwrap()).unwrap();
+    let lock: Lock = kendex_core::lock::load(lock_path).unwrap();
     let entry = lock
         .entries
         .values()

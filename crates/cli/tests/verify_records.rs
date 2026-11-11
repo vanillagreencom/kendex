@@ -21,7 +21,7 @@ use kendex_core::attest::{Document, Foreign, Row, Source, State};
 use kendex_core::drift::report::Remedy;
 use kendex_core::engine::Owns;
 use kendex_core::env::Env;
-use kendex_core::lock::LOCK_VERSION;
+
 use kendex_core::model::HarnessId;
 use kendex_core::process::Hardened;
 
@@ -681,18 +681,29 @@ pub(crate) fn edit_json(path: &Path, edit: impl Fn(&mut serde_json::Value)) {
     let mut value: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
     edit(&mut value);
-    fs::write(
-        path,
-        format!("{}\n", serde_json::to_string_pretty(&value).unwrap()),
-    )
-    .unwrap();
+    let text = format!("{}\n", serde_json::to_string_pretty(&value).unwrap());
+    fs::write(path, text).unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn edit_identity(lock: &mut serde_json::Value, key: &str, field: &str, value: serde_json::Value) {
+    let id = lock["entries"][key]["installation"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut identity = lock["installations"][&id].clone();
+    identity[field] = value;
+    // Do not change a shared fact's other references when planting an
+    // entry-only mismatch. The writer canonicalizes this alias on save.
+    lock["installations"]["edited-entry"] = identity;
+    lock["entries"][key]["installation"] = "edited-entry".into();
 }
 
 #[allow(clippy::unwrap_used)]
 fn move_entry(lock: &mut serde_json::Value, from: &str, to: &str, field: &str, value: &str) {
+    edit_identity(lock, from, field, value.into());
     let entries = lock["entries"].as_object_mut().unwrap();
-    let mut entry = entries.remove(from).unwrap();
-    entry[field] = serde_json::Value::String(value.to_owned());
+    let entry = entries.remove(from).unwrap();
     entries.insert(to.to_owned(), entry);
 }
 
@@ -832,7 +843,13 @@ const SECOND: &str = "skill:second:claude";
 fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let second = SECOND;
     let on_second = |field: &'static str, value: serde_json::Value| {
-        on_record(move |lock| lock["entries"][SECOND][field] = value.clone())
+        on_record(move |lock| {
+            if matches!(field, "name" | "kind" | "harness" | "source") {
+                edit_identity(lock, SECOND, field, value.clone());
+            } else {
+                lock["entries"][SECOND][field] = value.clone();
+            }
+        })
     };
     vec![
         (
@@ -1140,7 +1157,12 @@ fn narrowing_edits(catalog: &Path) -> Vec<(&'static str, Edit, Vec<Failing>)> {
         (
             "records a Pi extension on another harness under its own key",
             on_record(|value| {
-                value["entries"]["pi-extension:@scope/widgets:pi"]["harness"] = "claude".into();
+                edit_identity(
+                    value,
+                    "pi-extension:@scope/widgets:pi",
+                    "harness",
+                    "claude".into(),
+                );
             }),
             vec![key_fails("pi-extension:@scope/widgets:pi")],
         ),
@@ -1703,7 +1725,7 @@ fn unreadable_bases_answer_unknown_for_every_keys_position() {
         &["checkout", "-q", "-B", "older", INSTALLED],
     );
     edit_json(&world.project.join(RECORD), |lock| {
-        lock["version"] = (LOCK_VERSION - 1).into();
+        lock["version"] = 10.into();
     });
     commit(&world.project, "the record as an earlier kendex wrote it");
     git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);

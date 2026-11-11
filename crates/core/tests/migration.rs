@@ -654,20 +654,15 @@ fn recovery_refuses_an_unresolved_required_dependency() {
 }
 
 /// An installed project whose record a version 10 build left, and that
-/// record's bytes. The planted record is the current one with its version
-/// lowered: the recovery reads only each entry's identity and rendered
-/// hash, which the two shapes spell alike.
+/// record's bytes. The legacy ownership reader needs expanded identities.
 #[allow(clippy::unwrap_used)]
 fn version_10_project() -> (Fixture, String) {
     let f = fixture(&MANIFEST_SCHEMA.to_string());
     let install = plan_apply(&f.env, &f.scope, &PlanOptions::current()).unwrap();
     apply::execute(&f.env, &install.plan).unwrap();
-    let current = fs::read_to_string(f.scope_lock()).unwrap();
-    let older = current.replace(
-        &format!("\"version\": {}", kendex_core::lock::LOCK_VERSION),
-        "\"version\": 10",
-    );
-    assert_ne!(older, current, "the fixture rewrites the version");
+    let mut legacy = load_lock(&f.scope_lock()).unwrap();
+    legacy.version = 10;
+    let older = serde_json::to_string_pretty(&legacy).unwrap();
     fs::write(f.scope_lock(), &older).unwrap();
     (f, older)
 }

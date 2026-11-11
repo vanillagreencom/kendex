@@ -315,6 +315,7 @@ fn a_legacy_apply_keeps_installed_commits_until_refresh_records_selectors() {
     let world = world();
     let installed = catalog_head(&world);
     let mut legacy = record(&world);
+    legacy["version"] = 11.into();
     for section in ["entries", "bundles"] {
         for entry in legacy[section].as_object_mut().unwrap().values_mut() {
             assert!(entry.as_object_mut().unwrap().remove("selector").is_some());
@@ -557,6 +558,7 @@ fn a_legacy_pi_reading_stays_unknown_through_apply_and_locked_refresh() {
         let world = world();
         let key = "pi-extension:@scope/widgets:pi";
         let mut legacy = record(&world);
+        legacy["version"] = 11.into();
         let before = legacy["entries"][key].clone();
         assert!(
             legacy["entries"][key]

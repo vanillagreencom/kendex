@@ -589,6 +589,7 @@ warning() { printf 'md-refs: warning=%s:%s:%s:%s' "$1" "$2" "${3%%=*}" "${3#*=}"
 lock_cite="$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md .agents/skills/orch/SKILL.md)"
 warn_record="$(warning .agents/skills/orch/SKILL.md 3 "$lock_cite")"
 fx_lock_exact() { fx_lock_ref "$1" .agents/skills/orch/SKILL.md .agents/skills/orch/SKILL.md; }
+fx_lock_compact() { fx_lock_exact "$1"; put .kendex-lock.json '{"version":12,"installations":{"i":{"source":"cat","kind":"skill","name":"orch","harness":"codex"}},"entries":{"skill:orch:codex":{"installation":"i","emitted":{"paths":[".agents/skills/orch/SKILL.md"]}}}}'; }
 fx_lock_tree() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orch/SKILL.md; }
 fx_lock_authored() { fx_lock_ref "$1" .agents/skills/orch AGENTS.md; }
 fx_lock_boundary() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orchard/SKILL.md; }
@@ -608,6 +609,7 @@ fx_lock_target() {
 }
 run_rows \
   "an exact emitted citing file warns|fx_lock_exact lock-exact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
+  "a compact record keeps emitted citing files advisory|fx_lock_compact lock-compact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
   "a file below an emitted directory warns|fx_lock_tree lock-tree||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
   "strict install checks block for a lock-listed file|fx_lock_tree lock-strict||--all --strict|rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)" \
   "control: the same citation in an authored file blocks|fx_lock_authored lock-authored||--all|rc=1 $(dead AGENTS.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 1 1)" \

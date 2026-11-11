@@ -205,6 +205,45 @@ impl CommandAssessment {
     }
 }
 
+fn assessed_desired_pass<'a>(
+    env: &Env,
+    scope: &Scope,
+    declared: &'a Manifest,
+    lock: &Lock,
+    lock_base: &Lock,
+    options: &PlanOptions,
+    commands: CommandAssessment,
+) -> Result<(
+    std::borrow::Cow<'a, Manifest>,
+    desired::DesiredState,
+    Vec<HeldPin>,
+)> {
+    // `declared` is what the person declared, as this build reads it: the
+    // manifest any write this plan carries is built from. A single-package
+    // update reads from a copy with every other follower pinned at its
+    // installed commit — the pins steer this pass and never reach the file.
+    let (manifest, mut state, held) = desired_pass(env, scope, declared, lock, options)?;
+    commands.apply(&mut state);
+    if lock_base.version == 11 {
+        state.notes.push(
+            "This scope has an expanded version 11 install record. An authorized apply or refresh rewrites it in compact version 12.".into(),
+        );
+    }
+    if let Some(targets) = &options.update_only
+        && targets.reach == Reach::Declared
+    {
+        ops::protect_installed(
+            env,
+            scope,
+            &manifest,
+            lock,
+            &mut state,
+            &targets.declarations,
+        )?;
+    }
+    Ok((manifest, state, held))
+}
+
 /// A sanctioned unsubscribe transfer changes the planning record before the
 /// item pass. The save still compares with the record read from disk.
 fn plan_scope_with_lock_base(
@@ -219,24 +258,8 @@ fn plan_scope_with_lock_base(
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
     manifest::refuse_output_styles(env, scope, declared.output_styles.len())?;
-    // `declared` is what the person declared, as this build reads it: the
-    // manifest any write this plan carries is built from. A single-package
-    // update reads from a copy with every other follower pinned at its
-    // installed commit — the pins steer this pass and never reach the file.
-    let (manifest, mut state, held) = desired_pass(env, scope, declared, lock, options)?;
-    commands.apply(&mut state);
-    if let Some(targets) = &options.update_only
-        && targets.reach == Reach::Declared
-    {
-        ops::protect_installed(
-            env,
-            scope,
-            &manifest,
-            lock,
-            &mut state,
-            &targets.declarations,
-        )?;
-    }
+    let (manifest, mut state, held) =
+        assessed_desired_pass(env, scope, declared, lock, lock_base, options, commands)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);

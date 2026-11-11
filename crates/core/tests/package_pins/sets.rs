@@ -618,10 +618,7 @@ fn updating_a_package_its_set_also_owns_through_a_parent_still_moves_it() {
     assert_eq!(locked_commit(&w, "a"), second);
 }
 
-/// A record naming a version this build does not write is refused, in
-/// both directions and for the same reason: a lock behind this format is
-/// missing evidence this build reads, and one ahead of it holds evidence
-/// this build would strip on its next write. Nothing converts either.
+/// A pre-portable record needs recovery; a future record remains refused.
 /// The lock here is otherwise exactly what this build writes, so the
 /// version alone is what the refusal turns on.
 #[test]
@@ -650,7 +647,7 @@ fn a_lock_naming_another_version_is_refused_in_both_directions() {
         fs::write(&path, text).unwrap();
     };
 
-    renumber(LOCK_VERSION - 1);
+    renumber(10);
     let error = load_lock(&path).unwrap_err();
     assert!(
         matches!(error, CoreError::LegacyProjectLock { .. }),

@@ -3,14 +3,12 @@
 
 use super::{World, read, tree};
 
+#[allow(clippy::unwrap_used)]
 fn plant_version_10_lock(world: &World) {
     let lock = world.at(".kendex-lock.json");
-    let current = kendex_core::lock::LOCK_VERSION;
-    let older = read(&lock).replace(
-        &format!("\"version\": {current}"),
-        &format!("\"version\": {}", current - 1),
-    );
-    assert_ne!(older, read(&lock), "the fixture must rewrite the version");
+    let mut legacy = kendex_core::lock::load(&lock).unwrap();
+    legacy.version = 10;
+    let older = serde_json::to_string_pretty(&legacy).unwrap();
     super::write(&lock, &older);
 }
 
@@ -172,10 +170,7 @@ fn a_scope_whose_lock_cannot_be_read_fails_at_the_read() {
     // A record version this build does not read.
     let lock = world.at(".kendex-lock.json");
     let current = kendex_core::lock::LOCK_VERSION;
-    let older = read(&lock).replace(
-        &format!("\"version\": {current}"),
-        &format!("\"version\": {}", current - 1),
-    );
+    let older = read(&lock).replace(&format!("\"version\": {current}"), "\"version\": 10");
     assert_ne!(
         older,
         read(&lock),
