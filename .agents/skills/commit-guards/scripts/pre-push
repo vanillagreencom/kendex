@@ -75,8 +75,9 @@ adds over what this repository's refs for the remote last recorded — and not
 a claim about the destination. Those refs record a past fetch and nothing
 local dates them, so after a `git remote set-url` they still describe the
 previous repository and an oversized file can read there as pre-existing.
-Where those refs give no single base, the remote's default branch picks it.
-With no base at all, the whole tree is the scope.
+Where those refs give no single base, the remote's default branch picks it,
+or else their common ancestor. With no base at all, the whole tree is the
+scope.
 references/hooks-and-settings.md § Pre-push scope states when each applies.
 
 Two refusals keep the verdict about the thing being pushed. Every range scope
@@ -240,14 +241,17 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 # baseline and fails one with no row; ../CHECKS.md § byte-ceiling states the
 # scopes apart. Trying the boundary first limits these size refusals for
 # repositories that adopted the check with existing oversized binaries.
-local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
-  local __v="$1" local_oid="$2" status=0 line="" selected="" count=0
-  local boundaries=()
-  eval "$__v=''"
+local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was chosen (sole|default|shared); 1 when there is none
+  local __v="$1" __r="$2" local_oid="$3" status=0 line="" selected="" count=0
+  local boundaries=() survivors=()
+  eval "$__v=''; $__r=''"
   # One baseline must descend from every reached boundary. Traversal order
   # cannot establish that: a merge can also reach an older donor boundary.
   # Where none does — a branch cut from one published branch that merged
-  # another — the default branch decides, as history_boundary has it.
+  # another — the default branch decides, as history_boundary has it. With
+  # no usable default branch the base is the survivors' common ancestor, so
+  # the branch is still judged over a range: the whole tree hands the range
+  # lanes no history, and changelog-entries would pass the branch's own major.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
   # matches no tracking refs, so nothing is excluded, the walk reaches the
@@ -273,12 +277,28 @@ local_boundary() { # VAR LOCAL-OID — VAR gets the base; 1 when there is none
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     selected="$line"
+    survivors+=("$line")
     count=$((count + 1))
   done <"$GG_TMP/independent"
   case "$count" in
     0) gg_fail boundary-empty "$local_oid" "git merge-base returned no independent boundary from a nonempty set." ;;
-    1) ;;
-    *) default_base selected || return 1 ;;
+    1) eval "$__r=sole" ;;
+    *)
+      if default_base selected; then
+        eval "$__r=default"
+      else
+        # Every survivor descends from this base, so it is wider than any of
+        # them and can take in commits already published: a content refusal
+        # the caller names the way past. git exits 1 when the survivors share
+        # no ancestor, and only then is there no base.
+        selected="$(git merge-base --octopus "${survivors[@]}" 2>"$GG_TMP/boundary.err")" || status=$?
+        case "$status" in
+          0) eval "$__r=shared" ;;
+          1) return 1 ;;
+          *) gg_fail_cause boundary-common "$status" "$GG_TMP/boundary.err" "git merge-base could not find the common ancestor of the reached boundaries of $(gg_shown "$local_oid") (exit $status)" ;;
+        esac
+      fi
+      ;;
   esac
   eval "$__v=\$selected"
 }
@@ -543,8 +563,10 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
     fi
     continue
   fi
-  base=""
-  if local_boundary base "$local_oid"; then
+  base="" route=""
+  if local_boundary base route "$local_oid"; then
+    [ "$route" != shared ] \
+      || gg_message base-shared "$ref:$base" "=== pre-push: no default branch for this remote resolves, so $ref is judged from $(gg_shown "$base"), the common ancestor of the published branches it builds on. That range can include their own commits; git remote set-head <remote> --auto records the default branch and narrows it."
     judge "base:$base" "$ref" --base "$base"
   else
     # local_boundary states why no base means the whole tree. The message

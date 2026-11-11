@@ -123,9 +123,11 @@ printf '%s\n' "$gg_suite"
 # The incomparable modes cut the donor from a published side branch instead,
 # so neither its boundary nor P descends from the other. `main-default` and
 # `side-default` record the remote's default branch as named; `unrecorded`
-# records none. Each default gives a different merge base, so the pair holds
-# whatever order git lists the incomparable boundaries in.
-first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|unrecorded|disconnected) [SKILL-SOURCE]
+# records none, and `dangling` records one whose ref was deleted, as a prune
+# leaves it. Each default gives a different merge base, so the pair holds
+# whatever order git lists the incomparable boundaries in. `unrecorded` and
+# `dangling` also carry the topic's own major, which their base must judge.
+first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|unrecorded|dangling|disconnected) [SKILL-SOURCE]
   local __v="$1" r="" donor=""
   new_repo r "$2" "${4:-}"
   q git -C "$r" config gc.auto 0
@@ -146,7 +148,7 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|u
     eval "$__v=\$r"
     return 0
   fi
-  case "$3" in main-default | side-default | unrecorded)
+  case "$3" in main-default | side-default | unrecorded | dangling)
     q git -C "$r" checkout -q -b side
     printf 'side base\n' >"$r/side.txt"
     q git -C "$r" add side.txt
@@ -173,10 +175,17 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|u
   case "$3" in
     main-default) q git -C "$r" remote set-head origin main ;;
     side-default) q git -C "$r" remote set-head origin side ;;
+    dangling)
+      # Pushing a delete drops the tracking ref and keeps the symbolic HEAD
+      # that names it, the state a rename upstream and a prune leave.
+      q git -C "$r" -c core.hooksPath=/dev/null push -q origin main:refs/heads/trunk
+      q git -C "$r" remote set-head origin trunk
+      q git -C "$r" -c core.hooksPath=/dev/null push -q origin --delete trunk
+      ;;
   esac
   q git -C "$r" checkout -q -b topic
   GIT_COMMITTER_DATE='2030-01-05T00:00:00Z' q git -C "$r" merge -q --no-ff "$donor" -m "fix: preserve donor ancestry"
-  if [ "$3" = own-major ]; then
+  if [ "$3" = own-major ] || [ "$3" = unrecorded ] || [ "$3" = dangling ]; then
     printf '{"version":"2.0.0"}\n' >"$r/lib.json"
     q git -C "$r" add lib.json
     q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: topic major"
@@ -185,22 +194,24 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|u
 }
 
 first_push_judgment() { # REPO -> status and machine-readable scope/finding fields
-  local r="$1" rc=0 out="" scope="" major=""
+  local r="$1" rc=0 out="" scope="" major="" shared=""
   out="$(git -C "$r" push --dry-run origin HEAD:refs/heads/topic 2>&1)" || rc=$?
   scope="$(printf '%s\n' "$out" | sed -n 's/^pre-push: step=//p')" || exit 2
-  major="$(printf '%s\n' "$out" | sed -n 's/^changelog-entries: major-breaking=//p')" || exit 2
-  printf 'rc=%s scope=%s major=%s' "$rc" "$scope" "$major"
+  major="$(printf '%s\n' "$out" | sed -n 's/^changelog-entries: major-breaking=//p' | paste -sd ' ' -)" || exit 2
+  shared="$(printf '%s\n' "$out" | sed -n 's/^pre-push: base-shared=//p')" || exit 2
+  printf 'rc=%s scope=%s major=%s shared=%s' "$rc" "$scope" "$major" "$shared"
 }
 
-for FIRST_MODE in clean own-major main-default side-default unrecorded disconnected; do
+for FIRST_MODE in clean own-major main-default side-default unrecorded dangling disconnected; do
   FIRST=""
   first_push_merge FIRST "first-$FIRST_MODE" "$FIRST_MODE"
   FIRST_BASE="$(git -C "$FIRST" rev-parse origin/main)" || exit 2
   FIRST_BOUNDARIES="$(git -C "$FIRST" rev-list --boundary HEAD --not --remotes=origin \
     | sed -n 's/^-//p')" || exit 2
-  if [ "$FIRST_MODE" = main-default ] || [ "$FIRST_MODE" = side-default ] \
-    || [ "$FIRST_MODE" = unrecorded ]; then
+  case "$FIRST_MODE" in main-default | side-default | unrecorded | dangling) FIRST_INCOMPARABLE=1 ;; *) FIRST_INCOMPARABLE=0 ;; esac
+  if [ "$FIRST_INCOMPARABLE" -eq 1 ]; then
     FIRST_SIDE="$(git -C "$FIRST" rev-parse origin/side)" || exit 2
+    FIRST_SEED="$(git -C "$FIRST" rev-parse origin/side^)" || exit 2
     assert_eq "first-push $FIRST_MODE reaches both remote boundaries" \
       "$(printf '%s\n%s' "$FIRST_SIDE" "$FIRST_BASE" | LC_ALL=C sort)" \
       "$(printf '%s\n' "$FIRST_BOUNDARIES" | LC_ALL=C sort)"
@@ -212,24 +223,33 @@ for FIRST_MODE in clean own-major main-default side-default unrecorded disconnec
     done
     # The default branch's merge base is the base. main's excludes the
     # prerequisite's major; side's leaves it to be judged, as a pull request
-    # into side carries it. With none recorded there is no base, and the whole
-    # tree is judged.
+    # into side carries it. With no usable default branch the base is the seed
+    # both published branches grew from, so the topic's own major is judged,
+    # and the prerequisite's with it.
     case "$FIRST_MODE" in
-      main-default) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major=" ;;
-      side-default) FIRST_EXPECT="rc=1 scope=base:$FIRST_SIDE major=app.json:1.0.0:2.0.0" ;;
-      unrecorded) FIRST_EXPECT='rc=0 scope=all major=' ;;
+      main-default) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared=" ;;
+      side-default) FIRST_EXPECT="rc=1 scope=base:$FIRST_SIDE major=app.json:1.0.0:2.0.0 shared=" ;;
+      unrecorded | dangling)
+        FIRST_EXPECT="rc=1 scope=base:$FIRST_SEED major=app.json:1.0.0:2.0.0 lib.json:1.0.0:2.0.0 shared=refs/heads/topic:$FIRST_SEED"
+        ;;
     esac
+    if [ "$FIRST_MODE" = dangling ]; then
+      FIRST_DEFAULT="$(git -C "$FIRST" symbolic-ref --quiet refs/remotes/origin/HEAD)" || exit 2
+      FIRST_RESOLVES=0
+      git -C "$FIRST" rev-parse --verify --quiet "$FIRST_DEFAULT" >/dev/null || FIRST_RESOLVES=$?
+      assert_eq "first-push dangling fixture records a default branch that does not resolve: $FIRST_DEFAULT" 1 "$FIRST_RESOLVES"
+    fi
   elif [ "$FIRST_MODE" = disconnected ]; then
     assert_eq "first-push disconnected history reaches no boundary" "" "$FIRST_BOUNDARIES"
-    FIRST_EXPECT='rc=0 scope=all major='
+    FIRST_EXPECT='rc=0 scope=all major= shared='
   else
     FIRST_SEED="$(git -C "$FIRST" rev-parse origin/main^^)" || exit 2
     assert_eq "first-push $FIRST_MODE reaches the older boundary first" \
       "$(printf '%s\n%s' "$FIRST_SEED" "$FIRST_BASE")" "$FIRST_BOUNDARIES"
     q git -C "$FIRST" merge-base --is-ancestor "$FIRST_SEED" "$FIRST_BASE"
     case "$FIRST_MODE" in
-      clean) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major=" ;;
-      own-major) FIRST_EXPECT="rc=1 scope=base:$FIRST_BASE major=lib.json:1.0.0:2.0.0" ;;
+      clean) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared=" ;;
+      own-major) FIRST_EXPECT="rc=1 scope=base:$FIRST_BASE major=lib.json:1.0.0:2.0.0 shared=" ;;
     esac
   fi
   assert_eq "first-push boundary judgment: $FIRST_MODE" "$FIRST_EXPECT" "$(first_push_judgment "$FIRST")"
@@ -246,7 +266,7 @@ UNSAFE_FIRST=""
 first_push_merge UNSAFE_FIRST unsafe-first own-major "$UNSAFE_BOUNDARY"
 UNSAFE_TIP="$(git -C "$UNSAFE_FIRST" rev-parse HEAD)" || exit 2
 assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
-  "rc=0 scope=base:$UNSAFE_TIP major=" "$(first_push_judgment "$UNSAFE_FIRST")"
+  "rc=0 scope=base:$UNSAFE_TIP major= shared=" "$(first_push_judgment "$UNSAFE_FIRST")"
 
 # Keeping the incomparable survivor git lists last, not the default branch's
 # merge base, takes main's tip under a side default and hides the
@@ -254,13 +274,28 @@ assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
 SURVIVOR_BOUNDARY="$TMP/.survivor-boundary/commit-guards"
 mkdir -p "$(dirname "$SURVIVOR_BOUNDARY")"
 cp -R "$SKILL_TEMPLATE" "$SURVIVOR_BOUNDARY"
-gg_mutant SURVIVOR_LANE pre-push 'default_base selected || return 1' 'default_base gg_unused || return 1'
+gg_mutant SURVIVOR_LANE pre-push 'if default_base selected; then' 'if default_base gg_unused; then'
 cp -- "$SURVIVOR_LANE" "$SURVIVOR_BOUNDARY/scripts/pre-push"
 SURVIVOR_FIRST=""
 first_push_merge SURVIVOR_FIRST survivor-first side-default "$SURVIVOR_BOUNDARY"
 SURVIVOR_MAIN="$(git -C "$SURVIVOR_FIRST" rev-parse origin/main)" || exit 2
 assert_eq "must-fail: the last listed survivor hides the prerequisite's major" \
-  "rc=0 scope=base:$SURVIVOR_MAIN major=" "$(first_push_judgment "$SURVIVOR_FIRST")"
+  "rc=0 scope=base:$SURVIVOR_MAIN major= shared=" "$(first_push_judgment "$SURVIVOR_FIRST")"
+
+# Falling to the whole tree when no default branch resolves, as the lane did
+# before the common-ancestor base, hands changelog-entries no history: the
+# topic's own major passes under both a missing and a dangling default.
+WHOLE_BOUNDARY="$TMP/.whole-boundary/commit-guards"
+mkdir -p "$(dirname "$WHOLE_BOUNDARY")"
+cp -R "$SKILL_TEMPLATE" "$WHOLE_BOUNDARY"
+gg_mutant WHOLE_LANE pre-push 'if default_base selected; then' 'if default_base selected || return 1; then'
+cp -- "$WHOLE_LANE" "$WHOLE_BOUNDARY/scripts/pre-push"
+for WHOLE_MODE in unrecorded dangling; do
+  WHOLE_FIRST=""
+  first_push_merge WHOLE_FIRST "whole-$WHOLE_MODE" "$WHOLE_MODE" "$WHOLE_BOUNDARY"
+  assert_eq "must-fail: the whole tree passes the topic's own major ($WHOLE_MODE default)" \
+    "rc=0 scope=all major= shared=" "$(first_push_judgment "$WHOLE_FIRST")"
+done
 
 # --------------------------------------------------------------- the ref lines
 #
@@ -758,7 +793,7 @@ assert_eq "with no recorded default branch, a topic stacked on a side branch's m
 # tracking ref holds takes the side branch's tip as the baseline and lets the
 # major onto the destination unjudged.
 cp -- "$RANGES_KEPT" "$RANGES_LANE"
-sed -i.bak 's#^  default_base base || return 1$#  default_base base || { local_boundary pushed HEAD \&\& eval "$__v=\\$pushed"; return; }#' "$RANGES_LANE"
+sed -i.bak 's#^  default_base base || return 1$#  default_base base || { local_boundary pushed base HEAD \&\& eval "$__v=\\$pushed"; return; }#' "$RANGES_LANE"
 rm -f -- "$RANGES_LANE.bak"
 assert_eq "the any-ref edit matches one line" "1" "$(diff -- "$RANGES_KEPT" "$RANGES_LANE" | grep -c '^>')"
 ANY_REF=""
