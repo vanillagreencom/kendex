@@ -122,7 +122,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
    **Open-first head.** On that `open-first-returned` pass, once the push lands, this step owns the pushed head: it ends the overseer's hold and routes the head once. In a lane whose brief names a status file, write the review line `Review: [VERDICT]` in place of the pending line, `[VERDICT]` being the verdict [review-pr.md](review-pr.md) § 9 returned. Then, lane or not, record the pass, so no later pass repeats the triage-first branch:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order open-first-pushed
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"open-first-pushed"}'
    ```
 
    **Published-head route.** Run [review-pr-comments.md](review-pr-comments.md) § 7.2 from its current-head Copilot wait. Keep `[REVIEW_READ]` for its **Head moved** route. Keep its body checks, policy and refusal handling, and **Head unmoved** notice for a completed review on the unchanged head. Bypass its **Skip if** conditions for this publication pass: the pre-push triage's § 7.2 routed no head while internal review was pending, so this run routes the published head whatever threads the triage answered. With no Copilot review, the head takes **Head moved**, an unchanged push-first head included, and § 7.2's review call settles its request by [Copilot requests](../references/gates.md#copilot-requests). Where the call sends a request, GitHub's request event restarts pr-watch's quiet period, so the overseer's held `awaiting-stale` line rises again after the hold ends.
@@ -205,7 +205,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
    Detach orphaned children next, before any arm: once the PR is armed GitHub can merge it before [merge-pr.md](merge-pr.md) reaches its own detach, and the merge's cascade-Done would close them. Run [merge-pr.md § 4.1](merge-pr.md#41-detach-orphaned-children) for this item, `[ISSUE]` being `[ISSUE_ID]`, with its skip conditions and its per-orphan ask, which a lane sends through its ask gate. **Skip if** workflow state already records `children_detached`, the detach running once per item. An abort there arms nothing: skip the rest of this step, and [merge-pr.md](merge-pr.md) § 4.1 runs the detach again. Record the detach once it completes, or once § 4.1's own conditions skip it:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /children_detached true
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"children-detached"}'
    ```
 
    Read the pushed head:
@@ -225,7 +225,7 @@ When a cut follows the last review pass, set the existing `pre_delegate_sha` bou
 Once the PR exists, this run is a continuing action. Clear any stop a capped run left before entering another post-PR gate:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /post_pr_stop null
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
 
 ### 2.1 Base publication
@@ -372,13 +372,13 @@ A `blocked` verdict takes the step 1 table's `blocked` row under either mode. Fo
    | refusal `pr-not-open` | The pull request is closed or merged: report its `state` and stop |
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_approval/reviewer_down true
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"reviewer-down"}'
    ```
 
    A met gate clears its head-bound budget:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /post_pr_budgets/review_wait null
+   .agents/skills/orch/scripts/orch-runtime state head-budget reset --item [ISSUE_ID] --kind review-wait
    ```
 
    **Triage pass**: `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 → § 4 step 1` with managed context. It applies the external cap to its own fix pushes; what bounds this step is the Restart check.
@@ -408,7 +408,7 @@ A `blocked` verdict takes the step 1 table's `blocked` row under either mode. Fo
    **On `timeout` under `ask`**: `Keep waiting` goes to the Restart check; `Force merge` records `pr_approval.forced` and continues to step 2, which records the status that led to it, with the § 6.1 gates still applying; `Stop here` goes to § 6 with `MERGE_READY = false` and skips § 5.
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_approval/forced true
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"forced"}'
    ```
 
 2. **Record the result** for gate 4 — the gate status and the `unresolved_count` at verdict time — then → § 5.
@@ -473,14 +473,14 @@ Its reply's `limit` is `MAX_CYCLES`. Reruns-in-place are for flakes and re-gatin
 When its `result.value` is the verdict's `result.head`, this head had its rerun: go to Run Workflow. Otherwise record the rerun for this head, then ask for it. The github skill reruns the current failed required run only where its failed log names a transient runner failure (`ci-rerun --help`); the record is written before the ask, never after:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
 `[HEAD]` is the verdict's `result.head`; `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`. A `rerun run=[RUN_ID]` line returns to the § 5 call after the interval § 5 keeps between calls, never at once: GitHub registers the new attempt after the verb answers, and a call before that reads the earlier red as a second failure of this head. The § 5 call then reads the rerun attempt as the current run. Before returning, record the run on the item:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /ci_rerun/run [RUN_ID]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"ci-rerun-run","head":"[HEAD]","run":[RUN_ID]}'
 ```
 
 A `no-rerun` line, or exit `1`, goes to Run Workflow.

@@ -385,7 +385,7 @@ pub(crate) fn remap_commits(doc: &mut Document, hop: &Hop) -> (usize, usize) {
 
 /// The elements of `now` that `was` does not hold: a check judges what a
 /// write added, so an entry an earlier shape left keeps loading.
-fn added_entries<'a>(
+pub(super) fn added_entries<'a>(
     was: Option<&Value>,
     now: &'a Value,
 ) -> std::result::Result<Vec<&'a Value>, String> {

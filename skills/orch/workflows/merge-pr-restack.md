@@ -61,7 +61,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
 
    ```bash
    jq -n --arg head [HEAD] --arg condition [CONDITION] --arg validated [VALIDATED_HEAD] --arg paths [PATHS] '{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}' > tmp/restack-skip-[ISSUE].json
-   .agents/skills/orch/scripts/orch-runtime state upsert --item [ISSUE] /restack_skips --key head tmp/restack-skip-[ISSUE].json
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE] --request-json '{"op":"record-pr-progress","step":"restack-skip","file":"tmp/restack-skip-[ISSUE].json"}'
    ```
 
    A lane also rewrites its status file's validation line, which names the skip, its condition and its paths, as [dev-start.md § Validation status](dev-start.md#validation-status) sets out. A skip proves tree equivalence, and no more: a later run at that tree which did not pass voids the skip's proof with every other proof of the tree, so step 3's read answers `missing` and the restack hands back. Step 3 asks the runtime for that proof before either caller can admit the queue or merge. Any other skip exit under `full` goes to step 3 with no run. Any other exit under `range`, whatever it prints, runs the range command over the branch as it sits on the base after the restack, started without `--run-id` and polled as [dev SKILL.md § Long-Running Validation](../../dev/SKILL.md#long-running-validation) sets out for the harness:

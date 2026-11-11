@@ -946,12 +946,14 @@ enum StateOp {
         #[arg(long)]
         count: Option<u64>,
     },
-    /// Spend one attempt of a pull request's automatic retry budget.
+    /// A pull request's automatic retry budget: spend one attempt, or
+    /// restart it.
     HeadBudget {
         #[command(subcommand)]
         op: HeadBudgetOp,
     },
-    /// Record the stop a pull request is told and render its comment.
+    /// The stop a pull request is told: record it and render its comment,
+    /// or lift it.
     PostPrStop {
         #[command(subcommand)]
         op: StopOp,
@@ -1056,6 +1058,19 @@ enum ModelCheckOp {
         #[arg(long)]
         expected: PathBuf,
     },
+    /// Mark the session's standing switched check on the item's record
+    /// (`--item`), the fleet record's lane (`--fleet --lane ITEM`) or
+    /// controller (`--fleet`) started, before its recovery starts:
+    /// `started_now` false on a repeat; no such check refuses
+    /// `model-check-missing`.
+    Start {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        lane: Option<String>,
+        #[arg(long)]
+        session: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1070,6 +1085,13 @@ enum HeadBudgetOp {
         kind: orch_runtime::ops::store::BudgetKind,
         #[arg(long)]
         head: String,
+    },
+    /// Restart the budget: `reset`, or `none` where nothing was spent.
+    Reset {
+        #[arg(long)]
+        item: String,
+        #[arg(long, value_parser = parse_budget_kind)]
+        kind: orch_runtime::ops::store::BudgetKind,
     },
 }
 
@@ -1102,6 +1124,11 @@ enum StopOp {
     Record(StopFields),
     /// Record the stop where none stands; keep a standing one.
     RecordIfEmpty(StopFields),
+    /// Lift the standing stop: `cleared`, or `none` where none stood.
+    Clear {
+        #[arg(long)]
+        item: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2777,6 +2804,18 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     expected,
                 },
             ),
+            ModelCheckOp::Start {
+                target,
+                lane,
+                session,
+            } => {
+                let place = match (target.fleet, lane) {
+                    (false, _) => store::CheckPlace::Item,
+                    (true, Some(lane)) => store::CheckPlace::Lane(lane),
+                    (true, None) => store::CheckPlace::Overseer,
+                };
+                write(&target, Write::ModelStart { place, session })
+            }
         },
         StateOp::Heal {
             target,
@@ -2858,10 +2897,16 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
         StateOp::HeadBudget {
             op: HeadBudgetOp::Take { item, kind, head },
         } => write(&item_target(item), Write::HeadBudget { kind, head }),
+        StateOp::HeadBudget {
+            op: HeadBudgetOp::Reset { item, kind },
+        } => write(&item_target(item), Write::HeadBudgetReset { kind }),
         StateOp::PostPrStop { op } => {
             let (mode, fields) = match op {
                 StopOp::Record(fields) => (StopMode::Record, fields),
                 StopOp::RecordIfEmpty(fields) => (StopMode::RecordIfEmpty, fields),
+                StopOp::Clear { item } => {
+                    return write(&item_target(item), Write::PostPrStopClear);
+                }
             };
             let env = system_env()?;
             let path = state::item_path(&settings.state_dir, &fields.item);

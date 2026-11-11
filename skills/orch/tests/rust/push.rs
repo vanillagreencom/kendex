@@ -2027,7 +2027,7 @@ mod qa {
             ("ui/src/*", "ui/src/view/Panel.tsx", true),
             ("ui/src/*", "crates/core/lib.rs", false),
             ("docs/*", "ui/src/a.css", false),
-            ("ui/src/**/*.tsx", "ui/src/App.tsx", true),
+            ("ui/src/**/*.tsx", "ui/src/Root.tsx", true),
             ("ui/src/**/*.tsx", "ui/src/view/a/Panel.tsx", true),
             ("ui/src/**/*.tsx", "ui/src/App.ts", false),
             ("ui/src", "ui/src/view/Panel.tsx", true),

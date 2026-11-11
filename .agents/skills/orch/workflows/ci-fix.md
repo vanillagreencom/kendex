@@ -35,7 +35,7 @@ Standalone only: use the extracted issue as `[STATE_KEY]`, or `pr-[PR_NUMBER]` w
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
 .agents/skills/orch/scripts/orch-runtime state exists --item [STATE_KEY]
 .agents/skills/orch/scripts/orch-runtime state init --item [STATE_KEY] --branch [PR_BRANCH]
-.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_stop null
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [STATE_KEY]
 ```
 
 ## 2. Fetch Error Details
@@ -186,14 +186,14 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 On `status=complete` with `verdict=fail`, a transient runner failure on the pull request's head is rerun once per head before the result goes anywhere. A merge group's run is never rerun: a same-head re-queue under [merge-pr.md § 5](merge-pr.md#5-execute-the-merge)'s re-queue rule takes its place. Read and record the pull request's rerun as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head does, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request-json '{"op":"record-pr-progress","step":"ci-rerun","head":"[HEAD]"}'
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
 A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the standalone CI-fix budget:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_budgets/ci_fix null
+.agents/skills/orch/scripts/orch-runtime state head-budget reset --item [STATE_KEY] --kind ci-fix
 ```
 
 **Linear only** — post the short status to the tracker:

@@ -97,14 +97,13 @@ Read the branch both routes now stand on and initialize the item's workflow stat
 `exists` true → keep the state and record where this run stands:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /worktree "[WT_PATH]"
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /branch "[BRANCH]"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","worktree":"[WT_PATH]","branch":"[BRANCH]"}'
 ```
 
 Record this tier after either state route. Direct publication reads it to keep this tier's commit-chain validation:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /tier micro
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"micro"}'
 ```
 
 ## 2. Edit And Commit
@@ -261,7 +260,7 @@ A directed change carries neither its branch nor its pull request over (§ Items
 At condition 9, a tracker item records the promised round as the review floor [review-pr.md](review-pr.md) § 1 passes to `review-depth`, so a micro-class diff still gets a reviewed depth:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /review_floor small
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","review_floor":"small"}'
 ```
 
 Then set `[BRIEF]` to `small` and relaunch as `/orch small [ISSUE_ID]`: run one internal review round, then take the fallback approval in [copilot-head-notices.md § Fallback approval](../references/copilot-head-notices.md#fallback-approval) without another Copilot request. For every other condition, the item relaunches at the next class up, as [oversee.md](oversee.md) § Item Tier assigns it from the branch's state; `[BRIEF]` is that assignment's `brief=` word. A directed change takes the paragraph above and none of the routes below. Use the route the checkout leaves a tracker item on:

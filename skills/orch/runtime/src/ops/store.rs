@@ -13,13 +13,12 @@ use agent_runtime::clock;
 use agent_runtime::host;
 use serde_json::{Map, Value, json};
 
-use super::{Env, findings, loaded, reread, reviewers};
+use super::{Env, findings, ledger, loaded, progress, reread, reviewers};
 use crate::error::{Error, Result, ShapeReason};
 use crate::settings::StoreSettings;
 use crate::state::{self, Document, Kind, Locking};
 use crate::watch::lanes::{HandoffReading, handoff_places, handoff_read};
 
-const TIERS: [&str; 3] = ["micro", "small", "standard"];
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
@@ -121,6 +120,13 @@ fn slot_mut<'a>(
         };
     }
     Ok(current)
+}
+
+/// Write `value` at `pointer`, each intermediate created as `slot_mut`
+/// creates it.
+pub(super) fn set_at(path: &Path, doc: &mut Document, pointer: &str, value: Value) -> Result<()> {
+    *slot_mut(path, doc, pointer, &tokens(pointer)?)? = value;
+    Ok(())
 }
 
 /// The value a `set` or `append` argument stands for: a `{` or `[` prefix
@@ -400,12 +406,19 @@ pub enum Write {
         kind: BudgetKind,
         head: String,
     },
+    /// The budget restarted: a passing result, or a new period, owes its
+    /// retries again.
+    HeadBudgetReset {
+        kind: BudgetKind,
+    },
     PostPrStop {
         mode: StopMode,
         name: String,
         gate: String,
         remaining: String,
     },
+    /// The standing stop lifted, so the next stop is recorded again.
+    PostPrStopClear,
     StandingAdd {
         file: PathBuf,
     },
@@ -441,6 +454,12 @@ pub enum Write {
         observed: String,
     },
     ModelCheck(ModelCheck),
+    /// The standing switched check of `session` at `place` marked
+    /// `recovery_started` before its recovery starts.
+    ModelStart {
+        place: CheckPlace,
+        session: String,
+    },
     ModelReset {
         lane: String,
         session: String,
@@ -540,15 +559,19 @@ fn transition(
             file,
             unique,
         } => append(path, doc, pointer, one_value(file)?, *unique),
-        Write::LaneMerge { lane, file } => lane_merge(path, doc, lane, one_value(file)?),
+        Write::LaneMerge { lane, file } => {
+            super::lane::merge_lane(path, doc, lane, one_value(file)?)
+        }
         Write::Increment { pointer } => increment(path, doc, pointer),
         Write::HeadBudget { kind, head } => head_budget_take(path, doc, store, *kind, head),
+        Write::HeadBudgetReset { kind } => head_budget_reset(path, doc, *kind),
         Write::PostPrStop {
             mode,
             name,
             gate,
             remaining,
         } => Ok(post_pr_stop_record(doc, *mode, name, gate, remaining)),
+        Write::PostPrStopClear => Ok(post_pr_stop_clear(doc)),
         Write::StandingAdd { file } => standing_add(path, doc, env, one_value(file)?, file),
         Write::StandingLift { file } => standing_lift(path, doc, env, one_value(file)?, file),
         Write::LogAppend { file } => log_append(path, doc, store, env, one_value(file)?, file),
@@ -569,6 +592,7 @@ fn transition(
             observed,
         } => Ok(model_slot(path, doc, env, session, cause, observed)),
         Write::ModelCheck(check) => model_check(path, doc, env, check),
+        Write::ModelStart { place, session } => model_start(path, doc, place, session),
         Write::ModelReset {
             lane,
             session,
@@ -580,45 +604,30 @@ fn transition(
 
 /// The judgements the store makes on a `set`, by the field it names. An
 /// item's handoff record is `record-handoff`'s: a pointer write there would
-/// land a record with no stamp. The fleet record's `handoff` is the
-/// overseer's own, which no item transition writes: it is set here, an
-/// object, its `written_at` stamped under the time rule.
+/// land a record with no stamp. The fleet record's whole `handoff` is
+/// `record-overseer-ledger`'s write, stamped under the time rule.
 fn set(
     path: &Path,
     doc: &mut Document,
     store: &StoreSettings,
     env: &Env,
     pointer: &str,
-    mut value: Value,
+    value: Value,
 ) -> Result<Value> {
     let tokens = tokens(pointer)?;
     let field = tokens[0].as_str();
-    if field == "handoff" {
-        if Kind::of_path(path) == Kind::Item {
-            return Err(refused(
-                "handoff-route",
-                &[("pointer", pointer), ("op", "record-handoff")],
-            ));
-        }
-        if tokens.len() == 1 {
-            let Value::Object(record) = &mut value else {
-                return Err(refused("handoff-record", &[("pointer", pointer)]));
-            };
-            stamp(
-                record,
-                env,
-                "written_at",
-                "handoff-written-at-invalid",
-                "handoff-written-at-future",
-            )?;
-        }
+    if field == "handoff" && Kind::of_path(path) == Kind::Item {
+        return Err(refused(
+            "handoff-route",
+            &[("pointer", pointer), ("op", "record-handoff")],
+        ));
     }
     if tokens.len() == 1 {
-        if field == "tier" && !value.as_str().is_some_and(|t| TIERS.contains(&t)) {
-            let text = value
-                .as_str()
-                .map_or_else(|| value.to_string(), str::to_owned);
-            return Err(refused("tier-value", &[("value", &text)]));
+        if field == "handoff" {
+            return ledger::handoff(doc, env, value);
+        }
+        if field == "tier" {
+            progress::tier_value(field, &value)?;
         }
         // A whole panel is `record-panel`'s write, its rules and the
         // rereview count with it.
@@ -653,7 +662,7 @@ fn append(
         ));
     }
     if tokens.len() == 1 && tokens[0] == "triaged" {
-        triaged_valid(&value)?;
+        ledger::triage_row(&value)?;
     }
     let slot = slot_mut(path, doc, pointer, &tokens)?;
     if slot.is_null() {
@@ -673,83 +682,6 @@ fn append(
     }
     let length = items.len();
     Ok(json!({"pointer": pointer, "value": value, "length": length, "appended": appended}))
-}
-
-/// A lane record's merge: the lane is found by its `item` inside the
-/// transition, every field the mapping names replaces the lane's, and the
-/// item's lineage is bound once, as the launch binds it: an absent or null
-/// `obligation` keeps the lane's, one differing from a known binding refuses
-/// `obligation-conflict`, and an unknown binding takes the one stated, held
-/// to the launch request's shape.
-fn lane_merge(path: &Path, doc: &mut Document, lane: &str, value: Value) -> Result<Value> {
-    let Value::Object(mapping) = value else {
-        return Err(refused("merge-value", &[("lane", lane)]));
-    };
-    if let Some(item) = mapping.get("item")
-        && item.as_str() != Some(lane)
-    {
-        let named = item
-            .as_str()
-            .map_or_else(|| item.to_string(), str::to_owned);
-        return Err(refused("merge-item", &[("lane", lane), ("item", &named)]));
-    }
-    let index = doc
-        .get("lanes")
-        .and_then(Value::as_array)
-        .and_then(|lanes| {
-            lanes
-                .iter()
-                .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
-        })
-        .ok_or_else(|| Error::LaneMissing {
-            item: lane.to_owned(),
-        })?;
-    let pointer = format!("/lanes/{index}");
-    let Value::Object(record) = slot_mut(path, doc, &pointer, &tokens(&pointer)?)? else {
-        return Err(shape(path, &pointer, ShapeReason::NotObject, "a lane"));
-    };
-    for (key, stated) in mapping {
-        if key == "obligation" {
-            if stated.is_null() {
-                continue;
-            }
-            serde_json::from_value::<super::lane::Obligation>(stated.clone()).map_err(|e| {
-                refused(
-                    "obligation-invalid",
-                    &[("lane", lane), ("cause", &e.to_string())],
-                )
-            })?;
-            if record
-                .get("obligation")
-                .is_some_and(|known| !known.is_null() && *known != stated)
-            {
-                return Err(refused("obligation-conflict", &[("item", lane)]));
-            }
-        }
-        record.insert(key, stated);
-    }
-    Ok(json!({"pointer": pointer, "value": record.clone()}))
-}
-
-/// A triage row names the issue, the reason and a verdict the watch reads;
-/// a string row or an `item`-keyed one names no key it can acknowledge.
-fn triaged_valid(row: &Value) -> Result<()> {
-    let valid = row.as_object().is_some_and(|row| {
-        let mut keys: Vec<&str> = row.keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        keys == ["issue", "reason", "verdict"]
-            && row.get("issue").is_some_and(Value::is_string)
-            && row.get("reason").is_some_and(Value::is_string)
-            && row
-                .get("verdict")
-                .and_then(Value::as_str)
-                .is_some_and(|v| state::ACKNOWLEDGED_VERDICTS.contains(&v))
-    });
-    if valid {
-        Ok(())
-    } else {
-        Err(refused("triaged-record-invalid", &[("field", "triaged")]))
-    }
 }
 
 pub(super) fn increment(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
@@ -810,6 +742,46 @@ fn head_budget_take(
     Ok(json!({"kind": kind.word(), "verdict": "continue", "attempts": used + 1, "limit": limit}))
 }
 
+fn head_budget_reset(path: &Path, doc: &mut Document, kind: BudgetKind) -> Result<Value> {
+    let spent = doc
+        .get("post_pr_budgets")
+        .and_then(|b| b.get(kind.field()))
+        .is_some_and(|b| !b.is_null());
+    set_at(
+        path,
+        doc,
+        &format!("/post_pr_budgets/{}", kind.field()),
+        Value::Null,
+    )?;
+    let result = if spent { "reset" } else { "none" };
+    Ok(json!({"kind": kind.word(), "result": result}))
+}
+
+/// A budget is `null` or the head it was last spent on and its attempts.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Budget {
+    #[serde(rename = "head")]
+    _head: String,
+    #[serde(rename = "attempts")]
+    _attempts: u64,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Budgets {
+    #[serde(default, rename = "review_wait")]
+    _review_wait: Option<Budget>,
+    #[serde(default, rename = "ci_fix")]
+    _ci_fix: Option<Budget>,
+}
+
+pub(crate) fn check_budgets(now: &Value) -> std::result::Result<(), String> {
+    serde_json::from_value::<Option<Budgets>>(now.clone())
+        .map(drop)
+        .map_err(|e| e.to_string())
+}
+
 /// Record the stop, or keep the one standing under `record-if-empty`: the
 /// first stop a pull request is told is the precise one.
 fn post_pr_stop_record(
@@ -826,6 +798,30 @@ fn post_pr_stop_record(
     let stop = json!({"name": name, "gate": gate, "remaining": [remaining]});
     state::set(doc, "post_pr_stop", stop.clone());
     json!({"result": "recorded", "stop": stop})
+}
+
+fn post_pr_stop_clear(doc: &mut Document) -> Value {
+    let standing = doc.get("post_pr_stop").is_some_and(|stop| !stop.is_null());
+    state::set(doc, "post_pr_stop", Value::Null);
+    json!({"result": if standing { "cleared" } else { "none" }})
+}
+
+/// A stop is `null` or the one `record` writes.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Stop {
+    #[serde(rename = "name")]
+    _name: String,
+    #[serde(rename = "gate")]
+    _gate: String,
+    #[serde(rename = "remaining")]
+    _remaining: Vec<String>,
+}
+
+pub(crate) fn check_stop(now: &Value) -> std::result::Result<(), String> {
+    serde_json::from_value::<Option<Stop>>(now.clone())
+        .map(drop)
+        .map_err(|e| e.to_string())
 }
 
 /// The stop recorded, then its Markdown comment rendered where this write
@@ -879,7 +875,7 @@ fn render_comment(comment_file: &Path, name: &str, gate: &str, remaining: &str) 
 /// clock, keeps a past one, and refuses one outside `YYYY-MM-DDThh:mm:ssZ`,
 /// one naming no calendar instant, and one later than the clock, since no
 /// write lands in the future.
-fn stamp(
+pub(super) fn stamp(
     row: &mut Map<String, Value>,
     env: &Env,
     field: &str,
@@ -1420,6 +1416,84 @@ fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -
     let slot = format!("{pointer}/model_check");
     *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
     Ok(json!({"result": "acquired", "record": get(doc, &pointer)?}))
+}
+
+impl CheckPlace {
+    fn word(&self) -> &'static str {
+        match self {
+            CheckPlace::Item => "item",
+            CheckPlace::Lane(_) => "lane",
+            CheckPlace::Overseer => "overseer",
+        }
+    }
+}
+
+/// Mark the standing switched check of `session` at `place` started, before
+/// the recovery it guards starts: a check acquired again while unmarked is
+/// the same switch, one marked is a duplicate. A repeat changes nothing, so
+/// a replayed mark spends nothing; no switched check of the session refuses
+/// `model-check-missing`.
+fn model_start(
+    path: &Path,
+    doc: &mut Document,
+    place: &CheckPlace,
+    session: &str,
+) -> Result<Value> {
+    let pointer = match place {
+        CheckPlace::Item => Some(format!("/model_checks/{}", pointer_token(session))),
+        CheckPlace::Overseer => Some("/overseer/model_check".to_owned()),
+        CheckPlace::Lane(lane) => doc
+            .get("lanes")
+            .and_then(Value::as_array)
+            .and_then(|lanes| {
+                lanes
+                    .iter()
+                    .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
+            })
+            .map(|index| format!("/lanes/{index}/model_check")),
+    };
+    let check = match &pointer {
+        Some(pointer) => get(doc, pointer)?,
+        None => Value::Null,
+    };
+    let word = |key: &str| check.get(key).and_then(Value::as_str);
+    let switched = word("outcome") == Some("switched") && word("session_id") == Some(session);
+    let Some(pointer) = pointer.filter(|_| switched) else {
+        return Err(refused("model-check-missing", &[("session", session)]));
+    };
+    let started_now = check.get("recovery_started") != Some(&Value::Bool(true));
+    set_at(
+        path,
+        doc,
+        &format!("{pointer}/recovery_started"),
+        Value::Bool(true),
+    )?;
+    Ok(json!({"place": place.word(), "session": session, "started_now": started_now}))
+}
+
+/// Each check the write changed is one a model check writes: an outcome of
+/// `switched` or `unavailable`, and a `recovery_started` mark, a boolean,
+/// only on a switch.
+pub(crate) fn check_model_checks(
+    was: Option<&Value>,
+    now: &Value,
+) -> std::result::Result<(), String> {
+    let Value::Object(checks) = now else {
+        return Err("not an object".into());
+    };
+    let before = was.and_then(Value::as_object);
+    for (session, check) in checks {
+        if before.and_then(|b| b.get(session)) == Some(check) || check.is_null() {
+            continue;
+        }
+        let outcome = check.get("outcome").and_then(Value::as_str);
+        let started = check.get("recovery_started");
+        match (outcome, started) {
+            (Some("switched"), None | Some(Value::Bool(_))) | (Some("unavailable"), None) => {}
+            _ => return Err(format!("{session}: not a check a model check writes")),
+        }
+    }
+    Ok(())
 }
 
 /// A replacement's first turn end resets the lane's switched check to

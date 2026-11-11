@@ -117,6 +117,21 @@ impl Store {
         assert_eq!(fs::read_to_string(&path).unwrap(), before, "{request}");
         refusal
     }
+
+    /// The `result` of the named operation `request` on the fleet record.
+    fn fleet_op_ok(&self, request: &Value) -> Value {
+        self.ok(&["op", "--fleet", "--request-json", &request.to_string()])
+    }
+
+    /// The refusal of `request` on the fleet record, the record left byte
+    /// for byte as it stood.
+    fn fleet_op_refused(&self, request: &Value) -> (String, String) {
+        let path = self.fleet_path();
+        let before = fs::read_to_string(&path).unwrap();
+        let refusal = self.refused(&["op", "--fleet", "--request-json", &request.to_string()]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before, "{request}");
+        refusal
+    }
 }
 
 fn refused_env(store: &Store, args: &[&str], env: &[(&str, &str)]) -> (String, String) {
@@ -357,7 +372,7 @@ fn set_stores_a_value_that_is_not_json_raw() {
         ("/skip_qa", "true", json!(true)),
         ("/pre_delegate_sha", "null", Value::Null),
         ("/cycles", "7", json!(7)),
-        ("/branch", "007", json!(7)),
+        ("/pr_review/round", "007", json!(7)),
     ];
     for (pointer, text, want) in &rows {
         let result = store.ok(&["state", "set", "--item", ITEM, pointer, text]);
@@ -424,8 +439,9 @@ fn standing_lift_writes_the_array_as_the_file_holds_it_and_one_ruling_row() {
 
 /// `ci-fix` counts across cycles that each push a new head, so
 /// `CI_FIX_MAX_CYCLES` bounds the loop; a take at the cap spends nothing on
-/// replay; a passing run's clear restarts it; `review-wait` restarts on a
-/// new head and holds a `small` item to two rounds.
+/// replay; a passing run's reset restarts it and leaves the other budget;
+/// `review-wait` restarts on a new head and holds a `small` item to two
+/// rounds.
 #[test]
 fn head_budget_take_spends_once_and_ci_fix_counts_across_new_heads() {
     let store = Store::new();
@@ -465,14 +481,24 @@ fn head_budget_take_spends_once_and_ci_fix_counts_across_new_heads() {
         before,
         "a take at the cap writes nothing"
     );
-    store.ok(&[
-        "state",
-        "set",
-        "--item",
-        ITEM,
-        "/post_pr_budgets/ci_fix",
-        "null",
-    ]);
+    let reset = |kind: &str| {
+        store.ok(&[
+            "state",
+            "head-budget",
+            "reset",
+            "--item",
+            ITEM,
+            "--kind",
+            kind,
+        ])["result"]
+            .clone()
+    };
+    assert_eq!(reset("ci-fix"), "reset");
+    assert_eq!(
+        reset("ci-fix"),
+        "none",
+        "a restarted budget has nothing spent"
+    );
     assert_eq!(take("ci-fix", "head-d", "2"), "continue 1/2");
 
     assert_eq!(take("review-wait", "h1", "4"), "continue 1/4");
@@ -481,6 +507,13 @@ fn head_budget_take_spends_once_and_ci_fix_counts_across_new_heads() {
     store.ok(&["state", "set", "--item", ITEM, "/tier", "small"]);
     assert_eq!(take("review-wait", "h2", "4"), "continue 2/2");
     assert_eq!(take("review-wait", "h2", "4"), "at-cap 2/2");
+    assert_eq!(reset("review-wait"), "reset");
+    assert_eq!(take("review-wait", "h2", "4"), "continue 1/2");
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["post_pr_budgets"]["ci_fix"]["attempts"],
+        1,
+        "a reset leaves the other budget"
+    );
     let (key, _) = store.refused(&[
         "state",
         "head-budget",
@@ -549,7 +582,13 @@ fn post_pr_stop_record_if_empty_keeps_a_precise_stop_and_renders_once() {
         doc["post_pr_stop"]["remaining"],
         json!(["one unresolved review thread"])
     );
-    store.ok(&["state", "set", "--item", ITEM, "/post_pr_stop", "null"]);
+    let clear = || store.ok(&["state", "post-pr-stop", "clear", "--item", ITEM])["result"].clone();
+    assert_eq!(clear(), "cleared");
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["post_pr_stop"],
+        Value::Null
+    );
+    assert_eq!(clear(), "none");
     let again = stop(
         "record-if-empty",
         "merge-gates-unmet",
@@ -898,7 +937,8 @@ fn log_takeover_reads_the_last_rows_but_cycle_and_token_and_append_stamps_and_bo
 }
 
 /// A triage row names the issue, the reason and a verdict the watch
-/// acknowledges; a string row or an `item`-keyed one would rebuild no key.
+/// acknowledges, through the ledger's `triage` entry and the pointer verbs
+/// alike; a string row or an `item`-keyed one would rebuild no key.
 #[test]
 fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
     let store = Store::new();
@@ -912,14 +952,27 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
         r#"{"issue":42,"verdict":"kept","reason":"checked"}"#,
         r#"[]"#,
     ];
+    let triage =
+        |file: &str| json!({"op": "record-overseer-ledger", "entry": "triage", "file": file});
     for row in rows {
         let (key, _) = store.refused(&["state", "append", "--fleet", "/triaged", row]);
         assert_eq!(key, "triaged-record-invalid", "{row}");
         let file = store.write_file("triaged.json", row);
         let (key, _) = store.refused(&["state", "append-file", "--fleet", "/triaged", &file]);
         assert_eq!(key, "triaged-record-invalid", "{row}");
+        let (key, _) = store.fleet_op_refused(&triage(&file));
+        assert_eq!(key, "triaged-record-invalid", "{row}");
     }
     assert_eq!(fs::read_to_string(store.fleet_path()).unwrap(), before);
+    let kept = store.write_file(
+        "kept.json",
+        r#"{"issue":"KEN-4137","verdict":"kept","reason":"checked"}"#,
+    );
+    let entered = store.fleet_op_ok(&triage(&kept));
+    assert_eq!(
+        (&entered["entry"], &entered["pointer"]),
+        (&json!("triage"), &json!("/triaged"))
+    );
     store.ok(&[
         "state",
         "append",
@@ -927,9 +980,10 @@ fn a_triaged_row_is_held_to_the_shape_the_watch_acknowledges() {
         "/triaged",
         r#"{"issue":"KEN-4138","verdict":"canceled","reason":"checked"}"#,
     ]);
+    let triaged = store.doc(&store.fleet_path())["triaged"].clone();
     assert_eq!(
-        store.doc(&store.fleet_path())["triaged"][0]["verdict"],
-        "canceled"
+        (&triaged[0]["issue"], &triaged[1]["verdict"]),
+        (&json!("KEN-4137"), &json!("canceled"))
     );
 }
 
@@ -1426,8 +1480,9 @@ fn findings_record_keeps_the_first_class_of_an_identity_and_a_conflict_leaves_co
     assert_ne!(second["value"], token);
 }
 
-/// The fleet record's `handoff` is the overseer's own: a pointer write there
-/// stands, its `written_at` stamped, where an item's refuses toward
+/// The fleet record's `handoff` is the overseer's own: the ledger's
+/// `handoff` entry and a pointer write there land it with its `written_at`
+/// stamped, where an item's refuses toward
 /// `record-handoff`; the standing read and the resume answer for it as for
 /// an item's. A lane's handoff written through `record-handoff` keeps the
 /// session, pane, cause and model the relaunch reads.
@@ -1446,6 +1501,26 @@ fn the_overseers_handoff_is_a_stamped_pointer_write_and_a_lanes_keeps_its_sessio
     let future = r#"{"written_at":"2099-01-01T00:00:00Z","pane_key":"x"}"#;
     let (key, _) = store.refused(&["state", "set", "--fleet", "/handoff", future]);
     assert_eq!(key, "handoff-written-at-future");
+    // The ledger's `handoff` entry is the same write, one request on argv.
+    let entry = json!({"op": "record-overseer-ledger", "entry": "handoff",
+        "handoff_file": "tmp/handoffs/OVERSEER-HANDOFF.md", "pane_key": "41020:%7",
+        "session_id": "0f3d", "context": {"used_pct": 81}});
+    let written = store.fleet_op_ok(&entry);
+    assert_eq!(
+        (&written["entry"], &written["pointer"]),
+        (&json!("handoff"), &json!("/handoff"))
+    );
+    let stamp = written["value"]["written_at"].as_str().unwrap();
+    assert!(iso_shaped(stamp), "{stamp}");
+    assert_eq!(store.doc(&store.fleet_path())["handoff"], written["value"]);
+    let mut ahead = entry.clone();
+    ahead["written_at"] = json!("2099-01-01T00:00:00Z");
+    let (key, _) = store.fleet_op_refused(&ahead);
+    assert_eq!(key, "handoff-written-at-future");
+    let mut unnamed = entry.clone();
+    unnamed.as_object_mut().unwrap().remove("session_id");
+    let (key, _) = store.fleet_op_refused(&unnamed);
+    assert_eq!(key, "request-invalid");
     let standing = store.ok(&["state", "handoff-standing", "--item", "oversee"]);
     assert_eq!(standing["standing"], "stands");
     assert_eq!(standing["record"]["session_id"], "0f3d");
@@ -2388,8 +2463,9 @@ fn upsert_replaces_the_element_its_key_names_and_refuses_a_value_without_it() {
 /// bound.
 const SURFACE_TWO_FLEET: &str = r#"{"issue_id":"oversee","sub_issues":[],"agent":"","worktree":"","branch":"","qa_labels":[],"near_ceiling":[],"finding_occurrences":{"prior":"none","records":[]},"child_sessions":{},"review_agents":[],"review_agent_ids":{},"review_agent_runtime_types":{},"pre_delegate_sha":null,"skip_qa":false,"cycles":0,"rereview_cycles":0,"json_paths":[],"fixed_items":[],"escalated_items":[],"audit_issues_created":[],"pr_review_baseline":null,"pr_comment_review":{"iterations":0,"fixes":[],"issues_created":[],"skipped":[]},"post_pr_budgets":{"review_wait":null,"ci_fix":null},"post_pr_stop":null,"lanes":[{"item":"KEN-1","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-1","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:00:00Z","status":"running","obligation":null},{"item":"KEN-2","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-2","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:05:00Z","status":"running","obligation":{"repo":"o/r","item":"KEN-2","parent_repo":null,"parent_item":null}},{"item":"KEN-3","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-3","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:10:00Z","status":"running","obligation":null}]}"#;
 
-/// A surface-2 lane's merge writes the fields it names into the lane its
-/// item finds and binds the lineage once: an absent or null obligation
+/// A surface-2 lane's merge, `record-surface-lane`'s and the pointer verb's
+/// alike, writes the fields it names into the lane its item finds and binds
+/// the lineage once: an absent or null obligation
 /// keeps the lane's, an unknown one binds, a known one differing refuses
 /// with nothing written, and an obligation of another shape refuses.
 #[test]
@@ -2397,15 +2473,14 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
     let store = Store::new();
     fs::create_dir_all(store.state_dir()).unwrap();
     fs::write(store.fleet_path(), SURFACE_TWO_FLEET).unwrap();
-    let merge = |lane: &str, name: &str, mapping: &str| {
+    let request = |lane: &str, name: &str, mapping: &str| {
         let file = store.write_file(name, mapping);
-        store.ok(&["state", "merge", "--fleet", "--lane", lane, &file])
+        json!({"op": "record-surface-lane", "step": "merge", "item": lane, "file": file})
     };
+    let merge =
+        |lane: &str, name: &str, mapping: &str| store.fleet_op_ok(&request(lane, name, mapping));
     let refused = |lane: &str, name: &str, mapping: &str| {
-        let file = store.write_file(name, mapping);
-        store
-            .refused(&["state", "merge", "--fleet", "--lane", lane, &file])
-            .0
+        store.fleet_op_refused(&request(lane, name, mapping)).0
     };
     let bound = r#"{"repo":"o/r","item":"KEN-1","parent_repo":"o/r","parent_item":"KEN-0"}"#;
     let lane = |item: &str| {
@@ -2418,11 +2493,12 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
             .unwrap()
     };
 
-    let merged = merge(
-        "KEN-1",
+    // The pointer verb is the same merge.
+    let file = store.write_file(
         "wake.json",
         r#"{"status":"stopped","session_id":"s-1","obligation":null}"#,
     );
+    let merged = store.ok(&["state", "merge", "--fleet", "--lane", "KEN-1", &file]);
     assert_eq!(merged["pointer"], "/lanes/0");
     let one = lane("KEN-1");
     assert_eq!(
@@ -2458,6 +2534,12 @@ fn merge_writes_a_lanes_fields_and_binds_its_obligation_once() {
         store.doc(&store.fleet_path()),
         before,
         "a conflict writes nothing"
+    );
+    let file = store.write_file("conflict.json", &format!(r#"{{"obligation":{other}}}"#));
+    let (key, _) = store.refused(&["state", "merge", "--fleet", "--lane", "KEN-1", &file]);
+    assert_eq!(
+        key, "obligation-conflict",
+        "the pointer verb binds once too"
     );
 
     merge(
@@ -2614,7 +2696,8 @@ fn close_all_closes_every_member_of_the_map() {
 }
 
 /// The model checks: the item's once-only unavailable slot; a switch
-/// acquired until its recovery starts, then a duplicate; a lane or a
+/// acquired until its recovery starts, then a duplicate, the start marking
+/// only a standing switched check of its own session; a lane or a
 /// controller that moved is stale; a fleet check logs one row however often
 /// it is acquired before its recovery starts; a
 /// replacement's first turn end resets the lane's check to `passed` once.
@@ -2668,17 +2751,41 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
         json!({"launch": {"pane": "%1"}, "launched_at": 1})
     );
     assert_eq!(record(&item, "switched", &expected), "acquired");
-    store.ok(&[
-        "state",
-        "set",
-        "--item",
-        ITEM,
-        "/model_checks/s1/recovery_started",
-        "true",
-    ]);
+    let start = |place: &[&str], session: &str| {
+        let mut args = vec!["state", "model-check", "start"];
+        args.extend_from_slice(place);
+        args.extend_from_slice(&["--session", session]);
+        store.ok(&args)
+    };
+    assert_eq!(
+        start(&item, "s1"),
+        json!({"place": "item", "session": "s1", "started_now": true})
+    );
+    assert_eq!(
+        start(&item, "s1")["started_now"],
+        false,
+        "a repeat spends nothing"
+    );
     assert_eq!(record(&item, "switched", &expected), "duplicate");
     assert_eq!(record(&item, "unavailable", &expected), "duplicate");
     assert_eq!(slot("s1"), false);
+    // The unavailable check of s2 is no switch to recover.
+    let out = store.run(&[
+        "state",
+        "model-check",
+        "start",
+        "--item",
+        ITEM,
+        "--session",
+        "s2",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.lines().next(),
+        Some("orch-runtime: model-check-missing session=s2")
+    );
+    assert_eq!(reply(&out)["ok"], false);
     // Another launch of the same session is its own switch.
     let relaunched = store.write_file(
         "relaunched.json",
@@ -2686,9 +2793,18 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
             .to_string(),
     );
     assert_eq!(record(&item, "switched", &relaunched), "acquired");
-    let started = "/model_checks/s1/recovery_started";
-    store.ok(&["state", "set", "--item", ITEM, started, "true"]);
+    start(&item, "s1");
     assert_eq!(record(&item, "switched", &relaunched), "duplicate");
+    // A pointer write lands only a mark a model check would.
+    let (key, _) = store.refused(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/model_checks/s9/recovery_started",
+        "true",
+    ]);
+    assert_eq!(key, "field-owned");
     let (key, _) = store.refused(&[
         "state",
         "model-check",
@@ -2765,6 +2881,21 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
         record(&["--fleet", "--lane", "KEN-1"], "switched", &expected),
         "stale"
     );
+    assert_eq!(
+        start(&lane_place, "s1"),
+        json!({"place": "lane", "session": "s1", "started_now": true})
+    );
+    assert_eq!(record(&lane_place, "switched", &expected), "duplicate");
+    for (place, session) in [
+        (&lane_place[..], "s9"),
+        (&["--fleet", "--lane", "KEN-1"], "s1"),
+    ] {
+        let mut args = vec!["state", "model-check", "start"];
+        args.extend_from_slice(place);
+        args.extend_from_slice(&["--session", session]);
+        let (key, _) = store.refused(&args);
+        assert_eq!(key, "model-check-missing", "{place:?} {session}");
+    }
 
     let fleet = store.doc(&store.fleet_path());
     let read = store.write_file("read.json", &fleet["lanes"][0].to_string());
@@ -2818,6 +2949,8 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
         .unwrap()
         .clone();
     assert_eq!(row["item"], "oversee");
+    assert_eq!(start(&["--fleet"], "s1")["place"], "overseer");
+    assert_eq!(record(&["--fleet"], "switched", &bound), "duplicate");
     let mut next = overseer.clone();
     next["generation"] = json!(3);
     let next = store.write_file("next.json", &next.to_string());
@@ -3356,4 +3489,466 @@ fn each_ledger_entry_lands_in_its_own_array_in_its_readers_shape() {
         json!({"entry": "reply", "source_id": "PRRT_2", "commit": "abc1234", "outcome": "merged"}),
     ));
     assert_eq!(key, "request-invalid");
+}
+
+/// `request` with the fields of `fields` beside its `op`.
+fn with_op(op: &str, fields: Value) -> Value {
+    let mut request = json!({"op": op});
+    for (key, value) in fields.as_object().unwrap() {
+        request[key] = value.clone();
+    }
+    request
+}
+
+/// A route names the checkout by its absolute path, a branch and the tier
+/// and floor words `item-tier` assigns, each replacing the record's; a
+/// request naming none, or any field outside its shape, writes nothing.
+#[test]
+fn a_route_records_its_checkout_and_tier_and_refuses_a_word_outside_the_tiers() {
+    let store = Store::new();
+    store.init(ITEM);
+    let route = |fields: Value| with_op("record-route", fields);
+    store.op_ok(&route(
+        json!({"worktree": "/w/ken-4687", "branch": "ken-4687", "tier": "standard"}),
+    ));
+    store.op_ok(&route(json!({"tier": "small", "review_floor": "small"})));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        (
+            &doc["worktree"],
+            &doc["branch"],
+            &doc["tier"],
+            &doc["review_floor"]
+        ),
+        (
+            &json!("/w/ken-4687"),
+            &json!("ken-4687"),
+            &json!("small"),
+            &json!("small")
+        )
+    );
+    let rows = [
+        (json!({}), "route-empty"),
+        (json!({"worktree": "w/ken-4687"}), "worktree-invalid"),
+        (json!({"branch": "  "}), "branch-invalid"),
+        (json!({"tier": "Small"}), "tier-value"),
+        (json!({"review_floor": "large"}), "review-floor-value"),
+        (
+            json!({"tier": "micro", "worktree": "relative"}),
+            "worktree-invalid",
+        ),
+        (json!({"tier": "micro", "reviewers": 2}), "request-invalid"),
+    ];
+    for (fields, want) in rows {
+        let (key, _) = store.op_refused(&route(fields.clone()));
+        assert_eq!(key, want, "{fields}");
+    }
+}
+
+/// A dev return replaces each list it names and keeps the ones it leaves
+/// out, so a probe that did not answer keeps the standing near-ceiling
+/// lines; an empty line or a request naming no list writes nothing.
+#[test]
+fn a_dev_return_replaces_its_lists_and_refuses_an_empty_line() {
+    let store = Store::new();
+    store.init(ITEM);
+    let ret = |fields: Value| with_op("record-dev-return", fields);
+    let near = json!(["byte-ceiling: near-ceiling=assets/a.bin:189000:204800:92"]);
+    store.op_ok(&ret(json!({"near_ceiling": near})));
+    store.op_ok(&ret(
+        json!({"qa_labels": ["qa-ui"], "sub_issues": ["KEN-1"]}),
+    ));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        (&doc["near_ceiling"], &doc["qa_labels"], &doc["sub_issues"]),
+        (&near, &json!(["qa-ui"]), &json!(["KEN-1"]))
+    );
+    store.op_ok(&ret(json!({"near_ceiling": []})));
+    assert_eq!(store.doc(&store.item_path(ITEM))["near_ceiling"], json!([]));
+    let rows = [
+        (json!({}), "dev-return-empty"),
+        (json!({"near_ceiling": null}), "dev-return-empty"),
+        (
+            json!({"near_ceiling": ["x"], "qa_labels": [""]}),
+            "dev-return-field",
+        ),
+        (json!({"sub_issues": "KEN-1"}), "request-invalid"),
+    ];
+    for (fields, want) in rows {
+        let (key, line) = store.op_refused(&ret(fields.clone()));
+        assert_eq!(key, want, "{fields}");
+        if want == "dev-return-field" {
+            assert!(line.ends_with("field=qa_labels"), "{line}");
+        }
+    }
+}
+
+/// A pull request's progress: its order one of the seven words, the
+/// approval flags and the detach set once, one rerun per head stamped by
+/// the runtime with the run recorded only against that head, and a
+/// restack's skip replacing the one of its head.
+#[test]
+fn pr_progress_holds_its_order_words_and_a_rerun_run_names_its_head() {
+    let store = Store::new();
+    store.init(ITEM);
+    let step = |fields: Value| with_op("record-pr-progress", fields);
+    store.op_ok(&step(json!({"step": "order", "order": "open-first"})));
+    store.op_ok(&step(
+        json!({"step": "order", "order": "open-first-returned"}),
+    ));
+    for flag in ["forced", "reviewer-down", "children-detached"] {
+        store.op_ok(&step(json!({ "step": flag })));
+    }
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["pr_order"], "open-first-returned");
+    assert_eq!(
+        doc["pr_approval"],
+        json!({"forced": true, "reviewer_down": true})
+    );
+    assert_eq!(doc["children_detached"], true);
+
+    let head = "a".repeat(40);
+    let other = "b".repeat(40);
+    let (key, line) = store.op_refused(&step(
+        json!({"step": "ci-rerun-run", "head": head, "run": 7}),
+    ));
+    assert_eq!(key, "ci-rerun-head");
+    assert!(line.ends_with("recorded=none"), "{line}");
+    let before = now_secs();
+    store.op_ok(&step(json!({"step": "ci-rerun", "head": head})));
+    let rerun = store.doc(&store.item_path(ITEM))["ci_rerun"].clone();
+    assert_eq!(
+        (&rerun["head"], &rerun["run"]),
+        (&json!(head), &Value::Null)
+    );
+    let at = agent_runtime::clock::epoch_secs(rerun["at"].as_str().unwrap()).unwrap();
+    assert!((before..=now_secs()).contains(&at), "{rerun}");
+    let (key, _) = store.op_refused(&step(
+        json!({"step": "ci-rerun-run", "head": other, "run": 7}),
+    ));
+    assert_eq!(key, "ci-rerun-head");
+    store.op_ok(&step(
+        json!({"step": "ci-rerun-run", "head": head, "run": 7}),
+    ));
+    let ran = store.doc(&store.item_path(ITEM))["ci_rerun"].clone();
+    assert_eq!(ran, json!({"head": head, "run": 7, "at": rerun["at"]}));
+    let (key, _) = store.op_refused(&step(json!({"step": "ci-rerun", "head": "[HEAD]"})));
+    assert_eq!(key, "head-invalid");
+
+    let skip = |name: &str, head: &str, condition: &str, paths: Value| {
+        let file = store.write_file(
+            name,
+            &json!({"head": head, "condition": condition, "validated_head": other, "paths": paths})
+                .to_string(),
+        );
+        step(json!({"step": "restack-skip", "file": file}))
+    };
+    store.op_ok(&skip("s1.json", &head, "no-conflict", json!([])));
+    let replaced = store.op_ok(&skip(
+        "s2.json",
+        &head,
+        "version-only",
+        json!(["CHANGELOG.md"]),
+    ));
+    assert_eq!(replaced["replaced"], 1);
+    store.op_ok(&skip("s3.json", &other, "no-conflict", json!([])));
+    let skips = store.doc(&store.item_path(ITEM))["restack_skips"].clone();
+    assert_eq!(
+        (
+            skips.as_array().unwrap().len(),
+            &skips[0]["condition"],
+            &skips[1]["head"]
+        ),
+        (2, &json!("version-only"), &json!(other))
+    );
+    let rows = [
+        (
+            step(json!({"step": "order", "order": "open-first-merged"})),
+            "pr-order-value",
+        ),
+        (
+            skip("s4.json", &head, "clean", json!([])),
+            "restack-skip-field",
+        ),
+        (
+            skip("s5.json", "HEAD", "no-conflict", json!([])),
+            "restack-skip-field",
+        ),
+        (
+            step(json!({"step": "forced", "value": false})),
+            "request-invalid",
+        ),
+    ];
+    for (request, want) in rows {
+        let (key, _) = store.op_refused(&request);
+        assert_eq!(key, want, "{request}");
+    }
+}
+
+/// The surface-2 record `oversee.md` creates after an item's first launch.
+const SURFACE_LANE: &str = r#"{"item":"KEN-4500","tracker":"linear","repo":null,"harness":"codex","window":null,"account":null,"host":null,"mail_root":"/w/ken-4500","surface":"gui","model":"gpt-5.5-codex","session_id":null,"launched_at":"2026-10-24T19:00:00Z","status":"running","obligation":null}"#;
+
+/// A surface lane is created whole, once per item, and a tmux lane is the
+/// lane operations' own: neither step creates, merges into or turns a
+/// record into one.
+#[test]
+fn a_surface_lane_is_created_whole_and_a_tmux_lane_is_refused() {
+    let store = Store::new();
+    store.init_fleet();
+    let lane: Value = serde_json::from_str(SURFACE_LANE).unwrap();
+    let create =
+        |lane: &Value| json!({"op": "record-surface-lane", "step": "create", "lane": lane});
+    let created = store.fleet_op_ok(&create(&lane));
+    assert_eq!(created["pointer"], "/lanes/0");
+    assert_eq!(store.doc(&store.fleet_path())["lanes"], json!([lane]));
+    let variant = |key: &str, value: Value| {
+        let mut other = lane.clone();
+        other["item"] = json!("KEN-4501");
+        match value {
+            Value::Null if key == "surface" => {
+                other.as_object_mut().unwrap().remove(key);
+            }
+            value => other[key] = value,
+        }
+        other
+    };
+    let rows = [
+        (lane.clone(), "lane-standing"),
+        (variant("surface", json!("tmux")), "surface-lane"),
+        (variant("surface", Value::Null), "surface-lane"),
+        (variant("status", json!("lost")), "lane-invalid"),
+        (
+            variant("obligation", json!({"repo": "o/r"})),
+            "obligation-invalid",
+        ),
+    ];
+    for (lane, want) in rows {
+        let (key, _) = store.fleet_op_refused(&create(&lane));
+        assert_eq!(key, want, "{lane}");
+    }
+
+    let tmux = json!({"item": "KEN-4502", "surface": "tmux", "status": "running"});
+    store.ok(&["state", "append", "--fleet", "/lanes", &tmux.to_string()]);
+    let merge = |item: &str, mapping: &str| {
+        let file = store.write_file("merge.json", mapping);
+        json!({"op": "record-surface-lane", "step": "merge", "item": item, "file": file})
+    };
+    for (item, mapping) in [
+        ("KEN-4502", r#"{"status":"stopped"}"#),
+        ("KEN-4500", r#"{"surface":"tmux"}"#),
+    ] {
+        let (key, _) = store.fleet_op_refused(&merge(item, mapping));
+        assert_eq!(key, "surface-lane", "{item} {mapping}");
+    }
+    store.fleet_op_ok(&merge("KEN-4500", r#"{"status":"stopped"}"#));
+    assert_eq!(
+        store.doc(&store.fleet_path())["lanes"][0]["status"],
+        "stopped"
+    );
+    store.init(ITEM);
+    let (key, _) = store.op_refused(&create(&lane));
+    assert_eq!(key, "op-kind", "a lane is the fleet record's");
+}
+
+/// The overseer's ledger: the backlog audit stamped with the runtime's
+/// clock, the launch queue unique, and an alert verdict the watch can key,
+/// naming its item exactly when filed; anything else writes nothing.
+#[test]
+fn the_overseers_ledger_stamps_its_audit_and_holds_each_entry_to_its_readers_shape() {
+    let store = Store::new();
+    store.init_fleet();
+    let entry = |fields: Value| with_op("record-overseer-ledger", fields);
+    let before = now_secs();
+    store.fleet_op_ok(&entry(json!({"entry": "backlog-audit", "backlog": 120})));
+    let audit = store.doc(&store.fleet_path())["last_backlog_audit"].clone();
+    assert_eq!(audit["backlog"], 120);
+    let at = agent_runtime::clock::epoch_secs(audit["at"].as_str().unwrap()).unwrap();
+    assert!((before..=now_secs()).contains(&at), "{audit}");
+    store.fleet_op_ok(&entry(
+        json!({"entry": "launch-queue", "items": ["KEN-1", "KEN-2"]}),
+    ));
+    assert_eq!(
+        store.doc(&store.fleet_path())["launch_queue"],
+        json!(["KEN-1", "KEN-2"])
+    );
+    let verdict = |name: &str, row: Value| {
+        let file = store.write_file(name, &row.to_string());
+        entry(json!({"entry": "alert-verdict", "file": file}))
+    };
+    let filed = json!({"repo": "o/r", "kind": "dependabot", "number": 7, "verdict": "filed", "item": "KEN-9", "reason": "a fix item"});
+    let dismissed = json!({"repo": "o/r", "kind": "secret-scanning", "number": 8, "verdict": "dismissed", "item": null, "reason": "a test key"});
+    store.fleet_op_ok(&verdict("filed.json", filed.clone()));
+    store.fleet_op_ok(&verdict("dismissed.json", dismissed.clone()));
+    assert_eq!(
+        store.doc(&store.fleet_path())["alerts_triaged"],
+        json!([filed, dismissed])
+    );
+    let changed = |key: &str, value: Value| {
+        let mut row = filed.clone();
+        row[key] = value;
+        row
+    };
+    let rows = [
+        (
+            entry(json!({"entry": "launch-queue", "items": ["KEN-1", "KEN-1"]})),
+            "launch-queue-entry",
+        ),
+        (
+            entry(json!({"entry": "launch-queue", "items": [""]})),
+            "launch-queue-entry",
+        ),
+        (
+            verdict("a.json", changed("item", Value::Null)),
+            "alert-verdict",
+        ),
+        (
+            verdict("b.json", changed("verdict", json!("dismissed"))),
+            "alert-verdict",
+        ),
+        (
+            verdict("c.json", changed("kind", json!("codeql"))),
+            "alert-verdict",
+        ),
+        (
+            verdict("d.json", changed("repo", json!("o"))),
+            "alert-verdict",
+        ),
+        (
+            verdict("e.json", changed("number", json!("7"))),
+            "alert-verdict",
+        ),
+        (entry(json!({"entry": "backlog-audit"})), "request-invalid"),
+    ];
+    for (request, want) in rows {
+        let (key, _) = store.fleet_op_refused(&request);
+        assert_eq!(key, want, "{request}");
+    }
+}
+
+/// A pointer write into a field a progress, budget, stop or ledger record
+/// owns lands only a value its owner writes: anything else refuses
+/// `field-owned` naming the field and the operation, with nothing written.
+#[test]
+fn a_pointer_write_into_an_owned_progress_field_is_held_to_its_owners_check() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.init_fleet();
+    let skip = store.write_file("skip.json", r#"{"head":"abc"}"#);
+    let rows: [(&[&str], &str, &str); 14] = [
+        (
+            &["set", "--item", ITEM, "/worktree", "w/ken"],
+            "worktree",
+            "record-route",
+        ),
+        (
+            &["set", "--item", ITEM, "/branch", "007"],
+            "branch",
+            "record-route",
+        ),
+        (
+            &["set", "--item", ITEM, "/review_floor", "large"],
+            "review_floor",
+            "record-route",
+        ),
+        (
+            &["set", "--item", ITEM, "/near_ceiling", r#"[""]"#],
+            "near_ceiling",
+            "record-dev-return",
+        ),
+        (
+            &["set", "--item", ITEM, "/qa_labels", "[1]"],
+            "qa_labels",
+            "record-dev-return",
+        ),
+        (
+            &["set", "--item", ITEM, "/pr_order", "later"],
+            "pr_order",
+            "record-pr-progress",
+        ),
+        (
+            &["set", "--item", ITEM, "/pr_approval/forced", "yes"],
+            "pr_approval",
+            "record-pr-progress",
+        ),
+        (
+            &["set", "--item", ITEM, "/children_detached", "1"],
+            "children_detached",
+            "record-pr-progress",
+        ),
+        (
+            &["set", "--item", ITEM, "/ci_rerun", r#"{"head":"x"}"#],
+            "ci_rerun",
+            "record-pr-progress",
+        ),
+        (
+            &[
+                "upsert",
+                "--item",
+                ITEM,
+                "/restack_skips",
+                "--key",
+                "head",
+                &skip,
+            ],
+            "restack_skips",
+            "record-pr-progress",
+        ),
+        (
+            &["set", "--item", ITEM, "/post_pr_stop", r#"{"name":"n"}"#],
+            "post_pr_stop",
+            "post-pr-stop",
+        ),
+        (
+            &[
+                "set",
+                "--item",
+                ITEM,
+                "/post_pr_budgets/ci_fix",
+                r#"{"attempts":1}"#,
+            ],
+            "post_pr_budgets",
+            "head-budget",
+        ),
+        (
+            &[
+                "set",
+                "--fleet",
+                "/last_backlog_audit",
+                r#"{"at":"now","backlog":1}"#,
+            ],
+            "last_backlog_audit",
+            "record-overseer-ledger",
+        ),
+        (
+            &["set", "--fleet", "/launch_queue", r#"["KEN-1","KEN-1"]"#],
+            "launch_queue",
+            "record-overseer-ledger",
+        ),
+    ];
+    let item = fs::read_to_string(store.item_path(ITEM)).unwrap();
+    let fleet = fs::read_to_string(store.fleet_path()).unwrap();
+    for (args, field, op) in rows {
+        let mut call = vec!["state"];
+        call.extend_from_slice(args);
+        let (key, line) = store.refused(&call);
+        assert_eq!(key, "field-owned", "{args:?}");
+        assert!(line.contains(&format!("field={field} op={op}")), "{line}");
+    }
+    assert_eq!(fs::read_to_string(store.item_path(ITEM)).unwrap(), item);
+    assert_eq!(fs::read_to_string(store.fleet_path()).unwrap(), fleet);
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/pr_order",
+        "push-first",
+        "/tier",
+        "micro",
+    ]);
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        (&doc["pr_order"], &doc["tier"]),
+        (&json!("push-first"), &json!("micro"))
+    );
 }

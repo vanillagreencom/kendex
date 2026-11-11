@@ -581,7 +581,7 @@ A `no-change` return from dev-start ends that child's round with no commit; the 
 - **`open-first`**: keep § 1's pending line, and write no verdict line: this review's fix round is still local, and the overseer must not approve or request Copilot on the head it replaces. Record that this review returned, which lets [submit-pr.md](submit-pr.md) § 2 run its triage, write this verdict once its push lands, and arm the pull request:
 
   ```bash
-  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order open-first-returned
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"open-first-returned"}'
   ```
 
 - **`push-first`**: keep the pending review line until `[VERDICT]` is `pass`; it holds overseer approval while submit § 2 step 5 arms nothing. The first-head review call of [start-worktree.md](start-worktree.md) § 2.1, run with `[MARK_READY]` `true`, already marked the PR ready; [gates.md § Copilot requests](../references/gates.md#copilot-requests) states what that call requests. Only a `pass` records `push-first-returned` with `orch-runtime state set --item [ISSUE_ID] /pr_order push-first-returned`. Submit publishes the combined fixes and settles each new head's Copilot request ([gates.md § Copilot requests](../references/gates.md#copilot-requests)) before it arms auto-merge.

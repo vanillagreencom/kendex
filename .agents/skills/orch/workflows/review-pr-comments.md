@@ -29,7 +29,7 @@ Resolve `ORCH_DECISION_MODE` once for this post-PR workflow:
 Both commands below write to that state, so the key must resolve and the state must exist before either runs. Except under `--dry-run`, this triage pass is a continuing action:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /post_pr_stop null
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
 
 On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries once and logs `Retry`; a repeated failure records the named stop `github-read-failed` per [SKILL.md § The Cycle](../SKILL.md#the-cycle). `ask` presents `Retry` | `Skip step` | `Abort`, with `Retry` recommended.

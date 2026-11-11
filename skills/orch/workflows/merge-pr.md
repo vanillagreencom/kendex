@@ -85,7 +85,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_stop null
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [STATE_KEY]
 ```
 
 **Ready-head review call.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, run [the review call](../references/gates.md#the-review-call) once from `[MAIN_REPO_ROOT]`, `[MARK_READY]` `false`, on an open ready head. This includes a cloud PR whose lane requested no review. Under `approval` the call settles the head's Copilot request ([Copilot requests](../references/gates.md#copilot-requests)). Never close and reopen a PR to request review.

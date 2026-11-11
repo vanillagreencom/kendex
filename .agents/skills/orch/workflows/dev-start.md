@@ -264,7 +264,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 `[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` as `orch-runtime dev-return --text check` echoed it: a JSON array of strings, `[]` when the round recorded none, or `null` when the byte-ceiling probe did not answer: the lane exited other than 0 or 1, the lane path held a file or link that could not run, or the writer ran without `--near-ceiling-base`. On `null`, skip the write and name the echoed `near_ceiling_error` in the round's report; an empty list there would tell the next round no binary blob is near the ceiling. Each entry names a binary blob that round left within reach of the byte ceiling. The next round's delegation renders one `Near-ceiling:` line per entry so it can plan Git LFS, an asset store or generation before the blob grows. The write REPLACES the key: state describes the branch as the last recorded round left it. A blob moved out of Git stops being carried, and a blob pushed into the warn band starts being carried.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /near_ceiling '[NEAR_CEILING_ARRAY]'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-dev-return","near_ceiling":[NEAR_CEILING_ARRAY]}'
 ```
 
 ### Validation status
@@ -278,7 +278,7 @@ A lane under an overseer rewrites its status file's validation line from `.valid
 The implement path only; a fix round has no QA signals or sub-issue set to record.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /qa_labels '[QA_LABELS_ARRAY]' /sub_issues '[SUB_ISSUE_IDS_ARRAY]'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-dev-return","qa_labels":[QA_LABELS_ARRAY],"sub_issues":[SUB_ISSUE_IDS_ARRAY]}'
 ```
 
 Map each Done-when item to the files serving it in the PR body's `## Done-when evidence` section, one `N: text` line per branch-provable box ([submit-pr.md § 2](submit-pr.md#2-push-and-submit) step 3); every round measures against that map, never against its own last state, and an unmapped hunk is cut unless it is a [landing enabler](../../dev/SKILL.md#engineering-rules).

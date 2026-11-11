@@ -237,13 +237,13 @@ A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflo
 On surface 2, whose launcher is the harness's own, append the same record after the first launch of an item, with `window` null. Set `[OBLIGATION_OR_NULL]` to the accepted object from [Obligation lineage](../references/lane-directive.md#obligation-lineage), or JSON `null` when unknown:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append --fleet /lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}'
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"create","lane":{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}}'
 ```
 
 For an existing surface-2 item, write the fields that change to `tmp/lane-merge-[ITEM_KEY].json` with the harness file tool and merge them with the command below: the runtime finds the record by its `item` under the store's lock, and each field the file names replaces the record's. Its `obligation` binds once: an absent or null one keeps the record's, one that differs from a known binding refuses `obligation-conflict` with nothing changed, and an unknown binding takes the one stated, so state one only from the accepted directive. Never append a duplicate item or replace its record wholesale. Relaunch and handoff keep `launched_at`; a fresh ordinary launch can renew it while retaining the obligation and previous cycle.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state merge --fleet --lane [ITEM_KEY] tmp/lane-merge-[ITEM_KEY].json
+.agents/skills/orch/scripts/orch-runtime op --fleet --request-json '{"op":"record-surface-lane","step":"merge","item":"[ITEM_KEY]","file":"tmp/lane-merge-[ITEM_KEY].json"}'
 ```
 
 `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it timestamps and never after, because the earliest `launched_at` is the fleet start the watch takes as `--since`:

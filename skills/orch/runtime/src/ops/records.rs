@@ -13,6 +13,9 @@ use serde_json::Value;
 
 use super::findings::{self, Bucket, RecordCommentLedger, RecordDisposition};
 use super::item::{RecordRound, RoundKind};
+use super::lane::{self, RecordSurfaceLane};
+use super::ledger::{self, RecordOverseerLedger};
+use super::progress::{self, RecordDevReturn, RecordPrProgress, RecordRoute};
 use super::reviewers::{self, PanelKind, RecordAgents, RecordPanel};
 use super::{Env, item, loaded, qa, reread, store};
 use crate::error::{Error, Result};
@@ -28,15 +31,25 @@ pub enum Record {
     RecordAgents(RecordAgents),
     RecordDisposition(RecordDisposition),
     RecordCommentLedger(RecordCommentLedger),
+    RecordRoute(RecordRoute),
+    RecordDevReturn(RecordDevReturn),
+    RecordPrProgress(RecordPrProgress),
+    RecordSurfaceLane(RecordSurfaceLane),
+    RecordOverseerLedger(RecordOverseerLedger),
 }
 
 /// The `op` names [`Record`] answers; every other name is a [`super::Request`].
-const NAMES: [&str; 5] = [
+const NAMES: [&str; 10] = [
     "record-round",
     "record-panel",
     "record-agents",
     "record-disposition",
     "record-comment-ledger",
+    "record-route",
+    "record-dev-return",
+    "record-pr-progress",
+    "record-surface-lane",
+    "record-overseer-ledger",
 ];
 
 impl Record {
@@ -47,6 +60,11 @@ impl Record {
             Record::RecordAgents(_) => NAMES[2],
             Record::RecordDisposition(_) => NAMES[3],
             Record::RecordCommentLedger(_) => NAMES[4],
+            Record::RecordRoute(_) => NAMES[5],
+            Record::RecordDevReturn(_) => NAMES[6],
+            Record::RecordPrProgress(_) => NAMES[7],
+            Record::RecordSurfaceLane(_) => NAMES[8],
+            Record::RecordOverseerLedger(_) => NAMES[9],
         }
     }
 
@@ -65,7 +83,11 @@ impl Record {
             | Record::RecordPanel(_)
             | Record::RecordAgents(_)
             | Record::RecordDisposition(_)
-            | Record::RecordCommentLedger(_) => Kind::Item,
+            | Record::RecordCommentLedger(_)
+            | Record::RecordRoute(_)
+            | Record::RecordDevReturn(_)
+            | Record::RecordPrProgress(_) => Kind::Item,
+            Record::RecordSurfaceLane(_) | Record::RecordOverseerLedger(_) => Kind::Fleet,
         }
     }
 }
@@ -98,7 +120,12 @@ pub fn apply_record(
         | Record::RecordPanel(_)
         | Record::RecordAgents(_)
         | Record::RecordDisposition(_)
-        | Record::RecordCommentLedger(_) => None,
+        | Record::RecordCommentLedger(_)
+        | Record::RecordRoute(_)
+        | Record::RecordDevReturn(_)
+        | Record::RecordPrProgress(_)
+        | Record::RecordSurfaceLane(_)
+        | Record::RecordOverseerLedger(_) => None,
     };
     reread(|| {
         let snapshot = loaded(path)?;
@@ -109,6 +136,13 @@ pub fn apply_record(
             Record::RecordAgents(r) => reviewers::record_agents(path, &mut doc, r)?,
             Record::RecordDisposition(r) => findings::record_disposition(path, &mut doc, r)?,
             Record::RecordCommentLedger(r) => findings::record_comment_ledger(path, &mut doc, r)?,
+            Record::RecordRoute(r) => progress::record_route(&mut doc, r)?,
+            Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
+            Record::RecordPrProgress(r) => progress::record_pr_progress(path, &mut doc, env, r)?,
+            Record::RecordSurfaceLane(r) => lane::record_surface_lane(path, &mut doc, r)?,
+            Record::RecordOverseerLedger(r) => {
+                ledger::record_overseer_ledger(path, &mut doc, env, r)?
+            }
         };
         state::store(path, &snapshot, &doc, locking)?;
         Ok(report)
@@ -142,7 +176,7 @@ fn some_flag(now: &Value) -> std::result::Result<(), String> {
 
 /// A commit a checkout's HEAD names: hexadecimal, as `git rev-parse`
 /// prints it.
-fn some_commit(now: &Value) -> std::result::Result<(), String> {
+pub(super) fn some_commit(now: &Value) -> std::result::Result<(), String> {
     match now {
         Value::Null => Ok(()),
         Value::String(sha) if !sha.is_empty() && sha.bytes().all(|b| b.is_ascii_hexdigit()) => {
@@ -228,6 +262,97 @@ fn owned_fields() -> Vec<(&'static str, &'static str, Check)> {
             "qa_decision",
             "record-qa-decision",
             Check::Whole(qa::check_decision),
+        ),
+        (
+            "worktree",
+            "record-route",
+            Check::Whole(progress::check_worktree),
+        ),
+        (
+            "branch",
+            "record-route",
+            Check::Whole(progress::check_branch),
+        ),
+        ("tier", "record-route", Check::Whole(progress::check_tier)),
+        (
+            "review_floor",
+            "record-route",
+            Check::Whole(progress::check_tier),
+        ),
+        (
+            "near_ceiling",
+            "record-dev-return",
+            Check::Whole(progress::check_lines),
+        ),
+        (
+            "qa_labels",
+            "record-dev-return",
+            Check::Whole(progress::check_lines),
+        ),
+        (
+            "sub_issues",
+            "record-dev-return",
+            Check::Whole(progress::check_lines),
+        ),
+        (
+            "pr_order",
+            "record-pr-progress",
+            Check::Whole(progress::check_order),
+        ),
+        (
+            "pr_approval",
+            "record-pr-progress",
+            Check::Whole(progress::check_approval),
+        ),
+        (
+            "children_detached",
+            "record-pr-progress",
+            Check::Whole(some_flag),
+        ),
+        (
+            "ci_rerun",
+            "record-pr-progress",
+            Check::Whole(progress::check_rerun),
+        ),
+        (
+            "restack_skips",
+            "record-pr-progress",
+            Check::Added(progress::check_skips),
+        ),
+        (
+            "post_pr_stop",
+            "post-pr-stop",
+            Check::Whole(store::check_stop),
+        ),
+        (
+            "post_pr_budgets",
+            "head-budget",
+            Check::Whole(store::check_budgets),
+        ),
+        (
+            "model_checks",
+            "model-check",
+            Check::Added(store::check_model_checks),
+        ),
+        (
+            "last_backlog_audit",
+            "record-overseer-ledger",
+            Check::Whole(ledger::check_backlog_audit),
+        ),
+        (
+            "launch_queue",
+            "record-overseer-ledger",
+            Check::Whole(ledger::check_queue),
+        ),
+        (
+            "triaged",
+            "record-overseer-ledger",
+            Check::Added(ledger::check_triaged),
+        ),
+        (
+            "alerts_triaged",
+            "record-overseer-ledger",
+            Check::Added(ledger::check_alerts),
         ),
     ]);
     for field in PanelKind::FIELDS {

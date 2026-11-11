@@ -1953,6 +1953,144 @@ pub(super) fn record_close_outcome(
     Ok(())
 }
 
+/// The record of a lane a harness's own launcher runs, surface 2 or 3: no
+/// tmux pane, so no lane operation reads or writes it. `create` adds the
+/// whole record after the item's first launch; `merge` replaces the fields
+/// the file names on the standing record. A tmux lane is the lane
+/// operations' own, and either step refuses `surface-lane` on one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RecordSurfaceLane {
+    Create { lane: Value },
+    Merge { item: String, file: PathBuf },
+}
+
+fn surface_refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    agent_runtime::Error::refused(key, fields).into()
+}
+
+/// A record's surface is tmux where it names none: the launch writes `tmux`
+/// as the one surface its lanes have.
+fn tmux_refused(item: &str, record: &Value) -> Result<()> {
+    let surface = record
+        .get("surface")
+        .and_then(Value::as_str)
+        .unwrap_or("tmux");
+    if surface == "tmux" {
+        return Err(surface_refused(
+            "surface-lane",
+            &[("item", item), ("surface", surface)],
+        ));
+    }
+    Ok(())
+}
+
+fn obligation_held(item: &str, stated: &Value) -> Result<()> {
+    if stated.is_null() {
+        return Ok(());
+    }
+    serde_json::from_value::<Obligation>(stated.clone())
+        .map(drop)
+        .map_err(|e| {
+            surface_refused(
+                "obligation-invalid",
+                &[("lane", item), ("cause", &e.to_string())],
+            )
+        })
+}
+
+fn lane_index(doc: &Document, item: &str) -> Option<usize> {
+    doc.get("lanes")
+        .and_then(Value::as_array)
+        .and_then(|lanes| {
+            lanes
+                .iter()
+                .position(|l| l.get("item").and_then(Value::as_str) == Some(item))
+        })
+}
+
+pub(crate) fn record_surface_lane(
+    path: &Path,
+    doc: &mut Document,
+    r: &RecordSurfaceLane,
+) -> Result<Value> {
+    match r {
+        RecordSurfaceLane::Create { lane } => {
+            let read: Lane = serde_json::from_value(lane.clone())
+                .map_err(|e| surface_refused("lane-invalid", &[("cause", &e.to_string())]))?;
+            tmux_refused(&read.item, lane)?;
+            obligation_held(&read.item, lane.get("obligation").unwrap_or(&Value::Null))?;
+            if lane_index(doc, &read.item).is_some() {
+                return Err(surface_refused("lane-standing", &[("item", &read.item)]));
+            }
+            let rows = state::array_mut(path, doc, "lanes")?;
+            rows.push(lane.clone());
+            let pointer = format!("/lanes/{}", rows.len() - 1);
+            Ok(json!({"step": "create", "pointer": pointer, "value": lane}))
+        }
+        RecordSurfaceLane::Merge { item, file } => {
+            let index =
+                lane_index(doc, item).ok_or_else(|| Error::LaneMissing { item: item.clone() })?;
+            tmux_refused(
+                item,
+                &Value::Object(lane_doc_mut(path, doc, index)?.clone()),
+            )?;
+            let mut merged = merge_lane(path, doc, item, super::store::one_value(file)?)?;
+            tmux_refused(item, &merged["value"])?;
+            merged["step"] = json!("merge");
+            Ok(merged)
+        }
+    }
+}
+
+/// A lane record's merge: the lane is found by its `item` inside the
+/// transition, every field the mapping names replaces the lane's, and the
+/// item's lineage is bound once, as the launch binds it: an absent or null
+/// `obligation` keeps the lane's, one differing from a known binding refuses
+/// `obligation-conflict`, and an unknown binding takes the one stated, held
+/// to the launch request's shape.
+pub(crate) fn merge_lane(
+    path: &Path,
+    doc: &mut Document,
+    lane: &str,
+    value: Value,
+) -> Result<Value> {
+    let Value::Object(mapping) = value else {
+        return Err(surface_refused("merge-value", &[("lane", lane)]));
+    };
+    if let Some(item) = mapping.get("item")
+        && item.as_str() != Some(lane)
+    {
+        let named = item
+            .as_str()
+            .map_or_else(|| item.to_string(), str::to_owned);
+        return Err(surface_refused(
+            "merge-item",
+            &[("lane", lane), ("item", &named)],
+        ));
+    }
+    let index = lane_index(doc, lane).ok_or_else(|| Error::LaneMissing {
+        item: lane.to_owned(),
+    })?;
+    let record = lane_doc_mut(path, doc, index)?;
+    for (key, stated) in mapping {
+        if key == "obligation" {
+            if stated.is_null() {
+                continue;
+            }
+            obligation_held(lane, &stated)?;
+            if record
+                .get("obligation")
+                .is_some_and(|known| !known.is_null() && *known != stated)
+            {
+                return Err(surface_refused("obligation-conflict", &[("item", lane)]));
+            }
+        }
+        record.insert(key, stated);
+    }
+    Ok(json!({"pointer": format!("/lanes/{index}"), "value": record.clone()}))
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "the rows hold owned children and read them directly, and wait on real time for them"

@@ -53,8 +53,7 @@ The full session from inside a worktree: implement → publication and review in
    `exists` true → keep the state and record where this session runs:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /worktree "[WORKTREE_PATH]"
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /branch "[BRANCH]"
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","worktree":"[WORKTREE_PATH]","branch":"[BRANCH]"}'
    ```
 
    `[BRANCH]` is the `git-context branch` output.
@@ -62,7 +61,7 @@ The full session from inside a worktree: implement → publication and review in
    Record the tier this session runs at. It lifts any bound a `small` run left in the state; [small.md](small.md) § 1 records `small` after this step:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /tier standard
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-route","tier":"standard"}'
    ```
 
 7. **Gate on base freshness.** Every route into a worktree lands here, fresh or reused, except a handoff resume (step 3):
@@ -108,7 +107,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-order [WORKTR
 Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order [ORDER]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"[ORDER]"}'
 ```
 
 All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
@@ -129,7 +128,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
   An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on. Record the review-first order:
 
   ```bash
-  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order review-first
+  .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-pr-progress","step":"order","order":"review-first"}'
   ```
 
   Then report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
@@ -174,7 +173,7 @@ Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creat
 Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /post_pr_stop null
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop clear --item [ISSUE_ID]
 ```
 
 ### 5.1 Post Summary

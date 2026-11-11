@@ -234,35 +234,6 @@ assert_eq "$(cat "$TMP_ROOT/range-range-ran" 2>/dev/null || echo absent)" \
 assert_eq "$([[ -e "$TMP_ROOT/range-full-ran" ]] && echo ran || echo absent)" "absent" \
   "and the full battery did not run in its place"
 
-# Execute step 2's documented state write, the entry jq composes and the
-# runtime's upsert keyed on its head, including on a resumed head.
-skip_heads() { # DOC FIRST_HEAD SECOND_HEAD
-  local lines head state
-  state="$(mktemp -d "$TMP_ROOT/skip-state.XXXXXX")"
-  lines="$(awk '/^2\. / {step=2} /^3\. / {step=3}
-    step == 2 && (/^   jq -n .* > tmp\/restack-skip-/ || /^   \.agents\/.*orch-runtime state upsert /) {sub(/^   /, ""); print}' "$1")"
-  [[ "$(grep -c '' <<<"$lines")" -eq 2 ]] || fixture_failed skip-writer
-  lines="${lines//.agents\/skills\/orch\/scripts\/orch-runtime/$RUNTIME --state-dir $state}"
-  lines="${lines//tmp\/restack-skip-/$state/restack-skip-}"
-  lines="${lines//\[ISSUE\]/KEN-1}"
-  lines="${lines//\[CONDITION\]/no-conflict}"
-  lines="${lines//\[VALIDATED_HEAD\]/validated}"
-  lines="${lines//\[PATHS\]/none}"
-  "$RUNTIME" --state-dir "$state" state init --item KEN-1 >/dev/null
-  for head in "$2" "$3"; do
-    "$BASH" -euo pipefail -c "${lines//\[HEAD\]/$head}" >/dev/null || fixture_failed skip-write
-  done
-  "$RUNTIME" --state-dir "$state" state get --item KEN-1 /restack_skips | jq -r '.result.value | map(.head) | sort | join(",")'
-}
-for row in 'same-head|head-a|head-a|head-a' 'second-head|head-a|head-b|head-a,head-b'; do
-  IFS='|' read -r name first second expected <<<"$row"
-  assert_eq "$(skip_heads "$RESTACK_DOC" "$first" "$second")" "$expected" "$name keeps one skip per head"
-done
-cp "$RESTACK_DOC" "$TMP_ROOT/other-key.md"
-mutate_file "$TMP_ROOT/other-key.md" '--key head' '--key condition'
-assert_eq "$(skip_heads "$TMP_ROOT/other-key.md" head-a head-b)" 'head-b' \
-  "control: keying the skip on another field drops the first head's skip"
-
 # The document's push over the rebase map a restack leaves, with the real
 # record-push and only the worktree skill's push stood in.
 "$RUNTIME" --state-dir "$WT/tmp" state init --item KEN-1 --worktree "$WT" >/dev/null || fixture_failed state
@@ -504,23 +475,22 @@ merge_proof() {
   (cd "$wt" && env -u ORCH_STATE_DIR -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_SELECTION_CMD \
     -u ORCH_PR_ORDER "${INSTALL[@]}" WORKTREE_CLI="$NETWORK_PUSH" "$BASH" -euo pipefail -c "$block"$'\n''echo merge-admitted')
 }
-# record_skip WT LINE — the document's skip write for a restack-skip line.
+# record_skip WT LINE — the skip a restack-skip line names, recorded on the
+# item through the runtime's restack-skip step.
 record_skip() {
-  local lines head condition validated paths
+  local head condition validated paths entry request
   head="$(sed -n 's/.* head=\([^ ]*\).*/\1/p' <<<"$2")"
   condition="$(sed -n 's/.* condition=\([^ ]*\).*/\1/p' <<<"$2")"
   validated="$(sed -n 's/.* validated-head=\([^ ]*\).*/\1/p' <<<"$2")"
   paths="$(sed -n 's/.* paths=\([^ ]*\).*/\1/p' <<<"$2")"
   [[ -n "$head" && -n "$validated" ]] || fixture_failed proof-skip
-  lines="$(awk '/^2\. / {step=2} /^3\. / {step=3}
-    step == 2 && (/^   jq -n .* > tmp\/restack-skip-/ || /^   \.agents\/.*orch-runtime state upsert /) {sub(/^   /, ""); print}' "$RESTACK_DOC")"
-  lines="${lines//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
-  lines="${lines//\[ISSUE\]/KEN-1}"
-  lines="${lines//\[HEAD\]/$head}"
-  lines="${lines//\[CONDITION\]/$condition}"
-  lines="${lines//\[VALIDATED_HEAD\]/$validated}"
-  lines="${lines//\[PATHS\]/$paths}"
-  (cd "$1" && env -u ORCH_STATE_DIR "$BASH" -euo pipefail -c "$lines") >/dev/null || fixture_failed proof-skip-write
+  entry="$1/tmp/restack-skip-KEN-1.json"
+  jq -n --arg head "$head" --arg condition "$condition" --arg validated "$validated" --arg paths "$paths" \
+    '{head: $head, condition: $condition, validated_head: $validated, paths: (if $paths == "none" then [] else ($paths | split(",")) end)}' \
+    > "$entry" || fixture_failed proof-skip-entry
+  request="$(jq -cn --arg file "$entry" '{op: "record-pr-progress", step: "restack-skip", file: $file}')" ||
+    fixture_failed proof-skip-request
+  "$RUNTIME" --state-dir "$1/tmp" op --item KEN-1 --request-json "$request" >/dev/null || fixture_failed proof-skip-write
 }
 printf '#!/bin/sh\nexit 0\n' > "$NETWORK_PUSH"
 PROOF_WT="$TMP_ROOT/proof"

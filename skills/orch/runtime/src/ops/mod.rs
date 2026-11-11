@@ -42,6 +42,8 @@ pub mod qa;
 pub mod queue_watch;
 // The named record writes and the modules that own their fields.
 mod findings;
+mod ledger;
+mod progress;
 pub mod records;
 pub mod review_artifact;
 mod reviewers;

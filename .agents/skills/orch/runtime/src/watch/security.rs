@@ -480,7 +480,7 @@ fn standing_bot_fix(baseline: &Baseline) -> BTreeMap<String, String> {
 /// The verdicts `alerts_triaged` records,
 /// each `<repo>#<kind>/<number>` lowercased; a row naming no repository,
 /// no alert kind or no whole number is the record's `invalid`.
-fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
+pub(crate) fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
     let mut out = BTreeSet::new();
     // A field is a string's text, `null` when absent, or its JSON, so a
     // row missing a field is `invalid`, not skipped.
