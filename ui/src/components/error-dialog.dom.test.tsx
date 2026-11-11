@@ -40,6 +40,10 @@ it("states every failure, each with its own controls", () => {
     });
   });
   const dialog = document.body.querySelector('[role="dialog"]');
+  // The list scrolls, so the title counts what is in it.
+  expect(dialog?.querySelector("h2")?.textContent).toBe(
+    "Not everything finished: 2 problems",
+  );
   const sections = [...(dialog?.querySelectorAll("section section") ?? [])];
   expect(
     sections.map((section) => [

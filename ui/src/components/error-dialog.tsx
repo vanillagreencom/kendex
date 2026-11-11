@@ -9,7 +9,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { SEVERAL_FAILURES_TITLE } from "@/lib/copy";
+import { severalFailuresTitle } from "@/lib/copy";
+import { BOUNDED_DIALOG } from "@/lib/layout";
 import {
   type ErrorAction,
   type Failure,
@@ -24,12 +25,15 @@ import {
  *  Several each stand under their own title, with their controls beneath
  *  them: a footer of two Retry buttons could not say which one retries
  *  what. The failures scroll between a title and a footer that stay put,
- *  so however many joined, every one and OK stay within the window. */
+ *  so however many joined, every one and OK stay within the window and
+ *  clear of the toasts, and the title says how many there are. */
 export function ErrorDialog() {
   const dialog = useProblemsStore((s) => s.dialog);
   const closeError = useProblemsStore((s) => s.closeError);
   const several = dialog.joined.length > 0;
-  const title = several ? SEVERAL_FAILURES_TITLE : dialog.title;
+  const title = several
+    ? severalFailuresTitle(1 + dialog.joined.length)
+    : dialog.title;
   // Focus opens on OK, in the footer: a control among the failures would
   // scroll them to itself and hide the first ones as the dialog opens.
   const ok = useRef<HTMLButtonElement>(null);
@@ -45,7 +49,10 @@ export function ErrorDialog() {
         if (!next) closeError();
       }}
     >
-      <DialogContent initialFocus={ok} className="flex max-h-[85vh] flex-col">
+      <DialogContent
+        initialFocus={ok}
+        className={`flex flex-col ${BOUNDED_DIALOG}`}
+      >
         <DialogHeader>
           <DialogTitle className={STATUS_TONES[CLASS_TONES.failed].text}>
             {title}
