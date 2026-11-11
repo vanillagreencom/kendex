@@ -11,7 +11,8 @@
 //! compaction-off words, and Claude's capacity table names a window for
 //! every model. Pi needs its compaction off in the settings its session
 //! reads and a pi-hooks carrier those settings load that puts the window
-//! on its payloads and wakes an idle lane on mail. Copilot needs the three
+//! on its payloads, with the lane mail wake in the selection Pi loads from
+//! it, since a lane whose wake never loads is never woken. Copilot needs the three
 //! lane-mail hooks registered in its worktree or its home, and no settings
 //! layer switching them off, which `kendex hooks-off` judges; a hosted
 //! Copilot lane's home is on its host, which nothing reads for it.
@@ -34,6 +35,13 @@ const COPILOT_HOOKS: [&str; 3] = ["lane-mail-check", "lane-mail-compact", "lane-
 /// The bound on `kendex hooks-off` reading a home's and a project's
 /// settings layers.
 const HOOKS_OFF_BOUND: Duration = Duration::from_secs(30);
+
+/// The lane mail wake as the carrier's manifest lists it, and as a saved
+/// selection names it: by its path under the package root, or by its file
+/// name where Pi's matcher compares one.
+const WAKE_ENTRY: &str = "./extensions/lane-mail-wake.ts";
+const WAKE_FILE: &str = "extensions/lane-mail-wake.ts";
+const WAKE_NAME: &str = "lane-mail-wake.ts";
 
 /// A file's text where it stands, `None` where it does not, else the cause.
 type Read<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
@@ -136,8 +144,9 @@ fn read_local(path: &str) -> Result<Option<String>, String> {
 /// project's before the user's. Compaction is on unless the user file turns
 /// it off; the project file counts only against the switch, since Pi
 /// applies it only in a workspace it trusts. The carrier's `vocab.ts` puts
-/// `context_window` on the hook payloads, and its manifest lists the lane
-/// mail wake among the extensions Pi loads.
+/// `context_window` on the hook payloads, its manifest lists the lane mail
+/// wake, and the entry's saved selection, as a project amendment of the
+/// user's entry leaves it, loads the wake.
 fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), String> {
     let user = format!("{root}/settings.json");
     let project = format!("{worktree}/.pi/settings.json");
@@ -165,18 +174,23 @@ fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), 
         }
     }
     let no_window = "unsupported-for-oversee harness=pi reason=no-window-read".to_owned();
-    for (file, doc, scope) in [
-        (&project, &project_doc, "project"),
-        (&user, &user_doc, "global"),
+    let replaced = project_doc
+        .as_ref()
+        .map(|d| switched_off(d, &project))
+        .unwrap_or_default();
+    for (file, doc, scope, replaced) in [
+        (&project, &project_doc, "project", &[][..]),
+        (&user, &user_doc, "global", &replaced[..]),
     ] {
-        let Some(install) = doc
+        let Some(found) = doc
             .as_ref()
-            .map(|d| carrier(d, file, scope))
+            .map(|d| carrier(d, file, replaced))
             .transpose()?
             .flatten()
         else {
             continue;
         };
+        let install = found.place.install(file, scope);
         let fetch = |file: String| {
             read(&file).map_err(|cause| format!("pi-carrier-unreadable file={file} cause={cause}"))
         };
@@ -192,27 +206,39 @@ fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), 
         let wakes = manifest
             .as_ref()
             .and_then(|m| m.get("pi")?.get("extensions")?.as_array().cloned())
-            .is_some_and(|list| {
-                list.iter()
-                    .any(|e| e.as_str() == Some("./extensions/lane-mail-wake.ts"))
-            });
-        if wakes {
-            return Ok(());
+            .is_some_and(|list| list.iter().any(|e| e.as_str() == Some(WAKE_ENTRY)));
+        if !wakes {
+            let version = manifest
+                .as_ref()
+                .and_then(|m| m.get("version")?.as_str().map(str::to_owned))
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "unread".to_owned());
+            return Err(format!(
+                // Once the install is updated, the item's `launch-lane` request sent
+                // again retries it; over the record this launch left, a hosted
+                // lane's create reuses the worktree its provider holds.
+                "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update={} retry=launch-lane",
+                file.trim_end_matches("/settings.json"),
+                location.word(),
+                install.update,
+            ));
         }
-        let version = manifest
-            .as_ref()
-            .and_then(|m| m.get("version")?.as_str().map(str::to_owned))
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "unread".to_owned());
-        return Err(format!(
-            // Once the install is updated, the item's `launch-lane` request sent
-            // again retries it; over the record this launch left, a hosted
-            // lane's create reuses the worktree its provider holds.
-            "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update={} retry=launch-lane",
-            file.trim_end_matches("/settings.json"),
-            location.word(),
-            install.update,
-        ));
+        let entry = Selection {
+            value: found.selection,
+            file,
+            scope,
+        };
+        let amendment = match (scope, &project_doc) {
+            ("global", Some(doc)) => {
+                amendment(doc, &project, &found.place).map(|value| Selection {
+                    value,
+                    file: &project,
+                    scope: "project",
+                })
+            }
+            _ => None,
+        };
+        return wake_selection(&entry, amendment.as_ref(), &install.path, location);
     }
     Err(no_window)
 }
@@ -224,59 +250,290 @@ struct Install {
     update: String,
 }
 
-/// The pi-hooks carrier the settings document `doc` at `file` loads: the
-/// first entry of its `packages` naming the package, a string or an object
-/// whose `source` is one, and not switched off by an empty `extensions`
-/// filter (Pi's settings grammar, as `docs/adapters/pi.md` cites it from
-/// Pi's packages documentation). An `npm:` entry stands where Pi installs
-/// it, `npm/node_modules/<name>` beside the file; a path, absolute or
-/// relative to the file's directory, where it names, the layout
-/// `kendex update-pi` writes. Any other form names an install whose place
-/// on disk is not read here, refused by name rather than guessed.
-fn carrier(doc: &Value, file: &str, scope: &str) -> Result<Option<Install>, String> {
-    let dir = file.trim_end_matches("/settings.json");
-    for entry in doc
-        .get("packages")
+/// A pi-hooks package as Pi tells two entries of it apart: an npm package
+/// by its name, a path by where it resolves.
+#[derive(PartialEq)]
+enum Place {
+    Npm(String),
+    Path(String),
+}
+
+impl Place {
+    /// The place `source` names from the settings file `file`: an `npm:`
+    /// spec, or a path, absolute or relative to the file's directory, the
+    /// layout `kendex update-pi` writes. `None` for any other form, whose
+    /// place on disk is not read here.
+    fn of(source: &str, file: &str) -> Option<Place> {
+        let dir = file.trim_end_matches("/settings.json");
+        if let Some(spec) = source.strip_prefix("npm:") {
+            return Some(Place::Npm(npm_name(spec).to_owned()));
+        }
+        let path = if source.starts_with('/') {
+            source.to_owned()
+        } else if source.starts_with("./") || source.starts_with("../") {
+            format!("{dir}/{source}")
+        } else {
+            return None;
+        };
+        Some(Place::Path(lexical(&path)))
+    }
+
+    /// An `npm:` entry stands where Pi installs it, `npm/node_modules/<name>`
+    /// beside the settings file; a path where it names.
+    fn install(&self, file: &str, scope: &str) -> Install {
+        match self {
+            Place::Npm(name) => Install {
+                path: format!(
+                    "{}/npm/node_modules/{name}",
+                    file.trim_end_matches("/settings.json")
+                ),
+                update: format!("pi install npm:{name}"),
+            },
+            Place::Path(path) => Install {
+                path: path.clone(),
+                update: format!("kendex update-pi --scope {scope}"),
+            },
+        }
+    }
+}
+
+/// The carrier entry a settings file loads, and its saved `extensions`
+/// selection, absent where the entry names none.
+struct Found<'a> {
+    place: Place,
+    selection: Option<&'a Value>,
+}
+
+/// The `packages` entries of a settings document that name pi-hooks: a
+/// source string, or an object whose `source` is one, with the object.
+fn entries(doc: &Value) -> impl Iterator<Item = (&str, Option<&serde_json::Map<String, Value>>)> {
+    doc.get("packages")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-    {
-        let (source, filter) = match entry {
-            Value::String(source) => (source.as_str(), None),
-            Value::Object(object) => match object.get("source").and_then(Value::as_str) {
-                Some(source) => (source, object.get("extensions")),
-                None => continue,
-            },
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => continue,
-        };
-        if !names_carrier(source) {
+        .filter_map(|entry| match entry {
+            Value::String(source) => Some((source.as_str(), None)),
+            Value::Object(object) => object
+                .get("source")
+                .and_then(Value::as_str)
+                .map(|source| (source, Some(object))),
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => None,
+        })
+        .filter(|(source, _)| names_carrier(source))
+}
+
+/// An entry `pi config --local` writes over the user's entry: it loads
+/// nothing of its own and turns on or off only the files it names.
+fn amends(object: Option<&serde_json::Map<String, Value>>) -> bool {
+    object.and_then(|o| o.get("autoload")?.as_bool()) == Some(false)
+}
+
+/// An empty `extensions` filter, under which Pi loads none of the
+/// package's extensions.
+fn empty(object: Option<&serde_json::Map<String, Value>>) -> bool {
+    object
+        .and_then(|o| o.get("extensions")?.as_array())
+        .is_some_and(Vec::is_empty)
+}
+
+/// The places a project's empty-filter entries switch off: Pi replaces the
+/// user's entry of the same place with the project's, so the user's loads
+/// nothing either.
+fn switched_off(doc: &Value, file: &str) -> Vec<Place> {
+    entries(doc)
+        .filter(|(_, object)| !amends(*object) && empty(*object))
+        .filter_map(|(source, _)| Place::of(source, file))
+        .collect()
+}
+
+/// The `extensions` selection of the project's amendment of the user's
+/// entry at `place`, `Some(None)` for an amendment naming none.
+fn amendment<'a>(doc: &'a Value, file: &str, place: &Place) -> Option<Option<&'a Value>> {
+    entries(doc)
+        .find(|(source, object)| amends(*object) && Place::of(source, file).as_ref() == Some(place))
+        .map(|(_, object)| object.and_then(|o| o.get("extensions")))
+}
+
+/// The pi-hooks carrier the settings document `doc` at `file` loads: the
+/// first entry of its `packages` naming the package that loads anything
+/// of its own (Pi's settings grammar, as `docs/adapters/pi.md` cites it
+/// from Pi's packages documentation). An entry at a place in `replaced`
+/// stops the read, since Pi loads the replacing entry. An entry whose
+/// place is not read here is refused by name rather than guessed.
+fn carrier<'a>(
+    doc: &'a Value,
+    file: &str,
+    replaced: &[Place],
+) -> Result<Option<Found<'a>>, String> {
+    for (source, object) in entries(doc) {
+        if amends(object) || empty(object) {
             continue;
         }
-        if filter.and_then(Value::as_array).is_some_and(Vec::is_empty) {
-            continue;
-        }
-        if let Some(spec) = source.strip_prefix("npm:") {
-            let name = npm_name(spec);
-            return Ok(Some(Install {
-                path: format!("{dir}/npm/node_modules/{name}"),
-                update: format!("pi install npm:{name}"),
-            }));
-        }
-        let path = if source.starts_with('/') {
-            source.trim_end_matches('/').to_owned()
-        } else if let Some(rest) = source.strip_prefix("./") {
-            format!("{dir}/{}", rest.trim_end_matches('/'))
-        } else if source.starts_with("../") {
-            format!("{dir}/{}", source.trim_end_matches('/'))
-        } else {
+        let Some(place) = Place::of(source, file) else {
             return Err(format!("pi-carrier-unresolved entry={source} file={file}"));
         };
-        return Ok(Some(Install {
-            path,
-            update: format!("kendex update-pi --scope {scope}"),
+        if replaced.contains(&place) {
+            return Ok(None);
+        }
+        return Ok(Some(Found {
+            place,
+            selection: object.and_then(|o| o.get("extensions")),
         }));
     }
     Ok(None)
+}
+
+/// A saved `extensions` selection and the settings file that holds it.
+struct Selection<'a> {
+    value: Option<&'a Value>,
+    file: &'a str,
+    scope: &'a str,
+}
+
+/// How Pi reads one pattern of a selection by its first character.
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    /// No prefix: keep only the files some include matches, by glob.
+    Include,
+    /// `!`: drop the files it matches, by glob.
+    Exclude,
+    /// `+`: add back a file it names, exactly.
+    Force,
+    /// `-`: drop a file it names, exactly, after every other step.
+    Drop,
+}
+
+/// Whether Pi loads the wake from the carrier at `root` under the entry's
+/// saved selection and, for a user entry, the project's amendment of it.
+/// The rule is the package filter of Pi 1.5.1 (`applyPatterns` and
+/// `applyAutoloadDisabledPatterns` in its package manager): an absent
+/// selection loads every extension and an empty one none; otherwise the
+/// includes keep what they match, or everything where there is none, an
+/// exclude drops, a force adds back and a drop removes last. An
+/// amendment's last pattern that matches the wake decides it, before the
+/// entry's own selection. A glob pattern is matched against the path
+/// under the package root, the file name and the absolute path; an exact
+/// one, less one leading `./`, against the path and the absolute path.
+/// A pattern this reads only literally, so not one that holds a glob
+/// character, a `~`, a `file:` URL or a backslash, or that starts with
+/// `#`, `./` or `!` after its prefix, is refused by name, as is a selection
+/// that is not a list of strings: the read would be a guess, and a lane
+/// whose wake does not load is never woken.
+fn wake_selection(
+    entry: &Selection,
+    amendment: Option<&Selection>,
+    root: &str,
+    location: Location,
+) -> Result<(), String> {
+    let absolute = root
+        .starts_with('/')
+        .then(|| format!("{}/{WAKE_FILE}", lexical(root)));
+    let patterns = |selection: &Selection| -> Result<Vec<(Kind, bool)>, String> {
+        let unresolved = |entry: &str| {
+            format!(
+                "pi-selection-unresolved entry={entry} file={}",
+                selection.file
+            )
+        };
+        let Some(value) = selection.value else {
+            return Ok(Vec::new());
+        };
+        let Some(list) = value.as_array() else {
+            return Err(unresolved(&value.to_string()));
+        };
+        list.iter()
+            .map(|item| {
+                let Some(pattern) = item.as_str() else {
+                    return Err(unresolved(&item.to_string()));
+                };
+                let (kind, body) = match pattern.as_bytes().first() {
+                    Some(b'+') => (Kind::Force, &pattern[1..]),
+                    Some(b'-') => (Kind::Drop, &pattern[1..]),
+                    Some(b'!') => (Kind::Exclude, &pattern[1..]),
+                    _ => (Kind::Include, pattern),
+                };
+                let glob = matches!(kind, Kind::Include | Kind::Exclude);
+                let literal = !(body.contains('\\')
+                    || body.starts_with('~')
+                    || body.starts_with("file:")
+                    || (body.starts_with('/') && absolute.is_none())
+                    || (glob
+                        && (body.contains(['*', '?', '[', ']', '{', '}', '(', ')'])
+                            || body.starts_with(['#', '!'])
+                            || body.starts_with("./"))));
+                if !literal {
+                    return Err(unresolved(pattern));
+                }
+                let body = if glob {
+                    body
+                } else {
+                    body.strip_prefix("./").unwrap_or(body)
+                };
+                let hit = body == WAKE_FILE
+                    || absolute.as_deref() == Some(body)
+                    || (glob && body == WAKE_NAME);
+                Ok((kind, hit))
+            })
+            .collect()
+    };
+    let amended = match amendment {
+        Some(selection) => patterns(selection)?
+            .iter()
+            .rev()
+            .find(|(_, hit)| *hit)
+            .map(|(kind, _)| (matches!(kind, Kind::Include | Kind::Force), selection)),
+        None => None,
+    };
+    let (loads, by) = match amended {
+        Some(decided) => decided,
+        None if entry.value.is_none() => (true, entry),
+        None => {
+            let list = patterns(entry)?;
+            let hit = |want: Kind| list.iter().any(|&(kind, hit)| kind == want && hit);
+            let included =
+                list.iter().all(|&(kind, _)| kind != Kind::Include) || hit(Kind::Include);
+            let kept = included && !hit(Kind::Exclude);
+            (
+                !list.is_empty() && (kept || hit(Kind::Force)) && !hit(Kind::Drop),
+                entry,
+            )
+        }
+    };
+    if loads {
+        return Ok(());
+    }
+    Err(format!(
+        // Once the selection loads the wake again, `pi config` or
+        // `pi config --local` for a project file, the item's `launch-lane`
+        // request sent again retries it.
+        "pi-mail-wake-off harness=pi entry={WAKE_FILE} file={} scope={} location={} retry=launch-lane",
+        by.file,
+        by.scope,
+        location.word(),
+    ))
+}
+
+/// `path` with its `.` and `..` components resolved lexically, as Pi
+/// resolves a package's path before telling two entries apart.
+fn lexical(path: &str) -> String {
+    let absolute = path.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." if parts.last().is_some_and(|last| *last != "..") => {
+                parts.pop();
+            }
+            ".." if absolute => {}
+            _ => parts.push(part),
+        }
+    }
+    let joined = parts.join("/");
+    if absolute {
+        format!("/{joined}")
+    } else {
+        joined
+    }
 }
 
 /// Whether a package source names pi-hooks: its last path component, less
@@ -422,6 +679,45 @@ mod tests {
             files.extend(more);
             files
         };
+        // A settings text with compaction off and `packages` as given, held
+        // for the whole test as the planted files are.
+        let packages = |packages: &str| -> &'static str {
+            Box::leak(
+                format!(r#"{{"compaction": {{"enabled": false}}, "packages": {packages}}}"#)
+                    .into_boxed_str(),
+            )
+        };
+        let selecting = |extensions: &str| {
+            packages(&format!(
+                r#"[{{"source": "./packages/@vanillagreen/pi-hooks", "extensions": {extensions}}}]"#
+            ))
+        };
+        let user_selecting = |extensions: &str| {
+            with(
+                vec![f(user, Ok(selecting(extensions)))],
+                carrier(global, WAKE, SENDS),
+            )
+        };
+        let wake_off = |file: &str, scope: &str| {
+            Err(format!(
+                "pi-mail-wake-off harness=pi entry=extensions/lane-mail-wake.ts file={file} scope={scope} location=local retry=launch-lane"
+            ))
+        };
+        let user_npm = packages(r#"["npm:@vanillagreen/pi-hooks@0.19.2"]"#);
+        let npm_amended = |extensions: &str| {
+            with(
+                vec![
+                    f(user, Ok(user_npm)),
+                    f(
+                        project,
+                        Ok(packages(&format!(
+                            r#"[{{"source": "npm:@vanillagreen/pi-hooks", "autoload": false, "extensions": {extensions}}}]"#
+                        ))),
+                    ),
+                ],
+                carrier(installed, WAKE, SENDS),
+            )
+        };
         let rows: Vec<Row> = vec![
             (
                 "admitted",
@@ -517,6 +813,123 @@ mod tests {
                 vec![f(user, Ok(off)), f(&format!("{global}/package.json"), Err("busy"))],
                 Err(format!("pi-carrier-unreadable file={global}/package.json")),
             ),
+            (
+                "pi-config-turns-the-wake-off",
+                user_selecting(r#"["-extensions/lane-mail-wake.ts"]"#),
+                wake_off(user, "global"),
+            ),
+            (
+                "pi-config-keeps-hooks-and-turns-the-wake-off",
+                user_selecting(r#"["+extensions/hooks.ts", "-extensions/lane-mail-wake.ts"]"#),
+                wake_off(user, "global"),
+            ),
+            (
+                "an-entry-with-other-filters-loads-the-wake",
+                with(
+                    vec![f(
+                        user,
+                        Ok(packages(
+                            r#"[{"source": "./packages/@vanillagreen/pi-hooks", "skills": []}]"#,
+                        )),
+                    )],
+                    carrier(global, WAKE, SENDS),
+                ),
+                Ok(()),
+            ),
+            (
+                "an-exclusion-of-another-file-keeps-the-wake",
+                user_selecting(r#"["-extensions/other.ts", "+extensions/hooks.ts"]"#),
+                Ok(()),
+            ),
+            (
+                "an-include-list-without-the-wake-turns-it-off",
+                user_selecting(r#"["extensions/hooks.ts"]"#),
+                wake_off(user, "global"),
+            ),
+            (
+                "a-bang-exclusion-turns-it-off",
+                user_selecting(r#"["!extensions/lane-mail-wake.ts"]"#),
+                wake_off(user, "global"),
+            ),
+            (
+                "a-glob-pattern-matches-the-file-name",
+                user_selecting(r#"["extensions/hooks.ts", "lane-mail-wake.ts"]"#),
+                Ok(()),
+            ),
+            (
+                "an-exact-exclusion-never-matches-a-file-name",
+                user_selecting(r#"["-lane-mail-wake.ts"]"#),
+                Ok(()),
+            ),
+            (
+                "an-exact-exclusion-by-absolute-path-turns-it-off",
+                user_selecting(
+                    r#"["-/root/packages/@vanillagreen/pi-hooks/extensions/lane-mail-wake.ts"]"#,
+                ),
+                wake_off(user, "global"),
+            ),
+            (
+                "a-forced-include-overrides-a-bang",
+                user_selecting(r#"["!extensions/lane-mail-wake.ts", "+extensions/lane-mail-wake.ts"]"#),
+                Ok(()),
+            ),
+            (
+                "a-drop-is-applied-after-a-force",
+                user_selecting(r#"["+extensions/lane-mail-wake.ts", "-extensions/lane-mail-wake.ts"]"#),
+                wake_off(user, "global"),
+            ),
+            (
+                "a-glob-is-refused-by-name",
+                user_selecting(r#"["extensions/*.ts"]"#),
+                Err(format!("pi-selection-unresolved entry=extensions/*.ts file={user}")),
+            ),
+            (
+                "a-selection-that-is-not-a-list-is-refused-by-name",
+                user_selecting(r#""x""#),
+                Err(format!(r#"pi-selection-unresolved entry="x" file={user}"#)),
+            ),
+            (
+                "a-project-amendment-turns-the-wake-off",
+                npm_amended(r#"["-extensions/lane-mail-wake.ts"]"#),
+                wake_off(project, "project"),
+            ),
+            (
+                "a-project-amendment-turns-the-wake-back-on",
+                with(
+                    vec![
+                        f(
+                            user,
+                            Ok(packages(
+                                r#"[{"source": "npm:@vanillagreen/pi-hooks", "extensions": ["-extensions/lane-mail-wake.ts"]}]"#,
+                            )),
+                        ),
+                        f(
+                            project,
+                            Ok(packages(
+                                r#"[{"source": "npm:@vanillagreen/pi-hooks", "autoload": false, "extensions": ["+extensions/lane-mail-wake.ts"]}]"#,
+                            )),
+                        ),
+                    ],
+                    carrier(installed, WAKE, SENDS),
+                ),
+                Ok(()),
+            ),
+            (
+                "a-project-switch-off-replaces-the-user-entry",
+                with(
+                    vec![
+                        f(user, Ok(user_npm)),
+                        f(
+                            project,
+                            Ok(packages(
+                                r#"[{"source": "npm:@vanillagreen/pi-hooks", "extensions": []}]"#,
+                            )),
+                        ),
+                    ],
+                    carrier(installed, WAKE, SENDS),
+                ),
+                Err("unsupported-for-oversee harness=pi reason=no-window-read".to_owned()),
+            ),
         ];
         for (name, files, want) in rows {
             let files: BTreeMap<String, Result<&str, &str>> = files.into_iter().collect();
@@ -533,18 +946,26 @@ mod tests {
         }
         // A hosted lane's refusal names the host's install and the same retry,
         // the request the overseer can send.
-        let files: BTreeMap<String, Result<&str, &str>> =
-            with(vec![f(user, Ok(off))], carrier(global, NO_WAKE, SENDS))
-                .into_iter()
-                .collect();
-        let read = |path: &str| match files.get(path) {
-            Some(Ok(text)) => Ok(Some((*text).to_owned())),
-            Some(Err(cause)) => Err((*cause).to_owned()),
-            None => Ok(None),
-        };
-        assert_eq!(
-            pi(&read, "/root", "/wt", Location::Hosted).map_err(cause_free),
-            Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=hosted update=kendex update-pi --scope global retry=launch-lane".to_owned())
-        );
+        for (files, want) in [
+            (
+                with(vec![f(user, Ok(off))], carrier(global, NO_WAKE, SENDS)),
+                "pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=hosted update=kendex update-pi --scope global retry=launch-lane",
+            ),
+            (
+                user_selecting(r#"["-extensions/lane-mail-wake.ts"]"#),
+                "pi-mail-wake-off harness=pi entry=extensions/lane-mail-wake.ts file=/root/settings.json scope=global location=hosted retry=launch-lane",
+            ),
+        ] {
+            let files: BTreeMap<String, Result<&str, &str>> = files.into_iter().collect();
+            let read = |path: &str| match files.get(path) {
+                Some(Ok(text)) => Ok(Some((*text).to_owned())),
+                Some(Err(cause)) => Err((*cause).to_owned()),
+                None => Ok(None),
+            };
+            assert_eq!(
+                pi(&read, "/root", "/wt", Location::Hosted).map_err(cause_free),
+                Err(want.to_owned())
+            );
+        }
     }
 }
