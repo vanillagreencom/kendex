@@ -17,7 +17,7 @@ set -uo pipefail
 sk_fake_start
 echo "=== slack draft ask ==="
 
-LINK='[KEN-1](https://linear.app/workspace/issue/KEN-1)'
+LINK='**[\[KEN-1\]](https://linear.app/workspace/issue/KEN-1)**'
 MARKDOWN_DRAFT='Hello,
 
 [Reset password](https://example.invalid) before KEN-123 ships: run ```make```.'
