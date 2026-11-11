@@ -1898,11 +1898,12 @@ jobs:
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
-    # Every job reserves the 20-minute cold-compile allowance, its test
-    # step's bound, and 5 minutes for setup and cleanup. The test bounds and
-    # their measured runs are beside the test step. Warm job maxima cannot
-    # bound a cold build, so the compile reserve stays.
-    timeout-minutes: ${{ matrix.leg == 'render-lint' && 42 || matrix.leg == 'rest' && 44 || matrix.leg == 'verify-lock' && 35 || matrix.leg == 'apply-locked' && 32 || 41 }}
+    # Every CLI job reserves the existing 20-minute cold-compile allowance,
+    # its measured test bound, and 5 minutes for setup and cleanup. The
+    # calculation and warm-cache evidence are beside the cited runs at test.
+    # Warm job maxima cannot bound a cold build, including the new leg's key.
+    # The whole-crate jobs retain their compile + test + setup allowance.
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 33 || matrix.leg == 'rest' && 38 || matrix.leg == 'verify-lock' && 37 || matrix.leg == 'apply-locked' && 38 || 40 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
@@ -1948,8 +1949,9 @@ jobs:
       # time and by the Linux cargo job above.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
-      # runs of this workflow the one test in `catalog_render_lint` took
-      # 801-1012s, and over the eleven of those whose step was not killed at
+      # runs of this workflow the slow one of the two tests in
+      # `catalog_render_lint`, `installed_catalog_passes_comment_and_prose_lanes`,
+      # took 801-1012s, and over the eleven of those whose step was not killed at
       # its bound every other target together took 235-267s. That test
       # installs every package on every harness and lints the result, so it
       # carries the lane and it carries a leg of its own.
@@ -2007,27 +2009,39 @@ jobs:
       - name: CLI integration name partition
         if: matrix.crate == 'kendex-cli' && matrix.leg == 'rest' && github.event_name != 'push'
         run: bash tools/tests/orch-shard-partition.test.sh --cargo-only
-      # Test bounds, KEN-5028. Sample: the macOS cargo test steps of the 59
-      # merge-group Skill Tests runs from 42557012510 to 42960972919
-      # (2026-11-09 to 2026-11-11, all on image macos-26-arm64 20261102.0473);
-      # per-job timings and logs are attached to KEN-5028. Successful-step
-      # medians: whole kendex-core 321s, kendex-app 23s, render-lint 350s,
-      # rest 380s, verify-lock 191s, apply-locked 127s.
-      # The two timeouts were runner speed on unchanged work. In 42871268953
-      # kendex-core ran the same 1412 + 1299 tests as its neighbours 2.0-2.45x
-      # slower through the whole integration binary, no single test stalled,
-      # and the step would have ended near 744s, 2.32x its median. In
-      # 42893266602 render-lint's two tests passed in 485.31s, 1.39x its
-      # median; that one test took 199-485s across the sample. render-lint's
-      # work also grew: its median was 267s over the 2026-10-09 runs cited in
-      # KEN-3530, and the catalog it installs grew from 23 skills and 19 agents
-      # to 29 and 24 since, which spent the room its 8-minute bound had left.
-      # Each bound is ceil(median * 2.32 * 1.25 / 60): the slowest runner
-      # observed, plus a quarter. whole 16, render-lint 17, rest 19,
-      # verify-lock 10, apply-locked 7 minutes. Every step maximum in the
-      # sample, the estimated 744s included, is under its bound.
+      # CLI measurements: 15 successful main-push Skill Tests runs on
+      # 2026-10-09: 37882328114, 37880822013, 37880007749, 37879167232,
+      # 37878878860, 37876175474, 37875494584, 37875447295, 37872580775,
+      # 37872477875, 37872452783, 37867125177, 37866360021, 37865707185,
+      # 37865455977. Raw job timestamps and rest logs are attached to KEN-3530.
+      # Step maxima: render-lint 382s, unsplit rest 618s, verify-lock 538s.
+      # Each bound is ceil(maximum * 1.25 / 60): 8, 13, 12 minutes.
+      # CLI job ceilings reserve 20 minutes for compile + this test bound +
+      # 5 minutes for setup: render-lint 33, rest 38, verify-lock 37,
+      # apply-locked 38. Measured warm job maxima are 478s, 760s, 682s
+      # respectively; those cache-hit samples do not measure cold builds.
+      # Cold-cache job time remains unmeasured, so its compile reserve stays.
+      # Historical apply_locked:: work finished within 136.405s of the
+      # integration harness starting, including preceding and concurrent
+      # tests. This is an estimate, not a standalone leg measurement.
+      # Across KEN-4013's merge-group sample, apply-locked's test step had
+      # a 205s median and 356s maximum; rest's median was 764s against its
+      # 780s limit. Moving non-verification refresh tests into apply-locked
+      # uses that existing leg's room. verify_ remains with verify-lock.
+      # The split removes that family from rest to meet the 600s split figure;
+      # hosted PR timing must confirm both legs, independently of their bounds.
+      # render-lint: in merge-group Skill Tests runs 42557012510 to
+      # 42960972919, its longest passing test step took 464s. Its cost is
+      # installed_catalog_passes_comment_and_prose_lanes, the slow one of the
+      # two tests in catalog_render_lint, whose reference pass runs once per
+      # top-level scope in parallel. On one Linux host held to cores 0-2
+      # (macos-latest has 3), commit 8170d6894's split took that test from
+      # 181.8-185.1s to 101.0-102.1s. Scaled by 102.1/181.8, the 464s step
+      # is an estimated 261s, and 261s * 1.25 = 326s fits the 480s bound.
+      # This is an estimate, not a macOS measurement.
       # All filters are libtest substrings; new integration tests still land
-      # in one leg.
+      # in one leg. Whole-crate bounds retain their measured 534s core and
+      # 81s app maxima with the existing allowance.
       # --no-fail-fast: one run reports
       # every platform-specific failure instead of one per queue attempt.
       # Every selected invocation runs and the step fails if any did, the same
@@ -2039,7 +2053,7 @@ jobs:
       # the nightly run test.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.leg == 'render-lint' && 17 || matrix.leg == 'rest' && 19 || matrix.leg == 'verify-lock' && 10 || matrix.leg == 'apply-locked' && 7 || 16 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 8 || matrix.leg == 'rest' && 13 || matrix.leg == 'verify-lock' && 12 || matrix.leg == 'apply-locked' && 13 || 12 }}
         env:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ matrix.crate == 'kendex-cli' && (matrix.leg == 'rest' || matrix.leg == 'verify-lock' || matrix.leg == 'apply-locked') && github.token || '' }}
