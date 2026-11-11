@@ -35,13 +35,16 @@ CONTROLS = (
     # xdg-terminal-exec takes its command bare, not after -e.
     ("desktop terminal", BACKEND, 'launch=(xdg-terminal-exec bash -lc "$line")',
      'launch=(xdg-terminal-exec -e bash -lc "$line")', "test_attach_opens_a_terminal_window"),
-    # A $TERMINAL naming nothing is replaced by xdg-terminal-exec in silence.
-    ("fallback notice", BACKEND, '[[ -z "${TERMINAL:-}" || "${launch[0]}" == "$TERMINAL" ]] ||', 'true ||',
+    # A $TERMINAL on PATH is launched in place of xdg-terminal-exec.
+    ("terminal choice", BACKEND, 'launch=(xdg-terminal-exec bash -lc "$line")',
+     'launch=(xdg-terminal-exec bash -lc "$line")\n'
+     '    [[ -z "${TERMINAL:-}" ]] || ! command -v "$TERMINAL" >/dev/null || launch=("$TERMINAL" -e bash -lc "$line")',
      "test_attach_opens_a_terminal_window"),
-    # No terminal at all reads as a refusal instead of the nested attach.
-    ("no terminal", BACKEND, 'else\n      exit 3\n', 'else\n      exit 4\n', "test_attach_nests_without_a_terminal"),
-    # A terminal that failed to open falls back to the nested attach.
-    ("launch failure", SESSION, 'if opened.returncode not in (0, 3):', 'if opened.returncode not in (0, 3, 5):',
+    # A missing xdg-terminal-exec reads as a terminal that failed to open.
+    ("missing launcher", SESSION, 'if opened.returncode == 3:', 'if False:',
+     "test_attach_refuses_a_terminal_that_does_not_open"),
+    # A terminal that failed to open reads as an opened window.
+    ("launch failure", SESSION, 'if opened.returncode != 0:', 'if opened.returncode not in (0, 5):',
      "test_attach_refuses_a_terminal_that_does_not_open"),
     # A launcher that exits 0 counts as an opened window.
     ("client proof", BACKEND, "client=none seconds=5\\n' \"${launch[0]}\" >&2\n    exit 5",
@@ -51,9 +54,6 @@ CONTROLS = (
      "test_attach_refuses_a_terminal_that_does_not_open"),
     # A terminal's non-zero exit hides the terminal's own reason.
     ("terminal reason", BACKEND, 'tail -n 5 -- "$errors" >&2', ':', "test_attach_refuses_a_terminal_that_does_not_open"),
-    # An unresolvable $TERMINAL reads as no terminal.
-    ("unresolved terminal", BACKEND, 'exit 4\n    else', 'exit 3\n    else',
-     "test_attach_refuses_a_terminal_that_does_not_open"),
     ("no controller", SESSION, 'if not terminal:\n            raise Refusal("no-controller")',
      'if False:\n            raise Refusal("no-controller")', "test_attach_refuses_without_a_controller"),
     ("brief replacement", SESSION, 'record["private_brief"] = private',

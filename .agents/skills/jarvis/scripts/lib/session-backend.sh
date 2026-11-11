@@ -446,30 +446,23 @@ case "$verb" in
   open-window)
     # The attach a caller inside a tmux client opens in a new window of the
     # user's own terminal, from the caller's environment less TMUX and
-    # TMUX_PANE, which jarvis-session clears. Status 3 is no terminal: no
-    # $TERMINAL and no xdg-terminal-exec on PATH. 4 is a $TERMINAL naming
-    # nothing on PATH with no xdg-terminal-exec, which is not that absence. 5
-    # is a
-    # terminal that exited non-zero, put no new client on the session within
-    # 5 seconds or whose process state could not be read.
+    # TMUX_PANE, which jarvis-session clears. Status 3 is no xdg-terminal-exec
+    # on PATH. 5 is a terminal that exited non-zero, put no new client on the
+    # session within 5 seconds or whose process state could not be read.
     socket="$1" session="$2"
     printf -v line 'exec tmux -S %q attach-session -t %q' "$socket" "=$session"
-    # The user's configured terminal, then the desktop's. This does not share
+    # xdg-terminal-exec is the one launch route: it picks the user's terminal
+    # from their terminal list and that terminal's desktop entry, which also
+    # holds how the terminal takes a command. Terminals differ there:
+    # xfce4-terminal's -e takes one command string. This does not share
     # orch's private open_gui choice: KEN-4687's owner-held replacement owns
     # orch and migrates its adjacent callers, so one shared choice is a
     # caller-integration concern for that rebuild.
-    if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
-      launch=("$TERMINAL" -e bash -lc "$line")
-    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
-      launch=(xdg-terminal-exec bash -lc "$line")
-    elif [[ -n "${TERMINAL:-}" ]]; then
-      printf 'jarvis-session: terminal=unresolved requested=%s\n' "$TERMINAL" >&2
-      exit 4
-    else
+    command -v xdg-terminal-exec >/dev/null 2>&1 || {
+      printf 'jarvis-session: terminal=unresolved launcher=xdg-terminal-exec\n' >&2
       exit 3
-    fi
-    [[ -z "${TERMINAL:-}" || "${launch[0]}" == "$TERMINAL" ]] ||
-      printf 'jarvis-session: terminal=fallback requested=%s selected=%s\n' "$TERMINAL" "${launch[0]}" >&2
+    }
+    launch=(xdg-terminal-exec bash -lc "$line")
     clients() { tmux -S "$socket" list-clients -t "=$session" -F '#{client_pid}'; }
     before="$(clients)" || exit 5
     # The terminal's own stderr names why it failed, such as a display it
