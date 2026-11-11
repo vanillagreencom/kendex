@@ -702,11 +702,11 @@ fn write_scope(
     }
     let approved = Approved::of(&report, &consent);
     let names: Vec<_> = pending.iter().map(|pending| pending.name.clone()).collect();
-    let landed =
+    let (landed, stopped) =
         match super::update_pi::settle_scope(env, scope, &names, context.options, context.targeted)
         {
-            Ok(landed) => landed,
-            Err(error) => return start.stopped_short(report, None, Stop::Failed(error)),
+            Ok(landed) => (landed, None),
+            Err(stopped) => (stopped.landed, Some(stopped.error)),
         };
     let settled: Vec<Effect> = pending
         .iter()
@@ -714,6 +714,12 @@ fn write_scope(
         .cloned()
         .map(Effect::Pi)
         .collect();
+    // A settle that stopped after a package landed has written into the
+    // scope, so the scope is owed what any written scope is.
+    if let Some(error) = stopped {
+        let wrote = (!settled.is_empty()).then_some(settled);
+        return start.stopped_short(report, wrote, Stop::Failed(error));
+    }
     let planned = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, context.options)

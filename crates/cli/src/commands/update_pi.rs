@@ -213,15 +213,42 @@ pub(super) fn deferred_settle(
 /// Says what it installed and returns the names that landed: the plan the
 /// caller derives next reports every package still unsettled as drift, and
 /// that row is the run's failure. Only the scope lock and the install record
-/// can stop the scope. The lock is held for the install alone; the
-/// caller's own write takes it again.
+/// can stop the scope, and a stop still hands back what landed before it,
+/// since those packages are on disk whatever the record says. The lock is
+/// held for the install alone; the caller's own write takes it again.
 pub fn settle_scope(
     env: &Env,
     scope: &Scope,
     names: &[String],
     options: &PlanOptions,
     targeted: &[Scope],
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, SettleStopped> {
+    let mut installed = Installed::default();
+    match settle_rows(env, scope, names, options, targeted, &mut installed) {
+        Ok(()) => Ok(installed.landed),
+        Err(error) => Err(SettleStopped {
+            landed: installed.landed,
+            error,
+        }),
+    }
+}
+
+/// A settle that stopped on `error`, and the packages that landed before
+/// it did.
+#[derive(Debug)]
+pub struct SettleStopped {
+    pub landed: Vec<String>,
+    pub error: Box<dyn std::error::Error>,
+}
+
+fn settle_rows(
+    env: &Env,
+    scope: &Scope,
+    names: &[String],
+    options: &PlanOptions,
+    targeted: &[Scope],
+    installed: &mut Installed,
+) -> CliResult {
     let settings = settings::load(env)?;
     let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope, targeted);
     let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
@@ -245,9 +272,7 @@ pub fn settle_scope(
         notes: Vec::new(),
         shadows: pi_ext::ShadowScan::default(),
     };
-    let mut installed = Installed::default();
-    install_rows(env, &plan, options, &mut installed)?;
-    Ok(installed.landed)
+    install_rows(env, &plan, options, installed)
 }
 
 /// What a settle may install, decided once and here: a declared package
@@ -700,8 +725,9 @@ struct Installed {
 /// and no completion, so the next pass finds it stale again. The record
 /// compares each package with its source read at the commit a plan under
 /// `options` reads it at, the commit the plan's rows were installed from.
-/// What landed is counted into `installed` as it lands, so a pass that
-/// stops on an error still says what it wrote.
+/// What landed is counted into `installed` and said as it lands, before
+/// its record is written, so a pass that stops on an error, the record's
+/// included, still says what it wrote.
 fn install_rows(
     env: &Env,
     plan: &ScopePlan,
@@ -727,7 +753,6 @@ fn install_rows(
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
                 installed.landed.push(row.name.clone());
-                record_pi_installs(env, plan, &readings, Some(&row.name))?;
                 out(&format!(
                     "  {verb} {} -> {}",
                     row.name,
@@ -739,6 +764,7 @@ fn install_rows(
                         row.name
                     ));
                 }
+                record_pi_installs(env, plan, &readings, Some(&row.name))?;
             }
             Err(error) => {
                 say(&format!("  failed {}: {}", row.name, error));

@@ -1614,3 +1614,43 @@ fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own(
     let checked = kendex(&home, &clone, &["check"]);
     assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }
+
+/// A settle that installed a package and then could not save the install
+/// record still accounts for that package: the install is on disk, so the
+/// run says it installed it and the scope's closing ledger names it before
+/// the record failure ends the run. The record's machine half sits under a
+/// directory the run may not write, so the save fails after the install
+/// that preceded it.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_settle_whose_record_save_fails_keeps_what_it_installed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = declared_consumer(&home, NO_DEPENDENCIES);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "declare"]);
+    let clone = fresh_clone(&home, &origin);
+    let cache = clone.join(".cache/kendex");
+    fs::create_dir_all(&cache).unwrap();
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let output = kendex(
+        &home,
+        &clone,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
+    let printed = said(&output);
+
+    assert_eq!(output.status.code(), Some(1), "{printed}");
+    assert!(clone.join(".pi/packages/pi-widgets/index.js").is_file());
+    for line in [
+        "  installed pi-widgets -> 1.0.0\n",
+        "  - installed Pi extension pi-widgets\n",
+    ] {
+        assert_eq!(printed.matches(line).count(), 1, "{line}: {printed}");
+    }
+}
