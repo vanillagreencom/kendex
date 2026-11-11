@@ -82,7 +82,7 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 - Use inline code for a command or path. Use a code block for output longer than one line. Keep paragraphs to a few sentences.
 - Put text the person must send in a code block. Name the recipient above it.
 - Report changed rules, guidance or directives after their commit is pushed. Name each changed file once as `repo/folder/file.md`, linked to `https://github.com/OWNER/REPO/blob/COMMIT/path#heading` at that commit.
-- Beside a file, including a Slack file comment, use Slack mrkdwn: `*Label*` for bold, `<URL|LABEL>` for a link and plain lines for a list. The other markup rules still hold.
+- Write a Slack file comment in standard Markdown, as for a message. The slack package converts it to Slack mrkdwn when it posts the file. The exception is the report summary: [Summary template](reports.md#summary-template) and `oversee-report write` hold it to mrkdwn.
 
 ## Slack messages
 
@@ -97,12 +97,13 @@ Standard Markdown:
 - **[\[KEN-123\]](https://linear.app/vanillagreen/issue/KEN-123)** records the change to `kendex.toml`.
 ```
 
-File-comment mrkdwn:
+The same text as a file comment, in the mrkdwn the slack package posts:
 
 ```text
 *Installed plugins*
-- *Tailscale plugin:* The plugin is installed.
-- *<https://linear.app/vanillagreen/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
+
+• *Tailscale plugin:* The plugin is installed.
+• *<https://linear.app/vanillagreen/issue/KEN-123|[KEN-123]>* records the change to `kendex.toml`.
 ```
 
 Slack supports underline in structured `rich_text` text styles. The current post and relay routes send `markdown_text` or `mrkdwn` text, whose supported formats have no underline syntax. Use bold headers on this route; add no Unicode imitation. See Slack's [text element styles](https://docs.slack.dev/reference/block-kit/block-elements/text-element/), [Markdown block formats](https://docs.slack.dev/reference/block-kit/blocks/markdown-block/) and [mrkdwn styles](https://docs.slack.dev/messaging/formatting-message-text/#basic-visual-styles).
