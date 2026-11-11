@@ -27,6 +27,7 @@ The user's facts about their entity, accounts and people live in the user's own 
 - Show the calculation, the facts it uses and any unresolved obligation before requesting a decision.
 - Send a question whose answer goes past the established evidence to a licensed professional, as the decision the user must make.
 - Apply the `jarvis` skill's `references/decisions.md` § Authority to the decision request and § Evidence and risk when the decision has serious financial consequences.
+- Follow the `jarvis` skill's `references/finance.md` for filing obligations, the monthly close, mail triage, the approval packet and analysis methods.
 
 ## Output
 
