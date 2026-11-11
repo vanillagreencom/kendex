@@ -1674,8 +1674,10 @@ printf '[env]\nSECOND_OPINION_EFFORT = "low"\n' >"$settings_repo/.kendex/setting
 # The base's readers: a workflow naming a key, a package behind a checkout
 # prefix with its tests and a comma-separated key family, a glob over
 # packages, a repository path behind the workspace variable, a bare root
-# script name, and a lane glob. The package nothing names declares the keys
-# the rows change, one in a commented-out assignment.
+# script name, and a lane glob. The workflow names the settings file, as
+# the shipped template does, where a key's own assignment is no read.
+# The package nothing names declares the keys the rows change, one in a
+# commented-out assignment.
 mkdir -p "$settings_repo/.github/workflows" "$settings_repo/.agents/skills/probe/tests" \
   "$settings_repo/.agents/skills/idle" "$settings_repo/skills/globbed/scripts" \
   "$settings_repo/tools" "$settings_repo/suites/unit"
@@ -1687,6 +1689,7 @@ steps:
   - run: skills/*/tests/run.sh
   - run: $GITHUB_WORKSPACE/tools/check.sh
   - run: bash lint.sh
+  # kendex.settings.toml, which a lane's own classifier run reads too.
 WORKFLOW
 printf 'unit suites/**\n' >"$settings_repo/.github/ci-lanes.conf"
 printf 'echo "$PROBE_TEST_KEY"\n' >"$settings_repo/.agents/skills/probe/tests/run.sh"
@@ -1950,6 +1953,7 @@ no path readers|a key only a prefixed repository path names;a key only a bare ro
 no path globs|a key only a lane glob's file reads|        if ($0 ~ /[A-Za-z0-9_]/ && ("/" $0 "/") !~ /\/\.\.\//) print "glob\t" $0|-
 no family match|a generated name in a declared key family;a key in a comma-separated declared family|  if settings_declares "$1" "$SETTINGS_FAMILIES"; then return 0; fi|-
 no declaration|an undeclared key no reader names|  if settings_readers_load && ! settings_declares "$1" "$SETTINGS_DECLARED"; then|  if false; then
+no settings-file exclusion|an unread key with no setting|  for file in $BASE_SETTINGS_FILES; do excluded+=(":(exclude)$file"); done|-
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
 
