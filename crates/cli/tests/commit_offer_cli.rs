@@ -96,7 +96,7 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
 /// A bare repository the project calls `origin`, under a name the fake
 /// `gh` reads its answer from.
 #[allow(clippy::unwrap_used)]
-fn origin(project: &Path, name: &str) -> PathBuf {
+pub(crate) fn origin(project: &Path, name: &str) -> PathBuf {
     let bare = project.parent().unwrap().join(format!("{name}.git"));
     git(
         project,
@@ -136,7 +136,7 @@ fn executable(path: &Path, body: &str) {
 /// `--repo`, or `GH_REPO` for `gh api`, which has no `--repo`. The
 /// directory holds nothing but `gh`, so git resolves as before.
 #[allow(clippy::unwrap_used)]
-fn path_with_fake_gh(home: &Path) -> String {
+pub(crate) fn path_with_fake_gh(home: &Path) -> String {
     let dir = home.join("fake-bin");
     executable(&dir.join("gh"), FAKE_GH);
     format!(

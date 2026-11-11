@@ -245,13 +245,26 @@ pub fn split_way_on(style: &Style) -> Vec<String> {
     lines
 }
 
-/// A setup chosen at the offer that did not run through.
-pub fn set_up_failed(style: &Style, why: &str) -> Vec<String> {
-    let mut lines = said_as(
-        style,
-        Status::Failed,
-        "the setup did not finish; nothing was committed",
-    );
+/// The step of a setup chosen at the offer that failed.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SetUpStep {
+    /// A package's installer, so the setup did not finish.
+    Installer,
+    /// Reading back what the finished setups render, which is what the
+    /// commit would carry of theirs.
+    ReadBack,
+}
+
+/// A setup chosen at the offer that did not run through: the step that
+/// failed, then its own words.
+pub fn set_up_failed(style: &Style, step: SetUpStep, why: &str) -> Vec<String> {
+    let said = match step {
+        SetUpStep::Installer => "the setup did not finish; nothing was committed",
+        SetUpStep::ReadBack => {
+            "the setup finished, but what it renders could not be read back; nothing was committed"
+        }
+    };
+    let mut lines = said_as(style, Status::Failed, said);
     for line in why.lines() {
         lines.extend(quoted(style, line));
     }

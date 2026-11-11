@@ -169,7 +169,18 @@ fn pushed(
             if !offer.recovers_refused_push() || asking == Asking::No {
                 return Ok(Outcome::PushRefused);
             }
-            match block::after_push_refusal()? {
+            let recovery = match block::after_push_refusal() {
+                Ok(recovery) => recovery,
+                // The commit stands whatever is answered here, so a cancel
+                // leaves it as a leave does: the record keeps the commit
+                // and the run still exits as a cancel.
+                Err(error) if ui::cancelled(&error) => {
+                    super::cancel();
+                    Recover::Leave
+                }
+                Err(error) => return Err(error.into()),
+            };
+            match recovery {
                 Recover::Leave => Ok(Outcome::PushRefused),
                 Recover::PullRequest => recover(offer, files, message, before),
             }
