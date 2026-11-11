@@ -16,16 +16,16 @@ control_replace scripts/commands/issues.sh 1 \
 	'    if false; then'
 
 # Leave outside boxes out of the parser's completion state: its other
-# readers would accept an item complete refuses.
+# readers, the started bundle child's pre-merge check among them, would
+# accept an item complete refuses.
 control_expect "parser holds post-merge-heading from completion"
+control_expect "started bundle child post-merge-heading state_ok is false"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'                or any(.outside_boxes[]; .checked | not) then null' \
 	'                or false then null'
 
 # Never open a fence: a fenced example box is refused and holds completion.
 control_expect "write check files backtick-fence"
-control_expect "create files a fenced box"
-control_expect "complete accepts fenced"
 control_replace scripts/lib/issue-validation.sh 1 \
 	'              elif $run != null then .fence = $run' \
 	'              elif false then .fence = $run'

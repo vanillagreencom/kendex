@@ -114,10 +114,11 @@ build_completion_validation_result() {
 		fi
 		if [[ "$role" == "bundle-child" && "$state_ok" == true ]]; then
 			checklist=$(done_when_parse "$description" '[]') || return 1
+			# A started child passes on the parser's own completion answer, so
+			# the post-merge `issues complete` cannot refuse a child this passed.
 			state_ok=$(jq -r --arg state "$state" '
 				if $state == "Done" then .completion_state == "Done"
-				else (.boxes | length) > 0 and .unmet_branch_boxes == []
-					and .missing_evidence_boxes == [] and .errors == [] end
+				else (.boxes | length) > 0 and .completion_state != null end
 			' <<<"$checklist") || return 1
 		fi
 

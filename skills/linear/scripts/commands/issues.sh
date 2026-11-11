@@ -331,7 +331,8 @@ Validate-Completion:
   state other than Verifying
   when the shared checklist parser proves every branch box and every checked
   box has evidence. A started child needs a checklist; post-merge boxes are
-  optional. Open branch work or invalid post-merge metadata fails state_ok.
+  optional. Open branch work, an open box outside "## Done when", or invalid
+  post-merge metadata fails state_ok.
   Canceled children are excluded from the expansion:
   abandoned work can never be "Done" and is not a pending gap. Each validated
   issue must also have a comment containing "Completion Summary" or

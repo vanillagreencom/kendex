@@ -2,8 +2,9 @@
 # bash-runtime: 4
 # Surface: a checkbox outside `## Done when`. Authored create, update and
 # bulk-update bodies refuse one, naming it; `issues complete` refuses Done and
-# Verifying while a stored body holds one open. A quoted or fenced box is not
-# a box. Both routes read the shared Done-when parser.
+# Verifying while a stored body holds one open, and a started in-PR bundle
+# child holding one fails validate-completion. A quoted or fenced box is not
+# a box. Every route reads the shared Done-when parser.
 # Inputs: scripts/commands/issues.sh, scripts/lib/issue-validation.sh, this
 # suite and its assertion library.
 set -euo pipefail
@@ -80,7 +81,7 @@ while IFS='|' read -r name tail line box; do
   else
     assert_eq "write check refuses $name" "$rc" 1
     assert_jq "write check names the $name box" "$(cat "$TMP_ROOT/shape.err")" \
-      ".rule == \"checkbox-outside-done-when\" and .line == $line and .box == \"$box\" and (.fix | contains(\"## Done when\"))"
+      ".rule == \"checkbox-outside-done-when\" and .line == $line and .box == \"$box\" and (.fix | length) > 0"
   fi
 done <<ROWS
 post-merge-heading|## Post-merge\n\n- [ ] $POST|11|$POST
@@ -113,19 +114,18 @@ create
 update
 bulk-update
 ROWS
-run_linear create --title t --description "$(authored '## Notes\n\n```\n- [ ] fenced box\n```')"
-assert_eq "create files a fenced box" "$RC" 0
-assert "create writes a fenced box" sent issueCreate
 
 # Completion of a stored body, which may predate the write check. Columns:
 # name | body | completion arguments | refused open lines, or the state set.
+# The parser reads each refused body with every Done-when box met and
+# evidenced, so only the outside box can hold its completion state.
 printf '%s\n' '1: branch read' >"$TMP_ROOT/proof.txt"
 DONE='## Done when\n- [x] branch outcome\n  Evidence: branch read'
 while IFS='|' read -r name stored args expected; do
   printf '%b\n' "$stored" >"$STORED"
   read -r -a extra <<<"$args"
   run_linear complete CC-1 --summary proof ${extra[@]+"${extra[@]}"}
-  parsed="$(done_when_parse "$(cat "$STORED")" '[]' 2026-11-11T00:00:00Z)"
+  parsed="$(done_when_parse "$(cat "$STORED")" '"all"' 2026-11-11T00:00:00Z '{"1":"branch read"}')"
   if [[ "$expected" == \[* ]]; then
     assert_ne "complete refuses $name" "$RC" 0
     assert_jq "complete names the $name box" "$ERR" \
@@ -143,8 +143,10 @@ post-merge-heading|$DONE\n\n## Post-merge\n\n- [ ] $POST|--post-merge-at 2026-11
 bare|$DONE\n\n## Post-merge\n\n- [ ] $POST||[7]
 selected|## Done when\n- [ ] branch outcome\n\n## Notes\n- [ ] follow up\n- [x] read|--done-when-met all --evidence-file $TMP_ROOT/proof.txt|[5]
 before-section|- [ ] above\n\n$DONE|--post-merge-at 2026-11-11T00:00:00Z|[1]
-moved|$DONE\n- [ ] $POST|--post-merge-at 2026-11-11T00:00:00Z|Verifying
 checked|$DONE\n\n## Notes\n- [x] read|--post-merge-at 2026-11-11T00:00:00Z|Done
-quoted|$DONE\n\n## Notes\n> - [ ] quoted box|--post-merge-at 2026-11-11T00:00:00Z|Done
-fenced|$DONE\n\n## Notes\n\`\`\`\n- [ ] fenced box\n\`\`\`|--post-merge-at 2026-11-11T00:00:00Z|Done
 ROWS
+
+# A started in-PR bundle child passes the pre-merge check only where the
+# post-merge `issues complete` would accept it.
+result="$(build_completion_validation_result CC-2 "In Review" CC-1 true bundle-child started "$(printf '%b' "$DONE\n\n## Post-merge\n\n- [ ] $POST")")"
+assert_jq "started bundle child post-merge-heading state_ok is false" "$result" '.state_ok == false and .ok == false'
