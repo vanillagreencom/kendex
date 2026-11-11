@@ -83,15 +83,17 @@ export const OWN_COPY_NAME_LABEL = "Name for your edited copy";
 export const ownCopyDefaultName = (name: string): string => `${name}-edited`;
 export const installedAsNewToastLabel = (name: string, own: string): string =>
   `Installed ${name} — your edited copy is now ${own}`;
-// The rename went into the manifest and the write to disk did not, so this
-// says both halves rather than only the one that worked. The reason is the
-// error dialog's, which stays until it is read. It names no way to finish:
-// the page that ran a recorded plan is gone, and pointing at a screen that
-// is not there is worse than the reason on its own.
-export const installedBesideUnfinishedToast = (
-  name: string,
-  own: string,
-): string => `Your edited copy is now ${own}, but ${name} didn't install.`;
+// The fork landed and the install of the newest version behind it did not.
+// One error dialog says both halves, and no toast beside it: a toast fades,
+// and two surfaces worded apart can say two different outcomes. The title is
+// the half the person asked for and did not get, the reason sits under it,
+// and the step is the half that stands. It names no way to finish: the page
+// that ran a recorded plan is gone, and pointing at a screen that is not
+// there is worse than the reason on its own.
+export const besideNotInstalledTitle = (name: string): string =>
+  `${name} didn't install`;
+export const besideRecordedStep = (own: string): string =>
+  `Your edited copy is now ${own}, and the page shows what is on disk now.`;
 
 export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;

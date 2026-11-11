@@ -7,13 +7,15 @@ import {
   unknownCompletionTitle,
 } from "@/lib/copy";
 import {
+  besideNotInstalledTitle,
+  besideRecordedStep,
   installedAsNewToastLabel,
-  installedBesideUnfinishedToast,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_ONE_AT_A_TIME_NOTE,
 } from "@/lib/copy-updates";
 import { packageDisplayName } from "@/lib/labels";
 import { beforeWriting, offerToCommit, rescanEverything } from "@/lib/rescan";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { saying, sayUnfinished } from "@/lib/undone";
 import { readUnsettled, workOut } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
@@ -143,8 +145,8 @@ type BesideOutcome = Outcome<Beside> | { unknown: string };
  *  refusal — nothing written, another name may go through — for the
  *  dialog to show at the point of action, or null. A fork the scope
  *  recorded but could not render is not a refusal: the dialog closes, the
- *  toast says what landed, the error dialog says the step that failed, and
- *  the refreshed rows carry the rest.
+ *  error dialog alone says what did not install and what landed, and the
+ *  refreshed rows carry the rest.
  *
  *  An error in neither phase — a transport failure, a binary older than
  *  this UI — is the call failing on its way, not the engine answering. It
@@ -201,8 +203,14 @@ export const installAsNew = async (
       sayUnfinished(name, outcome.ok.unfinished);
       return null;
     case "recorded":
-      toast.info(installedBesideUnfinishedToast(name, own));
-      sayUnfinished(name, outcome.ok.why);
+      // Not `sayUnfinished`: its step says the change is in place, and the
+      // change asked for here is the install that failed. One dialog, no
+      // toast, so the lasting account is the only one.
+      useProblemsStore.getState().showError({
+        title: besideNotInstalledTitle(name),
+        message: outcome.ok.why === "" ? NO_REASON_GIVEN : outcome.ok.why,
+        steps: [besideRecordedStep(own)],
+      });
       return null;
   }
 };

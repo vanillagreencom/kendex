@@ -468,8 +468,10 @@ describe("updates store: installing beside an edited place", () => {
 
   // A fork the scope recorded but could not render is not a refusal:
   // another name would not help, and the rows now carry the drift. The
-  // dialog gets null and closes; the toast says what landed, and the step
-  // that failed stays in the error dialog the commit offer waits behind.
+  // dialog gets null and closes. The error dialog the commit offer waits
+  // behind is the one account: its title is the install that did not
+  // happen, its step the copy that did land, and no toast says either half
+  // in other words, since a toast fades and the dialog stays.
   it("treats a failure after the fork was recorded as a partial result, not a refusal", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
       status: "error",
@@ -477,12 +479,16 @@ describe("updates store: installing beside an edited place", () => {
     });
 
     expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
-    expect(toast.info).toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
     const dialog = useProblemsStore.getState().dialog;
     expect(dialog.open).toBe(true);
+    expect(dialog.title).toBe("gh didn't install");
     expect(dialog.message).toBe("render refused: disk full");
-    expect(dialog.title).not.toBe(FORK_ERROR_TITLE);
+    expect(dialog.steps).toEqual([
+      "Your edited copy is now gh-mine, and the page shows what is on disk now.",
+    ]);
     // The refreshes run: what landed is on disk and the rows must say so.
     expect(commands.updatesOverview).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
