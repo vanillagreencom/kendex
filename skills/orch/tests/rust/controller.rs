@@ -6000,7 +6000,7 @@ fn a_unit_launch_hands_the_jobs_variables_to_the_unit_and_no_value_to_the_client
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
-    let token = "ghp_fixture_value_never_on_a_command_line";
+    let token = "ghp_value_never_on_a_command_line";
     let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     env.push(("ORCH_PROBE_TOKEN", token));
     env.push(("SYSTEMD_LOG_LEVEL", "debug"));

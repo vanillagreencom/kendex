@@ -12,6 +12,7 @@
 use std::collections::BTreeSet;
 
 mod normalize;
+mod rust;
 mod shell;
 pub use normalize::{Letters, deobfuscate};
 
@@ -87,7 +88,8 @@ pub struct Line {
     /// strings a diagnostic command prints (see [`shell::named_spans`])
     /// and a case arm's literal patterns (see [`shell::quoted`]),
     /// and in a test's shell file the literals it hands over as data (see
-    /// [`shell::fixture_spans`]). Any other file has none.
+    /// [`shell::fixture_spans`]); in a Rust file they are its comments and
+    /// its test code (see [`rust::quoted`]). Any other file has none.
     pub spans: Vec<Span>,
 }
 
@@ -113,10 +115,14 @@ pub enum Quotation {
     ShellText,
     /// In a shell file under a test directory, a literal the test hands
     /// over as data: a quoted string an assignment takes as its value, a
-    /// quoted string `echo` or `printf` prints, and every argument of a
-    /// function the tests define, where the command's output reaches no
-    /// other command.
+    /// quoted string `echo` or `printf` prints, every argument of a
+    /// function the tests define, and every operand of `[`, `[[` or `test`,
+    /// where the command's output reaches no other command. In Rust, test
+    /// code: a `#[cfg(test)]` item, and every line of a file under a test
+    /// directory.
     Fixture,
+    /// A Rust comment: a line, doc or block comment.
+    Comment,
 }
 
 /// Where a needle stands on a line.
@@ -185,8 +191,9 @@ impl Line {
     ///
     /// Markdown code spans name their text. Shell comments, literal case
     /// patterns and strings printed to the terminal name their text, as
-    /// do the literals a test hands its stubs and assertions as data.
-    /// Executable substitutions, strings handed to other commands and
+    /// do the literals a test hands its stubs and assertions as data, and
+    /// Rust comments and Rust test code. Executable substitutions, strings
+    /// handed to other commands, a Rust string literal in shipped code and
     /// strings in languages this reader does not parse remain code.
     fn counts_at(&self, at: usize, reads: &[Quotation]) -> bool {
         !self
@@ -230,6 +237,10 @@ pub enum Reading<'a> {
     /// A shell script: comments and the strings a diagnostic command
     /// prints name their text, and so do a test's own literals.
     Shell(shell::Context<'a>),
+    /// A Rust file: comments name their text, and so does test code,
+    /// which is every line where `tests` says the file is under a test
+    /// directory.
+    Rust { tests: bool },
     /// Every other file is code from its first byte and quotes nothing.
     Plain,
 }
@@ -257,7 +268,7 @@ pub fn prepare(input: AuditInput) -> Prepared {
                 role: super::DocRole::Text,
                 lines: lines(
                     &text,
-                    language(&input.location, &text).reading(shell::Context::none()),
+                    language(&input.location, &text).reading(shell::Context::none(), false),
                 ),
                 written,
             });
@@ -364,7 +375,7 @@ fn tree_docs(
                 diagnostic: &diagnostic,
                 helpers: tests.then_some(&helpers),
             };
-            let split = lines(&cleaned.text, cleaned.language.reading(context));
+            let split = lines(&cleaned.text, cleaned.language.reading(context, tests));
             docs.push(Doc {
                 lines: match placed.supports {
                     Some(Supporting::Test | Supporting::Reference) => {
@@ -500,17 +511,20 @@ fn hook_docs(
         let language = language(root, &body);
         let diagnostic = match language {
             Language::Shell => shell::diagnostic_functions(&[&body]),
-            Language::Markdown | Language::Plain => BTreeSet::new(),
+            Language::Markdown | Language::Rust | Language::Plain => BTreeSet::new(),
         };
         docs.push(Doc {
             location: root.to_owned(),
             role: super::DocRole::Text,
             lines: lines(
                 &body,
-                language.reading(shell::Context {
-                    diagnostic: &diagnostic,
-                    helpers: None,
-                }),
+                language.reading(
+                    shell::Context {
+                        diagnostic: &diagnostic,
+                        helpers: None,
+                    },
+                    false,
+                ),
             ),
             written,
         });
@@ -540,8 +554,9 @@ struct Cleaned {
 ///
 /// What a fence does decide is which marks quote *inside* the line. A
 /// markdown document has prose to tell from its blocks at all; a shell
-/// file has comments and the strings it prints; every other file is code
-/// from its first byte, and `reading` says which this is.
+/// file has comments and the strings it prints; a Rust file has comments
+/// and test code; every other file is code from its first byte, and
+/// `reading` says which this is.
 ///
 /// The code spans come from here rather than from a line: a run of
 /// backticks may close on a later line, so only something holding the
@@ -567,6 +582,7 @@ pub fn lines(text: &str, reading: Reading<'_>) -> Vec<Line> {
             .map(marked(Quotation::CodeSpan))
             .collect(),
         Reading::Shell(context) => shell::quoted(&lower, context),
+        Reading::Rust { tests } => rust::quoted(&raw, tests),
         Reading::Plain => vec![Vec::new(); raw.len()],
     };
     raw.iter()
@@ -614,16 +630,19 @@ fn is_shell(location: &str, text: &str) -> bool {
 enum Language {
     Markdown,
     Shell,
+    Rust,
     Plain,
 }
 
 impl Language {
     /// How to read a document of this language, given the functions a
-    /// shell file is read against.
-    fn reading(self, context: shell::Context<'_>) -> Reading<'_> {
+    /// shell file is read against and whether the file is under a test
+    /// directory.
+    fn reading(self, context: shell::Context<'_>, tests: bool) -> Reading<'_> {
         match self {
             Language::Markdown => Reading::Markdown,
             Language::Shell => Reading::Shell(context),
+            Language::Rust => Reading::Rust { tests },
             Language::Plain => Reading::Plain,
         }
     }
@@ -632,6 +651,8 @@ impl Language {
 fn language(location: &str, text: &str) -> Language {
     if is_markdown(location) {
         Language::Markdown
+    } else if location.to_ascii_lowercase().ends_with(".rs") {
+        Language::Rust
     } else if is_shell(location, text) {
         Language::Shell
     } else {

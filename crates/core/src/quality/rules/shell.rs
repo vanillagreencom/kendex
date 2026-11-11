@@ -58,10 +58,11 @@ struct SafetyBypass;
 /// exists to stop `--no-verify` at Critical for the sentence that warns
 /// about it, and then for the comment explaining the refusal and the
 /// message it prints when refusing. A switch a document writes inside a
-/// code span, a shell comment or a printed string is that document
-/// naming the switch, and so is one a test hands a stub or an assertion
-/// as data; a switch standing as code is a switch, in whatever
-/// language the file is written. Every needle goes through
+/// code span, a shell or Rust comment or a printed string is that
+/// document naming the switch, and so is one a test hands a stub or an
+/// assertion as data, a shell test's comparison operand, and any switch
+/// in a Rust file's test code; a switch standing as code is a switch,
+/// in whatever language the file is written. Every needle goes through
 /// [`Line::standing`], which answers that and nothing else.
 impl AuditRule for SafetyBypass {
     fn id(&self) -> &'static str {
@@ -85,6 +86,7 @@ impl AuditRule for SafetyBypass {
                         Quotation::CodeSpan,
                         Quotation::ShellText,
                         Quotation::Fixture,
+                        Quotation::Comment,
                     ],
                 ) else {
                     continue;

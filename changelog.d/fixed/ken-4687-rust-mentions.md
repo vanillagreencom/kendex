@@ -1,0 +1,1 @@
+- The safety score reads a Rust file's comments, its `#[cfg(test)]` code and the Rust files under a package's test directory as naming a switch, not using it, and so reads the operands a shell test compares with `[`, `[[` or `test`, so a test's data or a doc comment no longer counts as turning permission prompts off; a string literal in shipped Rust code still does.

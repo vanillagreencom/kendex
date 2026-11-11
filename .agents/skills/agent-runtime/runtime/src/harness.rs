@@ -83,9 +83,7 @@ impl Harness {
     /// bills. `pi-claude/` is pi-claude-bridge on a Claude seat, so the seat
     /// is `CLAUDE_CONFIG_DIR`; `github-copilot/` and `anthropic/` are Pi's
     /// own root; any other Pi provider, or a Pi model naming none, takes the
-    /// Claude variable too. The same table routes orch's `lib/lane-launch.sh`
-    /// (`lane_env_prefix`, `lane_pick_harness`); it is held here as data for
-    /// every launcher.
+    /// Claude variable too.
     pub fn account_var(self, model: Option<&str>) -> &'static str {
         match self {
             Harness::Claude | Harness::Codex | Harness::Copilot => self.home_var(),
@@ -173,39 +171,24 @@ impl Harness {
         }
     }
 
-    /// The full-bypass permission words, the first spelling orch writes.
-    /// Pi has no permission word: its native posture asks nothing.
+    /// The full-bypass permission words a launch writes: the first
+    /// full-bypass spelling of [`Harness::permission_spellings`]. Pi has no
+    /// permission word: its native posture asks nothing.
     pub fn bypass_words(self) -> Vec<&'static str> {
-        match self {
-            Harness::Claude => vec!["--dangerously-skip-permissions"],
-            Harness::Codex => vec!["--dangerously-bypass-approvals-and-sandbox"],
-            Harness::Copilot => vec!["--allow-all"],
-            Harness::Pi => Vec::new(),
-        }
+        self.permission_spellings()
+            .into_iter()
+            .find(|(_, meaning)| *meaning == PermissionMeaning::FullBypass)
+            .map(|(spelling, _)| spelling)
+            .into_iter()
+            .collect()
     }
 
     /// Every permission spelling an unattended launch of this harness
-    /// accepts, with its meaning: the sixth column of orch's launch table
-    /// (`lib/lane-launch.sh`), its full-bypass subset the seventh. A
-    /// `FLAG=VALUE` spelling also matches the two-word `FLAG VALUE` form.
-    /// The builder adds its own permission word only where none of these
-    /// stands, and a `native` posture carrying a full-bypass spelling is a
-    /// mismatch.
-    ///
-    /// ```text
-    /// harness  accepted (sixth column)                                  full bypass (seventh)
-    /// claude   --dangerously-skip-permissions                            yes
-    ///          --permission-mode=bypassPermissions                       yes
-    ///          --permission-mode=dontAsk                                 no
-    /// codex    --dangerously-bypass-approvals-and-sandbox                yes
-    ///          --approve-for-me                                          no
-    ///          --ask-for-approval=never                                  no
-    ///          -a=never                                                  no
-    /// copilot  --allow-all                                               yes
-    ///          --yolo                                                    yes
-    ///          --allow-all-tools                                         no
-    /// pi       (none: its native posture asks nothing)
-    /// ```
+    /// accepts, with its meaning; the first full-bypass spelling is the one
+    /// a launch writes. A `FLAG=VALUE` spelling also matches the two-word
+    /// `FLAG VALUE` form. The builder adds its own permission word only
+    /// where none of these stands, and a `native` posture carrying a
+    /// full-bypass spelling is a mismatch.
     pub fn permission_spellings(self) -> Vec<(&'static str, PermissionMeaning)> {
         use PermissionMeaning::{FullBypass, Narrower};
         match self {

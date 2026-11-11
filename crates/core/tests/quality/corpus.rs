@@ -139,15 +139,17 @@ fn the_guard_hooks_scan_clean() {
 /// still lists. The launch table's comment naming the switch is a mention,
 /// read off the file at the line the mention reports, wherever it stands.
 ///
-/// The launch choice table of the launch-trust tests and the overseer-watch
-/// test library hand the launch lines
-/// they check to their stubs and assertions: a quoted string a test assigns
-/// or prints, and an argument of a function the tests define, on the line
-/// that names the function or a line continuing it. Each is a mention, and the
-/// skill scores clean. A reading that counted them again would be reading
-/// a test's data as a command, and this is where that fails; so does a
-/// table that lets an edit to the launcher's accepted line keep its
-/// acceptance
+/// The launch tests hand the launch lines they check to their stubs and
+/// assertions: a quoted string a test assigns or prints, and an argument
+/// of a function the tests define, on the line that names the function or
+/// a line continuing it. The stub a Rust test plants names the switch in
+/// its comment and compares its arguments with it in a `[` test. orch's
+/// Rust test code, its `#[cfg(test)]` items and every file under
+/// `tests/rust/`, spells the switch as the data it hands its fixtures.
+/// Each is a mention, and the skill scores clean. A reading that counted
+/// them again would be reading a test's data as a command, and this is
+/// where that fails; so does a table that lets an edit to the launcher's
+/// accepted line keep its acceptance
 /// (`allowance.rs::a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names`).
 #[test]
 fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
@@ -156,6 +158,13 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
     let fixtures = [
         "skills/orch/tests/lane-launch-rm-prompts.sh",
         "skills/orch/tests/lane-launch-trust.sh",
+        "skills/orch/tests/rust/fixtures/stub-bypass-gated/claude",
+        "skills/orch/runtime/src/effects/operation/host.rs",
+        "skills/orch/runtime/src/ops/walk.rs",
+        "skills/orch/tests/rust/controller.rs",
+        "skills/orch/tests/rust/effects.rs",
+        "skills/orch/tests/rust/walk.rs",
+        "skills/orch/tests/rust/watch_observe.rs",
     ];
     assert_eq!(found(&result), vec![], "{:#?}", result.findings);
     assert_eq!(result.safety.score, 100);

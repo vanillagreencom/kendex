@@ -7,7 +7,7 @@
 # `crates/core/tests/allowance.rs` fails while the table is stale. Read by
 # `crates/core/src/quality/allowance.rs`.
 
-ruleset = 8
+ruleset = 9
 
 [[package]]
 kind = "skill"
@@ -42,5 +42,5 @@ path = "runtime/src/harness.rs"
 
 [[package.file.finding]]
 rule = "safety-bypass"
-line-hash = "61f704fa1290ba7951ac9764e65853590ff37ae22e6ae455f6e59cec0f13a553"
+line-hash = "13815f40f3c4b9b8f37c05590ffdd89190483125362058a41fbc5ca588f34fb6"
 message = "`--dangerously-skip-permissions` turns off permission prompts"
