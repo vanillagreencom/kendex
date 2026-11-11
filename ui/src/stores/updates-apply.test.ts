@@ -34,6 +34,10 @@ vi.mock("sonner", () => ({
 
 const VG: Scope = { scope: "project", root: "/work/vg" };
 
+/** A place's last folder name, which these fixtures keep distinct. */
+const placeName = (scope: Scope): string =>
+  scope.scope === "global" ? "global" : (scope.root.split("/").at(-1) ?? "");
+
 const row = (overrides: Partial<UpdateRow>): UpdateRow =>
   updateRow("gh", null, {
     repo: "owner/catalog",
@@ -189,6 +193,75 @@ describe("what a bulk run says it did", () => {
     expect(dialog.open).toBe(true);
     expect(dialog.message).toBe("render bot instructions: disk full");
     expect(dialog.title).toContain("gh");
+  });
+
+  // Two places, one apply each, and both later steps failing: the dialog
+  // shows one thing at a time, and the second place's account taking the
+  // first's place would leave the first place's failed step unsaid.
+  it("names every place whose later step failed in one run", async () => {
+    const OTHER: Scope = { scope: "project", root: "/work/other" };
+    placeAnswers(null);
+    vi.mocked(commands.packageUpdateMany).mockImplementation(
+      async (scope) =>
+        ({
+          status: "ok",
+          data: {
+            view: {
+              ...view,
+              scope,
+              unfinished: `render bot instructions: ${placeName(scope)}`,
+            },
+            packages: [
+              answered(placeName(scope) === "vg" ? "gh" : "lint", {
+                moved: [
+                  rendering(
+                    placeName(scope) === "vg" ? "gh" : "lint",
+                    "claude",
+                  ),
+                ],
+              }),
+            ],
+          },
+        }) as never,
+    );
+
+    await useUpdatesStore
+      .getState()
+      .updateRows([row({ scope: VG }), row({ name: "lint", scope: OTHER })]);
+
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.title).toContain("gh");
+    expect(dialog.title).toContain("lint");
+    expect(dialog.message).toContain("render bot instructions: vg");
+    expect(dialog.message).toContain("render bot instructions: other");
+  });
+
+  // A dialog the person dismissed has been read: the next run's account
+  // is its own, with nothing of the last one carried into it.
+  it("starts a fresh account once the last one was dismissed", async () => {
+    placeAnswers({
+      status: "ok",
+      data: {
+        view: { ...view, unfinished: "render bot instructions: first" },
+        packages: [answered("gh", { moved: [rendering("gh", "claude")] })],
+      },
+    });
+    await useUpdatesStore.getState().updateRows([row({})]);
+    useProblemsStore.getState().closeError();
+    vi.mocked(commands.packageUpdateMany).mockResolvedValue({
+      status: "ok",
+      data: {
+        view: { ...view, unfinished: "render bot instructions: second" },
+        packages: [answered("lint", { moved: [rendering("lint", "claude")] })],
+      },
+    } as never);
+
+    await useUpdatesStore.getState().updateRows([row({ name: "lint" })]);
+
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.title).not.toContain("gh");
+    expect(dialog.message).toBe("render bot instructions: second");
   });
 
   // The count is packages, not renderings: one package written in two
