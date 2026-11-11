@@ -103,22 +103,17 @@ export interface Failure {
   actions: ErrorAction[];
 }
 
-/** What the dialog shows: one failure, and any later failures of the same
- *  run joined behind it. */
+/** What the dialog shows: the failure that opened it, and every later
+ *  failure said while it was still up. */
 interface ErrorDialogState extends Failure {
   open: boolean;
-  /** Failures of the run that opened the dialog, each said after the one
-   *  heading it, in the order they arrived. Empty outside a run. */
+  /** Failures said after the one heading the dialog and before it was
+   *  dismissed, in the order they arrived. */
   joined: Failure[];
-  /** The run that opened the dialog, or null when no run was in flight. */
-  run: number | null;
 }
 
 interface ProblemsStore {
   dialog: ErrorDialogState;
-  /** The run in flight, or null. A number rather than a flag so a run
-   *  joins only the dialog it opened, never one that was up before it. */
-  run: number | null;
   showError: (opts: {
     title: string;
     message?: string;
@@ -126,10 +121,6 @@ interface ProblemsStore {
     actions?: ErrorAction[];
   }) => void;
   closeError: () => void;
-  /** Run `work` as one run: every failure it says while the dialog it
-   *  opened is still up joins that dialog rather than replacing it. A run
-   *  inside a run is part of the outer one. */
-  inOneRun: <T>(work: () => Promise<T>) => Promise<T>;
 }
 
 const CLOSED: ErrorDialogState = {
@@ -138,42 +129,28 @@ const CLOSED: ErrorDialogState = {
   steps: [],
   actions: [],
   joined: [],
-  run: null,
 };
-
-let runs = 0;
 
 /** The one error modal for the whole app. A user-initiated action calls
  *  showError instead of toasting, so a failure always states what broke and
  *  how to fix it rather than flashing past in a corner.
  *
- *  The dialog shows one action's failure, and a later one replaces it. A
- *  run over several places or items is one action that can fail several
- *  times — one place refused, another's write landed with a step behind it
- *  failing — and a replace there would drop a failure the person never
- *  saw. So inside [`inOneRun`] every failure after the first joins the
- *  dialog, whatever kind it is; closing the dialog drops them all, and the
- *  run's next failure opens it afresh. */
-export const useProblemsStore = create<ProblemsStore>((set, get) => ({
+ *  A failure said while the dialog is up joins it rather than replacing
+ *  it, whatever said it. The dialog is modal, so whatever fails while it
+ *  is up was already under way: a later write of the same run over several
+ *  places, or another action still out. Replacing would drop a failure the
+ *  person never read, so the rule is the dialog's own and no caller opts
+ *  in. Closing the dialog drops them all, and a control acts only after
+ *  closing it, so its own failure opens the dialog afresh. */
+export const useProblemsStore = create<ProblemsStore>((set) => ({
   dialog: CLOSED,
-  run: null,
   showError: ({ title, message, steps = [], actions = [] }) =>
-    set(({ dialog, run }) => {
+    set(({ dialog }) => {
       const failure: Failure = { title, message, steps, actions };
-      if (run !== null && dialog.open && dialog.run === run) {
+      if (dialog.open) {
         return { dialog: { ...dialog, joined: [...dialog.joined, failure] } };
       }
-      return { dialog: { ...failure, open: true, joined: [], run } };
+      return { dialog: { ...failure, open: true, joined: [] } };
     }),
   closeError: () => set({ dialog: CLOSED }),
-  inOneRun: async (work) => {
-    if (get().run !== null) return work();
-    runs += 1;
-    set({ run: runs });
-    try {
-      return await work();
-    } finally {
-      set({ run: null });
-    }
-  },
 }));

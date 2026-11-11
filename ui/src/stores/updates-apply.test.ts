@@ -126,7 +126,6 @@ describe("what a bulk run says it did", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
   };

@@ -104,8 +104,8 @@ export const unfinishedTitle = (subject: string): string =>
   `${subject}: a step after the change failed`;
 export const UNFINISHED_STEP =
   "The change itself is in place, and the page shows what is on disk now.";
-// The error dialog's title over several failures of one run, each said
-// under its own title beneath it. Some may be writes that landed with a
+// The error dialog's title over several failures said before the person
+// dismissed it, each under its own title beneath it. Some may be writes that landed with a
 // step behind them failing and others refusals, so it claims neither.
 export const SEVERAL_FAILURES_TITLE = "Not everything finished";
 // A write whose answer never came back: the call failed on its way, so

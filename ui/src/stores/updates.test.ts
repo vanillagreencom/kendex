@@ -308,7 +308,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
 
@@ -347,7 +346,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
@@ -410,7 +408,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
@@ -443,7 +440,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
@@ -489,7 +485,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
@@ -520,7 +515,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
@@ -614,7 +608,6 @@ describe("updates store", () => {
           steps: [],
           actions: [],
           joined: [],
-          run: null,
         },
       });
       machineAnswers();
@@ -663,7 +656,6 @@ describe("updates store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({

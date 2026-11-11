@@ -66,7 +66,6 @@ describe("updates store: edited places", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
@@ -98,7 +97,6 @@ describe("updates store: edited places", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
@@ -169,7 +167,6 @@ describe("updates store: edited places", () => {
           steps: [],
           actions: [],
           joined: [],
-          run: null,
         },
       });
       write.answer();
@@ -197,7 +194,6 @@ describe("updates store: edited places", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
 
@@ -330,7 +326,6 @@ describe("updates store: installing beside an edited place", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.clearAllMocks();

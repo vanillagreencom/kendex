@@ -84,7 +84,6 @@ function freshZoomStore() {
       steps: [],
       actions: [],
       joined: [],
-      run: null,
     },
   });
   vi.clearAllMocks();

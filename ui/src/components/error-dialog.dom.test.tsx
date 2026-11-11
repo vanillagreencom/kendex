@@ -1,11 +1,15 @@
 // @vitest-environment jsdom
 import { act } from "react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { useProblemsStore } from "@/stores/problems";
 import { mount } from "@/test/dom";
 import { ErrorDialog } from "./error-dialog";
 
 vi.mock("@/bindings", () => ({ commands: {} }));
+
+beforeEach(() => {
+  act(() => useProblemsStore.getState().closeError());
+});
 
 // A failed write is a Result, and the dialog that reports it wears the
 // failed tone on its title.
@@ -18,27 +22,25 @@ it("titles a failed write in the failed Result tone", () => {
   expect(title?.textContent).toBe("Couldn't save");
 });
 
-// A run's failures each stand under their own title, and a control acts
+// Several failures each stand under their own title, and a control acts
 // on the failure it sits under: a footer of two Retry buttons could not
 // say which one retries what.
-it("states every failure of one run, each with its own controls", async () => {
+it("states every failure, each with its own controls", () => {
   const retried: string[] = [];
   mount(<ErrorDialog />);
-  await act(() =>
-    useProblemsStore.getState().inOneRun(async () => {
-      useProblemsStore.getState().showError({
-        title: "gh: a step after the change failed",
-        message: "render: denied",
-      });
-      useProblemsStore.getState().showError({
-        title: "Couldn't start managing lint",
-        message: "lint is locked",
-        actions: [{ label: "Retry", onClick: () => retried.push("lint") }],
-      });
-    }),
-  );
+  act(() => {
+    useProblemsStore.getState().showError({
+      title: "gh: a step after the change failed",
+      message: "render: denied",
+    });
+    useProblemsStore.getState().showError({
+      title: "Couldn't start managing lint",
+      message: "lint is locked",
+      actions: [{ label: "Retry", onClick: () => retried.push("lint") }],
+    });
+  });
   const dialog = document.body.querySelector('[role="dialog"]');
-  const sections = [...(dialog?.querySelectorAll("section") ?? [])];
+  const sections = [...(dialog?.querySelectorAll("section section") ?? [])];
   expect(
     sections.map((section) => [
       section.querySelector("h3")?.textContent,

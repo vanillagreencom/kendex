@@ -72,7 +72,6 @@ describe("settings store", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.clearAllMocks();
@@ -461,6 +460,7 @@ describe("settings store", () => {
     ] as const;
     expect(rows.length).toBeGreaterThan(0);
     for (const [_what, breakRead, message] of rows) {
+      useProblemsStore.getState().closeError();
       vi.mocked(commands.getSettings).mockResolvedValue({
         status: "ok",
         data: { settings, base: freshBase },

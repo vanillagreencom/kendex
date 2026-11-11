@@ -2,7 +2,6 @@ import type { DriftRow, HarnessId } from "@/bindings";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import { harnessName } from "@/lib/labels";
 import { sameScope } from "@/lib/scope";
-import { useProblemsStore } from "@/stores/problems";
 import { useScanStore } from "@/stores/scan";
 
 export interface SharedLink {
@@ -79,30 +78,26 @@ type Adopt = (
  * A folder shared through shortcuts needs its own confirmation, so the
  * first one found is handed back rather than adopted here.
  */
-export function adoptAll(
+export async function adoptAll(
   groups: MergedDriftRow[],
   linkOf: (group: MergedDriftRow) => SharedLink | null,
   adopt: Adopt,
 ): Promise<SharedLink | null> {
-  // One run: an item that landed with a step behind it failing does not
-  // stop the rest, so a later item's failure joins its account on screen.
-  return useProblemsStore.getState().inOneRun(async () => {
-    let shared: SharedLink | null = null;
-    let said = false;
-    for (const group of groups) {
-      const link = linkOf(group);
-      if (link) {
-        shared ??= link;
-        continue;
-      }
-      const harnesses = [
-        ...new Set(group.installations.map((row) => row.harness)),
-      ];
-      // Nothing carries past a failure, the deferred folder included: its
-      // confirmation would open against a page that is now wrong.
-      if (!(await adopt(group.kind, group.name, harnesses, said))) return null;
-      said = true;
+  let shared: SharedLink | null = null;
+  let said = false;
+  for (const group of groups) {
+    const link = linkOf(group);
+    if (link) {
+      shared ??= link;
+      continue;
     }
-    return shared;
-  });
+    const harnesses = [
+      ...new Set(group.installations.map((row) => row.harness)),
+    ];
+    // Nothing carries past a failure, the deferred folder included: its
+    // confirmation would open against a page that is now wrong.
+    if (!(await adopt(group.kind, group.name, harnesses, said))) return null;
+    said = true;
+  }
+  return shared;
 }

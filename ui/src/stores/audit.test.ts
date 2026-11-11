@@ -235,7 +235,6 @@ describe("audit store run() actions", () => {
         steps: [],
         actions: [],
         joined: [],
-        run: null,
       },
     });
     vi.clearAllMocks();
@@ -446,6 +445,67 @@ describe("audit store run() actions", () => {
     ]);
     expect(said[0].title).toContain("deploy");
     expect(said[1].title).toContain("lint");
+  });
+
+  // Switching a package off or deleting it writes once per place it is in,
+  // and goes on past a place whose write landed with a step behind it
+  // failing. No caller wraps those writes: the second place's failure,
+  // a refusal or another failed step, keeps the first place's on screen.
+  it("keeps the first place's failed step on screen past the second place's failure", async () => {
+    const project = { scope: "project" as const, root: "/work/vg" };
+    const actions = [
+      {
+        name: "toggle",
+        command: commands.toggleItem,
+        act: (scope: typeof globalScope | typeof project) =>
+          useAuditStore.getState().toggle(scope, "hook", "lint", false),
+      },
+      {
+        name: "remove",
+        command: commands.removeItem,
+        act: (scope: typeof globalScope | typeof project) =>
+          useAuditStore.getState().removeItem(scope, "hook", "lint"),
+      },
+    ];
+    type Answer = { unfinished: string } | { refused: string };
+    const seconds: { name: string; second: Answer; message: string }[] = [
+      {
+        name: "then refused",
+        second: { refused: "vg is locked" },
+        message: "vg is locked",
+      },
+      {
+        name: "then a failed step again",
+        second: { unfinished: "render: vg" },
+        message: "render: vg",
+      },
+    ];
+    expect(actions.length * seconds.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      for (const { name, second, message } of seconds) {
+        const row = `${action.name}, ${name}`;
+        useProblemsStore.getState().closeError();
+        vi.mocked(action.command).mockImplementation(async (scope) => {
+          const answer: Answer =
+            scope.scope === "global" ? { unfinished: "render: home" } : second;
+          return "refused" in answer
+            ? { status: "error", error: answer.refused }
+            : {
+                status: "ok",
+                data: { ...emptyView, scope, unfinished: answer.unfinished },
+              };
+        });
+
+        expect(await action.act(globalScope), row).toBe(true);
+        await action.act(project);
+
+        const { dialog } = useProblemsStore.getState();
+        expect(
+          [dialog, ...dialog.joined].map((failure) => failure.message),
+          row,
+        ).toEqual(["render: home", message]);
+      }
+    }
   });
 
   it("says nothing more about a write whose every step finished", async () => {

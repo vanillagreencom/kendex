@@ -85,84 +85,48 @@ describe("the error dialog's join rule", () => {
 
   const fail = (title: string) =>
     useProblemsStore.getState().showError({ title, message: `${title} why` });
-  const inOneRun = (work: () => Promise<void>) =>
-    useProblemsStore.getState().inOneRun(work);
+  const close = () => useProblemsStore.getState().closeError();
 
-  // Every state a failure can arrive in: with or without a run, over a
-  // closed dialog, over one the run opened, and over one the run did not.
-  it("joins a failure only to the dialog its own run opened", async () => {
-    const rows: {
-      name: string;
-      act: () => Promise<void>;
-      shown: string[];
-    }[] = [
+  // Every state a failure can arrive in: over a closed dialog, over one
+  // still up, and over one the person dismissed. Two loops' failures in
+  // flight at once are the same as one loop's: nothing tells them apart.
+  it("keeps every failure said until the person dismisses the dialog", () => {
+    const rows: { name: string; act: () => void; shown: string[] }[] = [
+      { name: "over a closed dialog", act: () => fail("a"), shown: ["a"] },
       {
-        name: "outside a run, over a closed dialog",
-        act: async () => fail("a"),
-        shown: ["a"],
+        name: "over a dialog still up",
+        act: () => {
+          fail("a");
+          fail("b");
+          fail("c");
+        },
+        shown: ["a", "b", "c"],
       },
       {
-        name: "outside a run, over an open dialog",
-        act: async () => {
+        name: "after the dialog was dismissed",
+        act: () => {
           fail("a");
+          close();
           fail("b");
         },
         shown: ["b"],
       },
       {
-        name: "in a run, over a dialog it opened",
-        act: () =>
-          inOneRun(async () => {
-            fail("a");
-            fail("b");
-            fail("c");
-          }),
-        shown: ["a", "b", "c"],
-      },
-      {
-        name: "in a run, over a dialog up before it began",
-        act: async () => {
+        name: "joined, then dismissed, then failed again",
+        act: () => {
           fail("a");
-          await inOneRun(async () => {
-            fail("b");
-            fail("c");
-          });
-        },
-        shown: ["b", "c"],
-      },
-      {
-        name: "in a run, after its dialog was dismissed",
-        act: () =>
-          inOneRun(async () => {
-            fail("a");
-            useProblemsStore.getState().closeError();
-            fail("b");
-          }),
-        shown: ["b"],
-      },
-      {
-        name: "in a run inside a run",
-        act: () =>
-          inOneRun(async () => {
-            fail("a");
-            await inOneRun(async () => fail("b"));
-            fail("c");
-          }),
-        shown: ["a", "b", "c"],
-      },
-      {
-        name: "after the run ended",
-        act: async () => {
-          await inOneRun(async () => fail("a"));
           fail("b");
+          close();
+          fail("c");
+          fail("d");
         },
-        shown: ["b"],
+        shown: ["c", "d"],
       },
     ];
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
-      useProblemsStore.getState().closeError();
-      await row.act();
+      close();
+      row.act();
       const { dialog } = useProblemsStore.getState();
       expect(dialog.open, row.name).toBe(true);
       expect(
@@ -170,17 +134,5 @@ describe("the error dialog's join rule", () => {
         row.name,
       ).toEqual(row.shown.map((title) => [title, `${title} why`]));
     }
-  });
-
-  it("ends the run when its work throws", async () => {
-    await expect(
-      inOneRun(async () => {
-        throw new Error("transport");
-      }),
-    ).rejects.toThrow("transport");
-    fail("a");
-    fail("b");
-
-    expect(useProblemsStore.getState().dialog.joined).toEqual([]);
   });
 });
