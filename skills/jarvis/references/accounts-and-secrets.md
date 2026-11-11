@@ -64,6 +64,8 @@ Restart=on-failure
 - Use the [1Password broker](#1password-broker) for that manager. Access another password manager through its own supported CLI. Read the selected item without displaying it.
 - Transfer a secret between tools through their own interfaces into a file with mode 600. Create the protected file before writing the value. Let only the intended receiving tool read it.
 - Never print the value, paste it into chat or place it in a handoff. Exclude it from logs and captures.
+- When a page, URL, redirect or dialog shows a new secret, never print its URL or page text, take a snapshot or capture a screenshot of that view. Move the value with a script that reads it from the page into its holder and prints only its length or fingerprint.
+- Before revoking, deleting or replacing a credential, name the exact key id read from the vendor's list, never a name or prefix. Read the list back after the action.
 - Remove the transfer file when the receiving operation ends. Revoke an exposed credential through its documented route.
 - Use [decisions.md:Evidence and risk](decisions.md#evidence-and-risk) for one purpose per credential, least privilege, protected storage and the shortest lifetime the platform offers.
 
