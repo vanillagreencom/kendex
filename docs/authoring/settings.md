@@ -30,7 +30,7 @@ Mark a key `# required` only when the consumer has to decide it and no default c
 
 The seeding rules are `crates/core/src/settings_seed.rs`.
 
-Refresh offers to remove an orphan comment block only when its complete bytes match a block the current template or a proven outgoing installed template could have seeded. A block immediately above any assignment stays. Consumer prose, a one-byte mismatch and historical text kendex cannot prove stay byte for byte. Refresh lists each removal before its existing confirmation; declining keeps the file, and `--yes` accepts. This adds no verification finding.
+Refresh offers to remove an orphan comment block only when its complete bytes match a block the current template or a proven outgoing installed template could have seeded. A block immediately above any assignment stays. Consumer prose, a one-byte mismatch and historical text kendex cannot prove stay byte for byte. Refresh lists each removal and asks. Where the refresh asks anyway, for an installed-set change, a Pi package or a recovery, that one question covers the removals. Otherwise the removals get their own question: declining keeps the comments, and the rest of the refresh still writes. `--yes` accepts. A refresh with no terminal and no `--yes` keeps the comments and does not ask. Once a refresh records a template that no longer has a key, the old template no longer proves that key's comment block, and refresh does not offer it again. This adds no verification finding.
 
 ## The grammar
 
