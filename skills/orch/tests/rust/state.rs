@@ -1,7 +1,9 @@
 //! The state verbs through the executable: the pointer writes under the
 //! record's lock, the file-bound appends, the value judge, the round caps
 //! and retry budgets, the post-PR stop, the fleet log and standing rows,
-//! the handoff record's places, the reads and the item's close-out.
+//! the handoff record's places, the reads and the item's close-out; and the
+//! named record writes the workflows run through `op`, which own the fields
+//! a pointer write is held to.
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests run the built binary and hold a record's lock themselves"
@@ -98,6 +100,22 @@ impl Store {
         let path = self.dir.path().join(name);
         fs::write(&path, text).unwrap();
         path.display().to_string()
+    }
+
+    /// The `result` of the named operation `request` on the item, given
+    /// whole on argv as a workflow's one line gives it.
+    fn op_ok(&self, request: &Value) -> Value {
+        self.ok(&["op", "--item", ITEM, "--request-json", &request.to_string()])
+    }
+
+    /// The refusal of `request` on the item, the record left byte for byte
+    /// as it stood.
+    fn op_refused(&self, request: &Value) -> (String, String) {
+        let path = self.item_path(ITEM);
+        let before = fs::read_to_string(&path).unwrap();
+        let refusal = self.refused(&["op", "--item", ITEM, "--request-json", &request.to_string()]);
+        assert_eq!(fs::read_to_string(&path).unwrap(), before, "{request}");
+        refusal
     }
 }
 
@@ -244,7 +262,8 @@ fn append_file_carries_bytes_the_shell_would_split_and_refuses_what_is_not_one_v
     store.init(ITEM);
     let cause = json!({
         "cause": "fs.rs::write_all's guard \"quoted\" $(whoami) `id` | ;\nsecond line\ttab",
-        "commit": "abc1234"
+        "commit": "abc1234",
+        "location": "fs.rs:12"
     });
     let file = store.write_file("cause.json", &cause.to_string());
     let pointer = "/pr_comment_review/patched_causes";
@@ -585,7 +604,8 @@ fn exists_answers_the_record_and_its_key_for_a_standing_and_a_missing_record() {
 /// refuses on, so the setting is the number of entries allowed; the write
 /// raises `rereview_cycles` itself and a refused write spends nothing; a
 /// `small` item holds the caps to its ceilings and its panels to three
-/// reviewers with the external lane counted.
+/// reviewers with the external lane counted. A pointer write of a panel is
+/// `record-panel`'s write, held to the panel's rules and shape alike.
 #[test]
 fn cap_flips_where_the_rereview_panel_write_refuses_and_tier_small_holds_the_ceilings() {
     let store = Store::new();
@@ -670,43 +690,66 @@ fn cap_flips_where_the_rereview_panel_write_refuses_and_tier_small_holds_the_cei
     assert_eq!(counted["verdict"], "below");
     assert_eq!(counted["limit"], 6);
 
-    let four = r#"{"agents": ["r1","r2","r3","r4"], "reason": "t", "external": false}"#;
-    let (key, _) = store.refused(&["state", "set", "--item", ITEM, "/first_panel", four]);
-    assert_eq!(key, "panel-bound");
-    let unmarked = r#"{"agents": ["r1"], "reason": "t"}"#;
-    let (key, _) = store.refused(&["state", "set", "--item", ITEM, "/first_panel", unmarked]);
-    assert_eq!(key, "panel-external");
-    let three_external = r#"{"agents": ["r1","r2","r3"], "reason": "t", "external": true}"#;
-    let (key, _) = store.refused(&[
-        "state",
-        "set",
-        "--item",
-        ITEM,
-        "/first_panel",
-        three_external,
-    ]);
-    assert_eq!(key, "panel-bound");
-    store.ok(&[
-        "state",
-        "set",
-        "--item",
-        ITEM,
-        "/first_panel",
-        r#"{"agents": ["r1","r2"], "reason": "t", "external": true}"#,
-    ]);
-    let copy = r#"{"agents": ["r1","r2"], "reason": "t", "external": false}"#;
-    let (key, line) = store.refused(&["state", "set", "--item", ITEM, "/verification_panel", copy]);
+    let panel = |which: &str, agents: Value, rest: Value| -> Value {
+        let mut request =
+            json!({"op": "record-panel", "panel": which, "agents": agents, "reason": "t"});
+        for (key, value) in rest.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    };
+    let four = panel(
+        "first",
+        json!(["r1", "r2", "r3", "r4"]),
+        json!({"external": false}),
+    );
+    assert_eq!(store.op_refused(&four).0, "panel-bound");
+    let unmarked = panel("first", json!(["r1"]), json!({}));
+    assert_eq!(store.op_refused(&unmarked).0, "panel-external");
+    let three_external = panel(
+        "first",
+        json!(["r1", "r2", "r3"]),
+        json!({"external": true}),
+    );
+    assert_eq!(store.op_refused(&three_external).0, "panel-bound");
+    let twice = panel("first", json!(["r1", "r1"]), json!({"external": false}));
+    assert_eq!(store.op_refused(&twice).0, "panel-agents");
+    store.op_ok(&panel(
+        "first",
+        json!(["r1", "r2"]),
+        json!({"external": true}),
+    ));
+    let copy = panel(
+        "verification",
+        json!(["r1", "r2"]),
+        json!({"external": false}),
+    );
+    let (key, line) = store.op_refused(&copy);
     assert_eq!(key, "panel-copy");
     assert!(line.ends_with("uncovered=r1,r2"), "{line}");
-    let reasoned = r#"{"agents": ["r1","r2"], "reason": "t", "external": false, "domain_reasons": {"r1": "fs", "r2": "docs"}}"#;
-    store.ok(&[
+    let reasoned = panel(
+        "verification",
+        json!(["r1", "r2"]),
+        json!({"external": false, "domain_reasons": {"r1": "fs", "r2": "docs"}}),
+    );
+    store.op_ok(&reasoned);
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["verification_panel"]["domain_reasons"],
+        json!({"r1": "fs", "r2": "docs"})
+    );
+    let (key, line) = store.refused(&[
         "state",
         "set",
         "--item",
         ITEM,
-        "/verification_panel",
-        reasoned,
+        "/first_panel",
+        r#"{"agents": ["r1"], "reason": "t", "external": false, "extra": 1}"#,
     ]);
+    assert_eq!(
+        key, "field-owned",
+        "a pointer write is held to the panel's shape"
+    );
+    assert!(line.contains("op=record-panel"), "{line}");
     let (key, _) = store.refused(&["state", "set", "--item", ITEM, "/tier", "Small"]);
     assert_eq!(key, "tier-value");
     let (key, _) = store.refused(&["state", "cap", "NOT_A_CAP"]);
@@ -2265,6 +2308,36 @@ fn set_and_append_write_every_pair_in_one_transition_and_a_refused_pair_writes_n
     let (key, _) = store.refused(&["state", "append", "--item", ITEM, "/c", "1", "/d"]);
     assert_eq!(key, "pair-unmatched");
     assert!(store.doc(&store.item_path(ITEM)).get("c").is_none());
+    // A field a named operation owns takes only what that operation writes,
+    // and the refusal lands none of the call's pairs.
+    let (key, line) = store.refused(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/c",
+        "1",
+        "/review_agents",
+        r#"[1]"#,
+    ]);
+    assert_eq!(key, "field-owned");
+    assert!(
+        line.contains("field=review_agents op=record-agents"),
+        "{line}"
+    );
+    let (key, _) = store.refused(&[
+        "state",
+        "append",
+        "--item",
+        ITEM,
+        "/fixed_items",
+        r#"{"description":"Fix"}"#,
+    ]);
+    assert_eq!(key, "field-owned", "a finding names its location");
+    let doc = store.doc(&store.item_path(ITEM));
+    assert!(doc.get("c").is_none());
+    assert_eq!(doc["review_agents"], json!([]));
+    assert_eq!(doc["fixed_items"], json!([]));
     store.init_fleet();
     let (key, _) = store.refused(&[
         "state",
@@ -2524,13 +2597,13 @@ fn close_all_closes_every_member_of_the_map() {
         "set",
         "--item",
         ITEM,
-        "/child_sessions",
+        "/members",
         r#"{"a":{"status":"open","pid":1},"b":null}"#,
     ]);
-    let closed = store.ok(&["state", "close-all", "--item", ITEM, "/child_sessions"]);
+    let closed = store.ok(&["state", "close-all", "--item", ITEM, "/members"]);
     assert_eq!(closed["closed"], 2);
     assert_eq!(
-        store.doc(&store.item_path(ITEM))["child_sessions"],
+        store.doc(&store.item_path(ITEM))["members"],
         json!({"a": {"status": "closed", "pid": 1}, "b": {"status": "closed"}})
     );
     assert_eq!(
@@ -2956,4 +3029,331 @@ fn the_lane_marks_judge_a_reading_alone_with_the_reserve_beside_the_plain_answer
         "1",
     ]);
     assert_eq!(key, "reserve-unpaired");
+}
+
+/// A git checkout under the store's root with one commit, and its HEAD.
+fn checkout(store: &Store) -> (String, impl Fn(&[&str]) -> String + '_) {
+    let git = |args: &[&str]| -> String {
+        let out = support::program("git")
+            .args(args)
+            .current_dir(store.dir.path())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    git(&["init", "-q", "repo"]);
+    git(&["-C", "repo", "config", "gc.auto", "0"]);
+    git(&["-C", "repo", "commit", "-q", "--allow-empty", "-m", "base"]);
+    (store.dir.path().join("repo").display().to_string(), git)
+}
+
+/// A CI round mints its own token beside the dev round's and opens no stage:
+/// its cleanup entries key on it and its fix runs as the dev round's work.
+#[test]
+fn a_ci_round_mints_its_own_token_and_opens_no_stage() {
+    let store = Store::new();
+    store.init(ITEM);
+    let dev = store.op_ok(&json!({"op": "begin-round", "kind": "dev"}));
+    let stages = store.doc(&store.item_path(ITEM))["stages"].clone();
+    let ci = store.op_ok(&json!({"op": "begin-round", "kind": "ci"}));
+    let doc = store.doc(&store.item_path(ITEM));
+    let token = &ci["report"]["round_id"];
+    assert!(token.is_string(), "{ci}");
+    assert_ne!(token, &dev["report"]["round_id"]);
+    assert_eq!(&doc["ci_round_id"], token);
+    assert_eq!(
+        doc["dev_round_id"], dev["report"]["round_id"],
+        "the dev round stands"
+    );
+    assert_eq!(doc["stages"], stages, "no stage opened or superseded");
+    assert_eq!(ci["report"]["superseded"], json!([]));
+}
+
+/// A round's base is the checkout's HEAD, read before the write, and only a
+/// review's fix round marks `review_fix_round`; a checkout that cannot be
+/// read writes nothing.
+#[test]
+fn a_round_base_records_the_checkouts_head_and_only_a_fix_round_marks_it() {
+    let store = Store::new();
+    store.init(ITEM);
+    let (repo, git) = checkout(&store);
+    let base = |worktree: &str, review_fix: bool| json!({"op": "record-round", "step": "base", "worktree": worktree, "review_fix": review_fix});
+    store.op_ok(&base(&repo, false));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        doc["pre_delegate_sha"],
+        git(&["-C", "repo", "rev-parse", "HEAD"])
+    );
+    assert!(doc.get("review_fix_round").is_none(), "{doc}");
+    git(&["-C", "repo", "commit", "-q", "--allow-empty", "-m", "fix"]);
+    store.op_ok(&base(&repo, true));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        doc["pre_delegate_sha"],
+        git(&["-C", "repo", "rev-parse", "HEAD"])
+    );
+    assert_eq!(doc["review_fix_round"], true);
+    let missing = store.dir.path().join("no-repo").display().to_string();
+    store.op_refused(&base(&missing, false));
+}
+
+/// The delegation time is stamped only on a minted round: a dev or CI
+/// round's on `dev_delegated_at`, a review round's on `review_delegated_at`.
+/// A round never minted refuses with the record unchanged.
+#[test]
+fn a_delegation_stamp_refuses_a_round_never_minted() {
+    let store = Store::new();
+    store.init(ITEM);
+    let stamp = |round: &str| json!({"op": "record-round", "step": "delegated", "round": round});
+    for round in ["dev", "review", "ci"] {
+        let (key, line) = store.op_refused(&stamp(round));
+        assert_eq!(key, "round-unminted", "{round}");
+        assert!(line.ends_with(&format!("round={round}")), "{line}");
+    }
+    store.op_ok(&json!({"op": "begin-round", "kind": "ci"}));
+    let before = now_secs();
+    store.op_ok(&stamp("ci"));
+    let doc = store.doc(&store.item_path(ITEM));
+    let at = doc["dev_delegated_at"].as_u64().unwrap();
+    assert!((before..=now_secs()).contains(&at), "{at}");
+    assert!(doc.get("review_delegated_at").is_none(), "{doc}");
+    store.op_ok(&json!({"op": "begin-round", "kind": "review"}));
+    store.op_ok(&stamp("review"));
+    let at = store.doc(&store.item_path(ITEM))["review_delegated_at"]
+        .as_u64()
+        .unwrap();
+    assert!((before..=now_secs()).contains(&at), "{at}");
+}
+
+/// A fix round counts on `cycles` and a comment triage pass on its own
+/// iterations, each from the count it finds, with the ledger beside it kept.
+#[test]
+fn a_counted_round_adds_one_to_its_own_counter() {
+    let store = Store::new();
+    store.init(ITEM);
+    let count =
+        |counter: &str| json!({"op": "record-round", "step": "counted", "counter": counter});
+    store.op_ok(&count("fix"));
+    store.op_ok(&count("fix"));
+    assert_eq!(store.op_ok(&count("external"))["value"], 1);
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["cycles"], 2);
+    assert_eq!(doc["pr_comment_review"]["iterations"], 1);
+    assert_eq!(
+        doc["pr_comment_review"]["fixes"],
+        json!([]),
+        "the ledger stands"
+    );
+}
+
+/// The reviewer set names each id and runtime type by one of its agents,
+/// each agent once; a return records its artifact and the agent's wave
+/// return once however often it is replayed; the dev round's sessions open
+/// `active` under their agent type and close together.
+#[test]
+fn the_reviewer_set_lists_only_its_agents_and_a_return_lands_once() {
+    let store = Store::new();
+    store.init(ITEM);
+    let step = |fields: Value| -> Value {
+        let mut request = json!({"op": "record-agents"});
+        for (key, value) in fields.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    };
+    store.op_ok(&step(json!({"step": "wave-start", "slots_observed": 3})));
+    let active = |agents: Value, ids: Value| {
+        step(
+            json!({"step": "active", "agents": agents, "ids": ids, "runtime_types": {"rev-a": "claude"}}),
+        )
+    };
+    store.op_ok(&active(json!(["rev-a", "rev-b"]), json!({"rev-a": "t1"})));
+    let (key, line) = store.op_refused(&active(json!(["rev-a"]), json!({"rev-c": "t3"})));
+    assert_eq!(key, "reviewer-unlisted");
+    assert!(line.ends_with("agent=rev-c"), "{line}");
+    let (key, _) = store.op_refused(&active(json!(["rev-a", "rev-a"]), json!({})));
+    assert_eq!(key, "reviewer-duplicate");
+    let returned = step(json!({"step": "returned", "artifact": "tmp/a.json", "agent": "rev-a"}));
+    store.op_ok(&returned);
+    let again = store.op_ok(&returned);
+    assert_eq!(again["artifact_recorded"], false);
+    assert_eq!(again["agent_recorded"], false);
+    store.op_ok(&step(json!({"step": "returned", "artifact": "tmp/b.json"})));
+    let (key, _) = store.op_refused(&step(json!({"step": "returned"})));
+    assert_eq!(key, "agents-field");
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["reviewer_slots_observed"], 3);
+    assert_eq!(doc["review_agents"], json!(["rev-a", "rev-b"]));
+    assert_eq!(doc["review_agent_ids"], json!({"rev-a": "t1"}));
+    assert_eq!(doc["json_paths"], json!(["tmp/a.json", "tmp/b.json"]));
+    assert_eq!(doc["review_wave_done"], json!(["rev-a"]));
+    store.op_ok(&step(json!({"step": "cleared"})));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["review_agents"], json!([]));
+    assert_eq!(doc["review_agent_ids"], json!({}));
+    assert_eq!(doc["review_wave_done"], json!([]));
+    assert_eq!(
+        doc["review_agent_runtime_types"],
+        json!({"rev-a": "claude"})
+    );
+
+    store.op_ok(&step(json!({
+        "step": "child-open",
+        "agent_type": "backend",
+        "agent_id": "a1",
+        "runtime_agent_type": "dev-backend",
+        "agent_type_fallback": null
+    })));
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["child_sessions"]["backend"],
+        json!({"status": "active", "agent_id": "a1", "runtime_agent_type": "dev-backend", "agent_type_fallback": null})
+    );
+    store.op_ok(&step(json!({"step": "children-closed"})));
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["child_sessions"]["backend"]["status"],
+        "closed"
+    );
+}
+
+/// A disposition moves one finding out of the arrays it leaves and into the
+/// one it lands in, read from its file or from an artifact's element with
+/// the named fields beside it, an empty field left out; an entry naming no
+/// location refuses with the record unchanged.
+#[test]
+fn a_disposition_moves_a_finding_and_refuses_one_without_its_location() {
+    let store = Store::new();
+    store.init(ITEM);
+    let fixed = store.write_file(
+        "fixed.json",
+        r#"{"description":"d","location":"a.rs:1","commit":"abc1234","source":"review"}"#,
+    );
+    let into_fixed = json!({"op": "record-disposition", "into": "fixed", "drop": ["fixed", "escalated"], "file": fixed});
+    store.op_ok(&into_fixed);
+    assert_eq!(
+        store.op_ok(&into_fixed)["dropped"],
+        1,
+        "a replay replaces the entry"
+    );
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["fixed_items"],
+        json!([{"description": "d", "location": "a.rs:1", "commit": "abc1234", "source": "review"}])
+    );
+    let artifact = store.write_file(
+        "artifact.json",
+        r#"{"blockers":[{"description":"d","location":"a.rs:1","severity":"high"}]}"#,
+    );
+    store.op_ok(&json!({
+        "op": "record-disposition",
+        "into": "escalated",
+        "drop": ["fixed"],
+        "file": artifact,
+        "element": "/blockers/0",
+        "fields": {"reason": "outstanding", "outcome": "blocked", "kind": ""}
+    }));
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["fixed_items"], json!([]));
+    assert_eq!(
+        doc["escalated_items"],
+        json!([{"description": "d", "location": "a.rs:1", "reason": "outstanding", "outcome": "blocked"}])
+    );
+    let unlocated = store.write_file("unlocated.json", r#"{"description":"Fix"}"#);
+    let (key, _) =
+        store.op_refused(&json!({"op": "record-disposition", "into": "fixed", "file": unlocated}));
+    assert_eq!(key, "disposition-entry");
+}
+
+/// Each ledger entry lands in its own array in the shape its readers take:
+/// a cause or a finding read from its file, a proposed rule once, a reply's
+/// outcome one of four, an issue under the triage or the audit that filed
+/// it, the baseline replaced whole. An entry outside its shape refuses with
+/// the record unchanged.
+#[test]
+fn each_ledger_entry_lands_in_its_own_array_in_its_readers_shape() {
+    let store = Store::new();
+    store.init(ITEM);
+    let ledger = |fields: Value| -> Value {
+        let mut request = json!({"op": "record-comment-ledger"});
+        for (key, value) in fields.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    };
+    let get = |pointer: &str| store.ok(&["state", "get", "--item", ITEM, pointer])["value"].take();
+    let rows: [(&str, &str, &str); 5] = [
+        (
+            "frozen-cause",
+            r#"{"cause":"c","issue":"KEN-1"}"#,
+            "/pr_comment_review/frozen_causes",
+        ),
+        (
+            "patched-cause",
+            r#"{"cause":"c","commit":"abc1234","location":"a.rs:1"}"#,
+            "/pr_comment_review/patched_causes",
+        ),
+        (
+            "proposed-rule",
+            r#""a rule""#,
+            "/pr_comment_review/proposed_rules",
+        ),
+        (
+            "fix",
+            r#"{"description":"d","location":"a.rs:1","commit":"abc1234","source":"copilot"}"#,
+            "/pr_comment_review/fixes",
+        ),
+        (
+            "skip",
+            r#"{"description":"d","reason":"r"}"#,
+            "/pr_comment_review/skipped",
+        ),
+    ];
+    for (entry, text, pointer) in rows {
+        let file = store.write_file(&format!("{entry}.json"), text);
+        store.op_ok(&ledger(json!({"entry": entry, "file": file})));
+        let want: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(get(pointer), json!([want]), "{entry}");
+    }
+    let rule = store.write_file("proposed-rule.json", r#""a rule""#);
+    let again = store.op_ok(&ledger(json!({"entry": "proposed-rule", "file": rule})));
+    assert_eq!(again["appended"], false, "a held rule is not appended");
+    store.op_ok(&ledger(json!({"entry": "reply", "source_id": "PRRT_1", "commit": "abc1234", "outcome": "already_fixed"})));
+    assert_eq!(
+        get("/pr_comment_review/replied"),
+        json!([{"source_id": "PRRT_1", "commit": "abc1234", "outcome": "already_fixed"}])
+    );
+    store.op_ok(&ledger(
+        json!({"entry": "issue", "id": "KEN-2", "origin": "triage"}),
+    ));
+    store.op_ok(&ledger(
+        json!({"entry": "issue", "id": "KEN-3", "origin": "audit"}),
+    ));
+    assert_eq!(get("/pr_comment_review/issues_created"), json!(["KEN-2"]));
+    assert_eq!(get("/audit_issues_created"), json!(["KEN-3"]));
+    store.op_ok(&ledger(
+        json!({"entry": "baseline", "last_threads": ["PRRT_1"]}),
+    ));
+    assert_eq!(
+        get("/pr_review_baseline"),
+        json!({"last_threads": ["PRRT_1"]})
+    );
+    assert_eq!(get("/pr_comment_review/iterations"), 0, "the count stands");
+
+    let stray = store.write_file(
+        "stray.json",
+        r#"{"cause":"c","commit":"abc1234","location":"a.rs:1","x":1}"#,
+    );
+    let (key, line) = store.op_refused(&ledger(json!({"entry": "patched-cause", "file": stray})));
+    assert_eq!(key, "ledger-entry");
+    assert!(line.contains("entry=patched-cause"), "{line}");
+    let unfiled = store.write_file("unfiled.json", r#"{"cause":"c"}"#);
+    let (key, _) = store.op_refused(&ledger(json!({"entry": "frozen-cause", "file": unfiled})));
+    assert_eq!(key, "ledger-entry");
+    let (key, _) = store.op_refused(&ledger(
+        json!({"entry": "reply", "source_id": "PRRT_2", "commit": "abc1234", "outcome": "merged"}),
+    ));
+    assert_eq!(key, "request-invalid");
 }

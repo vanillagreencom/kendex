@@ -124,7 +124,7 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
    ```
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"dev"}'
    ```
 
    Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states. The start under the admitted id is `orch-runtime validate start`'s, which the fix round reaches through `dev-validate-run --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`: a round that names its base takes the narrowest mode the project declares, `ci` where `DEV_VALIDATE_CI_CONTEXT` is declared and the base requires it, else `range` where `DEV_VALIDATE_RANGE_CMD` is declared, else the whole battery; a `--validate-mode full` on a project declaring a narrower mode is refused without a cause, and the mode is on the admitted entry's `proof`.
@@ -245,13 +245,13 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
    Then bind that file into the write for the bucket the item lands in. Fixed:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /fixed_items --drop /fixed_items --drop /escalated_items tmp/state-item-[ISSUE_ID].json
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-disposition","into":"fixed","drop":["fixed","escalated"],"file":"tmp/state-item-[ISSUE_ID].json"}'
    ```
 
    Escalated:
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /escalated_items --drop /fixed_items --drop /escalated_items tmp/state-item-[ISSUE_ID].json
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-disposition","into":"escalated","drop":["fixed","escalated"],"file":"tmp/state-item-[ISSUE_ID].json"}'
    ```
 
    A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes`, the one record [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:
@@ -261,13 +261,13 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
    ```
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/patched_causes tmp/patched-cause-[ISSUE_ID].json
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"patched-cause","file":"tmp/patched-cause-[ISSUE_ID].json"}'
    ```
 
    Copy `[LOCATION]` from the fixed item's header as written. Copy `[OWNER]` from its `Owner:` line as written; omit the `owner` key when the item has no such line.
 
    ```bash
-   .agents/skills/orch/scripts/orch-runtime state increment --item [ISSUE_ID] /cycles
+   .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"counted","counter":"fix"}'
    ```
 
    Each write clears the item from BOTH buckets before appending its own entry, matched on the RECORDED entry's (location, description), the § 8 key. One write per item, and the item stands in exactly one bucket, once.

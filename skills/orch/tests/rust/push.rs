@@ -1845,7 +1845,6 @@ mod qa {
                     "--request",
                     file.to_str().unwrap(),
                 ])
-                .env("LANE_MAIL_CLI", skills().join("mailbox/scripts/lane-mail"))
                 .current_dir(&self.repo);
             for (k, v) in env {
                 command.env(k, v);
@@ -2107,37 +2106,16 @@ mod qa {
         assert!(reply.get("advisory").is_none());
     }
 
+    /// The user's skip replaces the scanned routing with one that names no
+    /// signal, the record the review's QA step reads as nothing to run.
     #[test]
-    fn a_review_that_was_not_performed_is_recorded_and_never_holds_the_item() {
-        let change = Change::new(&[("a.rs", "x")], Some(json!([])));
-        let review = json!({"op": "record-qa-decision", "step": "review", "signal": "needs-perf-test", "performed": false, "reason": "no benchmark runner in this repository"});
-        let entry = result(&change.op(review.clone(), &[]));
-        assert_eq!(entry["gating"], false, "a review not performed never gates");
-        assert_eq!(entry["performed"], false);
-        assert_eq!(entry["reason"], "no benchmark runner in this repository");
-        assert_eq!(entry["notice"]["state"], "sent", "{entry}");
-        let again = result(&change.op(review, &[]));
-        assert_eq!(
-            again["notice"]["id"], entry["notice"]["id"],
-            "the same signal on the same head is told once"
-        );
-        let box_file = change.repo.join("tmp/lane-mail/ISSUE-1/to-overseer.jsonl");
-        assert_eq!(
-            fs::read_to_string(box_file).unwrap().lines().count(),
-            1,
-            "one notice"
-        );
-        assert_eq!(change.decision()["reviews"].as_array().unwrap().len(), 1);
-        let out = change.op(json!({"op": "record-qa-decision", "step": "review", "signal": "needs-review", "performed": false}), &[]);
-        assert_eq!(
-            refusal(&out),
-            "orch-runtime: review-reason signal=needs-review"
-        );
+    fn a_user_skip_replaces_the_routing_with_one_naming_no_signal() {
+        let change = Change::new(&[("a.rs", "x")], Some(json!(["needs-review"])));
         result(&change.scan("main", json!([]), &[]));
-        assert_eq!(
-            change.decision()["reviews"].as_array().unwrap().len(),
-            1,
-            "a rescan keeps the reviews"
-        );
+        assert_eq!(signals(&change.decision()), ["needs-review"]);
+        let skipped = result(&change.op(json!({"op": "record-qa-decision", "step": "skip"}), &[]));
+        let routing = json!({"signals": [], "agents": {}, "rationale": "user skip"});
+        assert_eq!(change.decision(), routing);
+        assert_eq!(skipped, routing);
     }
 }

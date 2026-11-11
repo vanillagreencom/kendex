@@ -237,11 +237,11 @@ The `fix set` is every § 5 row marked Fixing plus every `structural-close` row:
 Copy `[LOCATION]` from the fixed item's header as written. Copy `[OWNER]` from its `Owner:` line as written; omit the `owner` key when the item has no such line.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/frozen_causes [WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"frozen-cause","file":"[WORKTREE_PATH]/tmp/frozen-cause-[ISSUE_ID].json"}'
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/patched_causes [WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"patched-cause","file":"[WORKTREE_PATH]/tmp/patched-cause-[ISSUE_ID].json"}'
 ```
 
 ### 6.1 Delegate Fixes
@@ -259,7 +259,7 @@ Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting
 **Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) and record the head the verification pass below diffs against, once per fix set:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WORKTREE_PATH]"}'
 ```
 
 Group the `fix set` by `agent`. Before stamping each group's round, read the target PR and bind `[PR_OPEN]` by [dev-fix.md § 2](dev-fix.md#2-delegate) step 4:
@@ -287,7 +287,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"dev"}'
 ```
 
 Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states.
@@ -358,7 +358,7 @@ Apply the fix-round acceptance in [`dev-fix.md` § 2](dev-fix.md), which is cano
 **Verify before the push.** Every accepted fix round gets one focused pass over its diff, `[PRE_SHA]...HEAD`, by [review-pr.md § Bounded Re-Review](review-pr.md#bounded-re-review)'s rule for a fix diff no reviewer has seen, whatever `REVIEW_MAX_EXTERNAL_ROUNDS` reads. Its panel is that section's scoped panel over this diff: the reviewers whose domains it touches, and the domain reviewers § 2 routed the applied items to, whose defect classes the round fixed. A panel holding every `first_panel` reviewer carries that section's `domain_reasons`, or the runtime refuses it as `panel-copy`:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /verification_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "pr-comments fix round: [DOMAINS]"}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-panel","panel":"verification","agents":[PANEL_AGENTS_JSON],"reason":"pr-comments fix round: [DOMAINS]"}'
 ```
 
 Delegate and collect it as review-pr.md § 2.2 and § 3 do, with `Diff-range: [PRE_SHA]...HEAD`, closing its review entry with the `outcome` word [review-pr.md § 3.3](review-pr.md#33-present) computes from this pass's panel and accepted artifacts, then shut its reviewers down and clear their state with review-pr.md § 5's first write. Its blockers and `category == "fix"` suggestions re-enter § 5's disposition flow as findings of this pass; what survives joins this pass's `fix set` as a defect this diff introduces. Its `category == "issue"` suggestions go to § 6.2, as § 5 routes the triage reports' own; at the cap, where § 6.2 has already run, it runs once more for them after this pass. One verification pass runs per push: the fix it triggers joins the same push without a second pass, and the next external round reviews it.
@@ -406,7 +406,7 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /pr_comment_review/replied '{"source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"reply","source_id":"[THREAD_ID]","commit":"[COMMIT_SHA]","outcome":"[applied|skipped|blocked|already_fixed]"}'
 ```
 
 PR-level comments and human-only threads stay deferred to § 7.
@@ -414,7 +414,7 @@ PR-level comments and human-only threads stay deferred to § 7.
 This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Before the `pr-threads` read below, run § 1's current-head Copilot wait, except while the pull request is a draft, and route its reply by § 1's table: this is the one exception to checking without waiting for bots to re-review. Then check once, without waiting for bots to re-review, for comments that arrived while fixes were being applied, and loop or exit. Under `approval`, a Copilot thread posted after this read reaches the review gate's next call as `comments`; under the `off` gate mode, it reaches submit-pr's gate 3 and the readers [thread-read.md § What reads an open thread](../references/thread-read.md#what-reads-an-open-thread) lists.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state increment --item [ISSUE_ID] /pr_comment_review/iterations
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"counted","counter":"external"}'
 ```
 
 This is the only writer of `pr_comment_review.iterations` in any workflow: one triage pass advances the counter by exactly one, and a caller that runs this workflow writes neither it nor § 8's result arrays.
@@ -430,7 +430,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 A thread is new when its `threads[].id` is not in `known`. No new threads → § 7. Otherwise update the baseline and loop to § 1, at the cap as below it: the next pass analyzes the new threads and posts their dispositions, and § 6.1 is where the fix and the push stop:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_review_baseline '{"last_threads":[UNRESOLVED_THREAD_IDS]}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"baseline","last_threads":[UNRESOLVED_THREAD_IDS]}'
 ```
 
 ---
@@ -552,7 +552,7 @@ One tool call per block — each append runs per item. A fix and a skip entry ca
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/fixes [WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"fix","file":"[WORKTREE_PATH]/tmp/state-fix-[ISSUE_ID].json"}'
 ```
 
 ```json
@@ -560,13 +560,13 @@ One tool call per block — each append runs per item. A fix and a skip entry ca
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/skipped [WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"skip","file":"[WORKTREE_PATH]/tmp/state-skipped-[ISSUE_ID].json"}'
 ```
 
 An issue id is not finding text and stays inline:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /pr_comment_review/issues_created "[CREATED_ISSUE_ID]"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"issue","id":"[CREATED_ISSUE_ID]","origin":"triage"}'
 ```
 
 **Managed**: return to the parent workflow's next section. **Standalone**: return `.post_pr_stop` when present; otherwise the triage session is complete.

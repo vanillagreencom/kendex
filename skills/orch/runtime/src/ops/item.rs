@@ -25,26 +25,32 @@ use crate::state::{
     SummaryComment, ValidateJob,
 };
 
-/// The two round kinds `new-round-id` mints.
+/// The round kinds `begin-round` mints. A CI round keys its cleanup entries
+/// in `round_prunes` and opens no stage: its fix runs as a dev round's work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RoundKind {
     Dev,
     Review,
+    Ci,
 }
 
 impl RoundKind {
-    fn stage(self) -> StageKind {
+    pub(crate) const FIELDS: [&'static str; 3] = ["dev_round_id", "review_round_id", "ci_round_id"];
+
+    fn stage(self) -> Option<StageKind> {
         match self {
-            RoundKind::Dev => StageKind::Dev,
-            RoundKind::Review => StageKind::Review,
+            RoundKind::Dev => Some(StageKind::Dev),
+            RoundKind::Review => Some(StageKind::Review),
+            RoundKind::Ci => None,
         }
     }
 
     fn field(self) -> &'static str {
         match self {
-            RoundKind::Dev => "dev_round_id",
-            RoundKind::Review => "review_round_id",
+            RoundKind::Dev => Self::FIELDS[0],
+            RoundKind::Review => Self::FIELDS[1],
+            RoundKind::Ci => Self::FIELDS[2],
         }
     }
 }
@@ -527,6 +533,16 @@ pub(super) fn begin_round(
 ) -> Result<RoundBegun> {
     let round_id = env.round_id();
     let now = env.now_secs;
+    let Some(kind) = r.kind.stage() else {
+        state::set(doc, r.kind.field(), round_id.clone());
+        return Ok(RoundBegun {
+            kind: r.kind,
+            round_id,
+            start: now,
+            superseded: Vec::new(),
+            body_moved: false,
+        });
+    };
     let stages = stages(path, doc)?;
     // The kind's previous round is the last stage of the kind that
     // recorded a revision; the stamps are the tracker's own ISO 8601 UTC
@@ -534,7 +550,7 @@ pub(super) fn begin_round(
     let previous = stages
         .iter()
         .rev()
-        .filter(|s| s.kind == r.kind.stage())
+        .filter(|s| s.kind == kind)
         .find_map(|s| s.body_revision.as_deref());
     let body_moved = match (r.body_revision.as_deref(), previous) {
         (Some(now), Some(before)) => now > before,
@@ -544,7 +560,7 @@ pub(super) fn begin_round(
     let rows = state::array_mut(path, doc, "stages")?;
     let mut superseded = Vec::new();
     for (index, stage) in stages.iter().enumerate() {
-        if stage.kind == r.kind.stage() && stage.end.is_none() {
+        if stage.kind == kind && stage.end.is_none() {
             let row = state::element_mut(path, rows, index, "stages")?;
             state::set(row, "end", now);
             state::set(row, "superseded", true);
@@ -552,7 +568,7 @@ pub(super) fn begin_round(
         }
     }
     let mut row = json!({
-        "kind": r.kind.stage().word(),
+        "kind": kind.word(),
         "round_id": round_id,
         "start": now,
         "end": Value::Null,
@@ -568,6 +584,91 @@ pub(super) fn begin_round(
         superseded,
         body_moved,
     })
+}
+
+/// The count a round adds one to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Counter {
+    /// A dev fix round: `cycles`.
+    Fix,
+    /// A pass of the bot comments' triage: `pr_comment_review.iterations`.
+    External,
+}
+
+/// A round's records beside its token, tagged by `step`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "step", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RecordRound {
+    /// The checkout's HEAD as the round's base, `pre_delegate_sha`, read
+    /// before the transition; `review_fix` also marks the review's fix
+    /// round, which `REVIEW_MAX_CYCLES` 0 allows once.
+    Base {
+        worktree: PathBuf,
+        #[serde(default)]
+        review_fix: bool,
+    },
+    /// The delegation time of the minted round `round`: `dev_delegated_at`
+    /// for a dev or CI round, `review_delegated_at` for a review round. Its
+    /// own step, so a cleanup run between the mint and the delegation is not
+    /// counted against the agent's quiet window.
+    Delegated {
+        round: RoundKind,
+    },
+    Counted {
+        counter: Counter,
+    },
+}
+
+/// `head` is the checkout's HEAD a `base` step read before its transition.
+pub(crate) fn record_round(
+    path: &Path,
+    doc: &mut Document,
+    r: &RecordRound,
+    env: &Env,
+    head: Option<&str>,
+) -> Result<Value> {
+    match r {
+        RecordRound::Base { review_fix, .. } => {
+            let Some(head) = head else {
+                unreachable!("a base step reads its head before the transition")
+            };
+            state::set(doc, "pre_delegate_sha", head);
+            if *review_fix {
+                state::set(doc, "review_fix_round", true);
+            }
+            Ok(json!({"step": "base", "pre_delegate_sha": head, "review_fix_round": review_fix}))
+        }
+        RecordRound::Delegated { round } => {
+            let minted = doc
+                .get(round.field())
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty());
+            if !minted {
+                let word = serde_json::to_value(round)?;
+                return Err(agent_runtime::Error::refused(
+                    "round-unminted",
+                    &[("round", word.as_str().unwrap_or_default())],
+                )
+                .into());
+            }
+            let field = match round {
+                RoundKind::Dev | RoundKind::Ci => "dev_delegated_at",
+                RoundKind::Review => "review_delegated_at",
+            };
+            state::set(doc, field, env.now_secs);
+            Ok(json!({"step": "delegated", "field": field, "value": env.now_secs}))
+        }
+        RecordRound::Counted { counter } => {
+            let pointer = match counter {
+                Counter::Fix => "/cycles",
+                Counter::External => "/pr_comment_review/iterations",
+            };
+            let mut counted = super::store::increment(path, doc, pointer)?;
+            counted["step"] = json!("counted");
+            Ok(counted)
+        }
+    }
 }
 
 pub(super) fn record_validation_admission(

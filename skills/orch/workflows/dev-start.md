@@ -70,7 +70,7 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 Then stamp the round and apply the cleanup condition in [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Run each selected command as a separate tool call:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WORKTREE_PATH]"}'
 ```
 
 A standing dev round (`.dev_round_id` not null, as a bundled group's predecessor leaves it) is reconciled before the new round supersedes it, so its admitted runs close with their words: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` and run it with the command below; a run its reply reports `live` keeps running under the superseded round.
@@ -90,7 +90,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"dev"}'
 ```
 
 Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it; the dev agent runs it before each validation start, so the run is admitted, under the directory the runtime names, before any work starts.
@@ -106,7 +106,7 @@ Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line a
 After each spawn, persist the session:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /child_sessions/[AGENT_TYPE] '{"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"child-open","agent_type":"[AGENT_TYPE]","agent_id":"[AGENT_OR_TASK_ID]","runtime_agent_type":"[RUNTIME_AGENT_TYPE]","agent_type_fallback":[FALLBACK_REASON_JSON_OR_NULL]}'
 ```
 
 ### Single issue
@@ -234,7 +234,7 @@ The request names no `authorization`: this close is the lane's own acceptance of
 Read the structurally valid artifact passed by the caller, including a failing-validation artifact, and get its `summary`. For each bullet under `### Proposed Rules`, use the harness file tool to write the rule as one JSON string in `tmp/proposed-rule-[ISSUE_ID].json`. Append each rule to workflow state through this deduplicating update. Skip this step when the summary has no such bullet. `--unique` appends nothing where the array already holds that value.
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] --unique /pr_comment_review/proposed_rules tmp/proposed-rule-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-comment-ledger","entry":"proposed-rule","file":"tmp/proposed-rule-[ISSUE_ID].json"}'
 ```
 
 After all rules are stored, resolve the PR from the worktree:

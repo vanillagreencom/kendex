@@ -83,9 +83,17 @@ enum Verb {
     Op {
         #[command(flatten)]
         target: Target,
-        /// A JSON request tagged by `op`.
+        /// A JSON request tagged by `op`, read from this file.
+        #[arg(
+            long,
+            required_unless_present = "request_json",
+            conflicts_with = "request_json"
+        )]
+        request: Option<PathBuf>,
+        /// The JSON request itself. A request carrying a finding's or a
+        /// reviewer's own text names the file holding it.
         #[arg(long)]
-        request: PathBuf,
+        request_json: Option<String>,
         /// Exit by the live effect's outcome, the reply printed as ever:
         /// 0 confirmed, 3 failed, 75 unconfirmed with its intent left open.
         /// A transfer's or a stop's job is waited for within twice the
@@ -1380,11 +1388,36 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Op {
             target,
             request,
+            request_json,
             effect_exit,
         } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
-            let request = read_request(&request)?;
+            let origin = request
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("<request-json>"));
+            let decoded = |e: serde_json::Error| Error::Request {
+                path: origin.clone(),
+                cause: e.to_string(),
+            };
+            let value: serde_json::Value = match (&request, &request_json) {
+                (Some(file), _) => read_request(file)?,
+                (None, Some(text)) => serde_json::from_str(text).map_err(decoded)?,
+                (None, None) => unreachable!("clap requires one of the two"),
+            };
+            // A named record write starts no effect: it is one validated
+            // transition, answered with its report.
+            if let Some(record) = ops::records::Record::decode(&value) {
+                let record = record.map_err(decoded)?;
+                return ops::records::apply_record(
+                    &path,
+                    &record,
+                    &settings.store,
+                    &system_env()?,
+                    locking,
+                );
+            }
+            let request: Request = serde_json::from_value(value).map_err(decoded)?;
             // The target's kind is the precondition of every operation,
             // checked before anything is read: a verification must not
             // reach GitHub for a target it could never record on.

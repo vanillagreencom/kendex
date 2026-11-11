@@ -229,7 +229,7 @@ Omit sections with no data; include the sub-issue tree only for a bundle.
 Terminate every still-active agent in `child_sessions`, then retire the records:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state close-all --item [ISSUE_ID] /child_sessions
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"children-closed"}'
 ```
 
 ### 5.5 Merge

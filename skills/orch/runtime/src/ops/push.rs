@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::proof::{self, Hop};
-use super::{Env, loaded, reread};
+use super::{Env, findings, loaded, reread};
 use crate::error::{Error, Result};
 use crate::settings::{self, Settings};
 use crate::state::{self, Document, Locking};
@@ -370,42 +370,11 @@ fn apply_hops(doc: &mut Document, hops: &[Hop], key: &'static str) -> Vec<Reconc
             let count = doc.get("restacks").and_then(Value::as_u64).unwrap_or(0);
             state::set(doc, "restacks", count + 1);
         }
-        let remap = |items: &mut Vec<Value>| -> usize {
-            let mut moved = 0;
-            for item in items.iter_mut() {
-                if let Some(commit) = item.get("commit").and_then(Value::as_str)
-                    && !commit.is_empty()
-                {
-                    let mapped = proof::remap(commit, hop);
-                    if mapped != commit {
-                        item["commit"] = json!(mapped);
-                        moved += 1;
-                    }
-                }
-            }
-            moved
-        };
-        let mut fixed: Vec<Value> = match doc.get("fixed_items") {
-            Some(Value::Array(items)) => items.clone(),
-            _ => Vec::new(),
-        };
-        let mut review = match doc.get("pr_comment_review") {
-            Some(Value::Object(map)) => map.clone(),
-            _ => Map::new(),
-        };
-        let mut fixes: Vec<Value> = match review.get("fixes") {
-            Some(Value::Array(items)) => items.clone(),
-            _ => Vec::new(),
-        };
-        let fixed_items = remap(&mut fixed);
-        let pr_fixes = remap(&mut fixes);
         for (old, new) in hop {
             seen.insert(old.clone(), json!(new));
         }
         state::set(doc, "rebase_map", Value::Object(seen));
-        state::set(doc, "fixed_items", Value::Array(fixed));
-        review.insert("fixes".into(), Value::Array(fixes));
-        state::set(doc, "pr_comment_review", Value::Object(review));
+        let (fixed_items, pr_fixes) = findings::remap_commits(doc, hop);
         reports.push(Reconciled {
             key,
             map_entries: hop.len(),

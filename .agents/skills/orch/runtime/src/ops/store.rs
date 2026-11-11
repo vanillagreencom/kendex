@@ -13,17 +13,13 @@ use agent_runtime::clock;
 use agent_runtime::host;
 use serde_json::{Map, Value, json};
 
-use super::{Env, loaded, reread};
+use super::{Env, findings, loaded, reread, reviewers};
 use crate::error::{Error, Result, ShapeReason};
 use crate::settings::StoreSettings;
 use crate::state::{self, Document, Kind, Locking};
 use crate::watch::lanes::{HandoffReading, handoff_places, handoff_read};
 
-/// A small item's review panel holds this many reviewers, the external lane
-/// counted.
-const SMALL_TIER_PANEL_MAX: usize = 3;
 const TIERS: [&str; 3] = ["micro", "small", "standard"];
-const PANELS: [&str; 3] = ["first_panel", "rereview_panel", "verification_panel"];
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
@@ -156,7 +152,7 @@ pub fn judge(text: &str) -> Result<Value> {
 
 /// The one JSON value a file holds: `append-missing` where there is no
 /// file, `append-value` where it holds none or several.
-fn one_value(file: &Path) -> Result<Value> {
+pub(super) fn one_value(file: &Path) -> Result<Value> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -171,12 +167,12 @@ fn one_value(file: &Path) -> Result<Value> {
     }
 }
 
-fn tier(doc: &Document) -> Option<&str> {
+pub(super) fn tier(doc: &Document) -> Option<&str> {
     doc.get("tier").and_then(Value::as_str)
 }
 
 /// A whole-number count at `pointer`: an absent or null field is 0.
-fn count_at(path: &Path, doc: &Document, pointer: &str) -> Result<u64> {
+pub(super) fn count_at(path: &Path, doc: &Document, pointer: &str) -> Result<u64> {
     match get(doc, pointer)? {
         Value::Null => Ok(0),
         Value::Number(n) => n.as_u64().ok_or_else(|| {
@@ -504,7 +500,9 @@ pub struct Heal {
 /// record another writer moved between the read and the store is read again
 /// and the transition re-applied. A file the write names is read inside the
 /// transition, so its text never crosses argv and a re-applied transition
-/// reads it again.
+/// reads it again. A field a named operation owns is held to that
+/// operation's check before the store, so a pointer write lands nothing the
+/// operation would refuse.
 #[allow(
     clippy::disallowed_methods,
     reason = "the state verbs' one store write: the transition's document committed through the state module's write check"
@@ -520,6 +518,7 @@ pub fn run_write(
         let snapshot = loaded(path)?;
         let mut doc = snapshot.doc.clone();
         let report = transition(path, &mut doc, store, env, write)?;
+        super::records::check_owned(&snapshot.doc, &doc)?;
         state::store(path, &snapshot, &doc, locking)?;
         Ok(report)
     })
@@ -621,92 +620,19 @@ fn set(
                 .map_or_else(|| value.to_string(), str::to_owned);
             return Err(refused("tier-value", &[("value", &text)]));
         }
-        if PANELS.contains(&field) && value.is_object() {
-            panel_rules(doc, field, &value)?;
-            if field == "rereview_panel" {
-                return rereview_entry(path, doc, store, value);
-            }
+        // A whole panel is `record-panel`'s write, its rules and the
+        // rereview count with it.
+        if let Some(kind) = reviewers::PanelKind::of_field(field)
+            && value.is_object()
+        {
+            let panel: reviewers::Panel = serde_json::from_value(value).map_err(|e| {
+                super::records::owned_refusal(field, "record-panel", &e.to_string())
+            })?;
+            return reviewers::panel_write(path, doc, store, kind, &panel);
         }
     }
     *slot_mut(path, doc, pointer, &tokens)? = value.clone();
     Ok(json!({"pointer": pointer, "value": value}))
-}
-
-/// A `small` item's panel says whether the external lane runs and holds at
-/// most three reviewers with it; a fix-diff panel holding every
-/// `first_panel` reviewer names why the fix diff concerns each.
-fn agents_of(value: Option<&Value>) -> Vec<&str> {
-    value
-        .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default()
-}
-
-fn panel_rules(doc: &Document, field: &str, panel: &Value) -> Result<()> {
-    if tier(doc) == Some("small") {
-        let Some(external) = panel.get("external").and_then(Value::as_bool) else {
-            return Err(refused("panel-external", &[("field", field)]));
-        };
-        let agents = agents_of(panel.get("agents")).len() + usize::from(external);
-        if agents > SMALL_TIER_PANEL_MAX {
-            return Err(refused(
-                "panel-bound",
-                &[
-                    ("field", field),
-                    ("agents", &agents.to_string()),
-                    ("limit", &SMALL_TIER_PANEL_MAX.to_string()),
-                ],
-            ));
-        }
-    }
-    if field != "first_panel" {
-        let first = agents_of(doc.get("first_panel").and_then(|p| p.get("agents")));
-        let agents = agents_of(panel.get("agents"));
-        let why = panel.get("domain_reasons").and_then(Value::as_object);
-        if !first.is_empty() && first.iter().all(|a| agents.contains(a)) {
-            let uncovered: Vec<&str> = first
-                .iter()
-                .filter(|agent| {
-                    why.and_then(|w| w.get(**agent))
-                        .and_then(Value::as_str)
-                        .is_none_or(str::is_empty)
-                })
-                .copied()
-                .collect();
-            if !uncovered.is_empty() {
-                return Err(refused(
-                    "panel-copy",
-                    &[("field", field), ("uncovered", &uncovered.join(","))],
-                ));
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The `rereview_panel` write is the re-review cycle: it raises
-/// `rereview_cycles` in the same write it is gated on and refuses at
-/// `REVIEW_MAX_CYCLES`, so the setting is the number of entries allowed.
-fn rereview_entry(
-    path: &Path,
-    doc: &mut Document,
-    store: &StoreSettings,
-    panel: Value,
-) -> Result<Value> {
-    let entered = count_at(path, doc, "/rereview_cycles")?;
-    let limit = Cap::ReviewMaxCycles.limit(store, tier(doc))?;
-    if entered >= limit {
-        return Err(refused(
-            "cycle-cap",
-            &[
-                ("count", &entered.to_string()),
-                ("limit", &limit.to_string()),
-            ],
-        ));
-    }
-    state::set(doc, "rereview_panel", panel.clone());
-    state::set(doc, "rereview_cycles", entered + 1);
-    Ok(json!({"pointer": "/rereview_panel", "value": panel, "rereview_cycles": entered + 1}))
 }
 
 /// Append to the array at `pointer`, created when absent. The fleet log row
@@ -826,7 +752,7 @@ fn triaged_valid(row: &Value) -> Result<()> {
     }
 }
 
-fn increment(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
+pub(super) fn increment(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
     let tokens = tokens(pointer)?;
     let slot = slot_mut(path, doc, pointer, &tokens)?;
     let count = match slot {
@@ -1249,12 +1175,12 @@ pub fn handoff_standing(state_dir: &Path, item: &str, root: Option<&Path>) -> Re
 // The workflows' compound writes and the turn-end hook's own
 // ---------------------------------------------------------------------------
 
-fn same_finding(a: &Value, b: &Value) -> bool {
-    a.get("location") == b.get("location") && a.get("description") == b.get("description")
-}
-
 /// The array at `pointer`, created where absent.
-fn array_at<'a>(path: &Path, doc: &'a mut Document, pointer: &str) -> Result<&'a mut Vec<Value>> {
+pub(super) fn array_at<'a>(
+    path: &Path,
+    doc: &'a mut Document,
+    pointer: &str,
+) -> Result<&'a mut Vec<Value>> {
     let tokens = tokens(pointer)?;
     let slot = slot_mut(path, doc, pointer, &tokens)?;
     if slot.is_null() {
@@ -1289,43 +1215,14 @@ fn upsert(
     Ok(json!({"pointer": pointer, "value": value, "replaced": replaced, "length": items.len()}))
 }
 
+/// The bucket verb is `record-disposition`'s move over pointers: the
+/// findings module reads the entry and moves it.
 fn bucket_write(path: &Path, doc: &mut Document, bucket: &Bucket) -> Result<Value> {
-    let value = one_value(&bucket.file)?;
-    let mut entry = match &bucket.element {
-        None => value,
-        Some(element) => {
-            let Some(found) = value.pointer(element) else {
-                return Err(refused(
-                    "bucket-element",
-                    &[("file", &text_of(&bucket.file)), ("element", element)],
-                ));
-            };
-            json!({
-                "description": found.get("description").cloned().unwrap_or(Value::Null),
-                "location": found.get("location").cloned().unwrap_or(Value::Null),
-            })
-        }
-    };
-    let Value::Object(fields) = &mut entry else {
-        return Err(refused("bucket-entry", &[("file", &text_of(&bucket.file))]));
-    };
-    for (name, value) in &bucket.fields {
-        if !value.is_empty() {
-            fields.insert(name.clone(), Value::String(value.clone()));
-        }
-    }
-    let mut dropped = 0;
-    for pointer in &bucket.drop {
-        let items = array_at(path, doc, pointer)?;
-        let before = items.len();
-        items.retain(|item| !same_finding(item, &entry));
-        dropped += before - items.len();
-    }
-    array_at(path, doc, &bucket.into)?.push(entry.clone());
-    Ok(json!({"into": bucket.into, "entry": entry, "dropped": dropped}))
+    let entry = findings::entry_of(&bucket.file, bucket.element.as_deref(), &bucket.fields)?;
+    findings::bucket(path, doc, &bucket.into, &bucket.drop, entry)
 }
 
-fn close_all(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
+pub(super) fn close_all(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
     let tokens = tokens(pointer)?;
     let slot = slot_mut(path, doc, pointer, &tokens)?;
     if slot.is_null() {

@@ -289,7 +289,7 @@ To target a state directory from a worktree, pass the global `--state-dir <path>
 .agents/skills/orch/scripts/orch-runtime state append --item PROJ-123 /json_paths "review.json"
 .agents/skills/orch/scripts/orch-runtime state set --item PROJ-123 /pr_review/mode approval
 .agents/skills/orch/scripts/orch-runtime state set --item PROJ-123 /pr_review_baseline '{"last_threads":["PRRT_kwDOABC123","PRRT_kwDODEF456"]}'
-.agents/skills/orch/scripts/orch-runtime --state-dir /path/to/tmp state append --item PROJ-123 /fixed_items '{"description":"Fix"}'
+.agents/skills/orch/scripts/orch-runtime --state-dir /path/to/tmp state append --item PROJ-123 /fixed_items '{"description":"Fix","location":"src/lib.rs:10"}'
 ```
 
 ## Finding occurrences

@@ -83,7 +83,7 @@ Wait for every reviewer. Under an unlimited budget do NOT shut them down before 
 Extract the report path and verdict from each return; halt and report if any return does not carry them. Apply the shared contract's acceptance to each returned file. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. Append each accepted path:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /json_paths "[PATH]"
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-agents","step":"returned","artifact":"[PATH]"}'
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -141,7 +141,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 Complete [Record verified findings](../schemas/workflow-state.md#record-verified-findings) for this local batch. An empty fix set goes to the filing route below or § 5; otherwise, with either key:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WT_PATH]
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"base","worktree":"[WT_PATH]"}'
 ```
 
 **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not repeat them here.

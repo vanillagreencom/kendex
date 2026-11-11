@@ -40,7 +40,11 @@ pub mod prune;
 pub mod push;
 pub mod qa;
 pub mod queue_watch;
+// The named record writes and the modules that own their fields.
+mod findings;
+pub mod records;
 pub mod review_artifact;
+mod reviewers;
 pub mod store;
 pub mod successor;
 #[cfg(test)]
@@ -278,9 +282,8 @@ pub enum Request {
     /// The round's Cargo prune; `item::prune_round` runs it, since the
     /// cleanup comes between its record's writes.
     PruneRound(PruneRound),
-    /// The review's QA routing and the reviews that were not performed;
-    /// the `qa` module runs it, since the diff reads and the notice come
-    /// before and between its writes.
+    /// The review's QA routing; the `qa` module runs it, since the diff
+    /// reads come before its write.
     RecordQaDecision(qa::RecordQaDecision),
 }
 

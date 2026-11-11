@@ -1,6 +1,5 @@
 //! `record-qa-decision`: the QA routing of a review's verdict pass, recorded
-//! as the item's `qa_decision`, and the record of a QA review that could not
-//! be performed.
+//! as the item's `qa_decision`.
 //!
 //! The scan collects the round's signals over `BASE...HEAD` in the worktree:
 //! the dev round's `qa_labels`, a diff line matching unsafe code or atomics,
@@ -10,9 +9,7 @@
 //! signal gates only where the repository declares the review's runner,
 //! workload and baseline; without them it is recorded advisory, so it is
 //! never dropped unseen and never delegated to a review that cannot give a
-//! verdict. A review that reports it was not performed is recorded with its
-//! reason, never gates, and the overseer is told once per signal and head.
-use std::fs;
+//! verdict.
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -22,7 +19,6 @@ use serde_json::{Map, Value, json};
 
 use super::{loaded, reread};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Noticed, Refusal};
 use crate::settings::Settings;
 use crate::state::{self, Locking};
 
@@ -93,13 +89,11 @@ pub enum RecordQaDecision {
         #[serde(default)]
         judgments: Vec<Judgment>,
     },
-    Review {
-        signal: Signal,
-        performed: bool,
-        #[serde(default)]
-        reason: Option<String>,
-    },
+    /// The user skipped QA: the routing names no signal.
+    Skip {},
 }
+
+const SKIP_RATIONALE: &str = "user skip";
 
 fn refuse(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -424,122 +418,6 @@ fn update<T>(
     })
 }
 
-/// The notice the overseer is told by, written beside the item's other
-/// round files in the worktree.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the not-performed notice's text, written once before its one send"
-)]
-fn notice_file(
-    worktree: &Path,
-    item: &str,
-    signal: Signal,
-    head: &str,
-    reason: &str,
-) -> std::io::Result<PathBuf> {
-    let dir = worktree.join("tmp");
-    fs::create_dir_all(&dir)?;
-    let file = dir.join(format!("qa-not-performed-{item}-{}.md", signal.word()));
-    fs::write(
-        &file,
-        format!(
-            "QA review not performed: {} at {head}. Reason: {reason}. It is recorded and does not gate the item.\n",
-            signal.word()
-        ),
-    )?;
-    Ok(file)
-}
-
-fn review(
-    path: &Path,
-    settings: &Settings,
-    signal: Signal,
-    performed: bool,
-    reason: Option<&str>,
-    locking: Locking,
-) -> Result<Value> {
-    let item = state::item_of(path).unwrap_or_default().to_owned();
-    let doc = loaded(path)?.doc;
-    let worktree = doc
-        .get("worktree")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    if worktree.is_empty() {
-        return Err(refuse("worktree-unrecorded", &[("issue", &item)]));
-    }
-    let (code, head) = git(Path::new(&worktree), "head", &["rev-parse", "HEAD"]);
-    if code != Some(0) || head.is_empty() {
-        return Err(refuse("head-unread", &[("worktree", &worktree)]));
-    }
-    let reason = reason.unwrap_or("").trim().to_owned();
-    if !performed && reason.is_empty() {
-        return Err(refuse("review-reason", &[("signal", signal.word())]));
-    }
-    let entry = json!({
-        "signal": signal.word(),
-        "head": head,
-        "performed": performed,
-        "reason": reason,
-        "gating": false,
-        "notice": if performed { Value::Null } else { json!({"state": "owed"}) },
-    });
-    let created = update(path, locking, |doc| {
-        let decision = doc
-            .entry("qa_decision")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .ok_or_else(|| refuse("qa-decision-shape", &[]))?;
-        let reviews = decision
-            .entry("reviews")
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .ok_or_else(|| refuse("qa-decision-shape", &[]))?;
-        if !performed
-            && let Some(standing) = reviews.iter().find(|r| {
-                r["signal"] == signal.word()
-                    && r["head"] == head.as_str()
-                    && r["performed"] == false
-            })
-        {
-            return Ok(Err(standing.clone()));
-        }
-        reviews.push(entry.clone());
-        Ok(Ok(reviews.len() - 1))
-    })?;
-    let index = match created {
-        Err(standing) => return Ok(standing),
-        Ok(index) => index,
-    };
-    if performed {
-        return Ok(entry);
-    }
-    let sent = match notice_file(Path::new(&worktree), &item, signal, &head, &reason) {
-        Err(e) => json!({"state": "refused", "cause": e.to_string()}),
-        Ok(file) => match Mailbox::new(settings.lane_mail_cli.clone()).notice(
-            &item,
-            Path::new(&worktree),
-            &file,
-            None,
-        ) {
-            Ok(Noticed::Sent { id } | Noticed::Repeated { id }) => {
-                json!({"state": "sent", "id": id})
-            }
-            Err(Refusal::Unanswered { cause, .. }) => json!({"state": "unknown", "cause": cause}),
-            Err(other) => json!({"state": "refused", "cause": other.to_string()}),
-        },
-    };
-    update(path, locking, |doc| {
-        let slot = doc
-            .get_mut("qa_decision")
-            .and_then(|d| d.get_mut("reviews"))
-            .and_then(|r| r.get_mut(index))
-            .ok_or_else(|| refuse("qa-decision-shape", &[]))?;
-        slot["notice"] = sent.clone();
-        Ok(slot.clone())
-    })
-}
-
 /// Run `r` against the item record at `path`.
 pub fn run(
     path: &Path,
@@ -552,29 +430,37 @@ pub fn run(
             worktree,
             base,
             judgments,
-        } => {
-            // A rescan replaces the routing and keeps the reviews already
-            // recorded, so a review's notice is never owed twice.
-            update(path, locking, |doc| {
-                let mut decision = scan(settings, doc, worktree, base, judgments)?;
-                if let Some(reviews) = doc.get("qa_decision").and_then(|d| d.get("reviews")) {
-                    decision["reviews"] = reviews.clone();
-                }
-                state::set(doc, "qa_decision", decision.clone());
-                Ok(decision)
-            })
-        }
-        RecordQaDecision::Review {
-            signal,
-            performed,
-            reason,
-        } => review(
-            path,
-            settings,
-            *signal,
-            *performed,
-            reason.as_deref(),
-            locking,
-        ),
+        } => update(path, locking, |doc| {
+            let decision = scan(settings, doc, worktree, base, judgments)?;
+            state::set(doc, "qa_decision", decision.clone());
+            Ok(decision)
+        }),
+        RecordQaDecision::Skip {} => update(path, locking, |doc| {
+            let decision = json!({"signals": [], "agents": {}, "rationale": SKIP_RATIONALE});
+            state::set(doc, "qa_decision", decision.clone());
+            Ok(decision)
+        }),
     }
+}
+
+/// The routing as the record holds it: the review runs the agent of each
+/// signal, and a performance signal no declared runner can review stands
+/// advisory beside them.
+#[derive(Deserialize)]
+struct Decision {
+    #[serde(rename = "signals")]
+    _signals: Vec<Signal>,
+    #[serde(rename = "agents")]
+    _agents: std::collections::BTreeMap<String, String>,
+    #[serde(rename = "rationale")]
+    _rationale: String,
+    #[serde(default, rename = "advisory")]
+    _advisory: Option<Vec<Value>>,
+}
+
+/// The check a pointer write of `qa_decision` is held to.
+pub(crate) fn check_decision(now: &Value) -> std::result::Result<(), String> {
+    serde_json::from_value::<Option<Decision>>(now.clone())
+        .map(drop)
+        .map_err(|e| e.to_string())
 }

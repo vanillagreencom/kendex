@@ -2119,24 +2119,24 @@ pub(crate) mod fixtures {
     pub const FLEET: &str = include_str!("../../tests/rust/fixtures/workflow-state-oversee.json");
     pub const NEWER: &str = include_str!("../../tests/rust/fixtures/workflow-state-newer.json");
 
-    /// The init fields later than 2026-09-02 removed, the shape of a state
-    /// file an older `workflow-state init` wrote and a live fleet never
-    /// re-initialized.
-    pub const PRE_2026_INIT_FIELDS: &[&str] = &[
+    /// The init fields a standing record may lack: one written before the
+    /// init object named them still loads, since nothing re-initializes a
+    /// standing record.
+    pub const LATER_INIT_FIELDS: &[&str] = &[
         "finding_occurrences",
         "near_ceiling",
         "post_pr_budgets",
         "post_pr_stop",
     ];
 
-    /// `text` without the keys in `PRE_2026_INIT_FIELDS`, serialized the way
+    /// `text` without the keys in `LATER_INIT_FIELDS`, serialized the way
     /// this runtime writes, so a byte comparison after an unchanged store
     /// is exact.
     pub fn without_init_fields(text: &str) -> String {
         let serde_json::Value::Object(mut map) = serde_json::from_str(text).unwrap() else {
             panic!("fixture is not an object")
         };
-        for key in PRE_2026_INIT_FIELDS {
+        for key in LATER_INIT_FIELDS {
             assert!(map.shift_remove(*key).is_some(), "{key} in the fixture");
         }
         let mut out = serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap();
@@ -2207,7 +2207,7 @@ mod tests {
             let path = write(dir.path(), name, &uninitialized);
             let s = snapshot(&path);
             validate(&path, &s).unwrap();
-            for key in fixtures::PRE_2026_INIT_FIELDS {
+            for key in fixtures::LATER_INIT_FIELDS {
                 assert!(!s.doc.contains_key(*key), "{name}: {key}");
             }
             // An unchanged store writes the same bytes back.

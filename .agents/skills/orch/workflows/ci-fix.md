@@ -74,7 +74,7 @@ Infer the agent from the component paths or issue labels. Apply [Delegation](../
 Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Each command takes the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone. The mint stores the token at `ci_round_id` and answers it as `result.value`:
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state new-round-id --item [ISSUE_ID] /ci_round_id
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"begin-round","kind":"ci"}'
 ```
 
 Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to the round's prune, recorded under the CI token: write `tmp/prune-round-[ISSUE_ID].json` with the harness file tool as `{"op": "prune-round", "field": "ci"}`, then run it:
@@ -84,7 +84,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```
 
 ```bash
-.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
+.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request-json '{"op":"record-round","step":"delegated","round":"ci"}'
 ```
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
