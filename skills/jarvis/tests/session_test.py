@@ -17,7 +17,7 @@ import socket
 import struct
 import termios
 import threading
-from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
+from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher, shorten_account_settle
 import shlex
 import subprocess
 import sys
@@ -836,6 +836,20 @@ class SessionContract(unittest.TestCase):
         # unittest releases later acquisitions first, including on failure.
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
+        # Each row runs its own copy of the scripts, with the short account
+        # settle pause; the copy holds scripts/ only, so other fixtures are
+        # read from source_skills. github stays a link: the succession
+        # controls' tree has none, and a row reaches it only where setsid is
+        # missing (lane_run_detached).
+        self.source_skills = SKILLS
+        skills = self.root / "skills"
+        for package in ("jarvis", "orch", "mailbox"):
+            shutil.copytree(SKILLS / package / "scripts", skills / package / "scripts")
+        (skills / "github").symlink_to(SKILLS / "github", target_is_directory=True)
+        shorten_account_settle(skills)
+        installed = patch.dict(globals(), {"SKILLS": skills, "SCRIPT": skills / SCRIPT.relative_to(SKILLS)})
+        installed.start()
+        self.addCleanup(installed.stop)
         self.home = self.root / "home"
         self.home.mkdir()
         # The fixture home has no Git repository and holds fixture files, so
@@ -1858,7 +1872,7 @@ class SessionContract(unittest.TestCase):
     def test_trust_dialog_is_refused(self):
         # Copilot CLI 1.0.88's folder-trust question holds a new home before
         # its start; the refusal names it well inside the launch bound.
-        capture = SKILLS / "orch/tests/fixtures/oversee-watch/copilot-dialog-trust.txt"
+        capture = self.source_skills / "orch/tests/fixtures/oversee-watch/copilot-dialog-trust.txt"
         question = next(re.sub(r"^[\s│]+|[\s│]+$", "", line) for line in capture.read_text().splitlines()
                         if "Do you trust the files" in line)
         fixture = self.home / ".fixture.json"
