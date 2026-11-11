@@ -31,7 +31,7 @@ A folder qualifies when it is its own Git root, lies inside no other Git work tr
 - kendex's `kendex.toml`, `kendex.settings.toml`, `.kendex-lock.json`, `.kendex-generated.json`, `.cache`, `.kendex` and `.kendex-local`;
 - the harness folders and files kendex writes: `.agents`, `.claude`, `.codex`, `.github`, `.pi`, `.opencode`, `.cursor`, `.gemini`, `.mcp.json`, `opencode.json` and `opencode.jsonc`.
 
-Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can set up the commit-guards hooks. `git init` alone does not separate a folder inside a project from that project. When the enclosing project has kendex or harness files, `kendex add` there installs into the enclosing project; otherwise it installs into the folder, and this step refuses the folder as `inside-work-tree`.
+Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can offer to commit the files it writes and to set up the commit-guards hooks. [Install](../README.md#install) lists the questions `kendex add` asks and the answer each one needs. `git init` alone does not separate a folder inside a project from that project. When the enclosing project has kendex or harness files, `kendex add` there installs into the enclosing project; otherwise it installs into the folder, and this step refuses the folder as `inside-work-tree`.
 
 In a qualifying folder the step creates each missing starting file and keeps each existing one unchanged:
 

@@ -30,7 +30,17 @@ kendex add vanillagreencom/kendex --bundle jarvis --harness codex
 .agents/skills/jarvis/scripts/jarvis-session attach --home .
 ```
 
-- `kendex add` asks whether to install into this folder and whether to set up the commit-guards hooks. Answer yes to both. List each assistant you use in `--harness`, comma-separated.
+In a new home, `kendex add` asks these questions in this order:
+
+1. `install into this folder?`: type `y`.
+2. `write N changes?`: press `y`. Enter answers no and cancels the install.
+3. `N files kendex wrote are not committed`: press `c` to commit them. Enter leaves them as diffs.
+4. `message:`: press Enter to use the message shown, or `e` to type another one. `kendex add` asks this only after you press `c`.
+5. `make the repository changes of N packages?`: press `y` so the packages make the repository changes they declare, such as the commit-guards hooks. Enter answers no.
+
+To answer all of them without being asked, add `--yes --commit --allow-repo-effects` to the `kendex add` command. Add `--message TEXT` to commit with your own message.
+
+- List each assistant you use in `--harness`, comma-separated.
 - The first `start` writes the starting files, an `AGENTS.md` that loads the [persona](persona.md), the memory index and `state/`, and then starts the session. It uses the account folder your assistant uses, such as `~/.codex` or the folder `CODEX_HOME` names; add `--account DIR` for another one. In a folder that is not a new home of its own, it refuses and names what to do. [Initialize](references/home-layout.md#initialize) has the details.
 - `attach` puts your terminal on the running session. Before the first start with Copilot CLI, follow [Copilot folder trust](references/home-layout.md#copilot-folder-trust).
 
