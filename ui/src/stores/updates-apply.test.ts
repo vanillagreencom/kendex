@@ -170,6 +170,27 @@ describe("what a bulk run says it did", () => {
     expect(useProblemsStore.getState().dialog.open).toBe(false);
   });
 
+  // A place whose apply committed and whose render behind it failed wrote
+  // its packages: they count as updated, and the failure is said beside
+  // the count rather than turning the place into one more refusal.
+  it("counts a place whose later step failed as written, and says the step", async () => {
+    placeAnswers({
+      status: "ok",
+      data: {
+        view: { ...view, unfinished: "render bot instructions: disk full" },
+        packages: [answered("gh", { moved: [rendering("gh", "claude")] })],
+      },
+    });
+
+    await useUpdatesStore.getState().updateRows([row({})]);
+
+    expect(toast.success).toHaveBeenCalledWith("Updated 1 package");
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
+    expect(dialog.title).toContain("gh");
+  });
+
   // The count is packages, not renderings: one package written in two
   // tools is one update.
   it("counts a package written in two tools once", async () => {

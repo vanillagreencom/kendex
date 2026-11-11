@@ -15,6 +15,7 @@ import {
   type UpdateRow,
   type UpdateTarget,
 } from "@/bindings";
+import { namesInWords } from "@/lib/copy";
 import {
   ALREADY_CURRENT_TOAST,
   heldBackToastLabel,
@@ -24,7 +25,7 @@ import {
 } from "@/lib/copy-updates";
 import { harnessName } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
-import { sayUndone } from "@/lib/undone";
+import { sayUndone, sayUnfinished } from "@/lib/undone";
 
 type Report = (error: string) => void;
 
@@ -147,6 +148,7 @@ export const applyRow = async (
         )
       : await commands.packageUpdate(row.scope, row.kind, row.name),
     report,
+    row.name,
   );
 
 /** Install one place's package files again, moving nothing: the
@@ -162,18 +164,24 @@ export const repairRow = async (
   settleOne(
     await commands.packageUpdate(row.scope, row.kind, row.name),
     report,
+    row.name,
   );
 
-/** One place's answer, whichever command gave it. */
+/** One place's answer, whichever command gave it. `name` is the package,
+ *  which heads the account of a step behind the write that failed. */
 const settleOne = (
   response: Awaited<ReturnType<typeof commands.packageUpdate>>,
   report: Report,
+  name: string,
 ): ApplyOutcome => {
   if (response.status === "error") {
     report(response.error);
     return { ok: false };
   }
   sayUndone(response.data.view.undone);
+  // Landed: a step behind it that failed is said beside the update, which
+  // still counts as written.
+  sayUnfinished(name, response.data.view.unfinished);
   return { ok: true, update: response.data };
 };
 
@@ -239,6 +247,12 @@ export const applyRows = async (
       continue;
     }
     sayUndone(response.data.view.undone);
+    // This place's apply committed, so its rows are gathered below as
+    // written whatever the step behind it did.
+    sayUnfinished(
+      namesInWords(place.rows.map((row) => row.name)),
+      response.data.view.unfinished,
+    );
     const answered = new Map(
       response.data.packages.map((one) => [targetKey(one), one]),
     );

@@ -4,6 +4,7 @@ import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import { ADOPTABLE } from "@/lib/adoptable";
+import { FORK_ERROR_TITLE } from "@/lib/copy";
 import { UPDATE_NEEDS_CHECK_NOTE } from "@/lib/copy-updates";
 import { READ_LANDED, READ_PENDING } from "@/lib/read-state";
 import { useProblemsStore } from "./problems";
@@ -101,6 +102,66 @@ describe("updates store: edited places", () => {
     expect(useProblemsStore.getState().dialog.open).toBe(true);
     expect(useProblemsStore.getState().dialog.message).toBe("ipc down");
     expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // Keeping the edits settles the scope after the fork lands, and taking
+  // the new version renders behind its apply. Either step failing leaves
+  // the write standing, and the failure is said beside it.
+  it("says a step behind a landed fork or discard that failed", async () => {
+    const written = {
+      scope: { scope: "global" as const },
+      drift: [],
+      plan: [],
+      notes: [],
+      warnings: [],
+      safety: [],
+      adoptable: ADOPTABLE,
+      exits: [],
+      unfinished: "settle the scope: permission denied",
+    };
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+    const edited = row({
+      blockedByLocalEdit: true,
+      editedHarnesses: ["claude"],
+      forkableHarness: "claude",
+    });
+    const writes = [
+      {
+        name: "keep as my own",
+        answer: () =>
+          vi
+            .mocked(commands.packageFork)
+            .mockResolvedValue({ status: "ok", data: written }),
+        act: () => keepAsOwn(edited),
+      },
+      {
+        name: "take the new version",
+        answer: () =>
+          vi
+            .mocked(commands.applyDiscardEdits)
+            .mockResolvedValue({ status: "ok", data: written }),
+        act: () => takeNewVersion(edited),
+      },
+    ];
+    expect(writes.length).toBeGreaterThan(0);
+    for (const write of writes) {
+      useProblemsStore.setState({
+        dialog: { open: false, title: "", steps: [], actions: [] },
+      });
+      write.answer();
+
+      await write.act();
+
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, write.name).toBe(true);
+      expect(dialog.message, write.name).toBe(
+        "settle the scope: permission denied",
+      );
+      expect(dialog.title, write.name).not.toBe(FORK_ERROR_TITLE);
+    }
   });
 
   // The action boundary owns the guarantee: a confirmation opened before
@@ -318,22 +379,77 @@ describe("updates store: installing beside an edited place", () => {
     expect(commands.auditAll).toHaveBeenCalled();
   });
 
-  // An error in neither phase — Tauri rejecting an unknown command or bad
-  // args hands back a plain string — must never read as "your fork was
-  // recorded": it presents as a refusal, claiming nothing happened.
-  it("fails closed on an error shape that names no phase", async () => {
+  // A call that failed on its way never answered: the fork may have
+  // landed, so it reads as neither a recorded fork nor a refusal. Handed
+  // back as a refusal, the name dialog would stay open for another name,
+  // and a second one sent over a fork that did land installs the package
+  // twice. The dialog closes, the error dialog says nothing is known, and
+  // the rows are read again behind it.
+  it("reads a call that never answered as unknown, not as refused", async () => {
+    const failures = [
+      {
+        name: "a plain string, which names no phase",
+        answer: () =>
+          vi.mocked(commands.packageForkBeside).mockResolvedValue({
+            status: "error",
+            error: "the IPC channel closed" as never,
+          }),
+      },
+      {
+        name: "a rejection",
+        answer: () =>
+          vi
+            .mocked(commands.packageForkBeside)
+            .mockRejectedValue(new Error("the IPC channel closed")),
+      },
+    ];
+    expect(failures.length).toBeGreaterThan(0);
+    for (const failure of failures) {
+      vi.clearAllMocks();
+      useProblemsStore.getState().closeError();
+      failure.answer();
+
+      expect(
+        await installAsNew(row(edited), "claude", "gh-mine"),
+        failure.name,
+      ).toBeNull();
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, failure.name).toBe(true);
+      expect(dialog.message, failure.name).toBe("the IPC channel closed");
+      expect(dialog.title, failure.name).not.toBe(FORK_ERROR_TITLE);
+      expect(toast.success, failure.name).not.toHaveBeenCalled();
+      expect(toast.info, failure.name).not.toHaveBeenCalled();
+      expect(commands.updatesOverview, failure.name).toHaveBeenCalled();
+      expect(commands.auditAll, failure.name).toHaveBeenCalled();
+      expect(useUpdatesStore.getState().busy, failure.name).toBe(false);
+    }
+  });
+
+  // The fork and its install both landed; the render behind them did not.
+  // The install is said, and so is the step.
+  it("says a step behind a landed install that failed, beside it", async () => {
     vi.mocked(commands.packageForkBeside).mockResolvedValue({
-      status: "error",
-      error: "invalid args `newName`" as never,
+      status: "ok",
+      data: {
+        scope: { scope: "global" },
+        drift: [],
+        plan: [],
+        notes: [],
+        warnings: [],
+        safety: [],
+        adoptable: ADOPTABLE,
+        exits: [],
+        unfinished: "render bot instructions: disk full",
+      },
     });
 
-    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBe(
-      "invalid args `newName`",
+    expect(await installAsNew(row(edited), "claude", "gh-mine")).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith(
+      "Installed gh — your edited copy is now gh-mine",
     );
-    expect(toast.success).not.toHaveBeenCalled();
-    expect(toast.info).not.toHaveBeenCalled();
-    expect(commands.auditAll).toHaveBeenCalled();
-    expect(useUpdatesStore.getState().busy).toBe(false);
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
   });
 
   // A fork the scope recorded but could not render is not a refusal:

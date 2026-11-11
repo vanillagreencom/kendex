@@ -65,7 +65,7 @@ describe("updates store", () => {
   // `updates-standing.ts` moves it, for every landing kind, and a store
   // that quietly dropped it would leave
   // the page saying "Not checked for updates yet" over a check that ran.
-  const CHECKED_AT = 1_700_000_000;
+  const CheckedAt = 1_700_000_000;
 
   it("lands the age reported by a read or a check", async () => {
     const rows = [
@@ -89,26 +89,24 @@ describe("updates store", () => {
           rows: [row({})],
           warnings: [],
           unreadable: [],
-          lastFetched: CHECKED_AT,
+          lastFetched: CheckedAt,
         },
       });
       await test.read();
-      expect(useUpdatesStore.getState().lastFetched, test.name).toBe(
-        CHECKED_AT,
-      );
+      expect(useUpdatesStore.getState().lastFetched, test.name).toBe(CheckedAt);
     }
   });
 
   // A check that failed fetched nothing, so the age it had is still when
   // these rows were last true — dropping it would report a check nobody ran.
   it("keeps the age it had when a check fails", async () => {
-    useUpdatesStore.setState({ lastFetched: CHECKED_AT });
+    useUpdatesStore.setState({ lastFetched: CheckedAt });
     vi.mocked(commands.updatesRefresh).mockResolvedValue({
       status: "error",
       error: "no network",
     });
     await useUpdatesStore.getState().check();
-    expect(useUpdatesStore.getState().lastFetched).toBe(CHECKED_AT);
+    expect(useUpdatesStore.getState().lastFetched).toBe(CheckedAt);
   });
 
   it("counts only unmuted updates for the badge — held ones still count", () => {
@@ -411,6 +409,35 @@ describe("updates store", () => {
     // reads, which is all this pins — that they were asked.
     expect(commands.scanMachine).toHaveBeenCalled();
     expect(commands.auditAll).toHaveBeenCalled();
+  });
+
+  // The single-package apply landed and the render behind it failed: the
+  // update is said, and so is the step, rather than one swallowing the
+  // other.
+  it("says a step behind a landed update that failed, beside the update", async () => {
+    useProblemsStore.setState({
+      dialog: { open: false, title: "", steps: [], actions: [] },
+    });
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: {
+        view: { unfinished: "render bot instructions: disk full" },
+        heldBack: [],
+        removed: [],
+        moved: [],
+      },
+    } as never);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+
+    await useUpdatesStore.getState().updateOne(row({}));
+
+    expect(toast.success).toHaveBeenCalledWith("Updated gh");
+    const dialog = useProblemsStore.getState().dialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.message).toBe("render bot instructions: disk full");
   });
 
   // A check in flight is about to replace the rows: an update accepted

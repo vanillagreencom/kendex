@@ -16,6 +16,7 @@ vi.mock("@/bindings", () => ({
     }),
     auditAll: vi.fn(),
     adoptItem: vi.fn(),
+    replaceUnmanagedItem: vi.fn(),
     toggleItem: vi.fn(),
     removeItem: vi.fn(),
     libraryProvenance: vi.fn().mockResolvedValue({ status: "ok", data: [] }),
@@ -328,6 +329,83 @@ describe("audit store run() actions", () => {
     await useAuditStore.getState().removeItem(globalScope, "skill", "deploy");
 
     expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  // Each of these writes and then renders the project's configuration, and
+  // an adopt settles the scope after its move. A step behind the write that
+  // fails leaves the write standing: the action answers that it worked, the
+  // scope's fresh view lands, and the failure is said beside it rather
+  // than swallowed under a success or turned into a refusal.
+  it("says a step behind a landed write that failed, beside the write", async () => {
+    const actions = [
+      {
+        name: "adopt",
+        command: commands.adoptItem,
+        act: () =>
+          useAuditStore
+            .getState()
+            .adopt(globalScope, "hook", "lint", ["claude"]),
+      },
+      {
+        name: "replace",
+        command: commands.replaceUnmanagedItem,
+        act: () =>
+          useAuditStore
+            .getState()
+            .replaceUnmanaged(globalScope, "hook", "lint"),
+      },
+      {
+        name: "toggle",
+        command: commands.toggleItem,
+        act: () =>
+          useAuditStore.getState().toggle(globalScope, "hook", "lint", false),
+      },
+      {
+        name: "remove",
+        command: commands.removeItem,
+        act: () =>
+          useAuditStore.getState().removeItem(globalScope, "hook", "lint"),
+      },
+    ];
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      useProblemsStore.getState().closeError();
+      useAuditStore.setState({ views: [emptyView] });
+      const written = {
+        ...emptyView,
+        plan: ["Install hook lint for Claude Code"],
+        unfinished: "render bot instructions: permission denied",
+      };
+      vi.mocked(action.command).mockResolvedValue({
+        status: "ok",
+        data: written,
+      });
+
+      expect(await action.act(), action.name).toBe(true);
+
+      expect(useAuditStore.getState().views, action.name).toEqual([written]);
+      const dialog = useProblemsStore.getState().dialog;
+      expect(dialog.open, action.name).toBe(true);
+      expect(dialog.message, action.name).toBe(
+        "render bot instructions: permission denied",
+      );
+      expect(dialog.title, action.name).toContain("lint");
+    }
+    // The success the surface says for the write still stands beside it.
+    expect(toast.success).toHaveBeenCalledWith("Now managing lint");
+  });
+
+  it("says nothing more about a write whose every step finished", async () => {
+    vi.mocked(commands.adoptItem).mockResolvedValue({
+      status: "ok",
+      data: emptyView,
+    });
+
+    await useAuditStore
+      .getState()
+      .adopt(globalScope, "hook", "lint", ["claude"]);
+
+    expect(useProblemsStore.getState().dialog.open).toBe(false);
   });
 
   it("a refused action surfaces as an error, never a silent success", async () => {
