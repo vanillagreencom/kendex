@@ -84,6 +84,12 @@ pub fn account_wall_path(claim_store: &Path, config_dir: &str) -> PathBuf {
 pub struct AccountWall {
     pub config_dir: String,
     pub resets_at: u64,
+    /// The latest first sighting of a banner naming this reset: a fall of
+    /// the weekly figure from one read before it proves no reset after the
+    /// wall. Absent where `lib/account-wall.sh` wrote the record, which no
+    /// fall then frees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seen_at: Option<u64>,
 }
 
 /// Where a banner was read, which decides what counts as the harness's own
@@ -126,6 +132,8 @@ pub struct AccountWallWrite {
     /// The reset the banner names, `None` where the grammar read none.
     pub reset: Option<u64>,
     pub now: u64,
+    /// When the lane's banner was first seen.
+    pub first_seen: u64,
     pub banner: String,
     pub channel: WallChannel,
 }
@@ -136,7 +144,7 @@ pub struct AccountWallWrite {
 /// `lanes` never reads half a record.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the account wall record, the watch's own file beside the claim store, written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
+    reason = "the account wall record, the watch's own file beside the claim store, read for the sighting it holds and written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
 )]
 pub fn record_account_wall(
     claim_store: &Path,
@@ -154,9 +162,20 @@ pub fn record_account_wall(
     let path = account_wall_path(claim_store, &write.config_dir);
     let dir = path.parent().unwrap_or(&path);
     std::fs::create_dir_all(dir).map_err(|e| agent_runtime::Error::io("create", dir, e))?;
+    let config_dir = canon(&write.config_dir);
+    // Every walled lane on the account renews one record each pass: the
+    // latest sighting is kept while the reset stands, so a lane whose banner
+    // stood before a second wall cannot write back a sighting that a fall
+    // before that wall satisfies.
+    let renewed = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<AccountWall>(&text).ok())
+        .filter(|held| held.config_dir == config_dir && held.resets_at == reset)
+        .and_then(|held| held.seen_at);
     let record = AccountWall {
-        config_dir: canon(&write.config_dir),
+        config_dir,
         resets_at: reset,
+        seen_at: Some(renewed.map_or(write.first_seen, |seen| seen.max(write.first_seen))),
     };
     let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let text = serde_json::to_string(&record).map_err(|e| {
@@ -372,6 +391,38 @@ mod tests {
             "You've hit your weekly limit \u{b7} resets Oct 4, 6pm (UTC)",
             WallChannel::Pane
         ));
+    }
+
+    /// Two walled lanes on one account renew one record: a lane whose
+    /// banner stood before the other's must not write back its earlier
+    /// sighting while the reset stands, and a banner naming another reset
+    /// starts its own.
+    #[test]
+    fn a_renewal_keeps_the_latest_sighting_while_the_reset_stands() {
+        let dir = tempfile::tempdir().unwrap();
+        let claims = dir.path().join("claims");
+        let renew = |reset: u64, first_seen: u64| {
+            let path = record_account_wall(
+                &claims,
+                &AccountWallWrite {
+                    config_dir: "/home/me/.eclaude".to_owned(),
+                    reset: Some(reset),
+                    now: 1_000,
+                    first_seen,
+                    banner: format!("{DRAWN}You've hit your weekly limit \u{b7} resets Oct 4, 6pm"),
+                    channel: WallChannel::Pane,
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let held: AccountWall =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            held.seen_at
+        };
+        assert_eq!(renew(9_000, 100), Some(100));
+        assert_eq!(renew(9_000, 500), Some(500));
+        assert_eq!(renew(9_000, 100), Some(500), "the earlier lane's sighting");
+        assert_eq!(renew(9_600, 300), Some(300), "another reset");
     }
 
     fn env(now_secs: u64) -> Env {

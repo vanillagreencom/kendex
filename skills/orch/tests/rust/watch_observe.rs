@@ -560,7 +560,8 @@ fn wall_record(settings: &Settings) -> Option<AccountWall> {
 const NOW_ISO: &str = "2027-01-15T08:00:00Z";
 
 /// The wall judged current for the live identity writes the account record
-/// with the reset the banner names and opens `walled.at` on the lane record
+/// with the reset the banner names and its first sighting, kept on every
+/// later pass, and opens `walled.at` on the lane record
 /// at the first sighting; the same banner re-stamped before the live
 /// process's start, under another identity, writes no record on two passes
 /// and closes the standing wall into `pauses`.
@@ -586,17 +587,21 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
         event_lines(&first),
         vec!["EVENT usage-limit gh-4 /home/me/.eclaude resets=2027-10-04T18:00:00Z"]
     );
-    assert_eq!(
-        wall_record(&driver.settings),
-        Some(AccountWall {
-            config_dir: "/home/me/.eclaude".to_owned(),
-            resets_at: BANNER_RESET,
-        })
-    );
+    let recorded = Some(AccountWall {
+        config_dir: "/home/me/.eclaude".to_owned(),
+        resets_at: BANNER_RESET,
+        seen_at: Some(1_800_000_000),
+    });
+    assert_eq!(wall_record(&driver.settings), recorded);
     let opened = fleet.runner.fleet();
     assert_eq!(opened["lanes"][0]["walled"], json!({"at": NOW_ISO}));
     let quiet = driver.pass(&state);
     assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
+    assert_eq!(
+        wall_record(&driver.settings),
+        recorded,
+        "a later pass over the same banner keeps its first sighting"
+    );
     assert_eq!(
         fleet.runner.fleet()["lanes"][0]["walled"],
         json!({"at": NOW_ISO}),

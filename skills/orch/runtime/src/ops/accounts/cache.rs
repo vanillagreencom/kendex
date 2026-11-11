@@ -48,6 +48,17 @@ pub struct Prior {
     pub usage: Value,
 }
 
+/// A fall of the account's weekly figure inside one weekly window: a reset
+/// came before the window's end, which a wall recorded before the earlier
+/// figure was read cannot have foreseen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Fall {
+    pub from_at: u64,
+    pub from_pct: f64,
+    pub at: u64,
+    pub to_pct: f64,
+}
+
 /// One account's record as the file holds it. Fields other readers add
 /// (a normalized block) are dropped on rewrite; they re-derive them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +76,10 @@ pub struct Record {
     pub sample_claims: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<Refusal>,
+    /// The latest fall, kept across later figures: `prior` shows a fall for
+    /// one fetch only, and the wall it ends stands until it is read.
+    #[serde(rename = "drop", default, skip_serializing_if = "Option::is_none")]
+    pub fall: Option<Fall>,
 }
 
 fn one() -> u64 {
@@ -78,6 +93,51 @@ impl Record {
         self.usage.as_ref()?;
         Some(self.usage_fetched_at.unwrap_or(self.fetched_at))
     }
+
+    /// The fall the record holds: the one written, else the one between its
+    /// displaced sample and its figure, which the shell `lanes` writes
+    /// without keeping `drop`.
+    fn held_fall(&self) -> Option<Fall> {
+        self.fall.clone().or_else(|| {
+            let prior = self.prior.as_ref()?;
+            fall(
+                &self.harness,
+                (prior.fetched_at, &prior.usage),
+                (self.figure_at()?, self.usage.as_ref()?),
+            )
+        })
+    }
+}
+
+/// The fall from the `earlier` figure to the `later`, each with its stamp:
+/// both weekly figures read, the later lower in the whole percents the
+/// listing judges, and read before the earlier figure's weekly reset. A
+/// lower figure past that reset is the next week's; a figure nobody could
+/// read is never lower.
+fn fall(harness: &str, earlier: (u64, &Value), later: (u64, &Value)) -> Option<Fall> {
+    let weekly = |usage: &Value| {
+        let buckets = parse_body(harness, usage, Rounding::Rounded);
+        let pct = buckets.get("weekly_pct").and_then(Value::as_f64);
+        let reset = buckets
+            .pointer("/resets/weekly")
+            .and_then(Value::as_str)
+            .and_then(|s| agent_runtime::clock::epoch_secs(&super::usage::utc_stamp(s)));
+        (pct, reset)
+    };
+    let (from_at, from) = earlier;
+    let (at, to) = later;
+    let (Some(from_pct), Some(window_ends)) = weekly(from) else {
+        return None;
+    };
+    let (Some(to_pct), _) = weekly(to) else {
+        return None;
+    };
+    (to_pct < from_pct && at < window_ends).then_some(Fall {
+        from_at,
+        from_pct,
+        at,
+        to_pct,
+    })
 }
 
 /// The record file for `config_dir` measured through `harness`: a
@@ -109,6 +169,7 @@ pub struct Figure {
     pub fetched_at: u64,
     pub age: u64,
     pub prior: Option<Prior>,
+    pub fall: Option<Fall>,
 }
 
 /// What a read of the figure found: the figure, nothing, or a figure
@@ -139,6 +200,7 @@ pub fn figure(record: &Record, harness: &str, max_age: Option<u64>, now: u64) ->
         fetched_at: at,
         age,
         prior: record.prior.clone(),
+        fall: record.held_fall(),
     })
 }
 
@@ -186,21 +248,33 @@ pub fn refusal(record: &Record, endpoint: &str, now: u64) -> Option<(Refusal, u6
 }
 
 /// Write `usage` as the record's figure at `now`, the figure it displaces
-/// kept as the prior sample. Renamed into place whole, so a concurrent
-/// reader never parses half a record. A record that cannot be written
-/// costs the next run a fetch, never a wrong figure.
+/// kept as the prior sample and the fall from it recorded, else the fall
+/// the record held kept. Renamed into place whole, so a concurrent reader
+/// never parses half a record. A record that cannot be written costs the
+/// next run a fetch, never a wrong figure. The fall the record now holds.
 #[allow(
     clippy::disallowed_methods,
     reason = "the usage record under the claim store's directory, the listing's own file, written whole and renamed into place as every reader of it expects"
 )]
-pub fn write_figure(path: &Path, harness: &str, config_dir: &str, usage: Value, now: u64) {
+pub fn write_figure(
+    path: &Path,
+    harness: &str,
+    config_dir: &str,
+    usage: Value,
+    now: u64,
+) -> Option<Fall> {
     let existing = read(path, harness, config_dir);
+    let held = existing.as_ref().and_then(Record::held_fall);
     let prior = existing.and_then(|r| {
         Some(Prior {
             fetched_at: r.figure_at()?,
             usage: r.usage?,
         })
     });
+    let fall = prior
+        .as_ref()
+        .and_then(|p| fall(harness, (p.fetched_at, &p.usage), (now, &usage)))
+        .or(held);
     let record = Record {
         harness: harness.to_owned(),
         config_dir: config_dir.to_owned(),
@@ -210,14 +284,17 @@ pub fn write_figure(path: &Path, harness: &str, config_dir: &str, usage: Value, 
         prior,
         sample_claims: 1,
         refusal: None,
+        fall,
     };
     let _ = replace(path, &record);
+    record.fall
 }
 
 /// Write a refusal over the account's record at `now`, keeping the figure
-/// the record held under its own stamp beside it, so a usage 429 is
-/// answered from it. A `plan_ended` refusal keeps none: a figure from
-/// before the plan ended would hand out an account that admits no launch.
+/// the record held under its own stamp beside it, with its fall, so a
+/// usage 429 is answered from it. A `plan_ended` refusal keeps none: a
+/// figure from before the plan ended would hand out an account that admits
+/// no launch.
 /// `Ok(())` where the record stands, else the cause: every caller on the
 /// host then posts again each pass.
 #[allow(
@@ -233,10 +310,10 @@ pub fn write_refusal(
 ) -> Result<(), String> {
     let kept = read(path, harness, config_dir)
         .filter(|_| refusal.status != "plan_ended")
-        .and_then(|r| Some((r.figure_at()?, r.usage?, r.prior)));
-    let (usage_fetched_at, usage, prior) = match kept {
-        Some((at, usage, prior)) => (Some(at), Some(usage), prior),
-        None => (None, None, None),
+        .and_then(|r| Some((r.figure_at()?, r.held_fall(), r.usage?, r.prior)));
+    let (usage_fetched_at, fall, usage, prior) = match kept {
+        Some((at, fall, usage, prior)) => (Some(at), fall, Some(usage), prior),
+        None => (None, None, None, None),
     };
     let record = Record {
         harness: harness.to_owned(),
@@ -247,6 +324,7 @@ pub fn write_refusal(
         prior,
         sample_claims: 1,
         refusal: Some(refusal),
+        fall,
     };
     replace(path, &record)
 }

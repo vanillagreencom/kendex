@@ -1592,6 +1592,7 @@ fn wall(
             config_dir: account.clone(),
             reset: reset_at,
             now: pass.now,
+            first_seen,
             banner: text.clone(),
             channel: match source {
                 WallSource::Pane => WallChannel::Pane,

@@ -352,6 +352,8 @@ struct Reading {
     age: Option<u64>,
     /// The sample the figure displaced and the seconds between them.
     prior: Option<(Value, u64)>,
+    /// The fall of the weekly figure the account's record holds.
+    fall: Option<cache::Fall>,
 }
 
 impl Reading {
@@ -363,6 +365,7 @@ impl Reading {
             usage: None,
             age: None,
             prior: None,
+            fall: None,
         }
     }
 
@@ -383,6 +386,7 @@ impl Reading {
             }),
             age: None,
             prior: None,
+            fall: None,
         }
     }
 }
@@ -740,6 +744,7 @@ fn served(figure: cache::Figure, status: &str, detail: String) -> Reading {
         prior: figure
             .prior
             .map(|p| (p.usage, figure.fetched_at.saturating_sub(p.fetched_at))),
+        fall: figure.fall,
     }
 }
 
@@ -832,7 +837,7 @@ fn fetch(
         let at = r.usage_fetched_at.unwrap_or(r.fetched_at);
         r.usage.map(|u| (u, ctx.now.saturating_sub(at)))
     });
-    cache::write_figure(path, harness, dir, usage.clone(), ctx.now);
+    let fall = cache::write_figure(path, harness, dir, usage.clone(), ctx.now);
     Reading {
         status: "ok".to_owned(),
         detail: String::new(),
@@ -840,6 +845,7 @@ fn fetch(
         usage: Some(Usage::Body(usage)),
         age: Some(0),
         prior,
+        fall,
     }
 }
 
@@ -1330,6 +1336,10 @@ fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
                     usage: Some(Usage::Provider(buckets)),
                     age: None,
                     prior: None,
+                    // The provider's protocol states no time a figure was
+                    // read, so no fall of it can follow a wall's sighting;
+                    // a record of this spelling here is this machine's.
+                    fall: None,
                 },
                 words: Some(words),
             },
@@ -1374,7 +1384,8 @@ fn buckets_of(harness: &str, usage: &Usage) -> Value {
 
 /// One account's record: the reading's windows, the binding window and
 /// its rate against the displaced sample, the weekly wall a harness banner
-/// stated held at 100 until its reset, and the owner's words as flags.
+/// stated held at 100 until its reset or a fall after it, and the owner's
+/// words as flags.
 fn emit(ctx: &Ctx, e: &Emit) -> Value {
     let Reading {
         status,
@@ -1383,6 +1394,7 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         usage,
         age,
         prior,
+        fall,
     } = &e.reading;
     let mut status = status.clone();
     let mut detail = detail.clone();
@@ -1391,7 +1403,7 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         .map(|u| buckets_of(e.harness, u))
         .unwrap_or_else(|| json!({}));
     usage::utc_resets(&mut buckets);
-    if wall_overlay(ctx, e.dir, &mut buckets).is_err() {
+    if wall_overlay(ctx, e.dir, fall.as_ref(), &mut buckets).is_err() {
         buckets = json!({});
         status = "error".to_owned();
         detail = "wall record unreadable".to_owned();
@@ -1487,9 +1499,18 @@ fn integral(value: &mut Value) {
 /// The weekly wall a harness banner stated for the account, held at 100
 /// and resetting at the recorded reset while that reset is ahead: with no
 /// record, a record naming another account or a reset already passed the
-/// reading stands. A record nobody can read is the error: a wall nobody
-/// can read is no evidence the account has room.
-fn wall_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), String> {
+/// reading stands. A reading that shows room while the wall stands is no
+/// evidence the wall is gone, since the record exists for the usage
+/// endpoint that does not report it; a fall from a figure read at or after
+/// the wall's sighting is, since only a reset lowers a weekly figure inside
+/// its window. A record nobody can read is the error: a wall nobody can
+/// read is no evidence the account has room.
+fn wall_overlay(
+    ctx: &Ctx,
+    dir: &str,
+    fall: Option<&cache::Fall>,
+    buckets: &mut Value,
+) -> Result<(), String> {
     let path = wall::account_wall_path(&ctx.settings.claim_store, dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -1498,6 +1519,12 @@ fn wall_overlay(ctx: &Ctx, dir: &str, buckets: &mut Value) -> Result<(), String>
     };
     let record: wall::AccountWall = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     if record.config_dir != wall::canon(dir) || record.resets_at <= ctx.now {
+        return Ok(());
+    }
+    // A record naming no sighting cannot order a fall after it.
+    if let Some(seen) = record.seen_at
+        && fall.is_some_and(|f| f.from_at >= seen)
+    {
         return Ok(());
     }
     if !buckets.is_object() {
@@ -1772,6 +1799,7 @@ mod tests {
                         usage: Some(Usage::Body(body(40, 40))),
                         age: Some(0),
                         prior,
+                        fall: None,
                     },
                     words: None,
                 },

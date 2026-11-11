@@ -4568,6 +4568,205 @@ fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothin
     assert_eq!(world.pick(&claude(None))["answer"], json!("none"));
 }
 
+/// The week every wall row's account is walled in, as `measured` plants it.
+fn walled_week() -> u64 {
+    now() + 60 * 3600
+}
+
+fn weekly_body(pct: u64, reset: u64) -> Value {
+    json!({"seven_day": {"utilization": pct, "resets_at": stamp(reset)}})
+}
+
+/// The account wall the watch records for `dir`, resetting with the walled
+/// week and naming `seen_at` as the banner's first sighting.
+fn plant_wall(world: &World, dir: &str, seen_at: Option<u64>) {
+    let path = orch_runtime::ops::wall::account_wall_path(&world.settings.claim_store, dir);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let mut record = json!({
+        "config_dir": orch_runtime::ops::wall::canon(dir),
+        "resets_at": walled_week(),
+    });
+    if let Some(seen) = seen_at {
+        record["seen_at"] = json!(seen);
+    }
+    std::fs::write(path, record.to_string()).unwrap();
+}
+
+/// The usage record of `alias` holding one weekly figure read at `at`.
+fn plant_figure(world: &World, alias: &str, pct: u64, at: u64, reset: u64) {
+    std::fs::write(
+        world.record_path("claude", alias),
+        json!({"harness": "claude", "config_dir": world.dir(alias), "fetched_at": at,
+               "usage": weekly_body(pct, reset), "sample_claims": 1})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+/// An early reset keeps the week's reset time and leaves the banner on the
+/// walled lane's screen, so only the fall of the account's weekly figure,
+/// from one read after the wall was first seen, tells it from the endpoint
+/// that does not report the wall. The account is offered from the fetch that
+/// reads the fall, still on the fetches after it, and from a record the
+/// shell `lanes` wrote over the fall.
+#[test]
+fn an_early_reset_that_keeps_its_reset_time_frees_the_account_once_its_figure_falls_after_the_wall()
+{
+    let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 100, 0), measured("bclaude", 50, 0)]);
+    let dir = world.dir("aclaude");
+    plant_wall(&world, &dir, Some(now() - 3600));
+    plant_figure(&world, "aclaude", 100, now() - 600, walled_week());
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &weekly_body(0, walled_week()),
+        None,
+    );
+    world.plant_answer(
+        "token-bclaude",
+        "usage",
+        &weekly_body(50, walled_week()),
+        None,
+    );
+    let freed = listed_row(&world, "aclaude");
+    assert_eq!(
+        (&freed["weekly_pct"], &freed["verdict"]),
+        (&json!(0), &json!("room")),
+        "{freed}"
+    );
+    let pick = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&pick).as_deref(),
+        Some(dir.as_str()),
+        "the fetch after the fall: {pick}"
+    );
+    let again = listed_row(&world, "aclaude");
+    assert_eq!(again["verdict"], json!("room"), "{again}");
+    std::fs::write(
+        world.record_path("claude", "aclaude"),
+        json!({"harness": "claude", "config_dir": dir, "fetched_at": now() - 60,
+               "usage": weekly_body(0, walled_week()),
+               "prior": {"fetched_at": now() - 600, "usage": weekly_body(100, walled_week())},
+               "sample_claims": 1})
+        .to_string(),
+    )
+    .unwrap();
+    let shell = listed_row(&world, "aclaude");
+    assert_eq!(
+        shell["verdict"],
+        json!("room"),
+        "the fall a record without `drop` shows: {shell}"
+    );
+}
+
+/// A reading with room under a standing wall is the endpoint that does not
+/// report it unless a fall after the sighting shows a reset: no fall; a fall
+/// from a figure read before the sighting, where the wall came after an
+/// earlier reset of the same week; a fall across the earlier figure's
+/// weekly reset; a record naming no sighting; and a provider's row, whose
+/// figures carry no read time, beside this machine's record of a fall under
+/// the same spelling. Each holds the account walled and the pick takes the
+/// account at 50.
+#[test]
+fn a_reading_with_room_holds_the_wall_unless_its_figure_fell_after_the_sighting_inside_one_week() {
+    let seen = now() - 3600;
+    // (case, earlier figure, its read time, its weekly reset, the sighting, the answer)
+    let cases = [
+        ("no fall", 40, now() - 600, walled_week(), Some(seen), 45),
+        (
+            "before the sighting",
+            100,
+            seen - 600,
+            walled_week(),
+            Some(seen),
+            0,
+        ),
+        (
+            "across the reset",
+            100,
+            now() - 600,
+            now() - 60,
+            Some(seen),
+            0,
+        ),
+        ("no sighting", 100, now() - 600, walled_week(), None, 0),
+    ];
+    for (case, pct, at, reset, seen_at, answer) in cases {
+        let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+        world.write_fleet(Vec::new(), None);
+        world.plant_listing(&[measured("aclaude", pct, 0), measured("bclaude", 50, 0)]);
+        plant_wall(&world, &world.dir("aclaude"), seen_at);
+        plant_figure(&world, "aclaude", pct, at, reset);
+        world.plant_answer(
+            "token-aclaude",
+            "usage",
+            &weekly_body(answer, walled_week()),
+            None,
+        );
+        world.plant_answer(
+            "token-bclaude",
+            "usage",
+            &weekly_body(50, walled_week()),
+            None,
+        );
+        let row = listed_row(&world, "aclaude");
+        assert_eq!(
+            (
+                &row["weekly_pct"],
+                &row["verdict"],
+                &row["resets"]["weekly"]
+            ),
+            (&json!(100), &json!("walled"), &json!(stamp(walled_week()))),
+            "{case}: {row}"
+        );
+        assert_eq!(
+            chosen(&world.pick(&claude(None))).as_deref(),
+            Some(world.dir("bclaude").as_str()),
+            "{case}"
+        );
+    }
+    let mut hosted = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    hosted.write_fleet(Vec::new(), None);
+    hosted.plant_capabilities("fleet-vm", SSH_LINE);
+    hosted.plant_host_listing(
+        "fleet-vm",
+        &[
+            through_host(measured("hclaude", 0, 0)),
+            through_host(measured("worker", 50, 0)),
+        ],
+    );
+    let spelling = "/home/me/.hclaude";
+    plant_wall(&hosted, spelling, Some(seen));
+    std::fs::create_dir_all(hosted.path().join("usage")).unwrap();
+    std::fs::write(
+        hosted.path().join("usage").join(format!(
+            "claude-{}-{}.json",
+            orch_runtime::ops::wall::cksum(spelling.as_bytes()),
+            spelling.len()
+        )),
+        json!({"harness": "claude", "config_dir": spelling, "fetched_at": now() - 60,
+               "usage": weekly_body(0, walled_week()),
+               "prior": {"fetched_at": now() - 600, "usage": weekly_body(100, walled_week())},
+               "sample_claims": 1,
+               "drop": {"from_at": now() - 600, "from_pct": 100, "at": now() - 60, "to_pct": 0}})
+        .to_string(),
+    )
+    .unwrap();
+    let provider = listed_row(&hosted, "hclaude");
+    assert_eq!(
+        (&provider["weekly_pct"], &provider["verdict"]),
+        (&json!(100), &json!("walled")),
+        "provider: {provider}"
+    );
+    assert_eq!(
+        chosen(&hosted.pick(&claude(None))).as_deref(),
+        Some("/home/me/.worker"),
+        "provider"
+    );
+}
+
 #[test]
 fn two_refreshers_under_the_lock_fetch_once() {
     let mut world = World::new(&[]);
