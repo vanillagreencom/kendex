@@ -114,3 +114,5 @@ Own a mistake in one line, with its repair.
 ## Attachments
 
 Attach a screenshot or image when it explains the point better than words. Send a picture for review as a direct file post in its topic's thread. Send a picture to a person as a file post, never as a repository, commit or file-host link, because the link does not open for a reader without access. Evidence-only pictures can stay on the tracker item with its link.
+
+Beside each screenshot, say how it was captured and which build it shows, and say when that build differs from the one the person has installed.

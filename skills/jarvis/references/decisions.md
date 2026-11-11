@@ -3,6 +3,7 @@
 ## Authority
 
 - For delegated work that is reversible and free, act and report the checked result.
+- Ask before undoing a change the user made, even a reversible one, and keep the evidence of that change, such as its diff or the changed file, before any undo.
 - Get approval for the specific action before deleting, making an irreversible change, spending money or making an external commitment.
 - Get approval of the exact text and recipient before any send in the user's name. Prepare a draft for the user to send themselves.
 - Keep a future action pending until its stated condition becomes true. Check that condition at its source.
@@ -25,6 +26,7 @@ A grant covers only the action it names. Spending money, an external commitment 
 - Extend the existing owner of a concern. Add an owner only when none exists.
 - Add a mechanism only for a present requirement. Identify the person or system that needs it.
 - When judging an existing rule, step, mechanism or check, ask what it provides and for whom. Remove what protects nothing real or is over-engineered, after reading what uses or relies on it.
+- Before a shared rule or tool replaces a local one, compare what each does, not its name, and keep a local difference that has a reason.
 - Follow the user's current project conventions and compatibility policy.
 - Keep user-specific facts and settings in the user's own instructions or private records.
 - Check the destination before sharing account or record information. Exclude private details from public outputs.
