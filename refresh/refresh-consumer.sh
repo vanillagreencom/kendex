@@ -387,6 +387,12 @@ orch=present
 if [ ! -e "$ROOT/.agents/skills/orch" ] && [ ! -L "$ROOT/.agents/skills/orch" ]; then
   orch=absent
   printf 'refresh-settings=orch-absent value=%s\n' "$ROOT/.agents/skills/orch"
+elif [ ! -e "$ROOT/.agents/skills/orch/scripts/lib/overseer-launch.sh" ]; then
+  # The preference grammar is the runtime's, which no refresh runner builds;
+  # an install without the shell parser leaves the preference unjudged here,
+  # and the runtime's walk refuses an invalid one where it is read.
+  orch=unchecked
+  printf 'refresh-settings=preference-unchecked value=%s\n' "$ROOT/.agents/skills/orch/scripts/lib/overseer-launch.sh"
 fi
 if ! env -i PATH="$PATH" HOME="$HOME" bash -s -- "$SCRIPT_DIR" "$ROOT" "$orch" >"$TMP/settings.json" <<'SETTINGS_PARSE'
 set -euo pipefail

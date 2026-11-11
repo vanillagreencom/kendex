@@ -31,7 +31,6 @@ cp "$CHANGE_SCOPE_DIR/scripts/lib/change-scope.sh" "$CHANGE_SCOPE_DIR/scripts/li
 cp "$CHANGE_SCOPE_DIR/references/narrow-change.conf" "$LAYOUT/change-scope/references/"
 cp "$ORCH_DIR/scripts/item-tier" "$LAYOUT/orch/scripts/"
 cp "$ORCH_DIR/scripts/lib/change-class.sh" "$ORCH_DIR/scripts/lib/kendex-env.sh" \
-  "$ORCH_DIR/scripts/lib/launch-overlap.sh" \
   "$LAYOUT/orch/scripts/lib/"
 TIER="$LAYOUT/orch/scripts/item-tier"
 git -C "$TMP_ROOT" init -q -b main

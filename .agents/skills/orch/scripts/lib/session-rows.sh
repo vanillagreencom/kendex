@@ -334,7 +334,9 @@ session_rows_codex_launcher() { # PID
 # claude`, `exec claude` at the prompt, a tmux default command) is where the
 # walk stops and is never counted, so it writes no row and its reader takes
 # the pane fallback; a launched overseer is typed into the pane's shell and is
-# not that shape. The shell set is lib/lane-state.sh's is_bare_shell.
+# not that shape. A shell is one of the five names agent-runtime's process
+# walk counts as a shell (runtime/src/process.rs is_shell), a login shell's
+# leading dash stripped.
 session_rows_top_level() { # PANE_PID
   local pid="$$" line ppid comm child="" harnesses=0 steps=0
   while [ "$pid" != "$1" ]; do
@@ -343,7 +345,7 @@ session_rows_top_level() { # PANE_PID
     read -r ppid comm <<<"$line"
     [ -n "$ppid" ] || return 1
     comm="${comm##*/}"
-    if is_bare_shell "$comm"; then
+    if case "${comm#-}" in bash | zsh | fish | sh | dash) true ;; *) false ;; esac; then
       :
     elif [ "$child" = codex ] && session_rows_codex_launcher "$pid"; then
       :

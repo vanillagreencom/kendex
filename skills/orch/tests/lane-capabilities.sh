@@ -184,7 +184,6 @@ SCRIPTS="$(mutant_scripts repo/skills/orch)"
 ln -s "$TEST_DIR/../../github" "$TMP_ROOT/repo/skills/github"
 PROVIDER="$TMP_ROOT/repo/provider"
 mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/fleet"
-printf 'A directive.\n' > "$TMP_ROOT/directive"
 cat > "$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -213,8 +212,6 @@ chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/empty" "$TMP_ROOT/bin/tracker" "$TMP_
 caller_run() { # CALLER
   local command=()
   case "$1" in
-    lane-mail)
-      command=("$SCRIPTS/../../mailbox/scripts/lane-mail" send --item KEN-1 --directive --file "$TMP_ROOT/directive" --state-dir "$TMP_ROOT/fleet") ;;
     oversee-report)
       command=("$SCRIPTS/oversee-report" render --state "$TMP_ROOT/fleet/workflow-state-oversee.json" --repo owner/repo) ;;
   esac
@@ -228,12 +225,11 @@ caller_run() { # CALLER
     "${command[@]}") > "$TMP_ROOT/out" 2> "$TMP_ROOT/err" || RC=$?
   CALLS="$(wc -l < "$TMP_ROOT/calls")"; CALLS="${CALLS//[[:space:]]/}"
 }
-for caller in lane-mail oversee-report; do
+for caller in oversee-report; do
   rm -rf -- "$TMP_ROOT/state"
   : > "$TMP_ROOT/calls"
   caps="$SSH"; status=running; want=0
   case "$caller" in
-    lane-mail) want=2 ;;
     oversee-report) caps="${SSH/channel=mailbox/channel=task}"; caps="${caps/files=verb/files=none}" ;;
   esac
   write_provider "$caps" 0 ''

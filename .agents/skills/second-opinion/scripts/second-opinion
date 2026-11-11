@@ -19,7 +19,7 @@
 #   SECOND_OPINION_<NAME>_CMD    Full command for target <NAME> (claude, codex, pi-copilot and
 #                                pi-copilot-gpt have defaults)
 #   SECOND_OPINION_<NAME>_ROOM_CMD  Room check for target <NAME>'s account (default: none;
-#                                orch's lanes pick for pi-copilot/pi-copilot-gpt)
+#                                orch's account pick for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_<NAME>_INLINE_DIFF  Set to 1 to embed the review diff for target <NAME>
 #                                (default: on for pi-copilot/pi-copilot-gpt)
 #   SECOND_OPINION_TARGET        Force one target (still subject to self-exclusion)
@@ -178,7 +178,7 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              Whether the account target <NAME> spends has
                              room now (default: none, no check; for
                              pi-copilot and pi-copilot-gpt on their default
-                             command, orch's lanes pick, below; set empty for
+                             command, orch's account pick, below; set empty for
                              no check). Before it runs, its program word is
                              resolved as an entry's command program is; one
                              not installed skips the target as room check
@@ -187,7 +187,8 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              check passed. Exit 0 is room, and each stdout line
                              is a NAME=value assignment the target command
                              runs under, the account it judged: the env prefix
-                             `lanes pick` prints (orch skill). Any other exit
+                             `orch-runtime accounts pick --env` prints (orch
+                             skill). Any other exit
                              skips the target on that exit alone, the check's
                              own stderr passed through; running the setting's
                              command prints its reason again. A stdout line
@@ -311,14 +312,16 @@ Default commands:
           names it in SECOND_OPINION_MODELS, which needs no other key.
           Read-only file tools and no shell, so each is sent the review
           diff inline. Room check:
-          env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick
-            --harness pi --model MODEL
+          env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime
+            accounts pick --env --fleet --harness pi --native-model MODEL
           from the project root this script is installed in: an entry is
           taken only where the orch skill is installed there and its check
           admits the account's Copilot seat; the reviewer runs on this
-          machine's login. An install in no repository, such as a global
-          one, has no project root, and the check is unavailable there; it
-          never runs a lanes found under the working directory.
+          machine's login. A runtime its setup has not built refuses the
+          check (exit 69, its setup command on stderr). An install in no
+          repository, such as a global one, has no project root, and the
+          check is unavailable there; it never runs an orch-runtime found
+          under the working directory.
 
 Output clearing and ownership:
   No exit leaves a previous run's output behind. Every mode that writes
@@ -1096,7 +1099,7 @@ DEFAULT_CODEX_CMD="codex exec -s read-only -c model_reasoning_effort=xhigh --eph
 # reviewer runs here. Orch is optional: where its script is not installed under
 # the project root the check is unavailable and the entry is skipped.
 DEFAULT_PI_COPILOT_CMD="pi -p --no-session --no-extensions --model %s --thinking high --tools read,grep,find,ls"
-DEFAULT_PI_COPILOT_ROOM_CMD="env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model %s"
+DEFAULT_PI_COPILOT_ROOM_CMD="env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime accounts pick --env --fleet --harness pi --native-model %s"
 
 # The model a stock Copilot entry runs: pi-copilot Claude Opus, pi-copilot-gpt
 # GPT, matched on the settings namespace as every other per-target key is.
@@ -1225,9 +1228,10 @@ target_available() { command_program "$(target_cmd "$1")" "$CWD"; }
 # working directory would run a file of the tree under review, so the stock
 # check is unavailable there. Exit 0 is
 # room, and the stdout lines are the NAME=value env prefix naming the account
-# the command judged, which ROOM_ENV carries to the target command: `lanes pick`
-# prints exactly that, and `lanes pick --json` prints a record, which is
-# refused rather than exported. Any other exit is the check refusing, for a
+# the command judged, which ROOM_ENV carries to the target command: `orch-runtime
+# accounts pick --env` prints exactly that, and the pick without --env prints a
+# record, which is refused rather than exported. Any other exit is the check
+# refusing, for a
 # wall to wait out, a setting or read to fix, or a check that could not run;
 # the command's own stderr, passed through, says which. The skip is judged on
 # the exit alone and quotes none of that stderr, which is another tool's, its

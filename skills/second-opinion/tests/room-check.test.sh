@@ -54,11 +54,32 @@ printf 'is this safe?\n' | (cd "$TMP_ROOT" && env PATH="$ROW/bin:$PATH" "${W_ENV
 assert_eq "$rc" 0 "a quick prompt piped on stdin reaches the target after a check that drains stdin"
 assert_eq "$(count codex):$(cat "$ROW/seat-codex" 2>/dev/null || printf none)" 1:codex-seat "the target ran once, on the seat the check picked"
 
-# Exercise the fleet command with the real chooser. Only the usage endpoint
-# and the review CLI are fixtures; account selection and prefix delivery run
-# in production. The CLI records its actual account in its review metadata.
-# shellcheck source=../../orch/tests/lib/lanes-fixture.sh
-. "$SKILL_DIR/../orch/tests/lib/lanes-fixture.sh"
+# Exercise the fleet command with the built runtime's chooser, which these
+# rows need set up. Only the usage endpoint, the runtime's measured `curl`
+# fixture answering by the token a request carries, and the review CLI are
+# fixtures; account selection and prefix delivery run in production. The CLI
+# records its actual account in its review metadata. A pick naming a model has
+# kendex classify it.
+# shellcheck source=../../orch/tests/lib/tier-model-path.sh
+. "$SKILL_DIR/../orch/tests/lib/tier-model-path.sh"
+USAGE_CURL="$SKILL_DIR/../orch/tests/rust/fixtures/usage-curl/curl"
+# A row's run clears its environment, so the built runtime's cache, the one
+# the set-up fills for this checkout's sources, is handed to it by name.
+RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SKILL_DIR/../agent-runtime/scripts/lib/key.sh")" \
+  || { echo "room-check: runtime-cache=unresolved" >&2; exit 1; }
+# claude_account HOME NAME WEEKLY_PCT — a Claude config dir HOME/.NAME whose
+# credentials hold token-NAME, an hour from expiry, and that token's usage
+# answer at WEEKLY_PCT of the week, under USAGE.
+claude_account() {
+  mkdir -p "$1/.$2"
+  jq -n --arg at "token-$2" --argjson exp "$((($(date +%s) + 3600) * 1000))" \
+    '{claudeAiOauth: {accessToken: $at, refreshToken: "refresh", expiresAt: $exp, subscriptionType: "max"}}' \
+    > "$1/.$2/.credentials.json"
+  jq -n --argjson w "$3" '{five_hour: {utilization: 0, resets_at: "2099-08-01T06:00:00Z"},
+    seven_day: {utilization: $w, resets_at: "2099-08-01T06:00:00Z"},
+    limits: [{kind: "weekly_scoped", percent: 0, resets_at: "2099-08-01T06:00:00Z",
+      scope: {model: {display_name: "Opus"}}}]}' > "$USAGE/token-$2.usage.json"
+}
 CLAUDE_ROOM_CMD="$(sed -n 's/^SECOND_OPINION_CLAUDE_ROOM_CMD = "\(.*\)"$/\1/p' "$SKILL_DIR/../../kendex.settings.toml")"
 assert_eq "$(sed -n 's/^# SECOND_OPINION_CLAUDE_ROOM_CMD = "\(.*\)"$/\1/p' "$SKILL_DIR/kendex.settings.toml.example")" "$CLAUDE_ROOM_CMD" "the fleet example uses the project's Claude room command"
 
@@ -76,14 +97,12 @@ while IFS='|' read -r label weekly checked reviewer account; do
   build "claude-pool-$claude_row" ps:none current:codex models:claude+codex+my-model count:1 \
     cmd:claude=claude cmd:codex=codex cmd:my-model=extra model:my-model=deepseek claude:parse extra:parse
   H="$ROW/home"
-  FIXTURE_DIR="$ROW/usage"
-  mkdir -p "$FIXTURE_DIR" "$PROJ/.agents/skills"
+  USAGE="$ROW/usage"
+  mkdir -p "$USAGE" "$PROJ/.agents/skills"
   ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
-  make_lane "$H" firstclaude
-  make_lane "$H" secondclaude
-  claude_usage 0 100 0 Opus > "$FIXTURE_DIR/.firstclaude.json"
-  claude_usage 0 "$weekly" 0 Opus > "$FIXTURE_DIR/.secondclaude.json"
-  make_fetcher "$ROW/bin/fetch-usage"
+  ln -s "$USAGE_CURL" "$ROW/bin/curl"
+  claude_account "$H" firstclaude 100
+  claude_account "$H" secondclaude "$weekly"
   # Keep the stub's stdin and invocation accounting while its response names
   # the CLAUDE_CONFIG_DIR passed to the process, not the expected selection.
   mv "$ROW/bin/lane-claude" "$ROW/bin/claude-response"
@@ -93,9 +112,8 @@ set -euo pipefail
 "${0%/*}/claude-response" | jq --arg account "$CLAUDE_CONFIG_DIR" '.qa_metadata.account = $account'
 SH
   chmod +x "$ROW/bin/lane-claude"
-  W_ENV+=("LANES_HOME=$H" "ORCH_LANE_DIRS=$H/.firstclaude:$H/.secondclaude"
-    "ORCH_LANES_FETCH_CMD=$ROW/bin/fetch-usage" "FIXTURE_DIR=$FIXTURE_DIR"
-    "OVERSEE_WATCH_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude")
+  W_ENV+=("ORCH_LANE_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
+    "OVERSEE_WATCH_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   room_cmd="$CLAUDE_ROOM_CMD"
   [[ "$checked" != no ]] || room_cmd=""
   W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
@@ -143,7 +161,7 @@ while IFS='|' read -r label pool reviewer root; do
   ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
   printf '{}\n' > "$H/.pi-copilot/settings.json"
   printf '{}\n' > "$H/.pi-copilot/auth.json"
-  W_ENV+=("LANES_HOME=$H" "ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state")
+  W_ENV+=("ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
   assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"

@@ -50,7 +50,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # skips the reviewer for the next one. The orch skill's account judge,
 # `orch-runtime accounts pick --env`, is that check. pi-copilot and pi-copilot-gpt, Pi on the Copilot pool running Claude
 # Opus and GPT, come with their command, model, room check and inline diff
-# built in (`second-opinion --help` prints them); their check runs lanes pick
+# built in (`second-opinion --help` prints them); their check runs that judge
 # from .agents/skills/orch in the project this skill is installed in, so
 # where orch is not installed there, in a global install, which has no
 # project, or where the check refuses, the entry is skipped for the next one. Setting

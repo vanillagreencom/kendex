@@ -6,8 +6,8 @@
 # the lock loses a line whenever two writers meet.
 #
 # Sourced, never executed, after lib/file-lock.sh, whose orch_take_lock and
-# orch_release_lock this uses; oversee-watch sources it for the envelope class
-# alone, which takes no lock. Bash 3.2-safe, like its callers.
+# orch_release_lock this uses; the envelope class alone takes no lock. Bash
+# 3.2-safe, like its callers.
 
 # Whether FILE ends on a complete line: 0 when its last byte is a newline and
 # when it is empty, 1 when a writer left a fragment there, 2 when it could not

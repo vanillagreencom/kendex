@@ -11,7 +11,7 @@
 # file. A halt is acknowledged by a plain `inbox` read or a `wait` that
 # hands it over: `--ack` stops short of an unread one, so a hook that hands
 # mail over never consumes it.
-# A send or notice prints its receipt; oversee-report reads the notice id.
+# A send or notice prints its receipt; orch-runtime report write reads the notice id.
 # Silence is a send or notice that did not land. With the repeat guard, a repeat
 # of one envelope to one item inside a minute is refused before the append
 # rather than delivered a second time. Older host libraries can deliver it again.
@@ -34,6 +34,7 @@ Usage: lane-mail ask|notice|wait|inbox|watch --item ITEM [options]
        lane-mail send|drain|pending|events --item ITEM [--root ROOT] [--host] [options]
        lane-mail drain-many --file REQUEST
        lane-mail compact --item ITEM [--root ROOT]
+       lane-mail attach-check --attach PATH
        lane-mail resolve --item overseer --id MSGID [--text PATH | --default] [options]
        lane-mail peer ask|send --repo REPO [--host] [options]
 
@@ -144,8 +145,8 @@ Overseer side:
               `lane-mail: directive-send item=ITEM record=<JSON>`, the
               object {result, text, credit}: sent, archived or failed, the
               CLI's words (at most 300 characters), and the account's cloud
-              credit {remaining_dollars, locked_reason} from `lanes list`,
-              "unread" where that read failed. The send writes no fleet
+              credit {remaining_dollars, locked_reason} from `orch-runtime
+              accounts roster --host local`, "unread" where that read failed. The send writes no fleet
               record: orch's `orch-runtime send` records the receipt on the
               lane.
   drain --item ITEM --after N [--receipts]
@@ -266,6 +267,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               ORCH_PROGRESS_REPORT_DIR names, recorded at that physical
               path; refused
               `attach-outside` otherwise
+  attach-check --attach PATH
+              judges PATH as notice --attach does, appending nothing, and
+              prints `lane-mail: attach=<physical path>`, the path a notice
+              would record; refused `attach-outside` as notice refuses it
   resolve --item overseer --id MSGID [--text PATH | --default] [--delivery-id KEY]
               closes any ask this overseer sent with a separate `resolution` envelope,
               `re=MSGID`, and `by=explicit` when neither option is given.
@@ -309,7 +314,7 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               judges no key
 
 Optional orch package:
-  Lane sends, --host, --state-dir, compact and notice --attach need orch
+  Lane sends, --host, --state-dir, compact, notice --attach and attach-check need orch
   installed beside mailbox. A missing helper refuses orch-missing before
   writing. Without --host or --state-dir, an overseer send or peer call
   without orch keeps overseer-absent because no registered session reads it.
@@ -476,7 +481,7 @@ its receipt always names item `overseer` rather than the repository it reached.
 A `notice` receipt replaces `monitor=<m>` with `to=<owner|peer> ref=<ref>`;
 ref is empty when no --ref was given, and a lane notice has an empty to field.
 Only --progress adds ` progress=1` to that receipt.
-`oversee-report write` reads the notice receipt's id for its report-written line.
+`orch-runtime report write` reads the notice receipt's id for its report-written line.
 A session send prints `lane-mail: directive-send item=<item> record=<JSON>`
 on stderr, after its refusal's keyed line where it refuses, the record
 `send --item` describes; its stdout is the `sent` receipt alone.
@@ -691,7 +696,7 @@ if [ "$VERB" = peer ]; then
   esac
 fi
 case "$VERB" in
-  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | compact | peer) ;;
+  ask | notice | wait | inbox | watch | send | drain | drain-many | pending | events | resolve | compact | peer | attach-check) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
@@ -798,6 +803,12 @@ if [ "$VERB" = compact ]; then
     case "$given" in --item | --root) ;; *) refuse option-unknown "$given" ;; esac
   done
 fi
+if [ "$VERB" = attach-check ]; then
+  for given in $OPTS_GIVEN; do
+    case "$given" in --attach) ;; *) refuse option-unknown "$given" ;; esac
+  done
+  [ -n "$ATTACH" ] || refuse option-required --attach
+fi
 # The batch names its lanes and roots in its request file alone.
 if [ "$VERB" = drain-many ]; then
   for given in $OPTS_GIVEN; do
@@ -851,7 +862,7 @@ for given in $OPTS_GIVEN; do
     --progress)
       [ "$VERB:$ITEM:$TO" = notice:overseer:owner ] || refuse option-unknown --progress
       [ -n "$REF" ] || refuse progress-needs-ref --progress ;;
-    --attach) [ "$VERB:$ITEM" = notice:overseer ] || refuse option-unknown --attach ;;
+    --attach) case "$VERB:$ITEM" in notice:overseer | attach-check:) ;; *) refuse option-unknown --attach ;; esac ;;
     --recommend | --wait | --draft | --reserved) [ "$VERB:$ITEM" = ask:overseer ] || refuse option-unknown "$given" ;;
     --due) [ "$VERB" = pending ] || refuse option-unknown --due ;;
     --after)
@@ -893,7 +904,7 @@ fi
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
 case "$ITEM" in
-  '') [ "$VERB" = drain-many ] || refuse option-required --item ;;
+  '') case "$VERB" in drain-many | attach-check) ;; *) refuse option-required --item ;; esac ;;
   . | ..) refuse item-invalid "$ITEM" ;;
 esac
 case "$ITEM" in
@@ -1035,7 +1046,8 @@ trap lm_cleanup EXIT
 
 # The cause readings a stalled cloud lane's close carries into the fleet log:
 # this send's result (sent, archived or failed) and the CLI's words, and the
-# account's cloud credit as `lanes` reads it now. A send is the one
+# account's cloud credit as the runtime's account roster reads it now, this
+# machine's own reading of the record's Claude account alone. A send is the one
 # per-session call kendex makes, and no read of a session's own state exists
 # (Claude Code 2.1.295 documents none), so these are the only causes it can
 # name. A credit read that fails, or a reading with no credit body, records
@@ -1044,8 +1056,9 @@ trap lm_cleanup EXIT
 # the lane; the mailbox writes no fleet record.
 lm_send_record() { # RESULT CAUSE
   local credit
-  credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/lanes" list --harness claude --local --json 2>/dev/null |
-    jq -c --arg dir "$account" '[.[] | select(.config_dir == $dir) | .credits | objects | {remaining_dollars, locked_reason}] | first // "unread"')" ||
+  credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime" accounts roster --host local 2>/dev/null |
+    jq -c --arg dir "$account" '[.result.rows[]? | select(.harness == "claude" and .config_dir == $dir)
+      | .record.credits | objects | {remaining_dollars, locked_reason}] | first // "unread"')" ||
     credit='"unread"'
   jq -rn --arg item "$ITEM" --arg result "$1" --arg text "$2" --argjson credit "$credit" \
     '"lane-mail: directive-send item=\($item) record=" + ({result: $result, text: ($text | .[0:300]), credit: $credit} | tojson)' >&2 ||
@@ -1064,7 +1077,7 @@ lm_send_record() { # RESULT CAUSE
 # lane never asks, so an answer has nothing to reach, and no hook enforces a
 # halt there.
 lm_send_channel() {
-  local rc=0 fleet record host channel files harness account session root out answer cause
+  local rc=0 fleet record host caps fields=() field channel files account session root out answer cause
   fleet="$(mailbox_fleet_record full . "$STATE_DIR" 2>"$WORK_DIR/state.err")" ||
     refuse state-unreadable "$ITEM" "$(cat -- "$WORK_DIR/state.err")"
   record='{}'
@@ -1078,12 +1091,20 @@ lm_send_channel() {
     return 0
   fi
   host="$(jq -r '.host // "local"' <<<"$record")" || refuse state-unreadable "$ITEM"
-  lane_capabilities_read "$ORCH_SCRIPTS/lane-host" "$host" 2>"$WORK_DIR/caps.err" ||
+  # lane-host validates the kind's line against each key's closed set, so the
+  # two keys a send acts on are read from it as they stand.
+  caps="$(ORCH_LANE_HOST="$host" "$ORCH_SCRIPTS/lane-host" capabilities 2>"$WORK_DIR/caps.err")" ||
     refuse host-capabilities-unread "$host" "$(cat -- "$WORK_DIR/caps.err")"
-  lane_capability channel channel
+  channel="" files=""
+  IFS=$'\t' read -r -a fields <<<"$caps"
+  for field in ${fields[@]+"${fields[@]}"}; do
+    case "${field%%=*}" in
+      channel) channel=${field#*=} ;;
+      files) files=${field#*=} ;;
+    esac
+  done
   case "$channel" in
     mailbox)
-      lane_capability files files
       # A hosted launch records a mailbox on the provider's disk. A local
       # append would report delivery to a mailbox the lane never reads.
       if [ "$files" != local ]; then
@@ -1099,14 +1120,16 @@ lm_send_channel() {
     session) ;;
     *) refuse host-capabilities-unread "$host" "channel=$channel" ;;
   esac
-  IFS=$'\t' read -r harness account session root < <(jq -r '[.harness // "", .account // "", .session_id // "", .mail_root // ""] | @tsv' <<<"$record") ||
+  IFS=$'\t' read -r _ account session root < <(jq -r '[.harness // "", .account // "", .session_id // "", .mail_root // ""] | @tsv' <<<"$record") ||
     refuse state-unreadable "$ITEM"
   lm_root_own "$root" own
   [ -z "$MSGID" ] || refuse channel-session --re
   [ "$HALT" -eq 0 ] || refuse channel-session --halt
   { [ -n "$account" ] && [ -n "$session" ]; } || refuse session-unrecorded "$ITEM"
   rc=0
-  out="$(env "$(lane_env_prefix "$harness" "$account")" claude -p --cloud "$session" --output-format json <"$FILE" 2>"$WORK_DIR/claude.err")" || rc=$?
+  # The send is the Claude CLI's, so the account rides in Claude's variable:
+  # a session kind launches a Claude lane alone.
+  out="$(env "CLAUDE_CONFIG_DIR=$account" claude -p --cloud "$session" --output-format json <"$FILE" 2>"$WORK_DIR/claude.err")" || rc=$?
   # The CLI's own error words decide an archived session; any other answer
   # that is no {ok: true} is a send that failed, carried with those words.
   answer="$(jq -r 'if .ok == true then "sent" elif (.error // "" | tostring | test("archived"; "i")) then "archived" else "failed" end' <<<"$out" 2>/dev/null)" || answer=failed
@@ -1129,11 +1152,7 @@ lm_send_channel() {
   exit 0
 }
 if [ "$VERB" = send ] && [ "$ITEM" != overseer ]; then
-  lm_require_orch lane-host lanes lib/lane-capabilities.sh lib/lane-launch.sh
-  # shellcheck source=../../orch/scripts/lib/lane-capabilities.sh
-  . "$ORCH_SCRIPTS/lib/lane-capabilities.sh"
-  # shellcheck source=../../orch/scripts/lib/lane-launch.sh
-  . "$ORCH_SCRIPTS/lib/lane-launch.sh"
+  lm_require_orch lane-host orch-runtime
 fi
 
 # The caller's own repository: the main checkout behind this shell, whatever
@@ -1141,9 +1160,42 @@ fi
 # and decides which lanes are this overseer's to write.
 OWN_ROOT=""
 case "$VERB" in
-  ask | notice | send | resolve | peer | compact)
+  ask | notice | send | resolve | peer | compact | attach-check)
     OWN_ROOT="$(mailbox_common_root . 2>/dev/null)" || OWN_ROOT="" ;;
 esac
+
+# The attachment, judged where it stands: a regular file, not itself a
+# symlink, whose directory resolves physically to the progress-report
+# directory ORCH_PROGRESS_REPORT_DIR names, a relative one under the main
+# checkout, which is one rule at the one point the relay would otherwise carry
+# any path it was handed. ATTACH is rewritten to the physical path so the
+# relay opens what was judged.
+lm_attach_confined() {
+  local reports dir base
+  reports="$("$ORCH_SCRIPTS/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports 2>"$WORK_DIR/reports.err")" ||
+    refuse attach-outside "$ATTACH" "$(cat -- "$WORK_DIR/reports.err")"
+  case "$reports" in
+    /*) ;;
+    *) reports="${OWN_ROOT:-$PWD}/$reports" ;;
+  esac
+  reports="$(cd -- "$reports" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
+  { [ ! -L "$ATTACH" ] && [ -f "$ATTACH" ]; } || refuse attach-outside "$ATTACH"
+  case "$ATTACH" in
+    */*) dir="${ATTACH%/*}"; base="${ATTACH##*/}" ;;
+    *) dir=.; base="$ATTACH" ;;
+  esac
+  dir="$(cd -- "$dir" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
+  [ "$dir" = "$reports" ] || refuse attach-outside "$ATTACH"
+  ATTACH="$dir/$base"
+}
+
+# A caller that carries a file beside its own message asks this rule rather
+# than a copy of it: the answer is the physical path a notice would attach.
+if [ "$VERB" = attach-check ]; then
+  lm_attach_confined
+  printf 'lane-mail: attach=%s\n' "$ATTACH"
+  exit 0
+fi
 # A peer verb writes the caller's own record and places a bare --repo name
 # beside the caller's checkout. With no own root there is nowhere correct for
 # either, so it is refused here: before a name is composed, before the peer
@@ -1960,31 +2012,6 @@ lm_draft() {
   DRAFT_RECORD="$WORK_DIR/draft.json"
   jq -c --arg hash "${hash%% *}" '{recipient, medium, text, text_hash: $hash}' -- "$draft_copy" \
     >"$DRAFT_RECORD" 2>"$WORK_DIR/jq.err" || refuse file-unreadable "$DRAFT" "$(cat -- "$WORK_DIR/jq.err")"
-}
-
-# The attachment, judged where it stands: a regular file, not itself a
-# symlink, whose directory resolves physically to the progress-report
-# directory ORCH_PROGRESS_REPORT_DIR names, a relative one under the main
-# checkout, which is one rule at the one point the relay would otherwise carry
-# any path it was handed. ATTACH is rewritten to the physical path so the
-# relay opens what was judged.
-lm_attach_confined() {
-  local reports dir base
-  reports="$("$ORCH_SCRIPTS/orch-env" ORCH_PROGRESS_REPORT_DIR tmp/progress-reports 2>"$WORK_DIR/reports.err")" ||
-    refuse attach-outside "$ATTACH" "$(cat -- "$WORK_DIR/reports.err")"
-  case "$reports" in
-    /*) ;;
-    *) reports="${OWN_ROOT:-$PWD}/$reports" ;;
-  esac
-  reports="$(cd -- "$reports" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
-  { [ ! -L "$ATTACH" ] && [ -f "$ATTACH" ]; } || refuse attach-outside "$ATTACH"
-  case "$ATTACH" in
-    */*) dir="${ATTACH%/*}"; base="${ATTACH##*/}" ;;
-    *) dir=.; base="$ATTACH" ;;
-  esac
-  dir="$(cd -- "$dir" 2>/dev/null && pwd -P)" || refuse attach-outside "$ATTACH"
-  [ "$dir" = "$reports" ] || refuse attach-outside "$ATTACH"
-  ATTACH="$dir/$base"
 }
 
 # The line alone crosses the transport, and the provider adds it under a lock

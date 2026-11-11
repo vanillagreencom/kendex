@@ -1901,8 +1901,10 @@ PY_GUARD
 cp "$FRESH_ORCH/scripts/lib/overseer-launch.sh" "$TMP/release-parser"
 # The preserved parser must not decide the refreshed release's answer.
 printf 'exit 89\n' >>"$TMP/settings-trusted/.agents/skills/orch/scripts/lib/overseer-launch.sh"
-for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'token-absence|install'; do
+for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'token-absence|install' 'unchecked|install'; do
   IFS='|' read -r name ORCH_MODE <<<"$row"
+  # A release whose orch carries no shell preference parser.
+  [ "$name" != unchecked ] || rm -f -- "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
   reset_default
   if [ "$name" = absent ]; then
     # A consumer without orch still gets its committed settings scanned.
@@ -1924,6 +1926,24 @@ for row in 'absent|absent' 'parser-update|install' 'first-install|install' 'toke
         ! grep -qF -- '<code>SECOND_OPINION_CODEX_CMD' "$TMP/state/body"; then
       ok 'absent optional orch refreshes without preference diagnostics and still names a retired setting'
     else bad 'absent optional orch' "$OUT"; fi
+  elif [ "$name" = unchecked ]; then
+    if [ "$RC" -eq 0 ] &&
+        grep -qxF "refresh-settings=preference-unchecked value=$repo/.agents/skills/orch/scripts/lib/overseer-launch.sh" <<<"$OUT" &&
+        ! grep -qF 'deprecated entry' "$TMP/state/body"; then
+      ok 'an orch without the shell parser refreshes with the preference unchecked'
+    else bad 'orch without the shell parser' "$OUT"; fi
+    # Parsing anyway sources the absent library and stops the same refresh.
+    file_edit "$TMP/settings-trusted" refresh/refresh-consumer.sh 1 \
+      '^  orch=unchecked$' 's/^  orch=unchecked$/  orch=present # &/'
+    reset_default
+    before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
+    : >"$TMP/state/calls"
+    run_refresh unchecked-control pass render
+    if refresh_stopped_at_settings "$before" "refresh-error=settings-extraction value=$repo/.agents/skills/orch"; then
+      ok 'control: a parse with no parser breaks the unchecked refresh'
+    else bad 'unchecked preference control' "$OUT"; fi
+    cp "$TMP/boundary-runner" "$runner"
+    cp "$TMP/release-parser" "$FRESH_ORCH/scripts/lib/overseer-launch.sh"
   elif [ "$RC" -eq 0 ] && grep -qF 'deprecated entry <code>claude:1:high</code>' "$TMP/state/body"; then
     ok "$name uses the credential-free release parser"
   else bad "$name parser boundary" "$OUT"; fi

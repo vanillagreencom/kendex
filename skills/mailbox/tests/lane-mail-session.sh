@@ -8,7 +8,8 @@
 # naming a fleet state that holds no record for the lane refuses rather than
 # fall back to the mailbox. A local mailbox record keeps its mailbox. A hosted
 # mailbox record requires --root MAIL_ROOT --host and uses its recorded host.
-# The kind's line is the real lane-host's; `claude` and the provider are stubs.
+# The kind's line is the real lane-host's and the credit the built runtime's;
+# `claude` and the provider are stubs, and `curl` the runtime's usage fixture.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 # shellcheck source=../../orch/tests/lib/git-env.sh
@@ -153,28 +154,43 @@ for row in \
 done
 
 echo "=== every session send prints its result and the account's credit, and writes no fleet record ==="
-# A scripts tree whose lane-mail is a copy, OLD replaced by NEW where given,
-# and whose lanes is a stub: it logs ORCH_LANE_DIRS and its argv, prints
-# STUB_LANES_OUT and exits STUB_LANES_RC. Its path lands in LANE_MAIL_BIN.
-credit_scripts() { # NAME [OLD NEW]
-  local dir orch
+# mutant NAME OLD NEW — a copy of the scripts with lane-mail's OLD replaced
+# by NEW, its path in LANE_MAIL_BIN.
+mutant() {
+  local dir
   dir="$(mutant_scripts "$1" lane-mail)" || exit 1
-  [[ $# -lt 3 ]] || mutate_file "$dir/lane-mail" "$2" "$3"
-  orch="$dir/../../orch/scripts"
-  rm -- "${orch:?}/lanes"
-  cat > "$orch/lanes" <<'EOF'
-#!/usr/bin/env bash
-printf 'dirs=%s argv=%s\n' "${ORCH_LANE_DIRS:-}" "$*" >> "$STUB_LANES_LOG"
-printf '%s\n' "${STUB_LANES_OUT:-[]}"
-exit "${STUB_LANES_RC:-0}"
-EOF
-  chmod +x "$orch/lanes"
+  mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
+# The credit is the built runtime's roster reading the record's account: its
+# usage endpoint is the runtime's measured `curl` fixture, answering from
+# USAGE_FIXTURE_DIR by the token the account's credentials hold, and logging
+# each request there. The caller's own ORCH_LANE_DIRS names another account,
+# whose token has no answer, so a read not narrowed to the record's account
+# shows in that log.
 ACCOUNT="$TMP_ROOT/.eclaude"
-listing() { # CREDITS-JSON — one lanes list --json record for the account
-  jq -cn --arg dir "$ACCOUNT" --argjson c "$1" '[{config_dir: "/other", credits: {remaining_dollars: 99, locked_reason: null}}, {config_dir: $dir, credits: $c}]'
+OTHER_ACCOUNT="$TMP_ROOT/.oclaude"
+USAGE="$TMP_ROOT/usage"
+mkdir -p "$ACCOUNT" "$OTHER_ACCOUNT" "$USAGE" "$TMP_ROOT/claims"
+ln -s "$REPO_ROOT/skills/orch/tests/rust/fixtures/usage-curl/curl" "$BIN/curl"
+EXPIRES=$((($(date +%s) + 3600) * 1000))
+for token in eclaude oclaude; do
+  jq -cn --arg token "token-$token" --argjson expires "$EXPIRES" \
+    '{claudeAiOauth: {accessToken: $token, refreshToken: "refresh", expiresAt: $expires, subscriptionType: "max"}}'
+done > "$TMP_ROOT/credentials.jsonl"
+sed -n 1p "$TMP_ROOT/credentials.jsonl" > "$ACCOUNT/.credentials.json"
+sed -n 2p "$TMP_ROOT/credentials.jsonl" > "$OTHER_ACCOUNT/.credentials.json"
+# usage_answer CREDIT — the account's usage body with CREDIT as its extra
+# usage, `none` for a body with no credit, `unread` for no answer at all.
+usage_answer() {
+  rm -f -- "$USAGE/token-eclaude.usage.json" "$USAGE/curl.log"
+  [[ "$1" != unread ]] || return 0
+  jq -n --arg credit "$1" '{seven_day: {utilization: 10, resets_at: "2099-08-01T06:00:00Z"}}
+    + if $credit == "none" then {} else {iguana_necktie: ({limit_dollars: 50, used_dollars: 20,
+        resets_at: "2099-08-01T06:00:00Z"} + ($credit | fromjson))} end' > "$USAGE/token-eclaude.usage.json"
 }
+CREDIT_ENV=(ORCH_LANE_DIRS="$OTHER_ACCOUNT" USAGE_FIXTURE_DIR="$USAGE" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims"
+  ORCH_LANES_USAGE_TTL=0 ORCH_LANES_USAGE_MAX_AGE=0)
 # The send's receipt, the keyed line it prints on stderr whatever its
 # outcome for orch's `send` verb: its result, its credit, and whether its
 # text carries the CLI's words; `none` where no line was printed.
@@ -193,33 +209,40 @@ state_after() {
     printf 'state=changed'
   fi
 }
-credit_scripts credit
 OPEN_CREDIT='{"remaining_dollars":12.5,"locked_reason":null}'
 LOCKED_CREDIT='{"remaining_dollars":0,"locked_reason":"spend_limit"}'
-# LABEL|claude answer|lanes listing|lanes exit|send exit|CLI words|result|credit
+# LABEL|claude answer|usage answer|send exit|CLI words|result|credit
 for row in \
-  "a delivered send|{\"ok\":true}|$(listing "$OPEN_CREDIT")|0|0||sent|$OPEN_CREDIT" \
-  "an archived session|$ARCHIVED|$(listing "$LOCKED_CREDIT")|0|2|is archived|archived|$LOCKED_CREDIT" \
-  "a failed send and a failed credit read|$MISSING|[]|1|2|Session not found|failed|\"unread\"" \
-  "a listing with no credit body|{\"ok\":true}|$(listing null)|0|0||sent|\"unread\""; do
-  IFS='|' read -r label answer lanes lanes_rc want_rc cli result credit <<<"$row"
-  rm -f -- "${TMP_ROOT:?}/lanes.log"
+  "a delivered send|{\"ok\":true}|$OPEN_CREDIT|0||sent|$OPEN_CREDIT" \
+  "an archived session|$ARCHIVED|$LOCKED_CREDIT|2|is archived|archived|$LOCKED_CREDIT" \
+  "a failed send and a failed credit read|$MISSING|unread|2|Session not found|failed|\"unread\"" \
+  "a usage answer with no credit body|{\"ok\":true}|none|0||sent|\"unread\""; do
+  IFS='|' read -r label answer usage want_rc cli result credit <<<"$row"
+  usage_answer "$usage"
   cp -- "$STATE/workflow-state-oversee.json" "$TMP_ROOT/state.before"
-  lm STUB_CLAUDE_OUT="$answer" STUB_LANES_OUT="$lanes" STUB_LANES_RC="$lanes_rc" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
+  lm STUB_CLAUDE_OUT="$answer" "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
   assert_eq "rc=$RC receipt=$(receipt "$cli") $(state_after)" \
     "rc=$want_rc receipt=[\"$result\",$credit,true] state=same" \
     "$label: the receipt holds the send's result, its words and the credit reading, and the fleet record is read, never written"
-  assert_eq "$(cat "$TMP_ROOT/lanes.log")" "dirs=$ACCOUNT argv=list --harness claude --local --json" \
+  assert_eq "$(sort -u "$USAGE/curl.log")" "usage token-eclaude" \
     "$label: the credit is read for the record's account alone"
 done
 # The receipt is a stderr line; stdout keeps the `sent` receipt alone.
 assert_eq "stdout=$(grep -c '^lane-mail: directive-send' <<<"$OUT") err=$(sed -n '$p' "$TMP_ROOT/err" | cut -d' ' -f1-3)" 'stdout=0 err=lane-mail: directive-send item=CC-1' 'the record is on stderr, after the refusal where there is one, never on stdout'
 # shellcheck disable=SC2016  # the script's own text, never expanded here.
-credit_scripts credit-unrecorded '  lm_send_record "$answer" "$cause"
+mutant credit-unrecorded '  lm_send_record "$answer" "$cause"
 ' ''
-lm STUB_CLAUDE_OUT="$ARCHIVED" STUB_LANES_OUT="$(listing "$LOCKED_CREDIT")" STUB_LANES_LOG="$TMP_ROOT/lanes.log" -- "${DIRECTIVE[@]}"
+usage_answer "$LOCKED_CREDIT"
+lm STUB_CLAUDE_OUT="$ARCHIVED" "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "is archived")" "receipt=none" \
   "control: a send that prints no receipt fails the receipt rows"
+# shellcheck disable=SC2016
+mutant credit-any-account 'ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime"' '"$ORCH_SCRIPTS/orch-runtime"'
+usage_answer "$OPEN_CREDIT"
+lm "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
+assert_eq "receipt=$(receipt "") log=$(sort -u "$USAGE/curl.log" | paste -sd, -)" \
+  'receipt=["sent","unread",true] log=usage token-oclaude' \
+  "control: a read not narrowed to the record's account reads the caller's accounts"
 unset LANE_MAIL_BIN
 
 echo "=== a lane on a mailbox kind keeps its mailbox ==="
@@ -270,13 +293,6 @@ for row in \
 done
 
 echo "=== controls ==="
-# mutant OLD NEW — a copy of the scripts with lane-mail's one rule removed.
-mutant() {
-  local dir
-  dir="$(mutant_scripts "$1" lane-mail)" || exit 1
-  mutate_file "$dir/lane-mail" "$2" "$3"
-  LANE_MAIL_BIN="$dir/lane-mail"
-}
 mutant session-mailbox '    session) ;;' '    session) return 0 ;;'
 lm -- "${DIRECTIVE[@]}"
 assert_eq "called=$(called)" "called=no" "control: a session lane served through the mailbox never reaches the session"

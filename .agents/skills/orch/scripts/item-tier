@@ -72,8 +72,10 @@ fi
 . "$SCRIPT_DIR/lib/change-class.sh"
 # shellcheck source=../../change-scope/scripts/lib/branch-growth.sh
 . "$MEASUREMENT"
-# shellcheck source=lib/launch-overlap.sh
-. "$SCRIPT_DIR/lib/launch-overlap.sh"
+# A Location header line: plain, a list item or emphasised. The runtime's
+# admission reads the same line (runtime/src/ops/admission.rs
+# is_location_line); this reader runs where no runtime is built.
+LOCATION_LINE_ERE='^[[:space:]]*([-*+][[:space:]]+)?[*_]*Location[*_]*[[:space:]]*:'
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 

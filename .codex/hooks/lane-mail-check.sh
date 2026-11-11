@@ -3269,7 +3269,6 @@ session_row() {
   [ "$ARM" != stop ] || ROW_EVENT=Stop
   if ! printf '%s' "$INPUT" | "$BASH" -euo pipefail -c '
       . "$1/../../mailbox/scripts/lib/file-lock.sh" && . "$1/../../mailbox/scripts/lib/mailbox-append.sh" && . "$1/lib/lane-context.sh" &&
-      . "$1/lib/lane-state.sh" &&
       . "$1/lib/session-rows.sh" && session_rows_write "$2" "$3" "$4"' \
     _ "$SCRIPTS" "$ROOT" "$HARNESS" "$ROW_EVENT" 2>"$WORK_DIR/row.err"; then
     message rows-unwritten "$ROOT" "$(cat -- "$WORK_DIR/row.err")"

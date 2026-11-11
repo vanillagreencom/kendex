@@ -559,6 +559,40 @@ $REPORTS|2=lane-mail: attach-outside=$REPORTS
 ROWS
 assert_eq "$(field "$BOX/to-overseer.jsonl" '.attach' | sort -u)" "$(cd "$REPORTS" && pwd -P)/09-26-01-00.md" \
   "every accepted attachment is recorded at its one physical path"
+# attach-check answers each path as the notice above judged it, with the
+# physical path the notice recorded, and appends nothing.
+PHYSICAL="$(cd "$REPORTS" && pwd -P)/09-26-01-00.md"
+LINES_BEFORE="$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')"
+# PATH|WANT (status=stdout=first stderr line)
+while IFS='|' read -r path want; do
+  lm attach-check --attach "$path"
+  assert_eq "$RC=$OUT=$ERR" "$want" "attach-check $path"
+done <<ROWS
+$REPORTS/09-26-01-00.md|0=lane-mail: attach=$PHYSICAL=
+tmp/progress-reports/09-26-01-00.md|0=lane-mail: attach=$PHYSICAL=
+$REPORTS/deeper/09-26-01-01.md|2==lane-mail: attach-outside=$REPORTS/deeper/09-26-01-01.md
+$LANE/elsewhere/09-26-01-02.md|2==lane-mail: attach-outside=$LANE/elsewhere/09-26-01-02.md
+$REPORTS/09-26-01-03.md|2==lane-mail: attach-outside=$REPORTS/09-26-01-03.md
+$LANE/reports-link/09-26-01-00.md|0=lane-mail: attach=$PHYSICAL=
+$REPORTS|2==lane-mail: attach-outside=$REPORTS
+ROWS
+assert_eq "$(wc -l < "$BOX/to-overseer.jsonl" | tr -d ' ')" "$LINES_BEFORE" "attach-check appends nothing"
+lm attach-check --attach "$PHYSICAL" --item overseer
+assert_eq "$RC=$ERR" "2=lane-mail: option-unknown=--item" "attach-check takes the file alone"
+lm attach-check
+assert_eq "$RC=$ERR" "2=lane-mail: option-required=--attach" "attach-check requires the file"
+# From a linked worktree the default report directory is the main
+# checkout's, as a notice from there judges it.
+git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+git -C "$LANE" worktree add -q "$TMP_ROOT/attach-wt" 2>/dev/null
+attach_from_worktree() {
+  RC=0
+  OUT="$(cd "$TMP_ROOT/attach-wt" && env -u ORCH_PROGRESS_REPORT_DIR \
+    "${LANE_MAIL_BIN:-$LANE_MAIL}" attach-check --attach "$PHYSICAL" 2>"$TMP_ROOT/err")" || RC=$?
+}
+attach_from_worktree
+assert_eq "$RC=$OUT" "0=lane-mail: attach=$PHYSICAL" \
+  "attach-check from a linked worktree judges the main checkout's report directory"
 
 # --- pending --to and --due ---------------------------------------------------
 new_repo pending
@@ -1241,6 +1275,12 @@ mutant attach-anywhere '[ "$dir" = "$reports" ] || refuse attach-outside "$ATTAC
 lm notice --item overseer --to owner --file "$(text n 'R.')" --attach "$LANE/elsewhere/x.md"
 assert_eq "$RC=$(field "$BOX/to-overseer.jsonl" '.attach')" "0=$LANE/elsewhere/x.md" \
   "control: without the directory rule a file anywhere is attached"
+lm attach-check --attach "$LANE/elsewhere/x.md"
+assert_eq "$RC=$OUT" "0=lane-mail: attach=$LANE/elsewhere/x.md" \
+  "control: without the directory rule attach-check accepts a file anywhere"
+mutant attach-check-root '  ask | notice | send | resolve | peer | compact | attach-check)' '  ask | notice | send | resolve | peer | compact)'
+attach_from_worktree
+assert_eq "$RC" 2 "control: without the main checkout's root attach-check from a worktree judges the worktree's directory"
 
 new_repo control_to
 LANE_MAIL_BIN="$LANE_MAIL" owner_ask 'Owner?' a,b a 120

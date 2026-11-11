@@ -1,6 +1,7 @@
 //! The session send verb: `orch-runtime send` against the real mailbox
-//! program on a temporary checkout, the Claude CLI a fixture, the account
-//! listing a stub. Each row's name carries the defect it catches.
+//! program on a temporary checkout, the Claude CLI a fixture, the account's
+//! credit the real roster's reading of a planted usage record. Each row's
+//! name carries the defect it catches.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows plant records, run the built binary and the real mailbox program, and read the files they left"
@@ -21,7 +22,9 @@ const MAILBOX: &str = "CC-2";
 const FOREIGN: &str = "CC-3";
 const SESSION: &str = "session_01CLOUD";
 const TEXT: &str = "Rebase on main, then push.\n";
-const OPEN_CREDIT: &str = r#"{"remaining_dollars":12.5,"locked_reason":null}"#;
+/// An account's cloud credit: the dollars left and the lock's reason.
+type Credit = (f64, Option<&'static str>);
+const OPEN_CREDIT: Credit = (12.5, None);
 
 /// The real mailbox program, the sibling package's, and the orch scripts
 /// beside this crate.
@@ -42,18 +45,20 @@ fn orch_scripts() -> PathBuf {
 /// One checkout holding the fleet state as its own state directory, three
 /// lanes on it (a cloud session, a mailbox lane and a cloud session whose
 /// root is another repository's), and a scripts tree the mailbox program
-/// runs beside: every orch script linked to the real one but `lanes`, a
-/// stub printing the planted listing, and `workflow-state`, the real one
-/// behind a wrapper that logs each verb it is asked.
+/// runs beside: every orch script linked to the real one but
+/// `orch-runtime`, linked to this build's binary, and `workflow-state`,
+/// the real one behind a wrapper that logs each verb it is asked. The
+/// lanes' Claude account and another stand under a home of their own,
+/// each with its credential and a fresh usage record carrying a credit.
 struct World {
     _dir: tempfile::TempDir,
     _aux: tempfile::TempDir,
     root: PathBuf,
     lane_mail: PathBuf,
     account: PathBuf,
+    accounts: PathBuf,
     directive: PathBuf,
     claude_log: PathBuf,
-    lanes_log: PathBuf,
     state_log: PathBuf,
 }
 
@@ -81,8 +86,9 @@ fn world() -> World {
     let foreign = root.join("foreign");
     std::fs::create_dir(&foreign).unwrap();
     init_repo(&foreign);
-    let account = root.join(".eclaude");
-    std::fs::create_dir(&account).unwrap();
+    // `plant_accounts` places a local account at `<root>/home/<name>`.
+    let accounts = aux.path().join("accounts");
+    let account = accounts.join("home").join(".eclaude");
     std::fs::create_dir_all(root.join("wt").join(CLOUD)).unwrap();
     let mut fleet: Value =
         serde_json::from_str(include_str!("fixtures/workflow-state-oversee.json")).unwrap();
@@ -123,7 +129,10 @@ fn world() -> World {
     std::fs::write(&directive, TEXT).unwrap();
     // The scripts tree: the mailbox program finds the orch scripts two
     // directories up from its own place, so it is linked into a tree of
-    // its own beside the stubbed `lanes` and the logging `workflow-state`.
+    // its own beside the logging `workflow-state`. The runtime's wrapper
+    // finds its binary through the agent-runtime package beside the orch
+    // one, which this tree lacks, so the tree's `orch-runtime` is the
+    // binary every row runs.
     let tree = aux.path().join("tree");
     let mailbox = tree.join("mailbox").join("scripts");
     let orch = tree.join("orch").join("scripts");
@@ -136,15 +145,8 @@ fn world() -> World {
         let entry = entry.unwrap();
         std::os::unix::fs::symlink(entry.path(), orch.join(entry.file_name())).unwrap();
     }
-    let lanes_log = aux.path().join("lanes.log");
-    std::fs::remove_file(orch.join("lanes")).unwrap();
-    write_executable(
-        &orch.join("lanes"),
-        format!(
-            "#!/bin/bash\nprintf 'dirs=%s argv=%s\\n' \"${{ORCH_LANE_DIRS:-}}\" \"$*\" >> {}\nprintf '%s\\n' \"${{LANES_LISTING:-[]}}\"\nexit \"${{LANES_RC:-0}}\"\n",
-            lanes_log.display()
-        ),
-    );
+    std::fs::remove_file(orch.join("orch-runtime")).unwrap();
+    std::os::unix::fs::symlink(binary(), orch.join("orch-runtime")).unwrap();
     let state_log = aux.path().join("workflow-state.log");
     std::fs::remove_file(orch.join("workflow-state")).unwrap();
     write_executable(
@@ -155,30 +157,59 @@ fn world() -> World {
             orch_scripts().join("workflow-state").display()
         ),
     );
+    std::fs::create_dir_all(accounts.join("usage-answers")).unwrap();
     let claude_log = aux.path().join("claude.log");
-    World {
+    let world = World {
         _dir: dir,
         _aux: aux,
         root,
         lane_mail: mailbox.join("lane-mail"),
         account,
+        accounts,
         directive,
         claude_log,
-        lanes_log,
         state_log,
-    }
+    };
+    world.plant_credit(OPEN_CREDIT);
+    world
 }
 
-/// The listing `lanes list --json` answers: the account's row with
-/// `credit` beside another account's.
-fn listing(account: &Path, credit: &str) -> String {
-    format!(
-        r#"[{{"config_dir":"/other","credits":{{"remaining_dollars":99,"locked_reason":null}}}},{{"config_dir":"{}","credits":{credit}}}]"#,
-        account.display()
-    )
+/// One local Claude account at `dir` as the roster lists it: its usage
+/// record carrying the cloud credit, `remaining` dollars left and the lock
+/// `locked` names.
+fn credit_row(dir: &Path, (remaining, locked): Credit) -> Value {
+    json!({
+        "alias": dir.file_name().unwrap().to_string_lossy().trim_start_matches('.'),
+        "harness": "claude",
+        "config_dir": dir.display().to_string(),
+        "credits": {"unit": "usd", "limit_dollars": 50, "used_dollars": 50.0 - remaining,
+                    "remaining_dollars": remaining, "resets_at": null, "locked_reason": locked},
+    })
 }
 
 impl World {
+    /// The account the world's own `ORCH_LANE_DIRS` names: the lanes'
+    /// account is not among them, so a credit the send reads is the one it
+    /// asked for by the record's account.
+    fn other_account(&self) -> PathBuf {
+        self.accounts.join("home").join(".oclaude")
+    }
+
+    /// The lanes' account's credit as its usage record states it, beside
+    /// the other account's own.
+    fn plant_credit(&self, credit: Credit) {
+        plant_accounts(
+            &self.accounts,
+            &self.accounts,
+            None,
+            &[
+                credit_row(&self.account, credit),
+                credit_row(&self.other_account(), (99.0, None)),
+            ],
+            now_ms() / 1000,
+        );
+    }
+
     fn fleet_path(&self) -> PathBuf {
         self.root.join("workflow-state-oversee.json")
     }
@@ -198,13 +229,25 @@ impl World {
     }
 
     /// The environment every child of a row carries: the fixture CLI first
-    /// on PATH, the mailbox program of the tree, the open credit listing.
+    /// on PATH, the mailbox program of the tree, the accounts' home and
+    /// usage records, the other account as the configured one, and the
+    /// usage fixture's `curl` over no answers, so a request the roster
+    /// posts is refused, never sent out, and the credit reads unread.
     fn env(&self, command: &mut std::process::Command, extra: &[(&str, &str)]) {
         command
-            .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
+            .env(
+                "PATH",
+                tool_path(&[
+                    &fixtures().join("claude-cloud"),
+                    &fixtures().join("usage-curl"),
+                ]),
+            )
             .env("LANE_MAIL_CLI", &self.lane_mail)
             .env("CLAUDE_CLOUD_LOG", &self.claude_log)
-            .env("LANES_LISTING", listing(&self.account, OPEN_CREDIT))
+            .env("HOME", self.accounts.join("home"))
+            .env("OVERSEE_WATCH_STATE_DIR", &self.accounts)
+            .env("ORCH_LANE_DIRS", self.other_account())
+            .env("USAGE_FIXTURE_DIR", self.accounts.join("usage-answers"))
             .current_dir(&self.root);
         for (name, value) in extra {
             command.env(name, value);
@@ -356,14 +399,6 @@ fn a_send_is_owed_before_the_cli_and_a_refused_mark_is_settled_by_the_reconcile_
         "the reply carries the record"
     );
     assert_eq!(w.cli_calls(), one_call(&w.account));
-    assert_eq!(
-        w.log(&w.lanes_log),
-        [format!(
-            "dirs={} argv=list --harness claude --local --json",
-            w.account.display()
-        )],
-        "the credit is read for the record's account alone"
-    );
     assert!(
         std::fs::read_dir(w.root.join("directive-send"))
             .map(|d| d.count() == 0)
@@ -540,9 +575,9 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
     let w = world();
     let archived = r#"{"ok":false,"error":"Session session_01CLOUD is archived"}"#;
     let missing = r#"{"ok":false,"error":"Session not found"}"#;
-    let locked = r#"{"remaining_dollars":0,"locked_reason":"spend_limit"}"#;
-    // item, CLI answer, listing credit, result, words, credit, CLI calls
-    let rows: [(&str, &str, &str, &str, &str, Value, usize); 3] = [
+    let locked = (0.0, Some("spend_limit"));
+    // item, CLI answer, planted credit, result, words, credit, CLI calls
+    let rows: [(&str, &str, Credit, &str, &str, Value, usize); 3] = [
         (
             CLOUD,
             archived,
@@ -572,13 +607,8 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
         ),
     ];
     for (item, answer, credit, result_word, words, credit_record, calls) in rows {
-        let out = w.send(
-            item,
-            &[
-                ("CLAUDE_CLOUD_ANSWER", answer),
-                ("LANES_LISTING", &listing(&w.account, credit)),
-            ],
-        );
+        w.plant_credit(credit);
+        let out = w.send(item, &[("CLAUDE_CLOUD_ANSWER", answer)]);
         let answer = result(&out);
         assert_eq!(answer["mark"], "recorded", "{item}: {answer}");
         assert_eq!(answer["send"]["result"], result_word, "{item}");

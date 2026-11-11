@@ -754,7 +754,7 @@ fi''', row["clone"])
     else:
         # A copilot lane's identity is the login its host account already
         # holds, so nothing is copied; the rest of its launch policy rides in
-        # the command the launcher hands (lib/lane-launch.sh § lane_copilot_env).
+        # the command the launcher hands (agent-runtime's runtime/src/launch.rs).
         if args.harness != "copilot":
             put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = {"codex": "CODEX_HOME", "copilot": "COPILOT_HOME"}.get(args.harness, "PI_CODING_AGENT_DIR")
@@ -764,7 +764,7 @@ fi''', row["clone"])
     # them; Claude's relative path resolves in the SSH session's remote home.
     # A copilot lane places no file: its prefix sets COPILOT_HOME, and its
     # folder trust is the COPILOT_ALLOW_ALL=true its start command carries where
-    # it names --allow-all or --yolo (lib/lane-launch.sh lane_copilot_env).
+    # it names --allow-all or --yolo (agent-runtime's runtime/src/launch.rs).
     approval = {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}.get(args.harness)
     approval = account / "lane-host" / approval if approval else None
     if approval is not None and approval.exists():

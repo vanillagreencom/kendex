@@ -209,13 +209,13 @@ word() {
     # the stock Copilot entries' program: pi:stub a pi that records its argv
     # and answers as the extra lane, pi:missing a PATH without pi
     pi:stub|pi:missing) W_PI="${1#pi:}" ;;
-    # orch's lanes where the stock room check looks for it, under the project
+    # orch's runtime entry where the stock room check looks for it, under the project
     # root: orch:<kind> answers as room:<kind> and records its argv, orch:none
     # leaves it uninstalled
     orch:*) W_ORCH="${1#orch:}" ;;
     # install:global puts the skill in no repository, as a global install
     # is, and runs it from the project, the tree under review, so the orch
-    # word plants its lanes under the working directory instead
+    # word plants its entry under the working directory instead
     install:global) W_GLOBAL=1 ;;
     marker:*) W_ENV+=("${1#marker:}") ;;
     proj:*) project_file "${1#proj:}" ;;
@@ -271,7 +271,7 @@ SH
   chmod +x "$ROW/bin/lane-$1"
 }
 
-# A room check for target NAME, as `lanes pick` answers one, written into DIR as
+# A room check for target NAME, as `orch-runtime accounts pick --env` answers one, written into DIR as
 # room-<kind>-<name>: `room` exits 0 printing the account's env prefix,
 # `walled` exits 3 with its reason on stderr and `unmeasured` 5 with two
 # stderr lines, both passed through, `json` prints
@@ -314,8 +314,8 @@ stage_nopi() {
 
 # The stock Copilot entries' world: the pi the stock command runs, recording
 # its argv and the Pi root it was handed, then answering as the extra lane;
-# and orch's lanes under the project root, recording ORCH_LANE_HOST and its
-# argv, then answering as a room stub counted as `lanes`.
+# and orch's runtime entry under the project root, recording ORCH_LANE_HOST
+# and its argv, then answering as a room stub counted as `orch`.
 make_stock_world() {
   case "$W_PI" in
     stub)
@@ -329,25 +329,25 @@ SH
     missing) stage_nopi; W_PATH="$NOPI_PATH" ;;
   esac
   [[ -n "$W_ORCH" && "$W_ORCH" != none ]] || return 0
-  make_room_stub "lanes=$W_ORCH" "$ROW/bin"
+  make_room_stub "orch=$W_ORCH" "$ROW/bin"
   mkdir -p "$PROJ/.agents/skills/orch/scripts"
-  cat >"$PROJ/.agents/skills/orch/scripts/lanes" <<SH
+  cat >"$PROJ/.agents/skills/orch/scripts/orch-runtime" <<SH
 #!/usr/bin/env bash
-printf '%s %s\n' "\${ORCH_LANE_HOST:--}" "\$*" >>"$ROW/lanes-argv"
-exec "$ROW/bin/room-$W_ORCH-lanes"
+printf '%s %s\n' "\${ORCH_LANE_HOST:--}" "\$*" >>"$ROW/orch-argv"
+exec "$ROW/bin/room-$W_ORCH-orch"
 SH
-  chmod +x "$PROJ/.agents/skills/orch/scripts/lanes"
+  chmod +x "$PROJ/.agents/skills/orch/scripts/orch-runtime"
 }
 
 # What the stock entries ran, the suffix a stock row appends: each pi argv and
-# each lanes call (ORCH_LANE_HOST, then argv), `;`-joined, the seat the extra
+# each orch room check (ORCH_LANE_HOST, then argv), `;`-joined, the seat the extra
 # lane ran under, and whether its first request carried the diff inline.
 stock_state() {
   local inline=-
   [[ ! -e "$ROW/request-extra-1.txt" ]] || inline="$(request_state extra 1 | jq -r .inline_diff)"
-  printf 'pi=%s lanes=%s seat=%s inline=%s' \
+  printf 'pi=%s orch=%s seat=%s inline=%s' \
     "$(paste -s -d ';' "$ROW/pi-argv" 2>/dev/null || printf -- '-')" \
-    "$(paste -s -d ';' "$ROW/lanes-argv" 2>/dev/null || printf -- '-')" \
+    "$(paste -s -d ';' "$ROW/orch-argv" 2>/dev/null || printf -- '-')" \
     "$(cat "$ROW/seat-extra" 2>/dev/null || printf 'none')" "$inline"
 }
 
@@ -555,7 +555,7 @@ stock_pick() {
     PI_COPILOT_GPT) set -- gpt-6.1-sol ;;
     *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
   esac
-  printf 'env ORCH_LANE_HOST=local .agents/skills/orch/scripts/lanes pick --harness pi --model github-copilot/%s' "$1"
+  printf 'env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime accounts pick --env --fleet --harness pi --native-model github-copilot/%s' "$1"
 }
 # One word per line the guards emit, held here once; a space composes them.
 same_model() { printf '→ skipping %s: runs the same model as this session (%s) — a second opinion must be cross-model' "$1" "$2"; }
