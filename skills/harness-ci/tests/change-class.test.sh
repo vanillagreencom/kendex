@@ -2079,7 +2079,7 @@ no family|a marked member of a key family|        if (i <= families) continue|-
 no block end at an assignment|the key on the line after a marked one|      was_marked = marked; marked = 0|      was_marked = marked
 no inventoried skill beside the example|a marked key in an example with no inventoried skill|    case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac|-
 no source-catalog rule|a marked key in a source catalog|  if [ "$catalog" = true ]; then return 0; fi|-
-no removal|an extglob removal of a default key;a removal over an addition|        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;|-
+no removal|an extglob removal of a default key;a removal over an addition|        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;|        : ;;
 no block end at a blank line|a mark a blank line parts from the key|    line == "" { marked = 0; next }|    line == "" { next }
 no block end at a table header|a mark a table header parts from the key|    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); marked = 0; next }|    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); next }
 no inventoried example|a marked key in an uninventoried example beside an inventoried skill|    case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac|-
