@@ -44,7 +44,7 @@ use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Operation, Reading, Word};
 use crate::effects::{POLL, Run, read_intent, transfer};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal};
+use crate::mailbox::Mailbox;
 use crate::ops::{self, Applied, ClaimIntent, RecordProgress, Request};
 use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
 use crate::watch::claim;
@@ -2125,10 +2125,9 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
 
 /// Send `text` to the owner through the mailbox's owner notice. A notice
 /// the mailbox took, or refused as a repeat of one that landed, is `sent`;
-/// a program that never started, or refused by its own key before the
-/// append, is `unsent:<cause>`; one that gave no answer or exited with no
-/// key is `unanswered:<cause>`, since the notice may have gone. Each is
-/// recorded, never a reason to hold the outcome.
+/// a refusal that wrote nothing is `unsent:<cause>`, any other
+/// `unanswered:<cause>`, since the notice may have gone. Each is recorded,
+/// never a reason to hold the outcome.
 fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let path = run
         .settings
@@ -2148,19 +2147,8 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let _ = std::fs::remove_file(&path);
     match sent {
         Ok(()) => "sent".to_owned(),
-        Err(
-            refusal @ (Refusal::NotStarted { .. }
-            | Refusal::Exit {
-                status: Some(_),
-                keyed: Some(_),
-                ..
-            }),
-        ) => format!("unsent:{refusal}"),
-        Err(
-            refusal @ (Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }),
-        ) => {
-            format!("{}{refusal}", state::NOTICE_UNANSWERED)
-        }
+        Err(refusal) if refusal.wrote_nothing() => format!("unsent:{refusal}"),
+        Err(refusal) => format!("{}{refusal}", state::NOTICE_UNANSWERED),
     }
 }
 

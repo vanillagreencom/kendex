@@ -3719,6 +3719,60 @@ fn a_reconcile_closes_a_gone_runtime_run_and_owes_its_end_notice() {
     );
 }
 
+/// An end notice whose program died after its append may have landed:
+/// marked final there, one that never landed would be lost. The stage stays
+/// owed, and the next walk's replay under the run's key appends nothing and
+/// reads the repeat as sent.
+#[test]
+fn an_end_notice_killed_after_its_append_stays_owed_and_the_next_walk_marks_it_sent_once() {
+    let w = World::new();
+    let gone = Owned::sleep();
+    let mut doc = w.state();
+    let dir = w
+        .worktree
+        .join("tmp/dev-validate-crash")
+        .display()
+        .to_string();
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(Path::new(&dir).join("exit"), "guard-exit=0 at=1769600002\n").unwrap();
+    fs::write(Path::new(&dir).join("timing"), "seconds=3\n").unwrap();
+    fs::write(Path::new(&dir).join("start"), "start=1\n").unwrap();
+    let record = format!("{dir}/runner");
+    doc["stages"].as_array_mut().unwrap().push(json!({
+        "kind": "validate", "round_id": ROUND, "start": 1769600001, "end": null, "run_dir": dir,
+        "job": {"record": record, "runner": "setsid", "pid": gone.pid(), "start": "ticks:1"}
+    }));
+    w.write_state(&doc);
+    let (_, real) = w
+        .env()
+        .into_iter()
+        .find(|(key, _)| key == "LANE_MAIL_CLI")
+        .unwrap();
+    let mark = w.root.join("kill-after");
+    fs::write(&mark, "").unwrap();
+    let wrapper = w.root.join("lane-mail-killed");
+    support::write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\n'{real}' \"$@\"\nrc=$?\nif [ -e '{mark}' ]; then rm -f '{mark}'; kill -KILL $$; fi\nexit $rc\n",
+            mark = mark.display()
+        ),
+    );
+    let cli = [("LANE_MAIL_CLI", wrapper.to_str().unwrap())];
+    let inbox = w
+        .worktree
+        .join("tmp/lane-mail")
+        .join(ITEM_ID)
+        .join("to-lane.jsonl");
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &cli));
+    assert!(!mark.exists(), "the send was killed after its append");
+    assert_eq!(w.stage(&dir)["notice"]["owner"], "owed");
+    assert_eq!(fs::read_to_string(&inbox).unwrap().lines().count(), 1);
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &cli));
+    assert_eq!(w.stage(&dir)["notice"]["owner"], "sent");
+    assert_eq!(fs::read_to_string(&inbox).unwrap().lines().count(), 1);
+}
+
 #[test]
 fn a_stale_group_start_never_signals_the_process_that_reused_its_number() {
     use std::os::unix::process::CommandExt;

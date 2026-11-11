@@ -10,7 +10,7 @@ use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal, Sent};
+use crate::mailbox::{Mailbox, Sent};
 use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, Env, ReconcileRound, Request, job_ended};
@@ -684,21 +684,10 @@ fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> No
         // The program routed the lane to its session itself: the send's own
         // result marks it.
         Ok(Sent::Session { send }) => NoticeSend::Marked(session_mark(send.result)),
-        // Nothing was appended: the program never started, or refused by
-        // its own key before writing any mailbox.
-        Err(
-            refusal @ (Refusal::NotStarted { .. }
-            | Refusal::Exit {
-                status: Some(_),
-                keyed: Some(_),
-                ..
-            }),
-        ) => NoticeSend::Marked(format!("unsent:{refusal}")),
-        // No answer, a signal, an exit with no keyed line or a receipt that
-        // does not decode: the append may stand.
-        Err(Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }) => {
-            NoticeSend::Held
-        }
+        Err(refusal) if refusal.wrote_nothing() => NoticeSend::Marked(format!("unsent:{refusal}")),
+        // The append may stand: the next walk sends again under the run's
+        // key, which reads a landed notice as a repeat.
+        Err(_) => NoticeSend::Held,
     }
 }
 

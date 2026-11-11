@@ -26,7 +26,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Env, loaded, reread};
 use crate::error::{Error, Result, ShapeReason};
-use crate::mailbox::{Mailbox, Noticed, Refusal};
+use crate::mailbox::{Mailbox, Noticed};
 use crate::marker;
 use crate::settings::{self, ReviewSettings, Settings};
 use crate::state::{self, Document, Locking, Notice};
@@ -1470,10 +1470,8 @@ impl Gate<'_> {
     /// lane's status file there, under the notice's first line as its
     /// delivery key, which no other notice of the head carries, and answer
     /// the mark the send earns: `sent` on the receipt or the program's repeat
-    /// refusal; `unsent:<cause>`
-    /// where the program never started or refused by its own key before
-    /// the append; `unanswered:<cause>` where it gave no answer, exited
-    /// with no key or printed no receipt, since the append may stand. The
+    /// refusal; `unsent:<cause>` where the refusal wrote nothing;
+    /// `unanswered:<cause>` on any other, since the append may stand. The
     /// text file is this call's own, created exclusively and removed after.
     fn send_fallback_notice(&self, root: &Path, notice: &Notice, index: usize) -> String {
         use std::io::Write;
@@ -1501,21 +1499,8 @@ impl Gate<'_> {
         drop(handle);
         let mark = match self.mail.notice(item, root, &file, Some(&notice.text)) {
             Ok(Noticed::Sent { .. } | Noticed::Repeated { .. }) => "sent".to_owned(),
-            Err(
-                refusal @ (Refusal::NotStarted { .. }
-                | Refusal::Exit {
-                    status: Some(_),
-                    keyed: Some(_),
-                    ..
-                }),
-            ) => format!("unsent:{refusal}"),
-            Err(
-                refusal @ (Refusal::Unanswered { .. }
-                | Refusal::Exit { .. }
-                | Refusal::Reply { .. }),
-            ) => {
-                format!("{}{refusal}", state::NOTICE_UNANSWERED)
-            }
+            Err(refusal) if refusal.wrote_nothing() => format!("unsent:{refusal}"),
+            Err(refusal) => format!("{}{refusal}", state::NOTICE_UNANSWERED),
         };
         let _ = std::fs::remove_file(&file);
         mark

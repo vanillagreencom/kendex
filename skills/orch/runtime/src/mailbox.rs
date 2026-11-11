@@ -7,7 +7,8 @@
 //! cannot read are each a typed [`Refusal`] that stops the one read it
 //! answered; no refusal is ever read as an empty mailbox. A program that
 //! never started did nothing, where one that gave no answer may have
-//! written: a send's caller reads the two apart.
+//! written: a send's caller reads the two apart through
+//! [`Refusal::wrote_nothing`].
 //!
 //! The wire forms are `lane-mail --help`'s: the `count= first=` header, one
 //! JSON envelope per line, the `receipts` section of `drain --receipts`, the
@@ -85,6 +86,27 @@ impl Refusal {
             | Refusal::Exit { verb, .. }
             | Refusal::Reply { verb, .. } => verb,
         }
+    }
+
+    /// Whether a `send` or `notice` provably wrote nothing, so its caller
+    /// may record the delivery refused rather than unknown. A program that
+    /// never started did nothing, and `lane-mail` prints every keyed refusal
+    /// of these verbs before their local append. Anything else (no answer, a
+    /// signal, an exit with no keyed line, a reply that does not decode) may
+    /// follow the append. The keyed line read is the first one, so the claim
+    /// holds only for a local append with no `--ref`: a hosted append can
+    /// refuse after a provider write whose reply was lost, and `--ref` prints
+    /// a keyed warning that is no refusal.
+    pub fn wrote_nothing(&self) -> bool {
+        matches!(
+            self,
+            Refusal::NotStarted { .. }
+                | Refusal::Exit {
+                    status: Some(_),
+                    keyed: Some(_),
+                    ..
+                }
+        )
     }
 }
 
@@ -1010,6 +1032,62 @@ pub fn decode_directive_send(line: &str) -> Option<DirectiveSend> {
 mod tests {
     use super::*;
     use crate::ops::mail::{Credit, SendResult};
+
+    /// Every refusal shape against whether the send provably wrote nothing:
+    /// a shape read as nothing written where the append may stand loses a
+    /// delivery the replay would have proved, and the reverse resends one
+    /// that never left.
+    #[test]
+    fn a_refusal_wrote_nothing_only_where_the_program_never_started_or_refused_by_its_key() {
+        let exit = |status: Option<i32>, keyed: Option<&str>| Refusal::Exit {
+            verb: "send",
+            status,
+            keyed: keyed.map(str::to_owned),
+            stderr: "lane-mail: lane-foreign=x\n".to_owned(),
+        };
+        let cases = [
+            (
+                "not started",
+                Refusal::NotStarted {
+                    verb: "send",
+                    cause: "not-started".into(),
+                },
+                true,
+            ),
+            (
+                "keyed exit",
+                exit(Some(2), Some("lane-mail: lane-foreign=x")),
+                true,
+            ),
+            ("unkeyed exit", exit(Some(1), None), false),
+            (
+                "signal after a keyed line",
+                exit(None, Some("lane-mail: lane-foreign=x")),
+                false,
+            ),
+            ("signal", exit(None, None), false),
+            (
+                "unanswered",
+                Refusal::Unanswered {
+                    verb: "send",
+                    cause: "timeout".into(),
+                },
+                false,
+            ),
+            (
+                "undecoded reply",
+                Refusal::Reply {
+                    verb: "send",
+                    cause: "receipt",
+                    line: String::new(),
+                },
+                false,
+            ),
+        ];
+        for (shape, refusal, wrote_nothing) in cases {
+            assert_eq!(refusal.wrote_nothing(), wrote_nothing, "{shape}");
+        }
+    }
 
     /// The drain's wire form, decoded field by field, and the three short
     /// forms refused by name, so a cut-off reply is never read as a lane

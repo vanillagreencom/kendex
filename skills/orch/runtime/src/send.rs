@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal, Sent};
+use crate::mailbox::{Mailbox, Sent};
 use crate::ops::mail::{
     Credit, DirectiveSend, DirectiveSendRecorded, DirectiveWrite, KeyedSend, RecordDirectiveSend,
     SendResult, Word, owed,
@@ -175,18 +175,7 @@ fn send(
                 format!("delivered to a mailbox as envelope {id}, not to a session"),
             ));
         }
-        Err(Refusal::Exit {
-            status: Some(_),
-            keyed: Some(line),
-            ..
-        }) => DirectiveSend {
-            result: SendResult::Failed,
-            text: line,
-            credit: Credit::Unread(Word::Unread),
-        },
-        // A program that never started sent nothing: the send failed, as one
-        // the program refused by its own key.
-        Err(refusal @ Refusal::NotStarted { .. }) => DirectiveSend {
+        Err(refusal) if refusal.wrote_nothing() => DirectiveSend {
             result: SendResult::Failed,
             text: refusal.to_string(),
             credit: Credit::Unread(Word::Unread),
