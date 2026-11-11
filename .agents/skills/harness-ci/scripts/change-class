@@ -224,28 +224,36 @@
 # The settings admission admits a changed kendex.settings.toml or
 # .kendex/settings.toml to the trivial set, on --event pull_request or
 # merge_group, where every [env] key it changes is admitted. A key is light
-# by default where all of these hold at harness-only's base revision, read
-# there alone so the branch under judgement writes none of it:
-#   - an [env] declaration in a kendex.settings.toml.example the base
-#     inventory lists, with an inventoried SKILL.md in its directory, has
+# by default where all of these hold at the commit --base names, the one
+# the allowlist below is read from, never the merge base, so the branch
+# under judgement writes none of it and a branch forked before a mark was
+# dropped keeps none:
+#   - an [env] declaration in a kendex.settings.toml.example that
+#     commit's inventory lists, with an inventoried SKILL.md in its
+#     directory, has
 #     the exact trimmed line `# ci: unread` in its comment block, the block
 #     directly above the assignment that a blank line, a table header or
 #     another assignment ends. The mark is the declaring package's word that
 #     no CI job reads the key and that a change to it needs no review;
-#   - every kendex.settings.toml.example the base tracks that declares the
-#     key, in any table, inventoried or not, marks it;
+#   - every kendex.settings.toml.example that commit tracks that declares
+#     the key, in any table, inventoried or not, marks it;
 #   - the key starts with the namespace of every package that declares it:
 #     the example's directory name in upper snake case and an underscore,
 #     SLACK_ for .../slack/kendex.settings.toml.example, where a name
 #     outside kebab case gives none;
-#   - no `# keys:` family line in those examples matches the key, each item
-#     an anchored whole key with <NAME> read as [A-Za-z0-9_]+;
-#   - the base kendex.toml has no line starting with the key
+#   - a package that declares it owns the longest namespace that starts the
+#     key among every directory that commit tracks holding a SKILL.md or an
+#     example, so a package whose name starts another's, github beside
+#     github-repository-settings, marks none of the longer one's keys;
+#   - no `# keys:` family line in any tracked example matches the key, each
+#     item an anchored whole key with <NAME> read as [A-Za-z0-9_]+;
+#   - that commit's kendex.toml has no line starting with the key
 #     is_source_catalog.
 # HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
 # from the settings of the commit --base names alone, adjusts that default:
-# an entry starting with `!` removes the keys its remainder names, matched
-# with extglob off, and any other entry adds keys. The admitted set is the
+# an entry starting with `!` removes the keys its remainder names, and any
+# other entry adds keys, both matched as the same extglob patterns. The
+# admitted set is the
 # default and the additions, less the removals and the floor: a key in the
 # settings this script reads from the base, or any HARNESS_CI_* key, never
 # qualifies, whatever the globs say, so a change to the allowlist itself is
@@ -1005,9 +1013,9 @@ settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
 
 # The keys a merge-group run reads from the base never qualify, the
 # allowlist itself included: their breakage stops the queue that would merge
-# the repair. A `!` entry of the allowlist removes what its remainder names,
-# matched with extglob off, so `!(...)` is never a negation that admits every
-# other key; any other entry adds keys to the default.
+# the repair. A `!` entry of the allowlist removes what its remainder names;
+# stripping that `!` is what keeps `!(...)` from acting as a negation that
+# admits every other key. Any other entry adds keys to the default.
 settings_key_admitted() { # KEY
   local glob admitted=false
   case "$1" in
@@ -1020,10 +1028,8 @@ settings_key_admitted() { # KEY
   for glob in ${HARNESS_CI_TRIVIAL_SETTINGS:-}; do
     case "$glob" in
       '!'*)
-        shopt -u extglob
         # shellcheck disable=SC2254
-        case "$1" in ${glob#!}) set +f; shopt -s extglob; return 1 ;; esac
-        shopt -s extglob ;;
+        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;
       *)
         # shellcheck disable=SC2254
         case "$1" in $glob) admitted=true ;; esac ;;
@@ -1055,48 +1061,71 @@ source_catalog_at() { # REV OUT
   esac
 }
 
+# A directory's package namespace, as NAMESPACE: its name in upper snake
+# case and an underscore, empty for a name outside kebab case.
+NAMESPACE=""
+package_namespace() { # DIR
+  local name="${1##*/}"
+  NAMESPACE=""
+  case "$name" in
+    '' | -* | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) ;;
+    *) NAMESPACE="$(printf '%s' "${name//-/_}" | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ)_" ;;
+  esac
+}
+
 # The [env] keys light by default, as SETTINGS_DEFAULT_KEYS, read from the
-# declarations at harness-only's base revision alone, so the branch under
-# judgement writes no mark, inventory entry or manifest key this reads. The
+# declarations at the commit --base names alone, the one base_settings reads
+# the allowlist from: the branch under judgement writes no mark, inventory
+# entry or manifest key this reads, and the merge base, which the author
+# picks by choosing where to fork, never speaks for a mark the base end has
+# since dropped. harness-only writes that commit's validated inventory. The
 # header states the rule. Every kendex.settings.toml.example the base tracks
 # is read, an in-place or hand-written one included, since any of them can
 # veto a key; only one the base inventory lists beside an inventoried
-# SKILL.md, a skill's installed template, can admit one. A package's
-# namespace is its directory's name in upper snake case; a name outside
-# kebab case has none. A source catalog's CI runs every package's own tests
-# over the repository's settings, so it has no default. Returns 1, with the
+# SKILL.md, a skill's installed template, can admit one. Every tracked
+# directory holding a SKILL.md or an example names a namespace a key's owner
+# is chosen from. A source catalog's CI runs every package's own tests over
+# the repository's settings, so it has no default. Returns 1, with the
 # admission line, where a declaration could not be read, even where the
 # allowlist alone would admit the change: one rule costs a full run, never a
-# waiver.
+# waiver. Called after base_settings, which resolves BASE_REV.
 SETTINGS_DEFAULT_KEYS=""
 settings_declarations() {
-  local inventoried status path dir name namespace admittable n=0 catalog=false
-  local args=() refused="cause=declarations-unreadable step"
+  local inventoried status path dir namespace admittable n=0 catalog=false owners=" "
+  local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"
   if ! inventoried="$(cat -- "$work/base-inventory" 2>/dev/null)"; then
     settings_note "$refused=inventory"
     return 1
   fi
   inventoried=$'\n'"$inventoried"$'\n'
   status=0
-  source_catalog_at "$base_rev" "$work/declarations-manifest" || status=$?
+  source_catalog_at "$rev" "$work/declarations-manifest" || status=$?
   case "$status" in
     0) ;;
     1) catalog=true ;;
     *) settings_note "$refused=manifest"; return 1 ;;
   esac
-  if [ -z "$base_rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
-    "$base_rev" >"$work/declarations-tree" 2>/dev/null; then
+  if [ -z "$rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
+    "$rev" >"$work/declarations-tree" 2>/dev/null; then
     settings_note "$refused=example"
     return 1
   fi
   while IFS= read -r -d '' path; do
+    dir=""
+    case "$path" in */*) dir="${path%/*}" ;; esac
+    case "$path" in
+      SKILL.md | */SKILL.md | kendex.settings.toml.example | */kendex.settings.toml.example)
+        package_namespace "$dir"
+        namespace="$NAMESPACE"
+        case "$owners" in *" $namespace "*) ;; *) owners="$owners$namespace " ;; esac ;;
+    esac
     case "$path" in
       kendex.settings.toml.example | */kendex.settings.toml.example) ;;
       *) continue ;;
     esac
     n=$((n + 1))
     status=0
-    rev_file "$base_rev" "$path" "$work/declaration-$n" || status=$?
+    rev_file "$rev" "$path" "$work/declaration-$n" || status=$?
     [ "$status" = 0 ] || { settings_note "$refused=example path=$path"; return 1; }
     # The line scan below cannot tell a comment from a line inside a
     # multiline string.
@@ -1105,14 +1134,6 @@ settings_declarations() {
     [ "$status" = 1 ] || { settings_note "$refused=example path=$path"; return 1; }
     settings_values "$work/declaration-$n" >/dev/null ||
       { settings_note "$refused=example path=$path"; return 1; }
-    dir=""
-    case "$path" in */*) dir="${path%/*}" ;; esac
-    name="${dir##*/}"
-    namespace=""
-    case "$name" in
-      '' | -* | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) ;;
-      *) namespace="$(printf '%s' "${name//-/_}" | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ)_" ;;
-    esac
     admittable=1
     case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac
     case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac
@@ -1124,8 +1145,11 @@ settings_declarations() {
   # blank line, a table header or an assignment ends it, so a mark speaks for
   # the one key below it. A `# keys:` line names a family one code path
   # builds every member of at run time, a member a consumer adds included,
-  # so a mark on one declared member cannot speak for that reader.
-  if ! SETTINGS_DEFAULT_KEYS="$(awk '
+  # so a mark on one declared member cannot speak for that reader. The
+  # longest namespace that starts a key names its owner, which has to be a
+  # package declaring it.
+  if ! SETTINGS_DEFAULT_KEYS="$(awk -v owners="$owners" '
+    BEGIN { split(owners, owned, " ") }
     FNR == 1 { section = ""; marked = 0 }
     {
       line = $0
@@ -1154,11 +1178,15 @@ settings_declarations() {
       if (!was_marked) veto[key] = 1
       if (ns == "") veto[key] = 1
       if (index(key, ns) != 1) veto[key] = 1
+      if (ns != "" && index(key, ns) == 1) declarer[key, ns] = 1
       if (was_marked && adm && section == "env" && key ~ /^[A-Za-z_][A-Za-z0-9_]*$/) light[key] = 1
     }
     END {
       for (key in light) {
         if (key in veto) continue
+        owner = ""
+        for (o in owned) if (index(key, owned[o]) == 1 && length(owned[o]) > length(owner)) owner = owned[o]
+        if (!((key, owner) in declarer)) continue
         for (i = 1; i <= families; i++) if (key ~ family[i]) break
         if (i <= families) continue
         print key

@@ -1758,11 +1758,15 @@ done
 
 # A base that installs settings declarations and sets no allowlist. slack
 # marks two keys, one of them with SLACK_THREAD_DAYS on the line below it,
-# and leaves a third unmarked; jarvis marks its own key and one in orch's
-# namespace; second-opinion marks a member of the family its `# keys:` line
-# names; deep marks a key in an example the inventory lists with no
-# inventoried SKILL.md beside it; and a hand-written slack example the
-# inventory does not list declares one of slack's marked keys unmarked.
+# leaves a third unmarked and a mark a blank line parts from SLACK_GAP;
+# jarvis marks its own key, one in orch's namespace and one slack marks
+# too, and a mark above its table header parts from JARVIS_HEADED; second-opinion marks a member
+# of the family its `# keys:` line names; deep marks a key in an example
+# the inventory lists with no inventoried SKILL.md beside it, and hand one
+# in an example the inventory does not list beside an inventoried SKILL.md;
+# commit marks a key in the longer namespace of commit-guards, which is
+# installed beside it; and a hand-written slack example the inventory does
+# not list declares one of slack's marked keys unmarked.
 git -C "$settings_repo" checkout -q -B settings-case "$settings_bare"
 declare_file() { # PATH TEXT
   mkdir -p "$settings_repo/$(dirname "$1")" && printf '%s\n' "$2" >"$settings_repo/$1"
@@ -1779,16 +1783,30 @@ SLACK_THREAD_DAYS = "7"
 # ci: unread
 SLACK_DELIVER_SECONDS = "20"
 
+# Seconds a drain waits.
+# ci: unread
+SLACK_DRAIN_SECONDS = "5"
+
 # The command /lanes runs.
-SLACK_STATUS_COMMAND = ""'
+SLACK_STATUS_COMMAND = ""
+
+# ci: unread
+
+# A gap.
+SLACK_GAP = "1"'
 declare_file .agents/skills/jarvis/SKILL.md '# jarvis'
-declare_file .agents/skills/jarvis/kendex.settings.toml.example '[env]
+declare_file .agents/skills/jarvis/kendex.settings.toml.example '# ci: unread
+[env]
+JARVIS_HEADED = "1"
 # Seconds a wake waits.
 # ci: unread
 JARVIS_WAKE_SETTLE_SECS = "15"
 # Hours reports wait out.
 # ci: unread
-ORCH_REPORT_QUIET_HOURS = "0-7"'
+ORCH_REPORT_QUIET_HOURS = "0-7"
+# Seconds a drain waits here.
+# ci: unread
+SLACK_DRAIN_SECONDS = "5"'
 declare_file .agents/skills/second-opinion/SKILL.md '# second-opinion'
 declare_file .agents/skills/second-opinion/kendex.settings.toml.example '[env]
 
@@ -1804,6 +1822,19 @@ declare_file .agents/skills/deep/kendex.settings.toml.example '[env]
 # A setting.
 # ci: unread
 DEEP_LIGHT = "a"'
+declare_file .agents/skills/hand/SKILL.md '# hand'
+declare_file .agents/skills/hand/kendex.settings.toml.example '[env]
+
+# A setting.
+# ci: unread
+HAND_LIGHT = "a"'
+declare_file .agents/skills/commit-guards/SKILL.md '# commit-guards'
+declare_file .agents/skills/commit/SKILL.md '# commit'
+declare_file .agents/skills/commit/kendex.settings.toml.example '[env]
+
+# Paths the secret scan skips.
+# ci: unread
+COMMIT_GUARDS_SECRETS_EXCLUDES = ""'
 declare_file local/slack/kendex.settings.toml.example '[env]
 
 # Seconds deliver waits here.
@@ -1811,7 +1842,9 @@ SLACK_DELIVER_SECONDS = "20"'
 jq -c '. + [".agents/skills/slack/SKILL.md", ".agents/skills/slack/kendex.settings.toml.example",
   ".agents/skills/jarvis/SKILL.md", ".agents/skills/jarvis/kendex.settings.toml.example",
   ".agents/skills/second-opinion/SKILL.md", ".agents/skills/second-opinion/kendex.settings.toml.example",
-  ".agents/skills/deep/kendex.settings.toml.example"]' \
+  ".agents/skills/deep/kendex.settings.toml.example", ".agents/skills/hand/SKILL.md",
+  ".agents/skills/commit-guards/SKILL.md", ".agents/skills/commit/SKILL.md",
+  ".agents/skills/commit/kendex.settings.toml.example"]' \
   "$settings_repo/.kendex-generated.json" >"$SANDBOX/declared-inventory"
 mv -- "$SANDBOX/declared-inventory" "$settings_repo/.kendex-generated.json"
 git -C "$settings_repo" add -A
@@ -1825,10 +1858,26 @@ declared_base() { # MESSAGE -> the new base's commit, from the declared one
     git -C "$settings_repo" commit -q -m "$1" &&
     git -C "$settings_repo" rev-parse HEAD
 }
+# Two base ends a branch forked from the declared base no longer reaches:
+# one drops slack's mark on SLACK_POLL_SECONDS, one unlists slack's example.
+revoked_example="$settings_repo/.agents/skills/slack/kendex.settings.toml.example"
+awk '
+  prev == "# Seconds between mailbox reads." && $0 == "# ci: unread" { hits++; prev = $0; next }
+  { print; prev = $0 }
+  END { exit hits == 1 ? 0 : 3 }
+' "$revoked_example" >"$SANDBOX/revoked-example"
+mv -- "$SANDBOX/revoked-example" "$revoked_example"
+settings_revoked="$(declared_base 'the base end drops a mark')"
+git -C "$settings_repo" checkout -q -B settings-case "$settings_declared"
+jq -c 'map(select(. != ".agents/skills/slack/kendex.settings.toml.example"))' \
+  "$settings_repo/.kendex-generated.json" >"$SANDBOX/unlisted-inventory"
+mv -- "$SANDBOX/unlisted-inventory" "$settings_repo/.kendex-generated.json"
+settings_unlisted="$(declared_base 'the base end unlists an example')"
+git -C "$settings_repo" checkout -q -B settings-case "$settings_declared"
 printf 'schema = 7\nis_source_catalog = true\n' >"$settings_repo/kendex.toml"
 settings_catalog="$(declared_base 'the declared base is a source catalog')"
 git -C "$settings_repo" checkout -q -B settings-case "$settings_declared"
-settings_edit 'after~kendex.settings.toml~[env]~HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* !SECOND_OPINION_MODEL !SLACK_POLL_* !(SLACK_*)"'
+settings_edit 'after~kendex.settings.toml~[env]~HARNESS_CI_TRIVIAL_SETTINGS = "SECOND_OPINION_* !SECOND_OPINION_MODEL !@(SLACK_POLL_SECONDS|SLACK_NONE) !(SLACK_*)"'
 settings_removal="$(declared_base 'the declared base adds and removes keys')"
 git -C "$settings_repo" checkout -q -B settings-case "$settings_declared"
 declare_file local/broken/kendex.settings.toml.example "[env]
@@ -1853,8 +1902,9 @@ declared='class=trivial measured=true cause=declared-unread-settings settings=ke
 unread='cause=declarations-unreadable step'
 refused='class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml'
 refused_dot='class=standard measured=true cause=configuration-source path=.kendex/settings.toml glob=.kendex/settings.toml'
-# label | base | event | edits, `;`-separated | other files as PATH:LINES,
-# `-` none | one process-environment assignment, `-` none | verifier | the
+# label | base, where revoked and unlisted fork the branch from the
+# declared base instead | event | edits, `;`-separated | other files as
+# PATH:LINES, `-` none | one process-environment assignment, `-` none | verifier | the
 # class line after `class: ` | the admission line after `admitted=false `,
 # `-` for none
 cat >"$SANDBOX/settings-rows" <<ROWS
@@ -1869,11 +1919,18 @@ the key on the line after a marked one|declared|pull_request|after~kendex.settin
 an undeclared key with no allowlist|declared|pull_request|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a marked member of a key family|declared|pull_request|after~kendex.settings.toml~[env]~SECOND_OPINION_CLAUDE_CMD = "claude -p"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a marked key outside its package's namespace|declared|pull_request|after~kendex.settings.toml~[env]~ORCH_REPORT_QUIET_HOURS = "1-6"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a key its owner marks that another package marks outside its own namespace|declared|pull_request|after~kendex.settings.toml~[env]~SLACK_DRAIN_SECONDS = "9"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a marked key a hand-written example declares unmarked|declared|pull_request|after~kendex.settings.toml~[env]~SLACK_DELIVER_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a marked key in an example with no inventoried skill|declared|pull_request|after~kendex.settings.toml~[env]~DEEP_LIGHT = "b"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a marked key in an uninventoried example beside an inventoried skill|declared|pull_request|after~kendex.settings.toml~[env]~HAND_LIGHT = "b"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a mark a blank line parts from the key|declared|pull_request|after~kendex.settings.toml~[env]~SLACK_GAP = "2"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a mark a table header parts from the key|declared|pull_request|after~kendex.settings.toml~[env]~JARVIS_HEADED = "2"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a marked key in an installed package's longer namespace|declared|pull_request|after~kendex.settings.toml~[env]~COMMIT_GUARDS_SECRETS_EXCLUDES = "x"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+a mark the base end has dropped since the fork|revoked|pull_request|after~kendex.settings.toml~[env]~SLACK_POLL_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+an example the base end has unlisted since the fork|unlisted|pull_request|after~kendex.settings.toml~[env]~SLACK_POLL_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a mark only the head adds|declared|pull_request|after~.agents/skills/slack/kendex.settings.toml.example~# The command /lanes runs.~# ci: unread;after~kendex.settings.toml~[env]~SLACK_STATUS_COMMAND = "status"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a marked key in a source catalog|catalog|pull_request|after~kendex.settings.toml~[env]~SLACK_POLL_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
-a removal of a default key|removal|pull_request|after~kendex.settings.toml~[env]~SLACK_POLL_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
+an extglob removal of a default key|removal|pull_request|after~kendex.settings.toml~[env]~SLACK_POLL_SECONDS = "30"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a removal over an addition|removal|pull_request|$model_b|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 an extglob-shaped removal admits no other key|removal|pull_request|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=unadmitted-change path=kendex.settings.toml
 a default key the allowlist leaves|removal|pull_request|after~kendex.settings.toml~[env]~JARVIS_WAKE_SETTLE_SECS = "5"|-|-|dirty|$declared keys=JARVIS_WAKE_SETTLE_SECS lines=1|-
@@ -1916,9 +1973,10 @@ ROWS
 # stdout verdict, the class line and the admission line.
 settings_rows() { # SCRIPT [LABELS]
   local script="$1" only="${2:-}" label from event edits files env verifier class note
-  local spec edit status out line admission class_word
+  local spec edit status out line admission class_word fork
   while IFS='|' read -r label from event edits files env verifier class note; do
     if [ -n "$only" ] && ! grep -qxF -- "$label" <<<"$only"; then continue; fi
+    fork=""
     case "$from" in
       bare) from="$settings_bare" ;;
       refused) from="$settings_refused" ;;
@@ -1931,9 +1989,11 @@ settings_rows() { # SCRIPT [LABELS]
       unloaded) from="$settings_unloaded" ;;
       block) from="$settings_block" ;;
       linked) from="$settings_linked" ;;
+      revoked) fork="$settings_declared" from="$settings_revoked" ;;
+      unlisted) fork="$settings_declared" from="$settings_unlisted" ;;
       *) from="$settings_allow" ;;
     esac
-    git -C "$settings_repo" checkout -q -B settings-case "$from" || return
+    git -C "$settings_repo" checkout -q -B settings-case "${fork:-$from}" || return
     while IFS= read -r edit; do
       [ -z "$edit" ] || settings_edit "$edit" || return
     done <<<"$(tr ';' '\n' <<<"$edits")"
@@ -1994,31 +2054,38 @@ class: $admitted keys=SECOND_OPINION_MODEL lines=2" \
 # Must-fail controls for the rules whose loss would admit a key that changes
 # CI behaviour, each running the rows it holds against a copy without the
 # rule and naming the rows that turn red.
-settings_reds() { # NAME ROWS LINE REPLACEMENT [LINE REPLACEMENT]...
+settings_reds() { # NAME ROWS SCRIPT LINE REPLACEMENT
   local name="$1" only="$2" planted rows
   shift 2
-  planted=$(mutant "settings-control-$name" change-class "$@") || return
+  planted=$(mutant "settings-control-$name" "$@") || return
   rows=$(settings_rows "$planted" "$only") || return
   awk -F '\t' '$2 != $3 { print $1 }' <<<"$rows"
 }
 settings_controls=0
-while IFS='|' read -r control rows line replacement; do
+# A control names its script, change-class unless the row says otherwise.
+while IFS='|' read -r control rows line replacement script; do
   settings_controls=$((settings_controls + 1))
   rows="$(tr ';' '\n' <<<"$rows")"
   assert_eq "must-fail: $control" "$rows" \
-    "$(settings_reds "$settings_controls" "$rows" "$line" "$replacement")"
+    "$(settings_reds "$settings_controls" "$rows" "${script:-change-class}" "$line" "$replacement")"
 done <<'CONTROLS'
 no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) return 1 ;;|-
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
 no byte comparison|the same rewrite beside a key the allowlist does not name;a key the allowlist does not name;an allowlisted name outside the env table;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
 no veto by an unmarked declaration|a marked key a hand-written example declares unmarked|      if (!was_marked) veto[key] = 1|-
-no namespace|a marked key outside its package's namespace|      if (index(key, ns) != 1) veto[key] = 1|-
+no namespace|a key its owner marks that another package marks outside its own namespace|      if (index(key, ns) != 1) veto[key] = 1|-
 no family|a marked member of a key family|        if (i <= families) continue|-
 no block end at an assignment|the key on the line after a marked one|      was_marked = marked; marked = 0|      was_marked = marked
 no inventoried skill beside the example|a marked key in an example with no inventoried skill|    case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac|-
 no source-catalog rule|a marked key in a source catalog|  if [ "$catalog" = true ]; then return 0; fi|-
-no removal|a removal of a default key;a removal over an addition|        case "$1" in ${glob#!}) set +f; shopt -s extglob; return 1 ;; esac|-
+no removal|an extglob removal of a default key;a removal over an addition|        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;|-
+no block end at a blank line|a mark a blank line parts from the key|    line == "" { marked = 0; next }|    line == "" { next }
+no block end at a table header|a mark a table header parts from the key|    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); marked = 0; next }|    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); next }
+no inventoried example|a marked key in an uninventoried example beside an inventoried skill|    case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac|-
+no longest-namespace owner|a marked key in an installed package's longer namespace|        if (!((key, owner) in declarer)) continue|-
+declarations read at the merge base|a mark the base end has dropped since the fork|  local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"|  local rev="$base_rev" args=() refused="cause=declarations-unreadable step"
+the merge base's inventory|an example the base end has unlisted since the fork|if [ "$named_base_rev" = "$base" ]; then|if true; then|harness-only
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
 
