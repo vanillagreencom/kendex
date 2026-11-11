@@ -89,12 +89,13 @@ while IFS='|' read -r name action current state body expected; do
   run_case "${args[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   requests="$(jq -s . "$TMP_ROOT/requests.jsonl")"
   if [ "$expected" != pass ]; then
-    refusal='done-when-open'
-    boxes='open_boxes=[1,3]'
-    if [ "$expected" = evidence ]; then
-      refusal='done-when-evidence'
-      boxes='missing_evidence_boxes=[1,3]'
-    fi
+    case "$expected" in
+      refuse) refusal='done-when-open' boxes='open_boxes=[1,3]' ;;
+      evidence) refusal='done-when-evidence' boxes='missing_evidence_boxes=[1,3]' ;;
+      outside=*) refusal='done-when-outside' boxes="outside_lines=${expected#outside=}" ;;
+      fields=*) refusal='post-merge-checklist' boxes="errors=${expected#fields=}" ;;
+      *) assert_stop "$name has a known expectation" "$expected" ;;
+    esac
     assert_ne "$name refuses" "$rc" 0
     assert_file_contains "$name identifies refused boxes" "$TMP_ROOT/err" \
       "linear: refused=$refusal issue=CC-2 $boxes fix=issues complete"
@@ -122,8 +123,11 @@ missing-evidence|update|Todo|Done|## Done when\n- [x] first\n- [x] second\n  Evi
 blank-evidence|update|Todo|Done|## Done when\n- [x] first\n  Evidence:   \n- [x] second\n  Evidence: read\n- [X] third\n  Evidence:\t|evidence
 bulk-evidence|bulk-update|Verifying|Closed|## Done when\n- [x] first\n- [x] second\n  Evidence: read\n- [x] third\n  Evidence:   |evidence
 checked|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read first\n- [X] second\n  Evidence: read second|pass
-absent|update|Todo|Done|No checklist.\n- [ ] unrelated|pass
-other-section|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## Notes\n- [ ] unrelated|pass
+absent|update|Todo|Done|No checklist.\n- [ ] unrelated|outside=[2]
+other-section|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## Notes\n- [ ] unrelated|outside=[5]
+bulk-other-section|bulk-update|Verifying|Closed|## Notes\n- [ ] unrelated\n## Done when\n- [x] first\n  Evidence: read|outside=[2]
+other-section-checked|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## Notes\n- [x] noted|pass
+post-merge-fields|update|Todo|Done|## Done when\n- [x] Post-merge: health\n  Evidence: read|fields=[{"box":1,"rule":"post-merge-fields"}]
 bulk-checked|bulk-update|Todo|Closed|## Done when\n- [x] first\n  Evidence: read|pass
 bulk-absent|bulk-update|Todo|Done|No checklist.|pass
 started|update|Todo|Verifying|## Done when\n- [ ] first|pass

@@ -1838,7 +1838,7 @@ create_issue() {
 # FLT-1168 reached update from Verifying with an open post-merge box.
 resolve_issue_update_state() {
     local issue_result="$1" state="$2" description="$3"
-    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes state_type
+    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type
     issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
     team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
     if [ -z "$team_id" ]; then
@@ -1847,9 +1847,12 @@ resolve_issue_update_state() {
     fi
     resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
     parsed=$(done_when_parse "$description" '[]') || return 1
-    open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
-    missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
-    if [ "$open_boxes" != '[]' ] || [ "$missing_evidence_boxes" != '[]' ]; then
+    # The completion answer `issues complete` reads decides; the keys below
+    # only name its cause.
+    if ! jq -e '.completion_state == "Done"' <<<"$parsed" >/dev/null; then
+        open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
+        missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
+        outside_lines=$(jq -c '[.outside_boxes[] | select(.checked | not) | .line]' <<<"$parsed") || return 1
         state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
         if [ -z "$state_type" ]; then
             printf 'linear: refused=state-type-unavailable issue=%s state=%s\n' "$issue_id" "$state" >&2
@@ -1864,6 +1867,13 @@ resolve_issue_update_state() {
                 printf 'linear: refused=done-when-evidence issue=%s missing_evidence_boxes=%s fix=issues complete\n' "$issue_id" "$missing_evidence_boxes" >&2
                 return 1
             fi
+            if [ "$outside_lines" != '[]' ]; then
+                printf 'linear: refused=done-when-outside issue=%s outside_lines=%s fix=issues complete\n' "$issue_id" "$outside_lines" >&2
+                return 1
+            fi
+            errors=$(jq -c '.errors' <<<"$parsed") || return 1
+            printf 'linear: refused=post-merge-checklist issue=%s errors=%s fix=issues complete\n' "$issue_id" "$errors" >&2
+            return 1
         fi
     fi
     jq -r '.id' <<<"$resolved"
