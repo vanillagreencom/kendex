@@ -708,13 +708,12 @@ fn read_lane<'a>(
     clippy::disallowed_methods,
     reason = "the verb's one read of the fleet state, a snapshot it judges and prints; it acts on nothing"
 )]
-pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
-    let path = state::fleet_path(&settings.state_dir);
+pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Result<Value> {
     fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
         crate::error::Error::from(agent_runtime::Error::refused(key, fields))
     }
-    let fleet = state::load(&path)?
-        .map(|snapshot| <FleetState as state::Record>::view(&path, &snapshot.doc))
+    let fleet = state::load(path)?
+        .map(|snapshot| <FleetState as state::Record>::view(path, &snapshot.doc))
         .transpose()?
         .ok_or_else(|| refused("fleet-missing", &[("path", &path.display().to_string())]))?;
     let mut lanes = fleet
@@ -743,7 +742,13 @@ pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
     let readers = Readers::kernel();
     let observed = read_lane(lane, &readers, host, None);
     let mut said = Produced::default();
-    let (counters, stage) = lane_counts(lane, files, &settings.state_dir, &scripts, &mut said);
+    let (counters, stage) = lane_counts(
+        lane,
+        files,
+        path.parent().unwrap_or(&settings.state_dir),
+        &scripts,
+        &mut said,
+    );
     let mut reply = json!({
         "item": lane.item,
         "window": observed.name,

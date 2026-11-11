@@ -48,7 +48,8 @@ fn regressed(text: &str, repo: &str) -> Vec<String> {
         .collect()
 }
 
-fn epoch(text: &str) -> Result<u64, String> {
+/// A Linear timestamp, which carries milliseconds, as epoch seconds.
+pub(super) fn epoch(text: &str) -> Result<u64, String> {
     let stamp: jiff::Timestamp = text.parse().map_err(|e| format!("{e}"))?;
     u64::try_from(stamp.as_second()).map_err(|e| e.to_string())
 }
@@ -166,7 +167,7 @@ impl Unread {
 /// How one source read ended without its answer: the program never
 /// started, gave no answer within its bound, or exited nonzero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Failure {
+pub(super) enum Failure {
     NotStarted,
     TimedOut,
     Failed,
@@ -183,12 +184,17 @@ fn failure(e: &agent_runtime::Error) -> Failure {
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "escape evidence reads git and Linear through the bounded report runner; no read failure is a zero"
+    reason = "the report's git and Linear reads go through the bounded report runner; no read failure is a zero"
 )]
-fn command(root: &Path, program: &Path, args: &[&str], seconds: u64) -> Result<String, Failure> {
+pub(super) fn command(
+    root: &Path,
+    program: &Path,
+    args: &[&str],
+    seconds: u64,
+) -> Result<String, Failure> {
     let out = host::run_tagged_in(
         "report",
-        "escape-source",
+        "report-source",
         program,
         "read",
         args,

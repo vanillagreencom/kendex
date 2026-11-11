@@ -1,7 +1,7 @@
 //! The report cadence and owner report share one snapshot window. Files
 //! advance cadence; only mailbox attachment receipts advance the owner window.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
@@ -339,6 +339,90 @@ fn completions(
     Ok(rows)
 }
 
+/// One row of the tracker CLI's safe issue list: the fields the created
+/// count and the linked section read.
+#[derive(serde::Deserialize)]
+struct Created {
+    id: String,
+    title: String,
+    url: String,
+    created_at: String,
+    parent_id: String,
+    blocks: Vec<String>,
+    blocked_by: Vec<String>,
+    related: Vec<String>,
+}
+
+/// The issues created in `[since, now)` across every team: one whole list
+/// from the window's start with no team filter, so the count is never one
+/// team's or one page's. `None` is a read that failed or did not parse;
+/// the cell prints unread and the cause goes to stderr.
+fn created(ctx: &Context, since: u64, now: u64) -> Option<Vec<Created>> {
+    let from = clock::iso_utc(since);
+    let read = escapes::command(
+        &ctx.settings.roots.project,
+        &ctx.settings.reads.tracker_cli,
+        &[
+            "issues",
+            "list",
+            "--created-since",
+            &from,
+            "--max",
+            "--format=safe",
+        ],
+        120,
+    )
+    .map_err(|failure| match failure {
+        escapes::Failure::NotStarted => "no-linear-cli",
+        escapes::Failure::TimedOut => "linear-timed-out",
+        escapes::Failure::Failed => "linear-failed",
+    })
+    .and_then(|text| {
+        let rows: Vec<Created> = serde_json::from_str(&text).map_err(|_| "unparsed")?;
+        let mut kept = Vec::new();
+        for row in rows {
+            let at = escapes::epoch(&row.created_at).map_err(|_| "unparsed")?;
+            if at >= since && at < now {
+                kept.push(row);
+            }
+        }
+        Ok(kept)
+    });
+    match read {
+        Ok(rows) => Some(rows),
+        Err(cause) => {
+            let _ = writeln!(std::io::stderr(), "report-created-unread cause={cause}");
+            None
+        }
+    }
+}
+
+/// The section's line for `issue` where it links to a fleet item, naming
+/// each link: its parent, an issue it blocks, one blocking it, a related one.
+fn linked(issue: &Created, items: &BTreeSet<&str>) -> Option<String> {
+    let links: Vec<String> = std::iter::once((issue.parent_id.as_str(), "parent"))
+        .chain(issue.blocks.iter().map(|id| (id.as_str(), "blocks")))
+        .chain(
+            issue
+                .blocked_by
+                .iter()
+                .map(|id| (id.as_str(), "blocked by")),
+        )
+        .chain(issue.related.iter().map(|id| (id.as_str(), "related")))
+        .filter(|(id, _)| items.contains(id))
+        .map(|(id, kind)| format!("{} ({kind})", cell(id)))
+        .collect();
+    (!links.is_empty()).then(|| {
+        format!(
+            "- **[\\[{}\\]]({})** {}; links {}.\n",
+            cell(&issue.id),
+            cell(&issue.url),
+            cell(&issue.title),
+            links.join(", ")
+        )
+    })
+}
+
 /// A session's own due: its start is the cadence floor, and the fleet record
 /// it names, if any, is the only one it reads; a session that names none
 /// reads no fleet, so no fleet on its host counts toward it.
@@ -573,14 +657,16 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     let mut out = String::from(
         "> **Overall:** Work status follows from the fleet records.\n\n> **What's going well:** Completed work is listed below.\n\n> **What's not going well:** Unread figures need a reading before a conclusion.\n\n```\nNumbers\n```\n\n",
     );
-    for name in [
-        "Issues merged",
-        "Issues created",
-        "Issues verified",
-        "Issues cancelled",
+    let created = created(ctx, since, now);
+    for (name, count) in [
+        ("Issues merged", None),
+        ("Issues created", created.as_ref().map(Vec::len)),
+        ("Issues verified", None),
+        ("Issues cancelled", None),
     ] {
+        let count = count.map_or("unread".to_owned(), |n| n.to_string());
         out.push_str(&format!(
-            "- {name}: unread; source: Linear, all teams; window: {window_text}.\n"
+            "- {name}: {count}; source: Linear, all teams; window: {window_text}.\n"
         ));
     }
     let known = ["approved-on-rerequest", "fallback", "declined-unchanged"];
@@ -654,6 +740,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         .join(".agents/skills/orch/scripts");
     let mut past = Vec::new();
     let mut lane_blockers = Vec::new();
+    let mut unread = BTreeMap::new();
     for lane in lanes
         .iter()
         .filter(|l| matches!(l.status, LaneStatus::Running | LaneStatus::Preparing))
@@ -678,20 +765,17 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             clock::iso_utc(now)
         );
         out.push_str(&row);
-        if ctx.fleet == state::fleet_path(&ctx.settings.state_dir) {
-            match super::lanes::status(&ctx.settings, &lane.item) {
-                Ok(facts) => {
-                    let word = |key| facts.get(key).and_then(Value::as_str).unwrap_or("unread");
-                    out.push_str(&format!(
-                        "  - Status: {}; stage: {}.\n",
-                        cell(word("state")),
-                        cell(word("stage"))
-                    ));
-                    out.push_str(&format!("  - Rounds: review_rounds={} fix_receipts={} validation_runs={} restacks={} repeated_class_rounds={}.\n",word("review_rounds"),word("fix_receipts"),word("validation_runs"),word("restacks"),word("repeated_class_rounds")));
-                    if matches!(
-                        facts.get("state").and_then(Value::as_str),
-                        Some("walled" | "asking" | "rate-limit-switch")
-                    ) {
+        match super::lanes::status(&ctx.settings, &ctx.fleet, &lane.item) {
+            Ok(facts) => {
+                let word = |key| facts.get(key).and_then(Value::as_str).unwrap_or("unread");
+                out.push_str(&format!(
+                    "  - Status: {}; stage: {}.\n",
+                    cell(word("state")),
+                    cell(word("stage"))
+                ));
+                out.push_str(&format!("  - Rounds: review_rounds={} fix_receipts={} validation_runs={} restacks={} repeated_class_rounds={}.\n",word("review_rounds"),word("fix_receipts"),word("validation_runs"),word("restacks"),word("repeated_class_rounds")));
+                match facts.get("state").and_then(Value::as_str) {
+                    Some("walled" | "asking" | "rate-limit-switch") => {
                         lane_blockers.push(format!(
                             "- {}: {}; {}.\n",
                             cell(&lane.item),
@@ -704,14 +788,21 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                             )
                         ));
                     }
+                    // A read that failed or settles nothing leaves open
+                    // whether the lane is blocked.
+                    Some(state @ ("unreadable" | "unjudged")) => {
+                        unread.insert(&lane.item, format!("{state} ({})", word("cause")));
+                    }
+                    _ => {}
                 }
-                Err(cause) => out.push_str(&format!(
+            }
+            Err(cause) => {
+                out.push_str(&format!(
                     "  - Lane facts: unread ({}).\n",
                     cell(&cause.to_string())
-                )),
+                ));
+                unread.insert(&lane.item, cause.to_string());
             }
-        } else {
-            out.push_str("  - Lane facts: unread; lane status reads the configured fleet path.\n");
         }
         if duration.is_some_and(|n| n > 12600) {
             past.push(row);
@@ -845,15 +936,38 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             ));
         }
     }
-    if !blocked {
+    for (item, cause) in &unread {
         out.push_str(&format!(
-            "- Unread; source: lane gate facts, which no reader exposes; as of {}.\n",
+            "- Unread for {}: {}; source: lane status; as of {}.\n",
+            cell(item),
+            cell(cause),
             clock::iso_utc(now)
         ));
     }
-    out.push_str(&format!(
-        "\n```\nLinked issues created\n```\n\n- Unread; source: Linear, all teams; window: {window_text}.\n\n```\nWaiting on you\n```\n\n"
-    ));
+    if !blocked && unread.is_empty() {
+        out.push_str(&format!(
+            "- None; source: lane status of every active lane and each lane's post-PR stop; as of {}.\n",
+            clock::iso_utc(now)
+        ));
+    }
+    out.push_str("\n```\nLinked issues created\n```\n\n");
+    match &created {
+        Some(rows) => {
+            let lines: Vec<String> = rows.iter().filter_map(|i| linked(i, &launched)).collect();
+            if lines.is_empty() {
+                out.push_str(&format!(
+                    "- None; source: Linear, all teams; window: {window_text}.\n"
+                ));
+            }
+            for line in lines {
+                out.push_str(&line);
+            }
+        }
+        None => out.push_str(&format!(
+            "- Unread; source: Linear, all teams; window: {window_text}.\n"
+        )),
+    }
+    out.push_str("\n```\nWaiting on you\n```\n\n");
     let mail = Mailbox::new(ctx.settings.lane_mail_cli.clone());
     let asks = mail.pending_owner_asks(&ctx.settings.roots.common)?;
     let events = mail.events(&ctx.settings.roots.common)?;

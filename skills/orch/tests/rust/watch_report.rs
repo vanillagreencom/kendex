@@ -3655,17 +3655,15 @@ esac
     );
     assert!(!body.contains("- Queued KEN-1:"), "{body}");
     assert!(
-        body.contains(
-            "Issues created: unread; source: Linear, all teams; window: 2026-09-29T06:00:00Z"
-        ),
+        body.contains("Issues created: 0; source: Linear, all teams; window: 2026-09-29T06:00:00Z"),
         "{body}"
     );
-    for unread in [
+    for line in [
         "Post-merge checks waiting: unread; source: the tracker duty's verifying read, which this process has not made; as of ",
-        "- Unread; source: lane gate facts, which no reader exposes; as of ",
-        "Linked issues created\n```\n\n- Unread; source: Linear, all teams; window: 2026-09-29T06:00:00Z to ",
+        "Blocked\n```\n\n- None; source: lane status of every active lane and each lane's post-PR stop; as of ",
+        "Linked issues created\n```\n\n- None; source: Linear, all teams; window: 2026-09-29T06:00:00Z to ",
     ] {
-        assert!(body.contains(unread), "{unread}\n{body}");
+        assert!(body.contains(line), "{line}\n{body}");
     }
     assert!(
         std::fs::read_to_string(world.path().join("report-linear.args"))
@@ -3678,6 +3676,308 @@ esac
             .contains("--team kendex")
     );
     assert_eq!(body.matches("> **").count(), 3);
+}
+
+/// The body `report render` prints for the world's fleet, run through the
+/// binary with `tracker` as its tracker CLI and `extra` over the
+/// environment; a render that exits nonzero fails the row.
+fn render_body(world: &World, tracker: &Path, extra: &[(&str, String)]) -> String {
+    let output = isolated()
+        .current_dir(world.path())
+        .arg("--state-dir")
+        .arg(world.path())
+        .args([
+            "report",
+            "render",
+            "--repo",
+            "owner/repo",
+            "--credential-selected",
+        ])
+        .arg("--state")
+        .arg(world.fleet_path())
+        .env("PATH", tool_path(&[world.path()]))
+        .env("HOME", world.path().join("home"))
+        .env("LINEAR_TEAM", "kendex")
+        .env("GH_FAKE_REPLIES", world.path().join("gh.json"))
+        .env("GH_FAKE_LOG", world.path().join("gh.args"))
+        .env("OVERSEE_WATCH_TRACKER", tracker)
+        .env("LANE_MAIL_CLI", world.real_report_mail())
+        .envs(extra.iter().map(|(k, v)| (*k, v)))
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    reply["result"]["body"].as_str().unwrap().to_owned()
+}
+
+/// The text of the body's section `name`, up to the next section.
+fn section<'a>(body: &'a str, name: &str) -> &'a str {
+    let start = format!("```\n{name}\n```\n\n");
+    let rest = body.split_once(&start).map_or("", |(_, rest)| rest);
+    rest.split_once("\n```\n").map_or(rest, |(text, _)| text)
+}
+
+/// The created count and the linked section read one list of every team's
+/// issues created since the window's start, through the real tracker CLI
+/// over a curl that answers that one request alone: a count over two pages
+/// and three teams that leaves out an issue dated past the render, the
+/// issues linked to a fleet item of any status by parent, blocks, blocked by
+/// or related, and both cells unread, the render still printing, when the
+/// read fails or the CLI is missing.
+#[test]
+fn report_counts_issues_created_and_linked_across_all_teams() {
+    let world = World::new();
+    let _ = world.report_context();
+    let tracker = world.path().join("created");
+    std::fs::create_dir(&tracker).unwrap();
+    for name in ["linear", "curl"] {
+        std::os::unix::fs::symlink(
+            fixtures().join("linear-created").join(name),
+            tracker.join(name),
+        )
+        .unwrap();
+    }
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[
+        {"item":"KEN-1","status":"done","launched_at":"2026-09-29T06:00:00Z"},
+        {"item":"KEN-2","status":"parked","launched_at":"2026-09-29T07:00:00Z"}
+    ]}));
+    world.plant("gh.json", &json!({}));
+    let connection =
+        |nodes: Value| json!({"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":nodes});
+    let other = |id: &str| json!({"id":format!("uuid-{id}"),"identifier":id,"title":"Fixture text","state":{"name":"Todo","type":"unstarted"}});
+    let issue = |id: &str, at: &str, parent: Option<&str>, relations: Value, inverse: Value| {
+        json!({
+            "id":format!("uuid-{id}"),"identifier":id,"title":format!("Fixture {id}"),
+            "description":"Fixture text","state":{"name":"Todo","type":"unstarted"},
+            "assignee":null,"project":null,"projectMilestone":null,"cycle":null,
+            "parent":parent.map(|p| json!({"id":format!("uuid-{p}"),"identifier":p,"title":"Fixture text"})),
+            "labels":connection(json!([])),"priority":2,"estimate":1,"sortOrder":-1.0,
+            "url":format!("https://linear.app/fixture/{id}"),"createdAt":at,"updatedAt":at,
+            "archivedAt":null,"trashed":null,
+            "relations":connection(relations),"inverseRelations":connection(inverse)
+        })
+    };
+    let pages = json!([
+        [
+            issue(
+                "KEN-31",
+                "2026-10-01T10:00:00.123Z",
+                Some("KEN-1"),
+                json!([]),
+                json!([])
+            ),
+            issue(
+                "FLT-32",
+                "2026-10-02T10:00:00.000Z",
+                None,
+                json!([{"id":"r1","type":"blocks","relatedIssue":other("KEN-2")}]),
+                json!([])
+            ),
+        ],
+        [
+            issue(
+                "KEN-33",
+                "2026-10-03T10:00:00.000Z",
+                None,
+                json!([]),
+                json!([
+                    {"id":"r2","type":"blocks","issue":other("KEN-2")},
+                    {"id":"r3","type":"related","issue":other("KEN-1")}
+                ])
+            ),
+            issue(
+                "OPS-34",
+                "2026-10-04T10:00:00.000Z",
+                None,
+                json!([{"id":"r4","type":"related","relatedIssue":other("KEN-99")}]),
+                json!([])
+            ),
+            issue(
+                "KEN-35",
+                "2099-01-01T00:00:00.000Z",
+                Some("KEN-1"),
+                json!([]),
+                json!([])
+            ),
+        ],
+    ]);
+    let plant = |code: u16| {
+        std::fs::write(
+            tracker.join("linear-created.json"),
+            json!({"since":"2026-09-29T06:00:00Z","pages":pages,"code":code}).to_string(),
+        )
+        .unwrap();
+    };
+    plant(200);
+    let linear = tracker.join("linear");
+    let body = render_body(&world, &linear, &[]);
+    let window = "window: 2026-09-29T06:00:00Z to ";
+    for line in [
+        format!("- Issues merged: unread; source: Linear, all teams; {window}"),
+        format!("- Issues created: 4; source: Linear, all teams; {window}"),
+        format!("- Issues verified: unread; source: Linear, all teams; {window}"),
+        format!("- Issues cancelled: unread; source: Linear, all teams; {window}"),
+    ] {
+        assert!(body.contains(&line), "{line}\n{body}");
+    }
+    assert_eq!(
+        section(&body, "Linked issues created"),
+        concat!(
+            r"- **[\[KEN-31\]](https://linear.app/fixture/KEN-31)** Fixture KEN-31; links KEN-1 (parent).",
+            "\n",
+            r"- **[\[FLT-32\]](https://linear.app/fixture/FLT-32)** Fixture FLT-32; links KEN-2 (blocks).",
+            "\n",
+            r"- **[\[KEN-33\]](https://linear.app/fixture/KEN-33)** Fixture KEN-33; links KEN-2 (blocked by), KEN-1 (related).",
+            "\n"
+        ),
+        "{body}"
+    );
+    let requests: Vec<Value> = lines(&tracker.join("linear-created.log"))
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|r| r["handled"] == true)
+            .collect::<Vec<_>>(),
+        vec![true, true],
+        "one request per page, each the one accepted form: {requests:?}"
+    );
+    // A tracker answering 5xx, and a missing tracker CLI: both cells read
+    // unread and the report still renders.
+    plant(500);
+    let unread = |body: &str| {
+        assert!(
+            body.contains(&format!(
+                "- Issues created: unread; source: Linear, all teams; {window}"
+            )),
+            "{body}"
+        );
+        let linked = section(body, "Linked issues created");
+        assert!(
+            linked.starts_with(&format!("- Unread; source: Linear, all teams; {window}"))
+                && linked.lines().count() == 1,
+            "{body}"
+        );
+    };
+    unread(&render_body(&world, &linear, &[]));
+    std::fs::rename(&linear, tracker.join("linear.moved")).unwrap();
+    unread(&render_body(&world, &linear, &[]));
+}
+
+/// Blocked reads none only when every active lane's status was judged and
+/// no lane is blocked: a lane whose status read settles nothing, or refuses,
+/// is named unread, alone or beside a post-PR stop, and none is never
+/// printed then.
+#[test]
+fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
+    let world = World::new();
+    let _ = world.report_context();
+    world.plant("gh.json", &json!({}));
+    let server = Server::start(world.path(), "fleet");
+    let pane = server.open_window("gh-2", world.path(), "bash --norc --noprofile");
+    let root = world.path().display().to_string();
+    let running = |item: &str, launch: Value| {
+        json!({"item":item,"status":"running","harness":"claude","window":"gh-2",
+            "launched_at":"2026-09-29T06:00:00Z","mail_root":root,"launch":launch})
+    };
+    let judged = running("KEN-2", json!({"pane":pane,"server":server.pid}));
+    let tmux = [
+        ("TMUX", format!("{},0,0", server.socket.display())),
+        ("ORCH_TMUX_SESSION", server.session.clone()),
+    ];
+    let tracker = world.path().join("linear");
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[judged.clone()]}));
+    let body = render_body(&world, &tracker, &tmux);
+    assert!(
+        body.contains("- KEN-2: Running; ") && body.contains("\n  - Status: exited; stage: "),
+        "{body}"
+    );
+    let blocked = section(&body, "Blocked");
+    assert!(
+        blocked.starts_with(
+            "- None; source: lane status of every active lane and each lane's post-PR stop; as of "
+        ) && blocked.lines().count() == 1,
+        "{body}"
+    );
+    // A lane whose status settles nothing and one whose read refuses: each
+    // named unread, with no blocker found and no none; then beside a post-PR
+    // stop.
+    let mut lanes = vec![
+        judged,
+        running("KEN-3", json!({})),
+        running("KEN-4", json!({})),
+        running("KEN-4", json!({})),
+    ];
+    for stop in [false, true] {
+        if stop {
+            lanes.push(json!({"item":"KEN-5","status":"done","launched_at":"2026-09-29T06:00:00Z","post_pr_stop":{"reason":"owner-hold"}}));
+        }
+        world.write_fleet(&json!({"issue_id":"oversee","lanes":lanes}));
+        let body = render_body(&world, &tracker, &tmux);
+        let mut blocked: Vec<&str> = section(&body, "Blocked").lines().collect();
+        if stop {
+            assert_eq!(
+                blocked.first().copied(),
+                Some(r#"- KEN-5: {"reason":"owner-hold"}."#),
+                "{body}"
+            );
+            blocked.remove(0);
+        }
+        assert_eq!(blocked.len(), 2, "{body}");
+        assert!(
+            blocked[0].starts_with(
+                "- Unread for KEN-3: unjudged (pane-unrecorded); source: lane status; as of "
+            ),
+            "{body}"
+        );
+        assert!(
+            blocked[1].starts_with("- Unread for KEN-4: ")
+                && blocked[1].contains("lane-ambiguous")
+                && blocked[1].contains("; source: lane status; as of "),
+            "{body}"
+        );
+    }
+}
+
+/// A fleet named by `--state` has its lanes' facts read from its own record,
+/// and a lane with no checkout on this disk counts the item record beside
+/// that fleet, never the configured fleet's of the same key.
+#[test]
+fn report_reads_lane_facts_of_the_fleet_its_state_names() {
+    let world = World::new();
+    let other = world.path().join("other");
+    std::fs::create_dir(&other).unwrap();
+    let fleet = other.join(FLEET_FILE_NAME);
+    std::fs::write(
+        &fleet,
+        json!({"issue_id":"oversee","triaged":[],"launch_queue":[],"fleet_log":[],"lanes":[
+            {"item":"KEN-6","status":"preparing","harness":"claude","launched_at":"2026-10-01T06:00:00Z"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    for (dir, rounds) in [(other.as_path(), 2), (world.path(), 7)] {
+        std::fs::write(
+            state::item_path(dir, "KEN-6"),
+            json!({"rereview_cycles":rounds,"restacks":1,"stages":[]}).to_string(),
+        )
+        .unwrap();
+    }
+    let mut ctx = world.report_context();
+    ctx.fleet = fleet;
+    let body = report::render(&ctx, epoch("2026-10-01T14:00:00Z")).unwrap();
+    let worker = body
+        .split("- KEN-6: Preparing; ")
+        .nth(1)
+        .unwrap_or_default();
+    assert!(worker.contains("\n  - Status: unjudged; stage: "), "{body}");
+    assert!(
+        worker.contains("\n  - Rounds: review_rounds=2 fix_receipts=0 "),
+        "{body}"
+    );
+    assert!(!body.contains("Lane facts: unread"), "{body}");
 }
 
 #[test]

@@ -1664,7 +1664,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             op: LaneOp::Status { item },
         } => {
             let settings = resolve_settings(&flags)?;
-            watch::lanes::status(&settings, &item)?
+            watch::lanes::status(&settings, &state::fleet_path(&settings.state_dir), &item)?
         }
         Verb::ContainerClose { checkout, parent } => {
             let settings = resolve_settings(&flags)?;
