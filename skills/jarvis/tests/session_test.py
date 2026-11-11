@@ -1444,6 +1444,10 @@ class SessionContract(unittest.TestCase):
             self.skipTest("no user systemd manager: " + (probe.stderr.strip().split("\n")[0] or "exit=" + str(probe.returncode)))
         stub = self.root / "bin/systemd-run"
         log = self.record.parent / "session.log"
+        # A slice the test plants, apart from app.slice, where the manager
+        # puts a scope that names none: the server's scope must take it.
+        planted = "jarvistest" + uuid.uuid4().hex[:12] + ".slice"
+        self.addCleanup(subprocess.run, [systemctl, "--user", "stop", planted], capture_output=True, timeout=30)
         for row, refused in (("scope", False), ("scope-refused", True)):
             with self.subTest(row):
                 if refused:
@@ -1458,7 +1462,7 @@ class SessionContract(unittest.TestCase):
                 script.write_text(shlex.join(argv) + " > " + shlex.quote(str(out)) + '; printf "%s\\n" "$?" > '
                                   + shlex.quote(str(rc)) + "\nexec sleep 300\n")
                 logged = log.read_text().count("jarvis-session: tmux-scope=unavailable ") if log.exists() else 0
-                subprocess.run([run, "--user", "--quiet", "--collect", "--unit=" + unit, "--working-directory=" + str(self.root),
+                subprocess.run([run, "--user", "--quiet", "--collect", "--unit=" + unit, "--slice=" + planted, "--working-directory=" + str(self.root),
                                 *("--setenv=" + key + "=" + value for key, value in self.env.items()),
                                 "--", self.env["JARVIS_TEST_BASH"], str(script)], check=True, capture_output=True, timeout=30)
                 deadline = time.monotonic() + 60
@@ -1474,7 +1478,7 @@ class SessionContract(unittest.TestCase):
                 if refused:
                     self.assertTrue(cgroup[0].endswith("/" + unit + ".service"), cgroup)
                     continue
-                self.assertTrue(cgroup[0].endswith(".scope") and unit not in cgroup[0], cgroup)
+                self.assertTrue(cgroup[0].endswith(".scope") and unit not in cgroup[0] and "/" + planted + "/" in cgroup[0], cgroup)
                 subprocess.run([systemctl, "--user", "stop", unit + ".service"], check=True, capture_output=True, timeout=30)
                 os.kill(record["server_pid"], 0)
                 pane = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_dead}"],
