@@ -453,6 +453,12 @@ fn apply_and_replace_hold_a_moved_sibling_catalog() {
 #[allow(clippy::unwrap_used)]
 fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
     use std::os::unix::fs::PermissionsExt;
+    // Root writes through a mode bit, so the settle lands and the failure
+    // this case is about is never reached on such a runner.
+    if rustix::process::geteuid().is_root() {
+        eprintln!("skipped: root writes through the unwritable agents folder this case needs");
+        return;
+    }
     let f = fixture();
     // A declared agent nothing has installed yet: the settle behind the
     // keep is what writes it, into a folder that refuses the write.

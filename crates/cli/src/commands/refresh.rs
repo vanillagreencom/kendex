@@ -8,8 +8,9 @@ use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
 use super::commit_offer::after_writing;
 use super::engine_common::{
-    Confirmation, answerable, apply_report_accounted, before_writing, confirm_before_writing,
-    print_synced, refresh_failures, require_yes_in_non_interactive, write_report,
+    AfterFailed, Confirmation, answerable, apply_report_accounted, before_writing,
+    confirm_before_writing, confirm_writing, print_synced, refresh_failures,
+    require_yes_in_non_interactive, write_report,
 };
 use super::ledger::{Folded, Wrote, say_ledger_with};
 use super::offers::Reached;
@@ -212,14 +213,7 @@ fn pi_change(settle: &PiSettle) -> String {
 
 /// The question asked about one list, counting exactly what it holds.
 fn ask(consent: &Consent, yes: bool) -> Result<Confirmation, Box<dyn std::error::Error>> {
-    let changes = consent.count();
-    confirm_before_writing(
-        &format!(
-            "write {changes} change{}?",
-            if changes == 1 { "" } else { "s" }
-        ),
-        yes,
-    )
+    confirm_writing(consent.count(), yes)
 }
 
 fn consent_scope(scope: &kendex_core::model::Scope) -> String {
@@ -422,9 +416,9 @@ struct Written {
     /// write, which leaves the named project unregistered
     /// (`project::register_target`).
     failed: bool,
-    /// The reading an earlier write of this run took, which an offer this
-    /// write still owes covers from ([`Start::before`]).
-    before: Option<Before>,
+    /// The reading the offer this scope still owes covers from, `None`
+    /// where its write already made it.
+    owed: Option<Before>,
     stop: Option<Stop>,
 }
 
@@ -615,7 +609,7 @@ fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
-                    print_attention(env, report, listing(verbose), scope.reach);
+                    print_attention(env, report, listing(verbose), scope.reach, &[]);
                     failures.extend(refresh_failures(report, &[]));
                 }
             }
@@ -679,9 +673,9 @@ fn defer_process_installs(
 /// date — and still reaches the commit offer, on whatever an earlier run
 /// left uncommitted. Every stop this function sees before the last write
 /// goes through [`Start::stopped_short`], which owns what a scope that
-/// already wrote is owed. A Fresh scope's error from the apply after it
-/// has written its plan (a render failure, a failed commit offer) reaches
-/// it as a scope that wrote nothing.
+/// already wrote is owed; a plan's write that did not land is one of
+/// them. A failure after the plan's write landed, in the render or the
+/// commit offer, ends the scope written, through [`Start::wrote_plan`].
 fn write_scope(
     env: &Env,
     scope: &kendex_core::model::Scope,
@@ -689,7 +683,7 @@ fn write_scope(
     pending: &[PiSettle],
     start: &Start,
     context: &Context,
-    report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport) -> CliResult,
+    report_after_settle: impl FnOnce(&mut kendex_core::engine::EngineReport, &Shown) -> CliResult,
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     let yes = context.yes;
     if pending.is_empty() {
@@ -732,15 +726,7 @@ fn write_scope(
     };
     // The carrier can make hooks enforceable. Show their diagnostics
     // before the further question, using this plan for the ledger.
-    let flagged = std::mem::take(&mut after.safety);
-    after.safety = flagged
-        .iter()
-        .filter(|row| !shown.contains(row))
-        .cloned()
-        .collect();
-    let said = report_after_settle(&mut after);
-    after.safety = flagged;
-    if let Err(error) = said {
+    if let Err(error) = report_after_settle(&mut after, &shown) {
         return start.stopped_short(after, Some(settled), Stop::Failed(error));
     }
     let added = approved.added(&after);
@@ -764,22 +750,22 @@ fn write_scope(
         };
         if let Some(stop) = stop {
             let done = start.done(Some(settled));
-            return Ok(start.written(after, done, Some(stop)));
+            return Ok(start.written(after, done, stop));
         }
     }
-    let (written, stop) = match apply_report_accounted(env, &after, start.before()) {
-        Ok(wrote) => (
-            after.plan.ops.iter().cloned().map(Effect::Op).collect(),
-            wrote.after.err().map(Stop::Failed),
-        ),
-        Err(error) => (Vec::new(), Some(Stop::Failed(error))),
-    };
-    let done = start.done(Some(settled.into_iter().chain(written).collect()));
     let asked = match added.consent.is_empty() {
         true => consent.effects,
         false => Vec::new(),
     };
-    Ok(asked_over(start.written(after, done, stop), asked))
+    let write = match apply_report_accounted(env, &after, start.before()) {
+        Ok(wrote) => {
+            let written = after.plan.ops.iter().cloned().map(Effect::Op);
+            let done = start.done(Some(settled.into_iter().chain(written).collect()));
+            start.wrote_plan(after, done, wrote.after)
+        }
+        Err(error) => start.written(after, start.done(Some(settled)), Stop::Failed(error)),
+    };
+    Ok(asked_over(write, asked))
 }
 
 /// [`write_scope`] for a scope with no Pi package to settle: its orphan
@@ -825,8 +811,10 @@ fn write_unsettled(
     match apply_report_accounted(env, &report, start.before()) {
         Ok(wrote) => {
             let done = start.done((!consent.is_empty()).then_some(consent.effects));
-            let stop = wrote.after.err().map(Stop::Failed);
-            Ok(asked_over(start.written(report, done, stop), asked))
+            Ok(asked_over(
+                start.wrote_plan(report, done, wrote.after),
+                asked,
+            ))
         }
         Err(error) => start.stopped_short(report, None, Stop::Failed(error)),
     }
@@ -846,16 +834,25 @@ fn asked_over(write: ScopeWrite, asked: Vec<Effect>) -> ScopeWrite {
 /// The safety rows of the plan a settle's question is asked over, drawn
 /// before that question, and handed back so the report after the settle
 /// does not draw them again.
-fn safety_before_consent(
-    report: &EngineReport,
-    context: &Context,
-) -> Vec<kendex_core::engine::ItemSafety> {
-    ui::stderr(&super::advisory::safety_section(
-        &ui::style(),
-        &report.safety,
-        listing(context.verbose),
-    ));
-    report.safety.clone()
+fn safety_before_consent(report: &EngineReport, context: &Context) -> Shown {
+    let style = ui::style();
+    let listed = listing(context.verbose);
+    let lines = super::advisory::safety_section(&style, &report.safety, listed);
+    let folded = listed == Listing::Attention
+        && super::advisory::safety_section(&style, &report.safety, Listing::Verbose) != lines;
+    ui::stderr(&lines);
+    Shown {
+        safety: report.safety.clone(),
+        folded,
+    }
+}
+
+/// What a scope drew before its settle's question, which the report after
+/// the settle neither draws again nor forgets it folded.
+struct Shown {
+    safety: Vec<kendex_core::engine::ItemSafety>,
+    /// The compact drawing left out detail a verbose one draws.
+    folded: bool,
 }
 
 /// A plan whose only question is its orphan settings comment removals asks
@@ -960,19 +957,42 @@ impl Start {
         }
     }
 
-    fn written(
-        &self,
-        report: EngineReport,
-        done: Option<Vec<Effect>>,
-        stop: Option<Stop>,
-    ) -> ScopeWrite {
+    /// A written scope that stopped before its plan's write landed: the
+    /// offer it owes covers from the reading taken before its first write.
+    fn written(&self, report: EngineReport, done: Option<Vec<Effect>>, stop: Stop) -> ScopeWrite {
+        let owed = self.before().cloned().unwrap_or(Before::Untaken);
         ScopeWrite::Written(Box::new(Written {
             report,
             done,
             asked: Vec::new(),
             failed: false,
-            before: self.before().cloned(),
-            stop,
+            owed: Some(owed),
+            stop: Some(stop),
+        }))
+    }
+
+    /// A scope whose plan's write landed, `after` being how the steps
+    /// after it went. A render that failed made no offer, which is owed
+    /// over what the write changed from the reading it took; an offer
+    /// that was made, failed or not, is not made again.
+    fn wrote_plan(
+        &self,
+        report: EngineReport,
+        done: Option<Vec<Effect>>,
+        after: Result<(), AfterFailed>,
+    ) -> ScopeWrite {
+        let (stop, owed) = match after {
+            Ok(()) => (None, None),
+            Err(AfterFailed::Render { error, before }) => (Some(error), Some(before)),
+            Err(AfterFailed::Offer(error)) => (Some(error), None),
+        };
+        ScopeWrite::Written(Box::new(Written {
+            report,
+            done,
+            asked: Vec::new(),
+            failed: false,
+            owed,
+            stop: stop.map(Stop::Failed),
         }))
     }
 
@@ -991,7 +1011,7 @@ impl Start {
         match (self.done(wrote), stop) {
             (None, Stop::Declined) => Ok(ScopeWrite::Declined),
             (None, Stop::Failed(error)) => Err(error),
-            (done, stop) => Ok(self.written(report, done, Some(stop))),
+            (done, stop) => Ok(self.written(report, done, stop)),
         }
     }
 }
@@ -1128,10 +1148,7 @@ pub fn run(
             // the ones before it. An error reaches here from a scope
             // `Start::stopped_short` reads as unwritten, so this scope
             // drops off the reached list, while what earlier scopes wrote
-            // is on disk and owed both a snapshot and a closing line. That
-            // reading includes a scope with no recovery whose
-            // `confirm_plan_and_apply` failed after writing its plan, which
-            // gets neither here.
+            // is on disk and owed both a snapshot and a closing line.
             Err(error) if ui::cancelled(error.as_ref()) => {
                 reached.pop();
                 cancelled = Some(error);
@@ -1181,7 +1198,7 @@ fn write_ready(
             Ok(deferred) => deferred,
             Err(error) => return Ok(Some(start.stopped_short(report, None, Stop::Failed(error)))),
         };
-        *attention = print_attention(env, &report, listed, context.reach);
+        *attention = print_attention(env, &report, listed, context.reach, &[]);
         let reported = refresh_failures(&report, &deferred);
         failed = !context.synced.failures.is_empty() || !reported.is_empty();
         failures.extend(reported);
@@ -1206,13 +1223,22 @@ fn write_ready(
             return Ok(None);
         }
     }
-    let mut outcome = write_scope(env, scope, report, &pending, &start, context, |after| {
-        context.synced.suppress_busy_pending(&mut after.notes);
-        let deferred = defer_process_installs(env, scope, context, after)?;
-        *attention = print_attention(env, after, listed, context.reach);
-        failures.extend(refresh_failures(after, &deferred));
-        Ok(())
-    });
+    let mut outcome = write_scope(
+        env,
+        scope,
+        report,
+        &pending,
+        &start,
+        context,
+        |after, shown| {
+            context.synced.suppress_busy_pending(&mut after.notes);
+            let deferred = defer_process_installs(env, scope, context, after)?;
+            *attention = print_attention(env, after, listed, context.reach, &shown.safety);
+            attention.folded |= shown.folded;
+            failures.extend(refresh_failures(after, &deferred));
+            Ok(())
+        },
+    );
     // A scope with packages left goes on to its closing ledger even with
     // nothing to write, and the ledger is not a write: with a failure to
     // report, `close_written` lists nothing.
@@ -1247,8 +1273,8 @@ fn close_written(
 }
 
 /// What a write that stopped short of its last write owes: a cancel ends
-/// the run, and a decline or any other stop still reaches the offer, from
-/// the reading taken before the scope's first write where there was one.
+/// the run, and a decline or any other stop still reaches the offer the
+/// scope owes, where its write did not already make it.
 /// The scope's closing line and snapshot are the caller's, for every
 /// written scope alike.
 fn stopped(
@@ -1265,8 +1291,9 @@ fn stopped(
             consent_scope(scope)
         )),
     }
-    let before = written.before.as_ref().unwrap_or(&Before::Untaken);
-    if let Err(error) = after_writing(env, scope, &written.report.generated, before) {
+    if let Some(before) = &written.owed
+        && let Err(error) = after_writing(env, scope, &written.report.generated, before)
+    {
         failures.push(error.to_string());
     }
     None
@@ -1329,7 +1356,7 @@ fn ready_to_write(
         Ok(None) => return Ok(Ready::Ended(Ok(ScopeWrite::Declined))),
         Err(error) if ui::cancelled(error.as_ref()) => return Ok(Ready::Ended(Err(error))),
         Err(error) => {
-            print_attention(env, &report, listing(context.verbose), context.reach);
+            print_attention(env, &report, listing(context.verbose), context.reach, &[]);
             failures.push(error.to_string());
             return Ok(Ready::Skip);
         }

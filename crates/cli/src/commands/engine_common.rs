@@ -89,7 +89,7 @@ pub fn print_report_for(
     listing: Listing,
     reached: super::offers::Reached,
 ) -> super::attention::Attention {
-    let attention = super::attention::print_attention(env, report, listing, reached);
+    let attention = super::attention::print_attention(env, report, listing, reached, &[]);
     ui::report::print(Status::Notice, |style| {
         report_lines(style, report, !attention.blocked.is_empty())
     });
@@ -241,39 +241,29 @@ pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliRe
 
 /// The same prompt and the same write, handing back what it wrote instead
 /// of announcing it — for a verb that closes on a summary of its own.
+///
+/// The count is the consequence: an answer given to a bare "apply?" is an
+/// answer to the verb's name rather than to what it writes. An empty plan
+/// asks nothing and writes nothing, and still reaches the offer.
 pub fn confirm_and_apply(
     env: &Env,
     report: &EngineReport,
     yes: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    match confirm_plan_and_apply(env, report, yes)? {
-        PlanApplication::Applied(applied) => Ok(applied),
-        PlanApplication::Declined => Err("cancelled — these changes were not written".into()),
+    if !report.plan.is_empty()
+        && confirm_writing(report.plan.ops.len(), yes)? == Confirmation::Declined
+    {
+        return Err("cancelled — these changes were not written".into());
     }
+    apply_report(env, report)
 }
 
-enum PlanApplication {
-    Applied(usize),
-    Declined,
-}
-
-fn confirm_plan_and_apply(
-    env: &Env,
-    report: &EngineReport,
+/// The question asked before `changes` writes, counting exactly them.
+pub(super) fn confirm_writing(
+    changes: usize,
     yes: bool,
-) -> Result<PlanApplication, Box<dyn std::error::Error>> {
-    // The count is the consequence: an answer given to a bare "apply?" is
-    // an answer to the verb's name rather than to what it writes. An empty
-    // plan asks nothing and writes nothing, and still reaches the offer.
-    if !report.plan.is_empty() {
-        let ops = report.plan.ops.len();
-        if confirm_before_writing(&format!("write {ops} change{}?", plural(ops)), yes)?
-            == Confirmation::Declined
-        {
-            return Ok(PlanApplication::Declined);
-        }
-    }
-    apply_report(env, report).map(PlanApplication::Applied)
+) -> Result<Confirmation, Box<dyn std::error::Error>> {
+    confirm_before_writing(&format!("write {changes} change{}?", plural(changes)), yes)
 }
 
 /// Execute a report's plan — the one way a CLI verb holding an
@@ -297,33 +287,45 @@ fn confirm_plan_and_apply(
 /// an earlier run left uncommitted, and `run again with --commit` has to
 /// mean something. The empty plan itself writes nothing.
 pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn std::error::Error>> {
-    apply_report_since(env, report, None)
-}
-
-/// [`apply_report`] for the last write of a run whose earlier write made
-/// no offer: the offer covers what the whole run changed from `before`,
-/// the reading that earlier write took. `None` reads it here.
-pub(super) fn apply_report_since(
-    env: &Env,
-    report: &EngineReport,
-    before: Option<&kendex_core::commit_offer::Before>,
-) -> Result<usize, Box<dyn std::error::Error>> {
-    let wrote = apply_report_accounted(env, report, before)?;
-    wrote.after?;
+    let wrote = apply_report_accounted(env, report, None)?;
+    wrote.after.map_err(AfterFailed::into_error)?;
     Ok(wrote.applied)
 }
 
-/// What [`apply_report_since`] wrote, apart from what failed after it.
+/// What [`apply_report`] wrote, apart from what failed after it.
 pub(super) struct Wrote {
     pub applied: usize,
-    /// A step after the write: the configuration render and the commit
-    /// offer. Its failure leaves the write on disk.
-    pub after: CliResult,
+    /// The steps after the write: the configuration render and the commit
+    /// offer. Their failure leaves the write on disk.
+    pub after: Result<(), AfterFailed>,
 }
 
-/// [`apply_report_since`] for a caller that accounts for what it wrote:
-/// `Err` only where the write itself did not land, so a failure in a
-/// step after it never reads as a write that wrote nothing.
+/// A step after a landed write that failed, and whether the offer it
+/// owed was made.
+pub(super) enum AfterFailed {
+    /// The configuration render failed, so the offer was not made: it is
+    /// still owed, over what the write changed since `before`.
+    Render {
+        error: Box<dyn std::error::Error>,
+        before: kendex_core::commit_offer::Before,
+    },
+    /// The offer was made and failed. It is not made again.
+    Offer(Box<dyn std::error::Error>),
+}
+
+impl AfterFailed {
+    pub(super) fn into_error(self) -> Box<dyn std::error::Error> {
+        match self {
+            AfterFailed::Render { error, .. } | AfterFailed::Offer(error) => error,
+        }
+    }
+}
+
+/// [`apply_report`] for a caller that accounts for what it wrote: `Err`
+/// only where the write itself did not land, so a failure in a step after
+/// it never reads as a write that wrote nothing. The offer covers what
+/// the project changed from `before`, the reading an earlier write of the
+/// same run took where it made no offer; `None` reads it here.
 pub(super) fn apply_report_accounted(
     env: &Env,
     report: &EngineReport,
@@ -337,19 +339,23 @@ pub(super) fn apply_report_accounted(
         None => before_writing(report),
     };
     let applied = write_report(env, report)?;
-    Ok(Wrote {
-        applied,
-        after: after_write(env, report, &before),
-    })
+    let after = match rendered(env, report) {
+        Ok(generated) => {
+            super::commit_offer::after_writing(env, &report.plan.scope, &generated, &before)
+                .map_err(AfterFailed::Offer)
+        }
+        Err(error) => Err(AfterFailed::Render { error, before }),
+    };
+    Ok(Wrote { applied, after })
 }
 
-/// What follows a plan's write: the configuration its packages render,
-/// and the commit offer over both.
-fn after_write(
+/// Render the configuration a plan's packages own after its write, and
+/// hand back the generated paths the offer after it covers: the plan's
+/// own and the render's.
+fn rendered(
     env: &Env,
     report: &EngineReport,
-    before: &kendex_core::commit_offer::Before,
-) -> CliResult {
+) -> Result<kendex_core::engine::GeneratedPaths, Box<dyn std::error::Error>> {
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
@@ -363,7 +369,7 @@ fn after_write(
         }
     }
     bot_instructions.add_to(&mut generated);
-    super::commit_offer::after_writing(env, &report.plan.scope, &generated, before)
+    Ok(generated)
 }
 
 /// What the project held before `report` writes, read the only time it

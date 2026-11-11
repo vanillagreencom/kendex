@@ -114,7 +114,7 @@ pub fn no_terminal(style: &Style, scan: &Scan) -> Vec<String> {
 fn unchecked(style: &Style, root: &Path) -> Vec<String> {
     headed(
         style,
-        Need::Blocked,
+        Offer::unbuilt_need(),
         &format!(
             "{}: the files kendex wrote could not be checked",
             kendex_core::paths::slashed(root)

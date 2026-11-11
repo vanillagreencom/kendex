@@ -979,40 +979,83 @@ fn declining_what_the_settle_added_keeps_the_settle_and_writes_no_plan() {
     );
 }
 
-/// A global refresh with two pending changes, the defect a person met: one
-/// question lists both changes before it asks, counts exactly them, and
-/// is asked once, and the closing line counts what landed.
+/// A settle's question comes after the safety drawing of the plan it is
+/// asked over, and a compact drawing there sorts out the clean package. The
+/// report after the settle does not draw that row again, and the closing
+/// line still says the run left detail behind `--verbose`.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn a_global_refresh_lists_and_counts_its_two_changes_in_one_question() {
+fn a_settle_that_folded_its_safety_closes_saying_verbose_shows_more() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_consumer(&home, NO_DEPENDENCIES);
+    write(
+        &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "project", "--leave"])
+        .current_dir(&project)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(command, &[("[y]", "y")], pty::Stderr::Terminal);
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert!(
+        !printed.lines().any(|line| line.trim_end() == "safety:"),
+        "the clean row is folded: {printed}"
+    );
+    let ledger = printed.find("refreshed 1 change").unwrap();
+    assert!(printed[ledger..].contains("--verbose"), "{printed}");
+}
+
+/// A global refresh whose settle and plan both write, the defect a person
+/// met: the question counted the plan's ops without listing them. One
+/// question lists every change before it asks, counts exactly the rows it
+/// listed, and is asked once, and the closing line counts what landed.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_refresh_lists_and_counts_its_changes_in_one_question() {
     use kendex_core::{env::Env, model::Scope};
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::host_rooted(&home);
-    let catalog = home.join("catalog/pi-extensions");
-    let package = |name: &str, version: &str| {
+    let catalog = home.join("catalog");
+    let package = |version: &str| {
+        let root = catalog.join("pi-extensions/pi-one");
         write(
-            &catalog.join(name).join("package.json"),
+            &root.join("package.json"),
             &format!(
-                "{{\"name\":\"{name}\",\"version\":\"{version}\",\"pi\":{{\"extensions\":[\"index.js\"]}}}}\n"
+                "{{\"name\":\"pi-one\",\"version\":\"{version}\",\"pi\":{{\"extensions\":[\"index.js\"]}}}}\n"
             ),
         );
         write(
-            &catalog.join(name).join("index.js"),
+            &root.join("index.js"),
             &format!("export const version = \"{version}\";\n"),
         );
     };
-    package("pi-one", "1.0.0");
-    package("pi-two", "1.0.0");
+    let skill = |body: &str| {
+        write(
+            &catalog.join("skills/ship/SKILL.md"),
+            &format!("---\nname: ship\ndescription: ship it\n---\n{body}\n"),
+        );
+    };
+    package("1.0.0");
+    skill("Ship it.");
     write(
         &kendex_core::manifest::manifest_path(&env, &Scope::Global),
-        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-one]\nsource = 'cat'\n[pi-extensions.pi-two]\nsource = 'cat'\n",
+        "schema = 7\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[sources.cat]\npath = 'catalog'\n[skills.ship]\nsource = 'cat'\n[pi-extensions.pi-one]\nsource = 'cat'\n",
     );
     let installed = kendex(&home, &home, &["refresh", "--scope", "global", "--yes"]);
     assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
-    package("pi-one", "1.1.0");
-    package("pi-two", "1.1.0");
+    package("1.1.0");
+    skill("Ship it twice.");
     let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
     command
         .args(["refresh", "--scope", "global"])
@@ -1026,16 +1069,39 @@ fn a_global_refresh_lists_and_counts_its_two_changes_in_one_question() {
     let printed = said(&output);
     assert_eq!(output.status.code(), Some(0), "{printed}");
     assert_eq!(printed.matches("[y]").count(), 1, "{printed}");
-    let question = printed.find("write 2 changes?").unwrap();
-    for name in ["pi-one", "pi-two"] {
-        let listed = printed
-            .find(&format!("update Pi extension {name}:"))
-            .unwrap();
-        assert!(listed < question, "{printed}");
-        let bytes = fs::read_to_string(home.join(format!(".pi/agent/packages/{name}/index.js")));
-        assert_eq!(bytes.unwrap(), "export const version = \"1.1.0\";\n");
-    }
-    assert!(printed.contains("global: refreshed 2 changes"), "{printed}");
+    // The rows the plain question lists sit directly above it, one `  - `
+    // line each, and the question counts exactly those: the one Pi
+    // package, and the plan's ops beside it.
+    let lines: Vec<&str> = printed.lines().collect();
+    let keys = lines.iter().position(|line| line.contains("[y]")).unwrap();
+    let question = lines[keys - 1];
+    let listed: Vec<&str> = lines[..keys - 1]
+        .iter()
+        .rev()
+        .take_while(|line| line.starts_with("  - "))
+        .copied()
+        .collect();
+    assert!(
+        question.ends_with(&format!("write {} changes?", listed.len())),
+        "{printed}"
+    );
+    let pi: Vec<_> = listed
+        .iter()
+        .filter(|row| row.contains("update Pi extension pi-one:"))
+        .collect();
+    assert_eq!(pi.len(), 1, "{printed}");
+    assert!(
+        listed.len() > pi.len(),
+        "the plan's ops are listed: {printed}"
+    );
+    let bytes = fs::read_to_string(home.join(".pi/agent/packages/pi-one/index.js"));
+    assert_eq!(bytes.unwrap(), "export const version = \"1.1.0\";\n");
+    let copy = fs::read_to_string(home.join(".claude/skills/ship/SKILL.md")).unwrap();
+    assert!(copy.contains("Ship it twice."), "{copy}");
+    assert!(
+        printed.contains(&format!("global: refreshed {} changes", listed.len())),
+        "{printed}"
+    );
 }
 
 /// A later user-package choice cannot erase the project's write or commit.

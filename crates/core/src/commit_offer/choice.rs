@@ -127,6 +127,13 @@ impl Offer {
     pub fn recovers_refused_push(&self) -> bool {
         self.pull_request.is_ok()
     }
+
+    /// What a checkout needs where a read an offer is built from would not
+    /// run ([`super::scan`], [`super::offer`]): there is no offer to choose
+    /// from, so the person has to make the read run first.
+    pub fn unbuilt_need() -> Need {
+        Need::Blocked
+    }
 }
 
 impl Branch {

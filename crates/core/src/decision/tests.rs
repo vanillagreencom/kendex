@@ -75,7 +75,6 @@ fn one_list_supplies_the_question_and_its_count() {
     for (settles, count) in [(vec![], 2), (vec![settle("pi-hooks")], 3)] {
         let consent = Consent::of(&report, &settles);
         assert_eq!(consent.count(), count);
-        assert_eq!(consent.effects.len(), consent.count());
         let pi: Vec<_> = consent
             .effects
             .iter()

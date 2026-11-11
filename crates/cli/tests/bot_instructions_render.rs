@@ -224,3 +224,64 @@ fn refresh_commits_package_changes_only_when_the_candidate_is_unconfigured() {
         assert!(!project.join("package-code-ran").exists());
     }
 }
+
+/// An armed render that fails after a refresh's write landed leaves that
+/// write owed its offer, made over everything the write changed: the
+/// commit carries the copy and the record, and the `.gitignore` the write
+/// changed beside them, with the failure the run exits on.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_fails_after_the_refresh_wrote_still_commits_the_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp).join("home");
+    let project = installed(
+        &home,
+        "#!/bin/sh\nif [ \"$1\" = check ]; then\n  exit 0\nfi\necho 'fixture-render: broke' >&2\nexit 1\n",
+    );
+    // A file the write changes beside its renders, which only the reading
+    // the write took can give to the commit.
+    fs::remove_file(project.join(".gitignore")).unwrap();
+    for args in [
+        &["config", "user.name", "t"][..],
+        &["config", "user.email", "t@t"],
+        &["config", "commit.gpgsign", "false"],
+        &["add", "-A"],
+        &["commit", "-qm", "installed"],
+    ] {
+        git(&project, args);
+    }
+    let repo = kendex_core::guard::Repo::at(&project).unwrap();
+    kendex_core::repo_effects::armed::arm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        "bot-instructions",
+    )
+    .unwrap();
+    let source = project.join("catalog/skills/bot-instructions/SKILL.md");
+    let updated = format!("{DECLARATION}\nUpdated package documentation.\n");
+    write(&source, &updated);
+    git(&project, &["add", "catalog"]);
+    git(&project, &["commit", "-qm", "update the package"]);
+
+    let ran = kendex(&home, &project, &["refresh", "--yes", "--commit"]);
+
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert_eq!(ran.status.code(), Some(1), "{said}");
+    assert!(said.contains("fixture-render: broke"), "{said}");
+    let files = Hardened::git(
+        &["show", "--name-only", "--format=", "HEAD"],
+        Some(&project),
+    )
+    .run()
+    .unwrap();
+    let files = String::from_utf8(files.stdout).unwrap();
+    for path in [
+        ".claude/skills/bot-instructions/SKILL.md",
+        ".kendex-lock.json",
+        ".gitignore",
+    ] {
+        assert!(
+            files.lines().any(|line| line == path),
+            "{path}: {files}\n{said}"
+        );
+    }
+}

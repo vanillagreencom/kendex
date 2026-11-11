@@ -447,7 +447,7 @@ fn read(
             return Ok(Some(Err(ProjectFlag {
                 root: key.to_owned(),
                 count: 0,
-                need: Need::Blocked,
+                need: Offer::unbuilt_need(),
                 reason: FlagReason::Unreadable {
                     said: failed.said().to_vec(),
                 },
@@ -489,7 +489,7 @@ fn read(
         Err(failed) => Ok(Some(Err(ProjectFlag {
             root: key.to_owned(),
             count: 0,
-            need: Need::Blocked,
+            need: Offer::unbuilt_need(),
             reason: FlagReason::Unreadable {
                 said: failed.said().to_vec(),
             },
