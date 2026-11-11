@@ -1,6 +1,6 @@
 # What belongs in my Jarvis home?
 
-Your Jarvis home is `~/dev/jarvis`. It keeps your instructions, own skills, memory and recovery notes beside the installed package. The package supplies shared guidance. Your personal records and local secrets remain under your control.
+Your Jarvis home is the folder you created in [Install](../README.md#install), `~/jarvis` if you used its commands. It keeps your instructions, own skills, memory and recovery notes beside the installed package. The package supplies shared guidance. Your personal records and local secrets remain under your control.
 
 ```mermaid
 flowchart TD

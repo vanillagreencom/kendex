@@ -98,7 +98,7 @@ Repeat on each declared remote. Record hosts and their repositories in the consu
 
 ## Main and satellites
 
-Jarvis is the owner's main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another of the owner's computers with a Jarvis home, `~/dev/jarvis`. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](#satellite) and [forwarding](#forward) are described separately.
+Jarvis is the owner's main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another of the owner's computers with a clone of the Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](#satellite) and [forwarding](#forward) are described separately.
 
 `JARVIS_MAIN_HOST` selects the computer's role. Empty makes it Jarvis main; a Jarvis satellite sets `DEST:HOME`, where `DEST` is an SSH destination with no whitespace, `:` or `/` and no leading `-`, and `HOME` is the absolute path of the Jarvis home on Jarvis main. An invalid nonempty value remains a satellite and reports `setting-invalid`.
 

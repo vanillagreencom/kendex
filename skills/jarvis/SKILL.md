@@ -108,7 +108,7 @@ Jarvis is the main long-running session. Jarvis Voice is the VGS voice session o
 
 ## Setup
 
-Jarvis home is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
+Jarvis home is the folder with Jarvis's instructions, skills and memory. [README: Install](README.md#install) creates it at `~/jarvis`. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
 
 The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
 

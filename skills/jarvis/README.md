@@ -52,7 +52,7 @@ Jarvis runs as a session of your coding assistant in your Jarvis home. You give 
 - **Jarvis Voice** is the VGS voice session on any computer.
 - **Jarvis main** is the computer that runs Jarvis.
 - **Jarvis satellite** is a computer that runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
-- **Jarvis home** is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
+- **Jarvis home** is the folder with Jarvis's instructions, skills and memory: `~/jarvis` if you followed [Install](#install). Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
 
 | Your question | Read |
 |---|---|
