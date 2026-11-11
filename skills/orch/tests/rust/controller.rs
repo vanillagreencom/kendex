@@ -4219,6 +4219,12 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     let _ = runner.op_fleet(&json!({"op": "close-owned-resources", "item": "KEN-NONE"}));
     let _ = runner.run(&["reconcile", "--fleet"]);
     assert_eq!(sent(), 1, "no walk resends an unanswered notice");
+    // The record's server named by a live process no socket answers for:
+    // the watch cannot tell its controller from gone, so the overseer duty
+    // says nothing and sends no death alert of its own.
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["server"] = json!(predecessor.pid().to_string());
+    runner.write_fleet(&fleet);
     // The watch's heartbeat sends it once more, and marks it.
     let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
     let mut watch = isolated();

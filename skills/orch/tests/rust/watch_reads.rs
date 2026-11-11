@@ -3050,6 +3050,11 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
     let runner = support::Runner::new(&server, "stub-record");
     runner.init_fleet();
     let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    // The controller's own server, not the caller's: the one its record
+    // names, where a lane it launched is read.
+    let controller_dir = tempfile::tempdir().unwrap();
+    let controller = support::Server::start(controller_dir.path(), "fleet");
+    let there = controller.open_window("gh-5", dir.path(), "bash --norc --noprofile");
     let record = |item: &str, window: &str, launch: Value| {
         json!({
             "item": item, "window": window, "harness": "claude", "status": "running",
@@ -3058,14 +3063,22 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
         })
     };
     let mut fleet = runner.fleet();
+    fleet["overseer"] = json!({"server_socket": controller.socket.display().to_string()});
     fleet["lanes"] = json!([
         record("KEN-2", "gh-2", json!({"pane": pane, "server": server.pid})),
+        // A live process no socket answers for: its server cannot be told
+        // from gone.
         record(
             "KEN-3",
             "gh-3",
-            json!({"pane": pane, "server": server.pid + 1})
+            json!({"pane": pane, "server": std::process::id()})
         ),
         record("KEN-4", "gh-4", json!({})),
+        record(
+            "KEN-5",
+            "gh-5",
+            json!({"pane": there, "server": controller.pid, "server_start": controller.start})
+        ),
     ]);
     runner.write_fleet(&fleet);
     let status = |item: &str| {
@@ -3086,6 +3099,13 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
     let (_, answer) = status("KEN-4");
     assert_eq!(answer["result"]["state"], "unjudged", "{answer}");
     assert_eq!(answer["result"]["cause"], "pane-unrecorded");
+    let (code, answer) = status("KEN-5");
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"]["state"], "exited", "{answer}");
+    assert_eq!(
+        answer["result"]["pane_key"],
+        format!("{} {there}", controller.pid)
+    );
     let (code, answer) = status("KEN-9");
     assert_eq!(code, Some(1));
     assert_eq!(answer["refusal"]["key"], "lane-missing", "{answer}");

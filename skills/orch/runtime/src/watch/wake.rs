@@ -42,6 +42,7 @@ use serde_json::Value;
 
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
+use crate::effects::overseer_socket;
 use crate::error::{Error, Result, WatchError};
 pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
@@ -144,15 +145,6 @@ fn u64_of(value: &Value) -> Option<u64> {
         Value::String(s) => s.parse().ok(),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
-}
-
-/// The socket the overseer record names, where it names one.
-fn overseer_socket(overseer: &Overseer) -> Option<PathBuf> {
-    overseer
-        .extra
-        .get("server_socket")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
 }
 
 /// A lane as a target: its launch pane on the fleet server, its recorded

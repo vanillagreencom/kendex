@@ -2049,11 +2049,14 @@ fn judge_opened(
                 cwd: &cwd,
             }
         };
+        // The session the launch resolved, never the one tmux reports for
+        // the pane, which in a grouped session may be the other's name.
+        let session = operation.fleet_session(fleet_tmux_session(run.path)?.as_deref())?;
         let mut outcome = launch_outcome(
             operation,
             harness,
             sessions,
-            &pane.session,
+            &session,
             item,
             opened,
             Polled::Ready { identity },

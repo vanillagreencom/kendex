@@ -70,6 +70,7 @@ pub(crate) use operation::job::{
 };
 pub use operation::job::{JobStarted, NoticeUnmarked};
 pub(crate) use operation::{JobHandle, SidecarRead};
+pub use operation::{Observed, fleet_sockets, overseer_socket, server_at};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

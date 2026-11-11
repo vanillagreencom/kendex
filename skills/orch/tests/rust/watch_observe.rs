@@ -23,12 +23,13 @@ use std::time::Duration;
 
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux::{self, Pane, PaneFields};
+use agent_runtime::host::tmux::{self, Pane, PaneState};
 use agent_runtime::observe::{self, ProcessReading};
 use agent_runtime::process::{Identity, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
+use orch_runtime::effects;
 use orch_runtime::ops::accounts::Roster;
 use orch_runtime::ops::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
@@ -83,52 +84,27 @@ fn zone(name: Option<&str>) -> Option<TimeZone> {
     }
 }
 
-/// The readers over the test's own server: the pane by exact id on it,
-/// confirmed by pid, the one judge's foreground read, the capture, the
-/// listing and the files, as the production readers read them on the
-/// ambient server.
+/// The production pane and window readers with the test's own server as
+/// the ambient one: the one thing the kernel reads from the environment.
 struct TestReaders {
     socket: PathBuf,
 }
 
 impl TestReaders {
-    fn server(&self) -> Option<tmux::Server> {
-        tmux::server(&self.socket).ok()
+    fn pane(
+        &self,
+        recorded: Option<&Path>,
+        server: u64,
+        start: Option<u64>,
+        pane: &str,
+    ) -> Reading<PaneState> {
+        let sockets =
+            effects::fleet_sockets(recorded.map(Path::to_path_buf), Some(self.socket.clone()));
+        lanes::pane_at(&sockets, server, start, pane)
     }
 
-    fn pane(&self, server: u64, start: Option<u64>, pane: &str) -> Reading<PaneFields> {
-        let Some(live) = self.server() else {
-            return Reading::Unreadable {
-                cause: "server-unreachable",
-            };
-        };
-        if u64::from(live.pid) != server {
-            return Reading::Unreadable {
-                cause: "server-unreachable",
-            };
-        }
-        if start.is_some_and(|s| s != live.start) {
-            return Reading::Unreadable {
-                cause: "server-replaced",
-            };
-        }
-        tmux::pane_fields(&live, pane)
-    }
-
-    fn windows(&self, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
-        let Some(live) = self.server() else {
-            return Reading::Unreadable {
-                cause: "server-unreachable",
-            };
-        };
-        tmux::list_windows(&live, session).map(|rows| {
-            (
-                u64::from(live.pid),
-                rows.into_iter()
-                    .map(|(window, pane, name)| WindowRow { pane, window, name })
-                    .collect(),
-            )
-        })
+    fn windows(&self, recorded: Option<&Path>, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
+        lanes::windows_at(recorded.unwrap_or(&self.socket), session)
     }
 }
 
@@ -337,8 +313,9 @@ macro_rules! lane_driver {
         let $readers = TestReaders {
             socket: $server.socket.clone(),
         };
-        let pane_read = |s: u64, start: Option<u64>, p: &str| $readers.pane(s, start, p);
-        let windows_read = |session: &str| $readers.windows(session);
+        let pane_read =
+            |r: Option<&Path>, s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
+        let windows_read = |r: Option<&Path>, session: &str| $readers.windows(r, session);
         let mut $name = LaneDriver {
             readers: Readers {
                 pane: &pane_read,
@@ -368,25 +345,65 @@ macro_rules! lane_driver {
     };
 }
 
+/// A pane on a server that ended, the pane in it a bash shell: the server's
+/// pid and start, and the pane id, once the pid no longer runs.
+fn gone_server(dir: &Path) -> (u32, u64, String) {
+    let root = dir.join("gone");
+    std::fs::create_dir_all(&root).unwrap();
+    let gone = Server::start(&root, "fleet");
+    let pane = gone.open_window("gone", &root, "bash --norc --noprofile");
+    let (pid, start) = (gone.pid, gone.start);
+    drop(gone);
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while live(pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server never ended"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    (pid, start, pane)
+}
+
+/// The pane gone from its server, its server ended, and its server's pid
+/// answering under another start (a reused pid) are each the window gone.
 #[test]
 fn a_recorded_pane_the_server_has_not_is_window_gone_on_every_pass() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
-    fleet.set_lanes(vec![lane_record(
-        "KEN-1",
-        "gh-1",
+    let (gone_pid, gone_start, gone_pane) = gone_server(dir.path());
+    let mut ended = lane_record(
+        "KEN-2",
+        "gh-2",
         "claude",
         &server,
-        "%999",
+        &gone_pane,
         None,
         dir.path(),
-    )]);
+    );
+    ended["launch"]["server"] = json!(gone_pid);
+    ended["launch"]["server_start"] = json!(gone_start);
+    let shell = server.open_window("gh-3", dir.path(), "bash --norc --noprofile");
+    let mut reused = lane_record("KEN-3", "gh-3", "claude", &server, &shell, None, dir.path());
+    reused["launch"]["server_start"] = json!(server.start - 1);
+    fleet.set_lanes(vec![
+        lane_record("KEN-1", "gh-1", "claude", &server, "%999", None, dir.path()),
+        ended,
+        reused,
+    ]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     for _ in 0..2 {
         let produced = driver.pass(&state);
-        assert_eq!(event_lines(&produced), vec!["EVENT window-gone gh-1"]);
+        assert_eq!(
+            event_lines(&produced),
+            vec![
+                "EVENT window-gone gh-1",
+                "EVENT window-gone gh-2",
+                "EVENT window-gone gh-3"
+            ]
+        );
     }
     assert!(
         driver
@@ -402,7 +419,8 @@ fn a_recorded_pane_the_server_has_not_is_window_gone_on_every_pass() {
 /// A live harness can hold a shell in the pane's foreground for a pass, so
 /// a pane holding nothing but shells is `lane-exited` on the second
 /// consecutive pass alone, with its closing lines under it, and a third
-/// pass says nothing. A pane this reader cannot read is never that,
+/// pass says nothing; so is a pane its server keeps dead after its process
+/// exited. A pane this reader cannot read is never that,
 /// whatever passes go by: its own line once, with the cause.
 #[test]
 fn a_lane_exits_on_the_second_pass_and_an_unreadable_one_never_does() {
@@ -410,11 +428,15 @@ fn a_lane_exits_on_the_second_pass_and_an_unreadable_one_never_does() {
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    // A live process no socket answers for: its server cannot be told from
+    // gone.
     let mut unreadable = lane_record("KEN-3", "gh-3", "claude", &server, &pane, None, dir.path());
-    unreadable["launch"]["server"] = json!(server.pid + 1);
+    unreadable["launch"]["server"] = json!(std::process::id());
+    let dead = server.open_kept_dead("gh-4", dir.path());
     fleet.set_lanes(vec![
         lane_record("KEN-2", "gh-2", "claude", &server, &pane, None, dir.path()),
         unreadable,
+        lane_record("KEN-4", "gh-4", "claude", &server, &dead, None, dir.path()),
     ]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
@@ -429,10 +451,14 @@ fn a_lane_exits_on_the_second_pass_and_an_unreadable_one_never_does() {
         driver.baseline.get("lane-exited", "gh-2"),
         Some(format!("{} {pane}", server.pid).as_str())
     );
+    assert_eq!(
+        driver.baseline.get("lane-exited", "gh-4"),
+        Some(format!("{} {dead}", server.pid).as_str())
+    );
     let second = driver.pass(&state);
     assert_eq!(
         event_lines(&second),
-        vec!["EVENT lane-exited gh-2"],
+        vec!["EVENT lane-exited gh-2", "EVENT lane-exited gh-4"],
         "{:?}",
         lines(&second)
     );
@@ -1625,8 +1651,9 @@ macro_rules! overseer_driver {
         let $readers = TestReaders {
             socket: $server.socket.clone(),
         };
-        let pane_read = |s: u64, start: Option<u64>, p: &str| $readers.pane(s, start, p);
-        let windows_read = |session: &str| $readers.windows(session);
+        let pane_read =
+            |r: Option<&Path>, s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
+        let windows_read = |r: Option<&Path>, session: &str| $readers.windows(r, session);
         let $transfers = RefCell::new(Vec::new());
         let mut $name = OverseerDriver {
             readers: Readers {
@@ -1752,9 +1779,10 @@ fn a_dead_overseer_is_said_and_transferred_once_with_cause_dead() {
     let fourth = driver.pass(&state);
     assert!(lines(&fourth).is_empty());
     assert_eq!(transfers.borrow().len(), 1, "one request per death");
-    // An unreadable pane: the record names a server this is not.
+    // An unreadable pane: the record names a server by the pid of a live
+    // process no socket answers for, which cannot be told from gone.
     let mut moved = overseer_at(&server, &pane, &window, dir.path());
-    moved["server"] = json!((server.pid + 1).to_string());
+    moved["server"] = json!(std::process::id().to_string());
     fleet.set_overseer(moved);
     let unreadable = fleet.read();
     overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, driver2);
@@ -1798,6 +1826,100 @@ fn a_dead_overseer_is_said_and_transferred_once_with_cause_dead() {
     assert!(
         transfers3.borrow().is_empty(),
         "succession off asks no transfer"
+    );
+}
+
+/// The lane and the controller on the controller's own server, which the
+/// controller record names and the caller's is not, as a launch from the
+/// controller's pane leaves them: each read there and judged as on the
+/// caller's own, the lane exited on its second pass and the controller dead,
+/// and the stray sweep reads that server's fleet session.
+#[test]
+fn a_lane_and_a_controller_on_the_server_the_record_names_are_read_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let root = dir.path().join("controller");
+    std::fs::create_dir_all(&root).unwrap();
+    let controller = Server::start(&root, "fleet");
+    let pane = controller.open_window("overseer", dir.path(), "bash --norc --noprofile");
+    await_bare(&controller, &pane);
+    let window = window_of(&controller, &pane);
+    let lane = controller.open_window("gh-1", dir.path(), "bash --norc --noprofile");
+    let stray = controller.open_window("stray", dir.path(), "exec sleep 600");
+    let stray_window = window_of(&controller, &stray);
+    fleet.set_overseer(overseer_at(&controller, &pane, &window, dir.path()));
+    fleet.set_lanes(vec![lane_record(
+        "KEN-1",
+        "gh-1",
+        "claude",
+        &controller,
+        &lane,
+        None,
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, lane_readers, lanes_pass);
+    assert_eq!(
+        event_lines(&lanes_pass.pass(&state)),
+        vec![format!(
+            "EVENT stray-window {stray} window={stray_window} server={} name=stray",
+            controller.pid
+        )]
+    );
+    assert_eq!(
+        event_lines(&lanes_pass.pass(&state)),
+        vec!["EVENT lane-exited gh-1"]
+    );
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    assert_eq!(
+        lines(&driver.pass(&state)),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process"
+        )]
+    );
+}
+
+/// A property row: every read of a lane or a controller is by pane id on a
+/// server confirmed by pid and start, so a second session grouped with the
+/// fleet's, sharing its windows under another name, changes no reading.
+#[test]
+fn a_window_in_a_grouped_session_reads_the_same_for_a_lane_and_a_controller() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
+    await_bare(&server, &pane);
+    let window = window_of(&server, &pane);
+    let lane = server.open_window("gh-1", dir.path(), "bash --norc --noprofile");
+    let grouped = support::tmux(
+        &server.socket,
+        &["new-session", "-d", "-t", "fleet", "-s", "view"],
+    );
+    assert!(grouped.status.success(), "{}", stderr(&grouped));
+    fleet.set_overseer(overseer_at(&server, &pane, &window, dir.path()));
+    fleet.set_lanes(vec![lane_record(
+        "KEN-1",
+        "gh-1",
+        "claude",
+        &server,
+        &lane,
+        None,
+        dir.path(),
+    )]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, lane_readers, lanes_pass);
+    assert!(event_lines(&lanes_pass.pass(&state)).is_empty());
+    assert_eq!(
+        event_lines(&lanes_pass.pass(&state)),
+        vec!["EVENT lane-exited gh-1"]
+    );
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    assert_eq!(
+        lines(&driver.pass(&state)),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process"
+        )]
     );
 }
 
@@ -1893,8 +2015,10 @@ fn kill_harness(server: &Server, pane: &str, identity: &Identity) {
 /// A controller whose end a reading proves is said on the first pass
 /// (`passes=1`) whatever `ORCH_OVERSEER_DEAD_PASSES` reads: the exit record
 /// or the end row over a pane its shell holds alone, such a pane whose
-/// recorded harness was killed, the pane gone from the recorded server, and
-/// the pane that server keeps dead after its process exited.
+/// recorded harness was killed, the pane gone from the recorded server,
+/// the pane that server keeps dead after its process exited, that server
+/// ended or its pid answering under another start, and the harness's own
+/// wall row over a pane its shell holds alone.
 /// The owner's alert follows on
 /// the duty's next run, which the line asks for at once, under its own
 /// notice file, and nothing after; the alert says whether anything replaces
@@ -1978,6 +2102,49 @@ fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_
                 overseer_at(server, &pane, &window, dir)
             },
         },
+        Case {
+            name: "the recorded server ended",
+            source: "pane",
+            plant: |dir, server| {
+                let (pid, start, pane) = gone_server(dir);
+                let mut record = overseer_at(server, &pane, "@1", dir);
+                record["server"] = json!(pid.to_string());
+                record["server_start"] = json!(start);
+                record["server_socket"] =
+                    json!(dir.join("gone").join("tmux.sock").display().to_string());
+                record
+            },
+        },
+        Case {
+            name: "the recorded server's pid under another start",
+            source: "pane",
+            plant: |dir, server| {
+                let pane = server.open_window("overseer", dir, "bash --norc --noprofile");
+                await_bare(server, &pane);
+                let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+                record["server_start"] = json!(server.start - 1);
+                record
+            },
+        },
+        Case {
+            name: "the harness's own wall row over a bare pane",
+            source: "process",
+            plant: |dir, server| {
+                let pane = server.open_window("overseer", dir, "bash --norc --noprofile");
+                await_bare(server, &pane);
+                let rows = dir.join("overseer-rows.jsonl");
+                session_rows(
+                    &rows,
+                    &[
+                        json!({"harness": "claude", "event": "StopFailure", "error": "rate_limit",
+                        "message": "You've hit your weekly limit · resets Oct 4"}),
+                    ],
+                );
+                let mut record = overseer_at(server, &pane, &window_of(server, &pane), dir);
+                record["session_rows"] = json!(rows.display().to_string());
+                record
+            },
+        },
     ];
     for case in cases {
         let dir = tempfile::tempdir().unwrap();
@@ -1986,6 +2153,7 @@ fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_
         let record = (case.plant)(dir.path(), &server);
         let pane = record["pane"].as_str().unwrap().to_owned();
         let window = record["window"].as_str().unwrap().to_owned();
+        let key = format!("{} {pane}", record["server"].as_str().unwrap());
         fleet.set_overseer(record);
         let state = fleet.read();
         let alerts = Alerts::new();
@@ -1993,7 +2161,6 @@ fn an_overseer_whose_end_is_proven_is_said_on_its_first_pass_and_alerted_to_the_
         overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
         driver.succession = Succession::Off;
         driver.alert = &alert;
-        let key = format!("{} {pane}", server.pid);
         let first = driver.pass(&state);
         assert_eq!(
             lines(&first),
@@ -5349,7 +5516,8 @@ fn orch_scripts() -> PathBuf {
 /// provider's answer is the process proof and the local pane's screen is
 /// judged with it: a shell drawing Codex's idle screen is
 /// `idle-after-return`, never exited, and no capture is asked; a provider
-/// line naming no `pane` is the same kind.
+/// line naming no `pane` is the same kind. A transport pane its server keeps
+/// dead ended the transport alone: unreadable with its cause, never exited.
 #[test]
 fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_shell() {
     let dir = tempfile::tempdir().unwrap();
@@ -5363,12 +5531,17 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     let mut one = hosted_lane("KEN-1", "gh-1", "/remote/KEN-1");
     one["harness"] = json!("codex");
     one["launch"] = json!({"pane": pane, "server": server.pid});
-    fleet.set_lanes(vec![one]);
+    let dead = server.open_kept_dead("gh-2", dir.path());
+    let mut two = hosted_lane("KEN-2", "gh-2", "/remote/KEN-2");
+    two["harness"] = json!("codex");
+    two["launch"] = json!({"pane": dead, "server": server.pid});
+    fleet.set_lanes(vec![one, two]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
     world.plant_host(&[
         (&format!("{} capabilities", provider()), ok(SSH_LINE)),
         ("status --item KEN-1 --harness codex", ok("running\n")),
+        ("status --item KEN-2 --harness codex", ok("running\n")),
     ]);
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
@@ -5382,6 +5555,11 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     );
     assert!(
         all.iter().any(|l| l == "EVENT idle-after-return gh-1"),
+        "{all:?}"
+    );
+    assert!(
+        all.iter()
+            .any(|l| l == "EVENT lane-unreadable gh-2 cause=pane-dead"),
         "{all:?}"
     );
     let log = world.host_log();

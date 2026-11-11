@@ -50,7 +50,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux::{self, Pane, PaneFields};
+use agent_runtime::host::tmux::{self, PANE_DEAD, Pane, PaneFields, PaneState};
 use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
 use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
@@ -65,6 +65,7 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use crate::effects;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
@@ -98,13 +99,65 @@ pub struct WindowRow {
 }
 
 /// A pane read by exact id on the server whose pid, and where recorded
-/// whose start, a record names.
-pub type PaneRead<'a> = &'a dyn Fn(u64, Option<u64>, &str) -> Reading<PaneFields>;
+/// whose start, a record names, looked for at the socket the controller
+/// record names first ([`pane_at`]).
+pub type PaneRead<'a> = &'a dyn Fn(Option<&Path>, u64, Option<u64>, &str) -> Reading<PaneState>;
 /// Who holds a pane's terminal, read for the lane's harness and recorded
 /// identity.
 pub type ForegroundRead<'a> = &'a dyn Fn(u32, Option<Harness>, Option<&Identity>) -> ProcessReading;
-/// The windows of a session on the ambient server, with the server's pid.
-pub type WindowsRead<'a> = &'a dyn Fn(&str) -> Reading<(u64, Vec<WindowRow>)>;
+/// The windows of a session on the server at the socket the controller
+/// record names, else the ambient one, with the server's pid.
+pub type WindowsRead<'a> = &'a dyn Fn(Option<&Path>, &str) -> Reading<(u64, Vec<WindowRow>)>;
+
+/// The pane `pane` on the server [`effects::server_at`] finds among
+/// `sockets` by the recorded pid and start. A server proven gone, its pid
+/// dead or reused, is the pane gone with it; one that cannot be told from
+/// gone leaves the pane unreadable with the cause.
+pub fn pane_at(
+    sockets: &[PathBuf],
+    server: u64,
+    server_start: Option<u64>,
+    pane: &str,
+) -> Reading<PaneState> {
+    match effects::server_at(sockets, server, server_start) {
+        effects::Observed::Present(live) => tmux::pane_state(&live, pane),
+        effects::Observed::Gone { cause: _ } => Reading::Gone,
+        effects::Observed::Unobservable { cause } => Reading::Unreadable { cause },
+    }
+}
+
+/// The windows of `session` on the server at `socket`; `Gone` for no such
+/// session.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the stray sweep's one listing of the fleet session, which reports a window and never adopts or closes it"
+)]
+pub fn windows_at(socket: &Path, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
+    let live = match tmux::server(socket) {
+        Ok(live) => live,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "server-unreachable",
+            };
+        }
+    };
+    match tmux::session_present(&live, session) {
+        Ok(true) => {}
+        Ok(false) => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "session-unreadable",
+            };
+        }
+    }
+    tmux::list_windows(&live, session)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|(window, pane, name)| WindowRow { pane, window, name })
+                .collect()
+        })
+        .map(|rows| (u64::from(live.pid), rows))
+}
 
 /// The host reads the duty takes, injected so a pass is a function of the
 /// record and what the kernel, the server and the files answered; production
@@ -133,29 +186,26 @@ pub struct Readers<'a> {
 }
 
 impl Readers<'static> {
-    /// The readers production judges with: the ambient server confirmed by
-    /// pid and start, the exact pane, the one judge's foreground read, the
-    /// capture, the rows and the status file.
+    /// The readers production judges with: the recorded server found at the
+    /// controller record's socket or the ambient one by pid and start, the
+    /// exact pane, the one judge's foreground read, the capture, the rows
+    /// and the status file.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the lane observation duty's reads: the recorded pane by exact id on the ambient server, its foreground through the one judge with the recorded identity, its screen and the lane's files; the duty judges beside the record and never acts"
+        reason = "the lane observation duty's reads: the recorded pane by exact id on the server the record names, its foreground through the one judge with the recorded identity, its screen and the lane's files; the duty judges beside the record and never acts"
     )]
     pub fn kernel() -> Readers<'static> {
-        fn pane(server: u64, server_start: Option<u64>, pane: &str) -> Reading<PaneFields> {
-            let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
-                Ok(live) if u64::from(live.pid) == server => live,
-                Ok(_) | Err(_) => {
-                    return Reading::Unreadable {
-                        cause: "server-unreachable",
-                    };
-                }
-            };
-            if server_start.is_some_and(|s| s != live.start) {
-                return Reading::Unreadable {
-                    cause: "server-replaced",
-                };
-            }
-            tmux::pane_fields(&live, pane)
+        fn pane(
+            recorded: Option<&Path>,
+            server: u64,
+            server_start: Option<u64>,
+            pane: &str,
+        ) -> Reading<PaneState> {
+            let sockets = effects::fleet_sockets(
+                recorded.map(Path::to_path_buf),
+                tmux::ambient_socket().ok(),
+            );
+            pane_at(&sockets, server, server_start, pane)
         }
         fn foreground(
             pane_pid: u32,
@@ -177,31 +227,13 @@ impl Readers<'static> {
                 },
             }
         }
-        fn windows(session: &str) -> Reading<(u64, Vec<WindowRow>)> {
-            let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
-                Ok(live) => live,
-                Err(_) => {
-                    return Reading::Unreadable {
-                        cause: "server-unreachable",
-                    };
-                }
-            };
-            match tmux::session_present(&live, session) {
-                Ok(true) => {}
-                Ok(false) => return Reading::Gone,
-                Err(_) => {
-                    return Reading::Unreadable {
-                        cause: "session-unreadable",
-                    };
-                }
+        fn windows(recorded: Option<&Path>, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
+            match recorded.map_or_else(tmux::ambient_socket, |s| Ok(s.to_path_buf())) {
+                Ok(socket) => windows_at(&socket, session),
+                Err(_) => Reading::Unreadable {
+                    cause: "server-unreachable",
+                },
             }
-            tmux::list_windows(&live, session)
-                .map(|rows| {
-                    rows.into_iter()
-                        .map(|(window, pane, name)| WindowRow { pane, window, name })
-                        .collect()
-                })
-                .map(|rows| (u64::from(live.pid), rows))
         }
         fn zone(name: Option<&str>) -> Option<TimeZone> {
             match name {
@@ -571,10 +603,13 @@ impl HostRead {
 /// leaves it unjudged, and a running one is the proof that the harness is
 /// up, which the pane is judged with: the provider's own where its kind
 /// captures it, else the local pane, whose own foreground is the transport
-/// shell and proves nothing of the harness either way.
+/// shell and proves nothing of the harness either way. `socket` is the one
+/// the controller record names, where the lane's server is looked for
+/// first.
 fn read_lane<'a>(
     lane: &'a Lane,
     readers: &Readers,
+    socket: Option<&Path>,
     host: HostRead,
     account_room: Option<bool>,
 ) -> Observed<'a> {
@@ -668,7 +703,27 @@ fn read_lane<'a>(
         });
     };
     let pane_key = Some(format!("{server} {pane_id}"));
-    let pane = (readers.pane)(server, launch.and_then(|l| l.server_start), pane_id);
+    let pane = match (readers.pane)(socket, server, launch.and_then(|l| l.server_start), pane_id) {
+        Reading::Live(PaneState::Running(fields)) => Reading::Live(fields),
+        // A pane its server keeps after its process exited holds no
+        // session: a local lane has ended, its kept screen the closing
+        // lines. A hosted lane's local pane is the transport to its host,
+        // whose end proves nothing of the harness there.
+        Reading::Live(PaneState::Dead(kept)) if hosted::host_of(lane) == "local" => {
+            return Observed {
+                lane,
+                name,
+                pane_key,
+                identity,
+                screen: (readers.capture)(&kept).ok(),
+                rows_key,
+                state: LaneState::Exited,
+            };
+        }
+        Reading::Live(PaneState::Dead(_)) => Reading::Unreadable { cause: PANE_DEAD },
+        Reading::Gone => Reading::Gone,
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+    };
     let (process, screen) = match &pane {
         Reading::Live(fields) => (
             Some(if harness_up {
@@ -740,7 +795,8 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
         Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
     let readers = Readers::kernel();
-    let observed = read_lane(lane, &readers, host, None);
+    let socket = fleet.overseer.as_ref().and_then(effects::overseer_socket);
+    let observed = read_lane(lane, &readers, socket.as_deref(), host, None);
     let mut said = Produced::default();
     let (counters, stage) = lane_counts(
         lane,
@@ -802,7 +858,7 @@ pub(crate) fn judge(settings: &Settings, lane: &Lane, account_room: Option<bool>
     };
     let readers = Readers::kernel();
     Judged {
-        state: read_lane(lane, &readers, host, account_room).state,
+        state: read_lane(lane, &readers, None, host, account_room).state,
         answered,
     }
 }
@@ -936,12 +992,18 @@ pub fn observe(pass: &Pass) -> Produced {
         .filter_map(|l| hosts.of(l).ok().map(|caps| (*l, caps)))
         .filter(|(_, caps)| caps.status != Status::None)
         .collect();
+    let socket = pass
+        .fleet
+        .overseer
+        .as_ref()
+        .and_then(effects::overseer_socket);
     let observed: Vec<Observed> = lanes
         .iter()
         .map(|(lane, caps)| {
             read_lane(
                 lane,
                 pass.readers,
+                socket.as_deref(),
                 HostRead::of(pass.scripts, lane, *caps),
                 None,
             )
@@ -1724,7 +1786,15 @@ fn route(
     if wall::canon(&to) == wall::canon(account) {
         return refused(notes, "spent-account");
     }
-    let relaunch = match relaunch_request(obs.lane, harness, &to, account, pass) {
+    let relaunch = match relaunch_request(
+        obs.lane,
+        harness,
+        &to,
+        account,
+        pass.state_dir,
+        pass.scripts,
+        pass.session,
+    ) {
         Ok(request) => request,
         Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
     };
@@ -1786,10 +1856,10 @@ fn route(
 
 /// The relaunch's parts before the marker: the checkout, the session and
 /// the runtime's own argv.
-struct Recovery {
-    cwd: PathBuf,
-    session: String,
-    args: Vec<String>,
+pub(crate) struct Recovery {
+    pub(crate) cwd: PathBuf,
+    pub(crate) session: String,
+    pub(crate) args: Vec<String>,
 }
 
 const UNATTENDED_TEXT: &str = include_str!("unattended.txt");
@@ -1890,12 +1960,14 @@ fn recorded_permission(lane: &Lane, harness: Harness) -> Result<Option<String>, 
     clippy::disallowed_methods,
     reason = "the wall relaunch's request and brief files, the watch's own files beside the state, written before the detached relaunch starts"
 )]
-fn relaunch_request(
+pub(crate) fn relaunch_request(
     lane: &Lane,
     harness: Harness,
     to: &str,
     spent: &str,
-    pass: &Pass,
+    state_dir: &Path,
+    scripts: &Path,
+    session: Option<&str>,
 ) -> Result<Recovery, String> {
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
@@ -1920,8 +1992,7 @@ fn relaunch_request(
         .or_else(|| lane.extra.get("refresh").and_then(Value::as_bool))
         .unwrap_or(false);
     let permission = recorded_permission(lane, harness)?;
-    let stem = pass
-        .state_dir
+    let stem = state_dir
         .join(format!("wall-relaunch-{}", lane.item))
         .display()
         .to_string();
@@ -1976,8 +2047,8 @@ fn relaunch_request(
         "-c".to_owned(),
         "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
         "wall-relaunch".to_owned(),
-        pass.scripts.join("orch-runtime").display().to_string(),
-        pass.state_dir.display().to_string(),
+        scripts.join("orch-runtime").display().to_string(),
+        state_dir.display().to_string(),
         close.display().to_string(),
         file.display().to_string(),
     ];
@@ -1986,7 +2057,7 @@ fn relaunch_request(
         session: field("session")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
-            .or(pass.session)
+            .or(session)
             .unwrap_or("")
             .to_owned(),
         args,
@@ -2099,7 +2170,12 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
 /// reported once per pane key and never adopted or closed. An unreadable
 /// listing or receipt set reports nothing.
 fn strays(session: &str, pass: &Pass, out: &mut Produced) {
-    let (server, windows) = match (pass.readers.windows)(session) {
+    let socket = pass
+        .fleet
+        .overseer
+        .as_ref()
+        .and_then(effects::overseer_socket);
+    let (server, windows) = match (pass.readers.windows)(socket.as_deref(), session) {
         Reading::Live(listing) => listing,
         Reading::Gone | Reading::Unreadable { .. } => return,
     };

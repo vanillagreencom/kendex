@@ -40,7 +40,7 @@ const POLL: Duration = Duration::from_millis(200);
 /// exact id, or its server gone or replaced with every pane it held), or
 /// unobservable with the cause (an unanswering socket whose server process
 /// still runs, or a failed read).
-pub(in crate::effects) enum Observed<P> {
+pub enum Observed<P> {
     Unobservable { cause: &'static str },
     Gone { cause: &'static str },
     Present(P),
@@ -253,22 +253,61 @@ fn observe_pane(opened: &OpenedPane) -> Observed<Pane> {
     observe_fields(&server, &opened.pane)
 }
 
-/// The pane `key` names, on the caller's ambient server. A lane record may
-/// name the server by pid alone, so another server at the ambient
-/// socket, or none, is read against that pid's liveness; a key that records
-/// the server's start reads a server at that pid under another start as a
-/// reused pid, the recorded server gone with its panes.
+/// The pane `key` names, on the caller's ambient server.
 fn observe_key(key: &PaneRef) -> Observed<Pane> {
-    let server = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
-        Ok(server) if server.pid as u64 == key.server => server,
-        Ok(_) | Err(_) => return unanswering(key.server, None),
-    };
-    if key.server_start.is_some_and(|start| server.start != start) {
-        return Observed::Gone {
-            cause: "server-unmatched",
-        };
+    let ambient: Vec<PathBuf> = tmux::ambient_socket().into_iter().collect();
+    match server_at(&ambient, key.server, key.server_start) {
+        Observed::Present(server) => observe_fields(&server, &key.pane),
+        Observed::Gone { cause } => Observed::Gone { cause },
+        Observed::Unobservable { cause } => Observed::Unobservable { cause },
     }
-    observe_fields(&server, &key.pane)
+}
+
+/// The server a recorded pane is on, found among `sockets` by the pid the
+/// record names and, where it records one, its start. A record names its
+/// server by pid and start alone, never by socket, so every candidate is
+/// asked: one answering with that pid under its recorded start is present;
+/// one answering with that pid under another start is a reused pid, the
+/// recorded server gone with every pane it held (`server-unmatched`); none
+/// answering with that pid is read by the pid alone through the one
+/// identity reader: dead, the server and its panes are gone; live or
+/// unreadable, it is unobservable.
+pub fn server_at(
+    sockets: &[PathBuf],
+    server_pid: u64,
+    server_start: Option<u64>,
+) -> Observed<Server> {
+    let answering = sockets
+        .iter()
+        .find_map(|socket| match tmux::server(socket) {
+            Ok(s) if s.pid as u64 == server_pid => Some(s),
+            Ok(_) | Err(_) => None,
+        });
+    match answering {
+        Some(server) if server_start.is_none_or(|st| st == server.start) => {
+            Observed::Present(server)
+        }
+        Some(_) => Observed::Gone {
+            cause: "server-unmatched",
+        },
+        None => match unanswering(server_pid, None) {
+            Observed::Gone { cause } => Observed::Gone { cause },
+            Observed::Unobservable { cause } => Observed::Unobservable { cause },
+            Observed::Present(_) => unreachable!("unanswering never returns a pane"),
+        },
+    }
+}
+
+/// The candidate sockets of a pane the fleet records: the one the
+/// controller record names, then `ambient`, each once.
+pub fn fleet_sockets(recorded: Option<PathBuf>, ambient: Option<PathBuf>) -> Vec<PathBuf> {
+    let mut sockets: Vec<PathBuf> = recorded.into_iter().collect();
+    if let Some(ambient) = ambient
+        && !sockets.contains(&ambient)
+    {
+        sockets.push(ambient);
+    }
+    sockets
 }
 
 /// Whether the record names a session: any of the keys a launch, a
@@ -301,13 +340,20 @@ fn overseer_pane(overseer: &Overseer) -> Option<(u64, String)> {
     ))
 }
 
-/// The socket the overseer record names, else the ambient one, which an
+/// The socket the controller record names, where it names one.
+pub fn overseer_socket(overseer: &Overseer) -> Option<PathBuf> {
+    overseer
+        .extra
+        .get("server_socket")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The socket the controller record names, else the ambient one, which an
 /// unread uid refuses.
-fn overseer_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
-    match overseer.extra.get("server_socket").and_then(Value::as_str) {
-        Some(socket) => Ok(PathBuf::from(socket)),
-        None => tmux::ambient_socket(),
-    }
+fn controller_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
+    overseer_socket(overseer).map_or_else(tmux::ambient_socket, Ok)
 }
 
 /// The proof for a predecessor whose record carries no identity:
@@ -346,7 +392,7 @@ pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target
             cause: "server-start-unrecorded",
         };
     };
-    match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
+    match controller_socket(overseer).and_then(|socket| tmux::server(&socket)) {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
             match tmux::pane_state(&answering, &pane) {
                 Reading::Live(tmux::PaneState::Running(fields)) => match target {
@@ -564,16 +610,10 @@ fn is_pane_id(id: &str) -> bool {
 }
 
 impl Operation<'_> {
-    /// The tmux server a fleet window opens on and the session it opens in:
-    /// the socket the runtime's own `$TMUX` names or the user's default, as
-    /// `lib/tmux-server.sh` resolves it, and the session the settings name,
-    /// else the fleet record's `tmux.session`.
-    pub(in crate::effects) fn fleet_server(
-        &self,
-        doc_session: Option<&str>,
-    ) -> Result<(Server, String)> {
-        let session = self
-            .run
+    /// The session a fleet window opens in: the one the settings name, else
+    /// the fleet record's `tmux.session`.
+    pub(in crate::effects) fn fleet_session(&self, doc_session: Option<&str>) -> Result<String> {
+        self.run
             .settings
             .tmux_session
             .as_deref()
@@ -584,7 +624,18 @@ impl Operation<'_> {
                     "tmux-session-unresolved",
                     &[],
                 ))
-            })?;
+            })
+    }
+
+    /// The tmux server a fleet window opens on and the session it opens in:
+    /// the socket the runtime's own `$TMUX` names or the user's default, as
+    /// `lib/tmux-server.sh` resolves it, and the session the settings name,
+    /// else the fleet record's `tmux.session`.
+    pub(in crate::effects) fn fleet_server(
+        &self,
+        doc_session: Option<&str>,
+    ) -> Result<(Server, String)> {
+        let session = self.fleet_session(doc_session)?;
         let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
         if !tmux::session_present(&server, &session)? {
@@ -855,48 +906,13 @@ impl Operation<'_> {
         }
         // A socket that cannot be named is no candidate: a key no socket
         // answers for is read by its server's pid.
-        if let Some(Ok(socket)) = overseer.map(overseer_socket) {
-            push(socket);
-        }
-        if let Ok(socket) = tmux::ambient_socket() {
+        for socket in fleet_sockets(
+            overseer.and_then(overseer_socket),
+            tmux::ambient_socket().ok(),
+        ) {
             push(socket);
         }
         sockets
-    }
-
-    /// The server a standing pane or window key names, at the caller's
-    /// sockets: one answering with the key's pid and, where the key records
-    /// one, its start, is present; one answering with the key's pid under
-    /// another start is a reused pid, the recorded server gone with every
-    /// pane it held, `server-unmatched` (the rule `observe_key`
-    /// applies); none answering with that pid is read by the pid alone
-    /// through the one identity reader: dead, the server and its panes are
-    /// gone; live or unreadable, the key stands.
-    fn server_of_key(
-        &self,
-        sockets: &[PathBuf],
-        server_pid: u64,
-        server_start: Option<u64>,
-    ) -> Observed<Server> {
-        let answering = sockets
-            .iter()
-            .find_map(|socket| match tmux::server(socket) {
-                Ok(s) if s.pid as u64 == server_pid => Some(s),
-                Ok(_) | Err(_) => None,
-            });
-        match answering {
-            Some(server) if server_start.is_none_or(|st| st == server.start) => {
-                Observed::Present(server)
-            }
-            Some(_) => Observed::Gone {
-                cause: "server-unmatched",
-            },
-            None => match unanswering(server_pid, None) {
-                Observed::Gone { cause } => Observed::Gone { cause },
-                Observed::Unobservable { cause } => Observed::Unobservable { cause },
-                Observed::Present(_) => unreachable!("unanswering never returns a pane"),
-            },
-        }
     }
 
     /// Read every standing obligation by its own recorded key, discharging
@@ -934,10 +950,7 @@ impl Operation<'_> {
             })
             .collect();
         for (pane, server_pid, server_start) in panes {
-            let end = match (
-                self.server_of_key(&sockets, server_pid, server_start),
-                &pane,
-            ) {
+            let end = match (server_at(&sockets, server_pid, server_start), &pane) {
                 (Observed::Present(server), Some(id)) => match tmux::pane_fields(&server, id) {
                     Reading::Gone => Some(PaneEnd::Gone),
                     Reading::Live(_) | Reading::Unreadable { .. } => None,
@@ -1259,7 +1272,7 @@ impl Operation<'_> {
                 cause: "server-start-unrecorded",
             });
         };
-        let observed = match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
+        let observed = match controller_socket(overseer).and_then(|socket| tmux::server(&socket)) {
             Ok(server) if server.pid as u64 == key.server && server.start == server_start => {
                 observe_fields(&server, &key.pane)
             }
@@ -1446,7 +1459,7 @@ impl Operation<'_> {
     ) -> Result<()> {
         let sockets = self.sockets(overseer);
         for key in self.obligations.standing_panes() {
-            let observed = match self.server_of_key(&sockets, key.server, key.server_start) {
+            let observed = match server_at(&sockets, key.server, key.server_start) {
                 Observed::Present(server) => observe_fields(&server, &key.pane),
                 Observed::Gone { cause } => Observed::Gone { cause },
                 Observed::Unobservable { cause } => Observed::Unobservable { cause },
@@ -2458,10 +2471,7 @@ pub(in crate::effects) fn heal_controller(
     if Harness::parse(&harness_word).is_none() {
         return Ok(None);
     }
-    let socket = match word("server_socket") {
-        Some(socket) => PathBuf::from(socket),
-        None => tmux::ambient_socket()?,
-    };
+    let socket = controller_socket(&overseer)?;
     let server = tmux::server(&socket)?;
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);

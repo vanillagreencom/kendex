@@ -45,6 +45,7 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host;
+use agent_runtime::host::tmux::PaneState;
 use agent_runtime::launch::Permission;
 use agent_runtime::observe::{self, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Memory};
@@ -59,6 +60,7 @@ use super::events::{Event, OverseerCase};
 use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
 use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
+use crate::effects::overseer_socket;
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::walk::{self, WalkRequest};
 use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
@@ -1332,6 +1334,13 @@ fn judge(record: &Record, reads: &Reads, marks: &mut dyn FnMut() -> Option<Marks
                     source: Source::Rows,
                 };
             }
+            // The last row is the harness's record of its own wall, and a
+            // pane holding only shells has no harness left behind that wall.
+            Reading::Live(SessionVerdict::Walled { .. }) if bare => {
+                return Verdict::Exited {
+                    source: Source::Process,
+                };
+            }
             Reading::Live(SessionVerdict::Walled { kind }) => {
                 let message = record
                     .session_rows
@@ -1512,41 +1521,44 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
     }
     // `None` is the pane id gone from the very server the record names,
-    // confirmed by pid and start, or kept there dead after its process
-    // exited: no session runs in a pane that is gone or dead.
-    let (reads, pane_pid) =
-        match (pass.readers.pane)(record.server, record.server_start, &record.pane) {
-            Reading::Live(fields) => {
-                let process =
-                    (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
-                let harness_gone = matches!(process, ProcessReading::ShellsOnly)
-                    && match record.identity.as_ref() {
-                        Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
-                        None => record.harness.is_some(),
-                    };
-                (
-                    Some(Reads {
-                        process,
-                        screen: (pass.readers.capture)(&fields.pane),
-                        rows: record.session_rows.as_deref().map(rows::session_verdict),
-                        harness_gone,
-                    }),
-                    Some(fields.pid),
-                )
-            }
-            Reading::Gone
-            | Reading::Unreadable {
-                cause: host::tmux::PANE_DEAD,
-            } => (None, None),
-            Reading::Unreadable { cause } => {
-                return judged(
-                    Verdict::Unreadable {
-                        cause: cause.to_owned(),
-                    },
-                    Some(key),
-                );
-            }
-        };
+    // confirmed by pid and start, kept there dead after its process exited,
+    // or that server proven gone, its pid dead or reused: no session runs in
+    // a pane that is gone or dead.
+    let socket = pass.fleet.overseer.as_ref().and_then(overseer_socket);
+    let (reads, pane_pid) = match (pass.readers.pane)(
+        socket.as_deref(),
+        record.server,
+        record.server_start,
+        &record.pane,
+    ) {
+        Reading::Live(PaneState::Running(fields)) => {
+            let process =
+                (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
+            let harness_gone = matches!(process, ProcessReading::ShellsOnly)
+                && match record.identity.as_ref() {
+                    Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
+                    None => record.harness.is_some(),
+                };
+            (
+                Some(Reads {
+                    process,
+                    screen: (pass.readers.capture)(&fields.pane),
+                    rows: record.session_rows.as_deref().map(rows::session_verdict),
+                    harness_gone,
+                }),
+                Some(fields.pid),
+            )
+        }
+        Reading::Live(PaneState::Dead(_)) | Reading::Gone => (None, None),
+        Reading::Unreadable { cause } => {
+            return judged(
+                Verdict::Unreadable {
+                    cause: cause.to_owned(),
+                },
+                Some(key),
+            );
+        }
+    };
     // The overseer's own context record, read once per pass where the
     // fleet has a mailbox root: the reading the judge is handed, the
     // wedge and the stale and gap judgements all read this one record.

@@ -287,7 +287,8 @@ fn a_repeated_close_runs_the_stop_its_reconcile_reads_pending() {
 
 /// The effect's process ends during the launch poll; a reconcile completes
 /// the launch from the recorded pane, confirming it with the identity it
-/// reads, or failing it once that pane is gone.
+/// reads, or failing it once that pane is gone. The lane records the
+/// fleet's session, never the name of another session grouped with it.
 #[test]
 fn reconcile_completes_a_launch_from_its_recorded_pane() {
     let dir = tempfile::tempdir().unwrap();
@@ -302,6 +303,11 @@ fn reconcile_completes_a_launch_from_its_recorded_pane() {
         runner.state_dir(),
     );
     server.await_composer(&pane);
+    let grouped = tmux(
+        &server.socket,
+        &["new-session", "-d", "-t", "fleet", "-s", "view"],
+    );
+    assert!(grouped.status.success(), "{}", stderr(&grouped));
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane("KEN-42", "preparing", &runner, Value::Null)]);
     fleet["intents"] = json!([lane_intent(
@@ -318,6 +324,8 @@ fn reconcile_completes_a_launch_from_its_recorded_pane() {
     assert_eq!(lane["launch"]["pane"], pane);
     assert_eq!(lane["launch"]["pid"], server.pane_pid(&pane));
     assert_eq!(lane["window"], "fleet:KEN-42");
+    let ungrouped = tmux(&server.socket, &["kill-session", "-t", "=view"]);
+    assert!(ungrouped.status.success(), "{}", stderr(&ungrouped));
     // The close that follows stops it by that identity and the lane is done,
     // its window closed.
     let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-42")));
