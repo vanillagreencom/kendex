@@ -1203,10 +1203,13 @@ os.execvpe(argv[0],argv,env)
                     self.end_owned(predecessor)
                 elif adopted:
                     self.end_task_session()
-                elif "recovery" in record["transfer"] and not self.terminal(predecessor):
-                    # A live failed runner is handed over by its full ownership
-                    # record, never a window id a new tmux server could reuse.
-                    self.end_task_session()
+                elif "recovery" in record["transfer"]:
+                    # A recovery's predecessor is a failed successor, whose
+                    # unfinished tasks fail with it. A runner that outlives
+                    # its failure still holds its pane: that pane's owned
+                    # session ends with its task windows. With no such pane,
+                    # the task windows alone hold the name the retry opens.
+                    self.end_owned(predecessor)
                 existing = self.tmux("has-session", "-t", "=jarvis", check=False)
                 if existing.returncode == 0:
                     if not succeeding or adopted or not self.terminal(predecessor):

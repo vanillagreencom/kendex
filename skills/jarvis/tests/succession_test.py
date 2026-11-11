@@ -1253,6 +1253,29 @@ set-hook -g after-new-window "rename-window user-hook"
             time.sleep(0.05)
 
 '''
+        # A runner whose Start failed is held alive past its record lock. The
+        # hold is claimed under that lock, so the retry's worker cannot end
+        # the runner before the test sees it held.
+        method += '''    def runner_hold(self, edge):
+        config = Path(self.home) / ".succession-pause.json"
+        if not config.exists():
+            return
+        point = json.loads(config.read_text())
+        if point["phase"] != "runner-failed":
+            return
+        if edge == "claim":
+            Path(point["event"]).write_text(json.dumps({"pid": os.getpid()}))
+            self.held = True
+        elif getattr(self, "held", False):
+            while not Path(point["release"]).exists():
+                time.sleep(0.05)
+
+'''
+        failed = "                    self._fail_transfer(record, runner=True)\n            return 1\n"
+        self.assertEqual(instrumented.count(failed), 1)
+        instrumented = instrumented.replace(failed, "                    self._fail_transfer(record, runner=True)\n"
+                                            "                    self.runner_hold('claim')\n"
+                                            "            self.runner_hold('wait')\n            return 1\n")
         self.assertEqual(instrumented.count("    def write(self, record):"), 1)
         instrumented = instrumented.replace("    def write(self, record):", method + "    def write(self, record):")
         self.assertNotEqual(original, instrumented)
@@ -1297,47 +1320,92 @@ set-hook -g after-new-window "rename-window user-hook"
         # the worker and its signal. One row per worker stretch after the
         # predecessor's end: before it saves that end, and while it awaits
         # the successor's Start. A walled successor fails the transfer it
-        # took, as the worker's own failure does: the record releases it and
-        # the task window open beside it closes with its window.
+        # took, as the worker's own failure does: the record releases it, and
+        # the task open beside it fails with its window closed, whether the
+        # retry is walled too or starts while the failed runner still lives.
         skills = self.instrumented()
         script = skills / "jarvis/scripts/jarvis-session"
         pause = self.home / ".succession-pause.json"
         brief, _, private = self.private_brief()
         fixture = self.home / ".fixture.json"
+        harness = self.home / ".fixture-harness.py"
+        harness_source = harness.read_text()
+        assignment = '    auth_mode = fixture.get("auth_mode")\n'
+        self.assertEqual(harness_source.count(assignment), 1)
+        lanes = self.home / ".lane-fixture.json"
+        task_native = self.root / "bin/copilot"
+        native_source = task_native.read_bytes()
+        held, release = self.root / "runner-held.json", self.root / "runner-release"
+        self.model_classes()
         with patch.object(session_test, "SCRIPT", script):
-            for phase, edge, walled in (("predecessor-ended", "before", False), ("brief-delivered", "after", False),
-                                        ("predecessor-ended", "before", True)):
+            for phase, edge, walled in (("predecessor-ended", "before", None), ("brief-delivered", "after", None),
+                                        ("predecessor-ended", "before", "every"), ("predecessor-ended", "before", "first")):
                 with self.row(phase=phase, edge=edge, walled=walled):
                     self.handoff()
                     self.call("start", mode="new", brief=brief)
                     self.wait()
+                    if walled:
+                        lanes.write_text(json.dumps({"calls": str(self.root / "lane-calls"), "harness": "claude",
+                                                     "account": str(self.account), "read_rc": 0, "headroom": 100}))
+                        task_native.write_text("#!" + sys.executable + "\nimport signal\nprint('\\u276f\\u00a0', flush=True)\nwhile True: signal.pause()\n")
+                        task_file = self.home / "task.md"
+                        task_file.write_text("Write the result.\n")
+                        task = self.task("launch", "--name", "beside succession", "--harness", "copilot", "--model", "standard",
+                                         "--task-file", str(task_file), "--result-file", str(self.home / "result.md"),
+                                         "--account", str(self.account))
+                        self.assertEqual(task["state"], "running")
                     previous = json.loads(self.record.read_text())
                     if walled:
+                        # An every row walls each successor, a first row only
+                        # the first, so that row's retry starts.
+                        only = "" if walled == "every" else (' if int(os.environ["JARVIS_GENERATION"]) == '
+                                                             + str(previous["generation"] + 1) + " else None")
+                        harness.write_text(harness_source.replace(assignment, assignment.rstrip("\n") + only + "\n"))
                         fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": "current"}))
-                        task = subprocess.run(["tmux", "-L", self.label, "new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{pane_id}",
-                                               self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
-                                              capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
-                        subprocess.run(["tmux", "-L", self.label, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"],
-                                       capture_output=True, env=self.env, timeout=10, check=True)
                     identity, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, edge, self.env)
                     with request:
                         transfer = json.loads(self.record.read_text())
                         self.assertFalse(self.process_live(previous["process"]))
+                        if walled == "first":
+                            # Set before the signal: the runner takes the
+                            # transfer once the worker exits.
+                            pause.write_text(json.dumps({"phase": "runner-failed", "edge": "after",
+                                                         "event": str(held), "release": str(release)}))
                         os.killpg(identity["pid"], signal.SIGTERM)
                         deadline = time.monotonic() + 10
                         while self.process_live(identity):
                             self.assertLess(time.monotonic(), deadline, "the signalled worker did not exit")
                             time.sleep(0.05)
                         request.communicate(timeout=10)
-                    pause.unlink()
+                    try:
+                        if walled == "first":
+                            deadline = time.monotonic() + 30
+                            while not held.exists():
+                                self.assertLess(time.monotonic(), deadline, "the failed runner did not hand over\n" + self.session_log())
+                                time.sleep(0.05)
+                            self.wait("running")
+                            retried = json.loads(self.record.read_text())
+                            self.assertEqual((retried["generation"], retried["transfer"].get("recovery")),
+                                             (transfer["generation"] + 1, True))
+                        elif walled:
+                            self.wait("failed", "handover-failed")
+                            self.successor_ended()
+                            failed = json.loads(self.record.read_text())
+                            self.assertNotIn("worker", failed)
+                            self.assertIsNone(failed["terminal"])
+                            self.assertEqual(failed["worker_ended"], {"pid": identity["pid"], "cause": "SIGTERM"})
+                        if walled:
+                            self.assertEqual(self.task("status", "--id", task["id"])["state"], "failed")
+                    finally:
+                        if walled == "first":
+                            release.touch()
+                        pause.unlink()
+                        if walled:
+                            harness.write_text(harness_source)
+                            fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": None}))
+                            lanes.unlink()
+                            task_native.write_bytes(native_source)
                     if walled:
-                        self.wait("failed", "handover-failed")
-                        self.successor_ended()
-                        failed = json.loads(self.record.read_text())
-                        self.assertNotIn("worker", failed)
-                        self.assertIsNone(failed["terminal"])
-                        self.assertEqual(failed["worker_ended"], {"pid": identity["pid"], "cause": "SIGTERM"})
-                        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": None}))
                         self.call("stop")
                         self.wait("stopped", persisted_stop=True)
                         continue

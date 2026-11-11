@@ -35,7 +35,8 @@ def main():
         # reject a worker that records no stop cause and a successor that
         # does not take the transfer its worker left, before its native
         # session starts and during its Start, and task windows a failed
-        # taken transfer leaves open.
+        # taken transfer leaves open, whether its runner has ended or still
+        # lives when the retry starts.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
         defects = (("successor setup readiness", backend,
                     (("jq '.hasCompletedOnboarding == true'", "jq 'true'"),),
@@ -117,8 +118,12 @@ def main():
                     "test_reaped_predecessor_scope"),
                    ("tasks end with a failed taken transfer", session,
                     (('file=sys.stderr)\n        self.end_task_session(window)\n', 'file=sys.stderr)\n        False and self.end_task_session(window)\n'),
-                     ('elif "recovery" in record["transfer"] and not self.terminal(predecessor):',
-                      'elif False:')),
+                     ('elif "recovery" in record["transfer"]:', 'elif False:')),
+                    "test_reaped_predecessor_scope"),
+                   ("tasks end with a live failed runner", session,
+                    (('the retry opens.\n                    self.end_owned(predecessor)\n',
+                      'the retry opens.\n                    if not self.terminal(predecessor):\n'
+                      '                        self.end_task_session()\n'),),
                     "test_reaped_predecessor_scope"))
         # The rows the latest change added, which its pre-change revision fails.
         cases = ("test_successor_setup_readiness", "test_failed_start_recovers_or_notifies", "test_failed_transfer_retries_after_predecessor_end")
