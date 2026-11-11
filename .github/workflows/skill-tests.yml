@@ -2035,8 +2035,9 @@ jobs:
       # installed_catalog_passes_comment_and_prose_lanes, the slow one of the
       # two tests in catalog_render_lint, whose reference pass runs once per
       # top-level scope in parallel. On one Linux host held to cores 0-2
-      # (macos-latest has 3), commit 8170d6894's split took that test from
-      # 181.8-185.1s to 101.0-102.1s. Scaled by 102.1/181.8, the 464s step
+      # (macos-latest has 3), that test takes 101.0-102.1s with the reference
+      # pass run per scope and 181.8-185.1s with one pass over the tree; the
+      # timings are on KEN-5028. Scaled by 102.1/181.8, the 464s step
       # is an estimated 261s, and 261s * 1.25 = 326s fits the 480s bound.
       # This is an estimate, not a macOS measurement.
       # All filters are libtest substrings; new integration tests still land
