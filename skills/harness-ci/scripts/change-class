@@ -186,9 +186,9 @@
 #            Where HARNESS_CI_TRIVIAL_PATHS names the repository's own
 #            allowlist as blank-separated globs, it replaces that set, within
 #            the same ceiling. A changed kendex.settings.toml or
-#            .kendex/settings.toml joins the set where the base commit's
-#            HARNESS_CI_TRIVIAL_SETTINGS admits it, below; a diff of
-#            admitted settings files alone has no ceiling.
+#            .kendex/settings.toml joins the set where the settings
+#            admission below admits it; a diff of admitted settings files
+#            alone has no ceiling.
 #   micro    production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -221,32 +221,72 @@
 # A changed kendex configuration file refuses every narrow class, not only
 # render: those files decide what is rendered and what each judgement below
 # reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
-# HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
-# from the base commit alone, admits a changed kendex.settings.toml or
+# The settings admission admits a changed kendex.settings.toml or
 # .kendex/settings.toml to the trivial set, on --event pull_request or
-# merge_group. Admission needs every changed configuration source to be one
-# of those two files, each a regular file at every endpoint that holds it,
-# an endpoint without it read as an empty file, loaded there by orch's
-# kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
-# multiline string delimiter, and changed only in comment lines, blank
-# lines and [env] assignments of keys a glob names. A key in the settings
-# this script reads from the base, or any HARNESS_CI_* key, never
+# merge_group, where every [env] key it changes is admitted. A key is light
+# by default where all of these hold at the commit --base names, the one
+# the allowlist below is read from, never the merge base, so the branch
+# under judgement writes none of it and a branch forked before a mark was
+# dropped keeps none:
+#   - an [env] declaration in a kendex.settings.toml.example that
+#     commit's inventory lists, with an inventoried SKILL.md in its
+#     directory, has
+#     the exact trimmed line `# ci: unread` in its comment block, the block
+#     directly above the assignment that a blank line, a table header or
+#     another assignment ends. The mark is the declaring package's word that
+#     no CI job reads the key and that a change to it needs no review;
+#   - every kendex.settings.toml.example that commit tracks that declares
+#     the key, in any table, inventoried or not, marks it;
+#   - the key starts with the namespace of every package that declares it:
+#     the example's directory name in upper snake case and an underscore,
+#     SLACK_ for .../slack/kendex.settings.toml.example, where a name
+#     outside kebab case gives none;
+#   - a package that declares it owns the longest namespace that starts the
+#     key among every directory that commit tracks holding a SKILL.md or an
+#     example, so a package whose name starts another's, github beside
+#     github-repository-settings, marks none of the longer one's keys;
+#   - no `# keys:` family line in any tracked example matches the key, each
+#     item an anchored whole key with <NAME> read as [A-Za-z0-9_]+;
+#   - that commit's kendex.toml has no line starting with the key
+#     is_source_catalog.
+# HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
+# from the settings of the commit --base names alone, adjusts that default:
+# an entry starting with `!` removes the keys its remainder names, and any
+# other entry adds keys, both matched as the same extglob patterns. The
+# admitted set is the
+# default and the additions, less the removals and the floor: a key in the
+# settings this script reads from the base, or any HARNESS_CI_* key, never
 # qualifies, whatever the globs say, so a change to the allowlist itself is
-# refused. Unset or blank, no key qualifies. A diff of admitted settings
-# files alone is trivial at any line count. Beside any other path, the trivial rule
+# refused. Admission needs every changed configuration source to be one of
+# those two files, each a regular file at every endpoint that holds it, an
+# endpoint without it read as an empty file, loaded there by orch's
+# kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
+# multiline string delimiter, and changed only in comment lines, blank lines
+# and [env] assignments of admitted keys. A diff that changes only comments
+# and blank lines is admitted. A diff of admitted settings files alone is
+# trivial at any line count. Beside any other path, the trivial rule
 # judges those paths and the ceiling, over the whole diff, as it does for any
 # diff, with no agent instruction file beside it. It answers
-# `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
-# lines=<n>`, keys naming those whose loaded value differs. harness-only's
+# `cause=declared-unread-settings settings=<file>[,<file>]
+# keys=<key>[,<key>]|- lines=<n>`, keys naming those whose loaded value
+# differs, or `cause=allowlisted-settings` with the same fields where one of
+# those keys is outside the default. harness-only's
 # refusals, cause=base-inventory-absent and an empty path list answer ahead
 # of the configuration-source rule and print no admission line. Once that rule
 # holds the change, every other answer, whatever its class or cause, is
 # that refusal, measured, and prints one `settings-admission:
 # admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
 # admission rule that refused: unsupported-event, base-settings-unreadable,
-# allowlist-unset, configuration-file, settings-unreadable,
+# configuration-file, declarations-unreadable, settings-unreadable,
 # settings-not-regular, settings-bytes-dropped, multiline-string,
-# settings-unparsed or unadmitted-change. After admission it is
+# settings-unparsed or unadmitted-change. declarations-unreadable carries
+# step=inventory where harness-only's base inventory list could not be
+# read, step=manifest where the base kendex.toml is not a regular file or
+# could not be read, and
+# step=example, with path= where one is named, where an example could not
+# be listed or read, holds a multiline string delimiter or the reader
+# refuses it; it refuses even where the allowlist alone would admit the
+# change. After admission it is
 # class-<class> rule=<cause>, the class and cause a later rule would have
 # answered. The queue-only line is judged as before.
 # A hand edit counts the same as the engine's: that line decides no render or
@@ -426,9 +466,10 @@ changed=""
 # unreadable, and an unreadable diff reads queue-only.
 QUEUE_ONLY=true
 QUEUE_CAUSE="cause=paths-unread" QUEUE_INPUTS=run
-# A settings change HARNESS_CI_TRIVIAL_SETTINGS admitted: its class-line
-# fields, its files, the refusal it keeps, and the keys one file changed.
+# An admitted settings change: its class-line cause and fields, its files,
+# the refusal it keeps, and the keys one file changed.
 SETTINGS_ADMITTED=""
+SETTINGS_CAUSE=""
 SETTINGS_FILES=""
 SETTINGS_REFUSAL=""
 SETTINGS_FILE_KEYS=""
@@ -572,7 +613,8 @@ answer() { # CLASS FIELDS [measured]
 harness_args=(--event "$event" --head "$head" --repo "$repo")
 [ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
 if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
-  --paths-output "$paths_file" --output /dev/null 2>"$harness_err")"; then
+  --paths-output "$paths_file" --base-inventory-output "$work/base-inventory" \
+  --output /dev/null 2>"$harness_err")"; then
   cat "$harness_err" >&2
   die "cause=harness-only-failed event=$event" \
     "the shipped harness-only classifier refused this call"
@@ -971,23 +1013,190 @@ settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
 
 # The keys a merge-group run reads from the base never qualify, the
 # allowlist itself included: their breakage stops the queue that would merge
-# the repair.
+# the repair. A `!` entry of the allowlist removes what its remainder names;
+# stripping that `!` is what keeps `!(...)` from acting as a negation that
+# admits every other key. Any other entry adds keys to the default.
 settings_key_admitted() { # KEY
-  local glob
+  local glob admitted=false
   case "$1" in
     '' | [0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;;
     HARNESS_CI_*) return 1 ;;
   esac
   case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac
+  case " $SETTINGS_DEFAULT_KEYS " in *" $1 "*) admitted=true ;; esac
   set -f
-  for glob in $HARNESS_CI_TRIVIAL_SETTINGS; do
-    # shellcheck disable=SC2254
-    case "$1" in
-      $glob) set +f; return 0 ;;
+  for glob in ${HARNESS_CI_TRIVIAL_SETTINGS:-}; do
+    case "$glob" in
+      '!'*)
+        # shellcheck disable=SC2254
+        case "$1" in ${glob#!}) set +f; return 1 ;; esac ;;
+      *)
+        # shellcheck disable=SC2254
+        case "$1" in $glob) admitted=true ;; esac ;;
     esac
   done
   set +f
-  return 1
+  [ "$admitted" = true ]
+}
+
+# Whether the kendex.toml commit REV holds starts a line with the key
+# is_source_catalog, its bytes at OUT: 0 where no line does or REV holds no
+# manifest, 1 where one does, 3 where the manifest is not a regular file and
+# 4 where it could not be read.
+source_catalog_at() { # REV OUT
+  local status=0
+  rev_file "$1" kendex.toml "$2" || status=$?
+  case "$status" in
+    0) ;;
+    2) return 0 ;;
+    3) return 3 ;;
+    *) return 4 ;;
+  esac
+  status=0
+  grep -qE -- "^[[:space:]]*[\"']?is_source_catalog" "$2" || status=$?
+  case "$status" in
+    0) return 1 ;;
+    1) return 0 ;;
+    *) return 4 ;;
+  esac
+}
+
+# A directory's package namespace, as NAMESPACE: its name in upper snake
+# case and an underscore, empty for a name outside kebab case.
+NAMESPACE=""
+package_namespace() { # DIR
+  local name="${1##*/}"
+  NAMESPACE=""
+  case "$name" in
+    '' | -* | *[!abcdefghijklmnopqrstuvwxyz0123456789-]*) ;;
+    *) NAMESPACE="$(printf '%s' "${name//-/_}" | tr abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ)_" ;;
+  esac
+}
+
+# The [env] keys light by default, as SETTINGS_DEFAULT_KEYS, read from the
+# declarations at the commit --base names alone, the one base_settings reads
+# the allowlist from: the branch under judgement writes no mark, inventory
+# entry or manifest key this reads, and the merge base, which the author
+# picks by choosing where to fork, never speaks for a mark the base end has
+# since dropped. harness-only writes that commit's validated inventory. The
+# header states the rule. Every kendex.settings.toml.example the base tracks
+# is read, an in-place or hand-written one included, since any of them can
+# veto a key; only one the base inventory lists beside an inventoried
+# SKILL.md, a skill's installed template, can admit one. Every tracked
+# directory holding a SKILL.md or an example names a namespace a key's owner
+# is chosen from. A source catalog's CI runs every package's own tests over
+# the repository's settings, so it has no default. Returns 1, with the
+# admission line, where a declaration could not be read, even where the
+# allowlist alone would admit the change: one rule costs a full run, never a
+# waiver. Called after base_settings, which resolves BASE_REV.
+SETTINGS_DEFAULT_KEYS=""
+settings_declarations() {
+  local inventoried status path dir namespace admittable n=0 catalog=false owners=" "
+  local rev="$BASE_REV" args=() refused="cause=declarations-unreadable step"
+  if ! inventoried="$(cat -- "$work/base-inventory" 2>/dev/null)"; then
+    settings_note "$refused=inventory"
+    return 1
+  fi
+  inventoried=$'\n'"$inventoried"$'\n'
+  status=0
+  source_catalog_at "$rev" "$work/declarations-manifest" || status=$?
+  case "$status" in
+    0) ;;
+    1) catalog=true ;;
+    *) settings_note "$refused=manifest"; return 1 ;;
+  esac
+  if [ -z "$rev" ] || ! git -C "$repo" ls-tree -r -z --name-only --full-tree \
+    "$rev" >"$work/declarations-tree" 2>/dev/null; then
+    settings_note "$refused=example"
+    return 1
+  fi
+  while IFS= read -r -d '' path; do
+    dir=""
+    case "$path" in */*) dir="${path%/*}" ;; esac
+    case "$path" in
+      SKILL.md | */SKILL.md | kendex.settings.toml.example | */kendex.settings.toml.example)
+        package_namespace "$dir"
+        namespace="$NAMESPACE"
+        case "$owners" in *" $namespace "*) ;; *) owners="$owners$namespace " ;; esac ;;
+    esac
+    case "$path" in
+      kendex.settings.toml.example | */kendex.settings.toml.example) ;;
+      *) continue ;;
+    esac
+    n=$((n + 1))
+    status=0
+    rev_file "$rev" "$path" "$work/declaration-$n" || status=$?
+    [ "$status" = 0 ] || { settings_note "$refused=example path=$path"; return 1; }
+    # The line scan below cannot tell a comment from a line inside a
+    # multiline string.
+    status=0
+    grep -qE "\"\"\"|'''" -- "$work/declaration-$n" || status=$?
+    [ "$status" = 1 ] || { settings_note "$refused=example path=$path"; return 1; }
+    settings_values "$work/declaration-$n" >/dev/null ||
+      { settings_note "$refused=example path=$path"; return 1; }
+    admittable=1
+    case "$inventoried" in *$'\n'"$path"$'\n'*) ;; *) admittable=0 ;; esac
+    case "$inventoried" in *$'\n'"$dir/SKILL.md"$'\n'*) ;; *) admittable=0 ;; esac
+    args=("${args[@]+"${args[@]}"}" "ns=$namespace" "adm=$admittable" "$work/declaration-$n")
+  done <"$work/declarations-tree"
+  if [ "$catalog" = true ]; then return 0; fi
+  [ "$n" -gt 0 ] || return 0
+  # One comment block per assignment, as the template grammar reads it: a
+  # blank line, a table header or an assignment ends it, so a mark speaks for
+  # the one key below it. A `# keys:` line names a family one code path
+  # builds every member of at run time, a member a consumer adds included,
+  # so a mark on one declared member cannot speak for that reader. The
+  # longest namespace that starts a key names its owner, which has to be a
+  # package declaring it.
+  if ! SETTINGS_DEFAULT_KEYS="$(awk -v owners="$owners" '
+    BEGIN { split(owners, owned, " ") }
+    FNR == 1 { section = ""; marked = 0 }
+    {
+      line = $0
+      sub(/^[ \t\r\n]+/, "", line)
+      sub(/[ \t\r\n]+$/, "", line)
+    }
+    line == "" { marked = 0; next }
+    line ~ /^#/ {
+      if (line == "# ci: unread") marked = 1
+      if (match(line, /^#[ \t]*keys:/)) {
+        count = split(substr(line, RLENGTH + 1), items, /[ \t,]+/)
+        for (i = 1; i <= count; i++) {
+          if (items[i] !~ /^[A-Za-z_<][A-Za-z0-9_<>]*$/) continue
+          pattern = items[i]
+          gsub(/<NAME>/, "[A-Za-z0-9_]+", pattern)
+          family[++families] = "^" pattern "$"
+        }
+      }
+      next
+    }
+    line ~ /^\[/ { section = substr(line, 2, length(line) - 2); marked = 0; next }
+    index(line, "=") {
+      was_marked = marked; marked = 0
+      key = substr(line, 1, index(line, "=") - 1)
+      sub(/[ \t]+$/, "", key)
+      if (!was_marked) veto[key] = 1
+      if (ns == "") veto[key] = 1
+      if (index(key, ns) != 1) veto[key] = 1
+      if (ns != "" && index(key, ns) == 1) declarer[key, ns] = 1
+      if (was_marked && adm && section == "env" && key ~ /^[A-Za-z_][A-Za-z0-9_]*$/) light[key] = 1
+    }
+    END {
+      for (key in light) {
+        if (key in veto) continue
+        owner = ""
+        for (o in owned) if (index(key, owned[o]) == 1 && length(owned[o]) > length(owner)) owner = owned[o]
+        if (!((key, owner) in declarer)) continue
+        for (i = 1; i <= families; i++) if (key ~ family[i]) break
+        if (i <= families) continue
+        print key
+      }
+    }
+  ' "${args[@]}")"; then
+    settings_note "$refused=example"
+    return 1
+  fi
+  SETTINGS_DEFAULT_KEYS="${SETTINGS_DEFAULT_KEYS//$'\n'/ }"
 }
 
 # FILE without its comment lines, blank lines and admitted [env]
@@ -1129,10 +1338,10 @@ settings_file_admitted() { # PATH
 }
 
 # SETTINGS_FILES, the admitted files one per line in byte order, and
-# SETTINGS_ADMITTED, their class-line fields. Returns 1, with the admission
-# line, where admission refuses the change. Another event defines no range
-# the size rules read, and a base whose settings cannot be read holds no
-# allowlist.
+# SETTINGS_CAUSE and SETTINGS_ADMITTED, their class-line fields. Returns 1,
+# with the admission line, where admission refuses the change. Another event
+# defines no range the size rules read, and a base whose settings cannot be
+# read holds no allowlist.
 settings_admission() {
   local path files="" file key keys=""
   case "$event" in
@@ -1145,10 +1354,6 @@ settings_admission() {
     settings_note "$MEASURE_CAUSE"
     return 1
   }
-  case "${HARNESS_CI_TRIVIAL_SETTINGS:-}" in
-    *[![:space:]]*) ;;
-    *) settings_note "cause=allowlist-unset"; return 1 ;;
-  esac
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     change_class_path "$path" before-render
@@ -1162,6 +1367,7 @@ settings_admission() {
     settings_note "cause=settings-unreadable"
     return 1
   fi
+  settings_declarations || return 1
   while IFS= read -r file; do
     settings_file_admitted "$file" || return 1
     for key in ${SETTINGS_FILE_KEYS//,/ }; do
@@ -1169,6 +1375,13 @@ settings_admission() {
     done
   done <<<"$files"
   keys="${keys#,}"
+  SETTINGS_CAUSE=cause=declared-unread-settings
+  for key in ${keys//,/ }; do
+    case " $SETTINGS_DEFAULT_KEYS " in
+      *" $key "*) ;;
+      *) SETTINGS_CAUSE=cause=allowlisted-settings ;;
+    esac
+  done
   SETTINGS_FILES="$files"
   SETTINGS_ADMITTED="settings=${files//$'\n'/,} keys=${keys:--}"
 }
@@ -1224,21 +1437,14 @@ manifest_admission() {
     rev="$base_rev"
     [ "$side" = base ] || rev="$head_rev"
     status=0
-    rev_file "$rev" kendex.toml "$work/manifest-$side" || status=$?
+    # An endpoint without the manifest holds no catalog key; the render
+    # check below still asks it.
+    source_catalog_at "$rev" "$work/manifest-$side" || status=$?
     case "$status" in
       0) ;;
-      # An endpoint without the manifest holds no catalog key; the render
-      # check below still asks it.
-      2) continue ;;
+      1) manifest_note "cause=source-catalog side=$side"; return 1 ;;
       3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
       *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
-    esac
-    status=0
-    grep -qE -- "^[[:space:]]*[\"']?is_source_catalog" "$work/manifest-$side" || status=$?
-    case "$status" in
-      0) manifest_note "cause=source-catalog side=$side"; return 1 ;;
-      1) ;;
-      *) manifest_note "cause=manifest-unreadable side=$side"; return 1 ;;
     esac
   done
   manifest_checker || return 1
@@ -1729,7 +1935,7 @@ if [ -n "$SETTINGS_ADMITTED" ]; then
     outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
     docs_trivial=true
   fi
-  settings_cause="cause=allowlisted-settings $SETTINGS_ADMITTED"
+  settings_cause="$SETTINGS_CAUSE $SETTINGS_ADMITTED"
 fi
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$within_trivial" = true ]; then

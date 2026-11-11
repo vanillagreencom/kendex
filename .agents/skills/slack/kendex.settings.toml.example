@@ -20,15 +20,18 @@ SLACK_INBOUND = "socket"
 
 # Seconds `slack deliver` waits for the listener's outcome. A timeout leaves
 # the event queued; retrying its channel:ts cannot append a second mailbox entry.
+# ci: unread
 SLACK_DELIVER_SECONDS = "20"
 
 # How often the relay reads each mailbox for questions, notices and reports
 # to post, in seconds. Owner messages do not wait for it: Slack sends each
 # one over Socket Mode as it is posted, or a hosted worker queues it.
+# ci: unread
 SLACK_POLL_SECONDS = "15"
 
 # How many days a thread stays open for replies. A reply under an older
 # topic is not routed; the owner writes top-level instead.
+# ci: unread
 SLACK_THREAD_DAYS = "7"
 
 # A file a Jarvis session touches while it answers the overseer, such as
@@ -42,6 +45,7 @@ SLACK_THREAD_DAYS = "7"
 SLACK_JARVIS_SESSION_FILE = ""
 
 # Seconds after its last touch that SLACK_JARVIS_SESSION_FILE still holds the relay.
+# ci: unread
 SLACK_JARVIS_SESSION_MAX_AGE = "600"
 
 # The optional slash commands and Home tab. Each is off while empty, and an

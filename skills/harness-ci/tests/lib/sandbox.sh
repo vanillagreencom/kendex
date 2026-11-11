@@ -141,7 +141,9 @@ plant() { # ROOT SCRIPT PLANTED -> prints the planted change-class path
 
 # A copy of the package's SCRIPT with the exact LINE replaced by
 # REPLACEMENT, `-` deleting it, planted beside the real scripts. LINE has to
-# occur exactly once in the copy, or the control is not an edit.
+# occur exactly once in the copy, or the control is not an edit, and the
+# copy has to parse: a mutant that cannot run fails every row it is given,
+# which a control would count as a kill of the rule it removed.
 mutant() { # NAME SCRIPT LINE REPLACEMENT
   local name="$1" script="$2" copy
   copy="$SANDBOX/$name.${script##*/}"
@@ -151,6 +153,10 @@ mutant() { # NAME SCRIPT LINE REPLACEMENT
     END { exit hits == 1 ? 0 : 3 }
   ' "$(dirname "$CHANGE_CLASS")/$script" >"$copy"; then
     echo "FAIL: control $name: '$3' does not occur once in $script" >&2
+    exit 1
+  fi
+  if ! bash -n "$copy"; then
+    echo "FAIL: control $name: the copy of $script without '$3' does not parse" >&2
     exit 1
   fi
   plant "$SANDBOX/$name" "$script" "$copy"
