@@ -108,16 +108,15 @@ export const setUpLabel = (names: string[]) =>
 export const SETTING_UP_LABEL = "Setting up…";
 /** A package's installer failed, the terminal's `SetUpStep::Installer`. */
 export const SET_UP_FAILED_TITLE = "The setup did not finish";
-/** Every installer ran and the read after them failed, the terminal's
- *  `SetUpStep::ReadBack`. */
-export const SET_UP_READ_BACK_FAILED_TITLE =
-  "The setup finished, but what it renders could not be read back";
+/** Every installer ran, and offering the commit again failed. */
+export const SET_UP_OFFER_AGAIN_FAILED_TITLE =
+  "The setup finished, but the commit could not be offered again";
 /** Heads the packages whose installer ran to the end before the failure:
  *  their repository changes are made whatever failed after them. */
 export const SET_UP_ARMED_LABEL = "Set up in this repository";
 export const SET_UP_NOTHING_COMMITTED = "Nothing was committed.";
-/** Heads the read's own words under a setup whose installers all ran. */
-export const SET_UP_READ_BACK_SAID_LABEL = "Why it could not be read back";
+/** Heads the error's own words under a setup whose installers all ran. */
+export const SET_UP_OFFER_AGAIN_SAID_LABEL = "Why it could not be offered";
 /** The setup ran and the package still holds the commit. The fresh
  *  reading's words are drawn under it; one setup per offer, as the
  *  terminal's. */

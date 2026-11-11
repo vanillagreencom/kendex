@@ -39,12 +39,13 @@ export type PickedChoice = Choice & { route: Picked };
  *  reader just did. */
 export type Scoped = "action" | "all";
 
-/** The step of a setup chosen at a held offer that failed, the steps
- *  the terminal's `block::SetUpStep` names: a package's installer, named,
- *  or the read after every installer ran. */
+/** The step of a setup chosen at a held offer that failed: a package's
+ *  installer, named, or offering the commit again after every installer
+ *  ran. That offer reads the whole project again, so its failure says
+ *  nothing about which part of the read failed. */
 export type SetUpStep =
   | { kind: "installer"; name: string }
-  | { kind: "readBack" };
+  | { kind: "offerAgain" };
 
 /** A package whose installer the setup ran to the end: it is set up in
  *  the repository whatever failed after it, and these are its words. */
@@ -60,8 +61,8 @@ export type Stage =
   | { at: "busy"; step: Picked }
   /** The setup a held offer carries is running. */
   | { at: "settingUp" }
-  /** A package's installer failed, or the read after every installer
-   *  ran: which step, the packages set up before it with what each
+  /** A package's installer failed, or offering the commit again after
+   *  every installer ran did: which step, the packages set up before it with what each
    *  installer said, and what went wrong. Nothing was committed. */
   | {
       at: "setUpFailed";
@@ -913,7 +914,7 @@ export const useCommitOfferStore = create<CommitOfferState>((set, get, api) => {
           set({
             stage: {
               at: "setUpFailed",
-              step: { kind: "readBack" },
+              step: { kind: "offerAgain" },
               armed,
               error: read.error,
             },

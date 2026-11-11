@@ -91,8 +91,8 @@ import {
   SET_UP_ARMED_LABEL,
   SET_UP_FAILED_TITLE,
   SET_UP_NOTHING_COMMITTED,
-  SET_UP_READ_BACK_FAILED_TITLE,
-  SET_UP_READ_BACK_SAID_LABEL,
+  SET_UP_OFFER_AGAIN_FAILED_TITLE,
+  SET_UP_OFFER_AGAIN_SAID_LABEL,
   SETTING_UP_LABEL,
   STALE_LABEL,
   STALE_NOTE,
@@ -491,10 +491,11 @@ function StillHeldState() {
 }
 
 /** The setup chosen at a held offer did not run through: a package's
- *  installer, or the read after every installer ran, failed. The packages
- *  set up before it come first, each with its installer's words: a reader
- *  just told the setup failed needs to know those repository changes are
- *  made anyway. Then what went wrong. Nothing was committed. */
+ *  installer, or offering the commit again after every installer ran,
+ *  failed. The packages set up before it come first, each with its
+ *  installer's words: a reader just told the setup failed needs to know
+ *  those repository changes are made anyway. Then what went wrong.
+ *  Nothing was committed. */
 function SetUpFailedState({
   stage,
 }: {
@@ -505,8 +506,8 @@ function SetUpFailedState({
     <>
       <DialogHeader>
         <DialogTitle>
-          {stage.step.kind === "readBack"
-            ? SET_UP_READ_BACK_FAILED_TITLE
+          {stage.step.kind === "offerAgain"
+            ? SET_UP_OFFER_AGAIN_FAILED_TITLE
             : SET_UP_FAILED_TITLE}
         </DialogTitle>
         <DialogDescription>{SET_UP_NOTHING_COMMITTED}</DialogDescription>
@@ -530,7 +531,7 @@ function SetUpFailedState({
           title={
             stage.step.kind === "installer"
               ? repoEffectsFailedTitle(stage.step.name)
-              : SET_UP_READ_BACK_SAID_LABEL
+              : SET_UP_OFFER_AGAIN_SAID_LABEL
           }
         >
           <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">

@@ -984,13 +984,13 @@ describe("setting up a package that holds the commit", () => {
       toast: false,
     },
     {
-      name: "the read after it failed",
+      name: "the offer after it failed",
       byWrite: true,
       armed: applied,
       read: { status: "error", error: "fatal: index.lock exists" },
       stage: {
         at: "setUpFailed",
-        step: { kind: "readBack" },
+        step: { kind: "offerAgain" },
         armed: [{ name: "bot-instructions", said: [] }],
         error: "fatal: index.lock exists",
       },

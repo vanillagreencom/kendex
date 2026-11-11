@@ -191,15 +191,15 @@ describe("an offer a package holds", () => {
       disabled: false,
     },
     {
-      name: "setup finished, the read after it failed",
+      name: "setup finished, the offer after it failed",
       stage: {
         at: "setUpFailed",
-        step: { kind: "readBack" },
+        step: { kind: "offerAgain" },
         armed: [{ name: "bot-instructions", said: [] }],
         error: "fatal: index.lock exists",
       } as Stage,
       held: held("notSetUp", []),
-      title: "The setup finished, but what it renders could not be read back",
+      title: "The setup finished, but the commit could not be offered again",
       words: ["bot-instructions", "fatal: index.lock exists"],
       actions: ["Leave as diffs"],
       disabled: false,
