@@ -987,11 +987,41 @@ class SessionContract(unittest.TestCase):
             # cannot become launch-failed without another Start request.
             unexpected_running = state == "failed" and answer["state"] == "running"
             if (answer["state"] in ("blocked", "failed") and not transient_cleanup) or unexpected_running:
-                self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.session_log())
+                self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.ownership_reads() + "\n" + self.session_log())
             time.sleep(0.05)
         target = (json.loads(self.record.read_text()).get("terminal") or {}).get("pane", "")
         screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p", "-t", target], capture_output=True, text=True).stdout
-        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + self.session_log())
+        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n"
+                  + self.ownership_reads() + "\n" + self.session_log())
+
+    def ownership_reads(self):
+        # The values the backend's live read compares for the saved
+        # controller and predecessor, read again at the failure, so a failed
+        # run names the comparison that rejected a pane its capture still shows.
+        try:
+            saved = json.loads(self.record.read_text())
+        except (OSError, ValueError) as failure:
+            return "ownership-read: saved=unread " + repr(failure)
+        lines = []
+        for role, owner in (("controller", saved), ("predecessor", saved.get("predecessor"))):
+            terminal = (owner or {}).get("terminal")
+            if not terminal:
+                lines.append("ownership-read: role=" + role + " terminal=none")
+                continue
+            lines.append("ownership-read: role=" + role + " saved=" + json.dumps({
+                "terminal": terminal, "server_pid": owner.get("server_pid"), "server_started_at": owner.get("server_started_at"),
+                "generation": owner.get("generation"), "pending_generation": (owner.get("pending") or {}).get("generation"),
+                "process": owner.get("process")}, sort_keys=True))
+            fields = "#{pid} #{start_time} #{session_name} #{window_id} #{@jarvis-generation}"
+            for argv in (["display-message", "-p", "-t", terminal["pane"], fields],
+                         ["list-panes", "-a", "-F", fields + " #{pane_id} #{pane_pid} #{pane_dead} #{@jarvis-task}"]):
+                read = subprocess.run(["tmux", "-S", terminal["server"], *argv], capture_output=True, text=True, env=self.env, timeout=10)
+                lines.append("ownership-read: role=" + role + " " + argv[0] + " rc=" + str(read.returncode)
+                             + "\n" + read.stdout + read.stderr)
+            server = subprocess.run(["ps", "-o", "pid=,comm=", "-p", str(owner.get("server_pid"))],
+                                    capture_output=True, text=True, timeout=10)
+            lines.append("ownership-read: role=" + role + " ps rc=" + str(server.returncode) + "\n" + server.stdout + server.stderr)
+        return "\n".join(lines)
 
     def session_log(self):
         try:

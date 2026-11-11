@@ -920,23 +920,35 @@ os.execvpe(argv[0],argv,env)
             with self.locked():
                 record = self.read()
                 if self._current_request(record, generation, "succeed"):
-                    self._fail_transfer(record)
+                    self._fail_transfer(record, runner=True)
             return 1
 
-    def _fail_transfer(self, record):
+    def _fail_transfer(self, record, *, runner=False):
         # A succession that fails after its predecessor ended leaves no
         # controller. The caller holds the lock and has closed every
         # successor window but the one it runs in, a runner's, which the
         # record releases first and which then ends with the task windows.
         window = (record.get("terminal") or {}).get("window")
-        if "recovery" not in record["transfer"]:
-            # Native Start can fail after selection passed. Retry the recorded
-            # eligible choice once through the same worker and brief path.
-            choice = dict(record["choice"], spent_account=record["transfer"].get("spent_account", ""))
+        # A recovery transfer follows one that already ended the predecessor.
+        ended = "recovery" in record["transfer"] or record["transfer"]["phase"] in ("predecessor-ended", "confirmed", "brief-delivered")
+        # Native Start can fail after selection passed. Retry the recorded
+        # eligible choice once through the same worker and brief path, but
+        # only once this transfer ended the predecessor: before that, the
+        # predecessor's window still holds the home's session name.
+        if ended and "recovery" not in record["transfer"]:
             try:
-                self._hand_over(record, choice, record if self.terminal(record) else None,
-                                record["transfer"]["handoff"], recovery=True)
-                return
+                live = self.terminal(record)
+                # A runner runs in the failed successor's window: closing it
+                # would end the runner before the retry starts, so a runner
+                # whose window reads as not owned leaves the transfer failed.
+                if live or not runner:
+                    if not live:
+                        # The retry opens the home's session afresh, which the
+                        # failed successor's window would refuse as name-conflict.
+                        self.end_task_session(window)
+                    choice = dict(record["choice"], spent_account=record["transfer"].get("spent_account", ""))
+                    self._hand_over(record, choice, record if live else None, record["transfer"]["handoff"], recovery=True)
+                    return
             except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
                 self.failure_log("recovery-failed", failure)
                 record = self.read()
@@ -946,15 +958,17 @@ os.execvpe(argv[0],argv,env)
         self.write(record)
         # The mailbox's owner notice is also the Slack relay's existing input.
         # Only the locked, exhausted transfer sends it; status never sends.
-        with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, suffix=".md") as note:
-            note.write("Jarvis stopped after succession and its automatic Start retry failed. "
-                       "Restart Jarvis for " + self.home + ". Check its session log if Start fails again.\n")
-            note.flush()
-            notice = self.run([BASH, str(BACKEND.parents[3] / "mailbox/scripts/lane-mail"), "notice",
-                               "--root", self.home, "--item", "overseer", "--to", "owner", "--file", note.name], check=False)
-            sys.stderr.write(notice.stderr)
-            if notice.returncode:
-                print("jarvis-session: owner-notice=failed exit=" + str(notice.returncode), file=sys.stderr)
+        # A transfer that failed before the predecessor ended sends none.
+        if ended:
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, suffix=".md") as note:
+                note.write("Jarvis stopped after succession failed to start its successor. "
+                           "Restart Jarvis for " + self.home + ". Check its session log if Start fails again.\n")
+                note.flush()
+                notice = self.run([BASH, str(BACKEND.parents[3] / "mailbox/scripts/lane-mail"), "notice",
+                                   "--root", self.home, "--item", "overseer", "--to", "owner", "--file", note.name], check=False)
+                sys.stderr.write(notice.stderr)
+                if notice.returncode:
+                    print("jarvis-session: owner-notice=failed exit=" + str(notice.returncode), file=sys.stderr)
         self.end_task_session(window)
 
     def stop(self, origin):

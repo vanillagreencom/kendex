@@ -41,8 +41,14 @@ def main():
                     (("jq '.hasCompletedOnboarding == true'", "jq 'true'"),),
                     "test_successor_setup_readiness"),
                    ("automatic Start recovery", session,
-                    (('if "recovery" not in record["transfer"]:', 'if False and "recovery" not in record["transfer"]:'),),
+                    (('if ended and "recovery" not in record["transfer"]:', 'if False:'),),
                     "test_failed_start_recovers_or_notifies"),
+                   ("retry only after the predecessor ends", session,
+                    (('if ended and "recovery" not in record["transfer"]:', 'if "recovery" not in record["transfer"]:'),),
+                    "test_failed_transfer_retries_after_predecessor_end"),
+                   ("failed successor window closes before the retry", session,
+                    (('                        self.end_task_session(window)\n', '                        pass\n'),),
+                    "test_failed_transfer_retries_after_predecessor_end"),
                    ("exhausted recovery notice", session,
                     (('"--to", "owner", "--file", note.name', '"--to", "overseer", "--file", note.name'),),
                     "test_failed_start_recovers_or_notifies"),
@@ -110,12 +116,12 @@ def main():
                       "                            pass\n"),),
                     "test_reaped_predecessor_scope"),
                    ("tasks end with a failed taken transfer", session,
-                    (('        self.end_task_session(window)\n', '        False and self.end_task_session(window)\n'),
+                    (('file=sys.stderr)\n        self.end_task_session(window)\n', 'file=sys.stderr)\n        False and self.end_task_session(window)\n'),
                      ('elif "recovery" in record["transfer"] and not self.terminal(predecessor):',
                       'elif False:')),
                     "test_reaped_predecessor_scope"))
         # The rows the latest change added, which its pre-change revision fails.
-        cases = ("test_successor_setup_readiness", "test_failed_start_recovers_or_notifies")
+        cases = ("test_successor_setup_readiness", "test_failed_start_recovers_or_notifies", "test_failed_transfer_retries_after_predecessor_end")
         if args.case and args.case not in {case for _, _, _, case in defects}:
             parser.error("no planted defect for case " + args.case)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),

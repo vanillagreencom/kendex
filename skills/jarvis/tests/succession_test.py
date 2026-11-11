@@ -1,4 +1,5 @@
 """Succession uses real tmux and native identity hooks with deterministic CLI fixtures."""
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -79,7 +80,7 @@ print(json.dumps({"config_dir": row["account"]}))
         # without one on a home whose last Start had one.
         (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "claude,codex,copilot,pi"\n')
         for harness, briefed in (("claude", True), ("codex", False), ("copilot", True), ("pi", False)):
-            with self.subTest(harness=harness):
+            with self.row(harness=harness):
                 brief, start_brief, private = self.private_brief()
                 self.call("start", harness=harness, mode="new", brief=brief if briefed else None)
                 self.wait()
@@ -175,7 +176,7 @@ print(json.dumps({"config_dir": row["account"]}))
             subprocess.run(["git", "-C", str(self.home), *arguments], env=self.env,
                            capture_output=True, check=True, timeout=10)
         for recover in (True, False):
-            with self.subTest(recover=recover):
+            with self.row(recover=recover):
                 self.call("start", mode="new")
                 self.wait()
                 before = json.loads(self.record.read_text())
@@ -221,6 +222,52 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.wait("stopped", persisted_stop=True)
                     config.write_text(json.dumps(setup))
                     fixture.write_text(source)
+
+    def test_failed_transfer_retries_after_predecessor_end(self):
+        # A transfer that fails before its predecessor ended takes no retry:
+        # the predecessor's window still holds the home's session name. After
+        # that end, the one retry starts on the name the failed successor's
+        # window released. Each row fails the transfer with an owner's pane
+        # whose generation mark no longer names it while its window stands,
+        # the read status reports as an ended controller.
+        skills = self.instrumented()
+        script = skills / "jarvis/scripts/jarvis-session"
+        pause = self.home / ".succession-pause.json"
+        release = self.root / "release"
+        with patch.object(session_test, "SCRIPT", script):
+            for phase, retried in (("saved", False), ("predecessor-ended", True)):
+                with self.row(phase=phase, retried=retried):
+                    self.handoff()
+                    self.call("start", mode="new")
+                    self.wait()
+                    previous = json.loads(self.record.read_text())
+                    _, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, "after", self.env)
+                    with request:
+                        transfer = json.loads(self.record.read_text())
+                        owner = (transfer if retried else previous)["terminal"]
+                        subprocess.run(["tmux", "-S", owner["server"], "set-option", "-p", "-t", owner["pane"], "@jarvis-generation", "foreign"],
+                                       capture_output=True, env=self.env, timeout=10, check=True)
+                        release.touch()
+                        request.communicate(timeout=10)
+                    # The request returns before its detached worker polls the
+                    # release, so the release stands until the transfer settles.
+                    try:
+                        if retried:
+                            self.wait()
+                        else:
+                            self.wait("failed", "handover-failed")
+                    finally:
+                        release.unlink()
+                        pause.unlink()
+                    settled = json.loads(self.record.read_text())
+                    self.assertEqual((settled["generation"], settled["transfer"].get("recovery")),
+                                     (transfer["generation"] + 1, True) if retried else (transfer["generation"], None))
+                    if not retried:
+                        # No record owns the predecessor's window now; the row closes it.
+                        subprocess.run(["tmux", "-S", owner["server"], "kill-window", "-t", owner["pane"]],
+                                       capture_output=True, env=self.env, timeout=10, check=True)
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
 
     def test_succession_identity(self):
         self.handoff()
@@ -342,7 +389,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 ("room-first-entry", "codex", 20, "claude", ""), ("room-no-entry", "claude", 20, "none", ""),
                 ("room-no-entry", "copilot", 20, "none", ""), ("walled-no-entry", "claude", 0, "none", ""),
                 ("pick-fails", "claude", 20, "fail", ""), ("app-missing", "claude", 0, "codex", "")):
-            with self.subTest(state=state, start=start, target=target):
+            with self.row(state=state, start=start, target=target):
                 self.call("start", harness=start, mode="new", brief=brief)
                 previous = self.wait()
                 before = json.loads(self.record.read_text())
@@ -497,7 +544,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 (5, "codex", alternative, True), (0, "claude", self.account, False),
                 (0, "codex", alias, False),
                 (2, "codex", alternative, False)):
-            with self.subTest(reading=reading, target=target, picked=picked):
+            with self.row(reading=reading, target=target, picked=picked):
                 self.call("start", mode="new", brief=brief)
                 previous = self.wait()
                 contents = self.handoff()
@@ -554,7 +601,7 @@ set-hook -g after-new-window "rename-window user-hook"
         alternative.mkdir()
         for model in (None, "openai/gpt-5.5"):
             for eligible in (True, False):
-                with self.subTest(model=model, eligible=eligible):
+                with self.row(model=model, eligible=eligible):
                     choice = {"model": model, "effort": "high"} if model else {}
                     self.call("start", harness="pi", mode="new", **choice)
                     self.wait()
@@ -596,7 +643,7 @@ set-hook -g after-new-window "rename-window user-hook"
         with patch.object(session_test, "SCRIPT", script):
             for phase, repeated, worker_failure in (("saved", False, ""), ("predecessor-ended", True, ""),
                                                      ("waiting", True, "identity"), ("saved", False, "trust")):
-                with self.subTest(phase=phase, repeated=repeated, worker_failure=worker_failure):
+                with self.row(phase=phase, repeated=repeated, worker_failure=worker_failure):
                     self.call("start", mode="new", brief=brief)
                     previous = self.wait()
                     original = json.loads(self.record.read_text())
@@ -771,6 +818,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
                 (self.home / ".lane-fixture.json").unlink()
+                self.released()
 
     def test_pi_successor_skips_unlaunchable_entry(self):
         # A pi-claude/ entry's pick names a Claude account, which a Jarvis pi
@@ -942,7 +990,7 @@ set-hook -g after-new-window "rename-window user-hook"
             ("pi", True, "codex", False, False),
         )
         for harness, bridge, successor, briefed, task in rows:
-            with self.subTest(harness=harness, bridge=bridge, successor=successor):
+            with self.row(harness=harness, bridge=bridge, successor=successor):
                 contents = self.handoff()
                 consumer = self.unmanaged(harness, bridge)
                 if task:
@@ -981,7 +1029,7 @@ set-hook -g after-new-window "rename-window user-hook"
         # The keyed cause each selection refusal names; the others are Start's own.
         causes = {"other-pid": "pid-mismatch", "no-harness": "no-harness", "missing-pane": "pane-missing"}
         for row in ("other-pid", "no-harness", "missing-pane", "running", "starting"):
-            with self.subTest(row=row):
+            with self.row(row=row):
                 consumer = self.unmanaged(None if row == "no-harness" else "claude")
                 pid = worker = None
                 named = consumer
@@ -1042,7 +1090,7 @@ set-hook -g after-new-window "rename-window user-hook"
         rows = [(phase, edge, False) for phase in phases for edge in ("before", "after")] + [("confirmed", "after", True)]
         with patch.object(session_test, "SCRIPT", script):
             for phase, edge, abandoned in rows:
-                with self.subTest(phase=phase, edge=edge, abandoned=abandoned):
+                with self.row(phase=phase, edge=edge, abandoned=abandoned):
                     print("adoption-row: phase=" + phase + " edge=" + edge + " abandoned=" + str(abandoned).lower(), flush=True)
                     contents = self.handoff()
                     consumer = self.unmanaged("claude")
@@ -1107,15 +1155,31 @@ set-hook -g after-new-window "rename-window user-hook"
                     self.call("stop")
                     self.wait("stopped", persisted_stop=True)
 
-    def successor_ended(self):
+    def successor_ended(self, outlived="a managed controller outlived its worker"):
         # The abandoned successor's pane follows its worker, and the home's
         # session and server end with it. A retry inside that end can read
         # the pane and then find no server, which refuses as record-unreadable.
         deadline = time.monotonic() + 10
         while subprocess.run(["tmux", "-L", self.label, "has-session", "-t", "=jarvis"], capture_output=True,
                              env=self.env).returncode == 0:
-            self.assertLess(time.monotonic(), deadline, "a managed controller outlived its worker")
+            self.assertLess(time.monotonic(), deadline, outlived)
             time.sleep(0.05)
+
+    @contextlib.contextmanager
+    def row(self, **params):
+        # Rows share one home and tmux server, so a row that leaves its
+        # session or a failed transfer behind fails each later row's Start.
+        # The check runs outside the row's subTest: the method ends at the
+        # first such row instead of reporting every row after it.
+        with self.subTest(**params):
+            yield
+        self.released()
+
+    def released(self):
+        self.successor_ended("a row left the home's session standing\n" + self.session_log())
+        saved = json.loads(self.record.read_text()) if self.record.exists() else {}
+        self.assertIn(saved.get("state", "stopped"), ("stopped", "off"),
+                      "a row left its record unreleased\n" + json.dumps(saved) + "\n" + self.session_log())
 
     def retry(self):
         # The retry's own answer and stderr name the operation it refused; a
@@ -1206,7 +1270,7 @@ set-hook -g after-new-window "rename-window user-hook"
         with patch.object(session_test, "SCRIPT", script):
             for phase, edge, walled in (("predecessor-ended", "before", False), ("brief-delivered", "after", False),
                                         ("predecessor-ended", "before", True)):
-                with self.subTest(phase=phase, edge=edge, walled=walled):
+                with self.row(phase=phase, edge=edge, walled=walled):
                     self.handoff()
                     self.call("start", mode="new", brief=brief)
                     self.wait()
@@ -1286,7 +1350,7 @@ set-hook -g after-new-window "rename-window user-hook"
         with patch.object(session_test, "SCRIPT", script):
             for harness in ("claude", "codex"):
                 for phase, edge, abandoned in rows:
-                    with self.subTest(harness=harness, phase=phase, edge=edge, abandoned=abandoned):
+                    with self.row(harness=harness, phase=phase, edge=edge, abandoned=abandoned):
                         print("succession-row: harness=" + harness + " phase=" + phase + " edge=" + edge
                               + " abandoned=" + str(abandoned).lower(), flush=True)
                         self.handoff()
@@ -1355,6 +1419,6 @@ set-hook -g after-new-window "rename-window user-hook"
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_successor_setup_readiness", "SuccessionContract.test_failed_start_recovers_or_notifies", "SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_reaped_predecessor_scope", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
+        unittest.main(defaultTest=["SuccessionContract.test_successor_setup_readiness", "SuccessionContract.test_failed_start_recovers_or_notifies", "SuccessionContract.test_failed_transfer_retries_after_predecessor_end", "SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_reaped_predecessor_scope", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
                                    "SuccessionContract.test_known_wall_selection", "SuccessionContract.test_pi_known_wall_selection", "SuccessionContract.test_known_wall_retry", "SuccessionContract.test_fresh_wall_controller",
                                    "SuccessionContract.test_adoption_contract", "SuccessionContract.test_adoption_refusals", "SuccessionContract.test_adoption_recovery"])
