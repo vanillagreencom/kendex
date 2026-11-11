@@ -27,7 +27,7 @@ class SuccessionContract(SessionContract):
         # which entry to try, its exclusion, and the resulting launch identity.
         lanes = self.skills / "orch/scripts/lanes"
         lanes.write_text('''#!/usr/bin/env python3
-import json, sys
+import json, os, sys
 from pathlib import Path
 args = sys.argv[1:]
 config = Path(".lane-fixture.json")
@@ -52,8 +52,16 @@ model_wall = harness == "claude" and "--binding-floor" in args
 # The recorded account's own reading judges its headroom alone; a walk's pick
 # finds an account only on the fixture's harness.
 walled = row["headroom"] <= floor if "--lane" in args else harness != row["harness"] or model_wall
+# Accounts in lanes' order. lanes drops one an ORCH_LANE_EXCLUDE name names
+# by its directory name, with or without the leading dot (lanes: lane_named).
 if "accounts" in row and "--lane" not in args and harness in row["accounts"]:
-    print(json.dumps({"config_dir": row["accounts"][harness]}))
+    excluded = {name.strip() for name in os.environ.get("ORCH_LANE_EXCLUDE", "").split(",")}
+    left = [account for account in row["accounts"][harness]
+            if not {Path(account).name, Path(account).name.removeprefix(".")} & excluded]
+    if not left:
+        print('{"walled":1,"unmeasured":0}')
+        sys.exit(3)
+    print(json.dumps({"config_dir": left[0]}))
     sys.exit(0)
 if walled:
     print('{"walled":1,"unmeasured":0}')
@@ -129,54 +137,83 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.wait("stopped", persisted_stop=True)
 
     def test_successor_setup_readiness(self):
-        # A first-run account is emitted by lanes after its weekly reset.
-        self.call("start", harness="codex")
-        original = self.wait()
-        self.handoff()
+        # lanes ranks a first-run account first. Selection leaves that account
+        # out and walks on: to a ready account of the same harness where one
+        # has room, else to the next entry's harness.
         self.model_classes()
-        pending = self.root / "pending-claude"
-        pending.mkdir()
-        (pending / ".claude.json").write_text("{}")
-        calls = self.root / "setup-picks"
-        (self.home / ".lane-fixture.json").write_text(json.dumps({
-            "harness": "claude", "account": str(self.account), "calls": str(calls), "headroom": 100,
-            "accounts": {"claude": str(pending), "codex": str(self.account)}}))
         (self.home / "kendex.settings.toml").write_text(
             '[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"\n')
-        # The second pick acknowledges that the predecessor still owns its
-        # pane while selection skips setup, before handover may stop it.
         picker = self.skills / "orch/scripts/lanes"
         text = picker.read_text()
         self.assertEqual(text.count('row = json.loads(config.read_text())'), 1)
-        picker.write_text(text.replace('row = json.loads(config.read_text())',
-            'row = json.loads(config.read_text())\n'
-            'if "--lane" not in args and args[args.index("--harness") + 1] == "codex":\n'
-            ' import subprocess\n'
-            ' live = subprocess.run(["tmux", "-S", ' + repr(original["terminal"]["server"])
-            + ', "display-message", "-p", "-t", ' + repr(original["terminal"]["pane"])
-            + ', "#{pane_id}"], capture_output=True, text=True, check=True)\n'
-            ' assert live.stdout.strip() == ' + repr(original["terminal"]["pane"])))
-        answer, code = self.call("succeed")
-        self.assertEqual((answer["state"], code), ("handing-over", 0))
-        # fix= is the operator-consumed refusal contract, not prose wording.
-        self.assertIn("harness-setup-pending", self.stderr)
-        self.assertIn("fix=", self.stderr)
-        self.assertIn(str(pending), self.stderr)
-        current = self.wait()
-        self.assertEqual((current["harness"], current["account"]), ("codex", str(self.account)))
-        self.assertEqual([row["harness"] for row in self.started()], ["codex", "codex"])
-        self.assertEqual(self.started()[1]["account"], self.started()[0]["account"])
-        self.assertEqual(json.loads((pending / ".claude.json").read_text()), {})
+        for runner_up, expected in ((False, "codex"), (True, "claude")):
+            with self.row(runner_up=runner_up):
+                self.call("start", harness="codex", mode="new")
+                original = self.wait()
+                self.handoff()
+                pending = self.root / ("pending-claude-" + str(runner_up))
+                pending.mkdir()
+                (pending / ".claude.json").write_text("{}")
+                ready = self.root / ("ready-claude-" + str(runner_up))
+                ready.mkdir()
+                (ready / ".claude.json").write_text('{"hasCompletedOnboarding":true}')
+                claude = [str(pending), str(ready)] if runner_up else [str(pending)]
+                (self.home / ".lane-fixture.json").write_text(json.dumps({
+                    "harness": "claude", "account": str(self.account), "calls": str(self.root / "setup-picks"),
+                    "headroom": 100, "accounts": {"claude": claude, "codex": [str(self.account)]}}))
+                # Each pick after the skip acknowledges that the predecessor
+                # still owns its pane before handover may stop it.
+                picker.write_text(text.replace('row = json.loads(config.read_text())',
+                    'row = json.loads(config.read_text())\n'
+                    'if "--lane" not in args and os.environ.get("ORCH_LANE_EXCLUDE"):\n'
+                    ' import subprocess\n'
+                    ' live = subprocess.run(["tmux", "-S", ' + repr(original["terminal"]["server"])
+                    + ', "display-message", "-p", "-t", ' + repr(original["terminal"]["pane"])
+                    + ', "#{pane_id}"], capture_output=True, text=True, check=True)\n'
+                    ' assert live.stdout.strip() == ' + repr(original["terminal"]["pane"])))
+                try:
+                    answer, code = self.call("succeed")
+                    self.assertEqual((answer["state"], code), ("handing-over", 0), self.stderr)
+                    # fix= is the operator-consumed refusal contract, not prose wording.
+                    self.assertIn("harness-setup-pending", self.stderr)
+                    self.assertIn("fix=", self.stderr)
+                    self.assertIn(str(pending), self.stderr)
+                    current = self.wait()
+                    account = str(ready) if runner_up else str(self.account)
+                    self.assertEqual((current["harness"], current["account"]), (expected, account))
+                    previous, successor = self.started()[-2:]
+                    self.assertEqual([previous["harness"], successor["harness"]], ["codex", expected])
+                    # Codex launches under the lane's prepared copy of the account.
+                    self.assertEqual(successor["account"], account if runner_up else previous["account"])
+                    self.assertEqual(json.loads((pending / ".claude.json").read_text()), {})
+                finally:
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    picker.write_text(text)
+                    (self.home / ".lane-fixture.json").unlink()
 
     def test_failed_start_recovers_or_notifies(self):
         # The harness can refuse Start after the predecessor ends. Recovery
         # must use the existing launch and brief path, once, without an agent.
-        # Owner notices append to the home's repository mailbox.
-        for arguments in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
-            subprocess.run(["git", "-C", str(self.home), *arguments], env=self.env,
-                           capture_output=True, check=True, timeout=10)
-        for recover in (True, False):
+        # The home is a linked worktree: owner notices append to the overseer
+        # mailbox lane-mail resolves from it, at the main checkout. Two
+        # exhausted transfers on one day each notify the owner.
+        main = self.root / "main-checkout"
+        linked = self.root / "linked"
+        for arguments in (("init", "-q", str(main)), ("-C", str(main), "config", "gc.auto", "0"),
+                          ("-C", str(main), "config", "maintenance.auto", "false"),
+                          ("-C", str(main), "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid",
+                           "commit", "-q", "--allow-empty", "-m", "root"),
+                          ("-C", str(main), "worktree", "add", "-q", "--detach", str(linked))):
+            subprocess.run(["git", *arguments], env=self.env, capture_output=True, check=True, timeout=10)
+        (linked / ".git").rename(self.home / ".git")
+        linked.rmdir()
+        subprocess.run(["git", "-C", str(main), "worktree", "repair", str(self.home)], env=self.env,
+                       capture_output=True, check=True, timeout=10)
+        notices = main / "tmp/lane-mail/overseer/to-overseer.jsonl"
+        for recover in (True, False, False):
             with self.row(recover=recover):
+                sent = len(notices.read_text().splitlines()) if notices.exists() else 0
                 self.call("start", mode="new")
                 self.wait()
                 before = json.loads(self.record.read_text())
@@ -205,14 +242,14 @@ print(json.dumps({"config_dir": row["account"]}))
                     settled = json.loads(self.record.read_text())
                     self.assertEqual(settled["generation"], before["generation"] + 2)
                     self.assertEqual(Path(settled["transfer"]["handoff"]).read_text(), contents)
-                    notices = self.home / "tmp/lane-mail/overseer/to-overseer.jsonl"
                     if not recover:
                         try:
-                            self.await_rows(notices, 1)
+                            self.await_rows(notices, sent + 1)
                         except AssertionError:
                             self.fail(self.session_log())
                     rows = [json.loads(line) for line in notices.read_text().splitlines()] if notices.exists() else []
-                    self.assertEqual([(row["kind"], row["to"]) for row in rows], [] if recover else [("notice", "owner")])
+                    self.assertEqual([(row["kind"], row["to"]) for row in rows[sent:]], [] if recover else [("notice", "owner")])
+                    self.assertFalse((self.home / "tmp/lane-mail/overseer/to-overseer.jsonl").exists())
                     if recover:
                         self.assertEqual(self.prompts(settled["pending"]["native_session_id"]), self.prompts(before["pending"]["native_session_id"]))
                     else:

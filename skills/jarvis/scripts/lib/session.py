@@ -959,13 +959,18 @@ os.execvpe(argv[0],argv,env)
         # The mailbox's owner notice is also the Slack relay's existing input.
         # Only the locked, exhausted transfer sends it; status never sends.
         # A transfer that failed before the predecessor ended sends none.
+        # lane-mail refuses an owner notice whose text repeats one from the
+        # last 24 hours, so the failed launch and its time tell outages apart.
+        # Run from the home, lane-mail resolves the one overseer mailbox its
+        # readers and the relay share, at the main checkout of a worktree home.
         if ended:
             with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, suffix=".md") as note:
-                note.write("Jarvis stopped after succession failed to start its successor. "
-                           "Restart Jarvis for " + self.home + ". Check its session log if Start fails again.\n")
+                note.write("Jarvis stopped after succession failed to start its successor (launch "
+                           + record["launch"]["id"] + " at " + time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                           + "). Restart Jarvis for " + self.home + ". Check its session log if Start fails again.\n")
                 note.flush()
                 notice = self.run([BASH, str(BACKEND.parents[3] / "mailbox/scripts/lane-mail"), "notice",
-                                   "--root", self.home, "--item", "overseer", "--to", "owner", "--file", note.name], check=False)
+                                   "--item", "overseer", "--to", "owner", "--file", note.name], check=False)
                 sys.stderr.write(notice.stderr)
                 if notice.returncode:
                     print("jarvis-session: owner-notice=failed exit=" + str(notice.returncode), file=sys.stderr)

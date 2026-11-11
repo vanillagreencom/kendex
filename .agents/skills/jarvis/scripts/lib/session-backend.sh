@@ -142,6 +142,12 @@ case "$verb" in
         entries+=("$entry")
       done
       [[ -z "$caller" ]] || entries+=("$caller")
+      # An account that has not finished first-run setup leaves its entry in
+      # the walk: lanes' own ORCH_LANE_EXCLUDE drops the account, by its
+      # directory name (lanes: lane_named), from every later pick, so the
+      # same entries walk on to another account of their harness. A pick
+      # naming an account already dropped means the name did not reach it.
+      setup_pending=$'\n'
       while :; do
         walk_rc=0
         ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
@@ -152,14 +158,16 @@ case "$verb" in
         (( walk_rc == 0 )) || break
         setup="$(harness_setup_check "$OL_HARNESS" "$OL_LANE_DIR")" || exit 1
         [[ -n "$setup" ]] || break
+        if [[ "$setup_pending" == *$'\n'"$OL_LANE_DIR"$'\n'* ]]; then
+          printf 'jarvis-session: selection-failed account=%s reason=setup-exclusion-unapplied lane=%s\n' "$account" "$OL_LANE_DIR" >&2
+          exit 1
+        fi
+        setup_pending+="$OL_LANE_DIR"$'\n'
         reason="$(jq -er '.refused' <<<"$setup")" || exit 1
         fix="$(jq -er '.fix' <<<"$setup")" || exit 1
-        printf 'jarvis-session: successor-entry-skipped entry=%s reason=%s fix=%s\n' "$OL_CHOSEN" "$reason" "$fix" >&2
-        remaining=()
-        for entry in ${entries[@]+"${entries[@]}"}; do
-          [[ "$entry" == "$OL_CHOSEN" ]] || remaining+=("$entry")
-        done
-        entries=(${remaining[@]+"${remaining[@]}"})
+        printf 'jarvis-session: successor-lane-excluded entry=%s lane=%s reason=%s fix=%s\n' "$OL_CHOSEN" "$OL_LANE_DIR" "$reason" "$fix" >&2
+        pending_dir="${OL_LANE_DIR%/}"
+        export ORCH_LANE_EXCLUDE="${ORCH_LANE_EXCLUDE:+$ORCH_LANE_EXCLUDE,}${pending_dir##*/}"
       done
       if (( walk_rc == 0 )); then
         harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
