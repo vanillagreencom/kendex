@@ -749,8 +749,7 @@ fn write_scope(
             Err(error) => Some(Stop::Failed(error)),
         };
         if let Some(stop) = stop {
-            let done = start.done(Some(settled));
-            return Ok(start.written(after, done, stop));
+            return start.stopped_short(after, Some(settled), stop);
         }
     }
     let asked = match added.consent.is_empty() {
@@ -763,7 +762,7 @@ fn write_scope(
             let done = start.done(Some(settled.into_iter().chain(written).collect()));
             start.wrote_plan(after, done, wrote.after)
         }
-        Err(error) => start.written(after, start.done(Some(settled)), Stop::Failed(error)),
+        Err(error) => start.stopped_short(after, Some(settled), Stop::Failed(error))?,
     };
     Ok(asked_over(write, asked))
 }
@@ -957,20 +956,6 @@ impl Start {
         }
     }
 
-    /// A written scope that stopped before its plan's write landed: the
-    /// offer it owes covers from the reading taken before its first write.
-    fn written(&self, report: EngineReport, done: Option<Vec<Effect>>, stop: Stop) -> ScopeWrite {
-        let owed = self.before().cloned().unwrap_or(Before::Untaken);
-        ScopeWrite::Written(Box::new(Written {
-            report,
-            done,
-            asked: Vec::new(),
-            failed: false,
-            owed: Some(owed),
-            stop: Some(stop),
-        }))
-    }
-
     /// A scope whose plan's write landed, `after` being how the steps
     /// after it went. A render that failed made no offer, which is owed
     /// over what the write changed from the reading it took; an offer
@@ -1000,8 +985,9 @@ impl Start {
     /// being what it already wrote itself: a scope this run has written
     /// into — the recovery, or a settle — is owed its offer, its closing
     /// line and its snapshot whatever stopped it, so it ends written,
-    /// carrying the stop for [`stopped`]. A scope with nothing written
-    /// ends declined, or on the error itself.
+    /// carrying the stop for [`stopped`], and the offer it owes covers
+    /// from the reading taken before its first write. A scope with nothing
+    /// written ends declined, or on the error itself.
     fn stopped_short(
         &self,
         report: EngineReport,
@@ -1011,7 +997,14 @@ impl Start {
         match (self.done(wrote), stop) {
             (None, Stop::Declined) => Ok(ScopeWrite::Declined),
             (None, Stop::Failed(error)) => Err(error),
-            (done, stop) => Ok(self.written(report, done, stop)),
+            (done, stop) => Ok(ScopeWrite::Written(Box::new(Written {
+                report,
+                done,
+                asked: Vec::new(),
+                failed: false,
+                owed: Some(self.before().cloned().unwrap_or(Before::Untaken)),
+                stop: Some(stop),
+            }))),
         }
     }
 }
