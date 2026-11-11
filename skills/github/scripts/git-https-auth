@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Git wrapper for GitHub SSH remotes when gh HTTPS auth is available.
+# Git wrapper giving GitHub remotes gh's per-process HTTPS credentials.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,9 +17,19 @@ GitHub SSH remote and gh auth is valid, the command gets temporary config:
   url.https://github.com/.insteadOf = git@github.com:
   url.https://github.com/.insteadOf = ssh://git@github.com/
 
+Set KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never to disable this SSH fallback, or
+=always to force it for GitHub operations.
+
+When ORCH_GH_READ_TOKEN_FILE is set, the command reaches https://github.com/
+through gh's helper alone. A target repository or explicit URL on an HTTPS
+github.com remote gets the helper whatever the fallback mode, and gh auth is
+not probed, also when =always adds the SSH rewrites. That call, and an SSH
+remote the fallback rewrites, also gets:
+
+  http.https://github.com/.extraheader = (empty, dropping inherited headers)
+
 The config is per-process only and does not mutate repository or global git
-config. Set KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never to disable, or =always to
-force the temporary config for GitHub operations.
+config.
 EOF
 }
 

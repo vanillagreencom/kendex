@@ -138,8 +138,7 @@ def api_for(settings: Settings) -> Slack:
 
 
 def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
-    # The relay a setup restarts starts with SLACK_APP_TOKEN or exits, so a
-    # setup that would restart one refuses without it before anything runs.
+    # A setup that restarts a Socket Mode listener needs its app token.
     settings = load(need_app_token=unit_stands())
     api = api_for(settings)
     ids = resolve_owner_ids(api, settings.owners)
@@ -217,7 +216,7 @@ def post(
     root: Path,
     channel: Optional[str],
     text: Optional[str],
-    file: Optional[str],
+    file: Optional[List[str]],
     mention_owners: bool,
     thread: Optional[str],
     update: Optional[str],
@@ -244,13 +243,13 @@ def post(
         else:
             owners = load().owners
             prefix = " ".join(f"<@{i}>" for i in resolve_owner_ids(api, owners).values()) + " "
-    body = prefix + (text or (Path(file).name if file else ""))
+    body = prefix + (text or ", ".join(Path(path).name for path in file or []))
     body, body_arg = outbound(root, body, file_comment=bool(file), fallback=False)
     secret_check(body.encode(), "text")
     if file:
-        data = checked_file(file, f"file={file}")
-        file_id = api.upload(Path(file).name, data, channel, body, thread)
-        notice("uploaded", f"{file_id} channel={channel}")
+        files = [(Path(path).name, checked_file(path, f"file={path}")) for path in file]
+        file_ids = api.upload_files(files, channel, body, thread)
+        notice("uploaded", f"{','.join(file_ids)} channel={channel}")
         return 0
     if body_arg == "markdown_text":
         markdown_checked(body, "text")
@@ -371,6 +370,7 @@ def status(roots: List[Path], now: float) -> int:
         if record is None:
             print(keyed("slack-relay", f"{root} state=never fix=start the relay with `slack listen --root {root}`"))
             continue
+        inbound = record.get("inbound", "socket")
         age = now - float(record["last_poll"])
         fresh = age <= 2 * int(record["poll_seconds"]) + 5
         # A record the pre-Socket-Mode relay wrote has no connection fields:
@@ -396,13 +396,15 @@ def status(roots: List[Path], now: float) -> int:
             since = connection_since
         else:
             connection, since = "disconnected", last_poll_at
+        # Queue records may carry a socket default, but queue mode opens no socket.
+        connection_fields = " connection=none" if inbound == "queue" else f" connection={connection} connection_since={since}"
         unknown = record.get("unknown") or []
         held = f" held-by={record['held_by']}" if record.get("held_by") else ""
         print(
             keyed(
                 "slack-relay",
                 f"{root} state={state} channel={record['channel']} code={record.get('code') or '-'} last_poll_age={int(age)}s"
-                f" connection={connection} connection_since={since}"
+                f" inbound={inbound}{connection_fields}"
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"
                 f" refused={len(record.get('refused') or [])} calls_last_minute={record.get('calls_last_minute', 0)}"

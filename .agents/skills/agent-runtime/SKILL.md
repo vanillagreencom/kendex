@@ -1,23 +1,14 @@
 ---
 name: agent-runtime
 description: "Load to launch, inspect, deliver to or stop one coding-harness session through the agent-runtime CLI or Rust library."
-summary: "Shared agent execution: launch, observe, deliver to and stop one Claude Code, Codex, Copilot CLI or Pi session, with every process and session identity held exactly."
 license: MIT
 user-invocable: true
-dependencies:
-  commands:
-    - command: cargo
-      purpose: Build the runtime from source
-      floor: "1.96"
-    - command: tmux
-      purpose: Host a session in a pane on a private server
-      optional: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
+compatibility: "Requires these commands on PATH: cargo"
 ---
 
 <!-- kendex:project-instructions:start -->

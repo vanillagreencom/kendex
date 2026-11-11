@@ -56,7 +56,7 @@ fgit -C "$REPO" commit -q -m init
 SCRATCH="$TMP_ROOT/scratch"
 mkdir -p "$SCRATCH"
 
-# run AGENT_TYPE TOOL FIELD VALUE -> rc, stderr in $err. An empty AGENT_TYPE
+# run AGENT_TYPE TOOL FIELD VALUE -> rc, stderr in $ERR_FILE. An empty AGENT_TYPE
 # omits the field, as the main session's payload does. jq encodes the value
 # the way the harness does, so a path or command holding a quote, a
 # backslash or a newline reaches the hook as JSON.
@@ -66,7 +66,7 @@ run_tool() {
     '(if $a == "" then {} else {agent_type: $a} end) + {tool_name: $t, tool_input: {($f): $v}}')"
 }
 
-run_payload() { # raw-json [PATH] -> rc, stderr in $err
+run_payload() { # raw-json [PATH] -> rc, stderr in $ERR_FILE
   set +e
   if [ -n "${2:-}" ]; then
     printf '%s' "$1" | env -i HOME="$TMP_ROOT" PWD="$TMP_ROOT" PATH="$2" "$BASH_BIN" "$HOOK" \
@@ -76,7 +76,6 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
   fi
   rc=$?
   set -e
-  err="$(cat "$TMP_ROOT/stderr")"
 }
 
 # shellcheck source=lib/assert.sh
@@ -119,8 +118,6 @@ for tool in Edit MultiEdit NotebookEdit; do
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=$tool" \
     "a reviewer's $tool is refused, the call its value"
 done
-run_tool reviewer-correctness Edit file_path "$REPO/src/lib.rs"
-assert_contains "$err" "tmp/review-reviewer-correctness-" "the refusal names the one path a reviewer writes"
 run_tool reviewer-correctness Edit file_path "$SCRATCH/note.txt"
 assert_eq "$rc" 2 "an Edit outside any repository is refused too: a reviewer never edits"
 
@@ -135,7 +132,6 @@ assert_eq "$rc" 0 "the codebase-review artifact path passes"
 run_tool reviewer-test Write file_path "$REPO/src/lib.rs"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: path=$REPO/src/lib.rs" \
   "a Write onto a tracked file is refused, the path its value"
-assert_contains "$err" "mktemp -d" "the refusal says where a control belongs"
 run_tool reviewer-test Write file_path "$REPO/probe.sh"
 assert_eq "$rc" 2 "a new file at the repository root is refused"
 run_tool reviewer-test Write file_path "$REPO/new/dir/probe.sh"

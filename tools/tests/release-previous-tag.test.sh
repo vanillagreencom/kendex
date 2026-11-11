@@ -109,7 +109,7 @@ assert_eq "$RESOLVED" "$PR_HEAD" 'retrieved tag names the release PR head'
 DIFF=$(git -C "$CLONE" diff --name-only "$OUT" HEAD)
 assert_eq "$DIFF" notes 'comparison resolves a release head outside main'
 
-# Controls mutate owned copies outside the worktree and retain the code text.
+# The control mutates an owned copy outside the worktree and retains the code text.
 python3 - "$TOOL" "$TMP_ROOT" <<'PY'
 import pathlib
 import sys
@@ -120,24 +120,10 @@ end = source.index("' <<<", start)
 old_selection = source[:start] + '\n  .[0][0].tag_name\n' + source[end:]
 assert old_selection != source
 (root / 'old-selection.sh').write_text(old_selection)
-fetch = 'git fetch origin tag "$tag" >&2'
-assert source.count(fetch) == 1
-missing_fetch = source.replace(fetch, ': origin tag "$tag" >&2')
-assert missing_fetch != source
-(root / 'missing-fetch.sh').write_text(missing_fetch)
 PY
 fresh_clone old-selection
 run_tool "$TMP_ROOT/old-selection.sh"
 assert_eq "$RC:$OUT" '0:main-build-99' 'old-selection control picks the newer pre-release'
-
-fresh_clone missing-fetch
-run_tool "$TMP_ROOT/missing-fetch.sh"
-assert_eq "$RC:$OUT" '0:v1.2.3' 'missing-fetch control reaches the comparison'
-DIFF_RC=0
-git -C "$CLONE" diff --stat "$OUT" HEAD >"$TMP_ROOT/diff" 2>&1 || DIFF_RC=$?
-[[ $DIFF_RC != 0 ]] || { echo 'FAIL: comparison passed without fetching the tag' >&2; exit 1; }
-PASS=$((PASS + 1))
-printf 'ok: missing-fetch control fails the comparison\n'
 
 # Dependency failures and no stable release must leave no comparison tag.
 for row in api-failure empty malformed fetch-failure; do

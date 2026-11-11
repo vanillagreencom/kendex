@@ -163,8 +163,11 @@ fn repair_absent_manifest_cleanup() {
         .unwrap();
     fs::remove_file(&manifest_path).unwrap();
 
+    // The installed copy carries no command declaration, and the only
+    // place that said where source 'cat' is was the manifest: the skill's
+    // commands are unknown, said beside the cleanup, never passed.
     let checked = kendex(&home, &project, &["check", "--scope", "project", "--quiet"]);
-    assert_eq!(checked.status.code(), Some(1), "{checked:?}");
+    assert_eq!(checked.status.code(), Some(2), "{checked:?}");
     let text = String::from_utf8(checked.stdout).unwrap();
     let row = text
         .lines()
@@ -173,6 +176,16 @@ fn repair_absent_manifest_cleanup() {
     assert!(
         row.contains("fix: kendex remove --kind skill old-name"),
         "{row}"
+    );
+    let unknown = text
+        .split_once("could not check: ")
+        .map(|(_, rest)| rest)
+        .unwrap_or_else(|| panic!("no could-not-check section: {text}"));
+    assert!(
+        unknown
+            .lines()
+            .any(|line| line.contains("skill 'old-name'")),
+        "{text}"
     );
 
     let removed = kendex(&home, &project, &["remove", "--kind", "skill", "old-name"]);

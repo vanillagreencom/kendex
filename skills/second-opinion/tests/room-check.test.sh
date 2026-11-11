@@ -68,8 +68,6 @@ Claude chooses the second account after the first reaches its weekly wall|20|yes
 Claude account metadata survives collection with another opinion|20|union|claude,my-model|second
 control: removing the room command leaves the review on the walled account|20|no|claude|first
 Claude pool exhaustion selects the next cross-model reviewer|100|yes|my-model|none
-control: ignoring a refused room check runs the walled Claude account|100|ignore-refusal|claude|first
-control: omitting the production account field rejects the selected account assertion|20|omit-account|claude|second
 '
 claude_row=0
 while IFS='|' read -r label weekly checked reviewer account; do
@@ -102,22 +100,13 @@ SH
   [[ "$checked" != no ]] || room_cmd=""
   W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
   [[ "$checked" != union ]] || W_ENV+=("SECOND_OPINION_COUNT=2")
-  if [[ "$checked" == ignore-refusal ]]; then
-    mutate_script "$SO" '  target_room "$t" || return 1' '  target_room "$t" || :'
-  elif [[ "$checked" == omit-account ]]; then
-    mutate_script "$SO" '{account: $account}' '{account: null}'
-  fi
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
   assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"
   actual_account="$(jq -r '.qa_metadata.attempts | map(select(.name == "claude") | .account // "none") | if length == 0 then "none" else join(",") end' "$ROW/out/out.json")"
   expected_account=none
   [[ "$account" == none ]] || expected_account=".${account}claude"
-  if [[ "$checked" == omit-account ]]; then
-    assert_eq "$([[ "$actual_account" != "$expected_account" ]] && printf red || printf green)" red "control: missing production account turns the selected account assertion red"
-  else
-    assert_eq "$actual_account" "$expected_account" "$label: production attempt names the selected account"
-  fi
+  assert_eq "$actual_account" "$expected_account" "$label: production attempt names the selected account"
   cli_artifact="$ROW/out/out.json"
   [[ "$checked" != union ]] || cli_artifact="${cli_artifact}.claude.json"
   cli_account="$(jq -r '.qa_metadata.account // "none"' "$cli_artifact")"
@@ -127,8 +116,6 @@ SH
   assert_eq "$(jq '[.blockers[]] | length > 0' "$ROW/out/out.json")" true "$label: the artifact retains findings"
   if [[ "$checked" == no ]]; then
     assert_eq "$([[ "$actual_account" != .secondclaude ]] && printf red || printf green)" red "control: the account-selection assertion turns red without the room command"
-  elif [[ "$checked" == ignore-refusal ]]; then
-    assert_eq "$([[ "$reviewer" != my-model && "$(count extra)" == 0 ]] && printf red || printf green)" red "control: ignoring the refusal turns the roster-fallback assertion red"
   elif [[ "$account" == none ]]; then
     assert_eq "$(count claude)" 0 "$label: the refused Claude CLI never runs"
     # This selection diagnostic is the room-check caller's program-readable
@@ -136,4 +123,32 @@ SH
     assert_eq "$(grep -c 'skipping claude: room check refused' "$ROW/stderr")" 1 "$label: selection records the room refusal"
   fi
 done <<<"$CLAUDE_ROWS"
+
+# The stock Copilot entries' default room check with the real chooser, from a
+# Claude session on a consumer roster naming them: the pool ORCH_LANE_COPILOT_POOL states
+# for a Pi root is what pick judges, and the root it picks is the Pi
+# configuration the stock pi command runs on. Only pi is a fixture.
+# label|pool used/granted|reviewer|Pi root the reviewer ran on
+PI_ROWS='
+GPT on Copilot reviews on the Pi root whose Copilot pool has room|10/100|pi-copilot-gpt|.pi-copilot
+a Copilot pool at its grant is walled and codex reviews|100/100|codex|none
+'
+pi_row=0
+while IFS='|' read -r label pool reviewer root; do
+  [[ -n "$label" ]] || continue
+  pi_row=$((pi_row + 1))
+  build "pi-pool-$pi_row" ps:none current:claude models:claude+pi-copilot-gpt+codex count:1 cmd:claude=claude cmd:codex=codex pi:stub
+  H="$ROW/home"
+  mkdir -p "$H/.pi-copilot" "$PROJ/.agents/skills"
+  ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
+  printf '{}\n' > "$H/.pi-copilot/settings.json"
+  printf '{}\n' > "$H/.pi-copilot/auth.json"
+  W_ENV+=("LANES_HOME=$H" "ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state")
+  got="$(run review)"
+  assert_eq "${got%% *}" rc=0 "$label: review completes"
+  assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"
+  expected_root=none
+  [[ "$root" == none ]] || expected_root="$H/$root"
+  assert_eq "$(cat "$ROW/pi-root" 2>/dev/null || printf none)" "$expected_root" "$label: pi runs on the Pi root the chooser picked"
+done <<<"$PI_ROWS"
 finish

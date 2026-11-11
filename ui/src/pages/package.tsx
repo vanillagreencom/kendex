@@ -45,6 +45,7 @@ import {
   usePackagesKnown,
   useRecordedSummaryIndex,
   useSummaryIndex,
+  useTagsIndex,
 } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
@@ -123,6 +124,7 @@ export function PackagePage() {
   // The words the package's author wrote, from the same join the row and
   // its preview read, so the page cannot describe it differently.
   const summaryOf = useSummaryIndex();
+  const tagsOf = useTagsIndex();
   const recorded = useRecordedSummaryIndex(ref?.scope);
   const packagesKnown = usePackagesKnown();
   // Found by the whole identity the link carried, not by what each tool
@@ -137,9 +139,9 @@ export function PackagePage() {
   const group = useMemo(
     () =>
       ref && result && packageOf
-        ? groupFor(groupItems(result.items, packageOf, summaryOf), ref)
+        ? groupFor(groupItems(result.items, packageOf, summaryOf, tagsOf), ref)
         : null,
-    [ref, result, packageOf, summaryOf],
+    [ref, result, packageOf, summaryOf, tagsOf],
   );
 
   const builtin =
@@ -152,6 +154,7 @@ export function PackagePage() {
     versions,
     reads,
     load: reload,
+    ensure,
   } = usePackageData(builtin ? null : ref);
   const diff = usePackageDiff(
     ref,
@@ -456,13 +459,14 @@ export function PackagePage() {
         overview={overview}
         files={
           <PackageFiles
-            scope={ref.scope}
-            kind={group.kind}
-            name={group.name}
+            reference={ref}
             files={files}
             read={reads.files}
+            readme={readme}
+            readmeRead={reads.readme}
             retryRunning={reads.reading}
             onRetry={reload}
+            ensure={ensure}
           />
         }
       />

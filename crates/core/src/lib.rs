@@ -63,6 +63,7 @@ pub mod repo_effects;
 pub mod report;
 pub mod scan;
 pub mod settings;
+pub mod settings_compare;
 pub mod settings_file;
 pub mod settings_secret;
 pub mod settings_seed;

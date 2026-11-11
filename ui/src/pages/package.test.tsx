@@ -32,6 +32,7 @@ import {
   README_TAG,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
+  TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
   UPDATE_LABEL,
 } from "@/lib/copy";
@@ -59,7 +60,7 @@ import {
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
 } from "@/lib/copy-updates";
-import { SEVERITY_LABELS } from "@/lib/labels";
+import { SEVERITY_LABELS, TAG_LABELS } from "@/lib/labels";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -71,6 +72,7 @@ import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
 import type { PackageView } from "@/stores/nav-types";
+import { usePackageReads } from "@/stores/package-reads";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
@@ -192,6 +194,7 @@ const openPage = async (
           repo: "o/r",
         },
         summary: null,
+        tags: null,
         package: { kind, name: "gh" },
       };
     }),
@@ -280,6 +283,9 @@ beforeEach(() => {
     data: null,
   });
   useScanStore.setState({ generation: 0 });
+  // The page's reads outlive it, so a case would otherwise open on the
+  // answers the case before it read.
+  usePackageReads.setState({ answers: {} });
   useProvenanceStore.setState({ read: READ_LANDED, reading: false });
   useEditorStore.setState({
     scope: { scope: "global" },
@@ -333,6 +339,7 @@ it.each([false, true])(
         at: item.at,
         origin: { origin: "builtin" },
         summary: null,
+        tags: null,
         package: recorded ? { kind: item.kind, name: item.name } : null,
       },
     ]);
@@ -408,6 +415,7 @@ it("routes grouped native and catalog MCP toggles through each scope's observati
           ? { origin: "builtin" }
           : { origin: "marketplace", source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: { kind: item.kind, name: item.name },
     })),
   );
@@ -560,6 +568,7 @@ describe("the words the package page shows", () => {
               scopeKey(scope) === scopeKey(VG)
                 ? "What this project installed."
                 : "What the other project installed.",
+            tags: null,
             package: { kind: "skill" as ItemKind, name: "gh" },
           };
         }),
@@ -570,6 +579,27 @@ describe("the words the package page shows", () => {
 
     expect(header(host)).toContain("What this project installed.");
     expect(header(host)).not.toContain("What the other project installed.");
+  });
+
+  /** An installed skill copy carries no tags in its frontmatter, so the
+   *  package's declaration, read through the join, is the only place its
+   *  tags come from. */
+  it("shows the tags the package declares where its installed copy has none", async () => {
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+    act(() => {
+      useProvenanceStore.setState({
+        rows: useProvenanceStore
+          .getState()
+          .rows.map((row) => ({ ...row, tags: ["review", "testing"] })),
+      });
+    });
+
+    const label = [...host.querySelectorAll("dt")].find(
+      (dt) => dt.textContent === TAGS_ROW_LABEL,
+    );
+    expect(label?.nextElementSibling?.textContent).toBe(
+      `${TAG_LABELS.review}${TAG_LABELS.testing}`,
+    );
   });
 
   // libraryProvenance seeds rows with no position for missing copies.
@@ -593,6 +623,7 @@ describe("the words the package page shows", () => {
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
         summary,
+        tags: null,
         package: { kind: "skill", name: "gh" },
       };
       act(() => {
@@ -1237,6 +1268,7 @@ describe("the package page's safety tab", () => {
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           summary: null,
+          tags: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1428,6 +1460,7 @@ describe("the package page's file actions", () => {
           at: installedAt(VG).at,
           origin: { origin: "marketplace", source: "cat", repo: "o/r" },
           summary: null,
+          tags: null,
           package: { kind: "skill", name: "gh" },
         },
       ],
@@ -1652,6 +1685,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         at: null,
         origin: { origin: "marketplace", source: "cat", repo: "o/r" },
         summary: null,
+        tags: null,
         package: { kind: "skill", name: "gh" },
       },
       {
@@ -1662,6 +1696,7 @@ describe("a package page opened on an installation nothing recorded", () => {
         at: null,
         origin: { origin: "unmanaged" },
         summary: null,
+        tags: null,
         package: null,
       },
     ]);

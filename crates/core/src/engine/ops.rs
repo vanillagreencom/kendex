@@ -1,16 +1,17 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::apply::{Op, PlannedOp};
 
+use super::desired::ReadBundles;
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
-use crate::error::Result;
-use crate::lock::{Lock, Reason, lock_path};
+use crate::error::{ProvenanceStep, Result};
+use crate::lock::{InstallRef, Lock, LockEntry, Reason, RequirerProvenance, lock_path};
 use crate::manifest::{self, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 mod add;
-pub use add::{AddRequest, add, add_seeded, requested_kinds, targets_for};
+pub use add::{AddRequest, add, add_seeded, manifest_for_request, requested_kinds, targets_for};
 pub(crate) use add::{PreparedAddition, protect_installed, source_repo_label};
 
 /// Every kind a manifest declares by name. Plugins are excluded: they carry
@@ -315,7 +316,7 @@ fn prepare_removal(
             });
         }
     }
-    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
+    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, kind, &options)? {
         manifest.suppress(kind, &name);
     }
     Ok(PreparedRemoval {
@@ -371,72 +372,624 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// that is still installed. Those are the removals that have to be written
 /// down, or the next plan would simply undo them.
 ///
-/// Two readings answer it, and either one alone has a blind spot: the record
-/// says nothing once it has been deleted, and the catalogs say nothing while
-/// they cannot be read. So both are asked and anything either one names is
-/// written down — over-recording a removal costs a line the next `add`
-/// clears, while missing one puts back something the user took away.
+/// One walk answers it over two sets of facts: the record, which costs no
+/// catalog, and the catalogs read now over the edited manifest, which see a
+/// carrier or an edge added since the last install and survive a deleted
+/// record. A rooted path in any reading keeps the removal: an older reading
+/// can cost a suppression the next add clears, but never drops one.
+/// Otherwise an ancestor no recorded reading holds reasons for refuses,
+/// because the catalog cannot prove it gone and guessing could make the
+/// removal return. So does an installation a local edit holds, or whose
+/// every reading sits in a record marked held, and no reading roots,
+/// unless the read now accounted for every declaration: its reasons may
+/// predate a carrier the catalog gained, which only that read sees. That
+/// refusal names what the read could not account for, since the read is
+/// of each catalog where it sits now, which an apply at the recorded
+/// revisions does not see. Where no reading roots an installation and the
+/// read was short, the name test [`recorded_edges`] decides, since that
+/// read cannot see a carrier the record does not hold.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
+    kind: Option<ItemKind>,
     options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
-    let mut kept = recorded_edges(lock, names, options);
-    kept.extend(still_derived(env, scope, manifest, names, options));
-    kept
+) -> Result<BTreeSet<(ItemKind, String)>> {
+    let ReadAncestry {
+        installations,
+        bundles,
+        unread,
+    } = read_ancestry(env, scope, manifest);
+    let captured = captured_rows(lock);
+    let roots = |facts| RemovalRoots {
+        env,
+        scope,
+        manifest,
+        lock,
+        names,
+        kind,
+        options,
+        facts,
+        read_bundles: &bundles,
+    };
+    let mut decisions = BTreeMap::new();
+    roots(Facts::Recorded(&captured)).decide(&mut decisions);
+    roots(Facts::Read(&installations)).decide(&mut decisions);
+    let named = unread
+        .is_some()
+        .then(|| recorded_edges(lock, &captured, names, options));
+    let mut kept = BTreeSet::new();
+    for (key, decision) in decisions {
+        match decision {
+            Reach::Rooted => {
+                kept.insert(key);
+            }
+            Reach::Unrooted => {
+                if named.as_ref().is_some_and(|named| named.contains(&key)) {
+                    kept.insert(key);
+                }
+            }
+            // Read whole, the catalogs decide: had they rooted it, the
+            // root would have won.
+            Reach::Missing(Unread::Held(_)) if unread.is_none() => {}
+            Reach::Missing(Unread::Held(by)) => {
+                let unread = unread.unwrap_or_default();
+                return Err(provenance_missing(
+                    by,
+                    ProvenanceStep::RetryReadable { unread },
+                ));
+            }
+            Reach::Missing(Unread::Ancestor { ancestor, held }) => {
+                let step = match held {
+                    Some(held) => ProvenanceStep::ResolveEdit(held),
+                    None => ProvenanceStep::Apply,
+                };
+                return Err(provenance_missing(ancestor, step));
+            }
+            Reach::Missing(Unread::Set(set)) => {
+                return Err(crate::error::CoreError::RemovalSetReadingMissing {
+                    catalog: set.source,
+                    set: set.name,
+                });
+            }
+        }
+    }
+    Ok(kept)
 }
 
-/// What the record already says holds these installations up. Every one
-/// carries the edges it was installed under, so an edge from something that
-/// is not going away is exactly what would derive the item again — and
-/// reading it costs no catalog, which is what makes a removal stick while a
-/// source is unreadable.
+/// The selected installations whose recorded readings name an edge from
+/// something not going away: a requirer not named for removal, or a set not being
+/// uninstalled. A short read cannot see a carrier declared since the last
+/// readable apply, or a hold that kept a record whose installation went
+/// unread, so where no reading roots an installation this name test keeps
+/// the removal rather than lose it.
 fn recorded_edges(
     lock: &Lock,
+    captured: &Captured<'_>,
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
     lock.entries
         .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
-        .filter(|entry| {
-            entry.reasons.iter().any(|reason| match reason {
+        .map(|entry| (entry.kind, &entry.name, &entry.reasons))
+        .chain(captured.iter().flat_map(|(node, rows)| {
+            rows.iter()
+                .map(|(_, row)| (node.kind, &node.name, &row.reasons))
+        }))
+        .filter(|(kind, name, _)| names.contains(name) && options.named_for_removal(*kind, name))
+        .filter(|(_, _, reasons)| {
+            reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
                 Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
-        .map(|entry| (entry.kind, entry.name.clone()))
+        .map(|(kind, name, _)| (kind, name.clone()))
         .collect()
 }
 
-/// What the catalogs say the manifest still implies, now that the
-/// declarations are gone. This is the reading that survives a deleted
-/// record, and the one that sees an edge the catalog gained since the last
-/// install.
-fn still_derived(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    names: &[String],
-    options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
+fn provenance_missing(by: InstallRef, step: ProvenanceStep) -> crate::error::CoreError {
+    crate::error::CoreError::RemovalProvenanceMissing {
+        catalog: by.source,
+        kind: by.kind,
+        name: by.name,
+        harness: by.harness,
+        step,
+    }
+}
+
+struct ReadAncestry {
+    installations: BTreeMap<InstallRef, RequirerProvenance>,
+    bundles: ReadBundles,
+    unread: Option<Vec<String>>,
+}
+
+/// Every installation the catalogs derive now from the edited manifest,
+/// with its per-tool reasons, read under the identity each source is
+/// declared at, and, where the read did not account for every
+/// declaration, each cause it met.
+fn read_ancestry(env: &Env, scope: &Scope, manifest: &Manifest) -> ReadAncestry {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
-    let mut derived = BTreeSet::new();
-    for name in names {
-        for kind in super::expansion::PLANNED_KINDS {
-            if options.named_for_removal(kind, name) && expansion.contains(kind, name) {
-                derived.insert((kind, name.clone()));
-            }
+    let read = super::expansion::PLANNED_KINDS
+        .into_iter()
+        .flat_map(|kind| {
+            expansion
+                .of(kind)
+                .into_iter()
+                .filter_map(move |(name, planned)| {
+                    let repo = crate::source::declared_provenance(manifest, &planned.decl.source)?;
+                    Some(((kind, name.clone()), repo))
+                })
+        })
+        .collect();
+    // A read that cannot account for every declaration, a catalog, item or
+    // set it could not read or a dependency it could not satisfy, says
+    // nothing of what would root an installation once it can. Each cause
+    // is named where the expansion meets it, those the declaration status
+    // counts among them; the expansion refuses no declaration, which only
+    // the item passes do.
+    let complete = super::DeclarationStatus::of(&state) == super::DeclarationStatus::Complete;
+    debug_assert!(
+        complete || !state.short_reads.is_empty(),
+        "an incomplete removal read names no cause"
+    );
+    let unread = (!complete || !state.short_reads.is_empty())
+        .then(|| state.short_reads.into_iter().collect());
+    ReadAncestry {
+        installations: expansion.requirer_provenance(&read),
+        bundles: state.read_bundles,
+        unread,
+    }
+}
+
+enum Reach {
+    Rooted,
+    Unrooted,
+    Missing(Unread),
+}
+
+/// The fact a refusal names.
+enum Unread {
+    /// An ancestor the record holds no reasons for, and the record whose
+    /// edge named it where a local edit holds that record, so no apply
+    /// writes the missing row into it.
+    Ancestor {
+        ancestor: InstallRef,
+        held: Option<InstallRef>,
+    },
+    /// A set whose reading the record does not bind to the member's edge.
+    Set(crate::lock::BundleRef),
+    /// An installation no reading roots, resting on a record a hold keeps,
+    /// which this names: its own entry while a local edit holds it, or one
+    /// of the records holding its readings where each is marked held. The
+    /// catalogs read whole decide it.
+    Held(InstallRef),
+}
+
+impl Reach {
+    /// Rooted, then a refusal no read lifts, then one a whole read does.
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Unrooted => 0,
+            Self::Missing(Unread::Held(_)) => 1,
+            Self::Missing(Unread::Ancestor { .. } | Unread::Set(_)) => 2,
+            Self::Rooted => 3,
         }
     }
-    derived
+
+    /// The higher-ranked answer; on a tie, `self`.
+    fn or(self, other: Self) -> Self {
+        if other.rank() > self.rank() {
+            other
+        } else {
+            self
+        }
+    }
+}
+
+/// Where the walk reads an installation's reasons on one tool.
+enum Facts<'a> {
+    /// Every recorded reading of an installation: its own entry and each
+    /// dependent's captured row. Each reading's reasons come from its own
+    /// snapshot, and every step reads every recorded reading of the next
+    /// ancestor, wherever the walk arrived from. Nothing in the lock says
+    /// which of two readings is newer, so each is walked once and a root in
+    /// any of them counts; none vetoes another. An entry a local edit holds
+    /// keeps its reasons from before the hold, and a row beside it may be
+    /// as old, so such an installation roots or refuses and is never
+    /// proved free; so does one whose every reading sits in a record
+    /// marked held, the edit perhaps since undone by hand.
+    Recorded(&'a Captured<'a>),
+    /// What the catalogs derive now ([`read_ancestry`]). An installation
+    /// they do not derive has no carrier.
+    Read(&'a BTreeMap<InstallRef, RequirerProvenance>),
+}
+
+/// Every dependent's captured row, by the installation it reads.
+type Captured<'l> = BTreeMap<&'l InstallRef, Vec<(&'l LockEntry, &'l RequirerProvenance)>>;
+
+fn captured_rows(lock: &Lock) -> Captured<'_> {
+    let mut rows = Captured::new();
+    for dependent in lock.entries.values() {
+        for row in dependent.requirer_rows() {
+            rows.entry(&row.installation)
+                .or_default()
+                .push((dependent, row));
+        }
+    }
+    rows
+}
+
+/// One reading of an installation, and who recorded it.
+struct Reading<'f> {
+    recorder: Recorder<'f>,
+    repo: &'f str,
+    reasons: &'f BTreeSet<Reason>,
+}
+
+/// Who recorded a reading. An entry's own reading and a row its own
+/// snapshot captures for it, in a cycle, are two readings with the same
+/// entry behind them, and either can root it.
+#[derive(Clone, Copy)]
+enum Recorder<'f> {
+    /// The catalogs read now.
+    Read,
+    /// The installation's own entry.
+    Entry(&'f LockEntry),
+    /// A dependent's snapshot.
+    Row(&'f LockEntry),
+}
+
+impl<'f> Recorder<'f> {
+    /// The snapshot an ancestor no reading holds falls back to for the
+    /// identity it would be read under.
+    fn context(self) -> Option<&'f LockEntry> {
+        match self {
+            Self::Read => None,
+            Self::Entry(entry) | Self::Row(entry) => Some(entry),
+        }
+    }
+
+    /// The record behind this reading where a hold kept it as it was
+    /// ([`crate::lock::RequirerAncestry::held`]).
+    fn kept_as_was(self) -> Option<&'f LockEntry> {
+        match self {
+            Self::Read => None,
+            Self::Entry(entry) | Self::Row(entry) => entry.held_reading().then_some(entry),
+        }
+    }
+
+    /// With the installation read, names exactly one reading: an
+    /// installation has one entry and a snapshot one row per ancestor.
+    fn visit(self) -> Visit {
+        match self {
+            Self::Read => Visit::Read,
+            Self::Entry(_) => Visit::Entry,
+            Self::Row(dependent) => Visit::Row(install_ref(dependent)),
+        }
+    }
+}
+
+/// What the facts hold for an installation.
+enum Readings<'f> {
+    /// Each walked once, on its own reasons. Read now, an installation the
+    /// catalogs do not derive has none, and so no carrier.
+    Of(Vec<Reading<'f>>),
+    /// No recorded reading holds a row for it, so only a declaration under
+    /// the identity the record would read it at can still root it.
+    Unrecorded { identity: Option<&'f str> },
+}
+
+/// [`Recorder`], owned, for the visited set.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Visit {
+    Read,
+    Entry,
+    Row(InstallRef),
+}
+
+/// The readings already walked, each by its recorder and the installation
+/// it reads.
+type Visited = BTreeSet<(Visit, InstallRef)>;
+
+/// The single decision of whether a surviving declaration or set still
+/// roots an installation once the selected items leave.
+struct RemovalRoots<'a> {
+    env: &'a Env,
+    scope: &'a Scope,
+    manifest: &'a Manifest,
+    lock: &'a Lock,
+    names: &'a [String],
+    kind: Option<ItemKind>,
+    options: &'a PlanOptions,
+    facts: Facts<'a>,
+    read_bundles: &'a ReadBundles,
+}
+
+impl RemovalRoots<'_> {
+    /// Selected for removal, and so a name a kept removal is written for.
+    fn selected(&self, node: &InstallRef) -> bool {
+        self.names.contains(&node.name) && self.options.named_for_removal(node.kind, &node.name)
+    }
+
+    /// Named outright, so it keeps nothing it requires. Bundle members in
+    /// `removal_filter` were selected through their set; an independent
+    /// declaration or another set can still root them.
+    fn explicit(&self, node: &InstallRef) -> bool {
+        self.names.contains(&node.name) && self.kind.is_none_or(|kind| kind == node.kind)
+    }
+
+    fn same_source(&self, source: &str, repo: &str) -> bool {
+        crate::source::declared_provenance(self.manifest, source).as_deref() == Some(repo)
+    }
+
+    /// The entry recorded for exactly this installation, source included.
+    fn entry(&self, by: &InstallRef) -> Option<&LockEntry> {
+        self.lock
+            .entries
+            .get(&crate::lock::entry_key(by.kind, &by.name, by.harness))
+            .filter(|entry| entry.source == by.source)
+    }
+
+    fn decide(&self, decisions: &mut BTreeMap<(ItemKind, String), Reach>) {
+        let nodes: BTreeSet<InstallRef> = match self.facts {
+            Facts::Read(read) => read.keys().cloned().collect(),
+            // Every installation the record names: entries, captured rows,
+            // and the ancestors their edges name, which may have neither.
+            Facts::Recorded(captured) => captured
+                .keys()
+                .map(|node| (*node).clone())
+                .chain(self.lock.entries.values().flat_map(|entry| {
+                    let edges = entry
+                        .reasons
+                        .iter()
+                        .chain(entry.requirer_rows().iter().flat_map(|row| &row.reasons));
+                    std::iter::once(install_ref(entry)).chain(edges.filter_map(
+                        |reason| match reason {
+                            Reason::RequiredBy { by } => Some(by.clone()),
+                            Reason::Requested | Reason::MemberOf { .. } => None,
+                        },
+                    ))
+                }))
+                .collect(),
+        };
+        // A selected node is walked as any ancestor is, but never cut as
+        // explicit; its declaration has already left the edited manifest.
+        for node in nodes.iter().filter(|node| self.selected(node)) {
+            let reach = self.walk(None, node, &mut Visited::new());
+            let key = (node.kind, node.name.clone());
+            let reach = match decisions.remove(&key) {
+                Some(old) => old.or(reach),
+                None => reach,
+            };
+            decisions.insert(key, reach);
+        }
+    }
+
+    fn reasons(
+        &self,
+        context: Option<&LockEntry>,
+        node: &InstallRef,
+        repo: &str,
+        reasons: &BTreeSet<Reason>,
+        visited: &mut Visited,
+    ) -> Reach {
+        let mut found = Reach::Unrooted;
+        for reason in reasons {
+            let next = match reason {
+                Reason::Requested => Reach::Unrooted,
+                Reason::MemberOf { bundle } => self.member(node, repo, bundle),
+                Reason::RequiredBy { by } => self.installation(context, by, visited),
+            };
+            found = found.or(next);
+            if matches!(found, Reach::Rooted) {
+                break;
+            }
+        }
+        found
+    }
+
+    /// A set roots its member only while the manifest still installs it on
+    /// the member's tool from the catalog it was read from. Two readings
+    /// bind the set's catalog to this edge: the member's own, when it was
+    /// read from the set's source, and the set's record. Either one that
+    /// matches roots it. With neither, only a live set reading that omits
+    /// this member proves it absent. Expansion may skip a named member
+    /// the catalog no longer offers, leaving no live ancestry for it.
+    fn member(&self, node: &InstallRef, repo: &str, bundle: &crate::lock::BundleRef) -> Reach {
+        let installs = self.manifest.bundles.get(&bundle.name).is_some_and(|decl| {
+            decl.source == bundle.source
+                && super::desired::target_harnesses(decl, self.manifest, node.kind, self.scope)
+                    .contains(&node.harness)
+        });
+        if !installs {
+            return Reach::Unrooted;
+        }
+        let readings = match self.facts {
+            Facts::Read(_) => crate::source::declared_provenance(self.manifest, &bundle.source)
+                .into_iter()
+                .collect::<Vec<_>>(),
+            Facts::Recorded(_) => (node.source == bundle.source)
+                .then(|| repo.to_owned())
+                .into_iter()
+                .chain(
+                    self.lock
+                        .bundles
+                        .get(&bundle.name)
+                        .filter(|set| set.source == bundle.source)
+                        .map(|set| set.source_repo.clone()),
+                )
+                .collect(),
+        };
+        if readings.is_empty() {
+            if self.read_bundles.get(bundle).is_some_and(|members| {
+                !members
+                    .iter()
+                    .any(|member| member.kind == node.kind && member.name == node.name)
+            }) {
+                Reach::Unrooted
+            } else {
+                Reach::Missing(Unread::Set(bundle.clone()))
+            }
+        } else if readings
+            .iter()
+            .any(|read_under| self.same_source(&bundle.source, read_under))
+        {
+            Reach::Rooted
+        } else {
+            Reach::Unrooted
+        }
+    }
+
+    fn installation(
+        &self,
+        context: Option<&LockEntry>,
+        by: &InstallRef,
+        visited: &mut Visited,
+    ) -> Reach {
+        if self.explicit(by) {
+            return Reach::Unrooted;
+        }
+        self.walk(context, by, visited)
+    }
+
+    /// Whether any reading of `by` roots it, each walked once. `context`
+    /// is the snapshot whose edge led here, which only an unrecorded `by`
+    /// reads.
+    fn walk(&self, context: Option<&LockEntry>, by: &InstallRef, visited: &mut Visited) -> Reach {
+        let readings = match self.readings(context, by) {
+            Readings::Of(readings) => readings,
+            Readings::Unrecorded { identity } => {
+                return if identity.is_some_and(|repo| self.declared(by, repo)) {
+                    Reach::Rooted
+                } else {
+                    Reach::Missing(Unread::Ancestor {
+                        ancestor: by.clone(),
+                        held: context
+                            .filter(|record| {
+                                super::removal::edit_holds(self.env, self.scope, record)
+                            })
+                            .map(install_ref),
+                    })
+                };
+            }
+        };
+        let entry = readings.iter().find_map(|reading| match reading.recorder {
+            Recorder::Entry(entry) => Some(entry),
+            Recorder::Read | Recorder::Row(_) => None,
+        });
+        // A hold kept every reading as it was, so none can say what the
+        // catalogs' newer reading would root.
+        let kept = readings
+            .iter()
+            .map(|reading| reading.recorder.kept_as_was())
+            .collect::<Option<Vec<_>>>()
+            .and_then(|kept| kept.first().copied());
+        let mut found = Reach::Unrooted;
+        for reading in readings {
+            let next = if self.declared(by, reading.repo) {
+                Reach::Rooted
+            } else if visited.insert((reading.recorder.visit(), by.clone())) {
+                self.reasons(
+                    reading.recorder.context(),
+                    by,
+                    reading.repo,
+                    reading.reasons,
+                    visited,
+                )
+            } else {
+                Reach::Unrooted
+            };
+            found = found.or(next);
+            if matches!(found, Reach::Rooted) {
+                break;
+            }
+        }
+        if !matches!(found, Reach::Unrooted) {
+            return found;
+        }
+        // An edit on disk holds the entry even before an apply marks it.
+        let edited = entry.filter(|entry| super::removal::edit_holds(self.env, self.scope, entry));
+        match edited.or(kept) {
+            Some(held) => Reach::Missing(Unread::Held(install_ref(held))),
+            None => found,
+        }
+    }
+
+    /// The one answer to which readings speak for an installation: read
+    /// now, the catalogs' row; recorded, its own entry and every captured
+    /// row for it, wherever the walk arrived from. A snapshot without a row
+    /// gives no evidence while another holds one.
+    fn readings<'f>(&'f self, context: Option<&'f LockEntry>, by: &InstallRef) -> Readings<'f> {
+        let captured = match self.facts {
+            Facts::Read(read) => {
+                return Readings::Of(
+                    read.get(by)
+                        .map(|row| Reading {
+                            recorder: Recorder::Read,
+                            repo: &row.source_repo,
+                            reasons: &row.reasons,
+                        })
+                        .into_iter()
+                        .collect(),
+                );
+            }
+            Facts::Recorded(captured) => captured,
+        };
+        let installed = self.entry(by).map(|entry| Reading {
+            recorder: Recorder::Entry(entry),
+            repo: &entry.source_repo,
+            reasons: &entry.reasons,
+        });
+        let rows = captured
+            .get(by)
+            .into_iter()
+            .flatten()
+            .map(|(dependent, row)| Reading {
+                recorder: Recorder::Row(dependent),
+                repo: &row.source_repo,
+                reasons: &row.reasons,
+            });
+        let readings: Vec<_> = installed.into_iter().chain(rows).collect();
+        if !readings.is_empty() {
+            return Readings::Of(readings);
+        }
+        // The identity it would be read under still proves a declaration.
+        let identity = context
+            .filter(|context| context.source == by.source)
+            .map(|context| context.source_repo.as_str())
+            .or_else(|| {
+                self.lock
+                    .sources
+                    .get(&by.source)
+                    .map(|source| source.repo.as_str())
+            });
+        Readings::Unrecorded { identity }
+    }
+
+    fn declared(&self, by: &InstallRef, repo: &str) -> bool {
+        self.manifest
+            .declared(by.kind)
+            .get(&by.name)
+            .is_some_and(|decl| {
+                decl.source == by.source
+                    && self.same_source(&by.source, repo)
+                    && super::desired::target_harnesses(decl, self.manifest, by.kind, self.scope)
+                        .contains(&by.harness)
+            })
+    }
+}
+
+fn install_ref(entry: &LockEntry) -> InstallRef {
+    InstallRef {
+        source: entry.source.clone(),
+        kind: entry.kind,
+        name: entry.name.clone(),
+        harness: entry.harness,
+    }
 }
 
 /// The catalogs behind what is going away that cannot be read right now.

@@ -1,6 +1,7 @@
 """Jarvis mail acquisition and the single durable event-batch owner."""
 import argparse
 import base64
+from collections import namedtuple
 from concurrent.futures import ThreadPoolExecutor
 import datetime
 import fcntl
@@ -24,6 +25,87 @@ BATCH_KEY = "jarvis-"
 # The owner's note fixes both numbers; no consumer has asked to tune them.
 OWNER_WAIT_SECS = 600
 UNANSWERED_EVERY_SECS = 300
+FORWARD_EVERY_SECS = 60
+# A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
+# invalid value is still a satellite, so a typo never makes a second main.
+Role = namedtuple("Role", "kind dest home")
+# user is the account every command on that host runs as: owner-note's
+# listing and send, and the loop's mail and presence passes. None is the SSH
+# user.
+Destination = namedtuple("Destination", "key host user")
+
+
+class DestinationRefusal(Exception):
+    """A destination selection refusal: key, value and optional cause."""
+
+
+def destinations(settings):
+    """The main's declared machines; a satellite never discovers fleet roots."""
+    local = Destination("local", None, None)
+    if role(settings).kind != "main":
+        return (local,)
+    hosts = []
+    control = settings.get("JARVIS_CONTROL_HOST", "")
+    if control:
+        hosts.append(control)
+    for host in settings.get("JARVIS_REMOTE_HOSTS", "").split():
+        if not re.fullmatch(r"[^\s:/-][^\s:/]*", host):
+            raise DestinationRefusal("setting-invalid", "JARVIS_REMOTE_HOSTS", host)
+        if host not in hosts:
+            hosts.append(host)
+    user = settings.get("JARVIS_CONTROL_USER", "") or None
+    return (local, *(Destination("ssh:" + host, host, user if host == control else None) for host in hosts))
+
+
+def host_args(destination, command):
+    """The ssh argv that runs the shell text COMMAND on the destination's host, as its user where it names one.
+    COMMAND's stdin is the ssh child's stdin on either route."""
+    if destination.user:
+        # sudo -n refuses rather than prompts. sudo -i would hand the command
+        # to the login shell with each `$` unescaped, so "$1" inside it
+        # expands there (sudo 1.9.15p5); bash -l is that login, from that
+        # user's home, with every argument kept verbatim.
+        command = "sudo -n -H -u %s -- bash -l -c %s" % (shlex.quote(destination.user), shlex.quote("cd && " + command))
+    return ["ssh", destination.host, command]
+
+
+def destination_roots(destination):
+    if destination.host:
+        return listed_roots(checked(host_args(destination, "kendex project list"), operation="project-list"))
+    return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
+
+
+def note_routes(settings, repo, host=None, local=False):
+    """Select without sending; only the legacy route discovers its fallback lazily."""
+    declared = destinations(settings)
+    if host is not None or local:
+        key = "ssh:" + host if host is not None else "local"
+        selected = [target for target in declared if target.key == key]
+        if not selected:
+            raise DestinationRefusal("destination-unknown", host)
+    else:
+        selected = list(declared)
+    legacy = host is None and not local and len(declared) == (2 if settings.get("JARVIS_CONTROL_HOST") else 1)
+    if legacy:
+        selected.reverse()
+    matches = []
+    for target in selected:
+        try:
+            roots = [root for root in destination_roots(target) if root.rstrip("/").rsplit("/", 1)[-1] == repo]
+        except Failure as error:
+            side = "host" if legacy and target.host else target.key
+            raise DestinationRefusal("project-list-failed", side, str(error)) from error
+        if len(roots) > 1:
+            raise DestinationRefusal("repo-ambiguous", repo, "destination=%s roots=%s" % (target.key, " ".join(roots)))
+        if legacy:
+            if roots:
+                yield target, roots[0], True
+        else:
+            matches.extend((target, root) for root in roots)
+    if not legacy:
+        if len(matches) > 1:
+            raise DestinationRefusal("repo-ambiguous", repo, " ".join("%s:%s" % (target.key, root) for target, root in matches))
+        yield from ((target, root, False) for target, root in matches)
 
 
 class Failure(RuntimeError):
@@ -48,23 +130,24 @@ def child_failure(operation, result):
     if first.startswith("jarvis: failure="):
         record = json.loads(first[len("jarvis: failure="):])
         return Failure(*record["key"], record["detail"])
-    keyed = re.match(r"^(?:lane-mail|kendex|jarvis): ([a-z][a-z0-9-]*)=", first)
+    # owner-note and forward prefix the refusals their host scripts print.
+    keyed = re.match(r"^(?:lane-mail|kendex|jarvis|owner-note|forward): ([a-z][a-z0-9-]*)=", first)
     return Failure(operation, "refusal" if keyed else "exit",
                    keyed[1] if keyed else result.returncode, detail)
 
 
-def run(args, cwd=None, data=None, operation=None):
+def run(args, cwd=None, data=None, operation=None, timeout=60):
     try:
         return subprocess.run(list(map(str, args)), cwd=cwd, input=data,
                               text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              timeout=60)
+                              timeout=timeout)
     except (OSError, subprocess.SubprocessError) as error:
         raise failure(operation or Path(args[0]).name, error) from error
 
 
-def checked(args, cwd=None, data=None, operation=None):
+def checked(args, cwd=None, data=None, operation=None, timeout=60):
     operation = operation or Path(args[0]).name
-    result = run(args, cwd, data, operation)
+    result = run(args, cwd, data, operation, timeout)
     if result.returncode:
         raise child_failure(operation, result)
     return result.stdout
@@ -97,6 +180,17 @@ def owner_row(envelope):
 
 def config(bash, root):
     return json.loads(checked([bash, LIB / "jarvis-env.sh", "config", root]))
+
+
+def role(settings):
+    """JARVIS_MAIN_HOST, empty or DEST:/abs/home, as this machine's Role."""
+    value = settings["JARVIS_MAIN_HOST"]
+    if not value:
+        return Role("main", None, None)
+    match = re.fullmatch(r"([^\s:/-][^\s:/]*):(/.*)", value)
+    if not match or not match[2].isprintable():
+        return Role("invalid", None, None)
+    return Role("satellite", match[1], match[2])
 
 
 def line_value(value, token=False, limit=None):
@@ -146,6 +240,12 @@ def atomic_json(path, value):
             raise
     try:
         os.replace(temporary, path)
+        # Reclamation may overwrite the log only after this state is durable.
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -204,10 +304,10 @@ def listed_roots(text):
 
 def project_roots():
     try:
-        roots = checked(["kendex", "project", "list"], operation="project-list")
+        roots = destination_roots(Destination("local", None, None))
     except Failure as error:
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
-    return [Path(root).expanduser().resolve() for root in listed_roots(roots)]
+    return [Path(root).expanduser().resolve() for root in roots]
 
 
 def presence_roots(permitted):
@@ -224,7 +324,10 @@ def presence_roots(permitted):
 
 def pass_output(side, roots, events):
     body, origins, size = [], [], 0
-    for root, block in events:
+    for root, block, *binding in events:
+        if root is not None:
+            header, separator, tail = block.partition("\n")
+            block = header + " destination=" + line_value(side, True) + " root=" + line_value(binding[0] if binding else root, True) + separator + tail
         end = size + len(block.encode())
         origins.append([size, end, str(root)] if root is not None else [size, end, None])
         body.append(block)
@@ -238,6 +341,45 @@ def lane_mail():
     return LIB.parents[2] / "mailbox/scripts/lane-mail"
 
 
+def mailbox_header(line):
+    """The `count=N first=ID` header lane-mail's drain and events print, as (count, first), or None."""
+    match = re.fullmatch(r"count=(\d+) first=(\S*)", line)
+    return (int(match[1]), match[2]) if match else None
+
+
+def mailbox_receipts(lines):
+    """`drain --receipts` output as (index, cursor, count, rows).
+
+    index is the receipts line's, cursor its value or None where it reads
+    `missed`, count to-lane's logical line count, and rows each listed
+    directive as (line, id, epoch), epoch None where its `at` did not parse.
+    """
+    index = next((i for i, row in enumerate(lines) if row.startswith("receipts ")), None)
+    match = re.fullmatch(r"receipts cursor=(\d+|missed) count=(\d+) first=\S*", lines[index]) if index is not None else None
+    if not match:
+        raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
+    rows = []
+    for row in lines[index + 1:]:
+        parts = row.split(" ")
+        if len(parts) == 3 and parts[0].isdigit() and (parts[2].isdigit() or not parts[2]):
+            rows.append((int(parts[0]), parts[1], int(parts[2]) if parts[2] else None))
+    return index, None if match[1] == "missed" else int(match[1]), int(match[2]), rows
+
+
+def send_receipt(result, key):
+    """A `lane-mail send --delivery-id KEY` result as (id, repeated), or None with no receipt.
+
+    A new append prints `sent` and exits 0; a key the mailbox already holds
+    refuses `delivery-repeated`, naming the envelope that landed.
+    """
+    if result.returncode == 0:
+        match = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
+    else:
+        match = re.search(r"^lane-mail: delivery-repeated=" + re.escape(key) + r" id=([^\s]+)(?:\s|$)",
+                          result.stderr, re.M)
+    return (match[1], result.returncode != 0) if match else None
+
+
 def mailbox_events(bash, root, box, after=0, mark_read=False):
     """One `lane-mail events --item overseer --box` read in root, as (count, rows)."""
     operation = "mailbox-events-" + box
@@ -245,10 +387,10 @@ def mailbox_events(bash, root, box, after=0, mark_read=False):
     if mark_read:
         args.append("--mark-read")
     lines = checked(args, root, operation=operation).split("\n")
-    header = re.fullmatch(r"count=(\d+) first=.*", lines[0])
+    header = mailbox_header(lines[0])
     if not header:
         raise Failure("mailbox-read", "protocol", "events-header-unread", "events-header-unread")
-    return int(header[1]), [json.loads(row) for row in lines[1:] if row]
+    return header[0], [json.loads(row) for row in lines[1:] if row]
 
 
 def owner_unread(bash, root, cursor, count, now, reported, events):
@@ -262,23 +404,98 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     return [row["id"] for row in owned]
 
 
-def mail_pass(bash, home, side, cursor):
+def mailbox_root(bash, root):
+    """The checkout whose overseer mailbox lane-mail reads at root."""
+    if not root.is_dir():
+        raise Failure("root-read", "missing", "root", "root-missing")
+    if not lane_mail().is_file():
+        raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
+    return Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
+
+
+def mailbox_readers(bash, roots):
+    """Each root as (root, mailbox checkout or read failure, the root that reads that mailbox).
+
+    A project registered inside another's git tree resolves to the outer
+    mailbox. The mailbox's own checkout reads it, else the first listed
+    root; a failed root reads for itself, to report the failure. A listed
+    home is always its mailbox's own checkout: home_root takes its git top
+    level, and `kendex project list` notes a linked worktree, which
+    listed_roots skips.
+    """
+    resolved = []
+    for root in roots:
+        try:
+            resolved.append((root, mailbox_root(bash, root)))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            resolved.append((root, failure("root-read", error)))
+    reader = {}
+    for index, (root, common) in enumerate(resolved):
+        if isinstance(common, Path):
+            rank = (root != common, index)
+            if common not in reader or rank < reader[common][0]:
+                reader[common] = (rank, root)
+    return [(root, common, reader[common][1] if isinstance(common, Path) else root) for root, common in resolved]
+
+
+def mailbox_cursor(state, key, mailbox, own_lane):
+    """The record of root key as the reader of mailbox, its cursors handed over from the last reader.
+
+    The last reader's record carries `mailbox`. Its box cursors and unread
+    marker follow the mailbox, so a new reader delivers no row twice. A
+    record no reader carries keeps its own. With own_lane the to-lane
+    cursor stays the root's own: a local home's to-lane read emits no
+    event, so rereading from its own cursor repeats none, and it delivers
+    the owner rows a stand-in's to-lane read, which emits answers alone,
+    skipped.
+    """
+    record = dict(state.get(key, {}))
+    last = next((other for other, value in state.items() if other != key and value.get("mailbox") == mailbox), None)
+    if last is not None:
+        for field in ("to-overseer", "unread") if own_lane else ("to-lane", "to-overseer", "unread"):
+            if field in state[last]:
+                record[field] = state[last][field]
+            else:
+                record.pop(field, None)
+        state[last] = {field: value for field, value in state[last].items() if field != "mailbox"}
+    record["mailbox"] = mailbox
+    return record
+
+
+def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
+    """One pass over every root. A local home read adds each owner row it reads to delivered.
+
+    A satellite is no fleet contact: it reads its own home alone, as a
+    registered home, so its session gets its own mail and owner-unread.
+    """
     state = json.loads(json.dumps(cursor))
     events = []
     now = epoch()
-    for root in project_roots():
+    roots = [home] if satellite else project_roots()
+    # A home the project list omits (unregistered, removed, or a noted
+    # worktree row) still receives owner mail. Its to-lane alone is read for
+    # those rows: no mail event, no to-overseer mark-read, no receipts.
+    alone = side == "local" and home not in roots
+    readers = mailbox_readers(bash, roots)
+    if alone:
+        # Its to-lane read takes owner rows alone, so it never replaces a
+        # listed root's full read of a shared mailbox, nor takes its cursors.
+        readers += mailbox_readers(bash, [home])
+    for root, common, reader in readers:
+        if reader != root:
+            continue
+        boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
+        if isinstance(common, Path) and len(boxes) > 1:
+            prior = mailbox_cursor(state, key, str(common), side == "local" and root == home)
         next_root = json.loads(json.dumps(prior))
         cause = None
-        root_events = []
+        root_events, root_delivered = [], []
         try:
-            if not root.is_dir():
-                raise Failure("root-read", "missing", "root", "root-missing")
-            if not lane_mail().is_file():
-                raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
-            common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
-            for box in ("to-lane", "to-overseer"):
+            if not isinstance(common, Path):
+                raise common
+            for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
                 size_read = run(["wc", "-c", str(filename)])
@@ -290,7 +507,11 @@ def mail_pass(bash, home, side, cursor):
                 next_root[box] = {"count": count, "size": size}
                 for envelope in envelopes:
                     if box == "to-lane":
-                        if (side == "local" and root == home) or envelope.get("kind") != "answer":
+                        if side == "local" and root == home:
+                            if owner_row(envelope):
+                                root_delivered.append({"id": envelope["id"], "at": envelope["at"]})
+                            continue
+                        if envelope.get("kind") != "answer":
                             continue
                         metadata = "%s %s re %s" % tuple(line_value(value, True) for value in
                             (envelope["id"], envelope["kind"], envelope.get("re", "")))
@@ -301,35 +522,33 @@ def mail_pass(bash, home, side, cursor):
                             envelope["id"], envelope["kind"], envelope.get("ref") or "",
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
-                    root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
-            receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
-            index = next((i for i, row in enumerate(receipts) if row.startswith("receipts ")), None)
-            if index is None:
-                raise Failure("mailbox-read", "protocol", "receipts-unread", "receipts-unread")
-            receipt = re.fullmatch(r"receipts cursor=(\d+) count=(\d+) first=.*", receipts[index])
-            if not receipt:
-                raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
-            unread = []
-            for row in receipts[index + 1:]:
-                parts = row.split()
-                if len(parts) == 3 and int(parts[0]) > int(receipt[1]):
-                    unread.append(parts)
-            if side == "local" and root == home:
-                # Only the home inbox's receipts say whether owner mail was read.
-                owned = owner_unread(bash, root, int(receipt[1]), int(receipt[2]), now,
-                                     prior.get("owner_unread", []), root_events)
-                if owned:
-                    next_root["owner_unread"] = owned
+                    root_events.append((root, event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n"))
+            if len(boxes) > 1:
+                receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
+                _, cursor_read, lane_count, listed = mailbox_receipts(receipts)
+                if cursor_read is None:
+                    raise Failure("mailbox-read", "protocol", "receipts-missed", "receipts-missed")
+                unread = [row for row in listed if row[2] is not None and row[0] > cursor_read]
+                if side == "local" and root == home:
+                    # Only the home inbox's receipts say whether owner mail was read.
+                    unread_events = []
+                    owned = owner_unread(bash, root, cursor_read, lane_count, now,
+                                         prior.get("owner_unread", []), unread_events)
+                    # Page admission binds the shared mailbox; batch origins
+                    # and acquisition cursors still belong to this home.
+                    root_events.extend((common, block) for block in unread_events)
+                    if owned:
+                        next_root["owner_unread"] = owned
+                    else:
+                        next_root.pop("owner_unread", None)
+                if unread and now - int(unread[0][2]) >= 900:
+                    oldest = unread[0][1]
+                    if prior.get("unread") != oldest:
+                        root_events.append((root, event("overseer-unread", repo=root.name, unread=len(unread),
+                                                       oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min")))
+                    next_root["unread"] = oldest
                 else:
-                    next_root.pop("owner_unread", None)
-            if unread and now - int(unread[0][2]) >= 900:
-                oldest = unread[0][1]
-                if prior.get("unread") != oldest:
-                    root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
-                                             oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
-                next_root["unread"] = oldest
-            else:
-                next_root.pop("unread", None)
+                    next_root.pop("unread", None)
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             cause = failure("root-read", error).record
         if cause:
@@ -341,8 +560,19 @@ def mail_pass(bash, home, side, cursor):
             # A failed root read commits neither of its box cursors.
         else:
             next_root.pop("cause", None)
-            events.extend((root, block) for block in root_events)
+            events.extend((root, block, binding) for binding, block in root_events)
+            if delivered is not None:
+                delivered.extend(root_delivered)
         state[key] = next_root
+    # A root whose mailbox another root reads has no read outcome of its
+    # own: its record takes the reader's outcome from this pass, so no field
+    # goes stale while the other root reads.
+    for root, _, reader in readers:
+        if reader != root:
+            read = state[str(reader)]
+            record = {"cause": read["cause"]} if "cause" in read else {}
+            if record or str(root) in state:
+                state[str(root)] = record
     return pass_output(side, state, events)
 
 
@@ -384,19 +614,46 @@ def complete_blocks(data, offset):
 
 
 class Watch:
-    def __init__(self, home, bash, settings):
+    def __init__(self, home, bash, settings, initial_passes=None):
         self.home, self.bash, self.settings = home, bash, settings
         self.directory = Path(os.path.expanduser(settings["JARVIS_LOG_DIR"]))
         self.directory.mkdir(parents=True, exist_ok=True)
         self.log = self.directory / "events.log"
         self.path = self.directory / "batch.json"
+        self.destinations = destinations(settings)
+        seeds = self.initial_cursors(initial_passes) if initial_passes is not None else None
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {
             "generation": uuid.uuid4().hex, "offset": 0, "spans": [], "due": None, "pending": None}
         self._saved = json.loads(json.dumps(self.state)) if self.path.exists() else None
+        # Recovery must precede migration saves and decoding a possibly overwritten log.
+        if "reclaim" in self.state:
+            with self.log.open("r+b") as source:
+                fcntl.flock(source, fcntl.LOCK_EX)
+                self.recover_reclaim(source)
+        if seeds is not None:
+            # Include the whole vector in the first save, even the legacy binding save.
+            self.state["cursors"] = seeds
+        if not self.state.get("legacy_control_host") and settings.get("JARVIS_CONTROL_HOST"):
+            # Old host cursors contain no alias. Keep the original setting
+            # through this first upgrade; the frozen binding owns old tails.
+            self.state["legacy_control_host"] = settings["JARVIS_CONTROL_HOST"]
+            self.save()
         if not self.path.exists():
             self.save()
         self.cursors = self.state.get("cursors", {})
         self.state["cursors"] = self.cursors
+        legacy = self.destination_key("host")
+        if legacy != "host":
+            if "host" in self.cursors:
+                self.cursors[legacy] = self.cursors.pop("host")
+            if "host_failure" in self.state:
+                self.state[legacy + "_failure"] = self.state.pop("host_failure")
+            failures = self.state.get("presence_failures", {})
+            if "host" in failures:
+                failures[legacy] = failures.pop("host")
+                if "host" in failures[legacy]:
+                    failures[legacy][legacy] = failures[legacy].pop("host")
+            self.state["spans"] = [self.canonical_span(span) for span in self.state["spans"]]
         if self.log.exists():
             with self.log.open("rb") as source:
                 fcntl.flock(source, fcntl.LOCK_SH)
@@ -408,6 +665,56 @@ class Watch:
         self.unanswered_pending = None
         self.report_pending = None
         self.next_report = 0
+        self.relay_pending = None
+        self.next_relay = 0
+        self.satellite = role(settings).kind != "main"
+        self.forward_pending = None
+        self.next_forward = 0
+        self.mail_pending = {}
+
+    def initial_cursors(self, paths):
+        # Explicit adoption cannot enter ordinary migration or log recovery.
+        for path in (self.path, self.log):
+            if path.exists():
+                raise Failure("initial-pass", "refusal", "state-exists", str(path))
+        seeds = {}
+        for path in paths:
+            try:
+                data = Path(path).read_bytes()
+                _, _, records = decode_log(data, 0)
+                if len(records) != 1 or records[0][0] != len(data):
+                    raise ValueError("complete single pass required")
+                record = records[0][1]
+                if record.get("event_bytes") != data.rfind(b"\ncursor: ") + 1 or not isinstance(record.get("roots"), dict):
+                    raise ValueError("public pass footer required")
+                side, roots = record["side"], record["roots"]
+                if not isinstance(side, str):
+                    raise ValueError("destination key required")
+                if not all(isinstance(root, dict) for root in roots.values()):
+                    raise ValueError("root record required")
+            except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
+                raise Failure("initial-pass", "refusal", "pass-unread", "%s: %s" % (path, error)) from error
+            if side not in {target.key for target in self.destinations}:
+                raise Failure("initial-pass", "refusal", "destination-unknown", "%s: %s" % (path, side))
+            if side in seeds:
+                raise Failure("initial-pass", "refusal", "destination-repeated", "%s: %s" % (path, side))
+            if any("cause" in root for root in roots.values()):
+                raise Failure("initial-pass", "refusal", "root-failed", str(path))
+            seeds[side] = roots
+        return seeds
+
+    def destination_key(self, side):
+        host = self.state.get("legacy_control_host")
+        return "ssh:" + host if side == "host" and host else side
+
+    def destination(self, side):
+        key = self.destination_key(side)
+        return next(target for target in self.destinations if target.key == key)
+
+    def canonical_span(self, span):
+        if len(span) == 3:
+            return [*span[:2], [self.destination_key(span[2][0]), span[2][1]]]
+        return span
 
     def save(self):
         if self.state != self._saved:
@@ -421,13 +728,88 @@ class Watch:
         source.seek(start)
         spans, end, records = decode_log(source.read(), start)
         if self.state["pending"] is None:
-            self.state["spans"].extend(span for span in spans if span[0] >= offset)
+            self.state["spans"].extend(self.canonical_span(span) for span in spans if span[0] >= offset)
             self.state["offset"] = end
         for at, record in records:
             if at > checkpoint:
-                self.cursors[record["side"]] = record["roots"]
+                self.cursors[self.destination_key(record["side"])] = record["roots"]
                 self.state["cursor_offset"] = at
         self.state["cursor_offset"] = max(self.state.get("cursor_offset", 0), end)
+
+    def commit_reclaim(self, cut):
+        self.state["log_base"] = self.state.get("log_base", 0) + cut
+        for field in ("offset", "cursor_offset"):
+            self.state[field] -= cut
+        self.state["spans"] = [[span[0] - cut, span[1] - cut, *span[2:]]
+                               for span in self.state["spans"]]
+        del self.state["reclaim"]
+        self.save()
+
+    def recover_reclaim(self, source):
+        transaction = self.state["reclaim"]
+        end = transaction["end"]
+        source.seek(end)
+        marked = source.read(1) == b"\x00"
+        phase = transaction["phase"]
+        # A restarted process can see unsynced log changes in page cache.
+        # Synchronize before retiring their recovery record in either branch.
+        if phase == "ready" and not marked:
+            # Truncate removed the marker. Never overwrite subsequent consumer appends.
+            os.fsync(source.fileno())
+            self.commit_reclaim(transaction["cut"])
+            return
+        if phase == "ready":
+            source.seek(transaction["cut"])
+            source.write(base64.b64decode(transaction["suffix"]))
+            source.flush()
+        elif phase != "prepared":
+            raise RuntimeError("reclaim-phase-invalid: " + str(phase))
+        os.fsync(source.fileno())
+        # The undo image restores old coordinates. The owner-only marker is
+        # below both checkpoints and outside every live event span.
+        self.state["offset"] = self.state["cursor_offset"] = end + int(marked)
+        del self.state["reclaim"]
+        self.save()
+
+    def reclaim(self):
+        if self.state["pending"] is not None or not self.log.exists():
+            return
+        # Keep the inode: a consumer may have opened it before waiting for this lock.
+        with self.log.open("r+b") as source:
+            fcntl.flock(source, fcntl.LOCK_EX)
+            self.ingest(source)
+            self.save()
+            end = source.seek(0, os.SEEK_END)
+            # Open blocks and non-LF fragments pin all bytes until their real boundary.
+            if self.state["offset"] != end or self.state.get("cursor_offset", 0) != end:
+                return
+            cut = min((span[0] for span in self.state["spans"]), default=end)
+            # Each pass copies the retained suffix. Waiting until the retired
+            # prefix is at least that large keeps a backlog drain linear.
+            if not cut or end - cut > cut:
+                return
+            source.seek(cut)
+            suffix = source.read()
+            # Consumer appends need not sync; persist the snapshot before preparing undo.
+            os.fsync(source.fileno())
+            self.state["reclaim"] = {"phase": "prepared", "cut": cut, "end": end,
+                                     "suffix": base64.b64encode(suffix).decode()}
+            self.save()
+            # Supported producers escape NUL. Its position distinguishes an
+            # interrupted overwrite from a completed cut followed by appends.
+            source.seek(end)
+            source.write(b"\x00")
+            source.flush()
+            os.fsync(source.fileno())
+            self.state["reclaim"]["phase"] = "ready"
+            self.save()
+            source.seek(0)
+            source.write(suffix)
+            source.flush()
+            os.fsync(source.fileno())
+            source.truncate(len(suffix))
+            os.fsync(source.fileno())
+            self.commit_reclaim(cut)
 
     def append(self, output):
         data = output.encode()
@@ -461,6 +843,7 @@ class Watch:
             if not eligible:
                 self.state["due"] = None
                 self.save()
+                self.reclaim()
                 return
             if self.state["due"] is None:
                 self.state["due"] = now + int(self.settings["JARVIS_WAKE_SETTLE_SECS"])
@@ -481,7 +864,9 @@ class Watch:
                     retained.append(span)
             if not selected:
                 raise RuntimeError("event-too-large limit=61440")
-            identity = json.dumps([self.state["generation"], selected]).encode()
+            base = self.state.get("log_base", 0)
+            logical = [[span[0] + base, span[1] + base, *span[2:]] for span in selected]
+            identity = json.dumps([self.state["generation"], logical]).encode()
             self.state["pending"] = {"key": BATCH_KEY + hashlib.sha256(identity).hexdigest(),
                                      "body": body.decode(), "retained": retained, "end": end}
             # Selection is durable before the mailbox append. A retry uses
@@ -497,16 +882,14 @@ class Watch:
             except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                 print("watch-loop: send=pending " + str(error), file=sys.stderr)
                 return
-        sent = re.search(r"^lane-mail: sent item=overseer id=([^\s]+)(?:\s|$)", result.stdout, re.M)
-        repeated = re.search(r"^lane-mail: delivery-repeated=" + re.escape(pending["key"]) +
-                             r" id=([^\s]+)(?:\s|$)", result.stderr, re.M)
-        receipt = sent if result.returncode == 0 else repeated
+        receipt = send_receipt(result, pending["key"])
         if not receipt:
             print("watch-loop: send=pending " + result.stderr.strip(), file=sys.stderr)
             return
-        self.state.update(spans=pending["retained"], pending=None, due=None)
+        self.state.update(spans=[self.canonical_span(span) for span in pending["retained"]], pending=None, due=None)
         self.save()
-        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[1] + " inbox=overseer", flush=True)
+        self.reclaim()
+        print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):
         try:
@@ -552,9 +935,9 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return ("python3 -c " + shlex.quote(bootstrap) + " \"$BASH\" " + shlex.join(args) +
                 " 3<<'jarvis-files'\n" + json.dumps(files) + "\njarvis-files\n")
 
-    def remote(self, host):
-        args = ["--side", "host", "--cursor", json.dumps(self.cursors.get("host", {}))]
-        return run(["ssh", host, "bash -s"], data=self.remote_command(args))
+    def remote(self, destination):
+        args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {}))]
+        return run(host_args(destination, "bash -s"), data=self.remote_command(args))
 
     def presence(self, side):
         try:
@@ -570,13 +953,14 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             return [(None, "failed", failure("presence-" + side, error).record)]
 
     def _presence(self, side):
+        destination = self.destination(side)
         permitted = self.live
-        if side == "local":
+        if destination.host is None:
             return presence_roots(permitted)
         # Each host operation requests current local permission. The host
         # supplies the touch timestamp before its final permission request.
         with tempfile.TemporaryFile(mode="w+") as errors:
-            process = subprocess.Popen(["ssh", self.settings["JARVIS_CONTROL_HOST"], "bash -s"],
+            process = subprocess.Popen(host_args(destination, "bash -s"),
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
                                        text=True, bufsize=1)
             try:
@@ -611,20 +995,21 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
                     process.kill()
                 process.wait()
 
-    def acquire(self, now):
-        outputs = []
+    def acquire(self, now, side="local"):
+        """One destination's pass, accepted independently by the loop thread."""
+        destination = self.destination(side)
         try:
-            outputs.append(("local", mail_pass(self.bash, self.home, "local", self.cursors.get("local", {})), None))
+            delivered = []
+            if destination.host is None:
+                output = mail_pass(self.bash, self.home, side, self.cursors.get(side, {}), delivered, self.satellite)
+            else:
+                result = self.remote(destination)
+                if result.returncode:
+                    raise child_failure("host-pass", result)
+                output = result.stdout
+            return [(side, output, None, delivered)]
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            outputs.append(("local", None, failure("local-pass", error).record))
-        host = self.settings["JARVIS_CONTROL_HOST"]
-        if host:
-            try:
-                result = self.remote(host)
-                outputs.append(("host", result.stdout, child_failure("host-pass", result).record if result.returncode else None))
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-                outputs.append(("host", None, failure("host-pass", error).record))
-        return outputs
+            return [(side, None, failure("host-pass" if destination.host else "local-pass", error).record, [])]
 
     def report(self):
         try:
@@ -648,11 +1033,77 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             if result and report_key(result) != self.cursors.get("report", {}).get("event"):
                 self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
 
+    def relay_status(self):
+        try:
+            output = checked([self.bash, LIB.parents[2] / "slack/scripts/slack", "listen",
+                              "--status", "--root", self.home], self.home, operation="relay-status")
+            # Slack's public state owns freshness and the reconnect bound.
+            match = re.fullmatch(re.escape("slack: slack-relay=" + str(self.home.resolve())) +
+                                 r" state=(ok|failing|stale|never)(?: [^\n]*)?\n", output)
+            if not match:
+                raise Failure("relay-status", "protocol", "status-unread", output)
+            return match[1], output.rstrip("\n")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("relay-status", error)
+
+    def accept_relay(self, result):
+        prior = self.cursors.get("relay", {})
+        state = dict(prior)
+        blocks = []
+        if isinstance(result, Failure):
+            if prior.get("unavailable") != result.record["key"]:
+                blocks.append((None, event("relay-unavailable", home=self.home, cause=result.record["detail"])))
+            state["unavailable"] = result.record["key"]
+        else:
+            current, detail = result
+            previous = prior.get("state")
+            if current != "ok" and (previous is None or previous == "ok"):
+                blocks.append((None, event("relay-down", home=self.home, state=current, detail=detail)))
+            elif current == "ok" and previous is not None and previous != "ok":
+                blocks.append((None, event("relay-up", home=self.home, state=current)))
+            state = {"state": current}
+        # The log footer checkpoints transitions even across an interrupted
+        # state write; an unreadable status never replaces the last reading.
+        self.append(pass_output("relay", state, blocks))
+
+    def forward(self):
+        try:
+            return checked([self.bash, LIB.parent / "jarvis-session", "forward-drain", "--home", self.home],
+                           self.home, operation="forward-drain")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("forward-drain", error)
+
+    def accept_forward(self, result):
+        if isinstance(result, Failure):
+            self.failed_pass("forward", result.record)
+            return
+        self.state.pop("forward_failure", None)
+        blocks = [block for block in re.split(r"(?m)^(?=EVENT )", result) if block]
+        if not all(block.startswith("EVENT ") and block.endswith("\n") for block in blocks):
+            self.failed_pass("forward", Failure("forward-drain", "protocol", "output-unread", result[:200]).record)
+            return
+        headers = [block.split("\n", 1)[0] for block in blocks]
+        # The drain prints every open block on each run; the pass cursor keeps
+        # the headers already appended, so a restart appends none twice.
+        emitted = set(self.cursors.get("forward", {}).get("emitted", []))
+        self.append(pass_output("forward", {"emitted": headers},
+                                [(None, block) for block, header in zip(blocks, headers) if header not in emitted]))
+        self.save()
+
     def accept(self, outputs):
-        for side, output, failure in outputs:
+        for side, output, failure, delivered in outputs:
             if failure is not None:
                 self.failed_pass(side, failure)
             else:
+                if delivered:
+                    # A delivered owner row waits for coverage. It is saved
+                    # before the pass cursor moves past it, so a restart
+                    # rereads it rather than losing it; ids merge once.
+                    waiting = self.state.setdefault("unanswered", {"reported": [], "failed": False}) \
+                        .setdefault("pending", [])
+                    known = {row["id"] for row in waiting}
+                    waiting.extend(row for row in delivered if row["id"] not in known)
+                    self.save()
                 self.append(output)
                 self.state.pop(side + "_failure", None)
                 self.save()
@@ -661,50 +1112,97 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         self.accept(outputs)
         self.batch(now)
 
-    def unanswered(self):
-        """One owner-unanswered check as (rows, None) or (None, failure record)."""
-        try:
-            output = checked([self.bash, LIB.parent / "owner-unanswered", "--root", self.home,
-                              "--older", str(OWNER_WAIT_SECS // 60)], self.home, operation="owner-unanswered")
-            return [json.loads(line) for line in output.split("\n") if line], None
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
-            return None, failure("owner-unanswered", error).record
+    def unanswered(self, waiting):
+        """One owner-unanswered check of the waiting rows.
 
-    def accept_unanswered(self, rows, cause):
+        Returns (waiting, rows, now, None), or (waiting, None, None, failure record).
+        """
+        try:
+            # The window starts at the oldest waiting row, so a waiting row the
+            # helper does not list is covered, never outside its window.
+            output = checked([self.bash, LIB.parent / "owner-unanswered", "--root", self.home,
+                              "--since", min(row["at"] for row in waiting), "--older", "0"],
+                             self.home, operation="owner-unanswered")
+            return waiting, [json.loads(line) for line in output.split("\n") if line], epoch(), None
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return waiting, None, None, failure("owner-unanswered", error).record
+
+    def accept_unanswered(self, waiting, rows, now, cause):
         # A reminder for the session, never a page: owner-unread alone says mail is unread.
         memory = self.state.setdefault("unanswered", {"reported": [], "failed": False})
         blocks = []
         if cause is not None:
+            # Unread coverage covers nothing: every waiting row stays.
             if not memory["failed"]:
                 blocks.append(event("owner-unanswered-failed", cause=cause["detail"]))
             memory["failed"] = True
         else:
+            checked_ids = {row["id"] for row in waiting}
+            listed = {row["id"] for row in rows}
+            due = [row for row in rows if row["id"] in checked_ids
+                   and now - instant(row["at"]).timestamp() >= OWNER_WAIT_SECS]
             blocks.extend(event("owner-unanswered", id=row["id"], at=row["at"], kind=row["kind"]) +
                           line_value(row.get("text", ""), limit=4000) + "\n"
-                          for row in rows if row["id"] not in memory["reported"])
-            # Listed ids alone stay remembered; an answered row is forgotten.
-            self.state["unanswered"] = {"reported": [row["id"] for row in rows], "failed": False}
+                          for row in due if row["id"] not in memory.get("reported", []))
+            # A checked row the helper no longer lists is covered; a row
+            # delivered during the check waits for the next one. Only rows
+            # old enough to remind are remembered as reported.
+            self.state["unanswered"] = {
+                "pending": [row for row in memory.get("pending", [])
+                            if row["id"] not in checked_ids or row["id"] in listed],
+                "reported": [row["id"] for row in due], "failed": False}
         if blocks:
             self.append(pass_output("local", self.cursors.get("local", {}),
                                     [(str(self.home), block) for block in blocks]))
         self.save()
 
     def _poll(self, passes, pending, now):
+        relay = self.relay_pending
+        if relay is not None and relay.done():
+            self.accept_relay(relay.result())
+            self.relay_pending = None
+        if self.relay_pending is None and now >= self.next_relay:
+            self.next_relay = now + 30
+            self.relay_pending = passes.submit(self.relay_status)
         work = self.unanswered_pending
         if work is not None and work.done():
             self.accept_unanswered(*work.result())
             self.unanswered_pending = None
-        if self.unanswered_pending is None and now >= self.next_unanswered:
+        # Only a delivered owner row that no check has found covered starts a check.
+        waiting = self.state.get("unanswered", {}).get("pending", [])
+        if self.unanswered_pending is None and waiting and now >= self.next_unanswered:
             self.next_unanswered = now + UNANSWERED_EVERY_SECS
-            self.unanswered_pending = passes.submit(self.unanswered)
-        report = self.report_pending
-        if report is not None and report.done():
-            self.accept_report(report.result())
-            self.report_pending = None
-        if self.report_pending is None and now >= self.next_report:
-            self.next_report = now + 30
-            self.report_pending = passes.submit(self.report)
-        for side in ("local", "host") if self.settings["JARVIS_CONTROL_HOST"] else ("local",):
+            self.unanswered_pending = passes.submit(self.unanswered, list(waiting))
+        if self.satellite:
+            # A satellite renews no fleet presence and owes no checkpoint;
+            # it drains its forward outbox on the same executor instead.
+            work = self.forward_pending
+            if work is not None and work.done():
+                self.accept_forward(work.result())
+                self.forward_pending = None
+            if self.forward_pending is None and now >= self.next_forward:
+                self.next_forward = now + FORWARD_EVERY_SECS
+                self.forward_pending = passes.submit(self.forward)
+            sides = ()
+        else:
+            report = self.report_pending
+            if report is not None and report.done():
+                self.accept_report(report.result())
+                self.report_pending = None
+            if self.report_pending is None and now >= self.next_report:
+                self.next_report = now + 30
+                self.report_pending = passes.submit(self.report)
+            sides = tuple(target.key for target in self.destinations)
+            for side in sides:
+                if side == "local":
+                    continue
+                work = self.mail_pending.get(side)
+                if work is not None and work.done():
+                    self.accept(work.result())
+                    del self.mail_pending[side]
+                if side not in self.mail_pending:
+                    self.mail_pending[side] = passes.submit(self.acquire, now, side)
+        for side in sides:
             work = self.presence_pending.get(side)
             if work is not None and work.done():
                 self.accept_presence(side, work.result())
@@ -720,15 +1218,17 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         return pending
 
     def failed_pass(self, side, cause):
+        side = self.destination_key(side)
         prior = self.state.get(side + "_failure", {})
         if prior.get("key") != cause["key"]:
             self.append(pass_output(side, self.cursors.get(side, {}), [(None,
-                event("root-unreachable", repo=self.settings["JARVIS_CONTROL_HOST"] if side == "host" else self.home.name,
+                event("root-unreachable", repo=side if side.startswith("ssh:") else self.home.name,
                       cause=cause["detail"]))]))
             self.state[side + "_failure"] = cause
             self.save()
 
     def accept_presence(self, side, results):
+        side = self.destination_key(side)
         failures = self.state.setdefault("presence_failures", {}).setdefault(side, {})
         if any(status == "ok" for _, status, _ in results) and all(status != "failed" for _, status, _ in results):
             failures.pop(side, None)
@@ -757,7 +1257,12 @@ def main():
     parser.add_argument("--side", default="local")
     parser.add_argument("--cursor", default="{}")
     parser.add_argument("--presence", action="store_true")
+    parser.add_argument("--initial-pass", action="append", type=Path,
+                        help="initialize fresh loop state from a reconciled public pass, then exit; repeat per destination")
     args = parser.parse_args()
+    if args.initial_pass and args.mode != "loop":
+        parser.error("--initial-pass requires loop mode")
+    initial_passes = [path.absolute() for path in args.initial_pass] if args.initial_pass else None
     home = home_root(args.home)
     if args.mode == "pass":
         if args.presence:
@@ -778,10 +1283,12 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / "watch.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            watch = Watch(home, args.bash, settings)
+            watch = Watch(home, args.bash, settings, initial_passes)
+            if initial_passes is not None:
+                return
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
-            with ThreadPoolExecutor(max_workers=4) as passes:
+            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 3) as passes:
                 pending = passes.submit(watch.acquire, epoch())
                 while True:
                     pending = watch._poll(passes, pending, epoch())
@@ -791,6 +1298,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+    except (OSError, ValueError, RuntimeError, DestinationRefusal, subprocess.SubprocessError) as error:
         print("jarvis: failure=" + json.dumps(failure("pass", error).record), file=sys.stderr)
         sys.exit(1)

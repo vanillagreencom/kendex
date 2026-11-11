@@ -13,9 +13,18 @@
 # unset too, setup and the relay refuse and name the key.
 SLACK_OWNERS = ""
 
+# Owner-message source: socket opens this machine's Slack app connection;
+# queue receives events from a hosted receiver through `slack deliver`.
+# Read at start; neither mode falls back to the other.
+SLACK_INBOUND = "socket"
+
+# Seconds `slack deliver` waits for the listener's outcome. A timeout leaves
+# the event queued; retrying its channel:ts cannot append a second mailbox entry.
+SLACK_DELIVER_SECONDS = "20"
+
 # How often the relay reads each mailbox for questions, notices and reports
 # to post, in seconds. Owner messages do not wait for it: Slack sends each
-# one over the relay's Socket Mode connection as it is posted.
+# one over Socket Mode as it is posted, or a hosted worker queues it.
 SLACK_POLL_SECONDS = "15"
 
 # How many days a thread stays open for replies. A reply under an older
@@ -26,12 +35,38 @@ SLACK_THREAD_DAYS = "7"
 # "~/.fleet/jarvis-session-live". While it is younger than SLACK_JARVIS_SESSION_MAX_AGE the
 # relay holds its mailbox posts and `slack listen --status` shows
 # held-by=jarvis; owner messages in the channel still reach the overseer.
-# Replies to messages the owner typed in the channel still post in their threads.
+# Replies to messages the owner typed in the channel still post in their threads,
+# a notice that names a /report directive as a new message, and a notice that
+# names a forwarded directive under its root.
 # README.md says what posts on resume. Empty means no hold.
 SLACK_JARVIS_SESSION_FILE = ""
 
 # Seconds after its last touch that SLACK_JARVIS_SESSION_FILE still holds the relay.
 SLACK_JARVIS_SESSION_MAX_AGE = "600"
+
+# The optional slash commands and Home tab. Each is off while empty, and an
+# owner who types an off command is told so. Register a command in the Slack
+# app before setting its key: README.md § Slash commands and the Home tab.
+# A command line runs with no shell, in the directory the relay started in;
+# after 10 seconds TERM and then KILL stop its process group. Nothing from
+# Slack reaches it, and only its stdout is sent, after the secret-value
+# check.
+
+# The command line whose output /lanes replies with, for example
+# "scripts/fleet-status --slack".
+SLACK_STATUS_COMMAND = ""
+
+# The command line whose output /asks replies with.
+SLACK_ASKS_COMMAND = ""
+
+# The checkout whose overseer mailbox /report writes one directive to, asking
+# for a progress report now. It must be one of the relay's --root checkouts;
+# ~ expands to the home directory.
+SLACK_REPORT_ROOT = ""
+
+# The command line whose output the app's Home tab shows, published each time
+# an owner opens it, as Slack's mrkdwn.
+SLACK_HOME_COMMAND = ""
 
 [secrets]
 
@@ -42,6 +77,5 @@ SLACK_BOT_TOKEN = ""
 
 # The app-level token of the same Slack app, scope connections:write, which
 # opens the relay's Socket Mode connection. It lives where SLACK_BOT_TOKEN
-# lives. Unset, `slack listen` refuses and names the key; `listen --once` and
-# the other verbs do not read it.
+# lives. Socket Mode listen requires it; queue mode and listen --once do not.
 SLACK_APP_TOKEN = ""

@@ -128,28 +128,16 @@ pub(super) fn check_scope(
     // Read once, read by two checks: what the lock says is on disk, and
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
+    let admissions = pi_admissions(env, scope, manifest.current(), &lock);
     ctx.lock_lines(&manifest, &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = manifest.current() {
         ctx.pi_scope_duplicate_lines(manifest, sections);
+        // Every declared package's one line, recorded or not, from the
+        // answer apply's plan reads; the snapshot is never read for one.
         for (name, decl) in &manifest.pi_extensions {
-            let key =
-                crate::lock::entry_key(ItemKind::PiExtension, name, crate::model::HarnessId::Pi);
-            let unrecorded = match &lock {
-                Ok(crate::lock::LockFile::Current(lock)) => !lock.entries.contains_key(&key),
-                Ok(crate::lock::LockFile::Absent) => true,
-                Err(_) => false,
-            };
-            // A package its catalog retired is owed no install
-            // (`pi_ext::Resolved::Retired`).
-            let retired = || {
-                matches!(
-                    crate::pi_ext::resolve_declared(env, scope, manifest, name, decl),
-                    Ok(crate::pi_ext::Resolved::Retired { .. })
-                )
-            };
-            if unrecorded && !retired() {
-                ctx.pi_installation_line(name, None, decl.enabled, true, sections);
+            if let Some(admission) = admissions.get(name) {
+                ctx.pi_package_line(name, decl.enabled, admission, sections);
             }
         }
         scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
@@ -165,7 +153,17 @@ pub(super) fn check_scope(
             crate::engine::declared_over_existing_files(env, scope, manifest, record_view)
         })
         .unwrap_or_default();
-    ctx.command_lines(manifest.current(), record_view, &occupied, sections);
+    // An absent manifest declares nothing, which is known: a source that
+    // needs no declaration still reads, and any other is unknown for the
+    // cause its resolution gives. Only an unreadable one leaves every
+    // source unknown.
+    let nothing = crate::manifest::Manifest::default();
+    let declared = match &manifest {
+        ManifestRead::Current(manifest) => Some(manifest.as_ref()),
+        ManifestRead::Absent => Some(&nothing),
+        ManifestRead::Unreadable => None,
+    };
+    ctx.command_lines(declared, record_view, &occupied, sections);
     ctx.blocked_lines(manifest.current(), &lock, &occupied, sections);
     ctx.snapshot_lines(manifest.current(), sections, oldest_age);
     ctx.stamp_lines(manifest.current(), sections);
@@ -174,6 +172,47 @@ pub(super) fn check_scope(
         manifest: manifest_state,
         lock_refusal: lock.err(),
     }
+}
+
+/// What `update-pi`, run on this scope alone as a fix line names it, does
+/// with each declared Pi package (`pi_ext::admit`), the answer apply's
+/// plan reads: the one source of a declared package's line. Empty where
+/// the declarations or the record would not read, or the settings that
+/// place the roots: those reads have lines of their own, and no package is
+/// judged without them.
+fn pi_admissions(
+    env: &Env,
+    scope: &Scope,
+    manifest: Option<&crate::manifest::Manifest>,
+    lock: &crate::error::Result<crate::lock::LockFile>,
+) -> BTreeMap<String, crate::pi_ext::Admission> {
+    let empty = crate::lock::Lock::default();
+    let (Some(manifest), Ok(lock), Ok(settings)) = (manifest, lock, crate::settings::load(env))
+    else {
+        return BTreeMap::new();
+    };
+    let lock = match lock {
+        crate::lock::LockFile::Current(lock) => lock,
+        crate::lock::LockFile::Absent => &empty,
+    };
+    let (root, other_roots) =
+        crate::pi_ext::paired_roots(env, &settings, scope, std::slice::from_ref(scope));
+    manifest
+        .pi_extensions
+        .iter()
+        .map(|(name, decl)| {
+            let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
+            let admission = crate::pi_ext::admit(
+                &root,
+                &other_roots,
+                name,
+                crate::pi_ext::resolve_declared(env, scope, manifest, name, decl),
+                lock.entries.get(&key),
+                crate::pi_ext::RecordBasis::Recorded,
+            );
+            (name.clone(), admission)
+        })
+        .collect()
 }
 
 /// A Pi line the check could not produce: the settings, root or package
@@ -266,9 +305,25 @@ impl ManifestRead {
     }
 }
 
+/// Where one skill's command declarations come from: text already read,
+/// or a catalog to read behind the check's deadline, at the revision the
+/// install record names where one does.
+enum DeclarationRead {
+    Text(Result<String, String>),
+    Catalog(Option<crate::source::header::InstalledFrom>),
+}
+
 impl ScopeCheck<'_> {
     /// PATH is machine state, so saved source-comparison verdicts cannot
-    /// answer this check. Read each installed skill's own declaration once.
+    /// answer this check. Each skill with an installed tree is checked once,
+    /// against what its source declares: an installed copy's SKILL.md
+    /// carries no `dependencies`, and an edit to one changes no
+    /// requirement.
+    ///
+    /// A catalog read opens a source snapshot, which validates and may
+    /// publish it, so every such read runs behind this check's deadline
+    /// ([`crate::drift::copies::gated`]); one the deadline cuts off is
+    /// named as not checked.
     fn command_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -290,6 +345,7 @@ impl ScopeCheck<'_> {
                         .as_ref()
                         .map(|artifact| artifact.paths.as_slice())
                         .unwrap_or_default(),
+                    Some(crate::source::header::InstalledFrom::of(entry)),
                 )
             });
         let unrecorded = occupied
@@ -308,6 +364,7 @@ impl ScopeCheck<'_> {
                     copy.name.as_str(),
                     copy.source.as_str(),
                     copy.positions.as_slice(),
+                    None,
                 )
             });
         let native = manifest
@@ -325,40 +382,138 @@ impl ScopeCheck<'_> {
                     name.as_str(),
                     decl.source.as_str(),
                     &[] as &[std::path::PathBuf],
+                    None,
                 )
             });
-        for (name, source, paths) in recorded.chain(unrecorded).chain(native) {
-            let root = paths
-                .iter()
-                .find(|path| path.is_dir())
-                .cloned()
-                .or_else(|| {
-                    crate::engine::desired::in_place_source(
-                        self.env,
-                        self.scope,
-                        (ItemKind::Skill, source, name),
-                    )
-                    .filter(|path| path.is_dir())
-                });
-            let Some(root) = root else {
+        let mut reads = Vec::new();
+        for (name, source, paths, installed) in recorded.chain(unrecorded).chain(native) {
+            let in_place = crate::engine::desired::in_place_source(
+                self.env,
+                self.scope,
+                (ItemKind::Skill, source, name),
+            );
+            let present = paths.iter().any(|path| path.is_dir())
+                || in_place.as_ref().is_some_and(|path| path.is_dir());
+            if !present {
                 continue;
-            };
+            }
             // A selected source has one read result. A second harness cannot
             // replace its unreadable declaration with a different answer.
             if !seen.insert(name.to_owned()) {
                 continue;
             }
-            self.command_source_lines(name, &root, sections);
+            if let Some(read) = self.declaration_read(manifest, in_place, installed) {
+                reads.push((name.to_owned(), read));
+            }
+        }
+        for (name, text) in self.declaration_texts(manifest, reads) {
+            self.command_source_lines(&name, text, sections);
         }
     }
 
-    fn command_source_lines(&self, name: &str, root: &std::path::Path, sections: &mut Sections) {
-        let declarations = (|| {
-            let sealed =
-                crate::source_read::SealedSource::open(root).map_err(|error| error.to_string())?;
-            let text = sealed
-                .read_to_string(&sealed.root().join("SKILL.md"))
-                .map_err(|error| error.to_string())?;
+    /// Each read's text, in the order asked. The catalog reads run on one
+    /// thread behind the check's deadline, sending each text as it is
+    /// read; a read the deadline cuts off is named as not checked.
+    fn declaration_texts(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        mut reads: Vec<(String, DeclarationRead)>,
+    ) -> Vec<(String, Result<String, String>)> {
+        let catalog_reads: Vec<(String, Option<crate::source::header::InstalledFrom>)> = reads
+            .iter_mut()
+            .filter_map(|(name, read)| match read {
+                DeclarationRead::Catalog(installed) => Some((name.clone(), installed.take())),
+                DeclarationRead::Text(_) => None,
+            })
+            .collect();
+        let stages = match (manifest, catalog_reads.is_empty()) {
+            (Some(manifest), false) => {
+                let (env, scope, manifest) =
+                    (self.env.clone(), self.scope.clone(), manifest.clone());
+                Some(crate::drift::copies::gated(self.deadline, move |sender| {
+                    let mut headers = crate::source::header::DeclaredHeaders::default();
+                    for (name, installed) in catalog_reads {
+                        let text = headers.text(
+                            &env,
+                            &scope,
+                            &manifest,
+                            ItemKind::Skill,
+                            &name,
+                            installed.as_ref(),
+                        );
+                        if sender.send(text).is_err() {
+                            return;
+                        }
+                    }
+                }))
+            }
+            (Some(_), true) | (None, _) => None,
+        };
+        reads
+            .into_iter()
+            .map(|(name, read)| {
+                let text = match read {
+                    DeclarationRead::Text(text) => text,
+                    // Sent in the order they were asked, so the next stage is
+                    // this skill's; none by the deadline leaves it unread.
+                    DeclarationRead::Catalog(_) => stages
+                        .as_ref()
+                        .and_then(|stages| stages.next(self.deadline))
+                        .unwrap_or_else(|| {
+                            Err(
+                                "the check ran out of time before it could read the skill's source"
+                                    .to_owned(),
+                            )
+                        }),
+                };
+                (name, text)
+            })
+            .collect()
+    }
+
+    /// Where a skill's commands are read from, or `None` where the scope's
+    /// catalog refusal already speaks for it.
+    ///
+    /// An in-place tree is the source itself, and its bytes are the
+    /// person's as authored: one local file, read here. A recorded install
+    /// is read at the revision its record names. A copy no record claims
+    /// is read at its declaration, which is the reading copy settlement
+    /// holds to the catalog gate: a scope that gate refused already says
+    /// so for every such copy, and one it had no time for leaves the
+    /// commands unknown.
+    fn declaration_read(
+        &self,
+        manifest: Option<&crate::manifest::Manifest>,
+        in_place: Option<PathBuf>,
+        installed: Option<crate::source::header::InstalledFrom>,
+    ) -> Option<DeclarationRead> {
+        Some(match (in_place, manifest, installed) {
+            (Some(root), _, _) => DeclarationRead::Text(
+                crate::source_read::SealedSource::open(&root)
+                    .and_then(|sealed| sealed.read_to_string(&sealed.root().join("SKILL.md")))
+                    .map_err(|error| error.to_string()),
+            ),
+            (None, None, _) => DeclarationRead::Text(Err(
+                "the manifest could not be read, so the skill's source is unknown".to_owned(),
+            )),
+            (None, Some(_), Some(installed)) => DeclarationRead::Catalog(Some(installed)),
+            (None, Some(_), None) => match self.catalogs.refusals() {
+                Some([]) => DeclarationRead::Catalog(None),
+                Some([_, ..]) => return None,
+                None => DeclarationRead::Text(Err(
+                    "the check ran out of time before it could read the skill's source".to_owned(),
+                )),
+            },
+        })
+    }
+
+    fn command_source_lines(
+        &self,
+        name: &str,
+        text: Result<String, String>,
+        sections: &mut Sections,
+    ) {
+        let declarations = text.and_then(|text| {
             if !crate::frontmatter::opens(&text) {
                 return Ok(Vec::new());
             }
@@ -366,7 +521,7 @@ impl ScopeCheck<'_> {
             let parsed = crate::frontmatter::parse_tolerant(yaml)?;
             crate::engine::deps::commands::declared(&parsed.map)
                 .map_err(|problem| format!("row={} field={}", problem.row, problem.field))
-        })();
+        });
         match declarations {
             Ok(dependencies) => {
                 for issue in
@@ -524,18 +679,10 @@ impl ScopeCheck<'_> {
                             .insert(entry.harness);
                         continue;
                     }
+                    // A declared package's line is `check_scope`'s, from its
+                    // admission; with no declaration that reads, the
+                    // manifest's own line stands for it.
                     if entry.kind == ItemKind::PiExtension {
-                        let enabled = manifest
-                            .current()
-                            .and_then(|manifest| manifest.pi_extensions.get(&entry.name))
-                            .map_or(entry.enabled, |decl| decl.enabled);
-                        self.pi_installation_line(
-                            &entry.name,
-                            entry.rendered_hash.as_deref(),
-                            enabled,
-                            true,
-                            sections,
-                        );
                         continue;
                     }
                     if !entry.enabled {
@@ -580,6 +727,49 @@ impl ScopeCheck<'_> {
                     );
                 }
             }
+            Err(crate::error::CoreError::LegacyProjectLock { path, aside }) => {
+                self.version_10_line(manifest, path, aside, sections);
+            }
+            Err(error) => sections.unknown.push(unknown(format!(
+                "{prefix}lock: {}",
+                shown(&error.to_string())
+            ))),
+        }
+    }
+
+    /// A version 10 record a refresh recovers is not a scope the check
+    /// could not read: it is one whose fix is known, the refresh that
+    /// moves the record aside and installs from the declarations. The
+    /// refusal itself still reaches the caller's error channel, keyed. One
+    /// the recovery would refuse is unread, with the recovery's own reason
+    /// (`engine::version_10_recovery`), since no command of kendex's
+    /// settles it: a scope whose manifest is absent or would not read among
+    /// them, which has nothing to rebuild the record from.
+    fn version_10_line(
+        &self,
+        manifest: &ManifestRead,
+        path: &std::path::Path,
+        aside: &std::path::Path,
+        sections: &mut Sections,
+    ) {
+        let prefix = self.prefix;
+        match crate::engine::version_10_recovery(path, aside, manifest.current()) {
+            Ok(None) => sections.record_cleanup.push(drift(
+                format!("{prefix}lock: a version 10 record, which a refresh recovers"),
+                Some(Remedy::Refresh {
+                    global: self.global,
+                }),
+            )),
+            Ok(Some(why)) => sections.unknown.push(unknown(format!(
+                "{prefix}lock: {}",
+                shown(
+                    &crate::error::CoreError::Version10RecoveryRefused {
+                        path: path.to_path_buf(),
+                        why,
+                    }
+                    .to_string()
+                )
+            ))),
             Err(error) => sections.unknown.push(unknown(format!(
                 "{prefix}lock: {}",
                 shown(&error.to_string())
@@ -622,71 +812,76 @@ impl ScopeCheck<'_> {
         }
     }
 
-    fn pi_installation_line(
+    /// A declared Pi package's one line, from its admission alone
+    /// ([`pi_admissions`]), the answer apply's plan reads. A package
+    /// `update-pi` installs names it; one it leaves carries the reason
+    /// and no fix; a current copy draws a line only where its native
+    /// switch differs from the declaration, which apply's plan writes; a
+    /// retired package draws none.
+    fn pi_package_line(
         &self,
         name: &str,
-        expected: Option<&str>,
         enabled: bool,
-        declared: bool,
+        admission: &crate::pi_ext::Admission,
         sections: &mut Sections,
     ) {
-        let state = self
-            .pi_roots
-            .as_ref()
-            .map_err(ToString::to_string)
-            .and_then(|(root, _)| {
-                let state = crate::pi_ext::installed_state(root, name, expected)
-                    .map_err(|e| e.to_string())?;
-                let native =
-                    crate::pi_ext::package_enabled(&crate::pi_ext::settings_path(root), name)
-                        .map_err(|e| e.to_string())?;
-                Ok((state, native))
-            });
-        let switch_only = state
-            .as_ref()
-            .is_ok_and(|(state, _)| matches!(state, crate::pi_ext::PackageState::Current { .. }));
-        let detail = match state {
-            Ok((crate::pi_ext::PackageState::Current { .. }, native))
-                if native == Some(enabled) =>
-            {
-                return;
-            }
-            Ok((crate::pi_ext::PackageState::Current { .. }, _)) => {
-                "has a native extension filter that differs from its declaration"
-            }
-            Ok((crate::pi_ext::PackageState::Missing, _)) => "has no files on disk",
-            Ok((crate::pi_ext::PackageState::Different, _)) if expected.is_none() => {
-                "has no completed install record"
-            }
-            Ok((crate::pi_ext::PackageState::Different, _)) => {
-                "has files that differ from its install record"
-            }
-            Err(error) => {
-                pi_unknown_line(
-                    self.prefix,
-                    &format!("pi-extension '{}'", shown(name)),
-                    &error,
-                    sections,
-                );
-                return;
-            }
-        };
-        sections.missing.push(drift(
-            format!(
-                "{}pi-extension '{}' (pi) {detail}",
-                self.prefix,
-                shown(name)
-            ),
-            declared.then_some(if switch_only {
-                Remedy::Apply {
+        use crate::pi_ext::Admission;
+        let subject = format!("pi-extension '{}'", shown(name));
+        let line = |detail: &str| format!("{}{subject} (pi) {detail}", self.prefix);
+        match admission {
+            Admission::Retired => {}
+            Admission::Install { change, .. } => {
+                let update_pi = Some(Remedy::UpdatePi {
                     global: self.global,
+                });
+                match change {
+                    crate::pi_ext::Install::Missing => sections
+                        .missing
+                        .push(drift(line("has no files on disk"), update_pi)),
+                    crate::pi_ext::Install::Stale => sections.stale.push(drift(
+                        line("does not match its declaration or its completed install record"),
+                        update_pi,
+                    )),
                 }
-            } else {
-                Remedy::UpdatePi {
-                    global: self.global,
+            }
+            // The copy and its record match the declaration; the native
+            // switch is what is left to differ.
+            Admission::Current { .. } => {
+                let native = self
+                    .pi_roots
+                    .as_ref()
+                    .map_err(ToString::to_string)
+                    .and_then(|(root, _)| {
+                        crate::pi_ext::package_enabled(&crate::pi_ext::settings_path(root), name)
+                            .map_err(|e| e.to_string())
+                    });
+                match native {
+                    Ok(native) if native == Some(enabled) => {}
+                    Ok(_) => sections.missing.push(drift(
+                        line("has a native extension filter that differs from its declaration"),
+                        Some(Remedy::Apply {
+                            global: self.global,
+                        }),
+                    )),
+                    Err(error) => pi_unknown_line(self.prefix, &subject, &error, sections),
                 }
-            }),
-        ));
+            }
+            left @ (Admission::LoadedElsewhere { .. }
+            | Admission::OriginRefused(_)
+            | Admission::NotEvaluated(_)) => {
+                if let Some((why, reason)) = left.unsettled() {
+                    match why {
+                        crate::engine::PiUnsettled::NotEvaluated => {
+                            pi_unknown_line(self.prefix, &subject, &reason, sections);
+                        }
+                        crate::engine::PiUnsettled::LoadedElsewhere
+                        | crate::engine::PiUnsettled::OriginRefused => {
+                            sections.missing.push(drift(line(&reason), None));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Pi packages this project declares that the global manifest declares
@@ -924,12 +1119,13 @@ impl ScopeCheck<'_> {
         let Some(settled) = self.settle_copies(manifest, lock, occupied, sections) else {
             return;
         };
-        let (verdicts, record_failed, unrecorded) = match settled {
+        let (verdicts, record_failed, unrecorded, completion) = match settled {
             crate::drift::copies::Settled::Judged {
                 verdicts,
                 record_failed,
                 unrecorded,
-            } => (verdicts, record_failed, unrecorded),
+                completion,
+            } => (verdicts, record_failed, unrecorded, completion),
             // The plan is the judgement; without it every blocked line
             // stands as the stat found it, and the reason the judgement
             // is missing is a line of its own.
@@ -980,8 +1176,7 @@ impl ScopeCheck<'_> {
                 Some(crate::drift::copies::Verdict::Differs {
                     files,
                     rendered_from,
-                    take_over_settles,
-                }) => self.stale_line(install, *files, rendered_from, *take_over_settles, sections),
+                }) => self.stale_line(install, *files, rendered_from, completion, sections),
                 Some(crate::drift::copies::Verdict::Uncompared { reason }) => {
                     sections.unknown.push(unknown(format!(
                         "{}{} '{}' for {}: {}",
@@ -1004,15 +1199,24 @@ impl ScopeCheck<'_> {
 
     /// The line for a copy the plan measured as not the render: the count,
     /// what it was measured against, and the take-over as its fix where
-    /// the pass answered for the whole scope, the plan otherwise.
+    /// it is the scope's one completion (`engine::completion`, read off the
+    /// plan that measured the copy), the plan otherwise.
     fn stale_line(
         &self,
         install: &crate::engine::Occupied,
         files: u32,
         rendered_from: &str,
-        take_over_settles: bool,
+        completion: Option<crate::engine::Completion>,
         sections: &mut Sections,
     ) {
+        // A differing copy is a conflict, and `update-pi` never finishes a
+        // scope that has one (`engine::completion`).
+        let take_over = match completion {
+            Some(crate::engine::Completion::TakeOver { allow_repo_effects }) => {
+                Some(allow_repo_effects)
+            }
+            Some(crate::engine::Completion::UpdatePi) | None => None,
+        };
         let mut text = format!(
             "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
             self.prefix,
@@ -1024,7 +1228,7 @@ impl ScopeCheck<'_> {
             if files == 1 { "s" } else { "" },
             shown(rendered_from)
         );
-        if take_over_settles {
+        if take_over.is_some() {
             text.push_str(&format!(
                 "; take-over moves the existing content to the trash at {}",
                 shown(&crate::paths::slashed(&self.env.trash_dir()))
@@ -1032,11 +1236,12 @@ impl ScopeCheck<'_> {
         }
         sections.stale.push(drift(
             text,
-            Some(match take_over_settles {
-                true => Remedy::ReplaceUnmanaged {
+            Some(match take_over {
+                Some(allow_repo_effects) => Remedy::ReplaceUnmanaged {
                     global: self.global,
+                    allow_repo_effects,
                 },
-                false => Remedy::Plan {
+                None => Remedy::Plan {
                     global: self.global,
                 },
             }),
@@ -1155,6 +1360,9 @@ impl ScopeCheck<'_> {
     }
 
     /// The snapshot: package standings, as fresh as the last deep pass.
+    /// A Pi package's row or note is never read: a declared one's line is
+    /// [`Self::pi_package_line`]'s, from what apply's plan reads now, and
+    /// one with no declaration that reads has no line of its own.
     fn snapshot_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
@@ -1193,6 +1401,9 @@ impl ScopeCheck<'_> {
         *oldest_age = Some(oldest_age.map_or(age, |oldest| oldest.max(age)));
         let mut unreadable: BTreeMap<_, Vec<_>> = BTreeMap::new();
         for note in &snapshot.unreadable {
+            if note.kind == ItemKind::PiExtension {
+                continue;
+            }
             let notes = unreadable
                 .entry((note.kind, note.name.as_str(), note.repo.as_str()))
                 .or_default();
@@ -1203,7 +1414,7 @@ impl ScopeCheck<'_> {
         let mut compared = BTreeSet::new();
         for package in &snapshot.packages {
             // Holds and ignores do not suppress independent unreadable evidence.
-            if package.held || package.ignored {
+            if package.held || package.ignored || package.kind == ItemKind::PiExtension {
                 continue;
             }
             let key = (package.kind, package.name.as_str(), package.repo.as_str());
@@ -1413,19 +1624,9 @@ impl ScopeCheck<'_> {
             ));
         } else if package.update_available {
             sections.stale.push(drift(
-                if package.kind == ItemKind::PiExtension {
-                    format!("{prefix}{kind} '{name}' needs installation from its declared source")
-                } else {
-                    format!("{prefix}{kind} '{name}' has a newer version on its source")
-                },
-                Some(if package.kind == ItemKind::PiExtension {
-                    Remedy::UpdatePi {
-                        global: self.global,
-                    }
-                } else {
-                    Remedy::Refresh {
-                        global: self.global,
-                    }
+                format!("{prefix}{kind} '{name}' has a newer version on its source"),
+                Some(Remedy::Refresh {
+                    global: self.global,
                 }),
             ));
         }

@@ -2,11 +2,92 @@
 # Owner notice routing through the real relay and lane-mail. Slack supplies
 # channel:ts delivery ids and thread pointers; the host worker supplies an
 # operation id for voice. A pane note and an owner ask carry no delivery id.
+# A satellite's jarvis-session forward supplies a forward-<sha256> key and a
+# final provenance line, written here as literal text in the framed form
+# forward.py writes and the legacy form it once wrote: its answers thread
+# under one root a person reads.
 set -euo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 set -e
 
 sk_fake_start
+# Jarvis produces the deadline event; the real mailbox and relay judge each
+# candidate with fake time. Shared send recovery remains in recovery.test.sh.
+for page_case in accepted linked-home read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
+  ROOT="$(sk_new_root "page $page_case")"
+  sk_bind "$ROOT"
+  PAGE_RC=0
+  env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+    SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
+    python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" "$page_case" \
+    "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-$page_case.log" 2>&1 || PAGE_RC=$?
+  assert_eq "$PAGE_RC" 0 "$page_case: canonical unread page admission and root status"
+  [ "$PAGE_RC" -eq 0 ] || cat "$SK_TMP/page-$page_case.log"
+done
+
+sk_copy page-binding-control
+mkdir -p "${SK_BIN%/slack/scripts/slack}/jarvis"
+cp -R "$SK_ROOT/skills/jarvis/scripts" "${SK_BIN%/slack/scripts/slack}/jarvis/scripts"
+PAGE_PRODUCER="${SK_BIN%/slack/scripts/slack}/jarvis/scripts/lib/watch.py"
+python3 - "$PAGE_PRODUCER" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+before = 'root_events.extend((common, block) for block in unread_events)'
+after = 'root_events.extend((root, block) for block in unread_events)'
+assert text.count(before) == 1
+changed = text.replace(before, after)
+assert changed != text
+path.write_text(changed)
+PY
+ROOT="$(sk_new_root page-binding-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" linked-home \
+  "$PAGE_PRODUCER" >"$SK_TMP/page-binding-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: a worktree-valued page binding fails accepted delivery'
+assert_has "$(cat "$SK_TMP/page-binding-control.log")" "AssertionError: ('page-count', 'linked-home', 0, 1)" \
+  'control fails specifically because the linked-home page did not land'
+sk_bin_reset
+
+sk_mutant unread-action relay.py '            self.post_owner_unread\(events\)' '            pass # self.post_owner_unread(events)'
+ROOT="$(sk_new_root page-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" accepted \
+  "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: removing the page action fails the accepted-delivery assertion'
+assert_has "$(cat "$SK_TMP/page-control.log")" "AssertionError: ('page-count', 'accepted', 0, 1)" \
+  'control fails specifically because the eligible page did not land'
+
+sk_bin_reset
+
+sk_mutant unread-reference relay.py '\[\*self.mail.events\(\), \*references\]' 'self.mail.events()'
+ROOT="$(sk_new_root page-reference-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" compacted-read \
+  "$SK_ROOT/skills/jarvis/scripts/lib/watch.py" >"$SK_TMP/page-reference-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: losing the retained reference pages a compacted read original'
+assert_has "$(cat "$SK_TMP/page-reference-control.log")" "AssertionError: ('page-count', 'compacted-read', 1, 0)" \
+  'control fails specifically because the compacted read original was paged'
+sk_bin_reset
+
 echo "=== slack owner notices ==="
 ROOT="$(sk_new_root notices)"
 sk_bind "$ROOT"
@@ -27,6 +108,31 @@ sk_lm "$ROOT" send --item overseer --directive --delivery-id "cc364a44:$TOP" --f
 VOICE="$(jq -r 'select(.text == "Voice request.") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 TERMINAL="$(jq -r 'select(.text == "Terminal request.") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 COLON="$(jq -r 'select(.text == "Operation request.") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
+
+# forward_line KEY [METHOD] [WORDS] — a provenance line as the satellite writes it
+forward_line() {
+  printf 'forwarded-request: satellite=px13 request-ref=vgs-audit:aud-1 request-at=2026-11-02T14:03:07.120Z confirmation-ref=vgs-audit:aud-2 confirmed-at=2026-11-02T14:03:21Z key=%s confirmation-method=%s confirmation-text=%s' \
+    "$1" "${2:-words}" "${3:-\"Yes.\"}"
+}
+# forward_directive NAME KEY TEXT — an owner directive keyed KEY; prints its id
+forward_directive() {
+  sk_lm "$ROOT" send --item overseer --directive --delivery-id "$2" --file "$(sk_text "$1" "$3")" >/dev/null || exit 1
+  jq -r --arg d "$2" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl"
+}
+forward_key() { printf 'forward-%064x' "$1"; } # N — a distinct well-formed key
+FWD_BARE="$(forward_directive forward-bare "$(forward_key 1)" 'Bare forward request.')"
+FWD_KEY="$(forward_directive forward-key "$(forward_key 2)" "Mismatched forward request.
+
+$(forward_line "$(forward_key 12)")")"
+FWD_REV3="$(forward_directive forward-rev3 "$(forward_key 3)" "Revision 3 forward request.
+
+forwarded-request: satellite=px13 request=e1 request-at=2026-11-02T14:03:07Z confirmation=e2 confirmation-key=c1 caller=owner key=$(forward_key 3) confirmation-text=\"forward\"")"
+FWD_QUOTE="$(forward_directive forward-quote "$(forward_key 4)" "Unquoted forward request.
+
+$(forward_line "$(forward_key 4)" words '"yes')")"
+FWD_NULL="$(forward_directive forward-null "$(forward_key 8)" "Wordless forward request.
+
+$(forward_line "$(forward_key 8)" words null)")"
 
 # Thread pointers also identify Slack when the event lacks its delivery id.
 POINTER_TS="$(sk_inject "$CH" U001 'Thread pointer request.' "$TOP")"
@@ -55,6 +161,11 @@ slack-thread|$SLACK_REPLY|["$TOP"]
 thread-pointer|$POINTER|["$TOP"]
 progress||[null]
 ask-ruling|$ASK|["$ASK_TS"]
+forward-bare|$FWD_BARE|[]
+forward-key|$FWD_KEY|[]
+forward-rev3|$FWD_REV3|[]
+forward-quote|$FWD_QUOTE|[]
+forward-null|$FWD_NULL|[]
 EOF
 
 sk_poll "$ROOT"
@@ -76,5 +187,74 @@ else
   assert_has "$(cat "$SK_TMP/control.out")" 'FAIL voice reply stays in its medium and thread' "control: bypassing the medium check turns the routing assertion red"
 fi
 sk_bin_reset
+
+# --- a forwarded directive's answers thread under one root ------------------------
+roots() { sk_state "[.messages.${CH}[] | select(.user == \"UBOT\" and .thread_ts == null and (.text | startswith(\"Forwarded from \")))]"; }
+threads_of() { sk_state "[.messages.${CH}[] | select(.user == \"UBOT\" and .text == \"$1\") | .thread_ts] | @json"; } # TEXT
+answer() { sk_lm "$ROOT" notice --item overseer --to owner --ref "$1" --file "$(sk_text answer "$2")" >/dev/null; } # REF TEXT
+
+# Slack's date token for the request time, 2026-11-02T14:03:07Z, cut to its second.
+ASKED='<!date^1793628187^{date_short_pretty} at {time}|2026-11-02T14:03:07Z>'
+KEY_F="$(forward_key 5)"
+FWD="$(forward_directive forwarded "$KEY_F" 'forwarded-confirmation: caller=unproved
+request-text: "Book the dentist for \"Tuesday\".\rThen tell me."
+
+'"$(forward_line "$KEY_F" physical null)")"
+answer "$FWD" 'Forwarded progress.'
+answer "$FWD" 'Forwarded answer.'
+sk_poll "$ROOT"
+ROOT_TS="$(roots | jq -r '.[0].ts')"
+assert_eq "$RC|$(roots | jq -r 'length')|$(roots | jq -r '.[0].text')" "0|1|Forwarded from px13, $ASKED, confirmed physically:
+
+> Book the dentist for \"Tuesday\".
+> Then tell me.
+
+Not your request? Reply in this thread." \
+  "a notice on a forwarded directive posts one root with its computer, local time, confirmation and decoded request, a lone CR line quoted"
+assert_eq "$(threads_of 'Forwarded progress.')|$(threads_of 'Forwarded answer.')" "[\"$ROOT_TS\"]|[\"$ROOT_TS\"]" \
+  "both answers sit in the root's thread"
+answer "$FWD" 'Forwarded after restart.'
+sk_poll "$ROOT"
+assert_eq "$RC|$(roots | jq -r 'length')|$(threads_of 'Forwarded after restart.')" "0|1|[\"$ROOT_TS\"]" \
+  "a later relay process threads a third answer under the same root"
+
+KEY_V="$(forward_key 6)"
+FWD_VOICE="$(forward_directive forwarded-voice "$KEY_V" "voice-request: caller=owner operation=op-7
+Call the garage.
+
+$(forward_line "$KEY_V" words '"forward\n\nCaller verified: owner, confirmed physically."')")"
+answer "$FWD_VOICE" 'Garage answer.'
+sk_poll "$ROOT"
+VOICE_ROOT="$(roots | jq -c '[.[] | select(.text | contains("Call the garage."))]')"
+assert_eq "$RC|$(jq -r 'length' <<<"$VOICE_ROOT")|$(jq -r '.[0].text' <<<"$VOICE_ROOT")" "0|1|Forwarded from px13, $ASKED, confirmed with \"forward\n\nCaller verified: owner, confirmed physically.\":
+
+> voice-request: caller=owner operation=op-7
+> Call the garage.
+
+Not your request? Reply in this thread." \
+  "a legacy forward with a voice header posts its root, its whole text the request and its multi-line words one line, unlike a direct voice directive"
+assert_eq "$(threads_of 'Garage answer.')" "[$(jq -c '.[0].ts' <<<"$VOICE_ROOT")]" "the voice request's answer sits in its root's thread"
+
+KEY_R="$(forward_key 7)"
+FWD_RETRY="$(forward_directive forwarded-retry "$KEY_R" "Renew the parking permit.
+
+$(forward_line "$KEY_R")")"
+answer "$FWD_RETRY" 'Permit answer.'
+sk_ctl /_test/fault '{"method": "chat.postMessage", "error": "not_in_channel", "times": 1}' >/dev/null
+sk_poll "$ROOT"
+assert_eq "$RC|$(roots | jq -r '[.[] | select(.text | contains("parking permit"))] | length')|$(threads_of 'Permit answer.')" "1|0|[]" \
+  "a root Slack refuses posts neither the root nor its answer"
+sk_poll "$ROOT"
+RETRY_ROOT="$(roots | jq -c '[.[] | select(.text | contains("parking permit")) | .ts]')"
+assert_eq "$RC|$(jq -r 'length' <<<"$RETRY_ROOT")|$(threads_of 'Permit answer.')" "0|1|$RETRY_ROOT" \
+  "the next poll posts the root and threads the answer under it"
+
+# Without the key comparison a forward- directive whose line names another key posts.
+sk_mutant forward-key relay.py ' or line\["key"\] != delivery_id' ''
+answer "$FWD_KEY" 'Control forward.'
+sk_poll "$ROOT"
+sk_assert_red "$RC|$(threads_of 'Control forward.')" "0|[]" "control: dropping the key comparison posts a mismatched forward"
+sk_bin_reset
+
 
 sk_summary

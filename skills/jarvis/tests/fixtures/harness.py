@@ -94,11 +94,22 @@ def native_launcher():
         raise RuntimeError("native-fixture: dependency=rustc")
     with tempfile.TemporaryDirectory() as allocation:
         path = Path(allocation).resolve() / "harness-launcher"
-        result = subprocess.run([compiler, "--edition=2021", "-D", "warnings",
-                                 str(Path(__file__).resolve().with_name("harness_launcher.rs")), "-o", str(path)],
-                                # This fixture uses the installed compiler;
-                                # repository toolchain installation belongs to CI setup.
-                                cwd=path.parent, capture_output=True, text=True, timeout=60)
+        try:
+            result = subprocess.run([compiler, "--edition=2021", "-D", "warnings",
+                                     str(Path(__file__).resolve().with_name("harness_launcher.rs")), "-o", str(path)],
+                                    # This fixture uses the installed compiler;
+                                    # repository toolchain installation belongs to CI setup.
+                                    cwd=path.parent, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired as failure:
+            # Timeout output is bytes even in text mode, and killing a compiler
+            # can cut a UTF-8 sequence short. Keep those bytes readable too.
+            raise RuntimeError("native-fixture: compile-timeout " + json.dumps({
+                "timeout": failure.timeout,
+                "stdout": failure.stdout.decode("utf-8", "backslashreplace")
+                          if isinstance(failure.stdout, bytes) else failure.stdout,
+                "stderr": failure.stderr.decode("utf-8", "backslashreplace")
+                          if isinstance(failure.stderr, bytes) else failure.stderr,
+            })) from failure
         if result.returncode:
             # The CI failure record must retain rustup wrapper errors, which
             # can arrive on stdout with an empty stderr.
@@ -148,6 +159,9 @@ def main():
     with rows.open("a") as stream:
         stream.write(json.dumps({"harness": harness, "id": identity, "argv": args, "cwd": os.getcwd(),
                                  "account": str(account), "record": str(record_path), "pid": os.getpid(),
+                                 "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
+                                 "excluded_env": [key for key in fixture.get("excluded_env", []) if key in os.environ],
+                                 "selected_env": {key: os.environ.get(key) for key in fixture.get("selected_env", [])},
                                  "display": [os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY")]}) + "\n")
     history = fixture.get("history")
     if history == "pending":
@@ -260,14 +274,23 @@ def main():
         brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)
-    if deferred and auth_mode != "current" and fixture.get("turn") != "text-only":
+    tool_call = deferred and auth_mode != "current" and fixture.get("turn") != "text-only"
+    if tool_call:
         if barrier:
             # A working pane after a kickoff turn is no proof of the brief:
             # the controller reads it twice before the stamp.
             await_inspections(Path(barrier), 2)
         # The Start brief's first tool call says the session took it.
         brief_taken(fixture, harness, identity, "PreToolUse")
-    sys.stdin.read()
+    # Each later prompt is another turn whose tool call stamps again, as the
+    # native hook retries at the session's next call: a successor's runner
+    # pastes the brief again when its worker ended between that paste and
+    # its record.
+    for later in sys.stdin:
+        with rows.open("a") as stream:
+            stream.write(json.dumps({"prompt": later.strip(), "id": identity, "harness": harness}) + "\n")
+        if tool_call:
+            brief_taken(fixture, harness, identity, "PreToolUse")
 
 
 if __name__ == "__main__":

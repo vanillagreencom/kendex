@@ -8,6 +8,7 @@ import type {
   Origin,
   ProvenanceRow,
   Scope,
+  Tag,
 } from "@/bindings";
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
@@ -26,6 +27,7 @@ import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { observedAt, type ScopeSelection } from "@/lib/derive";
+import { TAG_LABELS } from "@/lib/labels";
 import {
   READ_LANDED,
   READ_PENDING,
@@ -102,6 +104,7 @@ describe("a customized package in the Library list", () => {
         at: installed(scope).path,
         origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
         summary: null,
+        tags: null,
         package: { kind: "skill" as const, name: "gh" },
       })),
       loaded: true,
@@ -400,6 +403,7 @@ describe("the places a narrowed Library row names", () => {
       at: null,
       origin: { origin: "marketplace", source: "cat", repo: "o/r" },
       summary: null,
+      tags: null,
       package: GH,
     },
     {
@@ -409,6 +413,7 @@ describe("the places a narrowed Library row names", () => {
       at: seen.at,
       origin: { origin: "marketplace", source: "hyprcat", repo: "o/h" },
       summary: null,
+      tags: null,
       package: GH,
     },
   ];
@@ -650,6 +655,7 @@ describe("a package whose rendering is gone everywhere", () => {
     at: null,
     origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
     summary: SEEDED_WORDS,
+    tags: null,
     package: { kind: "skill" as const, name: "gh" },
   };
 
@@ -893,6 +899,7 @@ describe("a package whose rendering is gone everywhere", () => {
         at: loose.at,
         origin: { origin: "unmanaged" },
         summary: null,
+        tags: null,
         package: null,
       },
     ] as never);
@@ -1226,6 +1233,7 @@ describe("the marketplace a Library row came from", () => {
     harness: item.harness,
     at: observedAt(item),
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
     origin,
   });
@@ -1421,6 +1429,7 @@ describe("one package several tools store differently", () => {
     at: item.at,
     origin: { origin: "marketplace", source: "kendex", repo: "vg/kendex" },
     summary: null,
+    tags: null,
     package: { kind: "hook", name: "block-bare-cd" },
   });
 
@@ -1440,6 +1449,7 @@ describe("one package several tools store differently", () => {
           at: items[2].at,
           origin: { origin: "unmanaged" },
           summary: null,
+          tags: null,
           package: null,
         },
       ] as never,
@@ -1568,6 +1578,7 @@ describe("what a Library row says a package is for", () => {
             repo: "vg/kendex",
           },
           summary: WORDS,
+          tags: null,
           package: { kind: "hook", name: "block-bare-cd" },
         },
       ] as never,
@@ -1952,6 +1963,7 @@ describe("the columns a narrow Library table keeps", () => {
         at: installed({ scope: "project", root }).path,
         origin: { origin: "own" as const, forkedFrom: null, source: "local" },
         summary: null,
+        tags: null,
         package: { kind: "skill" as const, name: "gh" },
       })) as never,
     );
@@ -1974,5 +1986,101 @@ describe("the columns a narrow Library table keeps", () => {
     expect(row[3].textContent, "Status is still the last cell").toContain(
       "Active",
     );
+  });
+});
+
+// An installed skill copy carries no tags of its own, so the Library files a
+// managed skill under the tags its declaration writes, through the join that
+// says which package the copy is. A declared list stands as written, empty
+// included; only a row with no declaration behind it leaves the
+// observation's own tags.
+describe("the tags a Library row is filed under", () => {
+  const copy = (tags: Tag[]): ObservedItem =>
+    ({ ...installed(VG), at: installed(VG).path, tags }) as ObservedItem;
+  const joined = (tags: Tag[] | null): ProvenanceRow => ({
+    scope: VG,
+    kind: "skill",
+    name: "gh",
+    harness: "claude",
+    at: installed(VG).path,
+    origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+    summary: null,
+    tags,
+    package: { kind: "skill", name: "gh" },
+  });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    roomIs(1400);
+  });
+
+  it("reads the declaration's tags in the column and under the facet", () => {
+    const cases: {
+      name: string;
+      observed: Tag[];
+      declared: Tag[] | null;
+      facet: Tag;
+      column: string;
+      kept: boolean;
+    }[] = [
+      {
+        name: "declared on a copy that carries none",
+        observed: [],
+        declared: ["review", "testing"],
+        facet: "review",
+        column: `${TAG_LABELS.review}${TAG_LABELS.testing}`,
+        kept: true,
+      },
+      {
+        name: "declared none over a copy that carries some",
+        observed: ["docs"],
+        declared: [],
+        facet: "docs",
+        column: "",
+        kept: false,
+      },
+      {
+        name: "no declaration reachable",
+        observed: ["docs"],
+        declared: null,
+        facet: "docs",
+        column: TAG_LABELS.docs,
+        kept: true,
+      },
+    ];
+    expect(cases.length, "tag join table is empty").toBeGreaterThan(0);
+    for (const { name, observed, declared, facet, column, kept } of cases) {
+      useScanStore.setState({
+        result: {
+          harnesses: [],
+          items: [copy(observed)],
+          missingProjects: [],
+          readProjects: [],
+          warnings: [],
+        } as never,
+      });
+      joinAnswered([joined(declared)]);
+
+      useLibraryViewStore.setState({ ...NO_FILTERS });
+      const all = mount(<InstalledView />);
+      const cells = [
+        ...(all.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+      ];
+      expect(cells, name).toHaveLength(8);
+      expect(cells[2].textContent, name).toBe(column);
+
+      useLibraryViewStore.setState({ ...NO_FILTERS, tag: facet });
+      const narrowed = mount(<InstalledView />);
+      // An emptied table draws a row of its own, whose first cell is the
+      // way out of the narrowing, so the package's row is asked for by name.
+      const names = [
+        ...narrowed.querySelectorAll("tbody tr td:first-child"),
+      ].map((cell) => cell.querySelector("button")?.textContent?.trim());
+      expect(names.includes("gh"), name).toBe(kept);
+    }
   });
 });

@@ -177,7 +177,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: matrix.target == 'x86_64-apple-darwin'
         with:
           key: ${{ matrix.target }}
@@ -196,16 +196,22 @@ jobs:
       - name: Linux webview dependencies
         if: runner.os == 'Linux'
         run: |
-          # The x86_64 runner's Azure mirror has stalled package downloads.
-          # Keep the image's suites and signing key on the official archive.
+          # Keep the image's suites and signing key, without unrelated
+          # third-party sources. Leave the image's sources untouched. The
+          # x86_64 runner's Azure mirror has stalled package downloads, so
+          # its copy points at the official archive.
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-            sudo sed -i \
-              -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
               -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
-              /etc/apt/sources.list.d/ubuntu.sources
+              /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          else
+            cp /etc/apt/sources.list.d/ubuntu.sources "$apt_sources"
           fi
-          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update
-          sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update
+          sudo apt-get "${apt_options[@]}" install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
             librsvg2-dev patchelf libxdo-dev xdg-utils libarchive-tools
         shell: bash
       - run: npm ci --prefix ui

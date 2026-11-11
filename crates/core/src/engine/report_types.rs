@@ -152,6 +152,30 @@ pub struct DriftRow {
     /// The verb that settles this row, where one does.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remedy: Option<RowRemedy>,
+    /// Why a declared Pi package's row is one neither this plan's write
+    /// nor `update-pi` settles, as `pi_ext::admit` decided it: what holds
+    /// the scope's one completion (`engine::completion`) and what the run's
+    /// report draws beside the packages left for `update-pi`. A row with
+    /// no remedy is not on that account settled. Read in process by the
+    /// planning verbs; no serialized reader takes it.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub pi_unsettled: Option<PiUnsettled>,
+}
+
+/// Why `update-pi` leaves a declared Pi package where it stands
+/// (`pi_ext::Admission`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PiUnsettled {
+    /// Pi already loads the package, under this name or an earlier one,
+    /// from a root it loads with this scope's, and will not start with it
+    /// registered twice.
+    LoadedElsewhere,
+    /// The record names another source than the declaration.
+    OriginRefused,
+    /// Its source would not resolve, or its copy or record would not
+    /// compare.
+    NotEvaluated,
 }
 
 /// A verb that settles a drift row, acting on the row's own kind and name:
@@ -167,6 +191,10 @@ pub enum RowRemedy {
     /// A kept retired item whose installed files are gone: refresh with
     /// `--prune` takes its record, or removing it by name does.
     PruneOrRemove,
+    /// A declared Pi package whose installed copy or completed install
+    /// record does not match its declaration: only `update-pi` installs it,
+    /// which an apply's write never runs.
+    UpdatePi,
 }
 
 /// Where a plan leaves an item its catalog retired, read off what the
@@ -349,6 +377,17 @@ pub struct EngineReport {
     /// declared uninstaller has to run before the plan does — while the
     /// script it names is still there to run.
     pub repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
+    /// Packages that declare a repository effect and that this plan holds
+    /// back only on conflicts the take-over replaces. The take-over that
+    /// installs them is the run that offers their effect, so the one
+    /// completion a run names carries that permission
+    /// (`engine::recovery::completion`).
+    pub repo_effects_held: Vec<String>,
+    /// Where this plan moves a version 10 project record it recovers
+    /// (`PlanOptions::recover_version_10`): the move is the plan's first
+    /// op, under the same consent as the rest of it. `None` on every plan
+    /// over a current or absent record.
+    pub recovers: Option<std::path::PathBuf>,
     /// Every instruction shim the scope owes and where it stands, in sync
     /// ones included. Drift rows carry only what is not in sync; `verify`
     /// reports each shim as a row of its own beside the lock rows.
@@ -598,6 +637,8 @@ impl EngineReport {
             safety: Vec::new(),
             repo_effects: Vec::new(),
             repo_effects_leaving: Vec::new(),
+            repo_effects_held: Vec::new(),
+            recovers: None,
             instruction_shims: Vec::new(),
             fork_edits: Vec::new(),
             resolved_sources: BTreeMap::new(),
@@ -916,6 +957,12 @@ pub struct PlanOptions {
     /// so the edit stays pending; kept here, that entry would be the lock's
     /// own, and the proof would weigh the lock against itself.
     pub never_applied: bool,
+    /// Plan a version 10 project record as a recovery rather than refuse
+    /// it: the scope plans fresh, the old record proves only the renders
+    /// whose bytes match its hashes, and the plan moves the record aside
+    /// first (`engine::recovery`). `refresh` and `apply` set it; every
+    /// other reader of the lock, the app included, keeps the refusal.
+    pub recover_version_10: bool,
 }
 
 /// The declarations a plan scoped to some packages brings current, and how
@@ -965,6 +1012,7 @@ impl PlanOptions {
             arriving_skills: BTreeSet::new(),
             judge_pins: false,
             never_applied: false,
+            recover_version_10: false,
         }
     }
 

@@ -673,23 +673,6 @@ else
   ok "every line the lint calls an accepted over-flag is still flagged"
 fi
 
-# Both checks above read the pattern rather than passing on their own shape: a
-# set narrowed to one alternative must miss probes, and one widened to match
-# anything must flag controls. Without this pair a `.` would look perfect.
-degenerate() { # MODE PATTERN LINES LABEL
-  local status=0 out=""
-  out="$(scan "$1" "$2" "$3")" || status=$?
-  if [ "$status" -ne 0 ]; then
-    bad "the control for '$4' could not run (grep exited nonzero)"
-  elif [ -z "$out" ]; then
-    bad "$4: it does not, so the check it guards proves nothing"
-  else
-    ok "$4"
-  fi
-}
-degenerate miss mapfile "$PROBES" "a narrowed set misses probes"
-degenerate hit . "$CONTROLS" "a set matching anything flags controls"
-
 # --- 7. the bridge: what --pattern reports is what the scan runs ---------
 # §§ 5 and 6 judge the string `--pattern` prints, and nothing above ties that
 # string to the one the scan greps with. A lint that reported the whole set

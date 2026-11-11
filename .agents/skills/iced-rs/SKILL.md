@@ -1,15 +1,13 @@
 ---
 name: iced-rs
 description: "Load whenever building or debugging an Iced UI."
-summary: "Iced 0.14 GUI reference: custom widgets via iced::advanced, overlays, Canvas, Shader, pane_grid, theming, subscriptions, Elm architecture, with a bundled full-API reference."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [ui]
 ---
 
 <!-- kendex:project-instructions:start -->

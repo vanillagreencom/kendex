@@ -281,6 +281,7 @@ pub(crate) struct RelativeLink {
 pub(crate) fn relative_links(text: &str) -> Vec<RelativeLink> {
     let mut parser = Parser::new_ext(text, crate::render::blocks::EXTENSIONS).into_offset_iter();
     let mut links = Vec::new();
+    let mut in_link = 0usize;
     while let Some((event, span)) = parser.next() {
         match event {
             Event::Start(Tag::Link {
@@ -295,6 +296,7 @@ pub(crate) fn relative_links(text: &str) -> Vec<RelativeLink> {
                 id,
                 ..
             }) => {
+                in_link += 1;
                 let path = dest_url.split(['#', '?']).next().unwrap_or_default();
                 if path.is_empty() || path.contains(':') || path.starts_with(['/', '~']) {
                     continue;
@@ -318,7 +320,8 @@ pub(crate) fn relative_links(text: &str) -> Vec<RelativeLink> {
                     citation: false,
                 });
             }
-            Event::Code(_) | Event::Text(_) => {
+            Event::End(TagEnd::Link | TagEnd::Image) => in_link = in_link.saturating_sub(1),
+            Event::Code(_) | Event::Text(_) if in_link == 0 => {
                 let code = matches!(event, Event::Code(_));
                 let raw = &text[span.clone()];
                 for (at, _) in raw

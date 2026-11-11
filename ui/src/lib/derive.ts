@@ -12,6 +12,7 @@ import type {
   PackageOf,
   RecordedSummaryOf,
   SummaryOf,
+  TagsOf,
 } from "@/lib/package-identity";
 import { sameScope, scopeKey } from "@/lib/scope";
 
@@ -57,6 +58,12 @@ export interface ItemFilter {
  *  and something narrower at the next. */
 export const EVERYWHERE: ItemFilter = { scope: "all" };
 
+/** An installation's tags as the installed file states them, for a caller
+ *  that neither draws nor narrows by tags. A surface that does reads them
+ *  through `package-identity.ts::tagsIndex`, since an installed skill copy
+ *  carries none of its own. */
+const observedTags: TagsOf = (item) => item.tags;
+
 /** Narrowings that are true of one installation: where it is, which tool
  *  reads it, what its author said it is for. Which kind of package it is
  *  is not one of them — a tool stores a package under whatever kind it can
@@ -64,11 +71,12 @@ export const EVERYWHERE: ItemFilter = { scope: "all" };
 export function filterItems(
   items: ObservedItem[],
   filter: ItemFilter,
+  tagsOf: TagsOf = observedTags,
 ): ObservedItem[] {
   return items.filter((item) => {
     if (!scopeMatches(item, filter.scope)) return false;
     if (filter.harness && item.harness !== filter.harness) return false;
-    if (filter.tag && !item.tags.includes(filter.tag)) return false;
+    if (filter.tag && !tagsOf(item).includes(filter.tag)) return false;
     return true;
   });
 }
@@ -113,8 +121,9 @@ export interface ItemGroup {
   summary: string | null;
   installations: ObservedItem[];
   harnesses: string[];
-  /** Every tag any installation of this item carries, deduped. One item can
-   *  be installed from copies that disagree; the union is what it is for. */
+  /** Every tag any installation of this item is filed under, deduped. One
+   *  item can be installed from versions that disagree; the union is what
+   *  it is for. */
   tags: Tag[];
   /** True when several harnesses read the same physical artifact. */
   shared: boolean;
@@ -193,6 +202,7 @@ export function groupItems(
   items: ObservedItem[],
   packageOf: PackageOf,
   summaryOf: SummaryOf = () => null,
+  tagsOf: TagsOf = observedTags,
 ): ItemGroup[] {
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
@@ -223,7 +233,7 @@ export function groupItems(
     group.summary ??= summaryOf(item);
     if (!group.harnesses.includes(item.harness))
       group.harnesses.push(item.harness);
-    for (const tag of item.tags) {
+    for (const tag of tagsOf(item)) {
       if (!group.tags.includes(tag)) group.tags.push(tag);
     }
   }

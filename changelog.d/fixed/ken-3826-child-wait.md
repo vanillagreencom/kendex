@@ -1,0 +1,1 @@
+- Each git call and other tool kendex runs returns as soon as the tool finishes, instead of waiting at least 10 ms, so sync, planning, apply and checks that make many git calls finish sooner in the app and the CLI.

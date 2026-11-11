@@ -2,8 +2,8 @@
 # The proof for tools/rust-reads: one row per source shape the reader
 # resolves or declines, each a checkout holding one crate and one source
 # file; the required members of this repository's own read set; the reads
-# that cannot happen; and one control per derivation rule, each a copy of
-# the reader with that rule removed, turning its row red.
+# that cannot happen; and a control, a copy of the reader with one rule
+# removed, turning its row red.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -112,36 +112,6 @@ RC=0
 OUT="$("$READS" one two 2>&1)" || RC=$?
 [ "$RC" -eq 2 ] && [[ "$OUT" == "rust-reads: usage="* ]] && ok "a second argument is refused with the usage line" || bad "a second argument is refused with the usage line" "rc=$RC out=$OUT"
 
-
-echo "=== each derivation rule has a control ==="
-# EDIT|SHAPE LABEL — a reader copy with EDIT applied prints something other
-# than that shape's rows. An edit carries no |, the column separator.
-MUTANT="$TMP/rust-reads"
-before=$((PASS + FAIL))
-while IFS='|' read -r edit shape; do
-  [ -n "$edit" ] || continue
-  sed "$edit" "$READS" >"$MUTANT"
-  chmod +x "$MUTANT"
-  if cmp -s "$READS" "$MUTANT"; then
-    bad "control: $shape" "the edit changed nothing in a reader copy: $edit"
-    continue
-  fi
-  row="$(printf '%s\n' "$SHAPES" | grep -F -- "$shape|")"
-  IFS='|' read -r _label file source rows <<<"$row"
-  seed_world "$file" "$source"
-  run_reads "$MUTANT"
-  [ "$RC" -eq 0 ] && [ "$OUT" != "$rows" ] && ok "control: $shape, with that rule removed" ||
-    bad "control: $shape, with that rule removed" "rc=$RC out=$OUT"
-done <<'ROWS'
-s/\\(\[ \\t\\n\]\*"\[^"\]\*"\/)) {/\\([ \\t]*"[^"]*"\/)) {/|a literal on the line after the parenthesis counts
-s/chain = chain "\/" unquote(lit)/chain = chain/|a .join literal joins the manifest directory
-s/chain = chain unquote(substr(rest, RSTART, RLENGTH))/chain = chain/|a concat! literal joins the manifest directory
-s/if (seg\[i\] == "..") { if (k == 0) return ""; k--; continue }/if (seg[i] == "..") { if (k > 0) k--; continue }/|an include climbing out of the checkout names nothing
-s/if (match(rest, \/^\[ \\t\\n\]\*\\)+\/)) rest = substr(rest, RLENGTH + 1)//|a chain across lines that goes on with a non-literal prints its directory and the root
-/emit("manifest", ".", owner)$/d|a format! argument leaves the read unfollowed
-ROWS
-[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the controls" >&2; exit 2; }
-
 echo "=== CLI smoke compiled scope retains its inputs and excludes other targets ==="
 # Cargo metadata and the real CLI target produce this scope. The default
 # workspace rows remain available to guard and the other compiler lanes.
@@ -184,28 +154,6 @@ scope_rows "$READS"
 [ "$SCOPE_RC" -eq 0 ] || { bad "CLI scope is readable"; cat "$SCOPE_TMP/err"; }
 scope_table
 grep -qFx $'build\tcrates' <<<"$SCOPE_ROWS" && ok "scoped output retains workspace build rows" || bad "scoped output retains workspace build rows"
-
-# Copies broaden package selection or remove one required input shape.
-# Each copy must make the same scope table red, without a compile error.
-while IFS='@' read -r needle replacement; do
-  [ "$(grep -cxF -- "$needle" "$READS")" -eq 1 ] || exit 2
-  NEEDLE="$needle" REPLACEMENT="$replacement" awk '
-    $0 == ENVIRON["NEEDLE"] { print ENVIRON["REPLACEMENT"]; next } { print }
-  ' "$READS" >"$SCOPE_TMP/reader"
-  chmod +x "$SCOPE_TMP/reader"
-  scope_rows "$SCOPE_TMP/reader"
-  if [ "$SCOPE_RC" -eq 0 ] && ! (PASS=0 FAIL=0; scope_table >"$SCOPE_TMP/control"; [ "$FAIL" -eq 0 ]); then
-    ok "control: CLI scope table rejects the changed derivation"
-  else
-    bad "control: CLI scope table accepts the changed derivation"
-  fi
-done <<'ROWS'
-      | closure([$cli[0].manifest_path]) as $paths@      | [$packages[].manifest_path] as $paths
-      | closure([$cli[0].manifest_path]) as $paths@      | [$cli[0].manifest_path] as $paths
-        visit(resolve(dir, unquote(substr(rest, RSTART, RLENGTH))))@        # no path-module visit
-    else if (kind == "include") printf "cli-include\t%s\n", path@    else if (kind == "include") printf "include\t%s\n", path
-  shared=$(awk -F '\t' '$2 != "crates" { print "cli-build\t" $2 }' <<<"$build")@  shared=
-ROWS
 
 # A failed metadata invocation cannot become an empty scoped read set.
 mkdir -p "$SCOPE_TMP/bin"

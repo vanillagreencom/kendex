@@ -93,6 +93,111 @@ pub fn resolve_declared(
     }))
 }
 
+/// What `update-pi` does with one declared package, decided here once for
+/// the verb that installs it (`update-pi`'s plan), for the plans that name
+/// it (`record_matching`), for the check that names it (`drift::report`)
+/// and for the package's update standing (`package::updates`), so none of
+/// them keeps a reading of its own.
+#[derive(Debug)]
+pub enum Admission {
+    /// Its catalog retired it: nothing installs, settles or re-records it.
+    Retired,
+    /// Its copy and completed record match the declaration.
+    Current {
+        package: DeclaredPackage,
+        source_hash: String,
+        rendered_hash: String,
+    },
+    /// `update-pi` installs it.
+    Install {
+        package: DeclaredPackage,
+        change: Install,
+    },
+    /// Pi already loads `installed`, this package under this name or an
+    /// earlier one, from `at`, a root it loads with this one: an install
+    /// here would register it twice, and Pi will not start like that.
+    LoadedElsewhere { installed: String, at: PathBuf },
+    /// The record names another source than the declaration
+    /// (`check_origin`): no install replaces bytes another source wrote.
+    OriginRefused(CoreError),
+    /// Its source would not resolve, or its copy or record would not
+    /// compare: nothing was judged.
+    NotEvaluated(CoreError),
+}
+
+impl Admission {
+    /// Why `update-pi` leaves the package, and the reason a report draws
+    /// for it; `None` where it installs the package or nothing is owed.
+    pub fn unsettled(&self) -> Option<(crate::engine::PiUnsettled, String)> {
+        use crate::engine::PiUnsettled;
+        match self {
+            Admission::Retired | Admission::Current { .. } | Admission::Install { .. } => None,
+            Admission::LoadedElsewhere { installed, at } => Some((
+                PiUnsettled::LoadedElsewhere,
+                format!(
+                    "carrier package does not match, and {installed} is installed at {} as well; Pi loads both package lists together and will not start with one package registered twice, so update-pi leaves it until one copy is removed",
+                    at.display()
+                ),
+            )),
+            Admission::OriginRefused(error) => {
+                Some((PiUnsettled::OriginRefused, uncompared(error)))
+            }
+            Admission::NotEvaluated(error) => Some((PiUnsettled::NotEvaluated, uncompared(error))),
+        }
+    }
+}
+
+/// What an admitted install changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Install {
+    /// Nothing is installed at the declared name yet.
+    Missing,
+    /// The installed copy or its completed record differs.
+    Stale,
+}
+
+/// Admit one declared package against `existing`, its record, as `basis`
+/// asks: the resolution, the origin, the installed bytes, and the install
+/// guard over `other_roots`, the roots Pi loads with `root`
+/// (`paired_roots`). A copy that is current needs no guard: nothing
+/// installs it again.
+pub fn admit(
+    root: &Path,
+    other_roots: &[PathBuf],
+    name: &str,
+    resolved: Result<Resolved>,
+    existing: Option<&crate::lock::LockEntry>,
+    basis: RecordBasis,
+) -> Admission {
+    let package = match resolved {
+        Ok(Resolved::Ships(package)) => package,
+        Ok(Resolved::Retired { .. }) => return Admission::Retired,
+        Err(error) => return Admission::NotEvaluated(error),
+    };
+    if let Err(error) = check_origin(name, &package, existing) {
+        return Admission::OriginRefused(error);
+    }
+    let change = match declared_state(root, name, &package, existing, basis) {
+        Ok(PackageState::Current {
+            source_hash,
+            rendered_hash,
+        }) => {
+            return Admission::Current {
+                package,
+                source_hash,
+                rendered_hash,
+            };
+        }
+        Ok(PackageState::Missing) => Install::Missing,
+        Ok(PackageState::Different) => Install::Stale,
+        Err(error) => return Admission::NotEvaluated(error),
+    };
+    match super::duplicate_elsewhere(name, other_roots) {
+        Some((installed, at)) => Admission::LoadedElsewhere { installed, at },
+        None => Admission::Install { package, change },
+    }
+}
+
 /// Build a durable record only when the installed copy matches the declared
 /// source byte for byte or under the destination path's Git text policy.
 /// Any other difference is not ownership evidence. The entry's enabled flag
@@ -104,21 +209,54 @@ pub fn matching_lock_entry(
     existing: Option<&crate::lock::LockEntry>,
     basis: RecordBasis,
 ) -> Result<Option<crate::lock::LockEntry>> {
-    check_origin(name, package, existing)?;
-    let PackageState::Current {
-        source_hash,
-        rendered_hash,
-    } = declared_state(scope_root, name, package, existing, basis)?
-    else {
-        return Ok(None);
-    };
+    // No other root: whether an install would be guarded is not this
+    // question, only whether the copy is the declaration's.
+    match admit(
+        scope_root,
+        &[],
+        name,
+        Ok(Resolved::Ships(package.clone())),
+        existing,
+        basis,
+    ) {
+        Admission::Current {
+            package,
+            source_hash,
+            rendered_hash,
+        } => lock_entry(
+            scope_root,
+            name,
+            &package,
+            existing,
+            source_hash,
+            rendered_hash,
+        )
+        .map(Some),
+        Admission::Install { .. } => Ok(None),
+        Admission::OriginRefused(error) | Admission::NotEvaluated(error) => Err(error),
+        Admission::Retired | Admission::LoadedElsewhere { .. } => {
+            unreachable!("a shipped package admitted against no other root")
+        }
+    }
+}
+
+/// The record of a copy `admit` found current.
+fn lock_entry(
+    scope_root: &Path,
+    name: &str,
+    package: &DeclaredPackage,
+    existing: Option<&crate::lock::LockEntry>,
+    source_hash: String,
+    rendered_hash: String,
+) -> Result<crate::lock::LockEntry> {
     let installed_at = existing
         .filter(|entry| super::state::matches_record(entry, name, &source_hash, &rendered_hash))
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(crate::clock::timestamp, |machine| {
             machine.installed_at.clone()
         });
-    Ok(Some(crate::lock::LockEntry {
+    Ok(crate::lock::LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind: crate::model::ItemKind::PiExtension,
         harness: crate::model::HarnessId::Pi,
@@ -142,7 +280,7 @@ pub fn matching_lock_entry(
         registration: None,
         output_style: None,
         reasons: std::collections::BTreeSet::from([crate::lock::Reason::Requested]),
-    }))
+    })
 }
 
 /// Where a planning pass collects what a declaration's switch changes: the
@@ -215,77 +353,70 @@ fn record_matching<'a>(
     basis: RecordBasis,
     mut plan: Option<SwitchPlan<'_>>,
 ) -> Result<Vec<crate::engine::DriftRow>> {
-    use crate::engine::{DriftCause, DriftRow, DriftState};
+    use crate::engine::{DriftRow, DriftState, RowRemedy};
     use crate::model::{HarnessId, ItemKind};
-    let root = scope_root(env, scope)?;
+    // The roots `update-pi` checks when it is run on this scope alone, as
+    // the finish naming it runs it.
+    let settings = crate::settings::load(env)?;
+    let (root, other_roots) = paired_roots(env, &settings, scope, std::slice::from_ref(scope));
     let mut drift = Vec::new();
     let mut switches = Vec::new();
     for (name, decl) in declarations {
         let key = crate::lock::entry_key(ItemKind::PiExtension, name, HarnessId::Pi);
-        let result =
-            resolve_declared(env, scope, manifest, name, decl).and_then(
-                |resolved| match resolved {
-                    Resolved::Ships(mut package) => {
-                        if let Some(selectors) = selectors {
-                            package.selector = selectors.get(name).cloned().unwrap_or_else(|| {
-                                unreachable!("a planned Pi reading has its selector basis")
-                            });
-                        }
-                        matching_lock_entry(&root, name, &package, lock.entries.get(&key), basis)
-                            .map(Some)
-                    }
-                    Resolved::Retired { .. } => Ok(None),
-                },
-            );
-        let Some(result) = result.transpose() else {
-            continue;
-        };
-        let (detail, cause) = match result {
-            Ok(Some(mut entry)) => {
-                let differs = entry.enabled != decl.enabled;
-                // A plan fails on a block it cannot compare, as a toggle
-                // must before it saves the manifest: a switch never lands
-                // without its block. Only the read-only pass reports it.
-                let block = match block_edit(env, &root, name, decl.enabled) {
-                    Err(error) if plan.is_some() => return Err(error),
-                    block => block,
-                };
-                if let Some(plan) = plan.as_mut()
-                    && let Ok(edit) = &block
-                {
-                    if differs {
-                        switches.push((name.as_str(), decl.enabled));
-                        entry.enabled = decl.enabled;
-                    }
-                    if let Some((path, edit)) = edit {
-                        plan.edits
-                            .push((path.clone(), format!("{name} instructions"), edit.clone()));
-                    }
+        let resolved = resolve_declared(env, scope, manifest, name, decl).map(|resolved| {
+            match (resolved, selectors) {
+                (Resolved::Ships(mut package), Some(selectors)) => {
+                    package.selector = selectors.get(name).cloned().unwrap_or_else(|| {
+                        unreachable!("a planned Pi reading has its selector basis")
+                    });
+                    Resolved::Ships(package)
                 }
-                lock.entries.insert(key, entry);
-                match block {
-                    Err(error) => (
-                        format!("APPEND_SYSTEM.md block could not be compared: {error}"),
-                        None,
-                    ),
-                    Ok(_) if differs => (
-                        "native extension filter does not match the enabled declaration".to_owned(),
-                        None,
-                    ),
-                    // The block alone is what a plan simply writes.
-                    Ok(Some(_)) => (
-                        "APPEND_SYSTEM.md block does not match the package's enabled state (declaration or kendex.extensionManager.config)".to_owned(),
-                        Some(DriftCause::UpstreamChanged),
-                    ),
-                    Ok(None) => continue,
+                (resolved, _) => resolved,
+            }
+        });
+        let existing = lock.entries.get(&key);
+        let mut remedy = None;
+        let admission = admit(&root, &other_roots, name, resolved, existing, basis);
+        let (mut unsettled, left) = admission.unsettled().unzip();
+        let (detail, cause) = match admission {
+            Admission::Retired => continue,
+            Admission::Current {
+                package,
+                source_hash,
+                rendered_hash,
+            } => {
+                let entry = lock_entry(&root, name, &package, existing, source_hash, rendered_hash);
+                let switched = (key, entry);
+                match planned_switch(
+                    env,
+                    &root,
+                    (name, decl),
+                    switched,
+                    lock,
+                    &mut plan,
+                    &mut switches,
+                )? {
+                    Some((detail, cause, held)) => {
+                        unsettled = held;
+                        (detail, cause)
+                    }
+                    None => continue,
                 }
             }
-            Ok(None) => (
-                "carrier package or completed install record does not match; update-pi must settle it"
-                    .to_owned(),
+            Admission::Install { .. } => {
+                remedy = Some(RowRemedy::UpdatePi);
+                (
+                    "carrier package or completed install record does not match; update-pi must settle it"
+                        .to_owned(),
+                    None,
+                )
+            }
+            Admission::LoadedElsewhere { .. }
+            | Admission::OriginRefused(_)
+            | Admission::NotEvaluated(_) => (
+                left.unwrap_or_else(|| unreachable!("an unsettled admission has its reason")),
                 None,
             ),
-            Err(error) => (format!("carrier package could not be compared: {error}"), None),
         };
         drift.push(DriftRow {
             kind: ItemKind::PiExtension,
@@ -297,25 +428,111 @@ fn record_matching<'a>(
             cause,
             compared: None,
             also_in_the_way: Vec::new(),
-            remedy: None,
+            remedy,
+            pi_unsettled: unsettled,
         });
     }
     if let Some(plan) = plan
         && !switches.is_empty()
     {
-        let path = super::settings_path(&root);
-        let pre = crate::apply::Pre::observed(&path)?;
-        let text = super::settings::toggled_packages(&path, switches.into_iter())?;
-        plan.ops.push(crate::apply::PlannedOp {
-            description: "Set Pi package extension filters".into(),
-            op: crate::apply::Op::WriteFile {
-                path,
-                bytes: text.into_bytes(),
-                pre,
-            },
-        });
+        plan.ops.push(switches_write(&root, switches)?);
     }
     Ok(drift)
+}
+
+/// The one settings write that sets every native switch a plan changes.
+fn switches_write(root: &Path, switches: Vec<(&str, bool)>) -> Result<crate::apply::PlannedOp> {
+    let path = super::settings_path(root);
+    let pre = crate::apply::Pre::observed(&path)?;
+    let text = super::settings::toggled_packages(&path, switches.into_iter())?;
+    Ok(crate::apply::PlannedOp {
+        description: "Set Pi package extension filters".into(),
+        op: crate::apply::Op::WriteFile {
+            path,
+            bytes: text.into_bytes(),
+            pre,
+        },
+    })
+}
+
+/// A row's detail, cause and unsettled reason.
+type SwitchRow = (
+    String,
+    Option<crate::engine::DriftCause>,
+    Option<crate::engine::PiUnsettled>,
+);
+
+fn uncompared(error: &CoreError) -> String {
+    format!("carrier package could not be compared: {error}")
+}
+
+/// Record a current package's entry, and with `plan` plan the native
+/// switch and the `APPEND_SYSTEM.md` block its declaration changes. The
+/// row it leaves, where it leaves one: one a plan writes carries
+/// `UpstreamChanged`, the cause a plan simply writes; a read-only pass
+/// writes neither, so its row carries no cause it would borrow from a
+/// write nobody runs.
+fn planned_switch<'a>(
+    env: &Env,
+    root: &Path,
+    (name, decl): (&'a String, &crate::manifest::ItemDecl),
+    (key, entry): (String, Result<crate::lock::LockEntry>),
+    lock: &mut crate::lock::Lock,
+    plan: &mut Option<SwitchPlan<'_>>,
+    switches: &mut Vec<(&'a str, bool)>,
+) -> Result<Option<SwitchRow>> {
+    let mut entry = match entry {
+        Ok(entry) => entry,
+        Err(error) => {
+            return Ok(Some((
+                uncompared(&error),
+                None,
+                Some(crate::engine::PiUnsettled::NotEvaluated),
+            )));
+        }
+    };
+    let differs = entry.enabled != decl.enabled;
+    // A plan fails on a block it cannot compare, as a toggle must before
+    // it saves the manifest: a switch never lands without its block. Only
+    // the read-only pass reports it.
+    let block = match block_edit(env, root, name, decl.enabled) {
+        Err(error) if plan.is_some() => return Err(error),
+        block => block,
+    };
+    if let Some(plan) = plan.as_mut()
+        && let Ok(edit) = &block
+    {
+        if differs {
+            switches.push((name.as_str(), decl.enabled));
+            entry.enabled = decl.enabled;
+        }
+        if let Some((path, edit)) = edit {
+            plan.edits
+                .push((path.clone(), format!("{name} instructions"), edit.clone()));
+        }
+    }
+    let written = plan
+        .is_some()
+        .then_some(crate::engine::DriftCause::UpstreamChanged);
+    lock.entries.insert(key, entry);
+    Ok(match block {
+        Err(error) => Some((
+            format!("APPEND_SYSTEM.md block could not be compared: {error}"),
+            None,
+            None,
+        )),
+        Ok(_) if differs => Some((
+            "native extension filter does not match the enabled declaration".to_owned(),
+            written,
+            None,
+        )),
+        Ok(Some(_)) => Some((
+            "APPEND_SYSTEM.md block does not match the package's enabled state (declaration or kendex.extensionManager.config)".to_owned(),
+            written,
+            None,
+        )),
+        Ok(None) => None,
+    })
 }
 
 /// The edit that brings the package's `APPEND_SYSTEM.md` block in line with
@@ -415,21 +632,32 @@ pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
 /// must be checked against before writing: Pi loads the global root and
 /// a project's together, and which project comes later, so a guard that
 /// refuses a package registered twice looks at every project this
-/// machine knows, the registered ones and the one the command runs in.
+/// machine knows, the registered ones, the one the command runs in, and
+/// each project in `targeted`, the scopes the command writes. A project
+/// a command names is registered only after its write, or never (a
+/// declined write, a linked work tree, a temporary folder), and a
+/// personal copy of a package it already holds would load twice there.
 /// For a project that is the global root alone.
 pub fn paired_roots(
     env: &Env,
     settings: &crate::settings::AppSettings,
     scope: &crate::model::Scope,
+    targeted: &[crate::model::Scope],
 ) -> (PathBuf, Vec<PathBuf>) {
     let global = global_root(env, settings);
     match scope {
         crate::model::Scope::Global => {
             let mut projects = settings.projects.clone();
-            if let Some(here) = crate::discover::current_project(env)
-                && !projects.contains(&here)
-            {
-                projects.push(here);
+            let reached = crate::discover::current_project(env).into_iter().chain(
+                targeted.iter().filter_map(|scope| match scope {
+                    crate::model::Scope::Project { root } => Some(root.clone()),
+                    crate::model::Scope::Global => None,
+                }),
+            );
+            for project in reached {
+                if !projects.contains(&project) {
+                    projects.push(project);
+                }
             }
             (
                 global,

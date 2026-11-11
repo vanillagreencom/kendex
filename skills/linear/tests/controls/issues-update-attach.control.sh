@@ -6,22 +6,36 @@ control_replace scripts/commands/issues.sh 1 \
     '    if [ "$clear_labels" = "true" ] && [ -n "$labels" ]; then' \
     '    if [ "$clear_labels" = "true" ] && [ -n "$labels" ] && [ ${#attach_paths[@]} -eq 0 ]; then'
 
-control_expect "an attach-only update returns the new asset URL and repo path"
+control_expect 'graphql: completed non-image survives the failed batch'
 control_replace scripts/commands/issues.sh 1 \
-    '            --argjson attachments "$attachments_json" \' \
-    "            --argjson attachments '[]' \\"
+    '            pending_json=$(pending_attachments_json ${attach_pending[@]+"${attach_pending[@]}"}) || return "$upload_status"' \
+    '            pending_json=$(pending_attachments_json ${attach_pending[@]+"${attach_pending[@]}"}) || return "$upload_status"; pending_json="[]"'
 
-# Keep the live read but let its null result pass, exposing the upload that
-# the destination check must prevent in update and its bulk-update caller.
-control_expect "missing update identifier: lookup is the only request, with no upload or mutation"
-control_expect "missing update UUID: lookup is the only request, with no upload or mutation"
-control_expect "missing bulk identifier: lookup is the only request, with no upload or mutation"
-control_expect "missing bulk UUID: lookup is the only request, with no upload or mutation"
+control_expect 'resume succeeds after its input is captured'
 control_replace scripts/commands/issues.sh 1 \
-    '    if ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then' \
-    '    if false && ! jq -e '\''.issue.id | strings | select(length > 0)'\'' <<<"$result" >/dev/null; then'
+    '            attach_pending+=("$retained_entry")' \
+    '            attach_pending+=("$retained_entry"); attach_pending=()'
 
-control_expect 'connection: safe PUT diagnostic'
-control_replace scripts/lib/attachments.sh 2 \
-    '            curl_exit=$?' \
-    '            curl_exit=0'
+control_expect 'private headers: invalid retained input sends no API request'
+control_replace scripts/commands/issues.sh 1 \
+    '                    type == "object" and keys == ["repo_path", "url"]' \
+    '                    type == "object"'
+
+# Forget an image uploaded before the failure. Its embed was never written, and
+# the resume set no longer names it, so following the resume steps loses it.
+control_expect 'graphql: unwritten image, then exact failed and unattempted upload suffix'
+control_replace scripts/commands/issues.sh 1 \
+    '            unwritten_images+=("$attach_path")' \
+    '            :'
+
+# Let a second --attach-uploaded replace the first, silently unbinding its pairs.
+control_expect 'a second retained file refuses'
+control_replace scripts/commands/issues.sh 1 \
+    '            if [ "$attach_uploaded_set" = true ]; then' \
+    '            if false; then'
+
+# Accept a file holding several JSON values, binding only the first.
+control_expect 'multiple values: invalid retained input refuses'
+control_replace scripts/commands/issues.sh 1 \
+    '                if length == 1 and (.[0] | type == "array" and length > 0 and all(.[];' \
+    '                if true and (.[0] | type == "array" and length > 0 and all(.[];'

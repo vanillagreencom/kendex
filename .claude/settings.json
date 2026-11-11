@@ -53,11 +53,6 @@
           },
           {
             "type": "command",
-            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-worktree-refresh.sh\"",
-            "timeout": 10
-          },
-          {
-            "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-safety.sh\"",
             "timeout": 10
           }
@@ -79,6 +74,16 @@
           {
             "type": "command",
             "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/jarvis-memory-note.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"${COPILOT_PROJECT_DIR-}\" ] || exit 0; bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/docs-writing-note.sh\"",
             "timeout": 10
           }
         ]

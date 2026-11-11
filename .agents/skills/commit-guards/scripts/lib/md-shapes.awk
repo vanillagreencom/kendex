@@ -2,7 +2,7 @@
 # line is indented, which blockquote prefix it carries, and whether it is a
 # heading, a thematic break, an HTML tag or a table's delimiter row. Loaded
 # as the first `-f` program beside md-blocks.awk, never alone; POSIX awk.
-# The grammar each predicate spells is CHECKS.md § md-format's.
+# The grammar each predicate spells is CHECKS.md § md-reflow's.
 
 BEGIN {
   # CommonMark's type-6 tag names, plus `source`, which GitHub suppresses too.

@@ -1,17 +1,13 @@
 ---
 name: mailbox
 description: "Load to send, read or resolve repository mailbox messages and owner questions."
-summary: "A repository mailbox for questions, notices, answers and directives."
 license: MIT
 user-invocable: true
-dependencies:
-  optional: [orch, worktree, linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
 ---
 
 <!-- kendex:project-instructions:start -->

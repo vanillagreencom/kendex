@@ -19,6 +19,9 @@ use super::expansion::{Offer, OpenCatalog};
 
 type RenderedFiles<'a> = (&'a Path, Vec<(PathBuf, Vec<u8>)>);
 
+pub(super) type ReadBundles =
+    BTreeMap<crate::lock::BundleRef, Vec<crate::source::bundles::BundleMember>>;
+
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Desired {
@@ -70,7 +73,8 @@ pub struct CatalogSource {
     /// The item's path within the catalog, `/`-spelled.
     pub path: String,
     /// Whether the rendering is the catalog's bytes unchanged, which is
-    /// what makes a line read off the rendering a line of `path`.
+    /// what makes a line read off the rendering a line of `path`. A skill
+    /// tree's SKILL.md is left to `skill_lines`.
     pub verbatim: bool,
     /// Whether the catalog holds this item as a directory. A place inside
     /// a rendering maps back onto `path` only where the catalog has a
@@ -78,6 +82,135 @@ pub struct CatalogSource {
     /// harness stores as a skill — has no `/SKILL.md` inside itself, and
     /// joining one on would name a path that does not exist.
     pub tree: bool,
+    /// For a skill tree, which lines of the rendering's SKILL.md are lines
+    /// of the catalog's; `verbatim` then speaks for every other file. `None`
+    /// for any other item, where `verbatim` speaks for the whole rendering.
+    pub skill_lines: Option<SkillLines>,
+}
+
+impl CatalogSource {
+    /// Carry these line facts from `was`, the rendering they describe, to
+    /// `now`, the tree that stands in its place: a line of `now` is a line
+    /// of the catalog's file only where it is one of `was` that is one.
+    /// Every site that swaps a rendered tree for other bytes asks this, so
+    /// no fact is left describing bytes that are no longer there.
+    pub(super) fn follow(&mut self, was: &[(PathBuf, Vec<u8>)], now: &[(PathBuf, Vec<u8>)]) {
+        match self.skill_lines {
+            Some(outer) => {
+                let (others, lines) = skill_tree_lines(was, now);
+                self.verbatim &= others;
+                self.skill_lines = Some(lines.onto(outer));
+            }
+            None => self.verbatim &= was == now,
+        }
+    }
+}
+
+/// How `artifact`, a skill tree, stands in `catalog`, the tree it renders
+/// from: whether every file but SKILL.md is the catalog's bytes, and where
+/// SKILL.md's lines stand in the catalog's.
+pub(crate) fn skill_tree_lines(
+    catalog: &[(PathBuf, Vec<u8>)],
+    artifact: &[(PathBuf, Vec<u8>)],
+) -> (bool, SkillLines) {
+    fn skill_file(files: &[(PathBuf, Vec<u8>)]) -> Option<&[u8]> {
+        files
+            .iter()
+            .find(|(rel, _)| crate::render::skill::carries_name(rel))
+            .map(|(_, bytes)| bytes.as_slice())
+    }
+    fn others(files: &[(PathBuf, Vec<u8>)]) -> impl Iterator<Item = &(PathBuf, Vec<u8>)> {
+        files
+            .iter()
+            .filter(|(rel, _)| !crate::render::skill::carries_name(rel))
+    }
+    let lines = match (skill_file(catalog), skill_file(artifact)) {
+        (Some(catalog), Some(artifact)) => SkillLines::of(catalog, artifact),
+        (None, _) | (_, None) => SkillLines::Rewritten,
+    };
+    (others(catalog).eq(others(artifact)), lines)
+}
+
+/// How the lines of a rendered SKILL.md stand in the catalog's SKILL.md. A
+/// copy cuts the frontmatter to the installed key set and keeps the body,
+/// so a body line sits at another number in each file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub enum SkillLines {
+    /// Line `from` of the rendering, and every line after it, is line
+    /// `to`, and the one as far after it, of the catalog's file. A line
+    /// before `from` is in a frontmatter block the copy rewrote.
+    Shifted { from: u32, to: u32 },
+    /// The rendering's body is not the catalog's — the project's own
+    /// instructions are in it — so none of its lines is the catalog's.
+    Rewritten,
+}
+
+impl SkillLines {
+    /// The catalog line `rendered` stands at, where it stands at one.
+    pub fn catalog_line(self, rendered: u32) -> Option<u32> {
+        match self {
+            Self::Shifted { from, to } => rendered
+                .checked_sub(from)
+                .and_then(|past| to.checked_add(past)),
+            Self::Rewritten => None,
+        }
+    }
+
+    /// How `rendered`'s lines stand in `catalog`, two texts of one SKILL.md:
+    /// all of them where the bytes are equal, those of the body where only
+    /// the frontmatter differs, none otherwise.
+    pub(crate) fn of(catalog: &[u8], rendered: &[u8]) -> SkillLines {
+        if catalog == rendered {
+            return Self::Shifted { from: 1, to: 1 };
+        }
+        Self::body(catalog, rendered).unwrap_or(Self::Rewritten)
+    }
+
+    /// Where a line of the first text stands in the catalog's file, `self`
+    /// placing it in a second text and `outer` placing that one's lines in
+    /// the catalog's: a line `self` places inside the block `outer` calls
+    /// rewritten stands nowhere.
+    fn onto(self, outer: SkillLines) -> SkillLines {
+        let (
+            Self::Shifted { from, to },
+            Self::Shifted {
+                from: outer_from, ..
+            },
+        ) = (self, outer)
+        else {
+            return Self::Rewritten;
+        };
+        // The first line `self` places at or past the first line `outer`
+        // places at all.
+        let first = from.checked_add(outer_from.saturating_sub(to));
+        match first.and_then(|first| Some((first, outer.catalog_line(self.catalog_line(first)?)?)))
+        {
+            Some((from, to)) => Self::Shifted { from, to },
+            None => Self::Rewritten,
+        }
+    }
+
+    fn body(catalog: &[u8], rendered: &[u8]) -> Option<SkillLines> {
+        let (catalog, rendered) = (
+            std::str::from_utf8(catalog).ok()?,
+            std::str::from_utf8(rendered).ok()?,
+        );
+        let (_, catalog_body) = crate::frontmatter::split(catalog).ok()?;
+        let (_, rendered_body) = crate::frontmatter::split(rendered).ok()?;
+        if catalog_body != rendered_body {
+            return None;
+        }
+        // The body is the text's tail, so the lines before it are the
+        // newlines of everything else.
+        let first = |text: &str, body: &str| {
+            u32::try_from(text[..text.len() - body.len()].matches('\n').count() + 1).ok()
+        };
+        Some(Self::Shifted {
+            from: first(rendered, rendered_body)?,
+            to: first(catalog, catalog_body)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -318,6 +451,8 @@ pub struct DesiredState {
     /// another catalog installed it, invariant 4's conflict
     /// (`plan_pass::plan_rebound`).
     pub processed: BTreeMap<(ItemKind, String), String>,
+    pub(super) requirer_provenance:
+        BTreeMap<crate::lock::InstallRef, crate::lock::RequirerProvenance>,
     /// Items their catalog retired that this pass met, declared or derived
     /// ([`DesiredState::retire`]); `EngineReport::retired`.
     pub retired: BTreeMap<(ItemKind, String), Retirement>,
@@ -329,6 +464,10 @@ pub struct DesiredState {
     /// Declared sets this pass could not expand whose installed members it
     /// keeps as recorded, each with why.
     pub(super) kept_bundles: BTreeMap<crate::lock::BundleRef, KeptBundle>,
+    /// Offered sets successfully read under this manifest's declarations,
+    /// with every named member, even one expansion cannot install. Only a
+    /// member absent from this reading is known not to be carried.
+    pub(super) read_bundles: ReadBundles,
     /// The records a set in `kept_bundles` keeps, its members and what
     /// they require, by entry key, each with the edges tying it to them it
     /// was recorded under (`bundles::kept_members`). The item pass adds
@@ -382,6 +521,17 @@ pub struct DesiredState {
     /// What one derived this pass is short through no choice of the
     /// person's, so no removal is decided on it.
     pub unreadable_catalogs: BTreeSet<String>,
+    /// Why the expansion read less than the catalogs carry, each cause
+    /// named where it is met. Some also make [`super::DeclarationStatus`]
+    /// incomplete: a walk finding, a set or catalog that would not read,
+    /// a revision conflict. The rest it leaves out: a source that did not
+    /// resolve, or not to a catalog, and an item its catalog does not
+    /// offer or whose frontmatter will not read, since a lookup of one
+    /// readable item stands on its own catalog. Only the removal read
+    /// takes all of them as short and names them (`ops::read_ancestry`):
+    /// a removal decided on less than the catalogs carry could return once
+    /// they read. An apply reports each where it meets it.
+    pub(super) short_reads: BTreeSet<String>,
     /// Compatibility stops the whole plan; ordinary unreadable sources do not.
     pub(super) catalog_refusal: Option<crate::error::CoreError>,
     /// Resolutions for item-level pins, keyed `(source, rev)` — kept apart
@@ -528,6 +678,60 @@ impl Withholding {
 }
 
 impl DesiredState {
+    /// The snapshot of these edges: the value of
+    /// [`crate::lock::LockEntry::requirer_provenance`], assigned whole.
+    /// Only ancestors of these edges belong in it, one row each: this
+    /// pass's reading where it read one, else the previous row, and with
+    /// neither it stays missing, never an invented empty row. A row is
+    /// never widened with another's reasons. No rows is `None`: a reader
+    /// looks rows up one by one.
+    pub(super) fn ancestry(
+        &self,
+        reasons: &BTreeSet<crate::lock::Reason>,
+        previous: Option<&crate::lock::LockEntry>,
+    ) -> Option<Vec<crate::lock::RequirerProvenance>> {
+        let mut pending = reasons.iter().cloned().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        let mut rows = BTreeMap::new();
+        while let Some(reason) = pending.pop() {
+            if let crate::lock::Reason::RequiredBy { by } = reason
+                && visited.insert(by.clone())
+                && let Some(row) = self.requirer_provenance.get(&by).or_else(|| {
+                    previous?
+                        .requirer_rows()
+                        .iter()
+                        .find(|row| row.installation == by)
+                })
+            {
+                pending.extend(row.reasons.iter().cloned());
+                rows.insert(by, row.clone());
+            }
+        }
+        (!rows.is_empty()).then(|| rows.into_values().collect())
+    }
+
+    /// Whether this pass read the record's installation, or an ancestor a
+    /// row of it holds, with an edge the record lacks: only a missing edge
+    /// can make a removal decided on the record lose a root.
+    pub(super) fn read_otherwise(&self, record: &crate::lock::LockEntry) -> bool {
+        let installation = crate::lock::InstallRef {
+            source: record.source.clone(),
+            kind: record.kind,
+            name: record.name.clone(),
+            harness: record.harness,
+        };
+        let lacks = |by: &crate::lock::InstallRef, recorded: &BTreeSet<crate::lock::Reason>| {
+            self.requirer_provenance
+                .get(by)
+                .is_some_and(|read| !read.reasons.is_subset(recorded))
+        };
+        lacks(&installation, &record.reasons)
+            || record
+                .requirer_rows()
+                .iter()
+                .any(|row| lacks(&row.installation, &row.reasons))
+    }
+
     pub(super) fn refuse_catalog(&mut self) -> Result<()> {
         match self.catalog_refusal.take() {
             Some(error) => Err(error),
@@ -537,6 +741,25 @@ impl DesiredState {
 
     pub(super) fn mark_incomplete(&mut self) {
         self.declaration_status = super::DeclarationStatus::Incomplete;
+    }
+
+    /// Records one read [`DesiredState::short_reads`] holds.
+    pub(super) fn read_short(&mut self, what: String) {
+        self.short_reads.insert(crate::names::shown(&what));
+    }
+
+    /// [`DesiredState::mark_incomplete`] for the expansion, naming why for
+    /// the removal read.
+    pub(super) fn mark_incomplete_for(&mut self, why: String) {
+        self.mark_incomplete();
+        self.read_short(why);
+    }
+
+    /// [`DesiredState::mark_incomplete_for`] with the cause also a note,
+    /// which an apply reports.
+    pub(super) fn note_incomplete(&mut self, note: String) {
+        self.mark_incomplete_for(note.clone());
+        self.notes.push(note);
     }
 
     /// Records a declaration whose item was found and read: the provenance
@@ -679,6 +902,8 @@ pub(crate) use places::{IN_PLACE_DISABLED, effective_method, in_place_source, sk
 pub(crate) use places::{harnesses_for, names_the_default, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};
 pub(super) mod hold;
+#[cfg(test)]
+mod tests;
 
 /// The desired world, computed against the manifest that will be on disk
 /// once this plan applies. An upstream skill merge rewrites the manifest,
@@ -877,6 +1102,7 @@ fn compute(
     }
     manifest_changed |= settle_retired(env, scope, manifest, &mut state, &mut updated_manifest);
     inline(env, scope, manifest, &mut state);
+    state.requirer_provenance = expansion.requirer_provenance(&state.processed);
 
     if manifest_changed {
         state.manifest_update = Some(updated_manifest);
@@ -1092,10 +1318,29 @@ impl ItemCtx<'_> {
     /// file otherwise — so a rendering that changes the shape (a command
     /// wrapped into a skill tree) reads as changed, which it is.
     pub(super) fn source(&self, kind: ItemKind, artifact: &Artifact) -> Result<CatalogSource> {
+        let tree = self.sealed.is_dir(self.item_path);
+        // A skill tree's SKILL.md is asked apart from its other files: a
+        // copy rewrites its frontmatter, and a line of its body is still a
+        // line of the catalog's file, at another number.
+        let (verbatim, skill_lines) = match artifact {
+            Artifact::Tree { files, .. } if kind == ItemKind::Skill && tree => {
+                let catalog = self
+                    .sealed
+                    .rendered_item(kind, self.item_path)?
+                    .into_files();
+                let (verbatim, lines) = skill_tree_lines(&catalog, files);
+                (verbatim, Some(lines))
+            }
+            _ => (
+                self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
+                None,
+            ),
+        };
         Ok(CatalogSource {
             path: self.sealed.catalog_path(self.item_path),
-            verbatim: self.sealed.catalog_hash(kind, self.item_path)? == artifact.disk_hash(),
-            tree: self.sealed.is_dir(self.item_path),
+            verbatim,
+            tree,
+            skill_lines,
         })
     }
 }

@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from typing import BinaryIO, Callable, Deque, Dict, Optional
+from typing import BinaryIO, Callable, Deque, Dict, List, Optional, Tuple
 
 from refusals import Refusal
 
@@ -151,6 +151,20 @@ class Slack:
         req.add_header("Content-Type", "application/json; charset=utf-8")
         return self._request(req, method, RETRIES)
 
+    def respond(self, url: str, body: Dict) -> None:
+        """One reply to a slash command's `response_url`, the temporary
+        webhook Slack's payload names, which takes a message payload as JSON
+        and needs no token (https://docs.slack.dev/interactivity/handling-user-interaction).
+        Slack documents no answer body, so any 2xx status succeeds and any
+        other refuses `slack-api-failed http=N`. Nothing retries: Slack
+        takes 5 replies per payload, and a lost response may have posted."""
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+        try:
+            self._open(req, "response_url")
+        except urllib.error.HTTPError as err:
+            raise Refusal("slack-api-failed", f"response_url http={err.code}") from err
+
     def paged(self, method: str, key: str, retries: int = RETRIES, **params: object):
         """Every item of a cursor-paginated method, page after page."""
         cursor: Optional[str] = None
@@ -202,20 +216,30 @@ class Slack:
 
 
     def upload(self, filename: str, data: bytes, channel: str, comment: str, thread_ts: Optional[str]) -> str:
-        """The three-step external upload; returns the file id."""
-        ticket = self.get("files.getUploadURLExternal", filename=filename, length=len(data))
-        req = urllib.request.Request(ticket["upload_url"], data=data, method="POST")
-        req.add_header("Content-Type", "application/octet-stream")
-        try:
-            self._open(req, "upload")
-        except urllib.error.HTTPError as err:
-            raise Refusal("slack-api-failed", f"upload http={err.code}") from err
+        """One-file relay callers keep the scalar file id."""
+        return self.upload_files([(filename, data)], channel, comment, thread_ts)[0]
+
+    def upload_files(
+        self, files: List[Tuple[str, bytes]], channel: str, comment: str, thread_ts: Optional[str],
+    ) -> List[str]:
+        """Upload every file before sharing the group in one completion."""
+        uploaded = []
+        # Without completion Slack discards uploads, so a failed member cannot
+        # share a partial group: https://docs.slack.dev/reference/methods/files.completeUploadExternal/
+        for filename, data in files:
+            ticket = self.get("files.getUploadURLExternal", filename=filename, length=len(data))
+            req = urllib.request.Request(ticket["upload_url"], data=data, method="POST")
+            req.add_header("Content-Type", "application/octet-stream")
+            try:
+                self._open(req, "upload")
+            except urllib.error.HTTPError as err:
+                raise Refusal("slack-api-failed", f"upload http={err.code}") from err
+            uploaded.append({"id": ticket["file_id"], "title": filename})
         done = self.post(
             "files.completeUploadExternal",
-            files=[{"id": ticket["file_id"], "title": filename}],
+            files=uploaded,
             channel_id=channel,
             initial_comment=comment,
             thread_ts=thread_ts,
         )
-        files = done.get("files") or [{"id": ticket["file_id"]}]
-        return str(files[0]["id"])
+        return [str(file["id"]) for file in done.get("files") or uploaded]

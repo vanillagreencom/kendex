@@ -1,17 +1,13 @@
 ---
 name: youtube-publish
 description: "Load to draft a YouTube upload, comment or reply, or send a draft after the user's recorded approval."
-summary: "YouTube Data API publishing with synthetic-content disclosure and an approval check on the sending path."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [integration]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -35,11 +31,11 @@ Use Python 3.8 or newer. The executable is `scripts/youtube-publish` under this 
 
 ## Draft and approval
 
-1. Draft the upload with `draft-upload --issue ID --video PATH --title TEXT --description TEXT --category ID --privacy public|private|unlisted --made-for-kids yes|no`. Ask the user to choose the visibility and audience setting. The draft includes `status.containsSyntheticMedia: true`. This discloses realistic altered or synthetic content. See [video status](https://developers.google.com/youtube/v3/docs/videos#status.containsSyntheticMedia).
-2. Draft a top-level comment with `draft-comment --issue ID --video-id ID --text TEXT`. For another channel's video, add `--target-channel-id ID` with that video's channel. Add `--parent-id ID` to draft a reply. These commands make no API call. Review the target and exact text with the user. See [top-level comments](https://developers.google.com/youtube/v3/docs/commentThreads/insert) and [replies](https://developers.google.com/youtube/v3/docs/comments/insert).
-3. Save the JSON draft in the consumer's private working files. Show the user the channel, target, full content, upload visibility and audience setting, and request digest. Each draft prints an `approval_record` object. The user records their explicit yes by posting that object as the entire comment body on the named Linear item. The comment must come from `YOUTUBE_APPROVER_EMAIL`. A caller's assertion or an agent-authored approval is insufficient.
-4. Run `publish --draft PATH` only after that yes. The sending path reads the tracker item and comments live. It checks the author, decision, item and digest before any YouTube request. A changed draft or changed video needs a new approval. Uploads use the [documented resumable protocol](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol).
-5. Record the returned resource id and approval comment id on the tracker item. A failed or interrupted write can have an uncertain result. Stop and check the channel with the user before any new attempt. Do not repeat a successful request or reuse its approval for another send.
+To draft an upload, comment or reply, or to send a draft after its recorded approval, follow [workflows/publish.md](workflows/publish.md).
+
+- Each draft prints an `approval_record` object. The user records their explicit yes by posting that object as the entire comment body on the named Linear item. The comment must come from `YOUTUBE_APPROVER_EMAIL`. A caller's assertion or an agent-authored approval is insufficient.
+- Run `publish --draft PATH` only after that yes. The sending path reads the tracker item and comments live. It checks the author, decision, item and digest before any YouTube request. A changed draft or changed video needs a new approval.
+- A failed or interrupted write can have an uncertain result. Stop and check the channel with the user before any new attempt. Do not repeat a successful request or reuse its approval for another send.
 
 ## Consent and spam
 

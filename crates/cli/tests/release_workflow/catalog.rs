@@ -47,7 +47,8 @@ fn check_options(
 }
 
 // curl reports DNS and connection failures even when CI supplies GITHUB_TOKEN.
-// Only the release read may skip; later install stages must still fail CI.
+// Only the release read and a temporary server error on the released
+// installer's command download may skip; any other failure must fail CI.
 fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String> {
     if install.status.success() {
         return Ok(());
@@ -69,6 +70,20 @@ fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String
     {
         return Err(format!("GitHub release read unavailable\n{diagnostic}"));
     }
+    // install.sh writes its command-download-failed line right after the
+    // failed curl's own status line (install.sh install_cli), so the pair
+    // binds the HTTP status to that download and to no other curl call.
+    let lines: Vec<&str> = stderr.lines().collect();
+    if lines.contains(&"kendex-install: cause=installer-run")
+        && lines.windows(2).any(|pair| {
+            pair[1] == "install.sh: command-download-failed=22"
+                && pair[0]
+                    .strip_prefix("curl: (22) The requested URL returned error: ")
+                    .is_some_and(|status| matches!(status, "502" | "503" | "504"))
+        })
+    {
+        return Err(format!("GitHub release download unavailable\n{diagnostic}"));
+    }
     panic!("{diagnostic}");
 }
 
@@ -77,7 +92,8 @@ fn require_install(install: &Output, token: Option<&OsStr>) -> Result<(), String
 fn install_failures_keep_both_streams_and_only_unavailable_release_reads_skip() {
     // This holds the test's handling of the installer's report protocol, not
     // shipped behavior. Dropping either stream from require_install makes
-    // the failure assertion red; accepting installer-run makes it red too.
+    // the failure assertion red; accepting installer-run beyond a temporary
+    // command-download status makes it red too.
     for (cause, curl, token, skip) in [
         ("release-read", "", None, true),
         ("release-read", "", Some(OsStr::new("read-only")), false),
@@ -103,6 +119,61 @@ fn install_failures_keep_both_streams_and_only_unavailable_release_reads_skip() 
         (
             "installer-run",
             "curl: (6) Could not resolve host: api.github.com",
+            Some(OsStr::new("read-only")),
+            false,
+        ),
+        // Run 42045355361 job 127306987527: the v1.20.0 binary download's 504.
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 504\ninstall.sh: command-download-failed=22",
+            Some(OsStr::new("read-only")),
+            true,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 503\ninstall.sh: command-download-failed=22",
+            None,
+            true,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 502\ninstall.sh: command-download-failed=22",
+            None,
+            true,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 500\ninstall.sh: command-download-failed=22",
+            None,
+            false,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 404\ninstall.sh: command-download-failed=22",
+            None,
+            false,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 403\ninstall.sh: command-download-failed=22",
+            Some(OsStr::new("read-only")),
+            false,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 504\ninstall.sh: command-download-failed=6",
+            None,
+            false,
+        ),
+        (
+            "installer-run",
+            "curl: (22) The requested URL returned error: 504\nanother-stage\ninstall.sh: command-download-failed=22",
+            None,
+            false,
+        ),
+        (
+            "release-read",
+            "curl: (22) The requested URL returned error: 504\ninstall.sh: command-download-failed=22",
             Some(OsStr::new("read-only")),
             false,
         ),
@@ -177,7 +248,7 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
                 String::from_utf8_lossy(&output.stdout).contains(" legs=fresh,upgrade"),
                 "{output:?}"
             );
-            let target = "        ceilings = os.pathsep.join((str(catalog.parent), str(root)))\n";
+            let target = "        ceilings = os.pathsep.join((str(boundary.parent), str(root)))\n";
             assert_eq!(text.matches(target).count(), 1);
             let mutated = text.replace(target, "        ceilings = \"\"\n");
             assert_ne!(text, mutated);

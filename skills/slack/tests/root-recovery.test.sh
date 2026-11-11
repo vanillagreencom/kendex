@@ -19,7 +19,7 @@ while IFS='|' read -r fault control; do
   GOOD_CH="$(sk_channel "$GOOD_ROOT")"
   case "$control" in
     start) sk_mutant root-start relay.py '            self.root_failed\(path, err\)' '            raise err' ;;
-    poll) sk_mutant root-poll relay.py '                self.root_failed\(root, err\)\n                clean = False' '                raise err' ;;
+    poll) sk_mutant root-poll relay.py '(    def poll_once\(self\) -> bool:[\s\S]*?\n)                self.root_failed\(root, err\)\n                clean = False' '\1                raise err' ;;
     retry) sk_mutant root-retry relay.py '        for path in self.paths:\n            if path not in active' '        for path in ():\n            if path not in active' ;;
     diagnostic) sk_mutant root-diagnostic relay.py '        if self.root_errors.get\(path\) != error:' '        if True:' ;;
   esac

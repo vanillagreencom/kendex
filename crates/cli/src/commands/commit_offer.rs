@@ -501,7 +501,7 @@ fn hold(
 ///
 /// The setup is the package's declared installer, the same run the
 /// package page and an install's separate yes make, relayed the same way.
-/// kendex reads that owner's rendered files back through its own dry run.
+/// kendex reads that owner's rendered files back through its discovery listing.
 fn set_up_here(
     env: &Env,
     scope: &Scope,

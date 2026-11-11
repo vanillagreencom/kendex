@@ -28,7 +28,7 @@ use input::input_for;
 /// key, beside the rule-set and discovery-table versions and the accepted
 /// findings' digest. Bump it when what the record holds, or how the input
 /// is read into it, changes.
-const CACHE_FORMAT: u32 = 5;
+const CACHE_FORMAT: u32 = 7;
 
 /// What one scoring pass produced, exactly as it is cached. The advisory
 /// payload flattens into the record, so the cached JSON keeps `findings`,
@@ -139,8 +139,8 @@ fn scored(
     name: &str,
     item: &Item,
 ) -> Result<(CachedScore, bool)> {
-    let input = input_for(browsed, kind, name, item)?;
-    let content_hash = input.content_hash();
+    let preview = input_for(browsed, kind, name, item)?;
+    let content_hash = preview.input.content_hash();
     let cache = cache_path(env, browsed, kind, name);
     if let Some(path) = &cache
         && let Some(hit) = verified(path, &content_hash)
@@ -152,7 +152,7 @@ fn scored(
         content_hash,
         discovery: DISCOVERY_VERSION,
         allowance: Allowance::builtin_digest().to_owned(),
-        advisory: crate::quality::audit(input),
+        advisory: preview.audit(),
     };
     if let Some(path) = &cache {
         // Best-effort: an unwritable cache costs the next call a re-score,

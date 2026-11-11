@@ -47,8 +47,11 @@ for edge in post update notice; do
       sk_poll "$ROOT"
       ;;
   esac
-  if [ "$edge" = update ]; then ROW=".messages.${CH}[] | select(.ts == \"$TS\")"; else ROW=".messages.${CH}[-1]"; fi
-  assert_eq "$RC=$(sk_state "$ROW | [.body_arg, (.text | endswith(\"$SLACK_LINK\"))] | join(\" \")")" '0=text true' "$edge selects mrkdwn when links cross the cap"
+  if [ "$edge" = notice ]; then
+    assert_eq "$RC=$(sk_state ".messages.${CH}[-1] | [.body_arg, (.text | endswith(\"$LINK\"))] | join(\" \")")" '0=markdown_text true' 'relay continues linked Markdown across the cap'
+  else
+    assert_eq "$RC=${ERR1%%=*}" '2=slack: text-too-long' "$edge retains its single-message refusal after link expansion"
+  fi
 done
 
 # The notice log consumes this key. A failed workspace read never holds a post.

@@ -1,7 +1,7 @@
 //! Where a fork's original came from: the source it was declared on, and
 //! the commit its bytes were installed at. Recorded on the fork so the
-//! Library can say what it replaced, and read by the capture so it takes
-//! the published file at the commit the edits were made against.
+//! Library can say what it replaced; an agent's capture also reads its
+//! published file at that commit.
 
 use crate::env::Env;
 use crate::error::Result;
@@ -9,22 +9,15 @@ use crate::manifest::{self, ForkProvenance};
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Where the original came from, recorded on the fork so the Library can
-/// say what it replaced and which commit the edits were made on. The
-/// commit is the captured harness's own lock record — installations can
-/// sit at different commits mid-refresh, and the edits live in the one
-/// rendering being kept. A harness with no record yet falls back to any
-/// installation's commit: an approximate base beats none.
+/// say what it replaced and which commit the edits were made on: the
+/// commit the capture read the publisher's file at, so the record and the
+/// keys the fork took back name one revision.
 pub(super) fn provenance(
-    env: &Env,
-    scope: &Scope,
-    kind: ItemKind,
-    name: &str,
-    harness: HarnessId,
     manifest: &manifest::Manifest,
     decl: &manifest::ItemDecl,
-) -> Result<ForkProvenance> {
-    let commit = installed_commit(env, scope, kind, name, harness, decl)?;
-    Ok(ForkProvenance {
+    commit: Option<String>,
+) -> ForkProvenance {
+    ForkProvenance {
         repo: manifest
             .sources
             .get(&decl.source)
@@ -32,15 +25,18 @@ pub(super) fn provenance(
         source: decl.source.clone(),
         commit,
         forked_at: crate::clock::timestamp(),
-    })
+    }
 }
 
-/// The commit this installation's bytes came from: the captured harness's
-/// own lock record, then any other tool's, then the declaration's own pin.
-/// Installations can sit at different commits mid-refresh and the edits
-/// live in the one rendering being kept, so the captured tool answers
-/// first. `None` where nothing recorded one, which reads as the source's
-/// head — an approximate base beats none.
+/// The commit an agent's installed bytes came from: the captured
+/// harness's own lock record, then any other tool's, then the
+/// declaration's own pin. Installations can sit at different commits
+/// mid-refresh and the edits live in the one rendering being kept, so the
+/// captured tool answers first. `None` where nothing recorded one, which
+/// reads as the source's head — an approximate base beats none. A skill's
+/// capture takes the record that wrote its copy instead
+/// ([`crate::library::record_at`]), and refuses rather than guess where
+/// none did.
 pub(super) fn installed_commit(
     env: &Env,
     scope: &Scope,

@@ -13,6 +13,7 @@ const from = (origin: Origin): ProvenanceRow[] => [
     at: "/x/claude",
     origin,
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   },
 ];

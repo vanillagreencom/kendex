@@ -36,6 +36,7 @@ Uncertain about category, prefer `fix` only for related work the Done-when needs
 | Test protection needing a new file, suite, or scenarios | `issue` when a named reachable failure needs protection that justifies its cost under code-quality § Tests and clears § Filing bar; otherwise `decline` |
 | A test with no protection | `fix` suggestion to remove it |
 | Weak evidence where protection matters | Repair the needed evidence under code-quality § Tests |
+| Protection a cheaper form keeps, such as injected time or a read of published state in place of a real-clock wait or a real device effect | `fix` suggestion naming that form |
 | An omitted test the pull request body justifies | Accept the omission; `decline` a request that the judgement already answers |
 | Performance fix inside touched code | `fix` |
 | Performance work needing benchmarks | `issue` |

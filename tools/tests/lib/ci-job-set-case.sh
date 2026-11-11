@@ -6,9 +6,10 @@ cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$
 cp "$ROOT/tools/rust-reads" "$TMP/rule/tools/rust-reads"
 VERIFY_LANES="${VERIFY_ROW% shards=*}"
 # The fixture checkouts' rows, where no script or suite reads a path: a
-# build input runs `rest`, `refresh` and `orch-rest` for real kendex
-# rows, and a tools/ path its suites' two shards and the scans.
-BUILD_ROW="$(measured both false true true '["refresh","orch-rest","rest"]' '["refresh","orch-rest","rest"]')"
+# build input runs the checkout-kendex shards for real kendex rows, the
+# Linux-only jarvis leg among them, and a tools/ path its suites' two shards
+# and the scans.
+BUILD_ROW="$(measured both false true true '["refresh","rest","jarvis"]' '["refresh","rest"]')"
 TOOL_SHARDS='["guards-scans","guards-tools","guards-tools-tail"]'
 TOOL_ROW="$(measured both false true false "$TOOL_SHARDS" "$(macos_shards "$TOOL_SHARDS")")"
 # Where a shard runs, and where none does. A shard runs on both runners
@@ -18,8 +19,7 @@ SHARD_BUILD="$(lanes both false true true)"
 SHARD_PROSE="$(lanes linux false false false)"
 NONE_CODE="$(lanes none false true false)"
 NONE_PROSE="$(lanes none false false false)"
-NO_SKILL="-review-gate -refresh -orch-oversee -orch-oversee-succeed -orch-dev -orch-state -orch-rest -guards-commit -guards-commit-tail -linear -linear-controls-a -linear-controls-b -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
-ORCH_ALL="+orch-oversee +orch-oversee-succeed +orch-dev +orch-state +orch-rest"
+NO_SKILL="-review-gate -refresh -guards-commit -guards-commit-tail -linear -linear-controls -worktree -worktree-restack -rest -slack -mailbox -node -pi-claude-bridge"
 
 # Whether a `shards=` list meets a spec: an exact list, `*` for any, or
 # `+shard` members it must hold and `-shard` members it must not. Empty
@@ -98,7 +98,7 @@ cp "$READ_WORLD/Cargo.toml" "$SEL_WORLD/Cargo.toml"
 skill() { # NAME REQUIRED-LIST — a SKILL.md, with a dependencies block where REQUIRED-LIST is given
   mkdir -p "$SEL_WORLD/skills/$1/scripts" "$SEL_WORLD/skills/$1/tests"
   if [ -n "$2" ]; then
-    printf -- '---\nname: %s\ndependencies:\n  optional: [price-handling]\n  commands:\n    - command: agent-browser\n      purpose: Browser automation\n      floor: "0.26.0"\n      packages:\n        npm: agent-browser\n    - command: op\n      purpose: Credential reads\n      optional: true\n  required: [%s]\n  agents: [runtime]\n---\n' "$1" "$2"
+    printf -- '---\nname: %s\ndependencies:\n  optional: [price-handling]\n  commands:\n    - command: agent-browser\n      purpose: Browser automation\n      floor: "0.26.0"\n      packages:\n        npm: agent-browser\n    - command: op\n      purpose: Credential reads\n      optional: true\n  required: [%s]\n  agents: [runtime]\n  hooks: [note]\n---\n' "$1" "$2"
   else
     printf -- '---\nname: %s\n---\n' "$1"
   fi >"$SEL_WORLD/skills/$1/SKILL.md"

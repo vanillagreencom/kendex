@@ -1,5 +1,4 @@
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { resolve } from "node:path";
+import type { ExtensionAPI, ToolRenderers } from "@earendil-works/pi-coding-agent";
 
 import {
 	attachDiffDetails,
@@ -49,68 +48,43 @@ import {
 	splitTerminalLines,
 	textContent,
 } from "./text.js";
-import { renderStackedToolResult, type StackableToolName } from "./stack.js";
-
-export type BuiltInToolName = StackableToolName | "edit" | "write";
-export type BuiltInToolSet = Partial<Record<BuiltInToolName, any>>;
-
-const builtInToolCache = new Map<string, BuiltInToolSet>();
-
-export function normalizedCwd(cwd?: string): string {
-	return resolve(cwd || process.cwd());
-}
-
-function createBuiltInToolSet(agent: any, cwd: string): BuiltInToolSet {
-	return {
-		read: agent.createReadTool?.(cwd),
-		bash: agent.createBashTool?.(cwd),
-		edit: agent.createEditTool?.(cwd),
-		write: agent.createWriteTool?.(cwd),
-		grep: agent.createGrepTool?.(cwd),
-		find: agent.createFindTool?.(cwd),
-		ls: agent.createLsTool?.(cwd),
-	};
-}
-
-export function getBuiltInTool(agent: any, cwd: string, toolName: BuiltInToolName): any {
-	const key = normalizedCwd(cwd);
-	let tools = builtInToolCache.get(key);
-	if (!tools) {
-		tools = createBuiltInToolSet(agent, key);
-		builtInToolCache.set(key, tools);
-	}
-	return tools[toolName];
-}
-
-/**
- * Fields of the wrapped AgentTool that Pi's agent loop reads, which a
- * replacement definition carries unchanged. `description`, `parameters` and
- * `constrainedSampling` are the tool as declared to the model, the last being
- * Pi's schema-sampling choice, strict-prefer on read, bash, edit and write.
- * `prepareArguments` runs before arguments validate against `parameters`, so
- * without it the shapes Pi's own tool accepts fail before `execute` delegates.
- * `outputSchema` lets codemode read the unchanged result's `structuredContent`;
- * on Pi below 0.99.0 the wrapped tool leaves it undefined.
- * `promptSnippet` and `promptGuidelines` come from Pi's ToolDefinition, which
- * the AgentTool drops: Pi lists a tool under Available tools in the system
- * prompt only when it has a snippet, and adds its guidelines beside it.
- */
-function piToolContract(agent: any, cwd: string, toolName: BuiltInToolName, original: any) {
-	const factory = `create${toolName[0]!.toUpperCase()}${toolName.slice(1)}ToolDefinition`;
-	const definition = agent[factory]?.(normalizedCwd(cwd)) ?? original;
-	return {
-		description: original.description,
-		parameters: original.parameters,
-		constrainedSampling: original.constrainedSampling,
-		prepareArguments: original.prepareArguments,
-		outputSchema: original.outputSchema,
-		promptSnippet: definition.promptSnippet,
-		promptGuidelines: definition.promptGuidelines,
-	};
-}
+import { renderStackedToolResult, STACK_MAX_ITEMS } from "./stack.js";
 
 export function contextCwd(context: any, fallback: string): string {
 	return context?.cwd ?? fallback;
+}
+
+/** Pi awaits tool_call before execution. Keep only the old bytes needed to
+ *  draw in-flight writes, within the existing display count and file limits. */
+export function registerWriteDiffEvents(pi: ExtensionAPI): void {
+	const pending = new Map<string, { path: string; snapshot?: DiffSnapshot }>();
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "write" || !ctx.hasUI || pending.size >= STACK_MAX_ITEMS) return;
+		const input = event.input as Record<string, unknown>;
+		const path = input.path ?? input.file_path;
+		if (typeof path !== "string" || typeof input.content !== "string") return;
+		const record: { path: string; snapshot?: DiffSnapshot } = { path };
+		pending.set(event.toolCallId, record);
+		const snapshot = await readDiffSnapshot(path, ctx.cwd);
+		// A lifecycle reset during the read must not restore an old call's state.
+		if (pending.get(event.toolCallId) === record) record.snapshot = snapshot;
+	});
+	pi.on("tool_result", (event) => {
+		const record = pending.get(event.toolCallId);
+		pending.delete(event.toolCallId);
+		if (event.toolName !== "write" || event.isError || !record?.snapshot) return;
+		if (event.details !== undefined && (event.details === null || typeof event.details !== "object" || Array.isArray(event.details))) return;
+		const path = event.input.path ?? event.input.file_path;
+		// A later handler can change arguments. Never diff a different target's old bytes.
+		if (path !== record.path || typeof event.input.content !== "string") return;
+		const result = attachDiffDetails({ details: event.details }, record.snapshot, textSnapshot(event.input.content), record.path);
+		return { details: result.details };
+	});
+	pi.on("tool_execution_end", (event) => { pending.delete(event.toolCallId); });
+	const clear = () => pending.clear();
+	pi.on("agent_end", clear);
+	pi.on("session_start", clear);
+	pi.on("session_shutdown", clear);
 }
 
 interface BashLiveTailState {
@@ -202,17 +176,9 @@ function writeCallSnapshot(context: any, targetPath: string, cwd: string): DiffS
 	return undefined;
 }
 
-export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
-	const original = getBuiltInTool(agent, cwd, "read");
-	if (!original) return;
-	pi.registerTool({
+export function createReadRenderers(cwd: string): ToolRenderers {
+	return {
 		renderShell: "self",
-		name: "read",
-		label: "read",
-		...piToolContract(agent, cwd, "read", original),
-		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			return getBuiltInTool(agent, contextCwd(context, cwd), "read").execute(id, params, signal, onUpdate, context);
-		},
 		renderCall(args: any, theme: any, context: any) {
 			return renderPendingCall(readCallText(args ?? {}, theme, context?.cwd ?? cwd), theme, context, cwd);
 		},
@@ -237,20 +203,12 @@ export function registerRead(pi: ExtensionAPI, agent: any, cwd: string): void {
 			}
 			return renderReadImages(makeTruncatedLines(text), result, expanded, theme, context, cwd);
 		},
-	});
+	};
 }
 
-export function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
-	const original = getBuiltInTool(agent, cwd, "bash");
-	if (!original) return;
-	pi.registerTool({
+export function createBashRenderers(cwd: string): ToolRenderers {
+	return {
 		renderShell: "self",
-		name: "bash",
-		label: "bash",
-		...piToolContract(agent, cwd, "bash", original),
-		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			return getBuiltInTool(agent, contextCwd(context, cwd), "bash").execute(id, params, signal, onUpdate, context);
-		},
 		renderCall(args: any, theme: any, context: any) {
 			markBashStarted(context);
 			return renderPendingCall(bashCallText(args ?? {}, theme, context?.cwd ?? cwd), theme, context, cwd);
@@ -313,22 +271,12 @@ export function registerBash(pi: ExtensionAPI, agent: any, cwd: string): void {
 			}
 			return makeTruncatedLines(text);
 		},
-	});
+	};
 }
 
-export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
-	const original = getBuiltInTool(agent, cwd, "edit");
-	if (!original) return;
-	pi.registerTool({
+export function createEditRenderers(cwd: string): ToolRenderers {
+	return {
 		renderShell: "self",
-		name: "edit",
-		label: "edit",
-		...piToolContract(agent, cwd, "edit", original),
-		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			const targetPath = params?.path ?? params?.file_path;
-			const result = await getBuiltInTool(agent, contextCwd(context, cwd), "edit").execute(id, params, signal, onUpdate, context);
-			return attachPatchDetails(result, typeof targetPath === "string" ? targetPath : undefined);
-		},
 		renderCall(args: any, theme: any, context: any) {
 			const effectiveCwd = context?.cwd ?? cwd;
 			const targetPath = args?.path ?? args?.file_path ?? "";
@@ -344,6 +292,7 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 			const targetPath = args.path ?? args.file_path ?? "";
 			const call = `${toolLabel(theme, "Edit ")}${renderToolPathText(targetPath, theme, context?.cwd ?? cwd)}`;
 			if (isPartial) return renderPendingDetail("editing…", theme);
+			result = attachPatchDetails({ ...result }, targetPath);
 			clearBlink(context);
 			const structured = result?.details?.kendexDiff as StructuredDiff | undefined;
 			if (context?.isError || result?.isError) {
@@ -356,25 +305,12 @@ export function registerEdit(pi: ExtensionAPI, agent: any, cwd: string): void {
 			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
 		},
-	});
+	};
 }
 
-export function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
-	const original = getBuiltInTool(agent, cwd, "write");
-	if (!original) return;
-	pi.registerTool({
+export function createWriteRenderers(cwd: string): ToolRenderers {
+	return {
 		renderShell: "self",
-		name: "write",
-		label: "write",
-		...piToolContract(agent, cwd, "write", original),
-		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			const effectiveCwd = contextCwd(context, cwd);
-			const targetPath = params?.path ?? params?.file_path;
-			const before = await readDiffSnapshot(targetPath, effectiveCwd);
-			const result = await getBuiltInTool(agent, effectiveCwd, "write").execute(id, params, signal, onUpdate, context);
-			if (result?.isError || typeof params?.content !== "string") return result;
-			return attachDiffDetails(result, before, textSnapshot(params.content), typeof targetPath === "string" ? targetPath : undefined);
-		},
 		renderCall(args: any, theme: any, context: any) {
 			const effectiveCwd = context?.cwd ?? cwd;
 			const targetPath = args?.path ?? args?.file_path ?? "";
@@ -413,20 +349,12 @@ export function registerWrite(pi: ExtensionAPI, agent: any, cwd: string): void {
 			if (structured) text += `\n${renderStructuredDiff(structured, theme, expanded, context?.cwd ?? cwd, undefined, targetPath)}`;
 			return makeTruncatedLines(text);
 		},
-	});
+	};
 }
 
-export function registerReadOnly(pi: ExtensionAPI, agent: any, cwd: string, toolName: "grep" | "find" | "ls"): void {
-	const original = getBuiltInTool(agent, cwd, toolName);
-	if (!original) return;
-	pi.registerTool({
+export function createReadOnlyRenderers(cwd: string, toolName: "grep" | "find" | "ls"): ToolRenderers {
+	return {
 		renderShell: "self",
-		name: toolName,
-		label: toolName,
-		...piToolContract(agent, cwd, toolName, original),
-		async execute(id: string, params: any, signal: AbortSignal | undefined, onUpdate: unknown, context: any) {
-			return getBuiltInTool(agent, contextCwd(context, cwd), toolName).execute(id, params, signal, onUpdate, context);
-		},
 		renderCall(args: any, theme: any, context: any) {
 			return renderPendingCall(readOnlyCallText(toolName, args ?? {}, theme, context?.cwd ?? cwd), theme, context, cwd);
 		},
@@ -461,6 +389,6 @@ export function registerReadOnly(pi: ExtensionAPI, agent: any, cwd: string, tool
 			}
 			return makeTruncatedLines(text);
 		},
-	});
+	};
 }
 

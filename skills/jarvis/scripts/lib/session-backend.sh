@@ -42,6 +42,20 @@ home_pane_live() {
   fi
   return "$rc"
 }
+# pi_session_account MODEL: into PI_SESSION_ACCOUNT what a Jarvis pi session
+# on MODEL spends, from orch's ol_account: pi, a Pi account the session's
+# directory holds; foreign, another harness's account (a pi-claude/ model
+# spends a claude seat), which no Pi account directory holds, so no reading
+# of the session's directory judges it; or unmeasured, an account no reading
+# names.
+pi_session_account() {
+  ol_account pi "$1"
+  case "$OL_ACCOUNT_HARNESS" in
+    pi) PI_SESSION_ACCOUNT=pi ;;
+    none | unknown) PI_SESSION_ACCOUNT=unmeasured ;;
+    *) PI_SESSION_ACCOUNT=foreign ;;
+  esac
+}
 case "$verb" in
   select)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
@@ -53,6 +67,7 @@ case "$verb" in
     harness="$1" account="$2" model="$4" effort="$5"
     trigger="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
     ol_account "$harness" "$model"
+    caller_account="$OL_ACCOUNT_HARNESS"
     rc=4
     if ol_account_measured "$OL_ACCOUNT_HARNESS"; then
       # The source account and the walk both serve an overseer, so neither
@@ -61,35 +76,93 @@ case "$verb" in
       ol_lanes "$OL_ACCOUNT_HARNESS" pick --lane "$account" --harness "$OL_ACCOUNT_HARNESS" --for-overseer \
         --min-headroom-pct "$trigger" ${OL_ACCOUNT_MODEL:+--native-model "$OL_ACCOUNT_MODEL"} --json >/dev/null || rc=$?
     fi
+    # The preference names the first choice and the recorded account the last
+    # resort, the order an overseer succession walks. An account with room, or
+    # one nothing measured, is kept as it is once no named entry qualifies,
+    # outside ol_walk: its caller entry would set up and could refuse an
+    # account the session already runs on. A handover with room is a context
+    # mark, so an unset preference keeps it. An account whose reading refuses
+    # headroom is left out, and the caller entry picks another of its harness.
+    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""
     case "$rc" in
-      0|4|5) ;; # An unmeasured account keeps the existing context-only route.
-      3)
-        ol_preference_entries "$(ol_preference)" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
-        OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
-        OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
-        # Select only. Jarvis launches native permission defaults and transfers
-        # no predecessor flags, so this asks the walk about harness rows alone.
-        OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
-        OL_WALK_REFUSE_ID="$(ol_account_id "$account")"
-        walk_rc=0
-        ol_walk "$trigger" "$account" ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"} caller || walk_rc=$?
-        for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
-          IFS=$'\t' read -r -a fields <<<"$skip"
-          printf 'jarvis-session: %s\n' "${fields[*]}" >&2
-        done
-        if (( walk_rc != 0 )); then
-          printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
-          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
-          exit 1
-        fi
-        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
-        ;;
+      0|4|5) ;;
+      3) [[ -n "$exclude" ]] || exclude="$account" ;;
       *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2
          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
          exit 1 ;;
     esac
-    jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" \
-      '{harness:$harness,account:$account,model:$model,effort:$effort}' ;;
+    if [[ -n "$exclude" ]]; then
+      mark="" caller=caller
+      OL_WALK_REFUSE_ID="$(ol_account_id "$exclude")" || exit 1
+      if [[ "$harness" == pi ]]; then
+        pi_session_account "$model"
+        [[ "$PI_SESSION_ACCOUNT" == pi ]] || caller=""
+      fi
+    fi
+    # Ordinary context succession keeps a Pi account no provider can name.
+    # A known wall still needs a launchable alternative from the walk.
+    if [[ "$caller_account" != unknown || -n "$exclude" ]]; then
+      ol_preference_entries "$(ol_preference "$mark")" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
+      OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
+      OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
+      # Select only. prepare writes the launched harness's own permission
+      # words from the home's setting and carries no predecessor words, so
+      # this asks the walk about harness rows alone.
+      OL_WALK_SOURCE_HARNESS="$harness" OL_WALK_SOURCE_ROWS=1
+      # A Jarvis pi session runs on a pi account directory. A pi entry whose
+      # model spends another account, or none the walk can pick, would hand
+      # that launch a directory of another kind or none.
+      entries=()
+      for entry in ${OL_ENTRIES[@]+"${OL_ENTRIES[@]}"}; do
+        if [[ "${entry%%:*}" == pi ]]; then
+          ol_entry_model "$entry"
+          pi_session_account "$OL_ENTRY_MODEL"
+          if [[ "$PI_SESSION_ACCOUNT" != pi ]]; then
+            printf 'jarvis-session: successor-entry-skipped entry=%s reason=pi-account-unlaunchable\n' "$entry" >&2
+            continue
+          fi
+        fi
+        entries+=("$entry")
+      done
+      walk_rc=0
+      [[ -z "$caller" ]] || entries+=("$caller")
+      ol_walk "$trigger" "$exclude" ${entries[@]+"${entries[@]}"} || walk_rc=$?
+      for skip in ${OL_WALK_SKIPS[@]+"${OL_WALK_SKIPS[@]}"}; do
+        IFS=$'\t' read -r -a fields <<<"$skip"
+        printf 'jarvis-session: %s\n' "${fields[*]}" >&2
+      done
+      if (( walk_rc == 0 )); then
+        harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
+      elif [[ -n "$exclude" || "$walk_rc" != 3 ]]; then
+        printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
+        [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+        exit 1
+      fi
+    fi
+    jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" --arg spent_account "$exclude" \
+      '{harness:$harness,account:$account,model:$model,effort:$effort} + if $spent_account == "" then {} else {spent_account:$spent_account} end' ;;
+  account)
+    # The account a Start that names none runs on: orch's answer for HARNESS.
+    source "$SCRIPT_DIR/lib/lane-context.sh"
+    lane_context_caller_cfg "$1" ;;
+  choice)
+    # A Start's stated model and effort, read as task-prepare reads them.
+    source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
+    jarvis_load "$4"
+    source "$SCRIPT_DIR/lib/overseer-launch.sh"
+    DEP_ERR=/dev/stderr
+    ol_entry_model "$1:$2:$3" || { printf 'jarvis-session: selection=model-unread\n%s\n' "$OL_CLASS_ERR" >&2; exit 1; }
+    # Succession judges a pi session's account by its directory, which holds
+    # no account of another harness, the rule the walk skips such entries by.
+    if [[ "$1" == pi ]]; then
+      pi_session_account "$OL_ENTRY_MODEL"
+      [[ "$PI_SESSION_ACCOUNT" != foreign ]] \
+        || { printf 'jarvis-session: selection=pi-account-unlaunchable model=%s\n' "$OL_ENTRY_MODEL" >&2; exit 1; }
+    fi
+    # jarvis-session shows this verb's stderr only on failure, so the answer
+    # carries kendex's model-resolution line for Start to print.
+    jq -cn --arg model "$OL_ENTRY_MODEL" --arg effort "$OL_ENTRY_EFFORT" --arg warning "$OL_ENTRY_WARNING" \
+      '{model:$model,effort:$effort,warning:$warning}' ;;
   task-prepare)
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
     jarvis_load "$5"
@@ -102,12 +175,57 @@ case "$verb" in
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
+    # Claude Code records its finished first-run setup as hasCompletedOnboarding
+    # in the account's .claude.json, the file lane_claude_trust_prepare reads.
+    # Without it the task stops on the theme and security screens with nobody
+    # at the pane. Read before ol_command_line, whose trust write sets the key:
+    # the setup is the account owner's to finish at the harness.
+    # No documented interface answers whether that setup is done: `claude auth
+    # status` reports sign-in, `claude doctor` install and settings health, and
+    # neither the settings keys (`theme` among them, plus the documented global
+    # config keys of .claude.json) nor any environment variable records it.
+    # IS_DEMO skips the setup without reporting it, a skip the owner never chose.
+    # https://code.claude.com/docs/en/cli-reference
+    # https://code.claude.com/docs/en/settings-reference#global-config-settings
+    # https://code.claude.com/docs/en/env-vars
+    if [[ "$harness" == claude ]]; then
+      onboarded=false
+      if [[ -e "$account/.claude.json" ]]; then
+        onboarded="$(jq '.hasCompletedOnboarding == true' < "$account/.claude.json")" || exit 1
+      fi
+      if [[ "$onboarded" != true ]]; then
+        printf -v fix 'open claude once with CLAUDE_CONFIG_DIR=%q and finish its first-run setup, then launch the task again' "$account"
+        jq -cn --arg fix "$fix" '{refused:"harness-setup-pending",fix:$fix}'
+        exit 0
+      fi
+    fi
     ol_model_line "$OL_ENTRY_WARNING"
     ol_launch_flags --question-off "$harness" "$model" "$effort" "$model" "" || exit 1
-    ol_command_line --brief "$6" "$harness" "" "$account" "$5" "${OL_FLAGS[@]}" || exit 1
+    ol_command_line --brief "$6" "$harness" "" "$account" "$7" "${OL_FLAGS[@]}" || exit 1
     jq -cn --arg line "$OL_CMD" --arg harness "$harness" --arg model "${model:-native-default}" \
       --arg account "$account" --arg effort "$effort" \
       '{line:$line,harness:$harness,model:$model,account:$account,effort:$effort}' ;;
+  task-ready)
+    # Prints PANE's screen. Status 0 is a harness drawing its composer or a
+    # turn (orch's pane_harness_up) that orch's lane_state reads as no dialog
+    # and no wall; 1 is any other screen: one no harness drew yet, a first-run
+    # or trust screen, a selection dialog such as Codex's model switch, or a
+    # sign-in or usage wall; 2 is an unread pane; 3 is an exited harness, its
+    # `exit=` status printed first.
+    export TMUX="$1,0,0"
+    dead="$(tmux -S "$1" display-message -p -t "$2" '#{pane_dead}:#{pane_dead_status}')" || exit 2
+    screen="$(tmux -S "$1" capture-pane -p -t "$2")" || exit 2
+    if [[ "${dead%%:*}" == 1 ]]; then
+      printf 'exit=%s\n%s\n' "${dead#*:}" "$screen"
+      exit 3
+    fi
+    printf '%s\n' "$screen"
+    pane_harness_up "$screen" || exit 1
+    # No window or process read: the pane is open and its harness alive.
+    lane_state state listed "" "" "$screen" || exit 2
+    case "$state" in
+      asking|rate-limit-switch|walled) exit 1 ;;
+    esac ;;
   task-live)
     rc=0
     home_pane_live "$1" "$2" "$3" "$4" || rc=$?
@@ -125,14 +243,68 @@ case "$verb" in
     tmux if-shell -F -t "$4" "#{&&:$binding,#{==:#{pid},$2}}" "kill-window -t $5" ;;
   live)
     home_pane_live "$1" "$2" "$3" "$4" || exit "$?"
-    actual="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
-    # Staging ownership precedes the native generation mark.
-    [[ "$actual" == "$5" || ( "$7" == staging && -z "$actual" ) ]] || exit 1
+    # One read per field: a dead pane's pid (tmux 3.8 clears it at EOF) and
+    # an unmarked pane's generation are empty, and a split on IFS whitespace
+    # would drop an empty field and shift the ones after it.
     session="$(tmux display-message -p -t "$4" '#{session_name}')" || exit 2
     window="$(tmux display-message -p -t "$4" '#{window_id}')" || exit 2
-    [[ "$session" == jarvis && "$window" == "$6" ]] || exit 1
+    case "$7" in
+      # An adopted pane carries no generation mark and lives in the
+      # consumer's own session, where moving it keeps its pane and process
+      # but not its window: its process ($5) binds it.
+      adopted)
+        pid="$(tmux display-message -p -t "$4" '#{pane_pid}')" || exit 2
+        [[ "$pid" == "$5" ]] || exit 1 ;;
+      # Staging ownership precedes the native generation mark.
+      staging | native)
+        generation="$(tmux display-message -p -t "$4" '#{@jarvis-generation}')" || exit 2
+        [[ ( "$generation" == "$5" || ( "$7" == staging && -z "$generation" ) ) && "$session" == jarvis && "$window" == "$6" ]] || exit 1 ;;
+      *) printf 'jarvis-session: live=invalid mode=%s\n' "$7" >&2; exit 2 ;;
+    esac
     jq -cn --arg socket "$1" --arg session "$session" --arg window "$window" --arg pane "$4" \
       '{server:$socket,session:$session,window:$window,pane:$pane}' ;;
+  adopt)
+    # The unmanaged session a Start adopts, read once on the caller's tmux
+    # server: PANE's pane, window and server, PID's start, and the harness
+    # nearest PID at or below it, from the process table stop-process signals
+    # by. A Pi session on a codex-bridge model runs codex below pi, so only
+    # the outermost harness names the session. Status 3 refuses with one
+    # keyed line, its cause pid-ended, pane-unread (tmux unreachable),
+    # pane-missing, pane-dead, pid-mismatch, no-harness or harnesses (two at
+    # that nearest depth); 2 is an unread process table.
+    pane="$1" pid="$2"
+    refuse() {
+      printf 'jarvis-session: adopt=refused cause=%s pane=%s pid=%s%s\n' "$1" "$pane" "$pid" "${2:+ harnesses=$2}" >&2
+      exit 3
+    }
+    at="$(lane_process_start "$pid")" || exit 2
+    [[ -n "$at" ]] || refuse pid-ended
+    line="$(tmux display-message -p -t "$pane" '#{socket_path}	#{pid}	#{start_time}	#{session_name}	#{window_id}	#{pane_id}	#{pane_dead}	#{pane_pid}')" || refuse pane-unread
+    IFS=$'\t' read -r socket server started session window id dead pane_pid <<<"$line"
+    # display-message answers a target it cannot find with success and empty
+    # pane fields, so the pane id read back is what proves the pane exists.
+    [[ -n "$id" ]] || refuse pane-missing
+    [[ "$dead" != 1 ]] || refuse pane-dead
+    [[ "$pane_pid" == "$pid" ]] || refuse pid-mismatch
+    table="$(lane_process_table)" || exit 2
+    harness="" nearest=""
+    for name in claude codex copilot pi; do
+      pattern="$(lane_harness_process_re "$name")" || exit 2
+      found="$(lane_process_below "$table" "$pid" "$pattern" 1 "" pids)" || exit 2
+      [[ -n "$found" ]] || continue
+      hops="$(awk 'NR == 1 || $1 < least { least = $1 } END { print least }' <<<"$found")" || exit 2
+      if [[ -z "$nearest" ]] || (( hops < nearest )); then
+        harness="$name" nearest="$hops"
+      elif (( hops == nearest )); then
+        harness+=",$name"
+      fi
+    done
+    [[ -n "$harness" ]] || refuse no-harness
+    [[ "$harness" != *,* ]] || refuse harnesses "$harness"
+    jq -cn --arg harness "$harness" --arg socket "$socket" --arg session "$session" --arg window "$window" --arg pane "$id" \
+      --argjson server "$server" --argjson started "$started" --argjson pid "$pid" --arg at "$at" \
+      '{harness:$harness,terminal:{server:$socket,session:$session,window:$window,pane:$pane},
+        server_pid:$server,server_started_at:$started,process:{pid:$pid,started_at:$at}}' ;;
   process)
     at="$(lane_process_start "$1")" || exit 1
     [[ -n "$at" ]] || exit 1
@@ -149,7 +321,7 @@ case "$verb" in
     rc=0
     lane_stop_identity "$1" "$2" "$3" || rc=$?
     if [[ "$rc" -ne 0 ]]; then
-      # Session.end_owned forwards this result to the caller's diagnostics.
+      # Session._stop_process forwards this result to the caller's diagnostics.
       printf 'jarvis-session: operation=stop-process exit=%s cause=%s pid=%s\n' "$rc" "$LANE_STOP_CAUSE" "$LANE_STOP_PID" >&2
     fi
     exit "$rc" ;;
@@ -159,14 +331,33 @@ case "$verb" in
     lane_trust_prepare "$harness" "$account" "$home" || exit 1
     lane_session_command "$harness" "$id" "$file" || exit 1
     cmd="$LANE_SESSION_CMD" var="$LANE_SESSION_ACCOUNT_VAR"
-    if [[ -n "${8:-}${9:-}" ]]; then
-      flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
+    # The home names the harnesses whose managed session runs with nobody at
+    # its pane. The subshell reads that one key, so no other home setting
+    # reaches this launch.
+    unattended="$(
+      source "$ROOT/jarvis/scripts/lib/jarvis-env.sh" || exit 1
+      jarvis_load "$home" || exit 1
+      IFS=, read -r -a named <<<"${JARVIS_UNATTENDED_HARNESSES:-}"
+      for entry in ${named[@]+"${named[@]}"}; do
+        kendex_trim entry "$entry"
+        [[ "$entry" != "$harness" ]] || printf 'named\n'
+      done
+    )" || exit 1
+    flags="$(launch_choice_write "$harness" "${8:-}" "${9:-}")" || exit 1
+    if [[ -n "$unattended" ]]; then
+      permission="$(launch_choice_permission_write "$harness")" || exit 1
+      flags="${flags:+$flags }$permission"
+    fi
+    if [[ -n "$flags" ]]; then
       launch_choice_shell_words "$flags" || exit 1
       flags="$(printf ' %q' ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"})" || exit 1
       cmd="$harness$flags${cmd#"$harness"}"
     fi
     form="$(lane_launch_form "$cmd" "$harness" "$LANE_TRUST_HOME" "")"
     child_env="JARVIS_RECORD=$(lane_single_quote "$6") JARVIS_GENERATION=$(lane_single_quote "$7")"
+    if [[ "$harness" == pi && -n "${CLAUDE_CONFIG_DIR:-}" ]]; then
+      child_env+=" CLAUDE_CONFIG_DIR=$(lane_single_quote "$CLAUDE_CONFIG_DIR")"
+    fi
     # Jarvis acts on the owner's desktop, so its session keeps the live display.
     lane_launch_keep_live_session
     line="$(lane_launch_line "$cmd" "$harness" "$var" "$LANE_TRUST_HOME" "$form" "" "$child_env")" || exit 1
@@ -226,5 +417,68 @@ case "$verb" in
   deliver)
     export TMUX="$1,0,0"
     pane_write pane "$2" "$3" file "$4" ;;
+  open-window)
+    # The attach a caller inside a tmux client opens in a new window of the
+    # user's own terminal, from the caller's environment less TMUX and
+    # TMUX_PANE, which jarvis-session clears. Status 3 is no terminal: no
+    # $TERMINAL and no xdg-terminal-exec on PATH. 4 is a $TERMINAL naming
+    # nothing on PATH with no xdg-terminal-exec, which is not that absence. 5
+    # is a
+    # terminal that exited non-zero, put no new client on the session within
+    # 5 seconds or whose process state could not be read.
+    socket="$1" session="$2"
+    printf -v line 'exec tmux -S %q attach-session -t %q' "$socket" "=$session"
+    # The user's configured terminal, then the desktop's. This does not share
+    # orch's private open_gui choice: KEN-4687's owner-held replacement owns
+    # orch and migrates its adjacent callers, so one shared choice is a
+    # caller-integration concern for that rebuild.
+    if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+      launch=("$TERMINAL" -e bash -lc "$line")
+    elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+      launch=(xdg-terminal-exec bash -lc "$line")
+    elif [[ -n "${TERMINAL:-}" ]]; then
+      printf 'jarvis-session: terminal=unresolved requested=%s\n' "$TERMINAL" >&2
+      exit 4
+    else
+      exit 3
+    fi
+    [[ -z "${TERMINAL:-}" || "${launch[0]}" == "$TERMINAL" ]] ||
+      printf 'jarvis-session: terminal=fallback requested=%s selected=%s\n' "$TERMINAL" "${launch[0]}" >&2
+    clients() { tmux -S "$socket" list-clients -t "=$session" -F '#{client_pid}'; }
+    before="$(clients)" || exit 5
+    # The terminal's own stderr names why it failed, such as a display it
+    # could not reach; its tail follows a non-zero exit.
+    errors="$(mktemp "${TMPDIR:-/tmp}/jarvis-terminal.XXXXXX")" || exit 5
+    trap 'rm -f -- "$errors"' EXIT
+    lane_run_detached /dev/null "$errors" "${launch[@]}" || exit 5
+    launcher="$!" waited=0
+    # A terminal that hands its window to a running server exits 0 at once,
+    # so only a new client on the session proves the window opened.
+    while (( waited < 50 )); do
+      after="$(clients)" || exit 5
+      for pid in $after; do
+        [[ $'\n'"$before"$'\n' == *$'\n'"$pid"$'\n'* ]] || exit 0
+      done
+      if [[ -n "$launcher" ]]; then
+        state="$(lane_process_state "$launcher")" || {
+          printf 'jarvis-session: launcher-state=unread pid=%s\n' "$launcher" >&2
+          exit 5
+        }
+        if [[ -z "$state" || "$state" == Z ]]; then
+          rc=0
+          wait "$launcher" || rc=$?
+          if [[ "$rc" != 0 ]]; then
+            printf 'jarvis-session: terminal=%s exit=%s\n' "${launch[0]}" "$rc" >&2
+            tail -n 5 -- "$errors" >&2
+            exit 5
+          fi
+          launcher=""
+        fi
+      fi
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    printf 'jarvis-session: terminal=%s client=none seconds=5\n' "${launch[0]}" >&2
+    exit 5 ;;
   *) printf 'jarvis-session: backend=%s\n' "$verb" >&2; exit 2 ;;
 esac

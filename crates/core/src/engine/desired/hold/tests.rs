@@ -60,6 +60,7 @@ fn entry_from(
 
 fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
     LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind: ItemKind::Skill,
         harness: HarnessId::Claude,

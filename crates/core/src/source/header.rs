@@ -99,7 +99,10 @@ pub(crate) fn try_text(
 /// `kendex.toml` per package would pay for that once per row.
 #[derive(Default)]
 pub(crate) struct DeclaredHeaders {
-    opened: std::collections::HashMap<OpenedKey, Option<(SealedSource, super::SourceConfig)>>,
+    /// Each catalog opened, or why it would not open, said once however
+    /// many packages ask.
+    opened:
+        std::collections::HashMap<OpenedKey, Result<(SealedSource, super::SourceConfig), String>>,
 }
 
 /// What one installation's own record says it came from.
@@ -116,6 +119,113 @@ pub(crate) struct InstalledFrom {
     pub(crate) repo: String,
     /// The commit the bytes came out of, for a source that has one.
     pub(crate) commit: Option<String>,
+}
+
+impl InstalledFrom {
+    /// What one lock entry records about where its bytes came from.
+    pub(crate) fn of(entry: &crate::lock::LockEntry) -> InstalledFrom {
+        InstalledFrom {
+            source: entry.source.clone(),
+            repo: entry.source_repo.clone(),
+            commit: entry.source_commit.clone(),
+        }
+    }
+}
+
+/// One installed package's own header file, read where its install
+/// record says the copy came from, and the commit it was read at.
+pub(crate) struct Published {
+    pub(crate) text: String,
+    pub(crate) commit: Option<String>,
+}
+
+/// The header file one installed copy was rendered from, for a caller
+/// that puts back what the install cut from it: the source `installed`
+/// names, held to the repository it resolved to then, at the commit it
+/// was installed from. Nothing is fetched and nothing else is read in its
+/// place: the current revision, or another repository under the same
+/// name, would put back keys these bytes never carried.
+///
+/// `installed` is the record that wrote the copy, as the caller's
+/// [`crate::library::record_at`] answered. A copy no record claims
+/// refuses: unlike [`DeclaredHeaders::text`], no declaration stands in,
+/// because a declaration says what the scope asks for now, not what these
+/// bytes are, and neither does a record that names no position, which
+/// cannot say these bytes are its own.
+///
+/// The outer error is the read's own: a source
+/// [`super::require_ready_at`] refuses, or an item that revision does not
+/// hold. The inner one is why the record cannot be read here: no record
+/// claims the copy, the package's record names no position it installed
+/// at, a source with revisions whose record names none, a source that now
+/// resolves to another repository, or an item with no header file.
+pub(crate) fn published_text(
+    env: &crate::env::Env,
+    scope: &crate::model::Scope,
+    manifest: &crate::manifest::Manifest,
+    package: (ItemKind, &str),
+    installed: Result<&InstalledFrom, &crate::library::Unclaimed>,
+) -> crate::error::Result<Result<Published, String>> {
+    let (kind, name) = package;
+    let installed = match installed {
+        Ok(installed) => installed,
+        Err(crate::library::Unclaimed::NoRecord) => {
+            return Ok(Err(format!(
+                "no install record names where this copy of '{name}' came from"
+            )));
+        }
+        Err(crate::library::Unclaimed::NamesNoPosition) => {
+            return Ok(Err(format!(
+                "the install record of '{name}' names no installed path, so it cannot say this copy is the one it wrote"
+            )));
+        }
+    };
+    // Only a repository source has revisions. A record of one that names
+    // no commit cannot say which revision these bytes are, and the
+    // current one is a guess. A folder or the local source has one
+    // revision, the bytes it holds now.
+    if installed.commit.is_none()
+        && manifest
+            .sources
+            .get(&installed.source)
+            .is_some_and(|source| source.repo.is_some())
+    {
+        return Ok(Err(format!(
+            "its install record names no commit of source '{}' to read it at",
+            installed.source
+        )));
+    }
+    let read_at = ReadAt::recorded(installed);
+    let (sealed, config) = match read_at.held(env, scope, manifest)? {
+        Ok(opened) => opened,
+        Err(cause) => return Ok(Err(cause)),
+    };
+    Ok(
+        header_text(&sealed, &config, kind, name, &read_at.source)?.map(|text| Published {
+            text,
+            commit: installed.commit.clone(),
+        }),
+    )
+}
+
+/// The text of `name`'s header file in an opened catalog. The error is a
+/// catalog that does not hold the item or a seal that refuses its file;
+/// the inner one an item that has no header file there.
+fn header_text(
+    sealed: &SealedSource,
+    config: &super::SourceConfig,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+) -> crate::error::Result<Result<String, String>> {
+    let path = super::find_item(sealed, config, kind, name).ok_or_else(|| {
+        crate::error::CoreError::ItemNotInSource {
+            name: name.to_owned(),
+            source_name: source.to_owned(),
+        }
+    })?;
+    Ok(try_text(sealed, kind, &path)?
+        .ok_or_else(|| format!("'{name}' has no header file in source '{source}'")))
 }
 
 /// Everything that decides which catalog a read opens: the scope, the
@@ -169,21 +279,7 @@ impl DeclaredHeaders {
         installed: Option<&InstalledFrom>,
     ) -> Option<Metadata> {
         let read_at = ReadAt::of(manifest, kind, name, installed)?;
-        // Keyed by everything that decides the bytes — the scope, the
-        // source name, what it must resolve to, and the revision — so no
-        // two installations that differ in any of them read each other's
-        // catalog.
-        let key = (
-            scope.clone(),
-            read_at.source.clone(),
-            read_at.repo.clone(),
-            read_at.hold.clone(),
-        );
-        let opened = self
-            .opened
-            .entry(key)
-            .or_insert_with(|| read_at.open(env, scope, manifest).ok());
-        let (sealed, config) = opened.as_ref()?;
+        let (sealed, config) = self.opened(env, scope, manifest, &read_at).as_ref().ok()?;
         let path = super::find_item(sealed, config, kind, name)?;
         // A kind that writes no header of its own has nothing to answer
         // with: a plugin's words belong to the registry that lists it, and
@@ -191,14 +287,57 @@ impl DeclaredHeaders {
         header_file(kind, &path)?;
         Some(read(sealed, kind, &path))
     }
+
+    /// The text of one installed package's header file, read where
+    /// [`DeclaredHeaders::of`] reads its words. The error is the cause,
+    /// worded for the person reading the package's record: a source that
+    /// is pending, switched off, gone from its path or re-pointed at
+    /// another repository, or an item no longer at that revision.
+    pub(crate) fn text(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        kind: ItemKind,
+        name: &str,
+        installed: Option<&InstalledFrom>,
+    ) -> Result<String, String> {
+        let read_at = ReadAt::of(manifest, kind, name, installed)
+            .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
+        let (sealed, config) = self
+            .opened(env, scope, manifest, &read_at)
+            .as_ref()
+            .map_err(String::clone)?;
+        header_text(sealed, config, kind, name, &read_at.source)
+            .map_err(|error| error.to_string())?
+    }
+
+    /// The catalog `read_at` names, opened once. Keyed by everything that
+    /// decides the bytes — the scope, the source name, what it must
+    /// resolve to, and the revision — so no two installations that differ
+    /// in any of them read each other's catalog.
+    fn opened(
+        &mut self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+        read_at: &ReadAt,
+    ) -> &Result<(SealedSource, super::SourceConfig), String> {
+        let key = (
+            scope.clone(),
+            read_at.source.clone(),
+            read_at.repo.clone(),
+            read_at.hold.clone(),
+        );
+        self.opened
+            .entry(key)
+            .or_insert_with(|| read_at.open(env, scope, manifest))
+    }
 }
 
-/// The text of one installed package's header file, read where
-/// [`DeclaredHeaders::of`] reads its words: the catalog and revision the
-/// installation's record names, else the declaration's. The error is the
-/// cause, worded for the person reading the package's record: a source
-/// that is pending, switched off, gone from its path or re-pointed at
-/// another repository, or an item no longer at that revision.
+/// [`DeclaredHeaders::text`] for a caller asking about one package: the
+/// catalog and revision the installation's record names, else the
+/// declaration's.
 pub(crate) fn installed_text(
     env: &crate::env::Env,
     scope: &crate::model::Scope,
@@ -207,19 +346,7 @@ pub(crate) fn installed_text(
     name: &str,
     installed: Option<&InstalledFrom>,
 ) -> Result<String, String> {
-    let read_at = ReadAt::of(manifest, kind, name, installed)
-        .ok_or_else(|| format!("'{name}' is neither installed nor declared in this scope"))?;
-    let (sealed, config) = read_at.open(env, scope, manifest)?;
-    let path = super::find_item(&sealed, &config, kind, name).ok_or_else(|| {
-        crate::error::CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: read_at.source.clone(),
-        }
-        .to_string()
-    })?;
-    try_text(&sealed, kind, &path)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("'{name}' has no header file in source '{}'", read_at.source))
+    DeclaredHeaders::default().text(env, scope, manifest, kind, name, installed)
 }
 
 /// Which catalog a read about one installation opens: the installation's
@@ -241,11 +368,7 @@ impl ReadAt {
         installed: Option<&InstalledFrom>,
     ) -> Option<ReadAt> {
         Some(match installed {
-            Some(installed) => ReadAt {
-                source: installed.source.clone(),
-                repo: Some(installed.repo.clone()),
-                hold: installed.commit.clone(),
-            },
+            Some(installed) => ReadAt::recorded(installed),
             None => {
                 let decl = manifest.declared(kind).get(name)?;
                 ReadAt {
@@ -257,18 +380,38 @@ impl ReadAt {
         })
     }
 
-    /// The catalog, opened. Nothing here fetches: [`super::require_ready_at`]
-    /// answers out of the cache a previous install filled and names why it
-    /// cannot otherwise.
+    /// The read one installation's record names, in full.
+    fn recorded(installed: &InstalledFrom) -> ReadAt {
+        ReadAt {
+            source: installed.source.clone(),
+            repo: Some(installed.repo.clone()),
+            hold: installed.commit.clone(),
+        }
+    }
+
+    /// The catalog, opened, with every cause as text.
     fn open(
         &self,
         env: &crate::env::Env,
         scope: &crate::model::Scope,
         manifest: &crate::manifest::Manifest,
     ) -> Result<(SealedSource, super::SourceConfig), String> {
+        self.held(env, scope, manifest)
+            .map_err(|error| error.to_string())?
+    }
+
+    /// The catalog, opened. Nothing here fetches: [`super::require_ready_at`]
+    /// answers out of the cache a previous install filled and names why it
+    /// cannot otherwise. The inner error is a source that now resolves to
+    /// another repository than the one `repo` holds the read to.
+    fn held(
+        &self,
+        env: &crate::env::Env,
+        scope: &crate::model::Scope,
+        manifest: &crate::manifest::Manifest,
+    ) -> crate::error::Result<Result<(SealedSource, super::SourceConfig), String>> {
         let ready =
-            super::require_ready_at(env, scope, &self.source, manifest, self.hold.as_deref())
-                .map_err(|error| error.to_string())?;
+            super::require_ready_at(env, scope, &self.source, manifest, self.hold.as_deref())?;
         // The record names the catalog these bytes came out of. Where the
         // declaration now reads somewhere else, that is a different
         // catalog under one name and its words are about a different
@@ -276,14 +419,13 @@ impl ReadAt {
         if let Some(repo) = &self.repo
             && &ready.provenance != repo
         {
-            return Err(format!(
+            return Ok(Err(format!(
                 "source '{}' now reads {}, not {repo}, which this package was installed from",
                 self.source, ready.provenance
-            ));
+            )));
         }
-        let sealed = SealedSource::open(&ready.root).map_err(|error| error.to_string())?;
-        let config = super::source_config_for(&sealed, &ready.provenance)
-            .map_err(|error| error.to_string())?;
-        Ok((sealed, config))
+        let sealed = SealedSource::open(&ready.root)?;
+        let config = super::source_config_for(&sealed, &ready.provenance)?;
+        Ok(Ok((sealed, config)))
     }
 }

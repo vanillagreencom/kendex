@@ -183,8 +183,10 @@ assert_eq "$(run "$LINUX" "$TMP/nowhere")" "rc=1 first=not-a-directory=$TMP/nowh
 lane
 assert_eq "$(run sparc-unknown-none-elf)" "rc=1 first=target=sparc-unknown-none-elf checked=-" \
   "a target the release does not build"
-assert_eq "$(run x86_64-pc-windows-msvc)" \
-  "rc=1 first=target=x86_64-pc-windows-msvc (checked by release-installer-check.ps1) checked=-" \
+# The keyed value ends at its first blank; the words after it are for a reader.
+windows="$(run x86_64-pc-windows-msvc)"
+read -r windows_rc windows_first _ <<<"$windows"
+assert_eq "$windows_rc $windows_first ${windows##* }" "rc=1 first=target=x86_64-pc-windows-msvc checked=-" \
   "the Windows setup is the PowerShell script's to check"
 
 # mac_app DIR WORD — a kendex.app at DIR whose sidecar is WORD

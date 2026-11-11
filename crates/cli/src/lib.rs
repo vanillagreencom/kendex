@@ -118,6 +118,9 @@ enum Command {
         scope: Option<String>,
         #[command(flatten)]
         output: commands::verify::Output,
+        /// The project this run reads, by path, instead of the one it was typed in
+        #[arg(long, value_name = "PATH")]
+        project_path: Option<std::path::PathBuf>,
         /// Also fail on warnings: a path an installed agent declares as tracked output that the project ignores
         #[arg(long)]
         strict: bool,
@@ -259,6 +262,11 @@ enum Command {
         /// project | global | all (default all)
         #[arg(long)]
         scope: Option<String>,
+        // The project this run writes, named rather than walked up to. The
+        // help clap prints is the flag's own, on `flags::ProjectTargetFlag`;
+        // a doc comment here would reach no output.
+        #[command(flatten)]
+        target: crate::flags::ProjectTargetFlag,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
@@ -590,6 +598,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             global,
             scope,
             output,
+            project_path,
             strict,
         } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::All)?;
@@ -597,6 +606,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
                 &env,
                 names,
                 filter,
+                project_path.as_deref(),
                 output,
                 commands::verify::Warnings::strict(strict),
             );
@@ -631,9 +641,14 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
             commands::drift_hook::run(&env, filter, yes)?;
         }
-        Command::UpdatePi { check, scope, .. } => {
+        Command::UpdatePi {
+            check,
+            scope,
+            target,
+            ..
+        } => {
             let filter = ScopeFilter::resolve(scope.as_deref(), false, ScopeFilter::All)?;
-            commands::update_pi::run(&env, filter, check)?;
+            commands::update_pi::run(&env, filter, &target, check)?;
         }
         Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
         Command::GeneratedPaths => generated_paths(&env)?,

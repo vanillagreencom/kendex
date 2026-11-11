@@ -38,8 +38,14 @@ def pattern() -> "re.Pattern[bytes]":
     return re.compile(candidates[0], re.I | re.M)
 
 
-def check(data: bytes, what: str) -> None:
-    """Refuse `what` when its bytes match the pattern anywhere."""
+def check(data: bytes, what: str, *, complete: bool = True) -> None:
+    """Refuse incomplete output or a whole value matching the pattern.
+
+    The shipped pattern has unbounded repetitions: no fixed overlap can
+    establish that a discarded suffix is secret-free.
+    """
+    if not complete:
+        raise Refusal("secret-check-incomplete", what)
     if pattern().search(data):
         raise Refusal("secret-value", what)
 

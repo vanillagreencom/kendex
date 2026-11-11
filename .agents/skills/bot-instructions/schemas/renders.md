@@ -2,9 +2,17 @@
 
 One section per output. Each names the exact path, what the generator owns inside it, which doctrine blocks it carries and in what order, and how repo text from `[bot-instructions]` is escaped into that file's syntax.
 
-Whole-file outputs in this reference apply to full mode. SKILL.md documents local mode and its installed-doctrine pointer.
+Whole-file outputs in this reference apply to full mode. [§ Local output](#local-output) owns local mode and its installed-doctrine pointer.
 
 Doctrine block ids are the `###` headings of the doctrine source, whose parse rule is SKILL.md § Doctrine. The routing table below is the only other place they are written down, and `doctrine-routing` holds the two to the same set.
+
+## Local output
+
+Read when selecting `--output local` for `render`, `check` or `adopt`. Local mode limits those commands to the `AGENTS.md` review region. The default `--output full` keeps every enabled bot output.
+
+The doctrine loader selects `SKILL.md` or `SKILL.md.disabled`. The pointer uses that filename and the `#doctrine` anchor inside the selected checkout installation. Checkout parent paths resolve through their symlinks. The installation's own symlink keeps its checkout path. Source reads use its canonical target.
+
+An external `--spec` needs a matching selected installation inside the checkout. Otherwise local mode refuses: use `--output full` or install the package inside the checkout. Remote files are excluded from validation, adoption, writes, orphan removal and ownership reports. Local review reads the package doctrine directly; repository doctrine overrides remain in the full render.
 
 ## Common rules
 
@@ -32,7 +40,7 @@ That read decodes strictly, and so does every other read in this package. **Text
 
 **A path list is neither content nor display text, and round-trips.** `git ls-files` emits whatever names the repo holds, and a name is bytes to git; a repo tracking one that is not UTF-8 is a working repo, not a repo to refuse. Nor may it substitute: a name is a thing this run REOPENS, and a substituted `b"\xff/AGENTS.md"` still passes the nested-`AGENTS.md` filter and then addresses a different path. The path list decodes with surrogates, which `os` calls and `subprocess` argument lists encode back to the bytes git gave. That is the one exception to the rule above.
 
-**Write phase.** The generator builds and validates a complete scratch tree, replaces each path, splices the owned region, then removes each marked file the TOML no longer produces. Removal comes last, so a write that fails leaves every orphan in place for the next render to find. A failure part way through names what it replaced and what it removed before the failure, and `check` reds on every path still carrying the old bytes until a re-run finishes the set. `render` also names, as `removed PATH`, a marked file an earlier render removed while the index still tracks it, and `--dry-run` names it as `would remove PATH`, so a caller that builds a commit from those lines stages the deletion. What the design does not claim is an atomic multi-file replacement: no filesystem offers one, and a mixed tree that says so beats one that does not.
+**Write phase.** The generator builds and validates a complete scratch tree, replaces each path, splices the owned region, then removes each marked file the TOML no longer produces. Removal comes last, so a write that fails leaves every orphan in place for the next render to find. A failure part way through names what it replaced and what it removed before the failure, and `check` reds on every path still carrying the old bytes until a re-run finishes the set. `render` also names, as `removed PATH`, a marked file an earlier render removed while the index still tracks it, and `--dry-run` and `--discover` name it as `would remove PATH`, so a caller that builds a commit from those lines stages the deletion. What the design does not claim is an atomic multi-file replacement: no filesystem offers one, and a mixed tree that says so beats one that does not.
 
 **Each individual replacement is atomic**, the `AGENTS.md` splice included. An interrupted write leaves the old bytes, never a truncated file. That is what makes the mixed tree above a recoverable state rather than a lost one: every path holds either its old content or its new one, so a recovery render has something to compare and `check` has something to report. It matters most for `AGENTS.md`, which the splice makes a genuine read-modify-write during the write phase — a truncate-then-write interrupted midway would leave the repo's own file cut off, and that file is the doctrine root three of the five bots read. This repo's own convention is the mechanism: write a temp file and rename it over the target, one temp name per write. The temp name carries the writing process's pid, so a failure that leaves one behind is debris the same process collides with on its retry: every exit from the span between creating the temp and renaming it removes the temp, whichever step raised.
 
@@ -123,7 +131,7 @@ No doctrine block reaches this region, so the routing table has no column for it
 
 **Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and writes the marker unless `--dry-run` is set, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
 
-**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the selected installation's checkout path and Doctrine anchor, under SKILL.md's `--output local` contract. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
+**Escaping.** Full mode interpolates only the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. Local mode uses the selected installation's checkout path and Doctrine anchor, under [§ Local output](#local-output). No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
 
 ## `code-review.md`
 

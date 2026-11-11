@@ -18,10 +18,7 @@ use std::process::{Command, Output};
 /// A lock naming the version this build writes, without which a read
 /// refuses it.
 fn lock_of(entries: &str) -> String {
-    format!(
-        r#"{{"version":{},"entries":{{{entries}}}}}"#,
-        kendex_core::lock::LOCK_VERSION
-    )
+    format!(r#"{{"version":{},"entries":{{{entries}}}}}"#, 11)
 }
 
 #[allow(clippy::expect_used)]

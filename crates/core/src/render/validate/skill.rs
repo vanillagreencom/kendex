@@ -49,6 +49,16 @@ pub(super) fn findings(
             format!("set dependencies.commands row {} field {} in {declared}'s SKILL.md", problem.row, problem.field),
         ));
     }
+    for key in crate::render::skill::dropped_metadata(&map) {
+        findings.push(Finding::advisory(
+            format!(
+                "kendex-skill-metadata-dropped: skill={} key={}\nthe installed SKILL.md carries string metadata only, so this value is left out of it",
+                crate::names::shown(declared),
+                crate::names::shown(&key),
+            ),
+            format!("write {key} as a string in {declared}'s SKILL.md, or move it out of metadata"),
+        ));
+    }
     let in_file = map
         .get("name")
         .and_then(Value::as_str)

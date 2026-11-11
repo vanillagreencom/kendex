@@ -33,6 +33,17 @@ fn plan(home: &Path, project: &Path) -> String {
     said(&kendex(home, project, &["apply", "--plan"]))
 }
 
+/// Every `finish-with=` value the plan printed: the scope-wide completion
+/// a program reads, keyed, or nothing where no one action settles the
+/// scope.
+fn finish_with(planned: &str) -> Vec<&str> {
+    planned
+        .lines()
+        .filter_map(|line| line.split_once("finish-with=").map(|(_, rest)| rest))
+        .map(|rest| rest.split(" — ").next().unwrap_or(rest).trim())
+        .collect()
+}
+
 /// The offer the plan just printed, word for word.
 #[allow(clippy::expect_used)]
 fn offer(planned: &str) -> String {
@@ -279,11 +290,11 @@ fn the_offer_that_keeps_the_files_is_the_one_that_settles_them() {
             planned.contains("differs from the package in 1 file: SKILL.md"),
             "{shape}: the folder was never compared with the install it blocks: {planned}"
         );
-        assert_eq!(
-            planned.contains("--replace-unmanaged"),
-            replaceable,
-            "{shape}: {planned}"
-        );
+        let completion: &[&str] = match replaceable {
+            true => &["apply replace-unmanaged"],
+            false => &[],
+        };
+        assert_eq!(finish_with(&planned), completion, "{shape}: {planned}");
         assert_eq!(offer(&planned), want, "{shape}: {planned}");
 
         follow(home, &project, &planned);
@@ -343,8 +354,9 @@ fn hand_made_files_beside_an_edited_install_keep_their_offer() {
 mod refusals;
 
 /// The other exit on the same shape. An edit beside the hand-made files is
-/// a decision of its own — it never takes the take-over away, and the
-/// replacement settles the files it is about while the edit keeps waiting.
+/// a decision of its own: the scope-wide completion is not named while it
+/// stands, since no one action settles the scope, but the take-over still
+/// settles the files it is about while the edit keeps waiting.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hand_made_files_beside_an_edited_install_are_still_replaceable() {
@@ -358,8 +370,14 @@ fn hand_made_files_beside_an_edited_install_are_still_replaceable() {
 
     let planned = plan(home, &project);
     assert!(
-        planned.contains("kendex apply --replace-unmanaged"),
-        "the take-over was not offered beside an edit: {planned}"
+        planned.contains("edited on disk")
+            && planned.contains("already holds files kendex did not write"),
+        "the fixture needs an edit beside hand-made files: {planned}"
+    );
+    assert_eq!(
+        finish_with(&planned),
+        Vec::<&str>::new(),
+        "a scope-wide completion was named while the edit stands: {planned}"
     );
 
     let taken = kendex(home, &project, &["apply", "-y", "--replace-unmanaged"]);

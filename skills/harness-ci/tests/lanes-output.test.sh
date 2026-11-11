@@ -169,69 +169,167 @@ assert_eq "must-fail: a blank value read as a reason opts the change back" "queu
 assert_eq "the retired coverage flag is read with one notice" "1 queue_only=true" \
   "$(grep -cxF 'option-retired: option=--covers-all-lanes' "$SANDBOX/local-stderr") $(sed -n '/^queue_only=/p' "$SANDBOX/local-output")"
 
-# Restore the base command's missing output in a disposable package copy.
-# The control must complete, then fail the same machine-output assertion.
-mkdir -p "$SANDBOX/control"
-cp -R "$TEST_DIR/.." "$SANDBOX/control/harness-ci"
-cp -R "$CHANGE_SCOPE_PACKAGE" "$SANDBOX/control/change-scope"
-needle='    [ "$output" = /dev/null ] || printf '\''lanes=%s\nlanes_cause=%s\n'\'' "$lanes" "$lanes_cause"'
-NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] { hits++; print "    :"; next }
-  { print } END { if (hits != 1) exit 2 }' "$CHANGE_CLASS" >"$SANDBOX/control/harness-ci/scripts/change-class"
-! cmp -s "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class" || exit 1
-run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
-assert_eq 'must-fail: base output contract omits the local lane answer' "" \
-  "$(sed -n '/^lanes/p' "$SANDBOX/local-output")"
-
-# The stand-down reads the repository's per-push mode, not the queue-only
-# cause. The control gates it on the cause again, so the queue-path change
-# above, whose cause answers before the reason is read, runs its lanes.
-cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
-library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
-needle='per_push="$(sed -n '\''s/^per-push: state=//p'\'' "${work:?}/class-log")" ||'
-replacement='per_push="$(sed -n '\''s/^queue-only: queue_only=[^ ]* cause=per-push-unset.*/unset/p'\'' "${work:?}/class-log")" ||'
-NEEDLE="$needle" REPLACEMENT="$replacement" awk '$0 == ENVIRON["NEEDLE"] {
-    hits++; print ENVIRON["REPLACEMENT"]; next
-  } { print } END { if (hits != 1) exit 2 }' \
-  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
-! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
-write_row queue-path-control "$base_default" 'src/main.sh .github/workflows/ci.yml' 21
-run_local "$SANDBOX/control/harness-ci/scripts/change-class" pull_request "$base_default" "$SANDBOX/default"
-assert_eq 'must-fail: a stand-down gated on the queue-only cause runs a queue-path change' \
-  'queue_only=true lanes=true' \
-  "$(sed -n '/^queue_only=/p; /^lanes=/p' "$SANDBOX/local-output" | tr '\n' ' ' | sed 's/ $//')"
-
 # Local callers read the structured cause field, not the explanation. Both
 # checkout refusals are reachable from --lanes-from on the public command.
-# The control restores the bare field that the action formatter accepts.
-cp "$CHANGE_CLASS" "$SANDBOX/control/harness-ci/scripts/change-class"
-library="$SANDBOX/control/harness-ci/scripts/lib/change-class.sh"
-needle='    die "cause=lanes-from-judged-tree root=$lanes_from" \'
-NEEDLE="$needle" awk '$0 == ENVIRON["NEEDLE"] {
-    hits++; sub(/cause=/, ""); print; next
-  } { print } END { if (hits != 1) exit 2 }' \
-  "$TEST_DIR/../scripts/lib/change-class.sh" >"$library"
-! cmp -s "$TEST_DIR/../scripts/lib/change-class.sh" "$library" || exit 1
 rows=0
-while IFS='|' read -r name declaration expected command; do
+while IFS='|' read -r name declaration expected; do
   rows=$((rows + 1))
-  classifier="$CHANGE_CLASS"
-  [ "$command" != control ] || classifier="$SANDBOX/control/harness-ci/scripts/change-class"
   status=0
-  run_local "$classifier" pull_request "$base_default" "$declaration" || status=$?
+  run_local "$CHANGE_CLASS" pull_request "$base_default" "$declaration" || status=$?
   assert_eq "$name: lane checkout refusal exits 2" 2 "$status"
   assert_eq "$name: structured local cause" "$expected" \
     "$(sed -n 's/^wiring-error: cause=\([^ ]*\).*/\1/p' "$SANDBOX/local-stderr")"
-  if [ "$command" = control ]; then
-    assert_eq "$name: reaches the planted lane refusal" \
-      "wiring-error: lanes-from-judged-tree root=$declaration" \
-      "$(sed -n '/^wiring-error:/p' "$SANDBOX/local-stderr")"
-  fi
   assert_eq "$name: refusal publishes no class" "" "$(cat "$SANDBOX/local-stdout")"
   assert_eq "$name: refusal publishes no lane outputs" "" "$(cat "$SANDBOX/local-output")"
 done <<ROWS
-judged checkout|$repo|lanes-from-judged-tree|production
-absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable|production
-must-fail bare cause control|$repo||control
+judged checkout|$repo|lanes-from-judged-tree
+absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable
 ROWS
 require_rows local-lane-refusals "$rows"
+# One input contract through both real producers. The docs owner supplies the
+# extra membership evidence; the lane owner must retain every text claim.
+text_decl='check src/*
+text product/text.md
+also product/text.md
+other elsewhere/*
+mac:nightly macos/*
+'
+mkdir -p "$SANDBOX/text/.github" "$SANDBOX/text-bad/.github"
+mkdir -p "$SANDBOX/text/$(dirname "$READER")"
+cp "$CHANGE_CLASS" "$SANDBOX/text/$READER"
+printf '%s' "$text_decl" >"$SANDBOX/text/.github/ci-lanes.conf"
+printf 'Bad product/*\n' >"$SANDBOX/text-bad/.github/ci-lanes.conf"
+base_text="$(base_with_settings base-text "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"')")"
+base_glob="$(base_with_settings base-glob "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/*.md"')")"
+base_instruction="$(base_with_settings base-instruction "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/AGENTS.md"')")"
+base_invalid="$(base_with_settings base-invalid "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = true')")"
+base_standard="$(base_with_settings base-standard "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"\nHARNESS_CI_STANDARD_PATHS = "elsewhere/* product/*"')")"
+git -C "$repo" checkout -q -B base-overlay "$base_text"
+mkdir -p "$repo/.kendex"
+printf '[env]\nHARNESS_CI_DOCS_PATHS = ""\n' >"$repo/.kendex/settings.toml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm overlay
+base_overlay="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -q -B base-unreadable "$base_default"
+mkdir -p "$repo/kendex.settings.toml"
+printf 'not settings\n' >"$repo/kendex.settings.toml/child"
+git -C "$repo" add -A
+git -C "$repo" commit -qm unreadable
+base_unreadable="$(git -C "$repo" rev-parse HEAD)"
+
+# NAME|BASE|PATHS|LINES|HEAD/ENV EDIT|EVENT|LANE ROOT|STATUS|DOCS|CLASS|LANES/CAUSE|VERDICTS|CLASS-ONLY
+# `none` owns no declared lanes, so the aggregate answer must keep checks on.
+# CLASS-ONLY checks the class-only caller review-depth, which runs
+# change-scope for the class alone.
+declared_rows() {
+  cat <<'ROWS'
+no-declaration|default|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+declared-owner|text|product/text.md|1|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+declared-large|text|product/text.md|21|none|merge_group|text|0|true|small|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+mixed-source|text|product/text.md src/main.sh|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=false,lane_mac=false|small
+mixed-unclaimed|text|product/text.md Makefile|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
+unclaimed-text|text|product/text.md|1|none|merge_group|default|0|true|trivial|true/declared-text|lane_check=true,lane_other=true,lane_mac=false
+no-lane-declaration|text|product/text.md|1|none|merge_group|none|0|true|trivial|true/declared-text|-
+malformed-lanes|text|product/text.md|1|none|merge_group|text-bad|0|true|trivial|true/declared-text|-
+head-only-declaration|default|product/text.md|1|setting|merge_group|text|0|false|standard|true/standard|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
+environment-declaration|default|product/text.md|1|env|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+overriding-empty|overlay|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+invalid-glob|glob|product/text.md|1|none|merge_group|text|2|-|-|-|-
+protected-instruction|instruction|product/AGENTS.md|1|none|merge_group|text|2|-|-|-|-
+protected-standard|standard|product/text.md|1|none|merge_group|text|2|-|-|-|-
+executable-text|text|product/text.md|1|executable|merge_group|text|2|-|-|-|-|micro
+mixed-executable|text|alpha/source.rs product/text.md zeta/source.rs|21|executable|merge_group|text|2|-|-|-|-|standard
+symlink-text|text|product/text.md|1|symlink|merge_group|text|2|-|-|-|-
+invalid-settings|invalid|product/text.md|1|none|merge_group|text|2|-|-|-|-
+unreadable-settings|unreadable|product/text.md|1|none|merge_group|text|2|-|-|-|-
+queue-default|text|product/text.md|1|none|pull_request|text|0|true|trivial|false/queue-only|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
+nightly-text|text|product/text.md|1|none|schedule|text|0|false|standard|true/full-run|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=true
+ROWS
+}
+declared_case() { # COMMAND ROW
+  local command="$1" name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts
+  local base_var base decl class_only local_status=0 action_status=0
+  IFS='|' read -r name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts class_only <<<"$2"
+  base_var="base_$base_name"
+  base="${!base_var}"
+  write_row "$name" "$base" "$paths" "$lines"
+  case "$edit" in
+    setting) printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"\n' >"$repo/kendex.settings.toml" ;;
+    executable) chmod +x "$repo/product/text.md" ;;
+    symlink) ln -sf elsewhere "$repo/product/text.md" ;;
+  esac
+  if [ "$edit" = setting ] || [ "$edit" = executable ] || [ "$edit" = symlink ]; then
+    git -C "$repo" add -A
+    git -C "$repo" commit -qm "$edit"
+  fi
+  decl=""
+  [ "$declaration" = none ] || decl="$SANDBOX/$declaration"
+  if [ "$edit" = env ]; then export HARNESS_CI_DOCS_PATHS=product/text.md; fi
+  run_action "$event" "$base" "$decl" true || action_status=$?
+  run_local "$command" "$event" "$base" "$decl" true || local_status=$?
+  unset HARNESS_CI_DOCS_PATHS
+  assert_eq "$name: command/action status" "$expected_status/$expected_status" "$local_status/$action_status"
+  if [ "$expected_status" = 0 ]; then
+    assert_eq "$name: docs membership and class" "docs_only=$docs change_class=$class" \
+      "$(sed -n '/^docs_only=/p' "$SANDBOX/action-output") $(cat "$SANDBOX/local-stdout")"
+    assert_eq "$name: command/action lanes agree" "$(lane_answer "$SANDBOX/action-output")" "$(lane_answer "$SANDBOX/local-output")"
+    assert_eq "$name: aggregate lanes" "$lane_result" \
+      "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
+    if [ "$expected_verdicts" != - ]; then
+      assert_eq "$name: owning lanes" "$expected_verdicts" "$(verdicts)"
+    fi
+  else
+    assert_eq "$name: command publishes no waiver" "" "$(cat "$SANDBOX/local-output")$(cat "$SANDBOX/local-stdout")"
+    assert_eq "$name: action publishes no waiver" "" "$(cat "$SANDBOX/action-output")"
+  fi
+  if [ -n "$class_only" ]; then
+    assert_class "$name: class-only consumer" "$class_only" \
+      --event "$event" --base "$base" --head HEAD --repo "$repo"
+  fi
+}
+rows=0
+while IFS= read -r row; do
+  rows=$((rows + 1))
+  declared_case "$CHANGE_CLASS" "$row"
+done < <(declared_rows)
+require_rows declared-text "$rows"
+
+# One control for the changed guard, using the same real input and assertions.
+# Keep the text and docs verdict, but restore the global trivial/docs waiver.
+claim_guard='if [ -n "$declared_paths" ] && [ "$lanes" = false ] && [ "$class" != render ]; then'
+claim_mutant="$(mutant declared-claim lib/change-class.sh "$claim_guard" 'if false; then')"
+control_row="$(declared_rows | sed -n '/^declared-owner|/p')"
+control_status=0
+(PASS=0; FAIL=0; declared_case "$claim_mutant" "$control_row"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/declared-control.log" 2>&1 || control_status=$?
+assert_eq "the declared owner row rejects the restored global waiver" 1 "$control_status"
+assert_eq "the control still completes with its original trivial class" \
+  change_class=trivial "$(cat "$SANDBOX/local-stdout")"
+assert_eq "the control reaches the wrong successful stand-down" \
+  false/trivial "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
+
+# The pre-declaration library contract takes eight arguments and writes no
+# declared file. The control restores the unconditional evidence read.
+legacy_work="$SANDBOX/legacy-work"
+mkdir -p "$legacy_work"
+printf 'docs/guide.md\n' >"$legacy_work/paths"
+: >"$legacy_work/class-log"
+legacy_control="$(mutant legacy-declared lib/change-class.sh \
+  '  if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then' \
+  '  if true; then')"
+for command in "$CHANGE_CLASS" "$legacy_control"; do
+  status=0
+  answer="$(
+    shopt -s extglob
+    . "${command%/*}/lib/change-class.sh"
+    die() { printf '%s\n' "$1"; exit 2; }
+    change_class_lanes trivial docs_only=true merge_group "$repo" HEAD true "$legacy_work" ""
+    printf 'lanes=%s lanes_cause=%s\n' "$lanes" "$lanes_cause"
+  )" || status=$?
+  expected='lanes=false lanes_cause=trivial exit=0'
+  [ "$command" = "$CHANGE_CLASS" ] || expected='cause=declared-paths-unreadable exit=2'
+  assert_eq "an older library caller without declaration evidence: $command" \
+    "$expected" "$answer exit=$status"
+done
+
 report lanes-output

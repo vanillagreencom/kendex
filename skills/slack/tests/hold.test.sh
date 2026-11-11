@@ -213,8 +213,20 @@ assert_eq "$RC=$(count "$CH" 'Reply while held.')=$(sk_state ".messages.${CH}[] 
 assert_eq "$(count "$CH" 'Unrelated while held.')" "0" "an unrelated notice in the same poll stays held"
 assert_eq "$(jq -r --arg id "$REPLY" 'select(.t == "out" and .id == $id and .state == "resolved") | .thread' "$(sk_journal "$ROOT")")" \
   "$TS1" "the reply's out line carries its posted thread"
+FORWARD_KEY="forward-$(printf '%064x' 1)"
+sk_lm "$ROOT" send --item overseer --directive --delivery-id "$FORWARD_KEY" --file "$(sk_text forwarded "Forwarded while held.
+
+forwarded-request: satellite=px13 request-ref=vgs-audit:aud-1 request-at=2026-11-02T14:03:07Z confirmation-ref=vgs-audit:aud-1 confirmed-at=2026-11-02T14:03:07Z key=$FORWARD_KEY confirmation-method=physical confirmation-text=null")" >/dev/null || exit 1
+FORWARDED="$(jq -r --arg d "$FORWARD_KEY" 'select(.delivery_id == $d) | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
+sk_lm "$ROOT" notice --item overseer --to owner --ref "$FORWARDED" --file "$(sk_text forwarded-reply 'Forwarded reply while held.')" >/dev/null
+sk_poll "$ROOT" "$HOLD"
+FORWARD_ROOT="$(sk_state "[.messages.${CH}[] | select(.thread_ts == null and (.text | contains(\"Forwarded while held.\"))) | .ts] | @json")"
+assert_eq "$RC=$(jq -r 'length' <<<"$FORWARD_ROOT")=$(sk_state "[.messages.${CH}[] | select(.text == \"Forwarded reply while held.\") | .thread_ts] | @json")" \
+  "0=1=$FORWARD_ROOT" "a notice on a forwarded directive posts its root and its threaded reply while held"
 sk_poll "$ROOT" "$HOLD"
 assert_eq "$(count "$CH" 'Reply while held.')" "1" "a held poll after restart does not repeat the reply"
+assert_eq "$(count "$CH" 'Forwarded while held.')=$(count "$CH" 'Forwarded reply while held.')" "1=1" \
+  "a held poll after restart repeats neither the forwarded root nor its reply"
 assert_eq "$(holds "$ROOT")" "hold " "the hold is journaled once"
 row "$ROOT"
 assert_has "$LINE" " held-by=jarvis" "the status row shows the hold"
@@ -454,6 +466,40 @@ every-ask-control every-ask no after
 reserved-expired real yes before
 reserved-later real yes after
 reserved-overdue-control overdue yes after
+ROWS
+
+# --- a resume posts a reply to an owner message the Jarvis session read ------------
+# The owner's message lands on a held poll; its reply and an unrelated notice
+# follow, the session reads both, and the hold ends before another held poll.
+# The control puts the seen rule back ahead of the reply rule.
+while read -r name control; do
+  R="$(sk_new_root "seen-reply-$name")"
+  sk_bind "$R"
+  sk_poll "$R" "$HOLD"
+  fresh
+  CH_R="$(sk_channel "$R")"
+  TS="$(sk_inject "$CH_R" U001 "Owner message in $name.")"
+  sk_poll "$R" "$HOLD"
+  DIRECTIVE="$(jq -r 'select(.kind == "directive") | .id' "$(sk_box "$R")/to-lane.jsonl")"
+  sk_lm "$R" notice --item overseer --to owner --ref "$DIRECTIVE" --file "$(sk_text "$name-reply" "Read reply in $name.")" >/dev/null
+  notice "$R" "$name-unrelated" "Read unrelated in $name."
+  UNRELATED="$(last_id "$R")"
+  sk_jarvis_read "$R" "$(wc -l < "$(sk_box "$R")/to-overseer.jsonl")"
+  stale
+  [ "$control" = real ] || sk_mutant seen-before-reply relay.py ' and not reply\n' '\n'
+  sk_poll "$R" "$HOLD"
+  ROW="$RC=$(count "$CH_R" "Read reply in $name.")=$(sk_state "[.messages.${CH_R}[] | select(.text | contains(\"Read reply in $name.\")) | .thread_ts] | join(\",\")")=$(count "$CH_R" "Read unrelated in $name.")=$(jq -r 'select(.t == "resume") | .skipped | join(",")' "$(sk_journal "$R")")"
+  if [ "$control" = real ]; then
+    assert_eq "$ROW" "0=1=$TS=0=$UNRELATED" "$name: a resume posts a read reply in the owner's thread and still skips a read unrelated notice"
+    sk_poll "$R" "$HOLD"
+    assert_eq "$(count "$CH_R" "Read reply in $name.")=$(count "$CH_R" "Read unrelated in $name.")" "1=0" "$name: a restart repeats neither the posted reply nor the skipped notice"
+  else
+    sk_assert_red "$ROW" "0=1=$TS=0=$UNRELATED" "$name: the seen rule ahead of the reply rule drops the read reply"
+  fi
+  sk_bin_reset
+done <<'ROWS'
+real real
+old-order-control old-order
 ROWS
 
 # --- root-local settings through the real launcher and one two-root poll ----------

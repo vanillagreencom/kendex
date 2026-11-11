@@ -21,7 +21,7 @@ a fall-through answer passes the first-response gate|codex:junk retry-exit:codex
 a fall-through exit passes the first-response gate|models:codex+claude codex:junk retry-exit:codex=7 exit:claude=8|review|rc=5 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"exit-8\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
 a fall-through empty answer passes the first-response gate|models:codex+claude codex:junk retry-exit:codex=7 claude:empty|review|rc=5 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
 replacement review receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean inline:claude=1|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|review-fallback
-replacement audit receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean|audit|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|audit-fallback
+replacement audit receives its own format retry|codex:junk retry-exit:codex=7 claude:junk retry:claude=covered|audit|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude,claude calls=2,2,0|audit-fallback
 union keeps the format retry invocation|count:2 codex:junk retry:codex=clean|review|rc=0 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"claude\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex,claude calls=2,1,0
 format recovery exit exhaustion keeps both invocations|models:codex codex:junk retry-exit:codex=7|review|rc=1 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"exit-7\",\"timed\":true}] order=codex,codex calls=2,0,0
 format recovery prose exhaustion keeps both invocations|models:codex codex:junk|review|rc=1 [{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true},{\"name\":\"codex\",\"cause\":\"answered\",\"timed\":true}] order=codex,codex calls=2,0,0
@@ -42,7 +42,22 @@ while IFS='|' read -r label world command expected prompt; do
   assert_eq "$got" "$expected" "$label"
   case "$prompt" in
     review-fallback) assert_eq "$(request_state claude 1)" '{"inline_diff":true,"repair":false,"audit_original":false}' "$label: replacement receives its own diff and original request" ;;
-    audit-fallback) assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":true}' "$label: replacement receives the original audit request" ;;
+    audit-fallback)
+      assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":true}' "$label: replacement receives the original audit request"
+      # Disable caller text only in this row's disposable wrapper. Context
+      # alone, or context with an altered request, must not satisfy the check.
+      while IFS='|' read -r mutation setup; do
+        # shellcheck disable=SC2086 # fixture words are a list
+        build "audit-control-$mutation" $DEFAULTS $world
+        mutate_script "$SO" '  local caller_prompt="$1"' "$setup"
+        got=$(run_fallback "$command")
+        assert_eq "$got" "$expected" "$label ($mutation): control reaches the replacement audit"
+        assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":false}' "$label ($mutation): original request check turns red"
+      done <<'AUDIT_CONTROLS'
+dropped|  local caller_prompt="$1"; caller_prompt=''
+altered|  local caller_prompt="$1"; caller_prompt=${caller_prompt/file.txt/file.md}
+AUDIT_CONTROLS
+      ;;
     envelope-cause) assert_eq "$(jq -r .cause_source < "$ROW/out/out.json.failed.json")" 'claude result' "$label: the replacement's result envelope is the cause" ;;
   esac
   if [[ "$world" == exit:codex=7* && "$prompt" == review-fallback ]]; then
@@ -75,50 +90,6 @@ PY
 control=$(run_fallback review)
 assert_eq "$control" 'rc=5 [{"name":"codex","cause":"exit-7","timed":true}] order=codex calls=1,0,0' 'control: disabled advancement rejects the original fallback expectation'
 assert_eq "$([[ "$control" != "rc=0 $FIRST order=codex,claude calls=1,1,0" ]] && printf red || printf green)" red 'the nonzero-exit test turns red under the mutant'
-# Each control removes behavior in a disposable production script. The same
-# request and record readbacks above must reject the mutant.
-# label|world|rule|correct readback
-CONTROLS='
-replacement diff rebuild|exit:codex=7 inline:claude=1|rebuild|{"inline_diff":true,"repair":false,"audit_original":false}
-original request reset|codex:junk retry-exit:codex=7 inline:claude=1|reset|{"inline_diff":true,"repair":false,"audit_original":false}
-per-target recovery allowance|codex:junk retry-exit:codex=7 claude:junk retry:claude=clean|recovery|0
-child invocation history|count:2 codex:junk retry:codex=clean|history|3
-attempted target count|exit:codex=7|selected|2
-stdout failure cause|exit:codex=7 failure-stdout:codex=login-required|cause|login-required
-stdout answer outranks stderr|refusal:codex=insufficient_quota|answer|rc=0 [{"name":"codex","cause":"answered","timed":true}] order=codex calls=1,0,0
-fall-through first-response gate|codex:junk retry-exit:codex=7 claude:flagged-envelope|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"result-success","timed":true}] order=codex,codex,claude calls=2,1,0
-fall-through exit first-response gate|models:codex+claude codex:junk retry-exit:codex=7 exit:claude=8|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"exit-8","timed":true}] order=codex,codex,claude calls=2,1,0
-fall-through empty-answer first-response gate|models:codex+claude codex:junk retry-exit:codex=7 claude:empty|gate|rc=5 [{"name":"codex","cause":"answered","timed":true},{"name":"codex","cause":"exit-7","timed":true},{"name":"claude","cause":"answered","timed":true}] order=codex,codex,claude calls=2,1,0
-'
-n=0
-while IFS='|' read -r label world rule correct; do
-  [[ -n "$label" ]] || continue
-  n=$((n + 1))
-  # shellcheck disable=SC2086 # fixture words are a list
-  build "control-$n-$rule" $DEFAULTS $world
-  case "$rule" in
-    rebuild) mutate_script "$SO" '      PROMPT=$(build_review_prompt)' '      : '\''PROMPT=$(build_review_prompt)'\'' ' ;;
-    reset) mutate_script "$SO" '    invocation_prompt="$PROMPT_TMP"' '    : '\''invocation_prompt="$PROMPT_TMP"'\'' ' ;;
-    recovery) mutate_script "$SO" '      if [[ "$TARGET_CLI" != "$RECOVERY_TARGET" ]]; then' '      if false; then # "$TARGET_CLI" != "$RECOVERY_TARGET"' ;;
-    history) mutate_script "$SO" '      lane_attempts=$(jq -ce '\''.qa_metadata.attempts | select(type == "array")'\'' <<<"$lane_raw" 2>/dev/null) || lane_attempts=""' '      lane_attempts="" # lane_attempts=$(jq -ce .qa_metadata.attempts <<<"$lane_raw")' ;;
-    selected) mutate_script "$SO" '  SELECTED_COUNT=${#REVIEW_LANES[@]}
-  if STAMPED=' '  SELECTED_COUNT=1 # SELECTED_COUNT=${#REVIEW_LANES[@]}
-  if STAMPED=' ;;
-    cause) mutate_script "$SO" '    CLI_FAILURE_CAUSE=$(printf '\''%s\n'\'' "$partial" | tail -20)' '    : '\''CLI_FAILURE_CAUSE=$(printf "%s\n" "$partial" | tail -20)'\'' ' ;;
-    answer) mutate_script "$SO" '    elif [[ $EXIT_CODE -eq 0 ]] && [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=' '    elif false && [[ -z "$RESULT_ENVELOPE_CAUSE" ]] && $REVIEW_LIKE && answer_json=' ;;
-    gate) mutate_script "$SO" '  [[ $invocation_prompt != "$PROMPT_TMP" ]] || gate_first_response' '  [[ $invocation_prompt != "$PROMPT_TMP" ]] || : gate_first_response' ;;
-  esac
-  got=$(run_fallback review)
-  case "$rule" in
-    rebuild|reset) actual=$(request_state claude 1) ;;
-    recovery) actual="${got%% *}"; actual="${actual#rc=}" ;;
-    history) actual=$(jq '.qa_metadata.attempts | length' < "$ROW/out/out.json") ;;
-    selected) actual=$(jq '.qa_metadata.selected_count' < "$ROW/out/out.json") ;;
-    cause) actual=$(grep -Fx -- login-required "$ROW/stderr" || true) ;;
-    answer|gate) actual="$got" ;;
-  esac
-  assert_eq "$([[ "$actual" != "$correct" ]] && printf red || printf green)" red "control: $label turns its assertion red"
-done <<<"$CONTROLS"
 
 # Detached execution must budget for the whole sequential roster, not one CLI.
 # shellcheck disable=SC2086

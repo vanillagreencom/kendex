@@ -190,7 +190,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
     // The label, the remedy, and its rendering unnamed, against the main
     // checkout's project and against the checked worktree's own.
     type Row = (&'static str, Remedy, Option<Fix>, Option<Fix>, Option<Fix>);
-    let rows: [Row; 10] = [
+    let rows: [Row; 11] = [
         (
             "apply",
             Remedy::Apply { global: false },
@@ -200,10 +200,25 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
         ),
         (
             "apply --replace-unmanaged",
-            Remedy::ReplaceUnmanaged { global: false },
+            Remedy::ReplaceUnmanaged {
+                global: false,
+                allow_repo_effects: false,
+            },
             here("kendex apply --replace-unmanaged"),
             elsewhere("kendex apply --replace-unmanaged --project-path '/w/app'"),
             here("kendex apply --replace-unmanaged"),
+        ),
+        (
+            "apply --replace-unmanaged carrying the repository-effect permission",
+            Remedy::ReplaceUnmanaged {
+                global: false,
+                allow_repo_effects: true,
+            },
+            here("kendex apply --replace-unmanaged --allow-repo-effects"),
+            elsewhere(
+                "kendex apply --replace-unmanaged --allow-repo-effects --project-path '/w/app'",
+            ),
+            here("kendex apply --replace-unmanaged --allow-repo-effects"),
         ),
         (
             "refresh",
@@ -227,10 +242,10 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_where_they_
             here("kendex updates"),
         ),
         (
-            "update-pi, which has no --project-path form and writes where it is typed",
+            "update-pi, a write that names the main checkout's project",
             Remedy::UpdatePi { global: false },
             here("kendex update-pi --scope project"),
-            elsewhere("kendex update-pi --scope project"),
+            elsewhere("kendex update-pi --scope project --project-path '/w/app'"),
             here("kendex update-pi --scope project"),
         ),
         (

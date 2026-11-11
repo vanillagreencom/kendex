@@ -247,7 +247,7 @@ gh_stub_answer_seq() {
   printf '%s\n' "$2" >"$STUB_DIR/$key.$n.out"
 }
 
-# gh_stub_fail VERB CODE [STDERR] — VERB exits CODE, printing STDERR.
+# gh_stub_fail VERB CODE [STDERR [STDOUT]] — VERB exits CODE with both streams.
 gh_stub_fail() {
   local key
   key="$(_gh_stub_key "$1")" || return 1
@@ -256,6 +256,7 @@ gh_stub_fail() {
   : >"$STUB_DIR/$key.0.out"
   printf '%s' "$2" >"$STUB_DIR/$key.0.status"
   [ "$#" -lt 3 ] || printf '%s\n' "$3" >"$STUB_DIR/$key.0.err"
+  [ "$#" -lt 4 ] || printf '%s\n' "$4" >"$STUB_DIR/$key.0.out"
 }
 
 # gh_stub_calls — the argv of every call so far, one per line.

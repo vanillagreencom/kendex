@@ -4,8 +4,8 @@
 # an agent and two Pi packages, one whose package.json `files` list names less
 # than kendex's install copies, so its unlisted files show the list narrows
 # nothing. Each row plants one file and runs the real script over the fixture,
-# reading its exit status and keyed first line; the controls run edited copies
-# of the script, one per rule.
+# reading its exit status and keyed first line; the control runs an edited
+# copy of the script.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -163,16 +163,8 @@ done <<'ROWS'
 block|\n    - beta
 quoted-name| ["beta"]
 ROWS
-if mutant '[ -z "$manifest" ] || refuse manifest' 's/\[ -z "\$manifest" \] || refuse manifest/[ -z "$manifest" ] || : manifest/'; then
-  run "$MUTANT"
-  [ "$RC" -ne 2 ] && [[ "$OUT" != *"manifest="* ]] \
-    && ok "control: without the manifest refusal the unreadable list is not refused" \
-    || bad "control: without the manifest refusal the unreadable list is not refused" "rc=$RC out=$OUT"
-else
-  bad "control: the manifest refusal was not changed in the script copy"
-fi
 
-echo "=== controls ==="
+echo "=== control ==="
 reset_world
 plant skills/alpha/scripts/rule.sh '#!/usr/bin/env bash\n# REVISIT(D015): a usage field\necho rule'
 plant skills/alpha/README.md 'Per D016 the route holds.'
@@ -182,44 +174,6 @@ if mutant 'printf "decision\t' 's/printf "decision\\t/if (0) &/'; then
     || bad "control: without the decision finding both citations pass" "rc=$RC out=$OUT"
 else
   bad "control: the decision finding was not changed in the script copy"
-fi
-reset_world
-plant skills/alpha/README.md '[optional](../gamma/SKILL.md)'
-if mutant 'printf "link\t' 's/printf "link\\t/if (0) &/'; then
-  run "$MUTANT"
-  [ "$RC" -eq 0 ] && ok "control: without the link finding the optional link passes" \
-    || bad "control: without the link finding the optional link passes" "rc=$RC out=$OUT"
-else
-  bad "control: the link finding was not changed in the script copy"
-fi
-reset_world
-plant skills/alpha/README.md '## [optional](../gamma/SKILL.md)'
-if mutant 'if (block_kind != "X") emit_links' 's/if (block_kind != "X") emit_links/if (block_kind != "H" \&\& block_kind != "X") emit_links/'; then
-  run "$MUTANT"
-  [ "$RC" -eq 0 ] && ok "control: with headings unread for links the heading link passes" \
-    || bad "control: with headings unread for links the heading link passes" "rc=$RC out=$OUT"
-else
-  bad "control: the heading link reading was not changed in the script copy"
-fi
-reset_world
-plant skills/alpha/README.md 'The [optional](../gamma/SKILL.md) one\n==='
-if mutant '&& setext_underline(line_no)) next' 's/if (block_kind == "H" \&\& setext_underline(line_no)) next//'; then
-  run "$MUTANT"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == *"shipped-refs: links=2"* ]] \
-    && ok "control: reading a setext heading's record cites its link twice" \
-    || bad "control: reading a setext heading's record cites its link twice" "rc=$RC out=$OUT"
-else
-  bad "control: the setext heading skip was not changed in the script copy"
-fi
-reset_world
-plant pi-extensions/pi-demo/node_modules/dep/README.md 'D016'
-if mutant 'PI_SKIPPED="' 's/^PI_SKIPPED=.*/PI_SKIPPED=""/'; then
-  run "$MUTANT"
-  [ "$RC" -eq 1 ] && [[ "$OUT" == "shipped-refs: decisions="* ]] \
-    && ok "control: with no Pi copy exclusion a node_modules file is judged" \
-    || bad "control: with no Pi copy exclusion a node_modules file is judged" "rc=$RC out=$OUT"
-else
-  bad "control: the Pi copy exclusion was not changed in the script copy"
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"

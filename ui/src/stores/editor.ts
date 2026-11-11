@@ -23,12 +23,14 @@ import { saying } from "@/lib/undone";
 import {
   mergedPlaces,
   opening,
+  placeCurrent,
   placesOf,
   readDraft,
   readError,
   readPlace,
   recordedRead,
 } from "./editor-cache";
+import { retainedReads } from "./retained-reads";
 import { useSettingsStore } from "./settings";
 
 export { openInventory } from "./editor-cache";
@@ -79,6 +81,12 @@ interface EditorState {
   /** Every scope's settings read, keyed by scope — the settings half of
    *  the same marks `saved` answers the manifest half of. */
   savedSettings: Record<string, ScopeSettings>;
+  /** When the read behind each scope's `saved` and `savedSettings` began,
+   *  so a page coming back can tell an answer still standing from one a
+   *  write or a rescan has since made void. */
+  placesAt: Record<string, number>;
+  /** When the read behind `draft` began, null with no draft read. */
+  draftAt: number | null;
   /** Either draft holds unsaved work. */
   dirty: boolean;
   /** The manifest half alone. A save carries the manifest only when it
@@ -98,11 +106,12 @@ interface EditorState {
   /** Read every scope's manifest and settings, for the marks drawn
    *  outside the editor. */
   loadAll: () => Promise<void>;
-  /** Read named places only, merged into what is already read. A page
-   *  about one package needs the places that package sits in and nothing
-   *  else — asking for every scope would put the machine's whole project
-   *  list behind one package's mark. */
-  loadPlaces: (scopes: Scope[]) => Promise<void>;
+  /** Read named places only, merged into what is already read, and only
+   *  those whose answer is no longer current. A page about one package
+   *  needs the places that package sits in and nothing else — asking for
+   *  every scope would put the machine's whole project list behind one
+   *  package's mark — and coming back to it changes none of them. */
+  ensurePlaces: (scopes: Scope[]) => Promise<void>;
   edit: (change: (draft: Draft) => Draft) => void;
   /** Set or reset one package setting, replacing any earlier answer for
    *  the same key of the same skill. */
@@ -171,6 +180,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     // discarded. `opening` clears the pick with the rest of the draft.
     const ask = asked();
     const { scope } = ask;
+    const at = retainedReads.since();
     set({ loading: true });
     let read: Awaited<ReturnType<typeof readPlace>>;
     try {
@@ -182,7 +192,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     const draft = readDraft(manifest);
     // The records answer for the place, whichever place the editor is on
     // now: what this read saw is what that place held.
-    set(recordedRead(scope, read));
+    set(recordedRead(scope, read, at));
     // The page's own copy is another matter. Committed into a scope the
     // editor has since left, this read puts one project's rows under
     // another project's name — and with the two bases matching, which
@@ -193,6 +203,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
       set({
         ...opening,
         draft: null,
+        draftAt: null,
         base: null,
         manifestFile: null,
         settings: null,
@@ -203,6 +214,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
     set({
       ...opening,
       draft: draft ?? emptyDraft(),
+      draftAt: at,
       base: manifest.data.base,
       manifestFile: manifest.data.file,
       settings: settings.status === "ok" ? settings.data : null,
@@ -212,7 +224,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
 
   /** Read the named places into the records the marks are drawn from. */
   const places = async (scopes: Scope[]) => {
-    set(mergedPlaces(scopes, await placesOf(scopes)));
+    const at = retainedReads.since();
+    set(mergedPlaces(scopes, await placesOf(scopes), at));
   };
 
   /** Whether anything is unsaved, derived from every draft rather than
@@ -295,6 +308,8 @@ export const useEditorStore = create<EditorState>((set, get) => {
     confirming: false,
     manifestFile: null,
     savedSettings: {},
+    placesAt: {},
+    draftAt: null,
     dirty: false,
     manifestDirty: false,
     loading: false,
@@ -307,6 +322,7 @@ export const useEditorStore = create<EditorState>((set, get) => {
         ...opening,
         scope,
         draft: null,
+        draftAt: null,
         base: null,
         manifestFile: null,
         // The private file is one project's answer, so a place change
@@ -324,7 +340,20 @@ export const useEditorStore = create<EditorState>((set, get) => {
       // beside a failed settings read leaves a page with no settings
       // controls that coming back never retries, and a skill installed
       // in one place has no other pill to switch to.
-      if (state.draft && state.settings && sameScope(state.scope, scope))
+      //
+      // And either still current or holding edits. A clean draft read
+      // before a write or a rescan is read again, so the page does not go
+      // on describing a file that has since changed. Edits in hand are
+      // never dropped for that: they stay against the bases they were
+      // made on, and a save over a file that moved is refused as stale.
+      const current =
+        state.draftAt !== null && !retainedReads.stale(state.draftAt);
+      if (
+        state.draft &&
+        state.settings &&
+        sameScope(state.scope, scope) &&
+        (current || state.dirty)
+      )
         return;
       await state.setScope(scope);
     },
@@ -340,7 +369,10 @@ export const useEditorStore = create<EditorState>((set, get) => {
       await places(everyPlace(projects));
     },
 
-    loadPlaces: places,
+    ensurePlaces: async (scopes) => {
+      const due = scopes.filter((scope) => !placeCurrent(get(), scope));
+      if (due.length > 0) await places(due);
+    },
 
     edit: (change) => {
       const { draft } = get();

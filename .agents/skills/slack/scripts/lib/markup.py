@@ -173,10 +173,9 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     """Link bare tracker ids once and return the actual outbound representation.
 
     `text` is one string, or strings and `Verbatim` blocks in order; a
-    string is linked, a block never is. Expansion is measured as Markdown
-    before choosing its representation. Post retains its refusal for an
-    already oversized input; link expansion alone can select mrkdwn there.
-    Files always take mrkdwn.
+    string is linked, a block never is. Files take mrkdwn; messages retain
+    standard Markdown, including after link expansion. `fallback` remains
+    accepted for the explicit single-message post caller.
     """
     pieces = [text] if isinstance(text, str) else list(text)
     # Expansion must not hide a match from the caller's refusal check.
@@ -190,11 +189,103 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
         else:
             parts.extend(_linked(piece, tracker, references))
     markdown = "".join(_render(part, mrkdwn=False) for part in parts)
-    input_size = sum(len(piece) if isinstance(piece, str) else len(piece.markdown()) for piece in pieces)
-    mrkdwn = file_comment or len(markdown) > MARKDOWN_LIMIT and (fallback or input_size <= MARKDOWN_LIMIT)
+    mrkdwn = file_comment
     if not mrkdwn:
         return markdown, "markdown_text"
     return "".join(_render(part, mrkdwn=True) for part in parts), "text"
+
+
+def continuations(text: str) -> List[str]:
+    """Partition final Markdown at its API cap, keeping literal regions whole
+    and closing/reopening an oversized fence with the same info string.
+    Numbering sits outside the content and counts toward the same cap."""
+    if len(text) <= MARKDOWN_LIMIT:
+        return [text]
+    count = 2
+    while True:
+        capacity = MARKDOWN_LIMIT - len(f"Part {count}/{count}\n\n")
+        chunks = _partition(text, capacity)
+        if len(str(len(chunks))) == len(str(count)):
+            return [f"Part {i}/{len(chunks)}\n\n{chunk}" for i, chunk in enumerate(chunks, 1)]
+        count = len(chunks)
+
+
+def _partition(text: str, capacity: int) -> List[str]:
+    chunks: List[str] = []
+    current = ""
+
+    def ordinary(run: str) -> None:
+        nonlocal current
+        while run:
+            room = capacity - len(current)
+            if len(run) <= room:
+                current += run
+                return
+            # Prefer paragraph, then line, then word boundaries without
+            # discarding the separator or moving it inside a code fence.
+            cut = run.rfind("\n\n", 0, room)
+            if cut >= 0:
+                cut += 2
+            else:
+                cut = run.rfind("\n", 0, room)
+                if cut >= 0:
+                    cut += 1
+                else:
+                    cut = run.rfind(" ", 0, room)
+                    cut = cut + 1 if cut >= 0 else room
+            if cut:
+                current += run[:cut]
+                run = run[cut:]
+            chunks.append(current)
+            current = ""
+
+    pos = 0
+    for match in LITERAL.finditer(text):
+        # Keep a fitting line's marker and formatting with its links.
+        line_start = text.rfind("\n", 0, match.start()) + 1
+        line_end = text.find("\n", match.start())
+        line_end = len(text) if line_end < 0 else line_end + 1
+        if pos <= line_start and match.end() <= line_end and line_end - line_start <= capacity:
+            ordinary(text[pos:line_start])
+            pos = line_start
+            if len(current) + line_end - line_start > capacity:
+                chunks.append(current)
+                current = ""
+        ordinary(text[pos:match.start()])
+        literal = match.group()
+        if len(literal) > capacity:
+            fence = match.group("fence")
+            if fence is None:
+                raise Refusal("text-too-long", f"literal chars={len(literal)} limit={MARKDOWN_LIMIT}")
+            if current:
+                chunks.append(current)
+                current = ""
+            opening, content = literal.split("\n", 1)
+            closing = re.search(r"^ {0,3}" + re.escape(fence) + r"[`~]*[ \t]*(?:\n|$)\Z", content, re.MULTILINE)
+            ending = content[closing.start():] if closing else fence
+            content = content[:closing.start()] if closing else content
+            room = capacity - len(opening) - 1 - len(ending) - 1
+            if room <= 0:
+                raise Refusal("text-too-long", f"fence chars={len(opening)} limit={MARKDOWN_LIMIT}")
+            while len(content) > room:
+                cut = content.rfind("\n", 0, room)
+                cut = cut + 1 if cut >= 0 else room
+                fragment, content = content[:cut], content[cut:]
+                # The extra newline belongs to the wrapper, so fragments
+                # keep even a split in the middle of a literal line exact.
+                chunks.append(opening + "\n" + fragment + "\n" + ending)
+            separator = "" if content.endswith("\n") else "\n"
+            current = opening + "\n" + content + separator + ending
+        else:
+            if len(current) + len(literal) > capacity:
+                chunks.append(current)
+                current = ""
+            current += literal
+        pos = match.end()
+    ordinary(text[pos:])
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern, Callable[[str], Optional[str]]]) -> List[Part]:

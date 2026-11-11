@@ -22,7 +22,7 @@ The standard report compares GitHub configuration with the repository's settings
 
 After installing, run `kendex refresh` and commit the installed files.
 
-Declare organization-standard values in `kendex.settings.toml` under `[env]`. Existing consumers first take the [trusted removal PR](references/adoption.md#trusted-removal-for-an-existing-consumer). [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
+Declare organization-standard values in `kendex.settings.toml` under `[env]`. Existing consumers first take the [trusted removal PR](workflows/retire-consumer-writer.md). [Repository wiring and settings](references/adoption.md) describes the required GitHub configuration and consumer refresh setup.
 
 ## Licence
 

@@ -12,7 +12,7 @@ kendex is a desktop app and command-line tool for people who use AI coding tools
 - Converts agent and skill files into the format each tool reads.
 - Previews a package change before it applies it.
 - Keeps a personal setup and a separate setup for each project.
-- Adopts customizations you set up by hand with `kendex adopt <kind> <name>`. For a project skill, the real directory moves to `.agents/skills/<name>`. With symlink delivery, separate coding-tool positions become kendex-managed links, including links you made by hand. With copy delivery, they become copies.
+- Adopts customizations you set up by hand.
 - Browses the [community marketplace](https://kendex.ai) and any package repository you subscribe to.
 - Opens a marketplace or a package in the app from a `kendex://` link on a kendex.ai page.
 - Finds outdated packages and updates them.
@@ -34,7 +34,7 @@ brew install vanillagreencom/kendex/kendex
 yay -S kendex-bin
 ```
 
-Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels are in [packaging](packaging/README.md).
+Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels, including the deb and rpm downloads and a Nix flake for the CLI, are in [packaging](packaging/README.md).
 
 ## Supported tools
 

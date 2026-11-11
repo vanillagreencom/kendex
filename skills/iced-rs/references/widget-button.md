@@ -1,179 +1,48 @@
 # Button
 
-> `iced::widget::button` · iced 0.14.0
+Read when adding an action, controlling its availability or styling its interaction states in Iced 0.14.0.
 
-A clickable widget that produces a message when pressed. The canonical way to let users trigger actions. Press fires on mouse-up (release), not mouse-down.
+Use `button` for an action that publishes a message on release. The [pinned implementation](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/button.rs) owns `Button`, its handlers, sizing, padding, clipping, status, style, catalog and defaults. The [widget helpers](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs) own the `button` constructor.
 
-## API
-
-### `Button` struct
-
-```rust
-pub struct Button<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Renderer: Renderer,
-    Theme: Catalog,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Button<'a, Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-    Theme: Catalog,
-{
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Button<'a, Message, Theme, Renderer>;
-
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn padding<P: Into<Padding>>(self, padding: P) -> Self;
-
-    pub fn on_press(self, on_press: Message) -> Self;
-    pub fn on_press_with(self, on_press: impl Fn() -> Message + 'a) -> Self;
-    pub fn on_press_maybe(self, on_press: Option<Message>) -> Self;
-
-    pub fn clip(self, clip: bool) -> Self;
-
-    pub fn style(
-        self,
-        style: impl Fn(&Theme, Status) -> Style + 'a,
-    ) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme, Status) -> Style + 'a>>;
-
-    pub fn class(
-        self,
-        class: impl Into<<Theme as Catalog>::Class<'a>>,
-    ) -> Self; // feature = "advanced"
-}
-```
-
-### `Status` enum
-
-```rust
-pub enum Status {
-    Active,   // Can be pressed
-    Hovered,  // Can be pressed and is being hovered
-    Pressed,  // Is being pressed
-    Disabled, // Cannot be pressed
-}
-```
-
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub background: Option<Background>,
-    pub text_color: Color,
-    pub border: Border,
-    pub shadow: Shadow,
-    pub snap: bool,
-}
-
-impl Style {
-    pub fn with_background(self, background: impl Into<Background>) -> Style;
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-```
-
-### Constants
-
-```rust
-pub const DEFAULT_PADDING: Padding;
-```
-
-### Type aliases
-
-```rust
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-```
-
-### Functions
-
-```rust
-pub fn button<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Button<'a, Message, Theme, Renderer>
-where
-    Theme: Catalog + 'a,
-    Renderer: Renderer;
-
-pub fn primary(theme: &Theme, status: Status) -> Style;    // Main action
-pub fn secondary(theme: &Theme, status: Status) -> Style;  // Complementary
-pub fn success(theme: &Theme, status: Status) -> Style;    // Good outcome
-pub fn danger(theme: &Theme, status: Status) -> Style;     // Destructive
-pub fn warning(theme: &Theme, status: Status) -> Style;    // Risky
-pub fn text(theme: &Theme, status: Status) -> Style;       // Link-style
-pub fn background(theme: &Theme, status: Status) -> Style; // Background shades
-pub fn subtle(theme: &Theme, status: Status) -> Style;     // Weak background
-```
-
-## Patterns
-
-### Simple button
+## Use
 
 ```rust
 use iced::widget::button;
 
-button("Press me!").on_press(Message::ButtonPressed)
+button("Delete")
+    .on_press(Message::Delete)
+    .style(button::danger)
 ```
 
-### Disabled button (no `on_press`)
+Without a handler, the button is disabled. Use `on_press_maybe` to control availability while keeping the widget present:
 
 ```rust
-button("I am disabled!") // No .on_press(...) → disabled
+button("Save")
+    .on_press_maybe(valid.then_some(Message::Save))
 ```
 
-### Conditional enable — never wrap conditionally
+Use `on_press_with(|| expensive_message())` when constructing the message is costly. The closure runs when an accepted activation publishes the message. Converting the button to an `Element` requires a cloneable message type.
 
-```rust
-// RIGHT — always construct, conditionally enable
-button("Save").on_press_maybe(if valid { Some(Message::Save) } else { None })
-```
+Follow the skill's [widget tree consistency rule](../SKILL.md#widget-tree-consistency) when attaching interaction wrappers.
 
-### Style variants
+## Interaction and style
 
-```rust
-use iced::widget::button;
+The button updates its child first. If the child captures the event, the button does not handle it. An enabled button records a left-mouse or touch press over its bounds. It publishes only after that recorded press is released over the button. Touch loss clears the pressed state. For mouse-down handling, use [mouse-area](widget-mouse-area.md).
 
-button("Delete").on_press(Message::Delete).style(button::danger)
-button("OK").on_press(Message::Confirm).style(button::primary)
-```
-
-### Custom style closure
+Use `.style(button::primary)` or another pinned style function for a theme variant. A custom closure receives the theme and interaction status. Start from a status-aware style to keep its text color and disabled appearance, then change the fields the design needs:
 
 ```rust
 button("Custom")
+    .on_press(Message::Confirm)
     .style(|theme, status| button::Style {
-        background: Some(match status {
-            button::Status::Hovered => theme.palette().primary.into(),
-            _ => theme.palette().background.into(),
-        }),
+        border: iced::border::rounded(6),
         ..button::primary(theme, status)
     })
 ```
 
-## Gotchas
+`.class(...)` requires the `advanced` feature. `.style(...)` uses the catalog's conversion from a style closure; see [Catalog](catalog.md).
 
-- `button.on_press` fires on **mouse-up (release)** over the button. Use `mouse_area(content).on_press(msg)` if you need mouse-down semantics for drag initiation.
-- Omitting `on_press` makes the button disabled — do NOT wrap the button in `if enabled { ... } else { ... }`. That changes tree shape and breaks event tracking. Use `on_press_maybe(Option<Message>)` instead.
-- `on_press_with(|| expensive_message())` defers the message construction until press — useful when building the message is expensive.
-- The `class` method requires the `advanced` crate feature. Most code should use `.style(fn)` instead.
-- Default text color comes from the theme; don't override blindly or hover/disabled states will look wrong.
+## Related references
 
-## See also
-
-- `catalog.md` — the `Catalog` trait pattern for widget styling
-- `widgets.md` — widget catalog with when-to-use rules
-- `widget-mouse-area.md` — for press-on-mouse-down semantics
-- `element.md` — `Element<'a, Message, Theme, Renderer>` (what `button` returns via `.into()`)
+- [Widgets](widgets.md): choose a built-in widget.
+- [Element](element.md): composition and message mapping.

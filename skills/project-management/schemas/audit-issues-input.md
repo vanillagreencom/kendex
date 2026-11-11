@@ -51,7 +51,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 |-------|----------|-------------|
 | `source` | Yes | Calling workflow name, one of the values above. Which are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10 |
 | `parent_issue` | Yes | The issue being worked on, as a hierarchy hint; null for an existing-issue batch |
-| `in_pr_bundle` | No | `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR; orch review-pr § 8 on Linear is that caller. Absent is `false`. What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates) |
+| `in_pr_bundle` | No | `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR; orch review-pr § 8 on Linear is one caller, and single mode is another ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 5). Absent is `false`. What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates) |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
 | `blocked_issues` | No | Issue IDs the research unblocks |
@@ -69,7 +69,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `index` | Yes | Sequential, 1-based |
 | `title` | Yes | Concise title |
 | `location` | Yes | File path — **never line numbers**; name the function or struct |
-| `description` | Yes | 2-3 sentences: what and why. Becomes the issue body |
+| `description` | Yes | 2-3 sentences: what and why. Becomes the issue body. For an owner directive, add `## Owner directive (verbatim)` and copy the owner's text byte for byte below it, to the next `##` heading or the end. Fence literal text containing `##` lines so they remain content, not the next heading |
 | `impact` | Before create | Who hits this, on what real path. The reviewer skill's `review-finding` field on a `category: "issue"` suggestion; on a blocker, an escalated item, or a Discovered Work bullet no artifact carries it and the caller writes it from the finding |
 | `symptom` | P2 review items | The run, user, or red check that already showed it. No artifact carries it, so the caller writes it from the finding. Required where a review-born source files at priority 2 |
 | `regressed_by` | No | Numbers of the pull requests that caused the defect, known from a revert, a bisect or the run that showed it. Renders the template's `**Regressed-by**` line. Empty on a review-born item that cites its source PR: a source is not a cause |
@@ -81,7 +81,7 @@ An existing-issue entry is `{"index": 1, "identifier": "PROJ-123"}` (or `issue-N
 | `found_by` | Yes | Agent that identified it |
 | `origin` | Yes | `suggestion`, `escalated` (items no dev round resolved: blockers dev could not fix, plus items outstanding at the review cycle cap), `skipped` (items dev deliberately skipped), `planned`, or `discovered` |
 | `blocks_items` / `blocked_by_items` | No | Indexes of other items in this batch |
-| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs |
+| `blocks_issues` / `blocked_by_issues` | No | Existing issue IDs. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode |
 | `supersedes` | No | Structured form of the filer's `Supersedes:` line: entries carry `identifier`, `reason`, and `when` (`now`, `partial`, or `at-completion`). `now` cancels after creation; `partial` re-scopes the named item to its remainder; `at-completion` records the strict description block below for the completion close and an ordinary related link for readers. Confirm identifiers per [tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) in single mode. `Related:` prose acts on nothing |
 
 ### Completion block

@@ -81,7 +81,7 @@ jobs:
 
       - name: Mint a token for this repository
         id: token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           # The secret holds the App ID; this input also takes the client id.
           app-id: ${{ secrets.FLEET_GH_APP_ID }}
@@ -98,11 +98,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: lock-record
       - name: System dependencies for the keychain store
-        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
+        run: |
+          # Keep the image's suites and signing key, without its slow Azure mirror
+          # or unrelated third-party sources. Leave the image's sources untouched.
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
 
       # The judge is this tree's kendex, not a release: a change to the code
       # that hashes, renders or records is one of the changes that moves the

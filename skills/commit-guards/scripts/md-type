@@ -1,0 +1,656 @@
+#!/usr/bin/env bash
+# md-type — the shape of a Markdown file against its docs-writing file type.
+# The rules are docs-writing's own files, read as data: the route table in its
+# SKILL.md classifies a path and names the shapes its type takes, and the
+# routed reference's numbered list names a README's sections in order. This
+# script holds no rule list. It judges structure only, never wording:
+#
+#   value-table          a pipe table whose header names a default, budget,
+#                        limit, ceiling or threshold, where the type takes it
+#   section-order        an H2 named by the numbered list, out of its order
+#   description-missing  no content between the title and the first H2,
+#                        where the type is ordered: the numbered list's first
+#                        item is the description slot, whatever it names
+#
+# A finding is (finding, type) in one file with a count; it is introduced,
+# and blocks, when the count exceeds the baseline's: the file's earlier self
+# in the HEAD commit under --staged and --all, on the range's base side under
+# --base and --against. The earlier self is the path the lane's walk pairs
+# the file with: GG_MD_RENAMES selects GG_WALK_RENAMES' detect mode, whose
+# statement in lib/configured-paths.sh is the pairing rule, and --help tells
+# it to the user. --as has no baseline. Word count beside the type's example
+# document is a signal and never changes the exit status.
+#
+#   md-type [--staged | --base REF | --against REF | --all]   the lane
+#   md-type --route PATH                 classify PATH for the reminder hook
+#   md-type [--root REPO] --as PATH FILE...   judge FILE as PATH, for docs-audit
+#
+# A file the block parser cannot end, a fence, front matter or block left
+# open, is the file's own malformation and fails like an introduced finding:
+# nothing past it can be judged.
+#
+# Exit codes: 0 clean, inherited findings only, or a lane-mode rules gap;
+# 1 an introduced finding or an unended file; 2 usage, collection error, or a
+# rules gap under --as or --route.
+set -euo pipefail
+# Pathname expansion off: path globs are matched against repository paths,
+# never against the work tree.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="md-type"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/settings.sh
+source "$SCRIPT_DIR/lib/settings.sh"
+# shellcheck source=lib/md-scope.sh
+source "$SCRIPT_DIR/lib/md-scope.sh"
+# shellcheck source=lib/siblings.sh
+source "$SCRIPT_DIR/lib/siblings.sh"
+
+PATHS_DEFAULT="*.md"
+BLOCKS_AWK="$SCRIPT_DIR/lib/md-blocks.awk"
+SHAPES_AWK="$SCRIPT_DIR/lib/md-shapes.awk"
+TYPE_AWK="$SCRIPT_DIR/lib/md-type.awk"
+
+usage() {
+  gg_message usage md-type "Command usage follows."
+  cat <<EOF
+usage: md-type [--staged | --base REF | --against REF | --all]
+       md-type --route PATH
+       md-type [--root REPO] --as PATH FILE [--as PATH FILE]...
+
+Judges a Markdown file's structure against its docs-writing file type: the
+route table in docs-writing's SKILL.md classifies the path and names the
+shapes the type takes. A value table, an out-of-order README section and a
+README with no description are findings. A finding the change introduces
+fails; one the baseline already had warns. Word count beside the type's
+example is printed as a signal. Every selected file is parsed, and one the
+block parser cannot end fails.
+
+--staged, --base REF, --against REF and --all select the files in
+COMMIT_GUARDS_MD_PATHS minus COMMIT_GUARDS_MD_EXCLUDES; with none of them
+COMMIT_GUARDS_MD_SCOPE decides. An absent or unreadable docs-writing is a gap
+notice at exit 0 in these modes.
+A renamed file is judged at its new path against the path it moved from,
+also where the change writes a new file at that path. A new file copied from
+a file the change also edits is judged against that file, since git records
+it as it records that move; a copy of a file the change leaves alone is a new
+file.
+--route PATH prints the type, reference and example for PATH, or
+route=ignored, route=outside-repo or route=unclassified.
+--as PATH FILE judges FILE, - for stdin, as repository path PATH with no
+baseline; each --as pair is judged in order with the rules read once, and
+judged=N follows the lines of the Nth. --root names the repository whose
+installed docs-writing to read first.
+
+Configuration (env > .env.local > .kendex/settings.toml >
+kendex.settings.toml [env] > default):
+  COMMIT_GUARDS_MD_PATHS      space-separated shell globs against the full
+                              repo-relative path (default $PATHS_DEFAULT)
+  COMMIT_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line
+                              (default $GG_MD_EXCLUDES_DEFAULT)
+  COMMIT_GUARDS_MD_SCOPE      touched | all (default $GG_MD_SCOPE_DEFAULT)
+
+Exit codes: 0 clean or inherited findings only; 1 an introduced finding or
+an unended file; 2 usage, collection error, or a rules gap under --as or
+--route.
+EOF
+}
+
+MODE=lane
+GG_MD_MODE=""
+STAGED=0
+ALL=0
+ROUTE_PATH=""
+AS_PATHS=()
+AS_FILES=()
+AS_ROOT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged)
+      gg_md_name_scope --staged
+      STAGED=1
+      ;;
+    --all)
+      gg_md_name_scope --all
+      ALL=1
+      ;;
+    --base)
+      [ $# -ge 2 ] || gg_fail argument-missing "--base" "--base requires a ref"
+      shift
+      gg_md_name_range base "$1"
+      ;;
+    --base=*) gg_md_name_range base "${1#--base=}" ;;
+    --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "--against" "--against requires a ref"
+      shift
+      gg_md_name_range against "$1"
+      ;;
+    --against=*) gg_md_name_range against "${1#--against=}" ;;
+    --route)
+      [ $# -ge 2 ] || gg_fail argument-missing "--route" "--route requires a path"
+      shift
+      MODE=route
+      ROUTE_PATH="$1"
+      ;;
+    --as)
+      [ $# -ge 3 ] || gg_fail argument-missing "--as" "--as takes a repository path and a file, - for stdin."
+      MODE=as
+      AS_PATHS+=("$2")
+      AS_FILES+=("$3")
+      shift 2
+      ;;
+    --root)
+      [ $# -ge 2 ] || gg_fail argument-missing "--root" "--root requires a directory"
+      shift
+      AS_ROOT="$1"
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
+  esac
+  shift
+done
+
+if [ "$MODE" != lane ]; then
+  [ -z "$GG_MD_NAMED" ] || gg_fail mode-conflict "$MODE" "--route and --as take no scope flag."
+  [ -n "$ROUTE_PATH" ] && [ "${#AS_PATHS[@]}" -gt 0 ] && gg_fail mode-conflict "route,as" "Pass --route or --as, not both."
+fi
+[ "$MODE" = as ] || [ -z "$AS_ROOT" ] || gg_fail argument "--root" "--root belongs to --as."
+
+for program in "$BLOCKS_AWK" "$SHAPES_AWK" "$TYPE_AWK"; do
+  [ -r "$program" ] || gg_fail dependency "$program" "Reinstall the commit-guards skill to restore this file."
+done
+
+# The rules, loaded once by load_rules. RULES is ok, missing or unreadable;
+# a gap carries RULES_DETECTOR and RULES_FILE. Rows are parallel arrays in
+# route-table order, first match wins.
+RULES=missing
+RULES_DETECTOR=""
+RULES_FILE=""
+DW=""
+ROW_LINE=()
+ROW_TYPE=()
+ROW_GLOBS=()
+ROW_REF=()
+ROW_EXAMPLE=()
+ROW_CHECKS=()
+ROW_EXAMPLE_WORDS=()
+
+normalize() { # SRC DST — CRLF line ends normalized, not judged
+  LC_ALL=C awk '{ sub(/\r$/, ""); print }' "$1" >"$2" 2>"$GG_TMP/normalize.err" \
+    || gg_fail_cause normalize "$1" "$GG_TMP/normalize.err" "Could not read the file."
+}
+
+rules_gap() { # DETECTOR FILE
+  RULES=unreadable
+  RULES_DETECTOR="$1"
+  RULES_FILE="$2"
+}
+
+load_rules() { # DOCS-WRITING-DIR, or empty when none was found
+  local kind line type globs ref example checks n=0 i readme=0 linked=0
+  if [ -z "$1" ] || [ ! -f "$1/SKILL.md" ]; then
+    RULES=missing
+    return 0
+  fi
+  # Physical, so a copy found beside this script is named without `..`.
+  DW="$(cd -- "$1" && pwd -P; printf x)" || gg_fail docs-writing-resolve "$1" "The docs-writing directory cannot be resolved."
+  DW="${DW%x}"
+  DW="${DW%$'\n'}"
+  normalize "$DW/SKILL.md" "$GG_TMP/skill.md"
+  md_lines "$GG_TMP/skill.md" SKILL.md "$GG_TMP/skill.lines" quiet || { rules_gap unended SKILL.md; return 0; }
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$TYPE_AWK" -v mode=rules -- "$GG_TMP/skill.lines" >"$GG_TMP/rules.tsv" 2>"$GG_TMP/rules.err" \
+    || gg_fail_cause rules-parse "$DW/SKILL.md" "$GG_TMP/rules.err" "The route table reader failed."
+  while IFS="$GG_TAB" read -r kind line type globs ref example checks; do
+    case "$kind" in
+      U)
+        rules_gap "$line" SKILL.md
+        return 0
+        ;;
+      R) ;;
+      *) gg_fail rules-record "$kind" "The route table reader returned an unknown record." ;;
+    esac
+    # An empty cell arrives as "-": a tab IFS merges adjacent tabs.
+    [ "$globs" != - ] || globs=""
+    [ "$ref" != - ] || ref=""
+    [ "$example" != - ] || example=""
+    [ "$checks" != - ] || checks=""
+    ROW_LINE[n]="$line"
+    ROW_TYPE[n]="$type"
+    ROW_GLOBS[n]="$globs"
+    ROW_REF[n]="$ref"
+    ROW_EXAMPLE[n]="$example"
+    ROW_CHECKS[n]="$checks"
+    ROW_EXAMPLE_WORDS[n]=""
+    n=$((n + 1))
+  done <"$GG_TMP/rules.tsv"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    for ref in "${ROW_REF[i]}" "${ROW_EXAMPLE[i]}"; do
+      [ -z "$ref" ] || [ -f "$DW/$ref" ] || { rules_gap link "$ref"; return 0; }
+    done
+    if [ -n "${ROW_REF[i]}" ] && [ -n "${ROW_EXAMPLE[i]}" ]; then linked=1; fi
+    case " ${ROW_CHECKS[i]} " in
+      *" order "*) [ -n "${ROW_REF[i]}" ] || { rules_gap order SKILL.md; return 0; } ;;
+    esac
+    i=$((i + 1))
+  done
+  # The discovery floor: a table that classifies no README, or routes no type
+  # to both a reference and an example, is a broken read, never an empty one.
+  classify README.md && readme=1
+  [ "$readme" -eq 1 ] && [ "$linked" -eq 1 ] || { rules_gap floor SKILL.md; return 0; }
+  RULES=ok
+}
+
+# What judging a file of ROW's type reads beyond the table: its example's
+# document words and, for an `order` row, the reference's numbered list.
+# Read once per row, on the first file of that type; 1 after recording the
+# gap when the list breaks the contract.
+row_detail() {
+  if [ -n "${ROW_EXAMPLE[ROW]}" ] && [ -z "${ROW_EXAMPLE_WORDS[ROW]}" ]; then
+    normalize "$DW/${ROW_EXAMPLE[ROW]}" "$GG_TMP/example.md"
+    LC_ALL=C awk -f "$SHAPES_AWK" -f "$TYPE_AWK" -v mode=example -- "$GG_TMP/example.md" >"$GG_TMP/example-doc.md" \
+      || gg_fail example-read "${ROW_EXAMPLE[ROW]}" "The example reader failed."
+    # The example's words are counted the way a judged file's are: from the
+    # lines stream of its document.
+    if ! md_lines "$GG_TMP/example-doc.md" "${ROW_EXAMPLE[ROW]}" "$GG_TMP/example.lines" quiet; then
+      rules_gap example "${ROW_EXAMPLE[ROW]}"
+      return 1
+    fi
+    judge "" "$MD_DOC" "$GG_TMP/example.lines" "$GG_TMP/example.judged"
+    ROW_EXAMPLE_WORDS[ROW]="$(LC_ALL=C awk -F '\t' '$1 == "W" { print $2 }' "$GG_TMP/example.judged")"
+  fi
+  case " ${ROW_CHECKS[ROW]} " in
+    *" order "*)
+      [ ! -f "$GG_TMP/order-$ROW.tsv" ] || return 0
+      normalize "$DW/${ROW_REF[ROW]}" "$GG_TMP/reference.md"
+      if ! md_lines "$GG_TMP/reference.md" "${ROW_REF[ROW]}" "$GG_TMP/reference.lines" quiet; then
+        rules_gap order "${ROW_REF[ROW]}"
+        return 1
+      fi
+      LC_ALL=C awk -f "$SHAPES_AWK" -f "$TYPE_AWK" -v mode=order -- "$GG_TMP/reference.lines" >"$GG_TMP/order-$ROW.tsv" \
+        || gg_fail order-parse "${ROW_REF[ROW]}" "The section list reader failed."
+      if [ ! -s "$GG_TMP/order-$ROW.tsv" ]; then
+        rules_gap order "${ROW_REF[ROW]}"
+        return 1
+      fi
+      ;;
+  esac
+}
+
+# The first route row whose glob matches PATH, `*` crossing `/`. Sets ROW.
+ROW=-1
+classify() { # PATH — 1 when no row matches
+  local i=0 glob
+  while [ "$i" -lt "${#ROW_TYPE[@]}" ]; do
+    for glob in ${ROW_GLOBS[i]}; do
+      # shellcheck disable=SC2254 # the route glob is the pattern
+      case "$1" in $glob)
+        ROW="$i"
+        return 0
+        ;;
+      esac
+    done
+    i=$((i + 1))
+  done
+  ROW=-1
+  return 1
+}
+
+shown_rule() { # FILE — a docs-writing file as the reader finds it
+  local root="$1"
+  case "$DW/$2" in
+    "$root"/*) printf '%s' "${DW#"$root"/}/$2" ;;
+    *) printf '%s' "$DW/$2" ;;
+  esac
+}
+
+rules_notice() { # — the lane-mode gap, printed once
+  case "$RULES" in
+    missing) gg_message gap docs-writing-missing "No installed docs-writing skill holds the file-type rules, so no shape was judged. Install docs-writing beside commit-guards, or remove md-type from COMMIT_GUARDS_CHECKS." ;;
+    unreadable) gg_message rules "unreadable detector=$RULES_DETECTOR path=$(shown_rule "$PWD" "$RULES_FILE")" "The installed docs-writing does not meet the route-table contract, so no shape was judged. Refresh the package with kendex refresh; if that does not restore it, report it with kendex report." ;;
+  esac
+}
+
+# md-blocks' line stream for DOC into OUT, and the document it read in
+# MD_DOC. CRLF line ends are normalized, not judged: a CRLF refusal reruns
+# the parser over an LF copy beside DOC, which is always under $GG_TMP. 1,
+# after naming the construct, when the parser cannot end the file; QUIET
+# names nothing.
+MD_DOC=""
+md_lines() { # DOC PATH OUT [quiet]
+  local status=0 refusal="" row
+  MD_DOC="$1"
+  while :; do
+    status=0
+    LC_ALL=C awk -f "$SHAPES_AWK" -f "$BLOCKS_AWK" -v mode=lines -- "$MD_DOC" >"$3" 2>"$GG_TMP/lines.err" || status=$?
+    [ "$status" -ne 0 ] || return 0
+    refusal=""
+    while IFS= read -r row; do
+      case "$row" in R"$GG_TAB"*) refusal="$row"; break ;; esac
+    done <"$3"
+    [ -n "$refusal" ] \
+      || gg_fail_cause block-exit "$2:$status" "$GG_TMP/lines.err" "The Markdown parser exited without a refusal record."
+    refusal="${refusal#R"$GG_TAB"}"
+    case "$refusal" in
+      *"$GG_TAB"crlf)
+        if [ "$MD_DOC" = "$1" ]; then
+          normalize "$1" "$1.lf"
+          MD_DOC="$1.lf"
+          continue
+        fi
+        ;;
+    esac
+    break
+  done
+  [ "${4-}" != quiet ] || return 1
+  gg_md_block_message "${refusal#*"$GG_TAB"}" "$2" "${refusal%%"$GG_TAB"*}"
+  gg_message "$GG_MD_RULE" "$GG_MD_DETAIL" "$GG_MD_EXPLANATION The rest of the file cannot be judged."
+  return 1
+}
+
+# The judge over DOC and its LINES stream into OUT, with row ROW's shapes:
+# "F finding line rule-line section" records, then "W words". An empty ROW
+# judges no shape and counts words only.
+judge() { # ROW DOC LINES OUT
+  local order="$GG_TMP/order-none.tsv" checks=""
+  : >"$order"
+  if [ -n "$1" ]; then
+    checks="${ROW_CHECKS[$1]}"
+    [ ! -f "$GG_TMP/order-$1.tsv" ] || order="$GG_TMP/order-$1.tsv"
+  fi
+  LC_ALL=C awk -f "$SHAPES_AWK" -f "$TYPE_AWK" -v mode=judge -v checks="$checks" -v order_file="$order" \
+    -- "$2" "$3" >"$4" 2>"$GG_TMP/judge.err" \
+    || gg_fail_cause judge "$2" "$GG_TMP/judge.err" "The shape judge failed."
+}
+
+count_of() { # FINDINGS KIND — the count of KIND's records
+  local kind rest n=0
+  while IFS="$GG_TAB" read -r kind rest; do
+    [ "$kind" = F ] && [ "${rest%%"$GG_TAB"*}" = "$2" ] && n=$((n + 1))
+  done <"$1"
+  printf '%s' "$n"
+}
+
+explain() { # FINDING INTRODUCED
+  local text
+  case "$1" in
+    value-table) text="A table of defaults, budgets or limits belongs in the code that owns the values; point to that code instead." ;;
+    section-order) text="This section is out of the order the rule line's list gives." ;;
+    description-missing) text="Put a short description of what this is and who it is for between the title and the first section." ;;
+  esac
+  [ "$2" = yes ] || text="$text The baseline already had this finding, so it warns."
+  printf '%s' "$text"
+}
+
+# Report one judged file. BASELINE is a judged findings file, or empty for
+# none. Adds to FINDINGS and INTRODUCED.
+FINDINGS=0
+INTRODUCED=0
+report() { # PATH FINDINGS-FILE BASELINE-FILE RULE-ROOT
+  local path="$1" out="$2" base="$3" root="$4" kind finding line section rule_line rule count baseline introduced words status=0
+  LC_ALL=C grep "^F$GG_TAB" "$out" >"$GG_TMP/f-records" || status=$?
+  [ "$status" -le 1 ] || gg_fail findings-read "$out:$status" "Could not read the judged findings."
+  while IFS="$GG_TAB" read -r kind finding line rule_line section; do
+    count="$(count_of "$out" "$finding")"
+    case "$finding" in
+      value-table) rule="$(shown_rule "$root" SKILL.md):${ROW_LINE[ROW]}" ;;
+      *) rule="$(shown_rule "$root" "${ROW_REF[ROW]}"):$rule_line" ;;
+    esac
+    baseline=none
+    [ -z "$base" ] || baseline="$(count_of "$base" "$finding")"
+    introduced=yes
+    [ "$baseline" = none ] || [ "$count" -gt "$baseline" ] || introduced=no
+    gg_message finding "$finding path=$path type=${ROW_TYPE[ROW]} line=$line rule=$rule count=$count baseline=$baseline introduced=$introduced section=$section" "$(explain "$finding" "$introduced")"
+    FINDINGS=$((FINDINGS + 1))
+    [ "$introduced" = no ] || INTRODUCED=$((INTRODUCED + 1))
+  done <"$GG_TMP/f-records"
+  # A sweep prints the signal only beside a finding, so its findings are not
+  # buried under a line for every document in the tree.
+  [ -n "${ROW_EXAMPLE[ROW]}" ] || return 0
+  [ "$GG_MD_MODE" != all ] || [ -s "$GG_TMP/f-records" ] || return 0
+  words="$(LC_ALL=C awk -F '\t' '$1 == "W" { print $2 }' "$out")"
+  gg_message signal "size path=$path type=${ROW_TYPE[ROW]} words=$words example_words=${ROW_EXAMPLE_WORDS[ROW]} example=$(shown_rule "$root" "${ROW_EXAMPLE[ROW]}")" "The file's words beside its type's example document: a signal, never a verdict."
+}
+
+# The docs-writing that judges repository ROOT: the sibling every lane
+# resolves, asked from ROOT, so ROOT's own install outranks this copy's. Run
+# in gg_path's subshell, which keeps the cd.
+docs_writing_from() { # ROOT
+  cd -- "$1" && gg_resolve_sibling "$SCRIPT_DIR" docs-writing
+}
+
+# The work tree holding DIR into VAR; 1 when DIR is in no repository. Outside
+# one only where no .git entry stands above DIR: a repository git refuses to
+# read, or a git that cannot run, fails with git's message, never reads as no
+# repository.
+repo_top() { # VAR DIR
+  local at="$2"
+  gg_path "$1" git -C "$2" -c core.fsmonitor=false rev-parse --show-toplevel 2>"$GG_TMP/top.err" && return 0
+  while :; do
+    [ ! -e "$at/.git" ] || gg_fail_cause route-repo "$at" "$GG_TMP/top.err" "Git could not read the repository holding this path."
+    [ "$at" != / ] || return 1
+    at="${at%/*}"
+    [ -n "$at" ] || at=/
+  done
+}
+
+# --- --route ------------------------------------------------------------------
+if [ "$MODE" = route ]; then
+  gg_tmpdir
+  case "$ROUTE_PATH" in /*) target="$ROUTE_PATH" ;; *) target="$PWD/$ROUTE_PATH" ;; esac
+  name="${target##*/}"
+  parent="${target%/*}"
+  [ -n "$parent" ] || parent=/
+  tail=""
+  while [ ! -d "$parent" ]; do
+    tail="/${parent##*/}$tail"
+    parent="${parent%/*}"
+    [ -n "$parent" ] || parent=/
+  done
+  parent="$(cd -- "$parent" && pwd -P; printf x)" || gg_fail route-path "$ROUTE_PATH" "The path's directory cannot be resolved."
+  parent="${parent%x}"
+  parent="${parent%$'\n'}"
+  top=""
+  if ! repo_top top "$parent"; then
+    printf 'md-type: route=outside-repo\n'
+    exit 0
+  fi
+  physical="${parent%/}$tail/$name"
+  case "$physical" in
+    "$top"/*) rel="${physical#"$top"/}" ;;
+    *)
+      printf 'md-type: route=outside-repo\n'
+      exit 0
+      ;;
+  esac
+  status=0
+  git -C "$top" -c core.fsmonitor=false check-ignore -q -- "$rel" 2>"$GG_TMP/ignore.err" || status=$?
+  case "$status" in
+    0)
+      printf 'md-type: route=ignored\n'
+      exit 0
+      ;;
+    1) ;;
+    *) gg_fail_cause route-ignore "$rel" "$GG_TMP/ignore.err" "git check-ignore could not answer." ;;
+  esac
+  gg_path found docs_writing_from "$top" || found=""
+  load_rules "$found"
+  case "$RULES" in
+    missing)
+      printf 'md-type: gap=docs-writing-missing\n'
+      exit 2
+      ;;
+    unreadable)
+      printf 'md-type: rules=unreadable detector=%s path=%s\n' "$RULES_DETECTOR" "$DW/$RULES_FILE"
+      exit 2
+      ;;
+  esac
+  if ! classify "$rel"; then
+    printf 'md-type: route=unclassified\nmd-type: skill=%s\n' "$DW/SKILL.md"
+    exit 0
+  fi
+  printf 'md-type: type=%s\n' "${ROW_TYPE[ROW]}"
+  if [ -n "${ROW_REF[ROW]}" ]; then
+    printf 'md-type: reference=%s\n' "$DW/${ROW_REF[ROW]}"
+  else
+    printf 'md-type: reference=%s\n' "$DW/SKILL.md"
+  fi
+  [ -z "${ROW_EXAMPLE[ROW]}" ] || printf 'md-type: example=%s\n' "$DW/${ROW_EXAMPLE[ROW]}"
+  exit 0
+fi
+
+# --- --as ---------------------------------------------------------------------
+if [ "$MODE" = as ]; then
+  gg_tmpdir
+  root="$AS_ROOT"
+  if [ -z "$root" ]; then
+    repo_top root "$PWD" || root="$PWD"
+  fi
+  gg_path found docs_writing_from "$root" || found=""
+  load_rules "$found"
+  case "$RULES" in
+    missing)
+      gg_message gap docs-writing-missing "No installed docs-writing skill holds the file-type rules, so the file was not judged."
+      exit 2
+      ;;
+    unreadable)
+      gg_message rules "unreadable detector=$RULES_DETECTOR path=$DW/$RULES_FILE" "The installed docs-writing does not meet the route-table contract, so the file was not judged."
+      exit 2
+      ;;
+  esac
+  unended=0
+  stdin_read=0
+  i=0
+  while [ "$i" -lt "${#AS_PATHS[@]}" ]; do
+    path="${AS_PATHS[i]}"
+    file="${AS_FILES[i]}"
+    i=$((i + 1))
+    # A copy under $GG_TMP, so the CRLF rerun's LF copy never lands beside
+    # the caller's file.
+    if [ "$file" = - ]; then
+      [ "$stdin_read" -eq 0 ] || gg_fail argument "-" "Only one --as file can be stdin."
+      stdin_read=1
+      cat >"$GG_TMP/as.md" || gg_fail stdin-read "-" "Could not read the file from stdin."
+    else
+      cat -- "$file" >"$GG_TMP/as.md" 2>"$GG_TMP/as.err" || gg_fail_cause as-read "$file" "$GG_TMP/as.err" "Could not read the file."
+    fi
+    if md_lines "$GG_TMP/as.md" "$path" "$GG_TMP/lines"; then
+      doc="$MD_DOC"
+      if classify "$path"; then
+        if ! row_detail; then
+          gg_message rules "unreadable detector=$RULES_DETECTOR path=$DW/$RULES_FILE" "The installed docs-writing does not meet the route-table contract, so the file was not judged."
+          exit 2
+        fi
+        judge "$ROW" "$doc" "$GG_TMP/lines" "$GG_TMP/findings"
+        report "$path" "$GG_TMP/findings" "" "$root"
+      fi
+    else
+      unended=$((unended + 1))
+    fi
+    # docs-audit reads this line to tell one document's lines from the next.
+    gg_message judged "$i" "The lines above belong to --as pair $i."
+  done
+  [ "$FINDINGS" -eq 0 ] && [ "$unended" -eq 0 ] || exit 1
+  exit 0
+fi
+
+# --- the lane -----------------------------------------------------------------
+gg_repo_root_cd
+gg_md_load_paths md-type COMMIT_GUARDS_MD_PATHS "$PATHS_DEFAULT"
+# Renames are detected and every one selected, in every scope: a move can
+# change a file's type, and a file carried across a move is measured against
+# its earlier self.
+GG_MD_RENAMES=detect
+gg_md_scope md-type "$STAGED" "$ALL"
+[ "$GG_MD_MODE" != none ] || exit 0
+
+# A render is not judged: its source is, and a local edit to a render is
+# overwritten. The inventory is read at the first path a walk selects.
+GG_RENDER_INVENTORY=deferred
+gg_tmpdir
+gg_md_select markdown
+skipped="$GG_WALK_SKIPPED"
+
+if [ "$GG_MD_COUNT" -eq 0 ]; then
+  if [ "$skipped" -eq 0 ]; then
+    gg_message no-match "$GG_MD_MODE:$GG_PATH_GLOBS_SHOWN" "No selected Markdown files match the configured paths."
+  else
+    gg_message unmeasured-count "$skipped" "No selected paths could be measured."
+  fi
+  exit 0
+fi
+
+gg_path found docs_writing_from "$PWD" || found=""
+load_rules "$found"
+rules_notice
+
+# The baseline commit: what the change is measured against. A finding is
+# introduced only where its count rose over the file's earlier self there.
+BASELINE_REV=""
+case "$GG_MD_MODE" in
+  staged | all)
+    BASELINE_REV="$(git rev-parse -q --verify 'HEAD^{commit}')" || BASELINE_REV=""
+    ;;
+  range)
+    case "$GG_MD_RANGE_KIND" in
+      against) BASELINE_REV="$GG_MD_RANGE_REF" ;;
+      base)
+        BASELINE_REV="$(git merge-base -- "$GG_MD_RANGE_REF" HEAD 2>"$GG_TMP/merge-base.err")" \
+          || gg_fail_cause merge-base "$GG_MD_RANGE_REF" "$GG_TMP/merge-base.err" "Git could not find the range's base."
+        ;;
+    esac
+    ;;
+esac
+
+# The judged findings of PATH's earlier self at BASELINE_REV, into BASE:
+# SOURCE, the path the walk paired it with, else PATH. Empty when the baseline
+# holds no earlier self or the parser cannot end it, which leaves every
+# finding measured as new. An earlier self of another type holds none of this
+# type's findings: BASE is then an empty findings file, so a move into a
+# README counts every value table it brings.
+BASE=""
+baseline_for() { # PATH SOURCE
+  local earlier="${2:-$1}" row="$ROW" same=0
+  BASE=""
+  git cat-file -e "$BASELINE_REV:$earlier" 2>/dev/null || return 0
+  if classify "$earlier" && [ "${ROW_TYPE[ROW]}" = "${ROW_TYPE[row]}" ]; then same=1; fi
+  ROW="$row"
+  BASE="$GG_TMP/base-findings"
+  if [ "$same" -eq 0 ]; then
+    : >"$BASE"
+    return 0
+  fi
+  gg_read_blob "$BASELINE_REV:$earlier" "$earlier" "baseline markdown file"
+  if md_lines "$GG_TMP/blob" "$earlier" "$GG_TMP/base-lines" quiet; then
+    judge "$ROW" "$MD_DOC" "$GG_TMP/base-lines" "$BASE"
+  else
+    BASE=""
+  fi
+}
+
+unended=0
+while IFS= read -r -d '' sha && IFS= read -r -d '' f && IFS= read -r -d '' from; do
+  gg_read_blob "$sha" "$f" "markdown file"
+  md_lines "$GG_TMP/blob" "$f" "$GG_TMP/lines" || { unended=$((unended + 1)); continue; }
+  doc="$MD_DOC"
+  [ "$RULES" = ok ] || continue
+  classify "$f" || continue
+  row_detail || { rules_notice; continue; }
+  judge "$ROW" "$doc" "$GG_TMP/lines" "$GG_TMP/findings"
+  BASE=""
+  if [ -n "$BASELINE_REV" ] && LC_ALL=C grep -q "^F$GG_TAB" -- "$GG_TMP/findings"; then
+    baseline_for "$f" "$from"
+  fi
+  report "$f" "$GG_TMP/findings" "$BASE" "$PWD"
+done <"$GG_TMP/md-files.z"
+
+gg_message summary "findings=$FINDINGS introduced=$INTRODUCED unended=$unended files=$GG_MD_COUNT scope=$GG_MD_MODE skipped=$skipped" "The Markdown shape scan is complete."
+gg_inventory_verdict "$((INTRODUCED + unended))"

@@ -219,7 +219,13 @@ fn a_skill_shared_by_symlink_counts_as_one_edited_rendering() {
     assert!(w.home.join("app/.agents/skills/gh").is_dir());
     assert!(!w.home.join("app/.opencode/skills/gh").exists());
 
-    fs::write(skill_file(&w), "my edited version").unwrap();
+    // A fork puts the publisher's keys back into the copy's frontmatter,
+    // so the edit keeps one.
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: about gh\n---\nmy edited version\n",
+    )
+    .unwrap();
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     let row = report
         .rows

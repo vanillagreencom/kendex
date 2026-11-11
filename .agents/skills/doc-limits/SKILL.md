@@ -1,17 +1,13 @@
 ---
 name: doc-limits
 description: "Load to add, tune, or debug document byte ceilings and DOC_LIMITS_* settings."
-summary: "Byte limits for the Markdown a harness loads at every turn: an AGENTS.md, CLAUDE.md, GEMINI.md or SKILL.md over its limit fails. Path classes set the limits, with reasoned exclusions."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [commit-guards]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation]
 ---
 
 <!-- kendex:project-instructions:start -->

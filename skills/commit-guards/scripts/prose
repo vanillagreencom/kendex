@@ -63,7 +63,7 @@ kendex.settings.toml [env] > default):
                               excludes lists
                               (default $PATHS_DEFAULT)
   COMMIT_GUARDS_MD_EXCLUDES   exclusion list, pattern<TAB>reason per line,
-                              shared with md-format and md-refs
+                              shared with md-type and md-refs
                               (default tools/md-excludes)
 
 Exit codes: 0 clean; 1 violations; 2 usage/config/collection error.

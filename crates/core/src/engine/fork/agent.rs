@@ -181,24 +181,12 @@ fn published(of: &ForkOf, installed: &crate::lock::Lock) -> Result<Published> {
         harness,
         ..
     } = *of;
-    let commit = super::installed_commit(env, scope, ItemKind::Agent, name, harness, decl)?;
-    let resolved =
-        match crate::source::resolve_at(env, scope, &decl.source, manifest, commit.as_deref())? {
-            crate::source::SourceState::Ready(ready) => ready,
-            _ => {
-                return Err(CoreError::SourcePending {
-                    name: decl.source.clone(),
-                });
-            }
-        };
-    let sealed = crate::source_read::SealedSource::open(&resolved.root)?;
-    let config = crate::source::source_config_for(&sealed, &resolved.provenance)?;
-    let Some(path) = crate::source::find_item(&sealed, &config, ItemKind::Agent, name) else {
-        return Err(CoreError::ItemNotInSource {
-            name: name.to_owned(),
-            source_name: decl.source.clone(),
-        });
-    };
+    let super::PublishedItem {
+        sealed,
+        config,
+        path,
+        commit,
+    } = super::published_item(of)?;
     let bytes = sealed.read(&path)?;
     let agent = parse_source_agent(&String::from_utf8_lossy(&bytes))
         .map_err(|problem| unreadable(name, &decl.source, problem))?;

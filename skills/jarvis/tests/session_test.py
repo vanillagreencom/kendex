@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout, redirect_stderr
 import io
 import errno
+import fcntl
 import runpy
 from unittest.mock import patch
 import hashlib
@@ -12,12 +13,17 @@ import re
 from pathlib import Path
 import shutil
 import signal
+import socket
+import struct
+import termios
+import threading
 from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import unittest
 
 
@@ -32,14 +38,19 @@ REASONS = {
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required"},
+                "trust-required", "home-not-dedicated"},
     "failed": {"launch-failed", "handover-failed"},
 }
+# The full-bypass words each harness's CLI takes for an unattended launch.
+# Pi has none.
+PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--dangerously-bypass-approvals-and-sandbox"},
+                    "copilot": {"--allow-all"}, "pi": set()}
+ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
-DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
+DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required"), ("blocked", "home-not-dedicated")}
 
 
-def validate(output, code, verb, duplicate_boot=False):
+def validate(output, code, verb, duplicate_boot=False, adopt=False):
     lines = output.splitlines()
     assert len(lines) == 1
     answer = json.loads(lines[0])
@@ -64,30 +75,774 @@ def validate(output, code, verb, duplicate_boot=False):
         assert answer["state"] in ("blocked", "failed")
     else:
         assert code == 0
-        if verb == "start" and not duplicate_boot:
+        if verb == "start" and adopt:
+            # An adopting Start answers the succession it begins.
+            assert (answer["state"], answer["reason"]) == ("handing-over", "succession")
+        elif verb == "start" and not duplicate_boot:
             assert answer["state"] in ("running", "starting")
         elif verb == "stop":
             assert answer["state"] in ("off", "stopped", "stopping")
     return answer
 
 
+class SessionLogContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+                    "XDG_STATE_HOME": str(self.root / "state"),
+                    "JARVIS_BASH": os.environ["JARVIS_TEST_BASH"]}
+        self.source = SKILLS / "jarvis/scripts/lib/session.py"
+        with patch.dict(os.environ, self.env, clear=True):
+            self.runtime = runpy.run_path(str(self.source))
+            self.session = self.runtime["Session"](self.home, self.env)
+        self.session.path.parent.mkdir(parents=True)
+        self.log = self.session.path.with_name("session.log")
+
+    @staticmethod
+    def reap(child):
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+
+    def test_session_log_stream_lines(self):
+        # print and traceback split a line over writes; a flush may have no NL.
+        stamp = time.struct_time((2026, 11, 8, 3, 40, 0, 6, 312, 0))
+        with patch.object(self.runtime["time"], "gmtime", return_value=stamp) as clock, \
+                self.runtime["SessionLog"](self.log.open("a", encoding="utf-8"), "manual") as stream, \
+                redirect_stdout(stream), redirect_stderr(stream):
+            print("stdout é")
+            self.assertEqual(sys.stderr.write("fragment"), len("fragment"))
+            self.assertEqual(sys.stderr.write("ed\nsecond\n\n"), len("ed\nsecond\n\n"))
+            clock.return_value = time.struct_time((2026, 11, 8, 3, 41, 0, 6, 312, 0))
+            sys.stdout.write("flushed tail")
+            sys.stdout.flush()
+            print("after flush")
+            sys.stderr.write("closed tail")
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "2026-11-08T03:40:00Z origin=manual stdout é",
+            "2026-11-08T03:40:00Z origin=manual fragmented",
+            "2026-11-08T03:40:00Z origin=manual second",
+            "2026-11-08T03:40:00Z origin=manual ",
+            "2026-11-08T03:41:00Z origin=manual flushed tail",
+            "2026-11-08T03:41:00Z origin=manual after flush",
+            "2026-11-08T03:41:00Z origin=manual closed tail"])
+
+    def test_worker_session_log_lines(self):
+        rows = (("start", "manual", None, "manual"), ("start", "boot", None, "boot"),
+                ("start", "app-on", None, "app-on"), ("start", "watch-loop", None, "watch-loop"),
+                ("succeed", "boot", None, "succession"), ("stop", "app-on", None, "manual"),
+                ("stop", "app-on", "app-off", "app-off"), ("successor", "boot", None, "succession"))
+        for verb, recorded, requested, origin in rows:
+            with self.subTest(verb=verb, origin=origin):
+                log = self.log
+                if verb == "stop":
+                    fixture = SessionContract()
+                    fixture.setUp()
+                    self.addCleanup(lambda fixture=fixture: self.assertTrue(fixture.doCleanups()))
+                    self.addCleanup(fixture.tearDown)
+                    fixture.call("start", origin=recorded, own_worker=True)
+                    fixture.wait()
+                    self.assertEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                    self.assertEqual(json.loads(fixture.record.read_text())["origin"], recorded)
+                    log = fixture.record.with_name("session.log")
+                    log.unlink(missing_ok=True)
+                    fixture.refuse_teardown()
+                    answer, code = fixture.call("stop", origin=requested, own_worker=True)
+                    self.assertEqual((answer["state"], answer["origin"], code), ("stopping", recorded, 0))
+                    self.assertNotEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                    self.assertEqual(json.loads(fixture.record.read_text())["origin"], recorded)
+                else:
+                    # An unreadable record is a real worker failure producer. Its
+                    # diagnostic precedes the cleanup read's uncaught Refusal.
+                    record = dict(v=1, home=str(self.home), origin=recorded, generation=1,
+                                  state="invalid", reason="invalid")
+                    self.session.write(record)
+                    log.unlink(missing_ok=True)
+                if verb == "successor":
+                    driver = ("import os,runpy,sys; runtime=runpy.run_path(sys.argv[1]); "
+                              "runtime['Session'](sys.argv[2], dict(os.environ)).successor(1)")
+                    result = subprocess.run([sys.executable, "-B", "-c", driver, str(self.source), str(self.home)],
+                                            env=self.env, capture_output=True, text=True, timeout=15)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout + result.stderr, "")
+                elif verb != "stop":
+                    children = []
+                    real_popen = subprocess.Popen
+                    def observe(*args, **kwargs):
+                        child = real_popen(*args, **kwargs)
+                        if kwargs.get("start_new_session"):
+                            children.append(child)
+                            self.addCleanup(self.reap, child)
+                        return child
+                    with patch.object(subprocess, "Popen", observe), self.session.locked():
+                        self.session.detach(verb, record, origin=requested)
+                    self.assertEqual(len(children), 1)
+                    self.assertNotEqual(children[0].wait(timeout=15), 0)
+                lines = log.read_text().splitlines()
+                self.assertGreater(len(lines), 1)
+                prefix = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=" + origin + " "
+                for line in lines:
+                    self.assertRegex(line, prefix)
+                bodies = [re.sub(prefix, "", line) for line in lines]
+                self.assertIn("Traceback (most recent call last):", bodies)
+                self.assertRegex(bodies[-1], r"(?:^|\.)Refusal(?::|$)")
+                if verb != "successor":
+                    self.assertRegex("\n".join(bodies), r"(?:^|\n)jarvis-session: worker-failed .* cause=Refusal ")
+
+    def test_worker_session_log_raw_stream_control(self):
+        skills = self.root / "control/skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch", "github"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        source = scripts / "lib/session.py"
+        self.assertFalse(source.is_symlink())
+        before = source.read_text()
+        old = "sys.stdout = sys.stderr = SessionLog(stream, origin)"
+        self.assertEqual(before.count(old), 1)
+        after = before.replace(old, "sys.stdout = sys.stderr = stream")
+        self.assertNotEqual(before, after)
+        source.write_text(after)
+        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                 "SessionLogContract.test_worker_session_log_lines", "--failfast"],
+                                env=os.environ | {"JARVIS_TEST_SKILLS": str(skills)},
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("self.assertRegex(line, prefix)", result.stderr)
+
+
 class BootReceiptScenario:
-    # The specified receipt producer owns applicability for its contract rows
-    # and every mutation of that scenario.
+    # The specified receipt producer owns applicability for its contract rows.
     applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
-    controls = (
-        ("boot receipt", "jarvis/scripts/lib/session.py", 'if boot and record and record.get("boot") == boot:', 'if False:', "test_off_and_boot_receipt"),
-        ("boot refusal receipt", "jarvis/scripts/lib/session.py", 'if boot:\n                    record["boot"] = boot\n                if args.origin == "app-on":', 'if False:\n                    record["boot"] = boot\n                if args.origin == "app-on":', "test_off_and_boot_receipt"),
-    )
+
+
+class MainHostContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        # This settings-only consumer inherits transport lookup, not the
+        # calling session's credentials, role or selected private path.
+        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+                    "XDG_STATE_HOME": str(self.root / "state")}
+
+    def command(self, *words, code=0):
+        result = subprocess.run([str(SCRIPT), *words, "--home", str(self.home)],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, code, result.stderr)
+        return result
+
+    def value(self, *words):
+        # Consumer apps parse only this named setting, never the secret file.
+        answer = json.loads(self.command("main-host", *words).stdout)
+        self.assertEqual(set(answer), {"JARVIS_MAIN_HOST"})
+        return answer["JARVIS_MAIN_HOST"]
+
+    def test_main_host_private_file_contract(self):
+        original = (b"# fixture private settings\r\nSECRET='first line\n"
+                    b"JARVIS_MAIN_HOST=literal-secret-text\nlast line'\n"
+                    b"export OTHER_SECRET='keep these bytes'\nJARVIS_MAIN_HOST='old:/home/old'")
+        rows = (("default", None, None), ("configured", "private/role.env", None),
+                ("override", "unused.env", "nested/selected.env"), ("linked", None, None))
+        for name, configured, inherited in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                if configured:
+                    (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "' + configured + '"\n')
+                self.env.pop("KENDEX_ENV_FILE", None)
+                if inherited:
+                    self.env["KENDEX_ENV_FILE"] = inherited
+                private = self.home / (inherited or configured or ".env.local")
+                private.parent.mkdir(parents=True, exist_ok=True)
+                if name == "linked":
+                    target = self.root / "shared-private.env"
+                    private.symlink_to(target)
+                private.write_bytes(original)
+                private.chmod(0o640)
+                self.assertEqual(self.value("--get"), "old:/home/old")
+                sentinel = self.root / "evaluated"
+                literal = "host:/home/O'Neil $USER `id` $(touch " + str(sentinel) + ")"
+                for words, expected in ((("--set", literal), literal), (("--set", "next:/main"), "next:/main"),
+                                        (("--clear",), ""), (("--clear",), "")):
+                    self.assertEqual(self.value(*words), expected)
+                    self.assertEqual(self.value("--get"), expected)
+                    # Independently compare the complete pre-existing bytes
+                    # and mode; a multiline secret is not an assignment list.
+                    self.assertEqual(private.read_bytes()[:len(original)], original)
+                    self.assertEqual(private.stat().st_mode & 0o777, 0o640)
+                    status = json.loads(self.command("status", "--main").stdout)
+                    self.assertEqual(status["role"], "satellite" if expected else "main")
+                    if expected:
+                        self.assertEqual(status["main"], expected.partition(":")[0])
+                    self.assertFalse(sentinel.exists())
+                self.assertEqual(private.is_symlink(), name == "linked")
+                if inherited:
+                    self.assertFalse((self.home / configured).exists())
+
+    def test_main_host_preservation_control(self):
+        skills = self.root / "control/skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        source = scripts / "lib/session.py"
+        self.assertFalse(source.is_symlink())
+        before = source.read_text()
+        match = "os.O_WRONLY | os.O_APPEND | os.O_CREAT"
+        self.assertEqual(before.count(match), 1)
+        after = before.replace(match, "os.O_WRONLY | os.O_TRUNC | os.O_CREAT")
+        self.assertNotEqual(after, before)
+        source.write_text(after)
+        # The nested suite retains its installed compiler environment; its
+        # settings cases select only their own fixture homes and environment.
+        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                 "MainHostContract.test_main_host_private_file_contract", "-v"],
+                                env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("self.assertEqual(private.read_bytes()[:len(original)], original)", result.stderr)
+
+    def test_main_host_initialization_and_precedence(self):
+        self.env["KENDEX_ENV_FILE"] = "private/new.env"
+        private = self.home / "private/new.env"
+        self.assertEqual(self.value("--get"), "")
+        self.assertFalse(private.exists())
+        self.assertEqual(self.value("--set", "saved:/main"), "saved:/main")
+        self.assertEqual(private.stat().st_mode & 0o777, 0o600)
+        self.env["JARVIS_MAIN_HOST"] = "caller:/main"
+        self.assertEqual(self.value("--get"), "caller:/main")
+        self.assertEqual(self.value("--clear"), "")
+        self.assertEqual(self.value("--get"), "caller:/main")
+        self.env.pop("JARVIS_MAIN_HOST")
+        self.assertEqual(self.value("--get"), "")
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_MAIN_HOST = "shared:/main"\n')
+        self.assertEqual(self.value("--get"), "")
+
+    def test_main_host_refusals_do_not_mutate(self):
+        private = self.home / ".env.local"
+        original = b"SECRET='keep me'\n"
+        private.write_bytes(original)
+        private.chmod(0o640)
+        for value in ("host", "-host:/main", "host:relative", "host name:/main", "host:/main\nother"):
+            with self.subTest(value=value):
+                result = self.command("main-host", "--set=" + value, code=2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("main-host=refused cause=setting-invalid", result.stderr)
+                self.assertEqual(private.read_bytes(), original)
+                self.assertEqual(private.stat().st_mode & 0o777, 0o640)
+        for words in ((), ("--get", "--clear"), ("--set", "host:/main", "--clear")):
+            with self.subTest(words=words):
+                self.assertEqual(self.command("main-host", *words, code=2).stdout, "")
+                self.assertEqual(private.read_bytes(), original)
+        # The shared resolver, rather than a parallel path validator, refuses
+        # paths outside the selected home. Loader output may contain secrets.
+        self.env["KENDEX_ENV_FILE"] = "../outside.env"
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertIn("main-host=refused cause=settings-unreadable", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(private.read_bytes(), original)
+        self.env.pop("KENDEX_ENV_FILE")
+        private.write_bytes(original + b"echo private-secret >&2\nreturn 1\n")
+        result = self.command("main-host", "--get", code=2)
+        self.assertNotIn("private-secret", result.stderr + result.stdout)
+
+    def ignored(self):
+        return subprocess.run(["git", "check-ignore", "-q", ".env.local"], cwd=self.home,
+                              env=self.env, capture_output=True).returncode == 0
+
+    def test_main_host_set_ignores_new_private_file(self):
+        # A credential save's rule: a new private file gets its exact ignore line.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / ".gitignore").write_text("/tmp/")
+        self.assertFalse(self.ignored())
+        self.assertEqual(self.value("--set", "host:/main"), "host:/main")
+        self.assertTrue(self.ignored())
+        self.assertEqual((self.home / ".gitignore").read_text(), "/tmp/\n/.env.local\n")
+
+    def test_main_host_set_refuses_unignored_private_file(self):
+        # An existing unignored private file is the person's: refuse, write nothing.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        private = self.home / ".env.local"
+        private.write_bytes(b"SECRET='keep me'\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("fix: add /.env.local to .gitignore, then run main-host again", result.stderr)
+        self.assertEqual(private.read_bytes(), b"SECRET='keep me'\n")
+        self.assertFalse((self.home / ".gitignore").exists())
+
+    def test_main_host_set_refuses_when_ignore_line_has_no_effect(self):
+        # A deeper .gitignore re-includes the file: git is asked again after
+        # the line lands, and the private file is never written.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
+        (self.home / "keys").mkdir()
+        (self.home / "keys" / ".gitignore").write_text("!private.env\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("jarvis-session: fix: ", result.stderr)
+        self.assertFalse((self.home / ".gitignore").exists())
+        self.assertFalse((self.home / "keys" / "private.env").exists())
+
+
+    def test_main_host_set_refuses_dangling_gitdir(self):
+        (self.home / ".git").write_text("gitdir: " + str(self.root / "gone") + "\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=git-unreadable\n", result.stderr)
+        self.assertFalse((self.home / ".env.local").exists())
+        self.assertFalse((self.home / ".gitignore").exists())
+
+    def test_main_host_linked_private_git_contract(self):
+        rows = (("tracked", "private-file-tracked"), ("unignored", "private-file-unignored"),
+                ("ignored", None), ("outside-repository", None))
+        for name, cause in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / ".gitignore").write_text("/.env.local\n")
+                target = self.root / (name + "-target") / "shared.env"
+                target.parent.mkdir()
+                original = b"SECRET='keep me'\n"
+                target.write_bytes(original)
+                if name != "outside-repository":
+                    subprocess.run(["git", "init", "-q"], cwd=target.parent, env=self.env, check=True)
+                if name == "tracked":
+                    subprocess.run(["git", "add", "shared.env"], cwd=target.parent, env=self.env, check=True)
+                elif name == "ignored":
+                    (target.parent / ".gitignore").write_text("/shared.env\n")
+                private = self.home / ".env.local"
+                private.symlink_to(target)
+                for words, expected in ((("--set", "host:/main"), "host:/main"), (("--clear",), "")):
+                    if cause is None:
+                        self.assertEqual(self.value(*words), expected)
+                        self.assertEqual(self.value("--get"), expected)
+                        self.assertTrue(target.read_bytes().startswith(original))
+                    else:
+                        result = self.command("main-host", *words, code=2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("main-host=refused cause=" + cause + "\n", result.stderr)
+                        self.assertEqual(target.read_bytes(), original)
+                    self.assertTrue(private.is_symlink())
+
+    def test_main_host_git_checks_ignore_inherited_redirects(self):
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=foreign, env=self.env, check=True)
+        (foreign / ".gitignore").write_text("/.env.local\n")
+        redirects = {"GIT_DIR": str(foreign / ".git"), "GIT_COMMON_DIR": str(foreign / ".git"),
+                     "GIT_WORK_TREE": str(foreign), "GIT_INDEX_FILE": str(foreign / ".git/index")}
+        rows = (("index", {"GIT_INDEX_FILE": redirects["GIT_INDEX_FILE"]}), ("repository", redirects))
+        for name, inherited in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / ".gitignore").write_text("/.env.local\n")
+                private = self.home / ".env.local"
+                original = b"SECRET='keep me'\n"
+                private.write_bytes(original)
+                subprocess.run(["git", "add", "-f", ".env.local"], cwd=self.home, env=self.env, check=True)
+                self.env.update(inherited)
+                try:
+                    result = self.command("main-host", "--set", "host:/main", code=2)
+                finally:
+                    for key in inherited:
+                        self.env.pop(key)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("main-host=refused cause=private-file-tracked\n", result.stderr)
+                self.assertEqual(private.read_bytes(), original)
+
+    def test_main_host_set_rolls_back_ineffective_ignore_append(self):
+        rows = (("absent", None), ("existing", b"# existing rules\r\n/tmp/"))
+        for name, original in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
+                (self.home / "keys").mkdir()
+                (self.home / "keys/.gitignore").write_text("!private.env\n")
+                ignore = self.home / ".gitignore"
+                if original is not None:
+                    ignore.write_bytes(original)
+                for _ in range(2):
+                    result = self.command("main-host", "--set", "host:/main", code=2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("main-host=refused cause=private-file-unignored\n", result.stderr)
+                    self.assertEqual(ignore.read_bytes() if ignore.exists() else None, original)
+                    self.assertFalse((self.home / "keys/private.env").exists())
+
+
+def scratch_base():
+    """A scratch base outside every Git work tree: a home fixture there qualifies.
+
+    A lane's TMPDIR can lie under its worktree's tmp/, as the comment above
+    TEMP_BASE in skills/reviewer/scripts/mutation-stability records.
+    """
+    base = tempfile.gettempdir()
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}}
+    found = subprocess.run(["git", "-c", "safe.directory=*", "-C", base, "rev-parse", "--show-toplevel"],
+                           env=env, capture_output=True, text=True, timeout=30)
+    return base if found.returncode == 128 else "/tmp"
+
+
+# The fixture's Codex file, comment included: a merge keeps every other byte.
+CODEX_FIXTURE = "# features this home turns on\n[features]\nhooks = true\n"
+
+
+class HomeInitContract(unittest.TestCase):
+    """jarvis-session init and the first manual Start write one set of starting files."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=scratch_base())
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        # No tmux on this PATH: every Start refuses after its initialization
+        # step, so a row reads that step's effect without a launch.
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        for tool in ("bash", "git", "cat", "flock", "mkdir", "rmdir", "sleep", "rm"):
+            found = shutil.which(tool)
+            if found:
+                (bin_dir / tool).symlink_to(found)
+        (bin_dir / "python3").symlink_to(sys.executable)
+        login = self.root / "login"
+        login.mkdir()
+        self.account = self.root / "account"
+        self.account.mkdir()
+        # git reads no caller repository: GIT_DIR and its siblings stay unset.
+        self.env = {"PATH": str(bin_dir), "HOME": str(login), "XDG_STATE_HOME": str(self.root / "state"),
+                    "XDG_CONFIG_HOME": str(login / ".config"), "GIT_CONFIG_NOSYSTEM": "1", "LANG": "C.UTF-8"}
+
+    def git_init(self, folder):
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run(["git", "-C", str(folder), *words], env=self.env, check=True, capture_output=True)
+
+    def home(self, name, *, git=True):
+        """A folder after git init and kendex add: its harness files beside the layout."""
+        home = self.root / name
+        (home / ".agents/skills").mkdir(parents=True)
+        (home / ".claude").mkdir()
+        (home / ".claude/settings.json").write_text('{\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+        (home / ".codex").mkdir()
+        (home / ".codex/config.toml").write_text(CODEX_FIXTURE)
+        (home / "kendex.toml").write_text("")
+        (home / ".gitignore").write_text("/tmp/\n")
+        if git:
+            self.git_init(home)
+        return home
+
+    def snapshot(self, home):
+        tree = {}
+        for path in sorted(home.rglob("*")):
+            relative = path.relative_to(home)
+            if relative.parts[0] == ".git":
+                continue
+            tree[str(relative)] = ("link", os.readlink(path)) if path.is_symlink() else (
+                ("dir",) if path.is_dir() else ("file", path.read_bytes()))
+        return tree
+
+    def run_init(self, home):
+        return subprocess.run([str(SCRIPT), "init", "--home", str(home)], env=self.env,
+                              capture_output=True, text=True, timeout=60)
+
+    def start(self, home, *words):
+        result = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude",
+                                 "--account", str(self.account), *words],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        return validate(result.stdout, result.returncode, "start"), result
+
+    @staticmethod
+    def keyed(line):
+        # The init line is a program's read: a leading key, then key=value,
+        # where a value with spaces is a JSON string.
+        return dict(re.findall(r'(\S+?)=("(?:[^"\\]|\\.)*"|\S*)', line.split(" ", 1)[1]))
+
+    def unreadable(self, repository):
+        # A config line git cannot parse: every git version refuses to read
+        # this repository with exit 128.
+        with (repository / ".git/config").open("a") as config:
+            config.write("[core\n")
+
+    def record(self, home):
+        key = hashlib.sha256(os.fsencode(str(home))).hexdigest()
+        return self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
+
+    def test_unqualified_folders_stay_unchanged(self):
+        project = self.root / "project"
+        project.mkdir()
+        self.git_init(project)
+        broken = self.root / "broken"
+        broken.mkdir()
+        self.git_init(broken)
+
+        def planted(home):
+            (home / "README.md").write_text("an ordinary project\n")
+            return home
+
+        def enclosed_by_unreadable():
+            home = self.home("broken/jarvis")
+            self.unreadable(broken)
+            return home
+
+        def own_unreadable():
+            home = self.home("unreadable")
+            self.unreadable(home)
+            return home
+
+        blocked, failed = ("blocked", "home-not-dedicated"), ("failed", "launch-failed")
+        enclosing = {"init": "refused", "cause": "inside-work-tree", "work-tree": json.dumps(str(project))}
+        rows = (
+            # name, folder, the init line's keys but git's detail, Start's answer
+            ("no-git", lambda: self.home("plain", git=False), {"init": "refused", "cause": "no-git"}, blocked),
+            ("inside-project", lambda: self.home("project/jarvis", git=False), enclosing, blocked),
+            ("nested-repository", lambda: self.home("project/nested"), enclosing, blocked),
+            ("other-entry", lambda: planted(self.home("busy")),
+             {"init": "refused", "cause": "other-entry", "entry": '"README.md"'}, blocked),
+            # git exits 128 for a repository it cannot read, as for none: an
+            # enclosing one must still keep the home from qualifying.
+            ("enclosing-unreadable", enclosed_by_unreadable,
+             {"init": "failed", "path": "..", "cause": "git-exit-128", "created": ""}, failed),
+            ("own-unreadable", own_unreadable, {"init": "failed", "path": ".", "cause": "git-exit-128", "created": ""}, failed),
+        )
+        for name, make, line, (state, reason) in rows:
+            with self.subTest(name=name):
+                home = make()
+                before = self.snapshot(home)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, "")
+                refusal = self.keyed(result.stderr.splitlines()[0])
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
+                self.assertEqual(self.snapshot(home), before)
+                answer, started = self.start(home)
+                self.assertEqual((answer["state"], answer["reason"], started.returncode), (state, reason, 1))
+                refusal = self.keyed(started.stderr.splitlines()[0])
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
+                self.assertEqual(self.snapshot(home), before)
+                self.assertFalse(self.record(home).exists())
+
+    def test_init_and_first_manual_start_write_the_same_home(self):
+        try:
+            import tomllib
+        except ImportError:
+            tomllib = None
+        homes = {}
+        for caller in ("init", "start"):
+            with self.subTest(caller=caller):
+                home = self.home(caller)
+                if caller == "init":
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertEqual((report["home"], sorted(report["created"]), report["kept"]),
+                                     (str(home), ["AGENTS.md", "memory/MEMORY.md", "state"], []))
+                    outcomes = {row["path"]: (row["key"], row["outcome"], row.get("cause")) for row in report["settings"]}
+                    self.assertEqual(outcomes, {
+                        ".claude/settings.json": ("autoMemoryEnabled", "merged", None),
+                        ".codex/config.toml": ("features.memories",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing"))})
+                else:
+                    # A person's Start names the harness alone: manual and new.
+                    started = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude"],
+                                             env=self.env, capture_output=True, text=True, timeout=60)
+                    answer = validate(started.stdout, started.returncode, "start")
+                    self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"))
+                self.assertIn(".agents/skills/jarvis/persona.md", (home / "AGENTS.md").read_text())
+                self.assertEqual((home / ".claude/settings.json").read_text(),
+                                 '{\n  "autoMemoryEnabled": false,\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+                self.assertEqual((home / ".codex/config.toml").read_text(),
+                                 "# features this home turns on\n[features]\nmemories = false\nhooks = true\n"
+                                 if tomllib else CODEX_FIXTURE)
+                homes[caller] = self.snapshot(home)
+                # Repeating either caller keeps every file it finds.
+                repeat = self.run_init(home)
+                self.assertEqual(repeat.returncode, 0, repeat.stderr)
+                report = json.loads(repeat.stdout)
+                self.assertEqual((report["created"], sorted(report["kept"])), ([], ["AGENTS.md", "memory/MEMORY.md", "state"]))
+                self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
+                self.assertEqual(self.snapshot(home), homes[caller])
+        self.assertEqual(homes["init"], homes["start"])
+
+    def test_initialized_home_clone_starts(self):
+        # A clone carries AGENTS.md and memory/MEMORY.md but not an empty
+        # state/. Its first manual Start on another machine adds state/ alone,
+        # whatever else the person keeps in the home.
+        home = self.home("clone")
+        initialized = self.run_init(home)
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        (home / "state").rmdir()
+        (home / "README.md").write_text("my notes\n")
+        before = self.snapshot(home)
+        answer, started = self.start(home)
+        self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"), started.stderr)
+        self.assertEqual(self.snapshot(home), dict(before, state=("dir",)))
+
+    def test_boot_and_app_starts_never_initialize(self):
+        origins = ("app-on", "boot") if BootReceiptScenario.applicable else ("app-on",)
+        for origin in origins:
+            with self.subTest(origin=origin):
+                home = self.home(origin)
+                before = self.snapshot(home)
+                answer, _ = self.start(home, "--mode", "resume", "--origin", origin)
+                self.assertEqual(answer["reason"], "tmux-missing")
+                self.assertEqual(self.snapshot(home), before)
+
+    def test_partial_home_keeps_user_content(self):
+        home = self.home("partial")
+        (home / "AGENTS.md").write_text("My own standing instructions.\n")
+        (home / ".claude/settings.json").write_text('{"autoMemoryEnabled": true}')
+        (home / ".codex/config.toml").write_text("[features]\nmemories = true\n")
+        kept = {path: (home / path).read_bytes() for path in ("AGENTS.md", ".claude/settings.json", ".codex/config.toml")}
+        result = self.run_init(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual((sorted(report["created"]), report["kept"]), (["memory/MEMORY.md", "state"], ["AGENTS.md"]))
+        self.assertEqual({row["path"]: row["outcome"] for row in report["settings"]},
+                         {".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
+        self.assertEqual({path: (home / path).read_bytes() for path in kept}, kept)
+
+    @staticmethod
+    def has_tomllib():
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def test_native_settings_preserve_content(self):
+        # Native settings belong to the person. Compare bytes, including the
+        # line endings their editor wrote, not universal-newline readback.
+        outside = self.root / "outside.json"
+        outside.write_bytes(b"{}\r\n")
+        rows = (
+            # name, harness, input (None is absent), expected text, outcome, cause
+            ("claude-absent", "claude", None, '{\n  "autoMemoryEnabled": false\n}\n', "merged", None),
+            ("claude-empty-object", "claude", "{ \n}\n", '{\n  "autoMemoryEnabled": false\n \n}\n', "merged", None),
+            ("claude-compact", "claude", "{}", '{\n  "autoMemoryEnabled": false\n}', "merged", None),
+            ("claude-missing", "claude", ' \n{\n\t"theme": "café"\n}\n ',
+             ' \n{\n  "autoMemoryEnabled": false,\n\t"theme": "café"\n}\n ', "merged", None),
+            ("claude-true", "claude", '{\n"autoMemoryEnabled": true\n}\n', None, "kept", None),
+            ("claude-false", "claude", '{"autoMemoryEnabled": false}', None, "kept", None),
+            ("claude-unreadable", "claude", "{", None, "refused", "unreadable"),
+            ("claude-not-object", "claude", "[]\n", None, "refused", "shape"),
+            ("claude-linked", "claude", "linked", None, "refused", "linked"),
+            ("codex-absent", "codex", None, "[features]\nmemories = false\n", "merged", None),
+            ("codex-empty", "codex", "", "[features]\nmemories = false\n", "merged", None),
+            ("codex-no-table", "codex", 'model = "café"\n',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-no-final-newline", "codex", 'model = "café"',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-header", "codex", CODEX_FIXTURE,
+             "# features this home turns on\n[features]\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-commented-header", "codex", "# café\n\t[ features ] \t# native choices\nhooks = true\n",
+             "# café\n\t[ features ] \t# native choices\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-header-at-eof", "codex", "# café\n[features]",
+             "# café\n[features]\nmemories = false", "merged", None),
+            ("codex-true", "codex", "[features]\nmemories = true\n", None, "kept", None),
+            ("codex-false", "codex", "[features]\nmemories = false\n", None, "kept", None),
+            ("codex-unreadable", "codex", "[features\n", None, "refused", "unreadable"),
+            ("codex-inline-table", "codex", "features = { hooks = true }\n", None, "refused", "shape"),
+        )
+        for newline_name, newline in (("lf", "\n"), ("crlf", "\r\n")):
+            for name, harness, text, updated, outcome, cause in rows:
+                # Files with no newline have no convention; new lines use LF.
+                ending = newline if text and "\n" in text else "\n"
+                expected = (updated.replace("\n", ending).encode("utf-8") if updated is not None else
+                            text.replace("\n", newline).encode("utf-8"))
+                with self.subTest(newline=newline_name, name=name):
+                    home = self.home(newline_name + "-" + name)
+                    relative = ".claude/settings.json" if harness == "claude" else ".codex/config.toml"
+                    path = home / relative
+                    if text is None or cause == "linked":
+                        path.unlink()
+                        if cause == "linked":
+                            path.symlink_to(outside)
+                    else:
+                        path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+                    before = self.snapshot(home).get(relative)
+                    if harness == "codex" and not self.has_tomllib():
+                        outcome, cause = "refused", "toml-reader-missing"
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    row = next(row for row in json.loads(result.stdout)["settings"] if row["path"] == relative)
+                    self.assertEqual((row["outcome"], row.get("cause")), (outcome, cause))
+                    if outcome == "refused":
+                        refusals = [self.keyed(line) for line in result.stderr.splitlines()
+                                    if line.startswith("jarvis-session: init-settings=")]
+                        self.assertIn({"init-settings": "refused", "path": relative, "cause": cause}, refusals)
+                        self.assertEqual(self.snapshot(home).get(relative), before)
+                    else:
+                        self.assertEqual(path.read_bytes(), expected)
+                    after = self.snapshot(home)
+                    repeated = self.run_init(home)
+                    self.assertEqual(repeated.returncode, 0, repeated.stderr)
+                    self.assertEqual(self.snapshot(home), after)
+                    self.assertEqual(outside.read_bytes(), b"{}\r\n")
+
+    def test_home_init_controls(self):
+        # A source copy drops each guarantee while leaving its input reachable.
+        rows = (
+            ("enclosing-search", 'root = toplevel(home.parent, "..") if home.parent != home else None', "root = None",
+             "test_unqualified_folders_stay_unchanged", "(name='nested-repository')"),
+            ("unreadable-as-none", "if result.returncode == 128 and NOT_A_REPOSITORY.search(result.stderr):",
+             "if result.returncode == 128:", "test_unqualified_folders_stay_unchanged", "(name='enclosing-unreadable')"),
+            ("newline-translation", 'path.open(encoding="utf-8", newline="")', 'path.open(encoding="utf-8")',
+             "test_native_settings_preserve_content", "(newline='crlf', name='claude-missing')"),
+        )
+        for name, match, mutant, contract, row in rows:
+            with self.subTest(name=name):
+                skills = self.root / "control" / name / "skills"
+                scripts = skills / "jarvis/scripts"
+                shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+                for dependency in ("mailbox", "orch"):
+                    (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+                source = scripts / "lib/home.py"
+                before = source.read_text()
+                self.assertEqual(before.count(match), 1)
+                changed = before.replace(match, mutant)
+                self.assertNotEqual(changed, before)
+                source.write_text(changed)
+                result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                         "HomeInitContract." + contract, "-v"],
+                                        env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(row, result.stderr)
+                self.assertNotIn("name='no-git'", result.stderr)
 
 
 class SessionContract(unittest.TestCase):
     def setUp(self):
         self.owned_workers = []
         self.scratch = tempfile.TemporaryDirectory()
+        # unittest releases later acquisitions first, including on failure.
+        self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
+        # The fixture home has no Git repository and holds fixture files, so
+        # initialization would refuse it; its starting files skip that step.
+        (self.home / "AGENTS.md").write_text("fixture standing instructions\n")
+        (self.home / "memory").mkdir()
+        (self.home / "memory/MEMORY.md").write_text("# Memory index\n")
+        (self.home / "state").mkdir()
         self.account = self.root / "account"
         self.account.mkdir()
         self.rows = self.root / "rows.jsonl"
@@ -101,12 +856,37 @@ class SessionContract(unittest.TestCase):
             target = bin_dir / harness
             shutil.copyfile(HARNESS, target)
             target.chmod(0o755)
-        self.env = os.environ | {"PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
+        # This fixture changes account identity: inherit control transport only.
+        self.env = {key: value for key, value in os.environ.items()
+                    if key in {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "SSH_AUTH_SOCK",
+                               "DBUS_SESSION_BUS_ADDRESS"} or key.startswith(("XDG_", "LC_"))} | {
+                                 "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],
                                  "XDG_STATE_HOME": str(self.root / "state"), "XDG_SESSION_ID": "fixture-login",
                                  "WAYLAND_DISPLAY": "fixture-wayland", "DISPLAY": ":fixture",
                                  "JARVIS_TEST_BASH": os.environ["JARVIS_TEST_BASH"]}
-        # Keep the production 70 s window, scaled with the source timer
-        # when the control runner shortens its disposable copy.
+        self.manager = self.root / "manager.json"
+        self.manager.write_text("{}")
+        login = self.root / "login"
+        login.mkdir()
+        # The servers Start opens read the login's tmux config, which a row
+        # writes, and never the developer's.
+        self.env["HOME"] = str(login)
+        self.env["XDG_CONFIG_HOME"] = str(login / ".config")
+        for tool in ("systemctl", "launchctl"):
+            target = bin_dir / tool
+            target.write_text("#!/usr/bin/env python3\nimport json, subprocess, sys\nfrom pathlib import Path\n"
+                + "path=Path(" + repr(str(self.manager)) + ")\n"
+                + "if not path.exists(): sys.exit(2)\nvalues=json.loads(path.read_text())\n"
+                + "if sys.argv[1:] == ['--user', 'show-environment']:\n"
+                + " for key, value in values.items():\n"
+                + "  subprocess.run([" + repr(os.environ["JARVIS_TEST_BASH"])
+                + ", '-c', 'printf \\\"%s=%q\\\\n\\\" \\\"$1\\\" \\\"$2\\\"', 'manager', key, value], check=True)\n"
+                + "elif sys.argv[1] == 'getenv':\n"
+                + " if sys.argv[2] in values: print(values[sys.argv[2]])\n"
+                + "else: sys.exit(2)\n"
+                + "if path.with_suffix('.once').exists() and (sys.argv[1] == '--user' or sys.argv[2] == 'CLAUDE_CODE_TMPDIR'): path.unlink()\n")
+            target.chmod(0o755)
+        # Keep the production 70 s window in step with the source timer.
         with patch.dict(os.environ, {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}):
             self.launch_wait = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))["CALL_SECONDS"] * 70 / 55
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
@@ -114,22 +894,23 @@ class SessionContract(unittest.TestCase):
         self.label = "jarvis-" + key[:32]
 
     def tearDown(self):
-        # Kill only the server this fixture started, then remove its scratch.
         (self.root / "refuse-teardown").unlink(missing_ok=True)
         try:
             if self.record.exists():
-                self.call("stop")
+                self.call("stop", own_worker=True)
                 self.wait("off" if json.loads(self.record.read_text()).get("app_off") else "stopped")
         finally:
             for worker in self.owned_workers:
-                worker.terminate()
                 try:
                     worker.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    worker.kill()
-                    worker.wait(timeout=5)
+                    worker.terminate()
+                    try:
+                        worker.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        worker.kill()
+                        worker.wait(timeout=5)
             subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
-            self.scratch.cleanup()
 
     def call(self, verb, harness="claude", mode="resume", origin="manual", **kwargs):
         argv = [str(SCRIPT), verb, "--home", str(self.home)]
@@ -137,8 +918,15 @@ class SessionContract(unittest.TestCase):
             argv += ["--harness", harness, "--account", str(kwargs.get("account", self.account)), "--mode", mode, "--origin", origin]
         elif verb == "stop" and origin == "app-off":
             argv += ["--origin", origin]
-        if kwargs.get("brief"):
+        elif verb == "succeed" and kwargs.get("account_walled"):
+            argv += ["--account-walled"]
+        if kwargs.get("brief") is not None:
             argv += ["--brief-file", str(kwargs["brief"])]
+        if kwargs.get("adopt"):
+            argv += ["--adopt-pane", kwargs["adopt"][0], "--adopt-pid", str(kwargs["adopt"][1])]
+        for flag in ("model", "effort"):
+            if kwargs.get(flag) is not None:
+                argv += ["--" + flag, kwargs[flag]]
         start = time.monotonic()
         if kwargs.get("own_worker"):
             # The real public owner runs here so its detached worker remains
@@ -159,7 +947,26 @@ class SessionContract(unittest.TestCase):
         else:
             result = subprocess.run(argv, env=kwargs.get("env", self.env), capture_output=True, text=True, timeout=60)
         self.assertLess(time.monotonic() - start, 60)
-        return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False)), result.returncode
+        self.stderr = result.stderr
+        return validate(result.stdout, result.returncode, verb, kwargs.get("duplicate_boot", False),
+                        bool(kwargs.get("adopt"))), result.returncode
+
+    def model_classes(self):
+        # Model classification is kendex's external boundary. Preserve native
+        # defaults for class entries, as its protocol does, and answer each
+        # with the warning line its JSON consumer prints (model_warning).
+        kendex = self.root / "bin/kendex"
+        kendex.write_text('#!/usr/bin/env python3\nimport json, sys\nprint(json.dumps({"protocol":"model-resolution-v1","request":{"tag":"class","class":"standard"},'
+                          '"resolution":{"diagnostics":[],"native_selector":"sonnet" if sys.argv[2] == "claude" else None},'
+                          '"warning":"model-resolution: requested=standard harness=" + sys.argv[2]}))\n')
+        kendex.chmod(0o755)
+
+    @staticmethod
+    def model_warning(harness):
+        return "model-resolution: requested=standard harness=" + harness
+
+    def model_lines(self):
+        return [line for line in self.stderr.splitlines() if line.startswith("model-resolution:")]
 
     def wait(self, state="running", reason=None, seconds=20, persisted_stop=False):
         deadline = time.monotonic() + seconds
@@ -262,7 +1069,7 @@ class SessionContract(unittest.TestCase):
             if "worker" not in record:
                 return record
             time.sleep(0.05)
-        self.fail("the worker did not publish its final record")
+        self.fail("the worker did not publish its final record\n" + self.record.read_text() + "\n" + self.session_log())
 
     def await_rows(self, events, count):
         deadline = time.monotonic() + 10
@@ -288,7 +1095,6 @@ class SessionContract(unittest.TestCase):
         self.assertFalse(actual_record.is_relative_to(self.home))
         self.assertEqual(json.loads(actual_record.read_text())["home"], str(self.home))
         state = self.home / "state"
-        state.mkdir()
         (state / "jarvis-session.json").write_text("not a runtime record")
         self.assertEqual(before["cwd"], str(self.home))
         self.assertEqual(before["account"], json.loads(self.record.read_text())["effective_home"])
@@ -360,6 +1166,297 @@ class SessionContract(unittest.TestCase):
     def test_copilot_contract(self): self.lifecycle("copilot")
     def test_pi_contract(self): self.lifecycle("pi")
 
+    def test_provider_home_and_selected_account(self):
+        provider = self.root / "caller Claude provider's home"
+        provider.mkdir()
+        excluded = ("CLAUDECODE", "CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID", "CLAUDE_PROJECT_DIR",
+                    "CODEX_THREAD_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED",
+                    "PI_SUBAGENT_CHILD_AGENT", "PI_SUBAGENT_PARENT_SESSION_ID", "PI_BRIDGE_PARENT_SESSION_ID",
+                    "SECOND_OPINION_CURRENT_MODEL", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GH_TOKEN")
+        config = self.home / ".fixture.json"
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"excluded_env": excluded}))
+        self.manager.write_text(json.dumps({key: "fixture-manager-value" for key in (*excluded, "CLAUDE_CONFIG_DIR")}))
+        for harness, caller in (("pi", str(provider)), ("pi", None), ("pi", ""),
+                                ("claude", str(provider)), ("codex", str(provider)), ("copilot", str(provider))):
+            with self.subTest(harness=harness, caller=caller):
+                account = self.root / ("selected-" + harness + "-account")
+                account.mkdir(exist_ok=True)
+                self.env.update({key: "fixture-parent-value" for key in excluded})
+                self.env.pop("CLAUDE_CONFIG_DIR", None)
+                if caller is not None:
+                    self.env["CLAUDE_CONFIG_DIR"] = caller
+                self.call("start", harness, account=account, mode="new")
+                self.wait()
+                native = self.started()[-1]
+                record = json.loads(self.record.read_text())
+                self.assertEqual(record["account"], str(account))
+                # Codex launches under the lane's prepared copy of the account.
+                self.assertEqual(native["account"], record["effective_home"])
+                if harness in ("pi", "claude"):
+                    self.assertEqual(native["account"], str(account))
+                expected = str(account) if harness == "claude" else (caller or None) if harness == "pi" else None
+                self.assertEqual(native["claude_config_dir"], expected)
+                self.assertEqual(native["excluded_env"], [])
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_manager_policy_reaches_native_and_source_failure_keeps_owner(self):
+        policy = {"ORCH_LANE_EXCLUDE": "3claude", "ORCH_LANE_RETIRE": "retired=2000-01-01",
+                  "ORCH_LANE_ALIASES": "work=2claude", "FLEET_USER": "user 'quoted' $literal\\slash\tline\nend\r\n",
+                  "AGENT_TMPDIR": str(self.root / "agent tmp"), "CLAUDE_CODE_TMPDIR": str(self.root / "agent tmp")}
+        config = self.home / ".fixture.json"
+        proxy = "https://fixture-user:fixture-private-value@proxy.invalid:8443"
+        transport = {"HTTPS_PROXY": proxy, "TERM": "screen-256color"}
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"selected_env": [*policy, *transport]}))
+        self.env.update({name: "stale-caller" for name in policy})
+        # Authenticated proxies and TERM=dumb are supported caller inputs.
+        self.env.update(HTTPS_PROXY=proxy, TERM="dumb")
+        self.env["DATABASE_URL"] = "fixture-caller-credential"
+        source = policy | {"DATABASE_URL": "fixture-manager-credential"}
+        self.manager.write_text(json.dumps(source))
+        self.manager.with_suffix(".once").touch()
+        # Keep a pre-existing server, with stale policy and a credential whose
+        # arbitrary name the harness scrub table cannot recognize.
+        tmux = ["tmux", "-L", self.label, "-f", os.devnull]
+        subprocess.run([*tmux, "new-session", "-d", "-s", "keeper"], env=self.env, check=True)
+        subprocess.run([*tmux, "set-option", "-g", "default-terminal", transport["TERM"]], env=self.env, check=True)
+        commands = self.root / "tmux-commands.jsonl"
+        real_tmux = shutil.which("tmux")
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + sys.executable + "\nimport json,os,sys\nfrom pathlib import Path\n"
+            + "with Path(" + repr(str(commands)) + ").open('a') as stream: stream.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            + "os.execv(" + repr(real_tmux) + ", ['tmux', *sys.argv[1:]])\n")
+        wrapper.chmod(0o755)
+        for key, value in {"FLEET_USER": "stale-server", "DATABASE_URL": "fixture-credential"}.items():
+            subprocess.run([*tmux, "set-environment", "-g", key, value], env=self.env, check=True)
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"excluded_env": ["DATABASE_URL"]}))
+        for mode in ("new", "resume"):
+            self.call("start", mode=mode)
+            self.wait(reason="new-no-record" if mode == "new" else "resumed")
+            self.assertEqual(self.started()[-1]["selected_env"], policy | transport)
+            self.assertEqual(self.started()[-1]["excluded_env"], [])
+            # Each succession gets fresh policy, then its worker and native
+            # process must succeed after that source disappears.
+            (self.home / "state").mkdir(exist_ok=True)
+            (self.home / "state/handoff.md").write_text("handoff\n")
+            for successor in range(2):
+                self.manager.write_text(json.dumps(source | {"FLEET_USER": str(successor)}))
+                self.call("succeed")
+                self.wait()
+                self.assertEqual(self.started()[-1]["selected_env"], policy | transport | {"FLEET_USER": str(successor)})
+                self.assertEqual(self.started()[-1]["excluded_env"], [])
+            predecessor = self.record.read_bytes()
+            for verb in ("start", "succeed"):
+                answer, code = self.call(verb)
+                self.assertEqual((answer["reason"], code), ("launch-failed", 1))
+                self.assertEqual(self.record.read_bytes(), predecessor)
+                self.assertEqual(self.call("status")[0]["state"], "running")
+            self.call("stop")
+            self.wait("stopped", persisted_stop=True)
+            self.manager.write_text(json.dumps(source))
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+            runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+            with patch.object(sys, "platform", "darwin"):
+                selected = runtime["environment"](policy=True)
+                self.assertEqual({name: selected.get(name) for name in policy}, policy)
+        # Missing optional policy is a successful empty read, never a fallback.
+        self.manager.write_text("{}")
+        self.call("start")
+        self.wait()
+        self.assertEqual(self.started()[-1]["selected_env"], dict.fromkeys(policy) | transport)
+        argv = commands.read_text()
+        self.assertFalse(proxy in argv, "private transport entered tmux arguments")
+        observed = {word for row in argv.splitlines() for word in json.loads(row)}
+        self.assertTrue({"new-session", "new-window"} <= observed)
+        pane = json.loads(self.record.read_text())["terminal"]["pane"]
+        command = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{pane_start_command}"],
+                                 env=self.env, capture_output=True, text=True, check=True).stdout
+        self.assertFalse(proxy in command, "private transport entered pane command text")
+
+    def test_pane_channel_keeps_timeouts_private_and_releases_ownership(self):
+        proxy = "https://fixture-user:fixture-private-value@proxy.invalid:8443"
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+            runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+        session = runtime["Session"](self.home, self.env | {"HTTPS_PROXY": proxy})
+        for verb in ("new-session", "new-window"):
+            with self.subTest(verb=verb):
+                errors = io.StringIO()
+                captured = []
+                def timeout(argv, **kwargs):
+                    captured.extend(argv)
+                    raise subprocess.TimeoutExpired(argv, 1)
+                with patch.object(subprocess, "run", side_effect=timeout), redirect_stderr(errors):
+                    try:
+                        with session.pane_command([sys.executable, "-c", "pass"]) as command:
+                            channel = Path(command[-1])
+                            self.assertEqual(channel.parent.stat().st_mode & 0o777, 0o700)
+                            session.tmux(verb, *command)
+                    except subprocess.TimeoutExpired as failure:
+                        session.failure_log("worker-failed", failure)
+                        propagated = "".join(traceback.format_exception(type(failure), failure, failure.__traceback__))
+                    else:
+                        self.fail("tmux timeout was swallowed")
+                for evidence in (captured, errors.getvalue(), propagated):
+                    self.assertFalse(proxy in str(evidence), "private transport entered diagnostic or argv")
+                self.assertFalse(channel.parent.exists(), "failed launch retained its channel")
+        # A pane process killed before receipt can close a queued connection.
+        with self.assertRaises((OSError, runtime["Refusal"])):
+            with session.pane_command([sys.executable, "-c", "pass"]) as command:
+                channel = Path(command[-1])
+                with socket.socket(socket.AF_UNIX) as peer:
+                    peer.connect(str(channel))
+        self.assertFalse(channel.parent.exists(), "closed receiver retained its channel")
+
+    def test_manager_policy_excludes_reserved_account_through_selector(self):
+        # Succession's subclass replaces lanes; this row needs its real owner.
+        script = patch.dict(globals(), {"SCRIPT": SKILLS / "jarvis/scripts/jarvis-session"})
+        script.start()
+        self.addCleanup(script.stop)
+        self.model_classes()
+        reserved = Path(self.env["HOME"]) / ".3claude"
+        reserved.mkdir()
+        allowed = Path(self.env["HOME"]) / ".2claude"
+        allowed.mkdir()
+        # The external meter and model classifier are fixtures. The real
+        # selector must skip the reserved account despite its greater room.
+        meter = self.root / "bin/meter"
+        meter.write_text("#!" + sys.executable + "\nimport sys\n"
+            + "if sys.argv[1]=='capabilities':\n print('kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane'); sys.exit(0)\n"
+            + "assert sys.argv[1]=='accounts'\n"
+            + "for account, pct in " + repr([(str(self.account), 99), (str(reserved), 0), (str(allowed), 5)]) + ":\n"
+            + " print('account='+account+'\\tharness=claude\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Sonnet')\n")
+        meter.chmod(0o755)
+        (self.home / "kendex.settings.toml").write_text('[env]\nORCH_LANE_HOST = ' + json.dumps(str(meter))
+            + '\nORCH_OVERSEER_PREFERENCE = "claude:standard:high"\n')
+        self.manager.write_text('{"ORCH_LANE_EXCLUDE":"3claude"}')
+        self.call("start")
+        self.wait()
+        (self.home / "state").mkdir(exist_ok=True)
+        (self.home / "state/handoff.md").write_text("handoff\n")
+        answer, code = self.call("succeed")
+        self.assertEqual((answer["reason"], code), ("succession", 0),
+                         str(answer) + "\n" + self.stderr + "\n" + self.session_log())
+        self.assertEqual(self.wait()["account"], str(allowed))
+        self.assertEqual(self.started()[-1]["account"], str(allowed))
+
+    def test_unattended_start_posture(self):
+        # The home's setting decides the launch line's permission words.
+        settings = self.home / "kendex.settings.toml"
+        for harness, named, unattended in (("claude", "claude", True), ("codex", " pi , codex ", True),
+                                           ("copilot", "copilot", True), ("pi", "pi", False),
+                                           ("claude", "", False), ("claude", "codex,copilot", False)):
+            with self.subTest(harness=harness, named=named):
+                settings.write_text('[env]\nJARVIS_UNATTENDED_HARNESSES = "' + named + '"\n')
+                self.call("start", harness, mode="new")
+                self.wait()
+                words = set(self.started()[-1]["argv"]) & ANY_PERMISSION_WORD
+                self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+
+    def test_person_start_defaults(self):
+        # A person's Start names the harness alone: the account directory the
+        # harness itself uses, a new context and the manual origin.
+        standard = Path(self.env["HOME"]) / ".claude"
+        configured = self.root / "configured"
+        for account in (standard, configured):
+            account.mkdir()
+        argv = [str(SCRIPT), "start", "--home", str(self.home), "--harness", "claude"]
+        rows = (
+            ("new-no-record", {}, standard),
+            # A repeat on the same account starts new: the mode default.
+            ("new-requested", {}, standard),
+            ("new-selection-changed", {"CLAUDE_CONFIG_DIR": str(configured)}, configured),
+        )
+        for expected, env, account in rows:
+            with self.subTest(reason=expected):
+                result = subprocess.run(argv, env=self.env | env, capture_output=True, text=True, timeout=60)
+                validate(result.stdout, result.returncode, "start")
+                answer = self.wait(reason=expected)
+                self.assertEqual((answer["account"], answer["origin"]), (str(account), "manual"))
+                self.call("stop")
+                self.wait("stopped")
+
+    def test_first_launch_runs_in_its_created_pane(self):
+        # The process tmux creates for a first Start is the one the record
+        # owns and the native launch runs under: no second pane process.
+        created = self.root / "created-pane-pids"
+        real = shlex.quote(shutil.which("tmux"))
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + 'if [[ " $* " == *" new-session "* ]]; then\n  created="$(' + real + ' "$@")"\n'
+            + "  printf '%s\\n' \"$created\"\n"
+            + "  " + real + " -S \"${created%%$'\\t'*}\" display-message -p -t \"${created##*$'\\t'}\" '#{pane_pid}' >> "
+            + shlex.quote(str(created)) + "\n  exit\nfi\nexec " + real + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.call("start")
+        self.wait()
+        record = json.loads(self.record.read_text())
+        pane = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_pid}"],
+                              capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(created.read_text().split(), [str(record["process"]["pid"])])
+        self.assertEqual(pane, [str(record["process"]["pid"])])
+
+    def test_start_model_and_effort(self):
+        # The stated pair is read as a preference entry reads it, launched in
+        # the harness's own words and recorded as the session's choice, with
+        # kendex's line for a class printed once per launch. A Pi model is
+        # refused only when it spends another harness's account: openai/
+        # names a provider no reading measures, so it launches.
+        self.model_classes()
+        for harness, model, launched, words, foreign in (
+                ("claude", "standard", "sonnet", ("--model", "--effort"), ()),
+                ("pi", "github-copilot/gpt-5.5", "github-copilot/gpt-5.5", ("--model", "--thinking"),
+                 (("pi-claude/claude-sonnet-4-5", True), ("openai/gpt-5", False)))):
+            with self.subTest(harness=harness):
+                def launch():
+                    argv = self.started()[-1]["argv"]
+                    return {word: argv[argv.index(word) + 1] for word in words if word in argv}, json.loads(self.record.read_text()).get("choice")
+
+                def stated(effort):
+                    return ({words[0]: launched, words[1]: effort},
+                            {"harness": harness, "account": str(self.account), "model": launched, "effort": effort})
+
+                self.call("start", harness, mode="new")
+                self.wait()
+                self.assertEqual(launch(), ({}, None))
+                for other, refused in foreign:
+                    with self.subTest(model=other):
+                        before, count = self.record.read_bytes(), len(self.started())
+                        answer, code = self.call("start", harness, mode="new", model=other, effort="high")
+                        if refused:
+                            self.assertEqual((answer["state"], answer["reason"], code), ("failed", "launch-failed", 1))
+                            self.assertIn("jarvis-session: selection=pi-account-unlaunchable model=" + other, self.stderr.splitlines())
+                            self.assertEqual((self.record.read_bytes(), len(self.started())), (before, count))
+                        else:
+                            self.assertEqual(self.wait()["reason"], "new-selection-changed")
+                            self.assertEqual(json.loads(self.record.read_text())["choice"]["model"], other)
+                count = len(self.started())
+                # Each row: the stated effort, or none; the answer; whether it
+                # launched; and the effort the session then runs.
+                for effort, reason, launches, running in (("high", "new-selection-changed", 1, "high"), ("high", "existing", 0, "high"),
+                                                          (None, "existing", 0, "high"), ("low", "new-selection-changed", 1, "low")):
+                    with self.subTest(effort=effort, reason=reason):
+                        answer, _ = self.call("start", harness, mode="new", **({"model": model, "effort": effort} if effort else {}))
+                        self.assertEqual(self.model_lines(), [self.model_warning(harness)] * launches if harness == "claude" else [])
+                        self.assertEqual(self.wait()["reason"] if launches else answer["reason"], reason)
+                        count += launches
+                        self.assertEqual(len(self.started()), count)
+                        self.assertEqual(launch(), stated(running))
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                # A resume keeps the recorded choice, restated or not; a new
+                # context that states none runs the app's own default.
+                for mode, restated, reason, running in (("resume", {"model": model, "effort": "low"}, "resumed", stated("low")),
+                                                        ("resume", {}, "resumed", stated("low")),
+                                                        ("new", {}, "new-requested", ({}, None))):
+                    with self.subTest(mode=mode, restated=bool(restated)):
+                        self.call("start", harness, mode=mode, **restated)
+                        self.assertEqual(self.wait()["reason"], reason)
+                        self.assertEqual(launch(), running)
+                        self.call("stop")
+                        self.wait("stopped", persisted_stop=True)
+
     def test_contract_validator_controls(self):
         answer, _ = self.call("status")
         for patch in ({"reason": "unknown"}, {"detail": "x" * 201}, {"detail": "a\nb"}):
@@ -367,13 +1464,6 @@ class SessionContract(unittest.TestCase):
                 validate(json.dumps(answer | patch) + "\n", 0, "status")
 
     def test_off_and_boot_receipt(self):
-        from session_controls import applicable_controls
-        for available in (False, True):
-            with self.subTest(boot_producer=available), patch.object(BootReceiptScenario, "applicable", available):
-                names = {row[0] for row in applicable_controls(BootReceiptScenario)}
-                for name, *_ in BootReceiptScenario.controls:
-                    self.assertEqual(name in names, available)
-                self.assertTrue({"app Off", "app On", "app On state"} <= names)
         # A desktop with no selected app still has the lock/runtime tools.
         tool_bin = self.root / "tools"
         tool_bin.mkdir()
@@ -432,6 +1522,46 @@ class SessionContract(unittest.TestCase):
             self.wait("stopped")
             self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "stopped")
             self.assertEqual(len(self.started()), count)
+
+    def test_update_brief(self):
+        brief = self.home / "private.txt"
+        brief.write_text("Continue the original work.")
+        answer, code = self.call("update-brief", brief=brief)
+        self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 1))
+        self.assertFalse(self.record.exists())
+        self.model_classes()
+        answer, code = self.call("start", brief=brief, model="sonnet", effort="high")
+        self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+        running = self.wait()
+        before = json.loads(self.record.read_text())
+        brief.write_text("Continue the corrected work.")
+        answer, code = self.call("update-brief", brief=brief)
+        self.assertEqual((answer, code), (running, 0))
+        self.assertEqual(json.loads(self.record.read_text()), before | {"private_brief": brief.read_text()})
+        saved = self.record.read_bytes()
+        missing = self.home / "missing.txt"
+        cases = [("missing", missing, None, {}), ("empty-path", "", None, {}), ("directory", self.home, None, {}),
+                 ("empty", brief, b" \n", {}), ("multiline", brief, b"one\ntwo", {}),
+                 ("control", brief, b"one\x00two", {}), ("encoding", brief, b"\xff", {})]
+        for state, reason in (("starting", "launching"), ("handing-over", "succession"),
+                              ("stopping", "stop-requested"), ("failed", "handover-failed"),
+                              ("stopped", "stopped"), ("off", "app-off"), ("blocked", "sign-in-required")):
+            cases.append((state, brief, b"Replacement", {"state": state, "reason": reason}))
+        cases.append(("app-off", brief, b"Replacement", {"app_off": True}))
+        cases.append(("ended", brief, b"Replacement", {"terminal": None}))
+        try:
+            for name, path, contents, changes in cases:
+                with self.subTest(input=name):
+                    if contents is not None:
+                        brief.write_bytes(contents)
+                    record = json.loads(saved) | changes
+                    self.record.write_text(json.dumps(record))
+                    prior = self.record.read_bytes()
+                    answer, code = self.call("update-brief", brief=path)
+                    self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 1))
+                    self.assertEqual(self.record.read_bytes(), prior)
+        finally:
+            self.record.write_bytes(saved)
 
     def test_identity_before_private_brief(self):
         events = self.observe_inspection()
@@ -1022,7 +2152,11 @@ class SessionContract(unittest.TestCase):
 
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],
-                          ["start", "--home", str(self.home), "--harness", "unknown"]):
+                          ["start", "--home", str(self.home), "--harness", "unknown"],
+                          *(["start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                             "--mode", "new", "--origin", "manual", *stated]
+                            for stated in (["--model", "standard"], ["--effort", "high"], ["--model", "standard", "--effort", ""],
+                                           ["--model", "claude:standard", "--effort", "high"]))):
             with self.subTest(arguments=arguments):
                 result = subprocess.run([str(SCRIPT), *arguments], env=self.env, capture_output=True, text=True, timeout=60)
                 self.assertEqual(result.returncode, 2)
@@ -1102,6 +2236,47 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(record, {"returncode": status, "signal": -status if status < 0 else None,
                                           "stdout": stdout, "stderr": stderr})
 
+    def test_native_fixture_reports_compiler_timeout(self):
+        # The CI failure record must retain output from a compiler that stalls.
+        # This timer-wiring row shortens only its child driver's compile limit.
+        compiler = self.root / "rustc"
+        compiler.write_text("#!" + sys.executable + "\n"
+                            "import os, signal\n"
+                            "os.write(1, b'compiler stdout \\xc3\\xa9\\n')\n"
+                            "os.write(2, b'compiler stderr \\xe2')\n"
+                            "signal.pause()\n")
+        compiler.chmod(0o755)
+        driver = """\
+import subprocess
+import sys
+from unittest.mock import patch
+from fixtures.harness import native_launcher
+
+run = subprocess.run
+def bounded_compile(*args, **kwargs):
+    kwargs["timeout"] = 1
+    return run(*args, **kwargs)
+
+try:
+    with patch("fixtures.harness.subprocess.run", side_effect=bounded_compile):
+        with native_launcher():
+            pass
+except RuntimeError as failure:
+    print(failure)
+    sys.exit(23)
+"""
+        environment = dict(os.environ)
+        environment.pop("JARVIS_TEST_NATIVE", None)
+        environment["PATH"] = str(self.root) + os.pathsep + environment["PATH"]
+        result = subprocess.run([sys.executable, "-c", driver], env=environment,
+                                cwd=HARNESS_SCRIPT.parent.parent, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+        category, record = result.stdout.removeprefix("native-fixture: ").split(" ", 1)
+        self.assertEqual(category, "compile-timeout")
+        self.assertEqual(json.loads(record), {"timeout": 1, "stdout": "compiler stdout é\n",
+                                              "stderr": "compiler stderr \\xe2"})
+        self.assertEqual(result.stderr, "")
+
     def test_cancelled_replacement_keeps_the_live_owner(self):
         for phase in ("pending", "running"):
             with self.subTest(predecessor_state=phase):
@@ -1150,9 +2325,11 @@ class SessionContract(unittest.TestCase):
                 log = self.record.parent / "session.log"
                 deadline = time.monotonic() + 10
                 marker = "jarvis-session: worker=cancelled generation=" + str(generation)
-                while marker not in log.read_text().splitlines() and time.monotonic() < deadline:
+                prefix = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=manual "
+                while not any(re.sub(prefix, "", line) == marker for line in log.read_text().splitlines()) and time.monotonic() < deadline:
                     time.sleep(0.05)
-                self.assertIn(marker, log.read_text().splitlines())
+                self.assertTrue(any(re.match(prefix, line) and re.sub(prefix, "", line) == marker
+                                    for line in log.read_text().splitlines()))
                 if phase == "pending":
                     self.await_launches(launches + 2)
                     current = json.loads(self.record.read_text())
@@ -1203,6 +2380,407 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("off")
                 self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
+
+    # Attach rows drive real tmux clients on pseudo-terminals. A client
+    # outside tmux carries no TMUX; one the command runs inside sets both.
+    def outside_env(self):
+        return {key: value for key, value in self.env.items() if key not in ("TMUX", "TMUX_PANE")} | {"TERM": "xterm-256color"}
+
+    def tmux_read(self, socket, *args):
+        return subprocess.run(["tmux", "-S", socket, *args], env=self.outside_env(), capture_output=True, text=True, timeout=10)
+
+    def stand_in(self, *sessions):
+        # The owner's default server, played by a server of this fixture's own.
+        label = self.label + "-owner"
+        tmux = ["tmux", "-L", label, "-f", os.devnull]
+        for name in sessions:
+            subprocess.run([*tmux, "new-session", "-d", "-s", name, os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                           check=True, env=self.outside_env())
+        self.addCleanup(subprocess.run, ["tmux", "-L", label, "kill-server"], capture_output=True, env=self.outside_env())
+        return subprocess.run([*tmux, "display-message", "-p", "#{socket_path}"], check=True, env=self.outside_env(),
+                              capture_output=True, text=True).stdout.strip()
+
+    def pane_of(self, socket, session):
+        return self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{pane_id}").stdout.strip()
+
+    def inside_env(self, socket, session):
+        line = self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{socket_path},#{pid},#{session_id}")
+        return self.outside_env() | {"TMUX": line.stdout.strip(), "TMUX_PANE": self.pane_of(socket, session)}
+
+    def pty_client(self, argv, sockets):
+        # The drain keeps the client's terminal writes from filling the pty.
+        # Cleanup reaps the client before the stand-in and scratch cleanups.
+        primary, secondary = os.openpty()
+        fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        client = subprocess.Popen(argv, stdin=secondary, stdout=secondary, stderr=secondary, env=self.outside_env(),
+                                  start_new_session=True)
+        os.close(secondary)
+        drain = threading.Thread(target=lambda: self.drain(primary), daemon=True)
+        drain.start()
+
+        def release():
+            for socket in sockets:
+                for line in self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{client_name}").stdout.splitlines():
+                    pid, name = line.split(" ", 1)
+                    if int(pid) == client.pid:
+                        self.tmux_read(socket, "detach-client", "-t", name)
+            try:
+                client.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                client.kill()
+                client.wait(timeout=5)
+            drain.join(timeout=5)
+            os.close(primary)
+        self.addCleanup(release)
+        return client
+
+    @staticmethod
+    def drain(fd):
+        try:
+            while os.read(fd, 4096):
+                pass
+        except OSError:
+            pass
+
+    def clients(self, socket, deadline=10, until=None):
+        # The client rows of one server, once they satisfy until.
+        limit = time.monotonic() + deadline
+        while True:
+            listed = self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{session_name}")
+            rows = listed.stdout.splitlines() if listed.returncode == 0 else []
+            if until is None or until(rows) or time.monotonic() >= limit:
+                return rows
+            time.sleep(0.05)
+
+    def attach(self, env):
+        # No terminal on stdin: a regressed exec of tmux attach-session then
+        # fails at once rather than drawing on the runner's terminal.
+        return subprocess.run([str(SCRIPT), "attach", "--home", str(self.home)], env=env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_attach_outside_tmux(self):
+        self.call("start")
+        terminal = self.wait()["terminal"]
+        # The command status prints runs as printed, from a PATH without it.
+        prefix = "jarvis-session: attach="
+        printed = [line[len(prefix):] for line in self.stderr.splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(printed), 1)
+        command = shlex.split(printed[0])
+        self.assertTrue(os.path.isabs(command[0]), command)
+        self.assertEqual(command[1:], ["attach", "--home", str(self.home)])
+        client = self.pty_client(command, [terminal["server"]])
+        # The command execs the client: the attached client is its process.
+        rows = self.clients(terminal["server"], until=bool)
+        self.assertEqual(rows, [str(client.pid) + " jarvis"])
+        self.call("stop")
+        self.wait("stopped")
+        self.assertFalse([line for line in self.stderr.splitlines() if line.startswith("jarvis-session: attach=")])
+
+    # The terminals the rows put on PATH. fixture-term takes its command after
+    # -e, as a $TERMINAL does, and xdg-terminal-exec takes it bare; each runs
+    # it on a pseudo-terminal of its own and records what it was handed. fail
+    # exits 1 with a reason on stderr; idle exits 0 at once, as a launcher
+    # handing off to a server can.
+    TERMINAL_STUB = """#!/usr/bin/env python3
+import fcntl, json, os, pty, struct, sys, termios
+name = os.path.basename(sys.argv[0])
+if name == "fixture-fail":
+    sys.exit("fixture-fail: display unavailable")
+if name == "fixture-idle":
+    sys.exit(0)
+command = sys.argv[1:] if name == "xdg-terminal-exec" else sys.argv[2:]
+assert name == "xdg-terminal-exec" or sys.argv[1] == "-e", sys.argv
+assert command[:2] == ["bash", "-lc"], sys.argv
+with open(os.environ["FIXTURE_TERMINAL_RECORD"], "w") as stream:
+    json.dump({"pid": os.getpid(), "env": {key: os.environ.get(key) for key in ("TMUX", "TMUX_PANE", "WAYLAND_DISPLAY")}}, stream)
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    os.execvp(command[0], command)
+try:
+    while os.read(fd, 4096):
+        pass
+except OSError:
+    pass
+os.waitpid(pid, 0)
+"""
+
+    def terminal_stubs(self):
+        stubs = self.root / "terminals"
+        stubs.mkdir(exist_ok=True)
+        for name in ("fixture-term", "fixture-fail", "fixture-idle", "xdg-terminal-exec"):
+            (stubs / name).write_text(self.TERMINAL_STUB)
+            (stubs / name).chmod(0o755)
+        return str(stubs) + os.pathsep + self.env["PATH"]
+
+    def bare_path(self):
+        # Every command on PATH but xdg-terminal-exec, so no row resolves the
+        # developer's own terminal.
+        farm = self.root / "bare-path"
+        if farm.exists():
+            return str(farm)
+        farm.mkdir()
+        for directory in self.env["PATH"].split(os.pathsep):
+            if not os.path.isdir(directory):
+                continue
+            for entry in os.scandir(directory):
+                if entry.name != "xdg-terminal-exec" and not os.path.lexists(farm / entry.name):
+                    (farm / entry.name).symlink_to(entry.path)
+        self.assertIsNone(shutil.which("xdg-terminal-exec", path=str(farm)))
+        return str(farm)
+
+    # open-window's terminal choice, one row per branch: the $TERMINAL the
+    # caller sets (None for unset), whether xdg-terminal-exec is on PATH, and
+    # the outcome. A window row gives the stderr attach prints; a refusal row
+    # its cause and detail. The window, nested and refusal tests each run the
+    # rows of their outcome, so a branch without a row here has no test.
+    TERMINAL_CHOICE = (
+        ("TERMINAL on PATH", "fixture-term", True, ("window", "")),
+        ("TERMINAL names nothing, xdg-terminal-exec", "fixture-missing", True,
+         ("window", "jarvis-session: terminal=fallback requested=fixture-missing selected=xdg-terminal-exec\n")),
+        ("no TERMINAL, xdg-terminal-exec", None, True, ("window", "")),
+        ("no TERMINAL, no xdg-terminal-exec", None, False, ("nested",)),
+        ("TERMINAL names nothing, no xdg-terminal-exec", "fixture-missing", False,
+         ("refused", "terminal-unresolved", "jarvis-session: terminal=unresolved requested=fixture-missing")),
+    )
+
+    def choices(self, outcome):
+        # The rows of one outcome, each with the TERMINAL (None for unset)
+        # and PATH it runs under, and the rest of its outcome.
+        paths = {True: self.terminal_stubs(), False: self.bare_path()}
+        return [(label, terminal, paths[desktop], result[1:])
+                for label, terminal, desktop, result in self.TERMINAL_CHOICE if result[0] == outcome]
+
+    @staticmethod
+    def chosen(env, terminal, path):
+        return {key: value for key, value in env.items() if key != "TERMINAL"} | {"PATH": path} | (
+            {"TERMINAL": terminal} if terminal else {})
+
+    def test_attach_opens_a_terminal_window(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        original = self.pty_client(["tmux", "-S", owner, "attach-session", "-t", "=owner"], [owner, home])
+        before = [str(original.pid) + " owner"]
+        self.assertEqual(self.clients(owner, until=bool), before)
+        inside = self.inside_env(owner, "owner")
+
+        def release(handed):
+            # The terminal ends once its client leaves the home server.
+            self.tmux_read(home, "detach-client", "-s", "=jarvis")
+            if not handed.exists():
+                return
+            pid, limit = json.loads(handed.read_text())["pid"], time.monotonic() + 10
+            while time.monotonic() < limit:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+        for index, (label, terminal, path, (stderr,)) in enumerate(self.choices("window")):
+            with self.subTest(label):
+                handed = self.root / ("terminal-" + str(index) + ".json")
+                env = self.chosen(inside, terminal, path) | {"HOME": str(self.root), "FIXTURE_TERMINAL_RECORD": str(handed)}
+                result = self.attach(env)
+                try:
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", stderr))
+                    # The window's own client attached; the caller's client,
+                    # its server and its session are where they were.
+                    record = json.loads(handed.read_text())
+                    rows = self.clients(home)
+                    self.assertEqual([row.split(" ")[1] for row in rows], ["jarvis"])
+                    parent = subprocess.run(["ps", "-o", "ppid=", "-p", rows[0].split(" ")[0]], capture_output=True, text=True)
+                    self.assertEqual(parent.stdout.strip(), str(record["pid"]))
+                    self.assertEqual(self.clients(owner), before)
+                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+                    self.assertEqual(record["env"], {"TMUX": None, "TMUX_PANE": None, "WAYLAND_DISPLAY": "fixture-wayland"})
+                finally:
+                    release(handed)
+
+    def test_attach_nests_without_a_terminal(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        for index, (label, terminal, path, _) in enumerate(self.choices("nested")):
+            with self.subTest(label):
+                errors, picker = self.root / ("attach-" + str(index) + ".err"), "picker-" + str(index)
+                line = ("exec env -u TERMINAL " + ("TERMINAL=" + shlex.quote(terminal) + " " if terminal else "")
+                        + "PATH=" + shlex.quote(path) + " " + shlex.quote(str(SCRIPT)) + " attach --home "
+                        + shlex.quote(str(self.home)) + " 2>" + shlex.quote(str(errors)))
+                self.tmux_read(owner, "new-session", "-d", "-s", picker, line)
+                pane = self.tmux_read(owner, "display-message", "-p", "-t", "=" + picker + ":", "#{pane_pid}").stdout.strip()
+                try:
+                    # The client runs in the picker's own pane: its process
+                    # is the pane's.
+                    self.assertEqual(self.clients(home, until=bool), [pane + " jarvis"])
+                    # The fallback explains itself in one line before the
+                    # nested client.
+                    self.assertEqual(len(errors.read_text().splitlines()), 1)
+                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+                finally:
+                    self.tmux_read(home, "detach-client", "-s", "=jarvis")
+
+    def test_attach_refuses_a_terminal_that_does_not_open(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        stubs = self.terminal_stubs()
+        # Jarvis already open in another window: its client is no proof that
+        # this attach's window opened.
+        held = self.pty_client(["tmux", "-S", home, "attach-session", "-t", "=jarvis"], [home])
+        existing = [str(held.pid) + " jarvis"]
+        self.assertEqual(self.clients(home, until=bool), existing)
+        # A found terminal that does not open, and the choice's refusal rows,
+        # refuse rather than nest in the pane.
+        rows = [("launcher exits non-zero", "fixture-fail", stubs, ("terminal-launch-failed",
+                 "jarvis-session: terminal=fixture-fail exit=1\nfixture-fail: display unavailable")),
+                ("no client within the bound", "fixture-idle", stubs,
+                 ("terminal-launch-failed", "jarvis-session: terminal=fixture-idle client=none seconds=5")),
+                *self.choices("refused")]
+        for label, terminal, path, (cause, detail) in rows:
+            with self.subTest(label):
+                result = self.attach(self.chosen(self.inside_env(owner, "owner"), terminal, path))
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=" + cause + "\n" + detail + "\n"))
+                self.assertEqual(self.clients(home), existing)
+
+    def test_attach_refuses_without_a_controller(self):
+        for label in ("never started", "stopped"):
+            with self.subTest(label):
+                if label == "stopped":
+                    self.call("stop")
+                saved = self.record.read_bytes() if self.record.exists() else None
+                result = self.attach(self.outside_env())
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=no-controller\n"))
+                self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
+                self.assertNotEqual(subprocess.run(["tmux", "-L", self.label, "list-sessions"], capture_output=True,
+                                                   env=self.outside_env()).returncode, 0)
+
+
+class FixtureLifetimeContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+
+    def test_clients_release_before_scratch(self):
+        fixture = SessionContract()
+        fixture.setUp()
+        released = []
+
+        def before_removal():
+            self.assertTrue(fixture.root.is_dir())
+            self.assertIsNotNone(client.poll())
+            self.assertNotEqual(fixture.tmux_read(server, "list-sessions").returncode, 0)
+            released.append(True)
+
+        fixture.addCleanup(before_removal)
+        try:
+            server = fixture.stand_in("keeper")
+            client = fixture.pty_client(["tmux", "-S", server, "attach-session", "-t", "=keeper"], [server])
+            self.assertEqual(fixture.clients(server, until=bool), [str(client.pid) + " keeper"])
+        finally:
+            try:
+                fixture.tearDown()
+            finally:
+                self.assertTrue(fixture.doCleanups())
+        self.assertEqual(released, [True])
+        self.assertFalse(fixture.root.exists())
+
+    def test_stop_writer_exits_before_scratch(self):
+        skills = self.root / "skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch", "github"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.settimeout(15)
+            source = scripts / "lib/session.py"
+            self.assertFalse(source.is_symlink())
+            before = source.read_text()
+            match = '                    self.end_owned(record.get("predecessor"))\n'
+            self.assertEqual(before.count(match), 1)
+            barrier = ("                    import socket\n"
+                       "                    with socket.create_connection(" + repr(listener.getsockname()) + ", timeout=15) as peer:\n"
+                       "                        peer.sendall(b'1')\n"
+                       "                        assert peer.recv(1) == b'1'\n")
+            changed = before.replace(match, match + barrier)
+            self.assertNotEqual(changed, before)
+            source.write_text(changed)
+            with patch.dict(globals(), {"SKILLS": skills, "SCRIPT": scripts / "jarvis-session"}):
+                fixture = SessionContract()
+                fixture.setUp()
+                released = False
+                real_wait = subprocess.Popen.wait
+
+                def release_writer():
+                    nonlocal released
+                    with listener.accept()[0] as peer:
+                        peer.settimeout(15)
+                        self.assertEqual(peer.recv(1), b"1")
+                        saved = json.loads(fixture.record.read_text())
+                        self.assertEqual(saved["state"], "stopping")
+                        self.assertTrue(fixture.root.is_dir())
+                        self.assertEqual(fixture.call("status")[0]["state"], "stopped")
+                        peer.sendall(b"1")
+                    released = True
+
+                def wait(child, *args, **kwargs):
+                    if child in fixture.owned_workers and child.poll() is None:
+                        release_writer()
+                    return real_wait(child, *args, **kwargs)
+
+                def before_removal():
+                    worker = fixture.owned_workers[-1]
+                    returncode = worker.poll()
+                    saved = json.loads(fixture.record.read_text())
+                    if not released:
+                        # Reap even a rejected control's held writer.
+                        release_writer()
+                        real_wait(worker, timeout=15)
+                    self.assertEqual(returncode, 0)
+                    self.assertEqual((saved["state"], saved["terminal"]), ("stopped", None))
+
+                fixture.addCleanup(before_removal)
+                try:
+                    fixture.call("start", own_worker=True)
+                    fixture.wait()
+                    self.assertEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                finally:
+                    try:
+                        with patch.object(subprocess.Popen, "wait", wait):
+                            fixture.tearDown()
+                    finally:
+                        self.assertTrue(fixture.doCleanups())
+                self.assertFalse(fixture.root.exists())
+
+    def test_lifetime_controls(self):
+        rows = (
+            ("scratch-first", "            subprocess.run([\"tmux\", \"-L\", self.label, \"kill-server\"], capture_output=True, env=self.env)\n",
+             "            self.scratch.cleanup()\n", "test_clients_release_before_scratch"),
+            ("skip-join", "            for worker in self.owned_workers:\n                try:\n                    worker.wait(timeout=5)\n",
+             "            for worker in self.owned_workers:\n                try:\n                    worker.wait(timeout=5) if False else worker.poll()\n", "test_stop_writer_exits_before_scratch"),
+        )
+        for name, match, mutation, contract in rows:
+            with self.subTest(name=name):
+                tests = self.root / name / "skills/jarvis/tests"
+                tests.mkdir(parents=True)
+                (tests / "fixtures").symlink_to(HARNESS_SCRIPT.parent, target_is_directory=True)
+                shutil.copyfile(Path(__file__).with_name("session.test.sh"), tests / "session.test.sh")
+                source = Path(__file__).read_text()
+                self.assertEqual(source.count(match), 1)
+                changed = source.replace(match, match + mutation if name == "scratch-first" else mutation)
+                self.assertNotEqual(changed, source)
+                (tests / "session_test.py").write_text(changed)
+                result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(tests / "session.test.sh"),
+                                         "FixtureLifetimeContract." + contract],
+                                        env=os.environ | {"JARVIS_TEST_SKILLS": str(SKILLS), "JARVIS_TEST_NATIVE": str(HARNESS)},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("FAIL: " + contract, result.stderr)
 
 
 if __name__ == "__main__":

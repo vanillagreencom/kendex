@@ -6,7 +6,7 @@ import { clearPackageConfigCache } from "../extensions/qol/package-config.ts";
 import { generateAutoRenameName } from "../extensions/qol/session-rename.ts";
 
 // The naming request's output-token cap is the value pi-qol hands pi-ai's
-// `complete`; this suite captures it there and restores the preload stub.
+// `completeSimple`; this suite captures it there and restores the preload stub.
 const requests: unknown[] = [];
 
 let workdir = "";
@@ -20,10 +20,11 @@ beforeEach(() => {
 	clearPackageConfigCache();
 	requests.length = 0;
 	mock.module("@earendil-works/pi-ai", () => ({
-		complete: async (_model: unknown, _context: unknown, options: { maxTokens?: number }) => {
+		completeSimple: async (_model: unknown, _context: unknown, options: { maxTokens?: number }) => {
 			requests.push(options?.maxTokens);
 			return { content: [{ text: "Named Session", type: "text" }], stopReason: "stop" };
 		},
+		getSupportedThinkingLevels: () => ["off"],
 	}));
 });
 

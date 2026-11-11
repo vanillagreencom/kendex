@@ -1,18 +1,13 @@
 ---
 name: project-management
 description: "Load to plan a cycle, audit issues, build a roadmap, or decompose research into issues."
-summary: "TPM planning, audit, roadmap, and research-driven decomposition: the cycle-plan, audit-issues, roadmap and research wrappers and the TPM workflows under them."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [orch, linear, github, reviewer]
-  optional: [decider, second-opinion]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [planning]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -126,6 +121,7 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
   - The thread a finding came from, a shape ("a name containing a quote"), or something true in theory is not a reach, and an item with nothing to name is a decline, not an issue. The judgement is the author's: `issues create` under `LINEAR_REQUIRE_REACH` refuses only a body with no `Reached by:` line, an unsubstituted placeholder and a null token (`TBD`, `n/a`, `none`, `-`) counting as absent.
   - A filing whose source is a review round carries, at priority 2, a `Symptom:` line naming the run, the user, or the red check that already showed the defect (`--review-born`). Priority 2 from any other source is structural, reports no symptom, and is not checked for one. Where a review-born finding files at all is [`../reviewer/references/finding-disposition.md`](../reviewer/references/finding-disposition.md) § Filing bar.
 - **A requirement asks for what code-quality admits.** A requirement, Done-when or test plan is written against the code-quality skill's SKILL.md § Tests, § Over-Engineering and the repository's compatibility policy under § Cleanup. A wording test, a fixed count of growing data, a compatibility or migration clause the policy does not require, or a gate with no named failure is cut from the item before filing; the cited section states each rule.
+- **An estimate is a relative size.** The numeric estimate is a size class within the team, 1 for its smallest work through 5 for its largest, never a unit of time. An estimate already set stays valid. State time beside the item, not in the field: one approximate number of nonstop hours from a lane starting the work through merge, review rounds included. The communication skill's references/messages.md § Evidence and costs says how to derive and label it.
 - **Done-when separates branch proof from live proof.** Prove every box the branch can prove before merge. Admit a post-merge box on the same item only when all three conditions hold. It needs something the branch cannot give: a deployment or installation (a release, consumer refresh or host), live use over time, or a person's screen or hands. Name that class in `Why after merge:`. Its `Where:` names the evidence location and its reader under [orch communication-modes.md § Owner-only verification](../orch/references/communication-modes.md#owner-only-verification). For owner-side account, browser and home steps, write "Jarvis, the owner's delegate" in `Where:`. The repository's normal traffic produces its sample inside the window. A release trigger names a release the repository publishes within 72 hours of merge. A count names its sample size. Otherwise make it a pre-merge test or drop it. Write each such box on one line as `- [ ] Post-merge: <check>; Where: <location or command>; Why after merge: <why the branch cannot prove it>; Trigger: <trigger>; Deadline: <deadline>`. The `Post-merge:` check states its pass condition. Trigger is `merge`, a UTC time at or after merge, or `release OWNER/REPO TAG-GLOB`, the first matching GitHub release published after merge. When OWNER/REPO is a repository where the item merged, the release must contain the item's latest merge commit in that repository. A missing Trigger means `merge`. Deadline is `+Nh`, with N from 1 through 72, counted from the trigger: the merge, the stated time, or the release publication. Write a merge trigger's deadline as `+Nh`, because the merge time is unknown when the box is written. A merge or time trigger also takes a real UTC deadline after its trigger and at most 72 hours later; a release trigger takes only `+Nh`. The Linear completion command validates this form. Admit a count or rare-event check only when an existing query or counter answers it inside this window. Otherwise make it a pre-merge test or drop it. Absence of an event passes only when the check states absence as its pass condition. An open post-merge box keeps the merged item in Verifying. The verification pass records evidence and ticks a passing box, then completes the same item after its last box. A failed check follows [orch § The Cycle](../orch/SKILL.md#the-cycle). Unreadable evidence and deadline moves follow [orch verify](../orch/workflows/verify.md#2-resolve-missing-evidence). A merged item never returns to In Progress. Do not create a separate item to carry the verification check.
 - **One item per batch.** A body that lists batches each able to land alone is filed as one item per batch, with a blocking relation only where a batch needs another's change.
 - **One landing per subsystem.** An item whose work changes more than one subsystem, as the orch skill's [small.md](../orch/workflows/small.md) opening defines one, is filed as one item per subsystem, each able to land and be reviewed alone, with a blocking relation only where one needs another's change. An item that cannot land in parts says why in its body. The orch launch read, [oversee.md](../orch/workflows/oversee.md) § 3 Lane directive step 2, sends back an item that still spans several.
@@ -135,6 +131,8 @@ Wrappers run in the primary session: they own the user dialog and every tracker 
 - **One approval per decision.** Ask the user to approve a body of work once, at the roadmap plan gate. Creation re-asks only what changed after that answer.
 
 ## Planning artifacts
+
+To publish artifacts after a run's planned tracker mutations, follow [workflows/publish-artifacts.md](workflows/publish-artifacts.md).
 
 Planning, research, roadmap and audit files are not repository content. A plan or report with no caller-supplied path lives at `tmp/plans/<slug>.md` (a research report at `tmp/plans/<slug>-research.md`, a roadmap at `tmp/roadmaps/roadmap-<feature>.md`), never under a tracked `docs/` path; the full rule is `agents/planner.md` § Plan Artifacts. `[RESEARCH_DOCS_PATH]`, the directory the research workflows name, is `tmp/plans/research`: a research issue's assets and findings live under `tmp/plans/research/<ISSUE_ID>/`. Temporary review output belongs under `tmp/reviews/`.
 
@@ -148,9 +146,7 @@ An artifact this route does not find is missing, and the calling workflow's miss
 
 Carry each planning artifact's repository reference, readable path, and source issue separately. A same-checkout delegation receives the readable path for analysis and the reference for its output. A handoff to another checkout carries the reference and the source issue; the receiver resolves its own readable path through the route above. Saved plans and tracker text contain references and source issues, never a machine's local paths. A source issue identifies storage, not the roadmap's hierarchy origin. With no published source issue, keep the existing local-until-creation flow.
 
-**Publishing on Linear.** Attach each produced artifact and each cited planning input once, to its source issue; one that already sits on its source issue is not uploaded again. After the planned mutations for that issue, run `issues update [ISSUE_ID] --attach [PATH]`, repeated per file, as an attach-only call. Include companion files needed to read the artifact, such as roadmap JSON and research metadata. Keep its returned `attachments[]` entries and add an `**Artifacts**` list to the issue description: one `[repository-relative path](url)` link per entry. Every other issue the run creates or updates that cites the artifact carries the same links in its own `**Artifacts**` list and uploads nothing. Replace the prior link for the same path and preserve links to other inputs. Those links identify the published version even when older attachments share the path. Verify every attachment and description write before reporting completion. A run with no issue writes keeps its files locally until creation; it creates no issue only to hold files. A run whose writes leave no open issue to hold them, such as one that only cancels, keeps its files locally and reports them as unpublished.
-
-**Publishing on GitHub.** For a GitHub audit, put the produced text artifact in the created or updated issue body, and include the text of any cited planning input needed for pickup. Report binary inputs that have no tracker upload route as incomplete; never claim a local-only file is available to another lane. A run without artifacts retains its existing tracker behavior.
+**Unpublished artifacts.** On Linear, a run with no issue writes keeps its files locally until creation; it creates no issue only to hold files. A run whose writes leave no open issue to hold them, such as one that only cancels, keeps its files locally and reports them as unpublished. On GitHub, report binary inputs that have no tracker upload route as incomplete; never claim a local-only file is available to another lane. A run without artifacts retains its existing tracker behavior.
 
 ## Commands
 

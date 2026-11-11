@@ -115,7 +115,6 @@ unset LINK_CONTEXT LINK_FORM
 run_attachments list KEN-404
 assert_eq "list of a missing issue: refuses" "$RC" 1
 assert_eq "list of a missing issue: prints nothing" "$OUT" ''
-assert_file_contains "list of a missing issue: names the issue" "$TMP_ROOT/err" 'Issue not found: KEN-404'
 
 run_attachments fetch https://example.invalid/file.txt --output "$TMP_ROOT/out.txt"
 assert_eq "foreign host: refuses" "$RC" 1

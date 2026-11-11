@@ -90,16 +90,20 @@ pub(super) fn seeded() -> Project {
         version: crate::lock::LOCK_VERSION,
         ..crate::lock::Lock::default()
     };
-    for (kind, name, source) in [
-        (ItemKind::Skill, "gh", "cat"),
-        (ItemKind::Skill, "house-style", "local"),
-        (ItemKind::Command, "preview", "local"),
-        (ItemKind::Command, "note", "cat"),
+    // What an install records as a folder source's provenance.
+    let cat = crate::source::declared_path_identity(&catalog.display().to_string());
+    for (kind, name, source, repo) in [
+        (ItemKind::Skill, "gh", "cat", cat.as_str()),
+        (ItemKind::Skill, "house-style", "local", "local"),
+        (ItemKind::Command, "preview", "local", "local"),
+        (ItemKind::Command, "note", "cat", cat.as_str()),
     ] {
-        lock.entries.insert(
-            crate::lock::entry_key(kind, name, HarnessId::Claude),
-            lock_entry(kind, name, source),
-        );
+        let mut entry = lock_entry(kind, name, source, repo);
+        if kind == ItemKind::Skill && source == "cat" {
+            entry.emitted = Some(wrote_claude_copy(&root, name));
+        }
+        lock.entries
+            .insert(crate::lock::entry_key(kind, name, HarnessId::Claude), entry);
     }
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
     Project {
@@ -820,6 +824,24 @@ fn a_folder_marketplace_is_saved_under_one_spelling() {
 /// refuses against terms already stored. Drifted because a copy takes the
 /// project's own bytes, and those bytes are the marketplace's — which is
 /// what makes its terms travel with them.
+/// The position an install of a catalog skill for Claude records writing,
+/// so the record speaks for the project's copy: a record naming no position
+/// speaks for none. Joined onto the root the lock is written against, as an
+/// install joins it: `canonicalize` keeps Windows' verbatim prefix.
+#[allow(clippy::unwrap_used)]
+fn wrote_claude_copy(root: &Path, name: &str) -> crate::lock::EmittedArtifact {
+    crate::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: name.to_owned(),
+        paths: vec![
+            crate::paths::canonical(root)
+                .unwrap()
+                .join(".claude/skills")
+                .join(name),
+        ],
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn under_a_second_alias(project: &Project) {
     skill(&project.catalog.join("skills"), "hound", "market bytes");
@@ -841,9 +863,16 @@ fn under_a_second_alias(project: &Project) {
         crate::lock::LockFile::Current(lock) => lock,
         other => panic!("the fixture writes a current lock: {other:?}"),
     };
+    let mut hound = lock_entry(
+        ItemKind::Skill,
+        "hound",
+        "feline",
+        &crate::source::declared_path_identity(&project.catalog.display().to_string()),
+    );
+    hound.emitted = Some(wrote_claude_copy(&project.root, "hound"));
     lock.entries.insert(
         crate::lock::entry_key(ItemKind::Skill, "hound", HarnessId::Claude),
-        lock_entry(ItemKind::Skill, "hound", "feline"),
+        hound,
     );
     crate::lock::save(&lock_path, &lock).unwrap();
     skill(&project.root.join(".claude/skills"), "gh", "edited gh here");

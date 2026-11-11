@@ -62,6 +62,19 @@ fn declared_with(home: &Path, body: &str, extra: &str) -> std::path::PathBuf {
     project
 }
 
+/// The same project, its skill declaring a key a copy cuts from SKILL.md,
+/// so each body line of the copy sits a line earlier than the catalog's.
+#[allow(clippy::unwrap_used)]
+fn declared_cut(home: &Path, body: &str) -> std::path::PathBuf {
+    let project = declared(home, body);
+    fs::write(
+        home.join("catalog/skills/deploy/SKILL.md"),
+        format!("---\nname: deploy\ndescription: ship it\nsummary: Ships it.\n---\n{body}"),
+    )
+    .unwrap();
+    project
+}
+
 /// A project declaring one agent for Codex, whose catalog file is
 /// markdown and whose rendering is TOML.
 #[allow(clippy::unwrap_used)]
@@ -474,13 +487,20 @@ fn a_finding_is_cited_at_the_catalog_file_the_render_came_from() {
         &'static str,
         &'static str,
     );
-    let rows: [Row; 3] = [
+    let rows: [Row; 4] = [
         (
             "the catalog's own bytes",
             |home| declared(home, RISKY),
             ".claude/skills/deploy/SKILL.md",
             "  skill deploy for Claude Code scores 75/100",
             "skills/deploy/SKILL.md:5",
+        ),
+        (
+            "a copy that cuts the frontmatter",
+            |home| declared_cut(home, RISKY),
+            ".claude/skills/deploy/SKILL.md",
+            "  skill deploy for Claude Code scores 75/100",
+            "skills/deploy/SKILL.md:6",
         ),
         (
             "a rendering the project changed",
@@ -529,30 +549,43 @@ fn a_finding_is_cited_at_the_catalog_file_the_render_came_from() {
     }
 }
 
-/// The catalog check cites the same place the install preview does.
+/// The catalog check cites the same place the install preview does, a
+/// copy that cuts SKILL.md's frontmatter included. One row per catalog
+/// SKILL.md.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_catalog_check_cites_what_the_preview_cites() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = declared(&home, RISKY);
-    let catalog = home.join("catalog");
-    let preview = kendex(&home, &project, &["apply"]);
-    let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
+    type Setup = fn(&Path) -> std::path::PathBuf;
+    let rows: [(&str, Setup); 2] = [
+        ("a copy of the catalog's bytes", |home| {
+            declared(home, RISKY)
+        }),
+        ("a copy that cuts the frontmatter", |home| {
+            declared_cut(home, RISKY)
+        }),
+    ];
+    for (what, setup) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = setup(&home);
+        let catalog = home.join("catalog");
+        let preview = kendex(&home, &project, &["apply"]);
+        let printed = String::from_utf8_lossy(&preview.stderr).into_owned();
 
-    let checked = kendex(
-        &home,
-        &home,
-        &["check", "--catalog", catalog.to_str().unwrap()],
-    );
+        let checked = kendex(
+            &home,
+            &home,
+            &["check", "--catalog", catalog.to_str().unwrap()],
+        );
 
-    assert!(checked.status.success(), "{checked:?}");
-    let authoring = String::from_utf8_lossy(&checked.stderr).into_owned();
-    assert_eq!(
-        cited(&authoring),
-        cited(&printed),
-        "the two surfaces cite different places: {authoring}"
-    );
+        assert!(checked.status.success(), "{what}: {checked:?}");
+        let authoring = String::from_utf8_lossy(&checked.stderr).into_owned();
+        assert_eq!(
+            cited(&authoring),
+            cited(&printed),
+            "{what}: the two surfaces cite different places: {authoring}"
+        );
+    }
 }
 
 /// A clean package draws no line of its own in a plan's report: nothing in
@@ -600,7 +633,7 @@ fn the_catalog_check_prints_the_score_and_the_findings() {
             "skills/deploy/SKILL.md",
             RISKY,
             "safety: skill deploy at skills/deploy scores 75/100",
-            Some("(skills/deploy/SKILL.md:"),
+            Some("(skills/deploy/SKILL.md:5)"),
         ),
         (
             "a clean skill",
@@ -614,9 +647,7 @@ fn the_catalog_check_prints_the_score_and_the_findings() {
             "SKILL.md",
             RISKY,
             "safety: skill deploy scores 75/100",
-            // Pinned as it prints: the citation of a root skill joins an empty
-            // path onto the file, so it opens with a slash.
-            Some("(/SKILL.md:"),
+            Some("(SKILL.md:5)"),
         ),
     ];
     for (what, file, body, score, finding_cites) in rows {

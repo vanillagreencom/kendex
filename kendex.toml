@@ -63,7 +63,6 @@ hooks = [
   "block-unsafe-rm",
   "command-safety",
   "block-argv-kill",
-  "block-worktree-refresh",
   "worktree-session-claim",
   "worktree-prompt-claim",
   "pre-commit-check",
@@ -83,6 +82,7 @@ hooks = [
   "lane-mail-prompt",
   "lane-mail-compact",
   "critical-path-deny",
+  "docs-writing-note",
 ]
 
 [bundles.orchestration]
@@ -159,27 +159,33 @@ hooks = [
   "block-repo-copy",
   "block-unsafe-rm",
   "block-argv-kill",
-  "block-worktree-refresh",
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
+  "docs-writing-note",
 ]
 skills = [
   "commit-guards",
   "doc-limits",
   "preflight",
+  "docs-writing",
 ]
 
 [bundles.command-safety]
-description = "Project-defined shell command restrictions"
+description = "Shell command restrictions with an optional native Git history fetch fence"
 hooks = ["command-safety"]
 skills = ["commit-guards"]
+
+[bundles.claude-attention]
+description = "Optional terminal bell for Claude permission prompts and questions in inactive tmux panes, with a shared cooldown; requires Python 3"
+hooks = ["claude-attention", "claude-question-attention"]
 
 # Items this catalog no longer ships, one table per kind (skills, agents,
 # hooks, commands, mcp-servers, output-styles, pi-extensions), each name with
 # a migration line (empty for none). A consumer still declaring one keeps it
 # installed, with one notice carrying it, until `kendex refresh --prune`.
 [retired.hooks]
+block-worktree-refresh = ""
 doc-drift-check = ""
 skill-load-check = ""
 skill-load-record = ""

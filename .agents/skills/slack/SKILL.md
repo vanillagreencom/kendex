@@ -1,18 +1,13 @@
 ---
 name: slack
 description: "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
-summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, reads through the mailbox store and writes through lane-mail: setup, listen, post, compact and install."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [communication, mailbox, orch]
-  optional: [linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [orchestration]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -31,7 +26,8 @@ The relay between one checkout's overseer mailbox and one private Slack channel.
 .agents/skills/slack/scripts/slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
 .agents/skills/slack/scripts/slack listen --root ROOT [--root ROOT]... [--once]
 .agents/skills/slack/scripts/slack listen --status --root ROOT [--root ROOT]...
-.agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH] [--thread TS] [--update TS]
+.agents/skills/slack/scripts/slack deliver --root ROOT < event.json
+.agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH]... [--thread TS] [--update TS]
 .agents/skills/slack/scripts/slack read --channel ID (--ts TS | --latest N)
 .agents/skills/slack/scripts/slack compact [--root ROOT]...
 .agents/skills/slack/scripts/slack install --root ROOT [--root ROOT]... [--print]
@@ -42,9 +38,10 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 ## Rules
 
 - A root is a checkout with the orch skill installed. A relay serves every root it is given, and one relay serves one checkout, held by an OS lock.
-- One relay per Slack app. Slack sends each owner message to one of an app's open Socket Mode connections, so a second relay on the same app takes part of the first one's messages, and each waits for the first relay's next reconnect. Each machine runs its own app and one relay over every root on it.
+- Socket Mode is the standard mode without a hosted receiver: one app per machine and one relay per app over that machine's roots. Slack sends each message to one of an app's open connections.
+- A hosted receiver uses one app per workspace. Set `SLACK_INBOUND=queue` before setup and listen. Queue mode needs no app token, opens no socket and reads no channel history. Its worker calls `slack deliver --root ROOT`. The source is selected once at startup; neither mode falls back to the other. Switching keeps the binding and journal.
 - The mailbox package owns mailbox reads, numbering and cursors. The relay reuses its store. An owner's words land through `lane-mail send --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#constraints).
-- A delivery prints `delivered` with its Slack ts, mailbox id and `path=live|catch-up`. Eyes failures print a keyed cause and retry on the next poll; `already_reacted` settles the mark.
+- A delivery prints `delivered` with its Slack ts, mailbox id and `path=live|catch-up|queue`. Eyes failures print a keyed cause and retry on the next poll; `already_reacted` settles the mark.
 - Owner answers, question closure and ruling notices follow [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
 - Webhooks cannot work through a proxy that swaps headers only. Every message post uses `chat.postMessage`.
@@ -61,11 +58,12 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - Pull requests use `OWNER/REPO#N`, or `REPO#N` and `#N` in the sending repository. Commit hashes link only when Git finds one commit in that repository. An unresolved reference stays unchanged with one `reference-link-unavailable` stderr line per distinct reference in an outbound message.
 - The relay and `slack post` keep secret-pattern matches unexpanded for refusal. Other bare tracker ids link before the final secret check and Markdown cap. Existing links, Slack angle tokens, bare URLs, inline code and fenced code stay literal. Never put a tracker id in a code span.
 - `slack post` text without `--file`, and the relay's ask, notice and answer posts, go out as standard Markdown, which Slack renders: `**bold**`, lists, headings, links and code blocks.
-- Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses an input already longer than that `text-too-long`; send the long part as a file. Link expansion across the cap selects mrkdwn for both outbound paths. The relay also posts a longer input as mrkdwn, its Markdown marks shown as typed, so an ask still reaches the owner before its deadline.
-- After confirmed tracker posting, an ask carries its draft on the item. Other asks post their draft, the text the owner approves, as one code block, never linked, so the owner reads it as typed. Past the cap its mrkdwn block escapes `&`, `<` and `>`; mrkdwn cannot show a run of three backticks inside a block, so such a draft is refused `text-not-literal` and not sent.
+- Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses a final linked body past that cap as `text-too-long`; send the long part as a file. The relay also refuses oversized new and overdue questions after expansion and secret checks, before sending. Shorten the question or link its detail in a file, issue or report. Reports and answers keep ordered Markdown continuations in the same thread, with visible part numbers.
+- After confirmed tracker posting, an ask carries its draft on the item. Other asks post their draft, the text the owner approves, in literal code blocks, never linked. The complete question, including its draft, options and deadline, must fit the cap.
 - A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown. It is outside the 12,000-character cap, and Slack's own message limits still bound it. How to write it: [communication § References and markup](../communication/references/messages.md#references-and-markup).
+- Repeat `post --file` for related files in one share with one comment. Every file passes the file and secret checks before upload. An input or upload failure shares no partial group. Slack's recipient settings decide notifications.
 - The words and markup of every post follow [communication](../communication/references/messages.md).
 
 ## Doctor row
 
-`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `connection=connected|reconnecting|disconnected|unknown` and `connection_since=`, `unknown` since `last_poll` for a record an older relay wrote without the connection fields; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
+`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `inbound=socket|queue`. Queue mode prints `connection=none` without `connection_since`, for fresh and stale records alike. Socket mode prints `connection=connected|reconnecting|disconnected|unknown` and `connection_since=`, `unknown` since `last_poll` for a record an older relay wrote without the connection fields; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).

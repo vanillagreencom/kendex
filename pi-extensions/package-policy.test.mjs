@@ -31,10 +31,6 @@ function shardNames(workflow) {
 	return JSON.parse(list);
 }
 
-function shardConditions(workflow) {
-	return shardNames(workflow).map((name) => `matrix.shard == '${name}'`);
-}
-
 // A package's CI entry point is `test:ci` when it declares one and `test`
 // otherwise. `test:ci` is how a package whose full `test` script cannot run on
 // a runner — pi-claude-bridge's needs API keys and a live provider — states the
@@ -369,14 +365,73 @@ function packagesWithoutSuites(counts) {
 // reader over a mutated copy instead of asserting against a second literal.
 function unrunPackages(workflow) {
 	const steps = ciSteps(workflow);
-	const shards = shardConditions(workflow);
+	const executions = packageExecutions(workflow);
 	return packages().flatMap(({ dir, pkg }) => {
 		const invocation = ciEntryPoint(pkg);
 		if (invocation === undefined) return [];
-		const runs = steps.some((step) => step.dir === dir && shards.includes(step.condition) && step.commands.includes(invocation));
+		const runs = executions.some(({ matrix, github }) => steps.some((step) =>
+			step.dir === dir && enabled(step.condition, matrix, github) && step.commands.includes(invocation)));
 		return runs ? [] : [`${dir}: no step on a shard the matrix runs invokes \`${invocation}\``];
 	});
 }
+
+// These workflow conditions use JavaScript-compatible comparisons and Boolean
+// operators. Execute those actual expressions rather than accepting any text
+// that mentions a declared shard. Unknown expression inputs fail the test.
+function enabled(condition, matrix, github) {
+	assert.ok(condition, "an execution has no condition");
+	const expression = condition.replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+	return Boolean(Function("matrix", "github", "needs", "cancelled", `return (${expression});`)(
+		matrix, github, { changes: { result: "skipped", outputs: {} } }, () => false,
+	));
+}
+
+function packageExecutions(workflow, events = ["merge_group", "push"]) {
+	const jobs = workflow.split(/\n(?= {2}[\w-]+:\n)/);
+	const ordinary = jobs.find((job) => job.startsWith("  skill-suites-shard:\n"));
+	const dedicated = jobs.find((job) => job.startsWith("  skill-suites-main-only:\n"));
+	assert.ok(ordinary && dedicated, "the package execution job reader found no route");
+	const matrix = [...dedicated.matchAll(/^ {10}- suite: ([\w.-]+)\n {12}shard: ([\w-]+)\n {12}os: ([\w-]+)$/gm)]
+		.map(([, suite, shard, os]) => ({ suite, shard, os }));
+	assert.ok(matrix.length > 0, "the dedicated matrix reader found no entry");
+	const executions = [];
+	for (const event_name of events) {
+		const github = { event_name, ref: "refs/heads/main" };
+		for (const [job, entries] of [
+			[ordinary, shardNames(workflow).map((shard) => ({ shard, suite: "", os: "ubuntu-latest" }))],
+			[dedicated, matrix],
+		]) {
+			assert.match(job, /^ {4}steps: (?:&|\*)skill-suite-steps$/m);
+			const condition = job.match(/^ {4}if: (.+)$/m)?.[1];
+			for (const entry of entries) {
+				if (enabled(condition, entry, github)) executions.push({ matrix: entry, github });
+			}
+		}
+	}
+	return executions;
+}
+
+function packageClaims(workflow, event) {
+	const steps = ciSteps(workflow);
+	return packageExecutions(workflow, [event]).flatMap(({ matrix, github }) =>
+		steps.filter((step) => enabled(step.condition, matrix, github) &&
+			step.commands.includes(ciEntryPoint(packages().find(({ dir }) => dir === step.dir)?.pkg ?? {})))
+			.map(({ dir }) => dir)).sort();
+}
+
+test("main executes each package once and the group excludes only the temporary package", () => {
+	const workflow = readFileSync(workflowPath, "utf8");
+	const expected = packages().filter(({ pkg }) => ciEntryPoint(pkg)).map(({ dir }) => dir).sort();
+	assert.deepEqual(packageClaims(workflow, "push"), expected);
+	assert.deepEqual(packageClaims(workflow, "merge_group"), expected.filter((dir) => dir !== "pi-agents-tmux"));
+	for (const fault of ["omitted", "duplicated", "wrong-shard"]) {
+		const row = /^ {10}- suite: pi-agents-tmux\n {12}shard: node\n {12}os: ubuntu-latest$/m;
+		const mutant = workflow.replace(row, (entry) => fault === "omitted" ? "" :
+			fault === "duplicated" ? `${entry}\n${entry}` : entry.replace("shard: node", "shard: rest"));
+		assert.notEqual(mutant, workflow);
+		assert.notDeepEqual(packageClaims(mutant, "push"), expected);
+	}
+});
 
 test("every Pi extension suite runs in CI under the package's own test script", () => {
 	const workflow = readFileSync(workflowPath, "utf8");

@@ -351,21 +351,28 @@ fn an_unmarked_secret_is_not_required() {
 /// Every way a `[secrets]` declaration can be wrong, and what it is told.
 /// A value there is the one this table exists to refuse: it would ship a
 /// credential, a placeholder or a default in the catalog, and the app
-/// would offer it as the answer to write.
+/// would offer it as the answer to write. However the line is wrong, its
+/// key is still one the author holds as a credential, and no key the
+/// template assigns under `[env]` is.
 #[test]
 fn every_secret_declaration_defect_is_located() {
-    let rows: Vec<(&str, Vec<(u32, String)>)> = vec![
+    /// The template, its findings, and the keys it holds as credentials.
+    type Row = (&'static str, Vec<(u32, String)>, &'static [&'static str]);
+    let rows: Vec<Row> = vec![
         (
             "[secrets]\n# The API key.\nAPI_KEY = \"sk-live-1\"\n",
             vec![(3, "API_KEY is declared under [secrets] with a value".to_owned())],
+            &["API_KEY"],
         ),
         (
             "[secrets]\n# The API key.\nAPI_KEY = \"paste yours here\" # required\n",
             vec![(3, "API_KEY is declared under [secrets] with a value".to_owned())],
+            &["API_KEY"],
         ),
         (
-            "[secrets]\nAPI_KEY = \"\"\n",
-            vec![(2, "API_KEY has no comment block above it".to_owned())],
+            "[env]\n# Mode.\nMODE = \"a\"\n\n[secrets]\nAPI_KEY = \"\"\n",
+            vec![(6, "API_KEY has no comment block above it".to_owned())],
+            &["API_KEY"],
         ),
         (
             "[secrets]\n# The API key.\nAPI-KEY = \"\"\n",
@@ -373,6 +380,15 @@ fn every_secret_declaration_defect_is_located() {
                 3,
                 "API-KEY is not a name a shell can export, so nothing reads it".to_owned(),
             )],
+            &["API-KEY"],
+        ),
+        (
+            "[secrets]\n# The API key.\nAPI_KEY = \"\"\n# Again.\nAPI_KEY = \"\"\n",
+            vec![(
+                5,
+                "API_KEY is assigned again; it is already on line 3".to_owned(),
+            )],
+            &["API_KEY"],
         ),
         (
             "[secrets]\n# One.\nA = \"\"\n\n[secrets]\n# Two.\nB = \"\"\n",
@@ -380,6 +396,7 @@ fn every_secret_declaration_defect_is_located() {
                 5,
                 "a second [secrets] header; the first is on line 1".to_owned(),
             )],
+            &["A", "B"],
         ),
         (
             "[secrets]\n# The API key.\nAPI_KEY = \"\" # optional\n",
@@ -388,10 +405,17 @@ fn every_secret_declaration_defect_is_located() {
                 "API_KEY carries `#optional` after its value, and the only marker a template writes there is `# required`"
                     .to_owned(),
             )],
+            &["API_KEY"],
         ),
     ];
-    for (text, findings) in rows {
+    for (text, findings, keys) in rows {
         assert_eq!(located(text), findings, "{text:?}");
+        let held = read(text).secret_keys;
+        assert_eq!(
+            held.iter().map(String::as_str).collect::<Vec<_>>(),
+            keys,
+            "{text:?}"
+        );
     }
 }
 
@@ -416,6 +440,8 @@ fn a_key_declared_both_public_and_secret_is_refused() {
         );
         assert_eq!(read.entries, [], "{text:?}");
         assert_eq!(read.secrets, [], "{text:?}");
+        // Refused as a row, still held as a credential.
+        assert!(read.secret_keys.contains("API_KEY"), "{text:?}");
     }
 }
 

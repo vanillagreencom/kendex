@@ -1,5 +1,7 @@
 # Changelog fragments
 
+For a person who writes or releases a kendex change: how to write the changelog fragments in this folder, and the release standard for kendex and its packages.
+
 ## Release standard
 
 This standard applies to kendex, its apps, Pi packages, GitHub releases, and the AUR and Homebrew recipes that pin those releases.

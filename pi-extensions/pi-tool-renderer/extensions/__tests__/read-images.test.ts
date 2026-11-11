@@ -12,7 +12,7 @@ import {
 } from "../tool-renderer/live-settings.js";
 import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "../tool-renderer/overlay.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../tool-renderer/package-config.js";
-import { registerRead } from "../tool-renderer/tools.js";
+import { createReadRenderers } from "../tool-renderer/tools.js";
 
 const createdDirs: string[] = [];
 const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -54,22 +54,8 @@ function writeImageMode(cwd: string, showReadImages: ReadImageSetting): void {
 	writeSettings(cwd, { showReadImages });
 }
 
-function readRenderer(cwd: string): any {
-	let definition: any;
-	const pi = {
-		registerTool(tool: any) {
-			definition = tool;
-		},
-	};
-	const agent = {
-		createReadTool: () => ({
-			description: "read",
-			parameters: {},
-			execute: async () => ({ content: [] }),
-		}),
-	};
-	registerRead(pi as any, agent, cwd);
-	return definition;
+function readRenderer(cwd: string) {
+	return createReadRenderers(cwd);
 }
 
 function renderImageResult(

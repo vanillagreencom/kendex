@@ -10,6 +10,10 @@ import sys
 import unittest
 from desktop_world import SCRIPTS, World
 
+# The catalog's own skills: docs-audit runs the commit-guards md-type beside
+# its install, which reads docs-writing beside itself.
+CATALOG = Path(__file__).resolve().parents[2]
+
 START = "2026-10-01T00:00:00+00:00"
 END = "2026-10-02T00:00:00+00:00"
 
@@ -29,6 +33,9 @@ class Report(World):
         self.assertIsNotNone(self.real_git)
         self.assertIsNotNone(self.bash)
         self.bin.joinpath("python3").symlink_to(sys.executable)
+        # md-type, which the shape step runs, needs the host's own tools behind
+        # the logged git.
+        self.env["PATH"] = str(self.bin) + os.pathsep + os.defpath
         self.clean = dict(self.env)
         self.executable("git", "import json,os,subprocess,sys\n"
                         "data=sys.stdin.buffer.read() if '--batch-check' in sys.argv else None\n"
@@ -67,10 +74,27 @@ class Report(World):
         self.git(repo, "commit", "-qm", "fixture", env=env)
         return self.git(repo, "rev-parse", "HEAD").decode().strip()
 
-    def audit(self, *repos, since=START, until=END, extra=()):
-        return subprocess.run([self.bash, str(SCRIPTS / "docs-audit"), "--since", since,
+    def audit(self, *repos, since=START, until=END, extra=(), script=SCRIPTS / "docs-audit"):
+        return subprocess.run([self.bash, str(script), "--since", since,
                                "--until", until, *extra, *map(str, repos or (self.repo,))],
                               env=self.env, capture_output=True, text=True, timeout=30)
+
+    def control(self, name, source, siblings=("commit-guards", "docs-writing")):
+        """A docs-audit copy at NAME/scripts with copies of the catalog skills it runs beside it.
+
+        Copies, not links: md-type finds docs-writing through `..` from its
+        own directory, which the kernel resolves past a link.
+        """
+        scripts = self.root / name / "scripts"
+        scripts.mkdir(parents=True)
+        scripts.joinpath("docs-audit").write_text(source)
+        for sibling in ("commit-guards", "docs-writing"):
+            copy = self.root / sibling
+            if sibling not in siblings:
+                shutil.rmtree(copy, ignore_errors=True)
+            elif not copy.exists():
+                shutil.copytree(CATALOG / sibling, copy, ignore=shutil.ignore_patterns("tests"))
+        return scripts
 
     def fixture(self):
         template = {"path": "adopted.md", "template": "templates/workflow.md", "templateHash": "fixture"}
@@ -116,8 +140,11 @@ class Report(World):
                                 for path in selected}) for rev, selected in ((base, old), (head, new))]
         self.assertEqual([call["input"].splitlines() for call in batches], expected_ids)
         content = [call["args"][-1] for call in calls if "blob" in call["args"]]
+        # Each inventory, then each selected head document once, for its shape.
         self.assertEqual(content, [self.git(self.repo, "rev-parse", f"{rev}:.kendex-generated.json").decode().strip()
-                                   for rev in (base, head)])
+                                   for rev in (base, head)]
+                         + [self.git(self.repo, "rev-parse", f"{head}:{path}").decode().strip()
+                            for path in sorted(new, key=os.fsencode)])
         self.assertTrue(all("-l" not in call["args"] for call in calls if "ls-tree" in call["args"]))
         evidence = os.environ.get("DOCS_AUDIT_EVIDENCE")
         if evidence:
@@ -185,18 +212,28 @@ class Report(World):
             with self.subTest(options=options):
                 self.assertEqual(self.audit(**options).returncode, 2)
 
+    def test_top_level_state_exclusion_control(self):
+        self.commit(self.repo, {".kendex-generated.json": b"[]"}, START)
+        self.commit(self.repo, {"state/delegate/s.md": b"top state\n", "deep/state/s.md": b"nested state\n"}, END)
+        source = (SCRIPTS / "docs-audit").read_text()
+        self.assertEqual(source.count("|state)/"), 1)
+        control = self.control("state-control", source.replace("|state)/", ")/")) / "docs-audit"
+        for script, paths in ((SCRIPTS / "docs-audit", ["deep/state/s.md"]),
+                              (control, ["deep/state/s.md", "state/delegate/s.md"])):
+            with self.subTest(script=script.name):
+                result = self.audit(script=script)
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual([row["path"] for row in rows(result.stdout)[1:]], paths)
+
     def test_generated_exclusion_control(self):
-        copy = self.root / "control"
-        scripts = copy / "scripts"
-        tests = copy / "tests"
-        scripts.mkdir(parents=True)
-        tests.mkdir()
         source = (SCRIPTS / "docs-audit").read_text()
         match = "and path not in generated"
         self.assertEqual(source.count(match), 1)
         mutated = source.replace(match, "and (path not in generated or True)")
         self.assertNotEqual(source, mutated)
-        scripts.joinpath("docs-audit").write_text(mutated)
+        scripts = self.control("control", mutated)
+        tests = scripts.parent / "tests"
+        tests.mkdir()
         for name in ("docs-audit.test.sh", "docs_audit_test.py", "desktop_world.py"):
             shutil.copyfile(Path(__file__).parent / name, tests / name)
         env = dict(self.clean, JARVIS_TOOL_SCRIPTS=str(scripts), PATH=str(Path(sys.executable).parent) + os.pathsep + os.defpath)
@@ -207,6 +244,56 @@ class Report(World):
         self.assertIn("AssertionError", result.stderr)
         self.assertIn("'7->7'", result.stderr)
         self.assertIn("'4->4'", result.stderr)
+
+    def shape_fixture(self):
+        readme = (b"# Tool\n\nA tool.\n\n## Settings\n\n| Key | Default |\n|---|---|\n| poll | 30 |\n")
+        self.commit(self.repo, {".kendex-generated.json": b"[]"}, START)
+        self.commit(self.repo, {"README.md": readme, "docs/plan.md": b"```\nopen\n",
+                                "skills/x/README.md": b"# X\n\nThe x skill.\n"}, END)
+
+    def test_shape_rows(self):
+        self.shape_fixture()
+        result = self.audit(extra=("--top", "1"))
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        report = rows(result.stdout)
+        shapes = [(r["path"], r["md_type"].split()[1]) for r in report if "md_type" in r and r["md_type"].startswith("md-type: finding=")]
+        self.assertEqual(shapes, [("README.md", "finding=value-table")])
+        unended = [r["path"] for r in report if "md_type" in r and r["md_type"].startswith("md-type: fence-unclosed=")]
+        self.assertEqual(unended, ["docs/plan.md"])
+        # --top bounds the size rows, ranked by words over the example's words.
+        sized = [r["path"] for r in report if "md_type" in r and r["md_type"].startswith("md-type: signal=size")]
+        self.assertEqual(len(sized), 1)
+        self.assertNotIn("status", report[0])
+
+    def test_unjudged_shape(self):
+        self.shape_fixture()
+        source = (SCRIPTS / "docs-audit").read_text()
+        for name, siblings, cause in (("no-judge", (), "md-type missing at "),
+                                      ("no-rules", ("commit-guards",), "md-type: gap=docs-writing-missing")):
+            with self.subTest(name=name):
+                script = self.control(name, source, siblings) / "docs-audit"
+                result = self.audit(script=script)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                report = rows(result.stdout)
+                self.assertIn("md_bytes", report[0])
+                self.assertEqual(report[-1]["status"], "unjudged")
+                self.assertTrue(report[-1]["cause"].startswith(cause), report[-1]["cause"])
+
+    def test_shape_step_control(self):
+        source = (SCRIPTS / "docs-audit").read_text()
+        match = "shapes, sizes, unjudged = shape(repo, identity, head, head_blobs)"
+        self.assertEqual(source.count(match), 1)
+        scripts = self.control("shape-control", source.replace(match, "shapes, sizes, unjudged = [], [], None"))
+        tests = scripts.parent / "tests"
+        tests.mkdir()
+        for name in ("docs-audit.test.sh", "docs_audit_test.py", "desktop_world.py"):
+            shutil.copyfile(Path(__file__).parent / name, tests / name)
+        env = dict(self.clean, JARVIS_TOOL_SCRIPTS=str(scripts), PATH=str(Path(sys.executable).parent) + os.pathsep + os.defpath)
+        result = subprocess.run([self.bash, str(tests / "docs-audit.test.sh"), "Report.test_shape_rows"],
+                                env=env, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("AssertionError", result.stderr)
+        self.assertIn("finding=value-table", result.stderr)
 
 
 if __name__ == "__main__":

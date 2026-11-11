@@ -107,7 +107,7 @@ DROP="$(sk_inject "$CH" U001 'Broadcast dropped.' "$PARENT" '"subtype":"thread_b
 sk_event "$ROOT" "$CH" "$DROP"
 assert_eq "$(jq -s --arg d "$CH:$DROP" '[.[] | select(.delivery_id == $d)] | length' "$(sk_box "$ROOT")/to-lane.jsonl")" "0" "control: rejecting broadcast events breaks owner routing"
 sk_bin_reset
-sk_mutant thread-only-notice relay.py 'thread_ts=thread_ts,\n                                     \*\*' 'thread_ts=thread_ts, reply_broadcast=True,\n                                     **'
+sk_mutant thread-only-notice relay.py 'thread_ts=root,' 'thread_ts=root, reply_broadcast=True,'
 sk_lm "$ROOT" notice --item overseer --to owner --ref "$OLD_ID" --file "$(sk_text thread-only 'Thread only.')" >/dev/null
 sk_poll "$ROOT"
 assert_eq "$(sk_state ".messages.${CH}[] | select(.text == \"Thread only.\") | .reply_broadcast")" "true" "control: broadcasting a ref notice breaks the thread-only assertion"

@@ -1,17 +1,13 @@
 ---
 name: code-quality
 description: "Load for any coding or development task in any repository: writing, changing, fixing, refactoring, or testing code or scripts in any language."
-summary: "Code-authoring standards: failure semantics, resource ownership, shared decisions, evidence, test contracts, and stack-specific references."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [docs-writing]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -63,6 +59,7 @@ Every rule here serves an outcome: correct results for the user, reliability und
 
 - **One lifetime, one owner.** Resources with a shared lifetime have one owner whose teardown releases them. Resources with independent lifetimes have separate owners, each responsible for acquisition, recovery and release. Phases of one lifetime are private functions, not separate owners.
 - Acquire ownership before registering cleanup. A pathname alone grants no right to replace or delete a file, and a saved process number grants no right to signal: hold what the ownership mechanism keeps unique, an exclusively created file or a process handle, or verify identity while the ownership mechanism still prevents reuse.
+- A deletion command an agent issues names its target as a literal path, scratch roots included. Resolve the target and verify it is the one to delete, then write the resolved path in the command, quoted or escaped as the shell needs. Never name the target through a variable, a positional parameter, or a variable joined to a slash or glob. A resolved path grants no ownership and no right to delete another actor's output. This governs the shell commands an agent issues, not variables in project runtime source.
 - A child launch that changes identity, credentials or home directory selects the inherited values it needs, in production and in tests. A transparent launcher passes the caller's environment and states that contract.
 - Test access expands no shipped API and adds no fixture command to a product executable; fixtures live in the stack's test boundary. A diagnostic command or output surface that ships names its production consumer at its declaration. A private readback with no production effect is not a defect.
 
@@ -97,7 +94,7 @@ A must-fail control ([§ Tests](#tests)) proves that an instrument detects the d
 - No test pins a fixed count of data that grows, such as a dictionary's size, a table's row count or a catalog's member total. Assert the members the contract names, or the floor the contract fixes.
 - Put variations of one input contract in one visible table and run the same assertions for each row, covering empty input where the contract permits it. Shared fixtures define a neutral world; keep a planted defect private to its case.
 - A surface is a coherent contract or state machine; the stack reference places its tests. Name tests for their contract and split files at contract boundaries, never on size alone. Place tests beside code only where the runtime neither loads nor snapshots them; otherwise use a separate test tree. When modules merge or an interface moves, tests at the new interface replace the old tests of the parts in the same change.
-- Where checks are selected by what changed, select them through the one existing suite entry point, from direct and indirect inputs: source, dependencies, fixtures, generated inputs, configuration and build settings. Add no parallel selector, cache, runner, workflow or hand-kept dependency table. Missing or unreadable selection evidence, a test whose inputs cannot be identified, and, with no build graph, a change to the entry point, the assertion library or a shared fixture each run every check in the requested area. A full or release run runs every test. An aggregate entry point runs every member and, on any failure, exits non-zero naming each failed member. Review validation time periodically, never as a per-change limit or merge gate: optimize demonstrated waste while keeping protection against real failures, and narrow no inputs and split no suite to meet a time target.
+- Where checks are selected by what changed, select them through the one existing suite entry point, from direct and indirect inputs: source, dependencies, fixtures, generated inputs, configuration and build settings. Add no parallel selector, cache, runner, workflow or hand-kept dependency table. A change to a shared input, such as the entry point, the assertion library, a shared fixture or a test harness, selects the checks whose direct or indirect inputs reach the changed part, as that entry point traces them. Missing or unreadable selection evidence, a test whose inputs cannot be identified and a shared-input change whose reach the entry point cannot trace each run every check in the requested area. A full or release run runs every test. An aggregate entry point runs every member and, on any failure, exits non-zero naming each failed member. Review validation time periodically, never as a per-change limit or merge gate: optimize demonstrated waste while keeping protection against real failures, and narrow no inputs and split no suite to meet a time target.
 - Inject time for clock-dependent logic. Prove concurrency order and producer progress with barriers or acknowledgements; a sleep with a reason proves neither. Bound potentially blocking code with a parent-process deadline, since an executor timeout cannot interrupt code that never yields. Real elapsed time belongs to timer-wiring or performance tests, with their limited claim stated.
 - Pin a fixture's bytes against checkout conversion: under git, `text eol=lf` for text a test parses or compares byte for byte, `binary` for an image or archive, `-text` where CRLF bytes are the input under test. A parser of checked-out text normalizes CRLF or refuses it by name.
 - Test process-id parsing and mapping as pure functions with synthetic ids. Test liveness only against a process the test started and still holds, never an invented id or a reaped child's id.
@@ -121,3 +118,19 @@ Markdown follows [docs-writing](../docs-writing/SKILL.md) and carries no history
 ## Cleanup
 
 Remove unused code rather than leaving renamed variables, commented blocks, removal markers or re-exports without callers; a supported external API is a caller. Follow the repository's declared compatibility policy for removals; absent such a policy, remove the dead path and document a breaking change instead of inventing a compatibility layer. A compatibility probe or shim states the minimum upstream version it serves and the condition that removes it; one with no exit is a workaround under § Correctness.
+
+## Finding Evaluation
+
+A finding of bad code or test practice, bloat, unnecessary machinery or scope, patchwork or non-holistic design carries one evaluation line. These classes are examples for judgement, not a checklist: a finding qualifies when its cost comes from how the code or test was decided. Other findings carry no line.
+
+```text
+code-quality: [misled|missing|not followed]: [reason]; owner: [guidance or route]
+```
+
+Judge the outcome and its real cost under § Core Principle first, then name the cause:
+
+- `misled`: written guidance steered the decision to the result. The owner is the section whose wording to correct, as `file § Section`.
+- `missing`: no guidance covers the case. The owner is the guidance that should hold the rule: a section here, a stack reference or the repository's project instructions.
+- `not followed`: the guidance is right, and the route that should apply it failed, such as a workflow that never loaded it or a review that passed the defect. The owner is that route; the guidance takes no new prose.
+
+The reason states what in the guidance or route produced the finding, not the finding again. The line travels with the finding through its existing item or note route. It adds no review round, scanner, gate or field, does not by itself justify a new work item and does not change the filing bar.

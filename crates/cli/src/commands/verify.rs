@@ -17,7 +17,8 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::tracked_output::Held;
 
 use super::engine_common::print_unmanaged;
-use super::{resolve_scopes, scope_label};
+use super::offers::{Reached, named_project};
+use super::{resolve_scopes_at, scope_label};
 use crate::scope::ScopeFilter;
 use crate::ui::{self, Span, Status, Style};
 
@@ -241,11 +242,13 @@ pub fn run(
     env: &Env,
     names: Vec<String>,
     filter: ScopeFilter,
+    target: Option<&Path>,
     output: Output,
     warnings: Warnings,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let style = ui::style();
-    let scopes = resolve_scopes(env, filter)?;
+    let scopes = resolve_scopes_at(env, filter, target)?;
+    let reached = Reached::of(target);
     let options = output.reading().plan_options();
     for scope in &scopes {
         if let Err(error) = kendex_core::engine::check_catalog_compatibility(env, scope, &options)
@@ -267,11 +270,13 @@ pub fn run(
     let base_owned = base_owned(&scopes, output.base.as_deref());
     let mut tally = Tally::default();
     for scope in scopes {
-        check_scope(env, scope, &names, &output, warnings, &mut tally, &style)?;
+        check_scope(
+            env, scope, reached, &names, &output, warnings, &mut tally, &style,
+        )?;
     }
     print_unmanaged(&tally.unmanaged);
     print_left_out(&style, &tally.left_out);
-    print_gaps(&style, &tally.gaps);
+    print_gaps(&style, &tally.gaps, reached);
     let clean = tally.clean();
     ui::stderr(&style.summary(
         if clean { Status::Done } else { Status::Failed },
@@ -322,9 +327,11 @@ fn base_owned(scopes: &[Scope], base: Option<&str>) -> Option<Vec<Placed>> {
 
 /// One scope's rows, into the tally. A scope whose record or manifest
 /// cannot be read is said and skipped; the exit code remembers it.
+#[allow(clippy::too_many_arguments)]
 fn check_scope(
     env: &Env,
     scope: Scope,
+    reached: Reached,
     names: &[String],
     output: &Output,
     warnings: Warnings,
@@ -370,7 +377,7 @@ fn check_scope(
     };
     let stale = trailed(style, &scope, &lock, &report, output.reading());
     tally.stale.extend(stale);
-    let placer = Placer::new(env, &scope, output.base.as_deref(), &report);
+    let placer = Placer::new(env, &scope, reached, output.base.as_deref(), &report);
     let named = |name: &str| names.is_empty() || names.iter().any(|wanted| wanted == name);
     tally.unmanaged.extend(
         report
@@ -438,7 +445,7 @@ fn installation_rows(
             continue;
         }
         tally.checked += 1;
-        let (detail, remedy) = say_row(env, style, entry, report)
+        let (detail, remedy) = say_row(env, style, entry, report, &placer.named)
             .map(|Problem { detail, remedy }| (detail, remedy))
             .unzip();
         tally.failed += usize::from(detail.is_some());
@@ -803,6 +810,10 @@ struct Gap {
     /// own warnings, which name what it runs with and the fix: apply
     /// records nothing for it, so the record's remedy would do nothing.
     withheld: Option<(&'static str, Vec<kendex_core::engine::ItemWarning>)>,
+    /// Why `update-pi` leaves a declared Pi package, where the plan's row
+    /// for it says so (`DriftRow::pi_unsettled`): the record's remedy
+    /// would name a verb that records nothing.
+    pi_left: Option<String>,
 }
 
 /// Both directions the record can fall short of the scope, as rows and as
@@ -863,10 +874,21 @@ fn gap_rows(
             let problem = withheld.as_ref().map(|(said, _)| (*said).to_owned());
             rows.push(placer.row(kind.name(), name, None, State::Unrecorded, problem, &[]));
         }
+        let pi_left = report
+            .drift
+            .iter()
+            .find(|row| {
+                row.kind == *kind
+                    && row.kind == ItemKind::PiExtension
+                    && row.name == *name
+                    && row.pi_unsettled.is_some()
+            })
+            .map(|row| row.detail.clone());
         gap.push(Gap {
             kind: *kind,
             name: name.clone(),
             withheld,
+            pi_left,
         });
     }
     for installation in &unrecorded {
@@ -875,6 +897,7 @@ fn gap_rows(
                 kind: installation.kind,
                 name: installation.name.clone(),
                 withheld: None,
+                pi_left: None,
             });
         }
     }
@@ -892,12 +915,16 @@ struct Placer<'a> {
     /// `None` without `--base`: a `keys` position then carries no
     /// judgement, and the field is left out rather than answered.
     foreign: Option<BTreeMap<PathBuf, Foreign>>,
+    /// The project a next step names where `--project-path` named it
+    /// ([`named_project`]): a step typed bare runs where the command was.
+    named: String,
 }
 
 impl<'a> Placer<'a> {
     fn new(
         env: &Env,
         scope: &'a Scope,
+        reached: Reached,
         base: Option<&str>,
         report: &kendex_core::engine::EngineReport,
     ) -> Placer<'a> {
@@ -921,6 +948,7 @@ impl<'a> Placer<'a> {
             scope,
             root,
             foreign,
+            named: named_project(scope, reached),
         }
     }
 
@@ -1181,8 +1209,11 @@ fn print_left_out(style: &Style, scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
 ///
 /// A package withheld for a reason that takes its copy says so in place
 /// of the record's remedy, with its warnings and their fixes under it.
-fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)]) {
+fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)], reached: Reached) {
     for (scope, items) in scopes {
+        let named = named_project(scope, reached);
+        let update_pi = format!("kendex update-pi{named} records it");
+        let apply = format!("kendex apply{named} records it");
         ui::stderr(&style.report_row(
             Status::Notice,
             &[Span::Prose(&format!(
@@ -1197,11 +1228,15 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)]) {
             kind,
             name,
             withheld,
+            pi_left,
         } in items
         {
             let why = match (withheld, kind) {
                 (Some((said, _)), _) => said,
-                (None, ItemKind::PiExtension) => "kendex update-pi records it",
+                (None, ItemKind::PiExtension) => match pi_left {
+                    Some(reason) => reason.as_str(),
+                    None => update_pi.as_str(),
+                },
                 (
                     None,
                     ItemKind::Agent
@@ -1211,7 +1246,7 @@ fn print_gaps(style: &Style, scopes: &[(Scope, Vec<Gap>)]) {
                     | ItemKind::Command
                     | ItemKind::McpServer
                     | ItemKind::Plugin,
-                ) => "kendex apply records it",
+                ) => apply.as_str(),
             };
             let text = format!("{} {name} — {why}", kind.name());
             ui::stderr(&style.report_row(Status::Decision, &[Span::Prose(&text)], "  - "));
@@ -1263,6 +1298,7 @@ fn say_row(
     style: &Style,
     entry: &kendex_core::lock::LockEntry,
     report: &kendex_core::engine::EngineReport,
+    named: &str,
 ) -> Option<Problem> {
     let problem = report.drift.iter().find(|row| {
         row.name == entry.name
@@ -1289,7 +1325,7 @@ fn say_row(
     let name = &entry.name;
     let harness = entry.harness.name();
     let bad = match problem {
-        Some(row) => Some(drift_problem(env, entry, row)),
+        Some(row) => Some(drift_problem(env, entry, row, named)),
         None if unreachable_source => {
             let detail = "where this package comes from is unavailable".to_owned();
             Some(detail.into())
@@ -1324,10 +1360,15 @@ fn say_row(
     bad
 }
 
+/// `named` is the project `--project-path` named ([`named_project`]).
+/// `remove` takes no `--project-path`, so a removal there runs in that
+/// project. The structured remedy is the document's own vocabulary, which
+/// names a scope and no project; the row's scope names it.
 fn drift_problem(
     env: &Env,
     entry: &kendex_core::lock::LockEntry,
     row: &kendex_core::engine::DriftRow,
+    named: &str,
 ) -> Problem {
     match row.state {
         DriftState::Stale => {
@@ -1364,8 +1405,12 @@ fn drift_problem(
                         Scope::Global => " and --global",
                         _ => "",
                     };
+                    let there = match named.is_empty() {
+                        true => "",
+                        false => " in that project",
+                    };
                     let removal = format!(
-                        "remove {} with --kind {}{global}",
+                        "remove {} with --kind {}{global}{there}",
                         entry.name,
                         entry.kind.name()
                     );
@@ -1374,13 +1419,16 @@ fn drift_problem(
                             format!("{}; or {removal}", row.detail)
                         }
                         RowRemedy::PruneOrRemove => format!(
-                            "{} — refresh with --prune takes the record, or {removal}",
+                            "{} — refresh{named} with --prune takes the record, or {removal}",
                             row.detail
                         ),
                         RowRemedy::RemoveEdited => format!(
                             "{}; its files were edited, which refresh holds — {removal}",
                             row.detail
                         ),
+                        // Only a Stale row carries it, which the arm above
+                        // reads; its detail names update-pi.
+                        RowRemedy::UpdatePi => row.detail.clone(),
                     }
                 }
                 None => row.detail.clone(),

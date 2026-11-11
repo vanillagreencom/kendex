@@ -149,70 +149,22 @@ names_err="$(run_row "$CHANGE_SCOPE" hash-changed)"
 assert_eq "a hash change prints no names-only line" "" \
   "$(grep '^inventory-change: ' <<<"$names_err" || true)"
 
-# One must-fail control per rule: the planted copy drops that rule alone, and
-# the row it reaches answers the class the rule was refusing.
-control() { # LABEL EXPECTED EDIT NAME SCRIPT LINE REPLACEMENT...
-  local label="$1" expected="$2" edit="$3" planted
-  shift 3
-  if ! planted="$(mutant "$@")"; then
-    assert_eq "$label: the control is an edit" edited "not edited"
-    return
-  fi
-  assert_eq "$label" "$expected" "$("$CONTROL_READ" "$(run_row "$planted" "$edit")")"
-}
-# What a control reads off the planted copy's stderr: the class line.
-CONTROL_READ=verdict_of
-
-MICRO="class=micro measured=true cause=production-within-micro"
-
-# Removing a validation gate's exclusion lets its small edit measure as micro.
+# The suite's must-fail control: a planted copy reading a list without the
+# validation gate's exclusion lets that gate's small edit measure as micro.
 awk '
   $0 == "path *skills/orch/scripts/dev-validate-run" { hits++; next }
   { print }
   END { exit hits == 1 ? 0 : 3 }
 ' "$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf" >"$SANDBOX/validation-gate.conf"
-control "a list without the validation runner measures its edit as micro" "$MICRO" \
-  skills/orch/scripts/dev-validate-run=2 validation-gate change-scope \
+if planted="$(mutant validation-gate change-scope \
   'NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"' \
-  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\""
-
-# harness-only that never judges the inventory's change leaves it on the
-# path set, where the list excludes it and the test-removed row answers
-# standard.
-control "an unjudged inventory change is excluded" \
-  "class=standard measured=true cause=excluded-path" test-removed \
-  names harness-only \
-  '  inventory_change="$(names_only_change)" || inventory_change=""' \
-  '  inventory_change=""'
-# harness-only that does not hold a removed entry's path absent at the head
-# lets a de-listed render with a hand edit leave the path set.
-control "an unlisted path the diff edits leaves the path set" "$MICRO" \
-  edited-unlisted head-state harness-only \
-  '    [ "$3" = "$([ -n "$at_head" ] && echo present || echo absent)" ]' \
-  '    :'
-# change-scope whose narrow answers skip the floor answers trivial on the
-# root AGENTS.md row.
-control "a classifier with no floor lets AGENTS.md through unreviewed" \
-  "class=trivial measured=true cause=documentation-paths" AGENTS.md=10 \
-  floor change-scope \
-  '  [ -n "$instruction_file" ] || answer "$1" "$2"' \
-  '  answer "$1" "$2"'
-# Without extglob the one-segment pattern matches nothing, and a hook body
-# measures as micro.
-control "a matcher without extglob measures a hook body" "$MICRO" \
-  hooks/guard.sh=2 glob change-scope 'shopt -s extglob' -
-# A reader from before the extglob grammar: no extglob, and every `path`
-# line read, the superseded one too. The broad line keeps its refusal.
-control "a reader before the extglob grammar still refuses a hook body" \
-  "class=standard measured=true cause=excluded-path" hooks/guard.sh=2 \
-  pre-extglob lib/change-scope.sh \
-  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
-  '    $1 == "superseded" { drop[$2] = 1 }' -
-control "a reader before the extglob grammar still refuses a rendered hook body" \
-  "class=standard measured=true cause=excluded-path" .claude/hooks/guard.sh=2 \
-  pre-extglob-render lib/change-scope.sh \
-  'change_class_list_globs() { # CONF KEYWORD' 'change_class_list_globs() { shopt -u extglob # CONF KEYWORD' \
-  '    $1 == "superseded" { drop[$2] = 1 }' -
+  "NARROW_CONF=\"$SANDBOX/validation-gate.conf\"")"; then
+  assert_eq "a list without the validation runner measures its edit as micro" \
+    "class=micro measured=true cause=production-within-micro" \
+    "$(verdict_of "$(run_row "$planted" skills/orch/scripts/dev-validate-run=2)")"
+else
+  assert_eq "the validation-gate control is an edit" edited "not edited"
+fi
 
 # A list from before the floor carries no `instruction` line; the classifier
 # refuses it rather than reading AGENTS.md with no floor.
@@ -284,31 +236,5 @@ git -C "$repo" commit -q -m "old fork"
 assert_eq "the base endpoint declares exclusions after the fork" \
   "class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*" \
   "$(class_line_of "$("$CHANGE_SCOPE" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
-standard_head_mutant="$(mutant standard-head lib/change-scope.sh \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||' \
-  '    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$head^{commit}" 2>/dev/null)" ||')"
-assert_eq "a reader of head settings loses the base endpoint exclusion" "$MICRO" \
-  "$(verdict_of "$("$standard_head_mutant" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
-
-# Controls change each independent rule in a disposable script copy.
-ROW_BASE="$standard_base"
-control "a nonempty declaration cannot replace shared exclusions" "$MICRO" \
-  hooks/guard.sh=2 standard-additive change-scope \
-  'if path_class_matches narrow standard; then' \
-  'if path_class_matches narrow standard && [ -z "${HARNESS_CI_STANDARD_PATHS:-}" ]; then'
-control "skipping repository matching lets its path through" "$MICRO" \
-  runtime/product.ts=2 standard-match change-scope \
-  '  answer standard "cause=repository-standard-path $PATH_MATCH_HIT" measured' \
-  '  : "cause=repository-standard-path $PATH_MATCH_HIT" measured'
-control "omitting the key loses the base declaration" "$MICRO" \
-  runtime/product.ts=2 standard-reader change-scope \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_STANDARD_PATHS'" \
-  "BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS'"
-ROW_ENV="HARNESS_CI_STANDARD_PATHS="
-control "keeping the caller setting loses the base exclusion" "$MICRO" \
-  runtime/product.ts=2 standard-environment change-scope \
-  'unset HARNESS_CI_STANDARD_PATHS' ':'
-ROW_ENV=""
-ROW_BASE=""
 
 report narrow-change

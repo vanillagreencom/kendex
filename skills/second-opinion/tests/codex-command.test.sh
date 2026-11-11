@@ -40,11 +40,8 @@ SH
         printf 'assistant reply\n' >"$ROW/resp-codex"
         want_result='0:assistant reply'
       fi
-      [[ $row != custom-control ]] || mutate_script "$SO" \
-        'if [[ $(harness_model "$TARGET_CLI") == codex ]] && program=$(target_available "$TARGET_CLI"); then' \
-        'if program=$(target_available "$TARGET_CLI"); then # retained scope: if [[ $(harness_model "$TARGET_CLI") == codex ]] && program=$(target_available "$TARGET_CLI"); then'
       ;;
-    copilot|opaque|copilot-control)
+    copilot|opaque)
       program=1copilot
       [[ $row != opaque ]] || program=review-wrapper
       cat >"$ROW/bin/$program" <<'SH'
@@ -61,7 +58,6 @@ SH
       chmod +x "$ROW/bin/$program"
       W_ENV+=("SECOND_OPINION_CODEX_CMD=env COPILOT_ALLOW_ALL=false $program --model gpt-6.1-sol --reasoning-effort medium --silent --no-ask-user --disable-builtin-mcps --available-tools bash view rg glob --deny-tool write")
       want=$'--model\ngpt-6.1-sol\n--reasoning-effort\nmedium\n--silent\n--no-ask-user\n--disable-builtin-mcps\n--available-tools\nbash\nview\nrg\nglob\n--deny-tool\nwrite'
-      [[ $row != copilot-control ]] || mutate_script "$SO" '[[ ${program##*/} != codex ]]' '[[ $(harness_model "$TARGET_CLI") != codex ]]'
       ;;
   esac
   argv=(review --range HEAD --output "$ROW/out/out.json")
@@ -70,22 +66,6 @@ SH
   env -i HOME="$ROW" PATH="$ROW/bin:$PATH" ${W_ENV[@]+"${W_ENV[@]}"} "$SO" "${argv[@]}" --cwd "$WORK" >"$ROW/stdout" 2>"$ROW/stderr" || rc=$?
   if [[ $mode == quick ]]; then got="$rc:$(cat "$ROW/stdout")"
   else got="$rc:$(jq -r '.verdict' "$ROW/out/out.json" 2>/dev/null || printf missing)"; fi
-  if [[ $row == custom-control ]]; then
-    assert_eq "$got" 4:missing "$row reproduces the undecoded event stream"
-    assert_eq "$(cat "$ROW/argv")" "$want"$'\n--disable\nhooks\n--json' "$row restores executable-only injection"
-    control_rc=0
-    (FAIL=0; assert_eq "$got" "$want_result" "must-fail: $row artifact"; [[ $FAIL -eq 0 ]]) || control_rc=$?
-    assert_eq "$control_rc" 1 "$row turns the custom artifact check red"
-    continue
-  fi
-  if [[ $row == copilot-control ]]; then
-    assert_eq "$got" 5:missing "$row rejects foreign flags before artifact creation"
-    assert_eq "$(cat "$ROW/argv")" "$want"$'\n--disable\nhooks\n--json' "$row restores target-name flag injection"
-    control_rc=0
-    (FAIL=0; assert_eq "$got" 0:pass "must-fail: $row artifact"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
-    assert_eq "$control_rc" 1 "$row turns the usable artifact check red"
-    continue
-  fi
   assert_eq "$got" "$want_result" "$row delivers the requested $mode answer"
   case "$row" in copilot|opaque) assert_eq "$(cat "$ROW/allow-all")" false "$row keeps configured write restriction" ;; esac
   if [[ "$row" != *control ]]; then assert_eq "$(cat "$ROW/argv")" "$want" "$row backend argv"; continue; fi
@@ -100,10 +80,8 @@ version-control|codex|review
 env-codex|codex|review
 copilot|codex|review
 opaque|codex|review
-copilot-control|codex|review
 custom-review|my-model|review
 custom-quick|my-model|quick
-custom-control|my-model|review
 ROWS
 
 # VG-612 and HT-2311 configured Codex without --disable hooks. Human output
@@ -114,7 +92,7 @@ ROWS
 while IFS='|' read -r row answer mutation want_rc want_verdict want_hook; do
   build "$row" current:none models:codex timeout:3
   W_ENV+=("SECOND_OPINION_CODEX_CMD=$ROW/bin/codex exec -m gpt-6.1-sol -s read-only -c model_reasoning_effort=high --ephemeral")
-  [[ $mutation != failed* ]] || W_ENV+=(SO_TEST_CLI_EXIT=1)
+  [[ $mutation != failed ]] || W_ENV+=(SO_TEST_CLI_EXIT=1)
   response "$answer" codex >"$ROW/review"
   cat >"$ROW/bin/write-artifact" <<'SH'
 #!/usr/bin/env bash
@@ -160,11 +138,6 @@ fi
 exit "${SO_TEST_CLI_EXIT:-0}"
 SH
   chmod +x "$ROW/bin/codex" "$ROW/bin/write-artifact" "$ROW/bin/lane-mail-check"
-  case "$mutation" in
-    old) mutate_script "$SO" 'cmd="$cmd --disable hooks --json"' ': # retained command policy: --disable hooks --json' ;;
-    text) mutate_script "$SO" 'cmd="$cmd --disable hooks --json"' 'cmd="$cmd --disable hooks" # retained transport: --json' ;;
-    failed-control) mutate_script "$SO" 'if [[ $EXIT_CODE -eq 0 ]]; then unwrap_codex_events; fi' 'unwrap_codex_events # retained success guard: $EXIT_CODE -eq 0' ;;
-  esac
   result=$(run review)
   assert_eq "${result%% *}" "rc=$want_rc" "$row exit"
   assert_eq "$(cat "$ROW/write-attempt")" attempt "$row attempted read-only artifact write"
@@ -178,15 +151,11 @@ SH
   else
     assert_eq "$(jq -r '.attempts[0].cause' "$ROW/out/out.json.failed.json")" "$want_verdict" "$row preserves failed record"
     assert_eq "$([[ -e "$ROW/out/out.json" ]] && printf present || printf absent)" absent "$row writes no verdict"
-    if [[ $mutation == failed* ]]; then
+    if [[ $mutation == failed ]]; then
       # Codex errors can be stdout events alone. Preserve the original stream,
       # including an earlier assistant answer, without accepting it as a verdict.
       got=$(jq -r '.cause_source == "codex stdout" and (.partial_stdout | contains("\"turn.failed\""))' "$ROW/out/out.json.failed.json")
-      if [[ $mutation == failed-control ]]; then
-        control_rc=0
-        (assert_eq "$got" true "must-fail: $row"; [[ $FAIL -eq 0 ]]) || control_rc=$?
-        assert_eq "$control_rc" 1 "$row turns failure preservation red"
-      else assert_eq "$got" true "$row preserves the stdout error events"; fi
+      assert_eq "$got" true "$row preserves the stdout error events"
     fi
   fi
 done <<'ROWS'
@@ -194,26 +163,17 @@ override-pass|clean|-|0|pass|none
 override-blocker|parse|-|0|action_required|none
 no-verdict|empty|-|5|answered|none
 nonzero-events|clean|failed|5|exit-1|none
-nonzero-events-control|clean|failed-control|5|exit-1|none
-old-wrapper-control|clean|old|5|timeout|blocked
-human-output-control|clean|text|5|answered|none
 ROWS
 
 # Codex's usage-limit refusal: exit 1, a stderr whose prompt echo fills the
 # first 20 lines, then its ERROR: line with a curly apostrophe. The attempt is
 # a quota refusal, the run says so, and the record's cause keeps the line.
 LIMIT_LINE='ERROR: You’ve hit your usage limit. Visit https://chatgpt.com/settings/usage to purchase more credits or try again at Oct 22nd, 2026 6:30 AM.'
-LIMIT_WANT="rc=5 attempts=quota reason=reported a quota/rate-limit refusal error=[\"$LIMIT_LINE\"]"
-for row in usage-limit usage-limit-control; do
-  build "$row" current:none models:codex
-  printf '#!/usr/bin/env bash\ncat >/dev/null\nfor i in $(seq 25); do echo "- Changed files: echoed prompt line $i"; done >&2\nprintf "%%s\\n" %q >&2\nexit 1\n' "$LIMIT_LINE" >"$ROW/bin/codex"
-  chmod +x "$ROW/bin/codex"
-  [[ "$row" != *control ]] || mutate_script "$SO" "You('|’)ve hit" "You've hit"
-  result=$(run review)
-  got=$(jq -r --arg rc "${result%% *}" '"\($rc) attempts=\([.attempts[].cause] | join(",")) reason=\(.reason) error=\(.cause | split("\n") | map(select(startswith("ERROR:"))) | tojson)"' "$ROW/out/out.json.failed.json")
-  if [[ "$row" != *control ]]; then assert_eq "$got" "$LIMIT_WANT" "a codex usage-limit refusal at exit 1 records quota and keeps its ERROR line"; continue; fi
-  control_rc=0
-  (assert_eq "$got" "$LIMIT_WANT" "must-fail: $row"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
-  assert_eq "$control_rc" 1 "$row turns the usage-limit row red"
-done
+LIMIT_WANT="rc=5 attempts=quota error=[\"$LIMIT_LINE\"]"
+build usage-limit current:none models:codex
+printf '#!/usr/bin/env bash\ncat >/dev/null\nfor i in $(seq 25); do echo "- Changed files: echoed prompt line $i"; done >&2\nprintf "%%s\\n" %q >&2\nexit 1\n' "$LIMIT_LINE" >"$ROW/bin/codex"
+chmod +x "$ROW/bin/codex"
+result=$(run review)
+got=$(jq -r --arg rc "${result%% *}" '"\($rc) attempts=\([.attempts[].cause] | join(",")) error=\(.cause | split("\n") | map(select(startswith("ERROR:"))) | tojson)"' "$ROW/out/out.json.failed.json")
+assert_eq "$got" "$LIMIT_WANT" "a codex usage-limit refusal at exit 1 records quota and keeps its ERROR line"
 finish

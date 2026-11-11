@@ -4,12 +4,11 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import * as agent from "@earendil-works/pi-coding-agent";
 
 import { clearPackageConfigCache } from "../tool-renderer/package-config.js";
 import { CONFIG_ID } from "../tool-renderer/settings.js";
 import { clearBlink, registerBlinkEvents, renderPendingCall } from "../tool-renderer/text.js";
-import { registerWrite } from "../tool-renderer/tools.js";
+import { createWriteRenderers } from "../tool-renderer/tools.js";
 import { useWorld } from "./helpers/world.js";
 
 const world = useWorld();
@@ -96,9 +95,7 @@ test("a row agent_end dropped stays still when Pi draws it again", () => {
 test("agent_end releases a dropped write row's snapshot, and a later read stores none", async () => {
 	const { cwd } = world();
 	writeFileSync(join(cwd, "a.txt"), "old\n");
-	const tools: any[] = [];
-	registerWrite({ registerTool: (tool: any) => tools.push(tool) } as any, agent, cwd);
-	expect(tools.length).toBe(1);
+	const tools = [createWriteRenderers(cwd)];
 	const args = { path: "a.txt", content: "new\n" };
 	const writeRow = (toolCallId: string) => {
 		let redrawn!: () => void;
@@ -143,6 +140,7 @@ test("the extension entry point stops a dropped row's blink at agent_end", () =>
 			on: (name, handler) => handlers.set(name, [...(handlers.get(name) ?? []), handler]),
 			events: { on: () => () => {}, emit: () => {} },
 			registerTool: () => {},
+			registerToolRenderer: () => {},
 		};
 		await toolRenderer(pi);
 		let invalidations = 0;

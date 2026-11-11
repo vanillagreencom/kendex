@@ -1182,3 +1182,264 @@ fn a_fork_tree_with_no_skill_file_is_not_absorbed() {
         "the source that reads as a skill is still there"
     );
 }
+
+/// A copy carries the installed key set alone, so a fork takes the
+/// publisher's other keys back from the file the copy was installed from,
+/// at the commit the record that wrote the copy names, around the
+/// person's edits, and the fork renders back to the edited copy. Forked
+/// through a reader of the shared tree, that is still the writer's record:
+/// the reader's own record of a copy elsewhere, at a newer commit, says
+/// nothing about these bytes. A source this machine cannot read refuses
+/// the fork rather than capture a lossy one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_keeps_the_publishers_keys_from_the_installed_commit() {
+    let authored = |tag: &str| {
+        format!(
+            "---\nname: gh\ndescription: about gh\nsummary: Works with GitHub\ntags: [{tag}]\nmetadata:\n  version: 1\ndependencies:\n  commands:\n    - command: kendex-fixture-absent\n      purpose: Call GitHub\n      optional: true\n---\nUpstream.\n"
+        )
+    };
+    // Claude and Cursor both read the shared tree. The tool whose capture
+    // is forked, and whether its own record names a copy of its own at the
+    // newer commit, in its own folder, which no copy occupies.
+    for (what, harness, own_record) in [
+        (
+            "the tool whose record wrote the copy",
+            HarnessId::Claude,
+            false,
+        ),
+        (
+            "a reader of the shared tree whose own record names its own copy at the newer commit",
+            HarnessId::Cursor,
+            true,
+        ),
+    ] {
+        let w = world();
+        fs::create_dir_all(w.upstream.join("skills/gh")).unwrap();
+        fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("review")).unwrap();
+        commit(&w.upstream, "one");
+        declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+        let manifest_path = manifest::manifest_path(&w.env, &w.scope);
+        let text = fs::read_to_string(&manifest_path).unwrap();
+        let both = text.replacen(
+            "harnesses = [\"claude\"]",
+            "harnesses = [\"claude\", \"cursor\"]",
+            1,
+        );
+        assert_ne!(both, text);
+        fs::write(&manifest_path, both).unwrap();
+        sync_and_apply(&w);
+        let installed = fs::read_to_string(skill_file(&w)).unwrap();
+        assert!(!installed.contains("tags:"), "{what}: {installed}");
+        let edited = installed.replace("Upstream.", "My fork.");
+        fs::write(skill_file(&w), &edited).unwrap();
+        // The source moves on and the mirror learns it, with no apply: the
+        // copy is still the one the first commit rendered.
+        fs::write(w.upstream.join("skills/gh/SKILL.md"), authored("testing")).unwrap();
+        commit(&w.upstream, "two");
+        let loaded = manifest::load_for_mutation(&manifest_path)
+            .unwrap()
+            .unwrap();
+        remote::sync_sources(&w.env, &loaded).unwrap();
+        if own_record {
+            let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+            let mut lock = kendex_core::lock::load(&path).unwrap();
+            let own = lock
+                .entries
+                .get_mut(&kendex_core::lock::entry_key(
+                    ItemKind::Skill,
+                    "gh",
+                    harness,
+                ))
+                .unwrap();
+            own.source_commit = Some(head_commit(&w.upstream));
+            own.emitted = Some(kendex_core::lock::EmittedArtifact {
+                kind: ItemKind::Skill,
+                name: "gh".to_owned(),
+                // Joined onto the root the lock is written against, as an
+                // install joins it.
+                paths: vec![
+                    kendex_core::paths::canonical(&w.home.join("app"))
+                        .unwrap()
+                        .join(".cursor/skills/gh"),
+                ],
+            });
+            kendex_core::lock::save(&path, &lock).unwrap();
+        }
+
+        let plan = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", harness).unwrap();
+        apply::execute(&w.env, &plan).unwrap();
+        let local =
+            fs::read_to_string(w.home.join("app/.kendex-local/skills/gh/SKILL.md")).unwrap();
+        for kept in [
+            "My fork.",
+            "summary: Works with GitHub",
+            "tags: [review]",
+            "  version: 1\n",
+            "      purpose: Call GitHub\n",
+        ] {
+            assert!(local.contains(kept), "{what}: {kept:?} in {local}");
+        }
+        assert!(!local.contains("tags: [testing]"), "{what}: {local}");
+        let report = audit(&w.env, &w.scope).unwrap();
+        apply::execute(&w.env, &report.plan).unwrap();
+        assert_eq!(
+            fs::read_to_string(skill_file(&w)).unwrap(),
+            edited,
+            "{what}"
+        );
+        assert!(audit(&w.env, &w.scope).unwrap().drift.is_empty(), "{what}");
+    }
+}
+
+/// A fork whose capture cannot put the publisher's keys back refuses
+/// before anything is written, with the cause: a source this machine
+/// cannot read at the installed commit, for its own reason, no install
+/// record of the copy, a repository record naming no commit, a source
+/// that now reads another catalog than the record names, or a frontmatter
+/// on either side that does not read. Taken anyway, the capture would
+/// drop every key the install cut, or take back keys from a revision the
+/// copy never was. One row per cause; a path source stands in where the
+/// catalog itself has to move.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_that_cannot_restore_the_publishers_keys_writes_nothing() {
+    type Refused = fn(&CoreError) -> bool;
+    type Setup = fn(&World);
+    let duplicate_key = |w: &World| {
+        let installed = fs::read_to_string(skill_file(w)).unwrap();
+        let edited = installed.replacen("name: gh\n", "name: gh\nname: gh\n", 1);
+        fs::write(skill_file(w), edited.replace("Upstream.", "Mine.")).unwrap();
+    };
+    let rows: [(&str, bool, Setup, Refused); 8] = [
+        (
+            "no install record names the copy",
+            false,
+            |w| {
+                let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+                let mut lock = kendex_core::lock::load(&path).unwrap();
+                let before = lock.entries.len();
+                lock.entries.retain(|_, entry| entry.name != "gh");
+                assert!(lock.entries.len() < before);
+                kendex_core::lock::save(&path, &lock).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the repository record names no commit",
+            false,
+            |w| {
+                let path = kendex_core::lock::lock_path(&w.env, &w.scope);
+                let mut lock = kendex_core::lock::load(&path).unwrap();
+                let mut cleared = 0;
+                for entry in lock.entries.values_mut().filter(|entry| entry.name == "gh") {
+                    assert!(entry.source_commit.take().is_some());
+                    cleared += 1;
+                }
+                assert!(cleared > 0);
+                kendex_core::lock::save(&path, &lock).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the folder source now reads another folder",
+            true,
+            |w| {
+                let elsewhere = w.home.join("catalog-two");
+                write_skill(&elsewhere, "gh", "Elsewhere.");
+                let path = manifest::manifest_path(&w.env, &w.scope);
+                let text = fs::read_to_string(&path).unwrap();
+                let moved = text.replacen(
+                    &crate::test_util::source_path(&w.home.join("catalog")),
+                    &crate::test_util::source_path(&elsewhere),
+                    1,
+                );
+                assert_ne!(moved, text);
+                fs::write(&path, moved).unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the source's snapshot is gone",
+            false,
+            |w| fs::remove_dir_all(w.env.source_cache_dir()).unwrap(),
+            |error| matches!(error, CoreError::SourcePending { name } if name == "cat"),
+        ),
+        (
+            "the source is switched off",
+            false,
+            |w| {
+                let path = manifest::manifest_path(&w.env, &w.scope);
+                let text = fs::read_to_string(&path).unwrap();
+                let off = text.replacen(
+                    &format!("repo = \"{REPO}\"\n"),
+                    &format!("repo = \"{REPO}\"\nenabled = false\n"),
+                    1,
+                );
+                assert_ne!(off, text);
+                fs::write(&path, off).unwrap();
+            },
+            |error| matches!(error, CoreError::SourceDisabled { name } if name == "cat"),
+        ),
+        (
+            "the folder source is gone from its path",
+            true,
+            |w| fs::remove_dir_all(w.home.join("catalog")).unwrap(),
+            |error| matches!(error, CoreError::SourceMissing { name, .. } if name == "cat"),
+        ),
+        (
+            "the copy's frontmatter names a key twice",
+            false,
+            duplicate_key,
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+        (
+            "the published frontmatter does not read",
+            true,
+            |w| {
+                fs::write(
+                    w.home.join("catalog/skills/gh/SKILL.md"),
+                    "---\nname: gh\ndescription: about gh\ndependencies:\n  commands: [unclosed\n---\nUpstream.\n",
+                )
+                .unwrap();
+            },
+            |error| matches!(error, CoreError::ForkWidensAccess { .. }),
+        ),
+    ];
+    for (what, folder, setup, refused) in rows {
+        let w = world();
+        if folder {
+            write_skill(&w.home.join("catalog"), "gh", "Upstream.");
+            let path = manifest::manifest_path(&w.env, &w.scope);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(
+                &path,
+                format!(
+                    "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n",
+                    crate::test_util::source_path(&w.home.join("catalog"))
+                ),
+            )
+            .unwrap();
+            let report = audit(&w.env, &w.scope).unwrap();
+            apply::execute(&w.env, &report.plan).unwrap();
+        } else {
+            write_skill(&w.upstream, "gh", "Upstream.");
+            commit(&w.upstream, "one");
+            declare(&w, "[skills.gh]\nsource = \"cat\"\n");
+            sync_and_apply(&w);
+        }
+        let installed = fs::read_to_string(skill_file(&w)).unwrap();
+        fs::write(skill_file(&w), installed.replace("Upstream.", "Mine.")).unwrap();
+        setup(&w);
+
+        let result = fork::fork(&w.env, &w.scope, ItemKind::Skill, "gh", HarnessId::Claude);
+        assert!(
+            matches!(&result, Err(error) if refused(error)),
+            "{what}: {result:?}"
+        );
+        assert!(
+            !w.home.join("app/.kendex-local/skills/gh").exists(),
+            "{what}"
+        );
+    }
+}

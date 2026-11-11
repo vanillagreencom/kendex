@@ -29,6 +29,20 @@ sk_run XDG_CONFIG_HOME="$CFG" -- install --root "$ROOT" --root "$BETA" --print
 assert_eq "$RC" 0 "--print exits 0"
 assert_has "$OUT" "ExecStart=$SK_SLACK listen --root $ROOT --root $BETA" "the unit's ExecStart runs listen over every root, in order"
 assert_has "$OUT" "WorkingDirectory=$ROOT" "the unit's working directory is the first root"
+policy() { printf '%s\n' "$1" | awk '/^(OOMPolicy|MemoryMax)=/ {print}'; }
+POLICY=$'MemoryMax=256M\nOOMPolicy=continue'
+assert_eq "$(policy "$OUT")" "$POLICY" 'the printed unit keeps MemoryMax and surviving processes after an OOM kill'
+sk_copy oom-policy
+python3 - "${SK_BIN%/scripts/slack}/systemd/slack-listen.service" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+assert s.count('OOMPolicy=continue') == 1
+p.write_text(s.replace('OOMPolicy=continue','OOMPolicy=stop'))
+PY
+sk_run XDG_CONFIG_HOME="$CFG" -- install --root "$ROOT" --print
+sk_assert_red "$(policy "$OUT")" "$POLICY" 'control: stopping survivors fails the same printed unit policy assertion'
+sk_bin_reset
 assert_lacks "$OUT" "@" "every placeholder of the template is filled"
 assert_eq "$([ -e "$UNIT" ] && echo present || echo absent)" "absent" "--print writes no unit file"
 
@@ -38,6 +52,7 @@ assert_eq "$RC=$OUT" "0=slack: installed=$UNIT
 slack: enabled=slack-listen.service
 slack: active=slack-listen.service" "install prints the unit path, the enabled unit and its active state"
 assert_eq "$(sed -n 's/^ExecStart=//p' "$UNIT")" "$SK_SLACK listen --root $ROOT" "the written unit runs listen over the root"
+assert_eq "$(policy "$(cat "$UNIT")")" "$POLICY" 'the written unit preserves the printed memory and OOM policy'
 assert_eq "$(cat "$LOG")" "--user daemon-reload
 --user enable slack-listen.service
 --user restart slack-listen.service

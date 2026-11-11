@@ -209,4 +209,62 @@ sk_run -- post --root "$ROOT" --text 'clean' --file "$SK_TMP/leak.md"
 assert_eq "$RC=$(sk_state '[.uploads[] | select(. | contains("ghp_"))] | length')" "0=1" "control: the file check gone, the token uploads"
 sk_bin_reset
 
+# The same production post and snapshot assertion reject a completion that
+# drops a member. File comments use Slack mrkdwn, including the owner prefix.
+printf 'picture bytes\n' > "$SK_TMP/picture.png"
+group_post() {
+  local before state ids
+  before="$(sk_state '.messages.C781 // [] | length')" || exit 1
+  sk_ctl /_test/calls-reset '{}' >/dev/null || exit 1
+  sk_run -- post --root "$ROOT" --channel C781 --thread "$TS" --mention \
+    --file "$SK_TMP/report.md" --file "$SK_TMP/picture.png" --text '*Related files*'
+  state="$(sk_ctl /_test/state)" || exit 1
+  ids="$(jq -r '.messages.C781[-1].files | map(.id) | join(",")' <<<"$state")" || exit 1
+  jq -c --arg ts "$TS" --arg result "$RC=$OUT" --arg ids "$ids" --argjson before "$before" '
+    . as $state | .messages.C781[-1] as $message |
+    [.calls, ((.messages.C781 | length) - $before), $message.thread_ts == $ts,
+     $message.text, [$message.files[].title],
+     [$message.files[] | $state.uploads[.id]],
+     $result == ("0=slack: uploaded=" + $ids + " channel=C781")]
+  ' <<<"$state"
+}
+GROUP_EXPECTED='[["files.getUploadURLExternal","upload","files.getUploadURLExternal","upload","files.completeUploadExternal"],1,true,"<@U001> <@U002> *Related files*",["report.md","picture.png"],["line one\nline two\n","picture bytes\n"],true]'
+assert_eq "$(group_post)" "$GROUP_EXPECTED" \
+  "repeated files share their bytes once with one comment in the selected channel and thread"
+sk_mutant partial-group api.py 'files=uploaded,' 'files=uploaded[:1],'
+sk_assert_red "$(group_post)" "$GROUP_EXPECTED" \
+  "control: the group assertion rejects a completion missing the second file"
+sk_bin_reset
+
+# An invalid member in either position prevents every upload, not just its
+# own. These are ordinary CLI paths, checked by the existing file owner.
+while read -r name first second key; do
+  sk_ctl /_test/calls-reset '{}' >/dev/null || exit 1
+  sk_run -- post --root "$ROOT" --channel C782 --text clean \
+    --file "$SK_TMP/$first" --file "$SK_TMP/$second"
+  assert_eq "$RC=${ERR1%%=*}=$OUT=$(sk_state '.calls | length')" "2=slack: $key==0" \
+    "$name: every file is checked before any upload or share"
+done <<'ROWS'
+secret-first leak.md report.md secret-value
+secret-second report.md leak.md secret-value
+unreadable-first absent.md report.md file-unreadable
+unreadable-second report.md absent.md file-unreadable
+ROWS
+
+# Slack emits ticket, byte-upload and completion failures. A later member's
+# failure must leave the first unshared and print no uploaded success.
+while read -r method after status completions; do
+  sk_ctl /_test/calls-reset '{}' >/dev/null || exit 1
+  sk_ctl /_test/fault "{\"method\":\"$method\",\"after\":$after,\"status\":$status}" >/dev/null || exit 1
+  sk_run -- post --root "$ROOT" --channel C782 --thread "$TS" --text clean \
+    --file "$SK_TMP/report.md" --file "$SK_TMP/picture.png"
+  assert_eq "$RC=${ERR1%%=*}=$OUT=$(sk_state '[(.messages.C782 // [] | length), ([.calls[] | select(. == "files.completeUploadExternal")] | length)] | @csv')" \
+    "2=slack: slack-api-failed==0,$completions" \
+    "$method failure refuses the group without a partial share or success"
+done <<'ROWS'
+files.getUploadURLExternal 1 500 0
+upload 1 500 0
+files.completeUploadExternal 0 500 1
+ROWS
+
 sk_summary

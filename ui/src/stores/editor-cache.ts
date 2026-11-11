@@ -8,6 +8,7 @@ import {
 } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
 import { scopeKey } from "@/lib/scope";
+import { retainedReads } from "./retained-reads";
 
 // The editor's scope-keyed caches: what is read per place, how it is
 // written, and how the open place's answer is found. Split out from the
@@ -138,7 +139,27 @@ interface PlaceCaches {
   saved: Record<string, Draft>;
   inventories: Record<string, EditorInventory>;
   savedSettings: Record<string, ScopeSettings>;
+  /** When the read behind each place's `saved` and `savedSettings` began,
+   *  on [retainedReads]. */
+  placesAt: Record<string, number>;
 }
+
+/** Whether a place's manifest and settings are both held from a read that
+ *  is still the answer. A half that failed is absent, so it is asked for
+ *  again on the next demand rather than standing as a known place. */
+export const placeCurrent = (
+  held: Pick<PlaceCaches, "saved" | "savedSettings" | "placesAt">,
+  scope: Scope,
+): boolean => {
+  const key = scopeKey(scope);
+  const at = held.placesAt[key];
+  return (
+    key in held.saved &&
+    key in held.savedSettings &&
+    at !== undefined &&
+    !retainedReads.stale(at)
+  );
+};
 
 /** What one place's read records: each half under that place's key, and
  *  gone where that half could not be read. Presence is what says a read
@@ -149,6 +170,7 @@ export const recordedRead =
   (
     scope: Scope,
     [manifest, inventory, settings]: Awaited<ReturnType<typeof readPlace>>,
+    at: number,
   ) =>
   (held: PlaceCaches): PlaceCaches => ({
     saved: recorded(held.saved, scope, readDraft(manifest)),
@@ -162,6 +184,7 @@ export const recordedRead =
       scope,
       settings.status === "ok" ? settings.data : null,
     ),
+    placesAt: { ...held.placesAt, [scopeKey(scope)]: at },
   });
 
 /** One read over several places, folded into what is held. Merged per
@@ -171,8 +194,9 @@ export const mergedPlaces =
   (
     scopes: Scope[],
     [manifests, settings]: Awaited<ReturnType<typeof placesOf>>,
+    at: number,
   ) =>
-  (held: Pick<PlaceCaches, "saved" | "savedSettings">) => ({
+  (held: Pick<PlaceCaches, "saved" | "savedSettings" | "placesAt">) => ({
     saved: scopes.reduce(
       (out, scope) => recorded(out, scope, manifests[scopeKey(scope)] ?? null),
       held.saved,
@@ -180,5 +204,9 @@ export const mergedPlaces =
     savedSettings: scopes.reduce(
       (out, scope) => recorded(out, scope, settings[scopeKey(scope)] ?? null),
       held.savedSettings,
+    ),
+    placesAt: scopes.reduce(
+      (out, scope) => ({ ...out, [scopeKey(scope)]: at }),
+      held.placesAt,
     ),
   });

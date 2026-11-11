@@ -1,0 +1,9 @@
+# Draft and publish
+
+Run when drafting an upload, comment or reply, or sending a draft after its recorded approval. Read [§ Draft and approval](../SKILL.md#draft-and-approval) and [§ Consent and spam](../SKILL.md#consent-and-spam) before step 1.
+
+1. Draft the upload with `draft-upload --issue ID --video PATH --title TEXT --description TEXT --category ID --privacy public|private|unlisted --made-for-kids yes|no`. Ask the user to choose the visibility and audience setting. The draft includes `status.containsSyntheticMedia: true`. This discloses realistic altered or synthetic content. See [video status](https://developers.google.com/youtube/v3/docs/videos#status.containsSyntheticMedia).
+2. Draft a top-level comment with `draft-comment --issue ID --video-id ID --text TEXT`. For another channel's video, add `--target-channel-id ID` with that video's channel. Add `--parent-id ID` to draft a reply. These commands make no API call. Review the target and exact text with the user. See [top-level comments](https://developers.google.com/youtube/v3/docs/commentThreads/insert) and [replies](https://developers.google.com/youtube/v3/docs/comments/insert).
+3. Save the JSON draft in the consumer's private working files. Show the user the channel, target, full content, upload visibility and audience setting, and request digest. The user records their yes on the named Linear item as [§ Draft and approval](../SKILL.md#draft-and-approval) sets out.
+4. After that yes, run `publish --draft PATH`. Uploads use the [documented resumable protocol](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol).
+5. Record the returned resource id and approval comment id on the tracker item. A failed or interrupted write follows [§ Draft and approval](../SKILL.md#draft-and-approval) before any new attempt.

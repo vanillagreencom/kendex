@@ -51,11 +51,17 @@ mock.module("@earendil-works/pi-coding-agent", () => ({
 	},
 }));
 
+// A suite's own mock.module of a peer replaces only the exports named here.
 mock.module("@earendil-works/pi-ai", () => ({
 	complete: async () => ({
 		content: [{ text: "stubbed summary text", type: "text" }],
 		stopReason: "end_turn",
 	}),
+	completeSimple: async () => ({
+		content: [{ text: "stubbed summary text", type: "text" }],
+		stopReason: "end_turn",
+	}),
+	getSupportedThinkingLevels: () => ["off"],
 }));
 
 mock.module("@earendil-works/pi-tui", () => {

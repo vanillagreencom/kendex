@@ -44,6 +44,10 @@ mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/tmux" <<STUB
 #!/bin/sh
 [ "\$1" = list-panes ] || exit 1
+if [ -n "\${PEER_READER_SOCKET:-}" ] && [ "\${TMUX%%,*}" != "\$PEER_READER_SOCKET" ]; then
+  printf '4242 1790000000 %%9\n'
+  exit
+fi
 [ -f "$PANES" ] || { echo "no server running" >&2; exit 1; }
 cat "$PANES"
 STUB
@@ -137,7 +141,11 @@ live_record() {
 # RECORD|LISTING|FIRST STDERR LINE|FIX LINES|LABEL. LISTING `-` is no server
 # to ask, and FIRST `-` is an empty stderr. No row sources the peer's private
 # env file.
-while IFS='|' read -r rec listing first fix label; do
+while IFS='|' read -r rec listing first fix label socket; do
+  SEND_ENV=()
+  if [ -n "$socket" ]; then
+    SEND_ENV=("TMUX=$TMP_ROOT/caller,$LIVE,0" "PEER_READER_SOCKET=$socket")
+  fi
   record "$rec"
   if [ "$listing" = - ]; then rm -f -- "$PANES"; else printf '%s\n' "$listing" > "$PANES"; fi
   send "$label"
@@ -156,7 +164,9 @@ done <<EOF
 {"server":"$LIVE","pane":"%4"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=pane-gone|1|a record carrying no start names a pane its server no longer lists
 {"server":"$LIVE","server_start":"soon","pane":"%9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a start that is not epoch seconds names no reader
 {"server":"$LIVE","server_start":$START,"pane":"%9"}|4242 $START %9|lane-mail: reader-unjudged=$PEER cause=server|0|a pane on a server this shell cannot ask is unjudged
+{"server":"$LIVE","server_start":$START,"pane":"%9","server_socket":"$TMP_ROOT/recorded socket"}|$LIVE $START %9|-|0|a peer send judges the saved socket rather than the caller's|$TMP_ROOT/recorded socket
 EOF
+SEND_ENV=()
 
 # No local record means no delivery, including an owner-form send.
 # The record's writers record no machine hostname, so the missing-record
@@ -306,6 +316,11 @@ ask() { # TEXT
 live_record
 ask 'an ask to a peer naming a live pane says nothing'
 assert_eq "$(first_err)" "" "an ask to a peer naming a live pane says nothing" "$TMP_ROOT/err"
+record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\",\"server_socket\":\"$TMP_ROOT/recorded socket\"}"
+SEND_ENV=("TMUX=$TMP_ROOT/caller,$LIVE,0" "PEER_READER_SOCKET=$TMP_ROOT/recorded socket")
+ask 'an ask judges the peer on its saved socket'
+SEND_ENV=()
+assert_eq "$(first_err)" "" "an ask judges the peer on its saved socket" "$TMP_ROOT/err"
 
 # A hosted peer keeps its record and tmux server on its own host.
 REMOTE_ROOT=/srv/peer
@@ -421,12 +436,12 @@ send 'No pair.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the pair test a record naming no pane is judged as a pane"
 
-mutant gone-silent '    1) lm_notice no-reader "$ROOT" cause=pane-gone ;;' '    1) ;;'
+mutant gone-silent '    1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;' '    1) ;;'
 record "{\"server\":\"$GONE\",\"server_start\":$START,\"pane\":\"%9\"}"
 send 'Gone.'
 assert_eq "$(first_err)" "" "control: without the pane-gone notice a record naming a gone pane says nothing"
 
-mutant server-silent '    *) lm_notice reader-unjudged "$ROOT" cause=server ;;' '    *) ;;'
+mutant server-silent '    *) lm_reader_report reader-unjudged "$ROOT" cause=server "$TMUX_PANE_DETAIL" ;;' '    *) ;;'
 record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
 printf '4242 %s %%9\n' "$START" > "$PANES"
 send 'Other server.'
@@ -439,7 +454,7 @@ send 'Bad start.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the start test a start that is not epoch seconds is judged as a server's"
 
-mutant hosted-silent '    lm_notice reader-unjudged "$ROOT" cause=hosted' '    :'
+mutant hosted-silent '    lm_reader_report reader-unjudged "$ROOT" cause=hosted' '    :'
 hosted_send 'Hosted control.'
 assert_eq "$(first_err)" "" "control: without the hosted notice a hosted peer's reader goes unsaid"
 

@@ -15,11 +15,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 pub const HOOK_NAME: &str = "kendex-drift";
 
 /// How long the session check may spend, over every scope it covers
-/// together, planning declarations that sit on files no record accounts
-/// for, before it gives the plan up and reports the positions as not
-/// checked: one deadline set from this before the first scope, never a
-/// budget per scope, since the hook's check covers the project and the
-/// global scope in one run. Inside the budget the harness gives the hook
+/// together, on its two deep reads: planning declarations that sit on
+/// files no record accounts for, and reading an installed skill's command
+/// declarations from its catalog. A read the deadline cuts off is
+/// reported as not checked. One deadline is set from this before the
+/// first scope, never a budget per scope, since the hook's check covers
+/// the project and the global scope in one run. Inside the budget the harness gives the hook
 /// that runs the check (`HOOK_SCRIPT`'s `timeout:`), beside the
 /// commit-hook check's own `crate::guard::CHECK_TIMEOUT`, which the same
 /// hook run spends after this: the two together stay under the hook's

@@ -1,15 +1,13 @@
 ---
 name: social-media-content-calendar
 description: "Load to plan a social media campaign, build a content calendar, or adapt existing material into post drafts."
-summary: "Plans campaign briefs, platform-specific drafts and asset handoffs for the publicist's recorded approval gate."
 license: MIT
 user-invocable: true
 metadata:
   author: "Ben Barclay (benbarclay), Hermes Agent; kendex adaptation by vanillagreen"
-  source: kendex
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [planning]
 ---
 
 <!-- kendex:project-instructions:start -->

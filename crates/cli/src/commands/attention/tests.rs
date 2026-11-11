@@ -1,4 +1,5 @@
 use kendex_core::apply::Plan;
+use kendex_core::engine::desired::SkillLines;
 use kendex_core::engine::{
     CatalogSource, DriftCause, DriftRow, DriftState, EngineReport, ExcludedHook, ItemSafety,
     SafetyTarget,
@@ -32,6 +33,7 @@ fn scored(name: &str, harness: HarnessId, findings: &[(Severity, &str)]) -> Item
             path: format!("skills/{name}"),
             verbatim: true,
             tree: true,
+            skill_lines: Some(SkillLines::Shifted { from: 1, to: 1 }),
         }),
         advisory: AuditResult {
             findings: findings
@@ -72,6 +74,7 @@ fn in_the_way(name: &str) -> DriftRow {
         compared: None,
         also_in_the_way: Vec::new(),
         remedy: None,
+        pi_unsettled: None,
     }
 }
 
@@ -162,11 +165,14 @@ fn drawn(style: &Style, listing: Listing) -> (Vec<String>, Attention) {
         &Env::host_rooted(home.path()),
         &owners_refresh(),
         listing,
+        crate::commands::offers::Reached::Here,
     )
 }
 
 /// A compact report holds what needs the reader and nothing else, in the
-/// order they act on it: the two conflicts with their ways out, the three
+/// order they act on it: the two conflicts with their ways out, and no
+/// scope-wide take-over, since neither conflict's content was measured
+/// against its render (`engine::completion`), the three
 /// flagged packages (the one rendered for two tools once, its six sites one
 /// line naming the first, and no line for the second tool's copy, and
 /// nothing of what the rules read past), the package a rule could not read,
@@ -185,7 +191,6 @@ fn a_compact_report_holds_only_what_needs_the_reader() {
             "    to keep those files: move them somewhere else first",
             "  skill blocker-b for Claude Code: /home/one/.claude/skills/blocker-b already holds files kendex did not write",
             "    to keep those files: move them somewhere else first",
-            "  to install the packages this place lists instead: kendex apply --replace-unmanaged --global",
             "safety:",
             "  skill deploy for Claude Code, Codex scores 0/100",
             "    [critical] pipes a download into a shell at 6 sites (skills/deploy/SKILL.md:1)",
@@ -268,6 +273,7 @@ fn a_compact_report_hiding_nothing_folds_nothing() {
         &Env::host_rooted(home.path()),
         &report,
         Listing::Attention,
+        crate::commands::offers::Reached::Here,
     );
     assert!(!lines.is_empty(), "the fixture draws nothing");
     assert!(!attention.folded, "{lines:#?}");

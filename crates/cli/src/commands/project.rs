@@ -6,8 +6,10 @@ use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
 use kendex_core::{discover, settings};
 
+use kendex_core::settings_compare::Answer;
+
 use super::{CliResult, out};
-use crate::ui::{Lines, escaped};
+use crate::ui::{self, Lines, Span, Status, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -42,7 +44,20 @@ pub enum ProjectCommand {
         consolidate: bool,
     },
     /// List the projects on Projects
-    List,
+    List {
+        /// Print one JSON array on stdout instead of the rows: per project,
+        /// `folder` (the registered path), `state` (`ok`, `folder-not-found`,
+        /// `not-a-folder` or `unreadable`) and `worktree`, which is null
+        /// unless the git repository holding the folder is checked out there
+        /// as a linked worktree, and then holds `main`, the main checkout's
+        /// path, or null where git could not name it. A linked worktree
+        /// around a nested repository, such as a submodule, is not reported.
+        /// Where git cannot say, the command fails naming the folder
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the saved settings that differ between the projects on Projects
+    Settings,
     /// Find projects in a folder
     Discover {
         root: PathBuf,
@@ -57,9 +72,9 @@ pub enum ProjectCommand {
 /// The one answer to the temporary-path refusal, flattened into every
 /// verb that can put a folder on the projects list. Most of them register
 /// the destination they settle on, and the flag answers for that. On
-/// `refresh`, `apply` and `updates` it answers only for the project a
-/// `--project-path` names: those register nothing otherwise, so without
-/// that flag beside it the flag decides nothing.
+/// `refresh`, `apply`, `updates` and `update-pi` it answers only for the
+/// project a `--project-path` names: those register nothing otherwise, so
+/// without that flag beside it the flag decides nothing.
 #[derive(Args, Clone, Copy, Default)]
 pub struct ThrowawayFlag {
     /// Add a throwaway project to Projects: a folder under a temporary
@@ -135,7 +150,8 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
             ));
         }
-        ProjectCommand::List => list(env)?,
+        ProjectCommand::List { json } => list(env, json)?,
+        ProjectCommand::Settings => compare_settings(env)?,
         ProjectCommand::Discover {
             root,
             register,
@@ -169,9 +185,24 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
 }
 
 /// The projects this machine tracks, one per line, each with what is
-/// wrong with it or what it is.
-fn list(env: &Env) -> CliResult {
-    for project in settings::load(env)?.projects {
+/// wrong with it or what it is; with `json`, the same answers as one
+/// document whose fields a program reads apart.
+///
+/// The rows cannot carry a folder exactly: the escaping that keeps a line
+/// safe to print spells a newline the way a folder named with a backslash
+/// and an `n` is spelled, and a folder may end in the text of a note. The
+/// document is the form a consumer such as Jarvis routes a write by.
+fn list(env: &Env, json: bool) -> CliResult {
+    let projects = settings::load(env)?.projects;
+    if json {
+        let mut listed = Vec::with_capacity(projects.len());
+        for project in &projects {
+            listed.push(listed_entry(project)?);
+        }
+        super::answer(&serde_json::to_string_pretty(&listed)?);
+        return Ok(());
+    }
+    for project in projects {
         let missing = kendex_core::scan::missing_why(&project);
         out(&format!(
             "{}{}{}",
@@ -187,35 +218,171 @@ fn list(env: &Env) -> CliResult {
                 // A folder nobody could read answers no question about the
                 // repository it might be in.
                 Some(_) => String::new(),
-                None => worktree_note(&project),
+                // A git that cannot answer says nothing rather than
+                // guessing: an entry annotated from a failed read would
+                // claim a repository relationship nobody established.
+                None => match linked_worktree(&project) {
+                    Ok(Some(Linked { main: Some(main) })) => {
+                        format!("  (worktree of {})", main.display())
+                    }
+                    Ok(Some(Linked { main: None })) => "  (worktree)".to_owned(),
+                    Ok(None) | Err(_) => String::new(),
+                },
             }
         ));
     }
     Ok(())
 }
 
-/// What a listed project is, where it is one work tree of a repository
-/// whose main checkout is somewhere else.
+/// One registered folder as `project list --json` prints it.
+///
+/// `worktree` is asked only of a folder that could be read, as the row
+/// asks it. Where git cannot say whether the folder is a linked worktree
+/// the document refuses rather than print null, which a consumer reads as
+/// "not a worktree" and so routes to the folder itself.
+fn listed_entry(project: &std::path::Path) -> Result<serde_json::Value, Lines> {
+    use kendex_core::scan::MissingWhy;
+    let unread = |cause: String| {
+        Lines(format!(
+            "project-list-unread={}\n{}",
+            escaped(&project.display().to_string()),
+            escaped(&cause)
+        ))
+    };
+    let exact = |path: &std::path::Path| {
+        path.to_str().map(str::to_owned).ok_or_else(|| {
+            unread(format!(
+                "{} is not UTF-8 and has no exact JSON form",
+                path.display()
+            ))
+        })
+    };
+    let missing = kendex_core::scan::missing_why(project);
+    let state = match &missing {
+        None => "ok",
+        Some(MissingWhy::Gone) => "folder-not-found",
+        Some(MissingWhy::NotAFolder) => "not-a-folder",
+        Some(MissingWhy::Unreadable { .. }) => "unreadable",
+    };
+    let worktree = match missing {
+        Some(_) => serde_json::Value::Null,
+        None => match linked_worktree(project).map_err(|e| unread(e.to_string()))? {
+            None => serde_json::Value::Null,
+            Some(Linked { main }) => serde_json::json!({
+                "main": main.as_deref().map(exact).transpose()?,
+            }),
+        },
+    };
+    Ok(serde_json::json!({
+        "folder": exact(project)?,
+        "state": state,
+        "worktree": worktree,
+    }))
+}
+
+/// Where the saved settings of the listed projects differ: each value,
+/// the projects holding it and the file it comes from, then the projects
+/// that could not be read. Agreement is silent, and a difference is a
+/// report, never a failure.
+fn compare_settings(env: &Env) -> CliResult {
+    let projects = settings::load(env)?.projects;
+    let compared = kendex_core::settings_compare::compare_settings(env, &projects);
+    let style = ui::style();
+    ui::stderr(&style.header(
+        "project settings",
+        &format!("{} projects", compared.projects.len()),
+    ));
+    ui::stderr(&style.note(&[Span::Prose(
+        "This report does not include values from the environment of this command.",
+    )]));
+    for differing in &compared.differing {
+        ui::stderr(&style.section(&differing.key, differing.answers.len(), Status::Decision));
+        for one in &differing.answers {
+            // A value and a file name are drawn verbatim: prose is
+            // re-spaced, and two values differing only in their spaces
+            // would show as one.
+            let (text, verbatim) = match &one.answer {
+                Answer::Value(value) => (format!("\"{value}\""), true),
+                Answer::Undecided { problem, lines } if lines.is_empty() => {
+                    (format!("unknown: {problem}"), false)
+                }
+                Answer::Undecided { problem, lines } => (
+                    format!(
+                        "unknown: {problem} ({})",
+                        kendex_core::settings_file::lines_phrase(lines)
+                    ),
+                    false,
+                ),
+            };
+            let label = match verbatim {
+                true => Span::Verbatim(&text),
+                false => Span::Prose(&text),
+            };
+            ui::stderr(&style.row(Status::Decision, &[label], None));
+            for holder in &one.holders {
+                let project = holder.project.display().to_string();
+                let layer = holder.layer.to_string();
+                ui::stderr(&style.detail(
+                    None,
+                    &[
+                        Span::Command(&project),
+                        Span::Prose(" from "),
+                        Span::Verbatim(&layer),
+                    ],
+                ));
+            }
+        }
+    }
+    if !compared.unread.is_empty() {
+        ui::stderr(&style.section("not read", compared.unread.len(), Status::Failed));
+        for unread in &compared.unread {
+            let project = unread.project.display().to_string();
+            let reason = unread.reason.to_string();
+            ui::stderr(&style.row(Status::Failed, &[Span::Command(&project)], None));
+            ui::stderr(&style.detail(None, &[Span::Prose(&reason)]));
+        }
+    }
+    ui::stderr(
+        &match (compared.differing.len(), compared.unread.is_empty()) {
+            (0, true) => style.summary(Status::Done, "no saved settings differ"),
+            (0, false) => style.summary(
+                Status::Notice,
+                "no saved settings differ between the projects that were read",
+            ),
+            (count, _) => style.summary(Status::Notice, &format!("{count} saved settings differ")),
+        },
+    );
+    Ok(())
+}
+
+/// A listed project whose own repository is checked out there as a linked
+/// git worktree: `main` is that repository's main checkout, or `None` where
+/// git could not name it.
+struct Linked {
+    main: Option<std::path::PathBuf>,
+}
+
+/// Whether the repository holding a listed project is checked out there as
+/// a linked git worktree, `None` where it is not; an error where git could
+/// not answer. A nested repository, a submodule among them, probes as its
+/// own main checkout even inside a linked worktree: this answers for the
+/// folder's own repository, not one enclosing it, which
+/// `Repo::enclosing_linked` does.
 ///
 /// A linked git worktree carrying declarations of its own is a project in
 /// its own right, and it sits on this list beside the checkout it was
 /// added from — two entries, two manifests, two installs. Which is which
-/// is not readable from the paths, so the line says it.
-///
-/// A git that cannot answer says nothing rather than guessing: this is a
-/// listing, and an entry annotated from a failed read would claim a
-/// repository relationship nobody established.
-fn worktree_note(project: &std::path::Path) -> String {
-    let Ok(Some(repo)) = kendex_core::guard::Repo::probe(project) else {
-        return String::new();
+/// is not readable from the paths, so the list says it.
+fn linked_worktree(project: &std::path::Path) -> Result<Option<Linked>, CoreError> {
+    let Some(repo) = kendex_core::guard::Repo::probe(project)? else {
+        return Ok(None);
     };
     if !repo.is_linked() {
-        return String::new();
+        return Ok(None);
     }
-    match repo.main_checkout() {
-        Ok(main) => format!("  (worktree of {})", main.display()),
-        Err(_) => "  (worktree)".to_owned(),
-    }
+    Ok(Some(Linked {
+        main: repo.main_checkout().ok(),
+    }))
 }
 
 /// Whether a folder may go on the projects list, asked by every
@@ -312,7 +479,10 @@ pub enum Registering {
 /// run that exits nonzero; and a confirmation the reader declined —
 /// except in `refresh`,
 /// where a Pi settle before the final confirm has already written what
-/// this then registers.
+/// this then registers. A write that landed counts as got through
+/// whatever fails after or beside it: an `apply` whose effects step
+/// failed, an `update-pi` scope where one package installed and another
+/// did not.
 ///
 /// A named root inside a linked git worktree, a repository nested in one
 /// included, is never registered, and no flag changes that: a worktree is removed when its lane ends, and an
@@ -321,10 +491,11 @@ pub enum Registering {
 /// one listed names it to `project add`, the explicit door, which lists
 /// any folder it is given.
 ///
-/// Called by `refresh`, `apply` and `updates --apply` after the write, with
-/// the [`Registering`] their preflight settled, and registers only where
-/// the destination was named: a walked-up project is the one the command
-/// was typed in, which those verbs have never registered.
+/// Called by `refresh`, `apply`, `updates --apply` and `update-pi` after
+/// the write, with the [`Registering`] their preflight settled, and
+/// registers only where the destination was named: a walked-up project is
+/// the one the command was typed in, which those verbs have never
+/// registered.
 pub fn register_target(env: &Env, registering: &Registering, scope: &Scope) -> CliResult {
     let Registering::Named { worktrees } = registering else {
         return Ok(());

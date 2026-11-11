@@ -6,6 +6,32 @@ use crate::model::{HarnessId, ItemKind};
 
 #[derive(Debug, Error)]
 pub enum CoreError {
+    /// The record cannot say what requires this installation: pre-field
+    /// locks can lack the carrier of a withheld requirer, and a record a
+    /// hold kept, a local edit's or a source's that would not read, keeps
+    /// reasons older than the catalog's. Guessing here can make a user's
+    /// removal return on the next readable apply.
+    #[error(
+        "removal-provenance-missing source={} kind={} name={} harness={} step={}: {}", crate::names::shown(catalog), kind.name(), crate::names::shown(name), harness.name(), step.key(), step.remedy()
+    )]
+    RemovalProvenanceMissing {
+        catalog: String,
+        kind: ItemKind,
+        name: String,
+        harness: HarnessId,
+        step: ProvenanceStep,
+    },
+    /// A set carries a member declared from another catalog, and the
+    /// record binds no reading of the set to that edge: a path catalog's
+    /// set records none, so no apply repairs it. A removal still decides
+    /// while the set read at that moment carries the member, or when the
+    /// set leaves with it.
+    #[error(
+        "removal-set-reading-missing source={} set={}: retry the removal while this catalog is readable and its set still carries the item, or remove the set with it",
+        crate::names::shown(catalog),
+        crate::names::shown(set)
+    )]
+    RemovalSetReadingMissing { catalog: String, set: String },
     #[error("catalog-needs-engine min={min} engine={engine}")]
     CatalogNeedsEngine { min: String, engine: &'static str },
 
@@ -122,10 +148,13 @@ pub enum CoreError {
     LockCorrupt { path: PathBuf, message: String },
 
     #[error(
-        "{}; {path}: this project lock is a version 10 record; move it to {aside}, then run `kendex apply` in this project. That apply replaces only renders whose current bytes match the version 10 record; other files remain conflicts. Keep it: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
+        "{}; {path}: this project lock is a version 10 record. A refresh or an apply in this project recovers it unless it says why it cannot: the record moves to {aside}, renders whose current bytes match it are replaced, and other files remain conflicts. Keep the moved record: it is the only record naming a pi hooks.json or hooks/ beside the project root, so move those aside as well",
         lock_version_refused(path, Some(10))
     )]
     LegacyProjectLock { path: PathBuf, aside: PathBuf },
+
+    #[error("{path}: this version 10 project lock was not recovered and is left as it is: {why}")]
+    Version10RecoveryRefused { path: PathBuf, why: Version10Stop },
 
     #[error("{path}: the existing install was not recorded — {reason}")]
     RecordExistingRefused { path: PathBuf, reason: String },
@@ -793,6 +822,106 @@ impl CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+/// Why a version 10 project record cannot be recovered where it sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Version10Stop {
+    /// An earlier recovery's record already sits where this one would
+    /// move: it is the proof later runs keep reading, and the move would
+    /// replace it.
+    AsideTaken { aside: PathBuf },
+    /// The lock path is a link. A recovery moves only kendex's own file.
+    LinkedRecord,
+    /// The scope's manifest is absent or would not read. The new record is
+    /// built from the declarations, so there is nothing to rebuild it from.
+    NoDeclarations,
+}
+
+impl std::fmt::Display for Version10Stop {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Version10Stop::AsideTaken { aside } => write!(
+                out,
+                "{} already holds a recovered record; move one of the two out of the project",
+                aside.display()
+            ),
+            Version10Stop::LinkedRecord => out.write_str(
+                "it is a link, and a recovery moves only the record file itself; put the file in its place",
+            ),
+            Version10Stop::NoDeclarations => out.write_str(
+                "this place's manifest is missing or does not read, and a recovery rebuilds the record from what the manifest lists; put back a readable manifest first",
+            ),
+        }
+    }
+}
+
+/// What ends a removal-provenance refusal, read off the record the
+/// refusal rests on. A hold is known here by an installed copy a local
+/// edit moved off what apply last wrote (`engine::edit_holds`), or by the
+/// mark a pass leaves on a record it kept older than its reading
+/// ([`crate::lock::RequirerAncestry::held`]), which outlasts an edit
+/// undone by hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProvenanceStep {
+    /// An apply with the catalog readable either records the reading in
+    /// the record whose edge names the installation, or takes that record
+    /// away as left over.
+    Apply,
+    /// A local edit holds the record whose edge names the installation, so
+    /// no apply rewrites that record until the edit is resolved or
+    /// discarded.
+    ResolveEdit(crate::lock::InstallRef),
+    /// A hold kept the named installation's record as it was, known by its
+    /// local edit or by the mark the hold left, so its reasons may predate
+    /// the catalog's, and no reading roots what is removed; a read of the
+    /// catalogs where they sit now that accounts for every declaration
+    /// decides in its place. One that does not leaves the refusal standing,
+    /// whether a catalog would not read, an item or set it carries would
+    /// not, or a dependency could not be satisfied. That read is not the
+    /// one an apply makes at the recorded revisions, so the refusal names
+    /// what it could not account for.
+    RetryReadable {
+        /// Each cause the read fell short on, as it met it: a catalog,
+        /// item or set it could not read, a dependency it could not
+        /// satisfy or a revision conflict.
+        unread: Vec<String>,
+    },
+}
+
+impl ProvenanceStep {
+    fn key(&self) -> String {
+        match self {
+            Self::Apply => "apply".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "resolve-edit held={}:{}:{}",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable { .. } => "retry-readable".to_owned(),
+        }
+    }
+
+    fn remedy(&self) -> String {
+        match self {
+            Self::Apply => "apply with the catalog readable using a build that records requirer provenance, removing what it reports left over, then retry removal".to_owned(),
+            Self::ResolveEdit(held) => format!(
+                "a local edit holds {} {} on {}, so no apply records what requires it: resolve the edit or apply with --discard-edits, with the catalog readable, then retry removal",
+                held.kind.name(),
+                crate::names::shown(&held.name),
+                held.harness.name()
+            ),
+            Self::RetryReadable { unread } => {
+                let mut remedy = "a hold kept this installation's record as it was, so it cannot say what requires it now: retry removal once the catalogs as they sit now, which can differ from the revisions the record holds, account for every declaration".to_owned();
+                if !unread.is_empty() {
+                    remedy.push_str("; this read could not account for: ");
+                    remedy.push_str(&unread.join("; "));
+                }
+                remedy
+            }
+        }
+    }
+}
 
 /// Fleet's lane lock migration reads this line instead of the English refusal.
 pub(crate) fn lock_version_refused(path: &std::path::Path, found: Option<i64>) -> String {

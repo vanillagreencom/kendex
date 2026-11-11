@@ -1,4 +1,4 @@
-import { ToolExecutionComponent, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ToolExecutionComponent, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Container, Loader } from "@earendil-works/pi-tui";
 
 import {
@@ -30,6 +30,7 @@ import { subtleRule } from "./theme.js";
 const TOOL_EXECUTION_RENDERER_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-execution-renderer-patch.v2");
 const TOOL_CHROME_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-patch");
 const TOOL_CHROME_THEME_SYMBOL = Symbol.for("kendex.pi-tool-renderer.tool-chrome-theme");
+const ACTIVE_TOOL_CHROME_THEME_SYMBOL = Symbol.for("kendex.pi-tool-renderer.active-tool-chrome-theme");
 const WORKING_LOADER_ALIGNMENT_PATCH_SYMBOL = Symbol.for("kendex.pi-tool-renderer.working-loader-alignment-patch");
 
 export function rememberToolChromeTheme(component: any, theme: any): void {
@@ -126,7 +127,9 @@ function prepareToolChromeTheme(theme: any, cwd?: string): void {
 	captureDiffBackgroundTheme(theme);
 }
 
-let activeToolChromeCtx: ExtensionContext | undefined;
+// A captured ExtensionContext throws once Pi replaces or reloads the session, so render reads only its theme.
+// The slot is global because the Container patch outlives a reload, which loads this module again.
+const activeToolChromeState = globalThis as Record<PropertyKey, unknown>;
 
 function mutedHorizontalRule(theme: any, width: number, cwd?: string): string {
 	return subtleRule(theme, glyphs(cwd).line.repeat(stableRenderWidth(width, cwd)));
@@ -160,7 +163,7 @@ function renderedToolCore(rendered: string[], width: number, cwd?: string): stri
 }
 
 function toolChromeThemeFor(component: any): any {
-	return component?.[TOOL_CHROME_THEME_SYMBOL] ?? component?.ui?.theme ?? (activeToolChromeCtx?.hasUI ? activeToolChromeCtx.ui.theme : undefined);
+	return component?.[TOOL_CHROME_THEME_SYMBOL] ?? component?.ui?.theme ?? activeToolChromeState[ACTIVE_TOOL_CHROME_THEME_SYMBOL];
 }
 
 /** Last chrome output per component. Pi re-renders the whole tree on every
@@ -230,16 +233,15 @@ export function installToolChromePatch(): void {
 }
 
 export function registerToolChromeEvents(pi: ExtensionAPI): void {
-	pi.on("session_start", (_event, ctx) => {
-		activeToolChromeCtx = ctx;
-		if (ctx.hasUI) prepareToolChromeTheme(ctx.ui.theme, ctx.cwd);
-	});
-	pi.on("turn_start", (_event, ctx) => {
-		activeToolChromeCtx = ctx;
-		if (ctx.hasUI) prepareToolChromeTheme(ctx.ui.theme, ctx.cwd);
-	});
+	const rememberActiveTheme = (ctx: { cwd: string; hasUI: boolean; ui: { theme: unknown } }) => {
+		const theme = ctx.hasUI ? ctx.ui.theme : undefined;
+		activeToolChromeState[ACTIVE_TOOL_CHROME_THEME_SYMBOL] = theme;
+		if (theme) prepareToolChromeTheme(theme, ctx.cwd);
+	};
+	pi.on("session_start", (_event, ctx) => rememberActiveTheme(ctx));
+	pi.on("turn_start", (_event, ctx) => rememberActiveTheme(ctx));
 	pi.on("session_shutdown", () => {
-		activeToolChromeCtx = undefined;
+		delete activeToolChromeState[ACTIVE_TOOL_CHROME_THEME_SYMBOL];
 	});
 }
 

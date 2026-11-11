@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# md-reflow — rewrite markdown to the format md-format judges: the lines of
-# a paragraph, a list item or a blockquote paragraph joined into one with
-# single spaces, trailing-double-space breaks joined away, and the missing
+# md-reflow — rewrite markdown to the format ../CHECKS.md § md-reflow states:
+# the lines of a paragraph, a list item or a blockquote paragraph joined into
+# one with single spaces, trailing-double-space breaks joined away, and the missing
 # blank line put before a heading, a fence or a list that follows a
 # paragraph line. Fenced code, tables, HTML blocks, indented code and front
 # matter come out byte-identical, and so does a file that is already clean.
-# The grammar is lib/md-blocks.awk's, the one md-format reads by.
+# The grammar is lib/md-blocks.awk's, the one md-refs and md-type read by.
 #
 #   md-reflow [--check] PATH...     these work-tree files
 #   md-reflow [--check] --staged    the work-tree copy of every markdown
@@ -42,17 +42,19 @@ usage() {
   cat <<EOF
 usage: md-reflow [--check] PATH... | [--check] --staged | [--check] --all
 
-Rewrites markdown to the format md-format judges: one paragraph per line,
+Rewrites markdown to one paragraph per line,
 one list item per line, blank lines before a heading, fence or list that
 follows a paragraph line, no trailing-double-space break. Fenced code,
 tables, HTML blocks, indented code and front matter are untouched; a clean
 file is untouched; a CRLF file is refused rather than converted.
 
-PATH... names work-tree files. --staged takes the work-tree copy of every
-markdown file the staged diff adds or changes, --all every tracked markdown
-file COMMIT_GUARDS_MD_PATHS names minus COMMIT_GUARDS_MD_EXCLUDES; both
-resolve against the index the way md-format does. --check writes nothing
-and exits 1 naming each file a reflow would change.
+PATH... names work-tree files. --staged and --all select from the index
+the markdown files COMMIT_GUARDS_MD_PATHS names minus
+COMMIT_GUARDS_MD_EXCLUDES and take their work-tree copies. --staged takes
+each one the staged diff adds or changes, renames held to exact content, so
+an unchanged move is not taken; --all takes every tracked one, an unchanged
+move included. --check writes nothing and exits 1 naming each file a reflow
+would change.
 
 Exit codes: 0 clean or rewritten; 1 --check found work; 2 usage, config or
 collection error.
@@ -117,7 +119,7 @@ else
   GG_MD_MODE=staged
   [ "$ALL" -eq 0 ] || GG_MD_MODE=all
   gg_md_select markdown
-  while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
+  while IFS= read -r -d '' sha && IFS= read -r -d '' f && IFS= read -r -d '' _source; do
     printf '%s\0' "$f" >>"$GG_TMP/targets.z"
   done <"$GG_TMP/md-files.z"
 fi

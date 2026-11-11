@@ -44,7 +44,7 @@ pub(super) fn agents_files(root: &Path) -> Result<Vec<PathBuf>> {
     .run()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.contains("not a git repository") {
+        if crate::guard::says_no_repository(&stderr) {
             let root_file = root.join(AGENTS_FILE);
             return Ok(match regular_file(&root_file)? {
                 true => vec![root_file],

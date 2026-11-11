@@ -528,15 +528,15 @@ export default function (pi: ExtensionAPI) {
 	// a cold record back. Rows the maxKeep trim in updateDashboard drops stay dropped until
 	// the next session start: clearing there would re-apply every trimmed record each poll.
 	const appliedRegistryRecords = new Map<string, string>();
-	const pendingTranscriptUsagePersistences = new Set<Promise<void>>();
-	const trackTranscriptUsagePersistence = (work: Promise<void>) => {
+	const pendingSessionPersistences = new Set<Promise<void>>();
+	const trackSessionPersistence = (work: Promise<void>) => {
 		let tracked: Promise<void>;
-		tracked = work.catch(() => undefined).finally(() => pendingTranscriptUsagePersistences.delete(tracked));
-		pendingTranscriptUsagePersistences.add(tracked);
+		tracked = work.catch(() => undefined).finally(() => pendingSessionPersistences.delete(tracked));
+		pendingSessionPersistences.add(tracked);
 	};
-	const drainTranscriptUsagePersistences = async () => {
-		while (pendingTranscriptUsagePersistences.size > 0) {
-			await Promise.allSettled([...pendingTranscriptUsagePersistences]);
+	const drainSessionPersistences = async () => {
+		while (pendingSessionPersistences.size > 0) {
+			await Promise.allSettled([...pendingSessionPersistences]);
 		}
 	};
 
@@ -785,7 +785,9 @@ export default function (pi: ExtensionAPI) {
 		const taskId = typeof event.taskId === "string" ? event.taskId : undefined;
 		const agent = typeof event.agent === "string" ? event.agent : undefined;
 		if (!runtimeRoot || !taskId || !agent) return;
-		void updateTaskRegistry(runtimeRoot, (records) => {
+		// A listener cannot await its registry write, so session_shutdown drains it: a
+		// late write creates the registry path again after its owner removed the runtime.
+		trackSessionPersistence(updateTaskRegistry(runtimeRoot, (records) => {
 			const existing = records[taskId];
 			const now = new Date().toISOString();
 			const kind: DashboardKind = event.mode === "oneshot" ? "oneshot" : event.mode === "pane" ? "pane" : existing?.kind ?? (typeof event.paneId === "string" ? "pane" : "oneshot");
@@ -830,7 +832,7 @@ export default function (pi: ExtensionAPI) {
 		}).then(() => {
 			if (dashboardCtx) return persistRuntimeSnapshot(dashboardCtx, runtimeRoot);
 			return undefined;
-		}).catch(() => undefined);
+		}));
 	};
 
 	const syncDashboard = (ctx = dashboardCtx) => {
@@ -1260,7 +1262,7 @@ export default function (pi: ExtensionAPI) {
 			effort: eventEffort,
 		});
 		if (transcriptPath && runtimeRoot) {
-			trackTranscriptUsagePersistence(restoreTranscriptUsage(runtimeRoot, taskId, transcriptPath));
+			trackSessionPersistence(restoreTranscriptUsage(runtimeRoot, taskId, transcriptPath));
 		}
 	};
 
@@ -1280,10 +1282,10 @@ export default function (pi: ExtensionAPI) {
 		});
 		const runtimeRoot = typeof event.runtimeRoot === "string" ? event.runtimeRoot : undefined;
 		if (runtimeRoot && taskId && deliverAs) {
-			void updateTaskRegistry(runtimeRoot, (records) => {
+			trackSessionPersistence(updateTaskRegistry(runtimeRoot, (records) => {
 				const existing = records[taskId];
 				if (existing) records[taskId] = { ...existing, deliverAs, updatedAt: new Date().toISOString() };
-			}).catch((error) => warnBestEffortRegistryFailure("steer event persistence", error));
+			}).then(() => undefined, (error) => warnBestEffortRegistryFailure("steer event persistence", error)));
 		}
 	});
 
@@ -1492,7 +1494,7 @@ export default function (pi: ExtensionAPI) {
 			// every settled batch — without this, a poll started just before
 			// shutdown could emit subagents:completed after the drain's final
 			// empty check and lose the terminal usage write.
-			trackTranscriptUsagePersistence(
+			trackSessionPersistence(
 				pollPaneCompletions(runtimeRoot, pi, true)
 					.then(async () => {
 						await syncDashboardFromTaskRegistry(ctx, runtimeRoot);
@@ -1666,7 +1668,7 @@ export default function (pi: ExtensionAPI) {
 		childInboxPoller = undefined;
 		runtimeLaneRefresh = undefined;
 		await drainCurrentTmuxPaneTitle();
-		await drainTranscriptUsagePersistences();
+		await drainSessionPersistences();
 		if (dashboardCtx) setMiniDashboardWidget(dashboardCtx, SUBAGENT_WIDGET_KEY, MINI_DASHBOARD_RANK.AGENTS, undefined);
 		dashboardCtx = undefined;
 		usageTranscriptVersionsByTask.clear();

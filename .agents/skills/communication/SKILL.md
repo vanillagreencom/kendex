@@ -1,15 +1,13 @@
 ---
 name: communication
 description: "Load before writing a message to a person: a reply, report, briefing, decision request, or issue or comment addressed to the user."
-summary: "Plain-language messages, reader modes, decision questions, reports, threads and spoken replies."
 license: MIT
 user-invocable: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [communication]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -28,7 +26,7 @@ Use this package for messages to a person. Agent-to-agent messages, literal retu
 
 ## Reading routes
 
-Read [messages](references/messages.md) before every message. Add only the reference the task needs:
+Read this file and [messages](references/messages.md) once per revision, then apply them to every message. A revision is the file text the session last read. Read a file again only when it changed after that read, or when that read is no longer in the session's context, for example after a context summary. Add only the reference the task needs, read on the same terms:
 
 | Task | Read |
 |---|---|
@@ -41,11 +39,11 @@ Read [messages](references/messages.md) before every message. Add only the refer
 For a global install, put this writing reference in the user-scope instruction file:
 
 ```text
-Before writing a message to a person, read `$HOME/.agents/skills/communication/SKILL.md`.
+Read `$HOME/.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
 ```
 
 For a project install, put this writing reference in the project-scope instruction file. The path is relative to the project root:
 
 ```text
-Before writing a message to a person, read `.agents/skills/communication/SKILL.md`.
+Read `.agents/skills/communication/SKILL.md` once per revision, and apply it before every message to a person.
 ```

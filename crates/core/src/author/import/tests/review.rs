@@ -127,6 +127,319 @@ fn an_unedited_install_of_a_skill_with_tests_is_one_origin() {
     assert!(target.join("skills/gh/DEVELOPMENT.md").is_file());
 }
 
+/// An install holds the installed key set alone. A copy that is only
+/// that is the marketplace original, and an edited one is offered with the
+/// package's cut keys back around the edits, so importing it keeps what
+/// the package declares.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installed_copy_is_read_against_the_installed_key_set() {
+    let (tmp, env, scope) = seeded();
+    let Scope::Project { root } = &scope else {
+        unreachable!()
+    };
+    fs::write(
+        tmp.path().join("catalog/skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: about gh\nsummary: Works with GitHub\ntags: [review]\n---\nmarket bytes\n",
+    )
+    .unwrap();
+    let copy = root.join(".claude/skills/gh");
+    fs::create_dir_all(&copy).unwrap();
+    let installed = "---\nname: gh\ndescription: about gh\n---\nmarket bytes\n";
+    fs::write(copy.join("SKILL.md"), installed).unwrap();
+    let scopes = [scope.clone()];
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    assert_eq!(gh.origins.len(), 1, "{:?}", gh.origins);
+
+    fs::write(
+        copy.join("SKILL.md"),
+        installed.replace("market bytes", "my edited bytes"),
+    )
+    .unwrap();
+    let candidates = inventory(&env, &scopes).unwrap();
+    let gh = find(&candidates, "gh");
+    let edited = gh
+        .origins
+        .iter()
+        .find(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
+        .unwrap();
+    let target = target(&env, &tmp, "mine-keys");
+    let chosen = ImportSelection {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        destination: "gh".to_owned(),
+        hash: edited.hash.clone(),
+        license_confirmed: true,
+        license_basis: None,
+    };
+    apply(&env, &scopes, &target, &[chosen]).unwrap();
+    let copied = fs::read_to_string(target.join("skills/gh/SKILL.md")).unwrap();
+    for kept in [
+        "my edited bytes",
+        "summary: Works with GitHub",
+        "tags: [review]",
+    ] {
+        assert!(copied.contains(kept), "{kept:?} in {copied}");
+    }
+}
+
+/// An edited copy takes back the keys the commit it was installed from
+/// declares, not what its source declares since, read from the record that
+/// wrote that copy. Every reader of a shared tree is answered from that
+/// record, including a reader whose own record, at another commit, names
+/// a copy of its own elsewhere, so every reader of one copy restores the
+/// same keys. Where those keys cannot be put back — a copy no record
+/// wrote, though its tool holds one for another position, a copy whose
+/// tool's record names no installed path and so cannot say the copy is
+/// its own, a recorded commit this machine does not hold, a repository
+/// record naming no commit, or a copy whose own frontmatter does not
+/// read — the edited copy is listed with the cause and nothing to
+/// select: offered as it stands, it would import without them, and read
+/// at another revision it would import keys these bytes never carried.
+/// One row per installation.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_edited_copy_takes_back_the_keys_of_the_commit_it_was_installed_from() {
+    const REPO: &str = "owner/repo";
+    let git = |dir: &std::path::Path, args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(dir))
+            .run()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}");
+    };
+    let commit = |dir: &std::path::Path| {
+        git(dir, &["add", "-A"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--quiet",
+                "-m",
+                "c",
+            ],
+        );
+    };
+    let authored = |tag: &str| {
+        format!("---\nname: gh\ndescription: about gh\ntags: [{tag}]\n---\nmarket bytes\n")
+    };
+    use crate::test_util::rooted;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let upstream = home.join("base").join(REPO);
+    fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+    fs::write(
+        upstream.join("kendex.toml"),
+        "[marketplace]\nname = \"cat\"\nlicense = \"MIT\"\n",
+    )
+    .unwrap();
+    fs::write(upstream.join("skills/gh/SKILL.md"), authored("one")).unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    commit(&upstream);
+    let base = format!("file://{}", home.join("base").display());
+    let env =
+        crate::env::Env::fake(&home, crate::env::FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    let root = home.join("app");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        root.join("kendex.toml"),
+        // Declared for a tool that reads the shared tree, so a copy there
+        // no record wrote still reads as this package's.
+        format!(
+            "schema = 7\n[sources.cat]\nrepo = \"{REPO}\"\n[install]\nharnesses = [\"codex\"]\n[skills.gh]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    let scope = Scope::Project { root: root.clone() };
+    let one = crate::remote::sync(&env, REPO, None).unwrap().commit;
+    fs::write(upstream.join("skills/gh/SKILL.md"), authored("two")).unwrap();
+    commit(&upstream);
+    let two = crate::remote::sync(&env, REPO, None).unwrap().commit;
+
+    let edited_copy = "---\nname: gh\ndescription: about gh\n---\nmy edited bytes\n";
+    let own = ".claude/skills";
+    let shared = ".agents/skills";
+    let cursor = ".cursor/skills";
+    // One record of the copy's package: the tool it is held for, the
+    // commit it names, and the skills folder whose `gh` tree it records
+    // writing, if it records any.
+    struct Record<'a> {
+        held_by: HarnessId,
+        installed_at: Option<String>,
+        wrote: Option<&'a str>,
+    }
+    struct Row<'a> {
+        what: &'a str,
+        records: Vec<Record<'a>>,
+        copy_in: &'a str,
+        copy: &'a str,
+        kept: Option<&'a str>,
+    }
+    let rows = [
+        Row {
+            what: "the tool that wrote the copy into its own folder",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: Some(own),
+            }],
+            copy_in: own,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a shared tree read by tools that hold no record of their own",
+            records: vec![Record {
+                held_by: HarnessId::Codex,
+                installed_at: Some(one.clone()),
+                wrote: Some(shared),
+            }],
+            copy_in: shared,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a shared tree whose reader's own record names its own copy at a newer commit",
+            records: vec![
+                Record {
+                    held_by: HarnessId::Codex,
+                    installed_at: Some(one.clone()),
+                    wrote: Some(shared),
+                },
+                Record {
+                    held_by: HarnessId::Cursor,
+                    installed_at: Some(two.clone()),
+                    wrote: Some(cursor),
+                },
+            ],
+            copy_in: shared,
+            copy: edited_copy,
+            kept: Some("tags: [one]"),
+        },
+        Row {
+            what: "a copy in a tool's own folder that its record, of the shared tree, does not name",
+            records: vec![Record {
+                held_by: HarnessId::Cursor,
+                installed_at: Some(one.clone()),
+                wrote: Some(shared),
+            }],
+            copy_in: cursor,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a copy whose tool's record names no installed path",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: None,
+            }],
+            copy_in: own,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a commit this machine does not hold",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some("0".repeat(40)),
+                wrote: Some(own),
+            }],
+            copy_in: own,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a repository record that names no commit",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: None,
+                wrote: Some(own),
+            }],
+            copy_in: own,
+            copy: edited_copy,
+            kept: None,
+        },
+        Row {
+            what: "a copy whose frontmatter names a key twice",
+            records: vec![Record {
+                held_by: HarnessId::Claude,
+                installed_at: Some(one.clone()),
+                wrote: Some(own),
+            }],
+            copy_in: own,
+            copy: "---\nname: gh\nname: gh\ndescription: about gh\n---\nmy edited bytes\n",
+            kept: None,
+        },
+    ];
+    for (n, row) in rows.into_iter().enumerate() {
+        let what = row.what;
+        for dir in [own, shared, cursor] {
+            let _ = fs::remove_dir_all(root.join(dir).join("gh"));
+        }
+        let tree = root.join(row.copy_in).join("gh");
+        fs::create_dir_all(&tree).unwrap();
+        fs::write(tree.join("SKILL.md"), row.copy).unwrap();
+        let mut lock = crate::lock::Lock {
+            version: crate::lock::LOCK_VERSION,
+            ..crate::lock::Lock::default()
+        };
+        for record in row.records {
+            let mut gh = entry(ItemKind::Skill, "gh", "cat", REPO);
+            gh.harness = record.held_by;
+            gh.source_commit = record.installed_at;
+            gh.emitted = record.wrote.map(|dir| crate::lock::EmittedArtifact {
+                kind: ItemKind::Skill,
+                name: "gh".to_owned(),
+                paths: vec![root.join(dir).join("gh")],
+            });
+            lock.entries.insert(
+                crate::lock::entry_key(ItemKind::Skill, "gh", record.held_by),
+                gh,
+            );
+        }
+        crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
+
+        let scopes = [scope.clone()];
+        let candidates = inventory(&env, &scopes).unwrap();
+        let gh = find(&candidates, "gh");
+        let edited: Vec<_> = gh
+            .origins
+            .iter()
+            .filter(|origin| matches!(origin.group, CandidateGroup::Edited { .. }))
+            .collect();
+        assert!(!edited.is_empty(), "{what}: {:?}", gh.origins);
+        let Some(kept) = row.kept else {
+            for origin in edited {
+                assert!(origin.hash.is_empty(), "{what}: {origin:?}");
+                assert!(origin.problem.is_some(), "{what}: {origin:?}");
+            }
+            continue;
+        };
+        // Every reader of the copy restores the same bytes, so they are
+        // one origin.
+        assert_eq!(edited.len(), 1, "{what}: {edited:?}");
+        let target = target(&env, &tmp, &format!("mine-{n}"));
+        let chosen = ImportSelection {
+            kind: ItemKind::Skill,
+            name: "gh".to_owned(),
+            destination: "gh".to_owned(),
+            hash: edited[0].hash.clone(),
+            license_confirmed: true,
+            license_basis: None,
+        };
+        apply(&env, &scopes, &target, &[chosen]).unwrap();
+        let copied = fs::read_to_string(target.join("skills/gh/SKILL.md")).unwrap();
+        assert!(copied.contains("my edited bytes"), "{what}: {copied}");
+        assert!(copied.contains(kept), "{what}: {copied}");
+        assert!(!copied.contains("tags: [two]"), "{what}: {copied}");
+    }
+}
+
 /// A licence kendex does not recognize as redistributable cannot be
 /// checkbox-confirmed — it needs a stated basis, like no licence at all.
 #[test]

@@ -174,8 +174,9 @@ fn declared_hook_events_must_reach_each_named_harness() {
 }
 
 /// The workflow's advisory option changes only the strict check. Safety
-/// findings never fail either mode. The missing-description fixture also
-/// reaches marketplace_check_exits_exactly_like_the_strict_catalog_check.
+/// findings never fail either mode, and a pass prints them: catalog CI runs
+/// no other check step. The missing-description fixture also reaches
+/// marketplace_check_exits_exactly_like_the_strict_catalog_check.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_release_wrapper_honors_the_callers_advisory_policy() {
@@ -205,6 +206,10 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
                 .output()
                 .unwrap()
         };
+        // The finding's location, a structured field of the check's report.
+        let finding = "skills/review/SKILL.md:5";
+        let reports_finding =
+            |output: &Output| String::from_utf8_lossy(&output.stdout).contains(finding);
         for (flags, exit) in [(vec![], strict_exit), (vec!["--allow-advisories"], 0)] {
             let output = run(&tool, &flags);
             assert_eq!(
@@ -212,6 +217,23 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
                 Some(exit),
                 "{name} {flags:?}: {output:?}"
             );
+            if name == "safety" {
+                assert!(reports_finding(&output), "{flags:?}: {output:?}");
+            }
+        }
+        if name == "safety" {
+            // Keep the pass, but drop the check's report from it. The
+            // finding then reaches no reader.
+            let original = std::fs::read_to_string(&tool).unwrap();
+            let target = "            print(report)\n";
+            assert_eq!(original.matches(target).count(), 1);
+            let mutant = original.replace(target, "            pass\n");
+            assert_ne!(mutant, original);
+            let path = home.join("mutant-silent.py");
+            std::fs::write(&path, mutant).unwrap();
+            let control = run(&path, &[]);
+            assert_eq!(control.status.code(), Some(0), "{control:?}");
+            assert!(!reports_finding(&control), "{control:?}");
         }
         if name == "structural" {
             // Keep the check, but omit its strict flag. The default then
@@ -231,6 +253,71 @@ fn the_release_wrapper_honors_the_callers_advisory_policy() {
             );
         }
     }
+}
+
+/// A catalog in a subdirectory of the caller's checkout answers to that
+/// checkout's ignore rules, as the same catalog does at its root.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_subdirectory_catalog_meets_its_repositorys_ignore_rules() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let repository = home.join("repo");
+    let catalog = repository.join("cat");
+    std::fs::create_dir_all(catalog.join("agents")).unwrap();
+    std::fs::write(repository.join(".gitignore"), "reports/\n").unwrap();
+    std::fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    std::fs::write(
+        catalog.join("agents/scribe.md"),
+        "---\nname: scribe\ndescription: Write a review\ntracked-outputs: [reports/review.md]\n---\nWrite a review.\n",
+    )
+    .unwrap();
+    let init = Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&repository)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
+    let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/catalog-release-check");
+    let run = |script: &Path, flags: &[&str]| {
+        Command::new("python3")
+            .arg(script)
+            .arg(env!("CARGO_BIN_EXE_kendex"))
+            .arg(&catalog)
+            .args(flags)
+            .env_clear()
+            .envs(test_util::fixture_env(&home))
+            .env("PATH", std::env::var("PATH").unwrap_or_default())
+            .env("RUNNER_TEMP", &home)
+            .output()
+            .unwrap()
+    };
+    let reports_ignore =
+        |output: &Output| String::from_utf8_lossy(&output.stdout).contains("tracked-output");
+    // Strict fails on the advisory; the advisory policy passes and prints it.
+    for (flags, exit) in [(vec![], 1), (vec!["--allow-advisories"], 0)] {
+        let output = run(&tool, &flags);
+        assert_eq!(output.status.code(), Some(exit), "{flags:?}: {output:?}");
+        assert!(reports_ignore(&output), "{flags:?}: {output:?}");
+    }
+    // Bound discovery at the catalog's parent again. Git then stops below
+    // the repository, and strict passes the ignored output.
+    let original = std::fs::read_to_string(&tool).unwrap();
+    let target = "ceilings = os.pathsep.join((str(boundary.parent), str(root)))";
+    assert_eq!(original.matches(target).count(), 1);
+    let mutant = original.replace(
+        target,
+        "ceilings = os.pathsep.join((str(catalog.parent), str(root)))",
+    );
+    let path = home.join("mutant-bounded.py");
+    std::fs::write(&path, mutant).unwrap();
+    let control = run(&path, &[]);
+    assert_eq!(control.status.code(), Some(0), "{control:?}");
+    assert!(!reports_ignore(&control), "{control:?}");
 }
 
 /// A catalog holding one skill per name, each body naming its catalog.

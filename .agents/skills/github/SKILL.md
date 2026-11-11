@@ -1,17 +1,13 @@
 ---
 name: github
 description: "Load to work or watch GitHub pull requests: threads, comments, reviews, CI logs, merges."
-summary: "GitHub API CLI for pull requests: threads, comments, reviews, CI logs, merging, cross-PR analysis and an attention watcher."
 license: MIT
 user-invocable: true
-dependencies:
-  optional: [harness-ci]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [git, integration]
 ---
 
 <!-- kendex:project-instructions:start -->

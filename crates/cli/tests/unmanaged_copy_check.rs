@@ -188,6 +188,120 @@ fn a_matching_copy_is_recorded_silently_under_quiet() {
     assert_eq!(fs::read(&w.rendered).unwrap(), rendered);
 }
 
+/// The take-over a differing copy names is the scope's answer, and only a
+/// plan gives it: a check that reads the memo a plan left names the plan
+/// instead. So a change the memo's keys never see, Claude's output-style
+/// selection taken off the recorded style, cannot leave the check naming
+/// the take-over the plan now withholds beside that edit.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_check_names_the_take_over_only_from_a_fresh_plan() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("project");
+    let catalog = home.join("catalog");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    fs::create_dir_all(catalog.join("output-styles")).unwrap();
+    fs::write(catalog.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    fs::write(
+        catalog.join("output-styles/STE.md"),
+        "---\nname: STE\ndescription: Short sentences\nkeep-coding-instructions: true\n---\nWrite short sentences.\n",
+    )
+    .unwrap();
+    for skill in ["sk", "sk2"] {
+        fs::create_dir_all(catalog.join("skills").join(skill)).unwrap();
+        fs::write(
+            catalog.join("skills").join(skill).join("SKILL.md"),
+            format!("---\nname: {skill}\ndescription: Ship it.\n---\n\nRun it.\n"),
+        )
+        .unwrap();
+    }
+    let manifest = format!(
+        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.sk]\nsource = \"cat\"\n",
+        test_util::source_path(&catalog)
+    );
+    fs::write(project.join("kendex.toml"), &manifest).unwrap();
+    let applied = kendex(&home, &project, &["apply", "--yes"]);
+    assert!(applied.status.success(), "{}", said(&applied));
+    let added = kendex(&home, &project, &["add", "--output-style", "STE", "--yes"]);
+    assert!(added.status.success(), "{}", said(&added));
+    let settings = project.join(".claude/settings.json");
+    let selected = fs::read_to_string(&settings).unwrap();
+    assert!(selected.contains("\"STE\""), "{selected}");
+    let declared = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        format!("{declared}\n[skills.sk2]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    fs::create_dir_all(project.join(".claude/skills/sk2")).unwrap();
+    fs::write(
+        project.join(".claude/skills/sk2/SKILL.md"),
+        "---\nname: sk2\ndescription: mine\n---\n\nWritten by the tool that came before.\n",
+    )
+    .unwrap();
+    // The sk2 line's typed fix, and whether any line names the take-over.
+    let sk2_fix = || {
+        let checked = kendex(&home, &project, &["check", "--json", "--scope", "project"]);
+        let report: serde_json::Value = serde_json::from_slice(&checked.stdout)
+            .unwrap_or_else(|error| panic!("check --json is JSON: {error}: {}", said(&checked)));
+        let lines: Vec<serde_json::Value> = report["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|section| section["lines"].as_array().unwrap().iter().cloned())
+            .collect();
+        let fixes: Vec<String> = lines
+            .iter()
+            .filter(|line| {
+                line["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("unmanaged copy of skill 'sk2'")
+            })
+            .map(|line| line["remedy"]["verb"].as_str().unwrap().to_owned())
+            .collect();
+        let take_over = lines
+            .iter()
+            .any(|line| line["remedy"]["verb"] == "replace-unmanaged");
+        (fixes, take_over)
+    };
+    let finish_with = || {
+        let planned = said(&kendex(&home, &project, &["apply", "--plan"]));
+        planned
+            .lines()
+            .filter_map(|line| {
+                line.split_once("finish-with=")
+                    .map(|(_, rest)| rest.to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    let memo = kendex_core::drift::copies::memo_path(
+        &Env::host_rooted(&home),
+        &Scope::Project {
+            root: project.clone(),
+        },
+    );
+
+    // A plan with nothing withheld: the take-over is the scope's finish,
+    // and the check that ran the plan names it.
+    assert!(!memo.exists());
+    assert_eq!(finish_with().len(), 1, "the plan names the take-over");
+    assert_eq!(sk2_fix(), (vec!["replace-unmanaged".to_owned()], true));
+    assert!(memo.is_file(), "the check left its memo");
+
+    // The selection edited beside the copy: the plan withholds the
+    // take-over, and the check reading the memo names the plan.
+    fs::write(&settings, selected.replace("\"STE\"", "\"Explanatory\"")).unwrap();
+    assert!(finish_with().is_empty(), "the plan withholds the take-over");
+    assert!(memo.is_file(), "the check reads the memo");
+    assert_eq!(sk2_fix(), (vec!["plan".to_owned()], false));
+
+    // A fresh plan says the same.
+    fs::remove_file(&memo).unwrap();
+    assert_eq!(sk2_fix(), (vec!["plan".to_owned()], false));
+}
+
 /// One git command in a fixture repository, through the constructor that
 /// drops the caller's git environment.
 #[allow(clippy::unwrap_used)]

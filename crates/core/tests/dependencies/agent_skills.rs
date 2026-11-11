@@ -157,7 +157,7 @@ fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
         (
             "pinned to another tool",
             "\n[skills.linear]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
-            &[],
+            &["linear"],
             false,
         ),
     ];
@@ -188,6 +188,238 @@ fn an_assigned_skill_turned_away_leaves_the_declarations_complete() {
             assert!(
                 !lock.entries["skill:linear:claude"].enabled,
                 "{what}: scout turned on a skill the person switched off"
+            );
+        }
+    }
+}
+
+/// Holding a skill satisfies an assignment only on that installation's
+/// tool. Consumer restrictions still win, with one soft warning even
+/// when the agent lacks the skill on several tools.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_assignment_fills_only_tools_without_an_independent_installation() {
+    let rows = [
+        (
+            "missing Claude",
+            "[\"claude\"]",
+            "[\"codex\"]",
+            "",
+            true,
+            false,
+        ),
+        (
+            "held on both",
+            "[\"claude\"]",
+            "[\"claude\", \"codex\"]",
+            "",
+            true,
+            false,
+        ),
+        (
+            "consumer restriction",
+            "[\"claude\", \"pi\"]",
+            "[\"codex\"]",
+            "[skills.t]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+            false,
+            true,
+        ),
+    ];
+    for (what, agent_tools, held_tools, restriction, claude, warning) in rows {
+        let f = scout_fixture(
+            &format!(
+                "harnesses = {agent_tools}\n\n[skills.x]\nsource = \"cat\"\nharnesses = {held_tools}\n\n{restriction}"
+            ),
+            "[\"t\"]",
+        );
+        skill(&f.source, "x", "dependencies:\n  required: [t]\n");
+        skill(&f.source, "t", "");
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(
+            report.declaration_status,
+            DeclarationStatus::Complete,
+            "{what}"
+        );
+        assert_eq!(
+            not_installed(&report),
+            if warning { vec!["t"] } else { vec![] },
+            "{what}"
+        );
+        assert_eq!(on_scout(&report), usize::from(warning), "{what}");
+        assert_eq!(report.warnings.len(), usize::from(warning), "{what}");
+        apply::execute(&f.env, &report.plan).unwrap();
+        let lock = lock_of(&f);
+        let hard_reason = |harness| Reason::RequiredBy {
+            by: kendex_core::lock::InstallRef {
+                source: "cat".to_owned(),
+                kind: ItemKind::Skill,
+                name: "x".to_owned(),
+                harness,
+            },
+        };
+        let codex_reasons = if restriction.is_empty() {
+            BTreeSet::from([hard_reason(HarnessId::Codex)])
+        } else {
+            BTreeSet::from([Reason::Requested, hard_reason(HarnessId::Codex)])
+        };
+        assert_eq!(
+            lock.entries["skill:t:codex"].reasons, codex_reasons,
+            "{what}"
+        );
+        assert_eq!(
+            lock.entries.contains_key("skill:t:claude"),
+            claude,
+            "{what}"
+        );
+        assert_eq!(
+            f.project.join(".claude/skills/t").exists(),
+            claude,
+            "{what}"
+        );
+        assert!(!lock.entries.contains_key("skill:t:pi"), "{what}");
+        if claude {
+            let reason = if held_tools.contains("claude") {
+                hard_reason(HarnessId::Claude)
+            } else {
+                required_by_scout()
+            };
+            assert_eq!(
+                lock.entries["skill:t:claude"].reasons,
+                BTreeSet::from([reason]),
+                "{what}"
+            );
+        }
+        if held_tools.contains("claude") {
+            let expected = std::collections::BTreeMap::from([
+                ("skill:lead:claude", BTreeSet::from([Reason::Requested])),
+                ("skill:x:claude", BTreeSet::from([Reason::Requested])),
+                ("skill:x:codex", BTreeSet::from([Reason::Requested])),
+                (
+                    "skill:t:claude",
+                    BTreeSet::from([hard_reason(HarnessId::Claude)]),
+                ),
+                (
+                    "skill:t:codex",
+                    BTreeSet::from([hard_reason(HarnessId::Codex)]),
+                ),
+                (
+                    "agent:scout:claude",
+                    BTreeSet::from([required_by("cat", "lead")]),
+                ),
+            ]);
+            let actual: std::collections::BTreeMap<_, _> = lock
+                .entries
+                .iter()
+                .map(|(key, entry)| {
+                    assert!(entry.enabled, "{what}: {key}");
+                    (key.as_str(), entry.reasons.clone())
+                })
+                .collect();
+            assert_eq!(
+                actual, expected,
+                "{what}: all installations retain their reasons"
+            );
+        }
+        let manifest = manifest_of(&f);
+        assert_eq!(
+            manifest.skills.contains_key("t"),
+            !restriction.is_empty(),
+            "{what}"
+        );
+        if !restriction.is_empty() {
+            assert_eq!(
+                manifest.skills["t"].harnesses.as_deref(),
+                Some([HarnessId::Codex].as_slice()),
+                "{what}"
+            );
+        }
+        let again = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(not_installed(&again), not_installed(&report), "{what}");
+        assert!(
+            again.plan.ops.is_empty(),
+            "{what}: repeat apply changes the plan"
+        );
+    }
+}
+
+/// The first agent supplies one tool; the other supplies a second and
+/// requires the first agent there. That revisit must keep each tool's
+/// original owner, even though the skill's first derivation names only
+/// one agent. Swapping names covers both agent name orders.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn assignment_revisits_keep_each_tools_existing_agent_reason() {
+    for (first, second) in [("scout", "helper"), ("helper", "scout")] {
+        let f = fixture(
+            "[skills.lead]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[skills.x]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
+        );
+        skill(
+            &f.source,
+            "lead",
+            &format!("dependencies:\n  agents: [{first}]\n"),
+        );
+        skill(
+            &f.source,
+            "x",
+            &format!("dependencies:\n  agents: [{second}]\n"),
+        );
+        skill(&f.source, "shared", "");
+        skill(
+            &f.source,
+            "bridge",
+            &format!("dependencies:\n  agents: [{second}]\n"),
+        );
+        skill(
+            &f.source,
+            "back",
+            &format!("dependencies:\n  agents: [{first}]\n"),
+        );
+        fs::create_dir_all(f.source.join("agents")).unwrap();
+        for agent in [first, second] {
+            fs::write(
+                f.source.join(format!("agents/{agent}.md")),
+                format!(
+                    "---\nname: {agent}\ndescription: Finds things\nmodel: inherit\n---\nBody.\n"
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(
+            f.source.join("kendex.toml"),
+            format!("[agent-skills]\n{first} = [\"shared\", \"bridge\"]\n{second} = [\"shared\", \"back\"]\n"),
+        ).unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert!(report.warnings.is_empty(), "first={first}");
+        assert_eq!(report.declaration_status, DeclarationStatus::Complete);
+        apply::execute(&f.env, &report.plan).unwrap();
+        let lock = lock_of(&f);
+        for (tool, harness, owner) in [
+            ("claude", HarnessId::Claude, first),
+            ("codex", HarnessId::Codex, second),
+        ] {
+            assert_eq!(
+                lock.entries[&format!("skill:shared:{tool}")].reasons,
+                BTreeSet::from([Reason::RequiredBy {
+                    by: kendex_core::lock::InstallRef {
+                        source: "cat".to_owned(),
+                        kind: ItemKind::Agent,
+                        name: owner.to_owned(),
+                        harness,
+                    },
+                }]),
+                "first={first}, tool={tool}",
+            );
+            assert!(
+                lock.entries.contains_key(&format!("skill:bridge:{tool}")),
+                "first={first}"
+            );
+            assert!(
+                lock.entries.contains_key(&format!("skill:back:{tool}")),
+                "first={first}"
+            );
+            assert!(
+                lock.entries.contains_key(&format!("agent:{first}:{tool}")),
+                "first={first}"
             );
         }
     }
@@ -262,9 +494,17 @@ fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
             false,
         ),
     ];
-    for (what, a, a_on, b, b_on, on) in rows {
+    for ((what, a, a_on, b, b_on, on), partly_held) in rows
+        .into_iter()
+        .flat_map(|row| [false, true].map(|partly_held| (row, partly_held)))
+    {
+        let b_tools = if partly_held {
+            "[\"claude\", \"codex\"]"
+        } else {
+            "[\"claude\"]"
+        };
         let f = fixture(&format!(
-            "[skills.a]\nsource = \"cat\"\nenabled = {a_on}\n\n[skills.b]\nsource = \"cat\"\nenabled = {b_on}\n"
+            "[skills.a]\nsource = \"cat\"\nenabled = {a_on}\n\n[skills.b]\nsource = \"cat\"\nenabled = {b_on}\nharnesses = {b_tools}\n"
         ));
         skill(&f.source, "a", a);
         skill(&f.source, "b", b);
@@ -291,6 +531,12 @@ fn an_assigned_skill_is_on_while_an_agent_that_loads_it_is_on() {
                 .get(&format!("skill:{name}:claude"))
                 .unwrap_or_else(|| panic!("{what}: {name} installs"));
             assert_eq!(entry.enabled, on, "{what}: {name} {:?}", entry.reasons);
+            if partly_held && on {
+                assert!(
+                    lock.entries[&format!("skill:{name}:codex")].enabled,
+                    "{what}: {name} on Codex"
+                );
+            }
         }
         if on {
             assert!(

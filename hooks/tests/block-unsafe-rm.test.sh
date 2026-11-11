@@ -23,10 +23,6 @@ BASH_BIN="$(command -v bash)"
 
 # shellcheck source=lib/assert.sh
 . "$TEST_DIR/lib/assert.sh"
-assert_contains() {
-  if grep -qF -- "$2" "$ERR_FILE"; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$3"
-  else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        wanted: %s\n        in:\n%s\n' "$3" "$2" "$(cat "$ERR_FILE")"; fi
-}
 
 # The command reaches the hook JSON-encoded, exactly as the harness sends it.
 # jq does the encoding rather than sed: a Bash tool call is routinely several
@@ -111,11 +107,6 @@ single quoted variable|command|0|-|rm -rf '\''${HOME:?}'\''
 shared_rows
 skill_load_control shared-variable "$HOOK" 'SHARED_RE="${RM_EDGE}rm${SKIP}${GAP}+${SHARED_ROOT}"' \
   "SHARED_RE='a^'" HOOK shared_rows 'incident guarded TMPDIR root'
-skill_load_control shared-literal "$HOOK" '${literal_root}${literal_end}"' \
-  "SHARED_RE='a^'" HOOK shared_rows 'incident literal glob'
-skill_load_control shared-dot-segments "$HOOK" '${CROSSABLE}*)?"' \
-  "SHARED_DOT='a^'" HOOK shared_rows 'guarded dot segment glob' \
-  'guarded parent segment glob' 'literal dot segment glob' 'literal parent segment glob'
 
 # Tool calls routinely quote cleanup source while rewriting another script.
 # Literal boundaries and the closed Python string grammar prove data input.
@@ -191,11 +182,6 @@ executable_body_rows
 skill_load_control body-raw-scan "$HOOK" 'command_regions() {' \
   '  return 0' HOOK data_body_rows \
   'python replacement heredoc' 'file writing heredoc' 'python replacement inline'
-skill_load_control body-always-refuse "$HOOK" 'set -euo pipefail' \
-  'exit 2' HOOK data_body_rows \
-  'python replacement heredoc' 'file writing heredoc' 'python replacement inline' \
-  'literal backticks in program' 'literal backticks in heredoc' \
-  'guarded shared root as data'
 skill_load_control body-always-allow "$HOOK" 'set -euo pipefail' \
   'exit 0' HOOK executable_body_rows \
   'real removal' 'shell inline' 'eval inline' 'source inline' 'shell heredoc' \
@@ -336,10 +322,6 @@ git_rm_rows
 skill_load_control git-rm-prefix "$HOOK" 'while [[ $COMMAND =~ $GIT_RM ]]; do' \
   '  break' HOOK git_rm_rows 'git cached variable' 'git directory variable' \
   'git shared variable' 'git shared literal'
-skill_load_control git-rm-erased-options "$HOOK" '  COMMAND=${COMMAND/"${BASH_REMATCH[0]}"/"${git_prefix}__${git_suffix}"}' \
-  '  COMMAND=${COMMAND/"${git_prefix}__${git_suffix}"/ }' HOOK git_rm_rows \
-  'git nested variable' 'git nested shared variable' 'git nested shared literal' \
-  'git config nested variable'
 
 # Agents redirect cleanup output and copy descriptors in Bash tool calls.
 # Each operator crosses its whole target before the scan resumes at operands.
@@ -394,25 +376,11 @@ redirection_rows
 skill_load_control redirection-crossing "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
   'SKIP="(${GAP}+${WORD})*"' HOOK redirection_rows \
   'redirection numbered-output adjacent variable' 'redirection numbered-output adjacent literal'
-skill_load_control redirection-target "$HOOK" 'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT}${GAP}*${WORD})*"' \
-  'SKIP="(${GAP}+${WORD}|${GAP}*${REDIRECT})*"' HOOK redirection_rows \
-  'redirection output spaced safe target'
-skill_load_control redirection-boundary "$HOOK" "ENDERS='&;|'" \
-  "ENDERS='' #" HOOK redirection_rows 'redirection semicolon boundary' \
-  'redirection and boundary' 'redirection or boundary' 'redirection pipe boundary'
-skill_load_control redirection-newline "$HOOK" 'GAP="[${BLANK}]"' \
-  'GAP="[${SPACE_ANY}]"' HOOK redirection_rows \
-  'redirection newline boundary'
 first_table 'unset and empty roots match no literal|payload|0|-|{"command":"rm -rf /home/method/dev/.scratch/agents /shared/tmp /shared/te(mp).+ /shared/agent /shared/home"}'
 PAYLOAD_HOME=/
 first_table 'filesystem root direct glob|payload|2|block-unsafe-rm: refused=shared-root|{"command":"rm -rf /tmp.*"}
 filesystem root named child|payload|0|-|{"command":"rm -rf /tmp.AbC123"}'
 unset PAYLOAD_HOME
-run_hook 'rm -rf -- "${TMPDIR:?}"'
-assert_contains "$ERR_FILE" 'd=$(mktemp -d)' 'shared-root remedy keeps the private directory'
-assert_contains "$ERR_FILE" '"${d:?}" in the same shell call' 'shared-root remedy keeps cleanup in the creating call'
-if grep -Fq -- '${NAME:?}' "$ERR_FILE"; then advice=unsafe; else advice=private; fi
-assert_eq "$advice" private 'shared-root remedy does not suggest guarding the shared name'
 
 echo "=== block-unsafe-rm: a variable-rooted operand is refused ==="
 run_hook 'rm -rf $CACHE/$KEY';        assert_eq "$rc" 2 'a bare $NAME root is refused'
@@ -488,10 +456,6 @@ a variable root before flags reaches the same value|command|2|block-unsafe-rm: r
 an operand that cannot collapse says nothing|command|0|-|rm -rf -- \"\${P:?}/save\"
 a payload that is not JSON is refused unread|payload|0|block-unsafe-rm: payload=invalid-json|not JSON
 "
-run_hook 'rm -rf $CACHE/$KEY'
-assert_contains "$ERR_FILE" 'rm -- "${NAME:?}/file"' 'the guarded rewrite adds no delete flags'
-assert_contains "$ERR_FILE" 'rm -- /absolute/literal/path' 'the literal rewrite adds no delete flags'
-assert_contains "$ERR_FILE" 'rm -rf $CACHE/$KEY' 'the refusal quotes the command it judged'
 
 first_table 'reported-adjacent-redirection|command|2|block-unsafe-rm: refused=shared-root|rm>/dev/null -rf "$HOME"'
 

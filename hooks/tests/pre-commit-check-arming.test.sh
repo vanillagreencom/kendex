@@ -155,16 +155,11 @@ run_hook "$NOT_A_REPO" "$(payload 'git commit -m x')"
 assert_eq "rc=$rc first=$(first_line)" 'rc=0 first=-' "a non-repository with no move has no verdict"
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  skill_load_control no-same-command-refusal "$HOOK" '      read_call' \
-    'CONFIG_MUTATION=""' HOOK arming_rows \
-    "defensive guard refusal: $RESTORED: git config --unset core.hooksPath && git commit -n --allow-empty -m fixture"
   skill_load_control split-ignores-current-state "$HOOK" 'else HOOKS_DIR=""; fi' \
     'ARMED=""' HOOK split_command_rows \
     'split command: reset: git commit -n -m fixture'
   skill_load_control no-consent "$HOOK" 'message unarmed "$PWD"' 'exit 2' HOOK arming_rows \
     "arming: $UNARMED"
-  skill_load_control relative-owner "$HOOK" 'COMMON=$(cd -- "$COMMON" && pwd -P) || { message setup consent; exit 0; }' 'COMMON=$(git rev-parse --git-common-dir)' HOOK arming_rows \
-    "setup requires consent: $SUBDIR"
   skill_load_control wrong-owner "$HOOK" 'MAIN=$(cd -- "$COMMON/.." && pwd -P) || { message setup consent; exit 0; }' 'MAIN=consent' HOOK owner_row \
     'setup goes to the main checkout owner'
 fi

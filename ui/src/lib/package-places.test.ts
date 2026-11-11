@@ -114,6 +114,7 @@ const joined = (
   at: install(scope, harness).path,
   origin,
   summary: null,
+  tags: null,
   package: { kind: "skill", name: "gh" },
 });
 
@@ -128,6 +129,7 @@ const owned = (scopes: Scope[], origin: Origin = OURS): ProvenanceRow[] =>
     at: install(scope).path,
     origin,
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   }));
 

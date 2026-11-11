@@ -256,6 +256,7 @@ fn record(
     // is the record's to answer for in `attest::record`.
     let rendered_hash = rendered_hash(item);
     Ok(LockEntry {
+        requirer_provenance: None,
         name: item.name.clone(),
         kind: item.kind,
         harness: item.harness,
@@ -325,6 +326,7 @@ fn row_for<'a>(
         compared: None,
         also_in_the_way: Vec::new(),
         remedy: None,
+        pi_unsettled: None,
     }
 }
 
@@ -447,9 +449,14 @@ fn plan_registration(
         return Ok(planned);
     }
     for (path, edit, out_of_sync) in pending {
+        let action = if item.kind == ItemKind::Hook && !item.enabled {
+            "unregister"
+        } else {
+            "register"
+        };
         config_edits.push(
             path.clone(),
-            format!("register {}", item.name),
+            format!("{action} {}", item.name),
             edit.clone(),
         );
         if out_of_sync && matches!(planned, Planned::Clean) {

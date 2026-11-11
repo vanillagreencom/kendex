@@ -45,7 +45,7 @@ message_text() { # KEY VALUE [CAUSE]
 }
 
 # Successful stderr is hidden from the model. Match the installed hook's
-# context channel, as block-worktree-refresh::library_gap does. Builtins own
+# context channel. Builtins own
 # serialization here because this notice also reports missing or broken jq.
 message() { # KEY VALUE [CAUSE]
   local text

@@ -42,20 +42,31 @@ elif sys.argv[1]!='whoami':
 """
 
 
+class Platform:
+    """sys as op_fifo sees it on another platform; every other attribute reads the live sys, so its streams stay real."""
+
+    def __init__(self, name):
+        self.platform = name
+
+    def __getattr__(self, name):
+        return getattr(sys, name)
+
+
 class Broker(World):
-    def start(self, body=None, args=None, terminal=True):
+    def start(self, body=None, args=None, terminal=True, leader=False):
         self.executable("op", body or OP)
         self.directory = self.root / "broker"
         if args is None:
             args = ["--directory", str(self.directory), "--account", "fixture-account"]
-        # Only a broker whose stdin is a terminal may start an interactive sign-in.
+        # Only a broker whose stdin is a terminal may start an interactive sign-in. A leader broker starts its own
+        # session, as the systemd unit does, so no terminal of the test's reaches its calls.
         if terminal:
             controller, stdin = os.openpty()
             self.addCleanup(os.close, controller)
         else:
             stdin = subprocess.DEVNULL
         process = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "op-broker"), *args],
-            env=self.env, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            env=self.env, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=leader)
         if terminal:
             os.close(stdin)
 
@@ -239,7 +250,7 @@ elif sys.argv[1]=='read':
                     path.unlink()
             for request in ({"reply": "../outside", "verb": "read", "reference": "op://fixture/item/password"},
                             {"reply": "bad.reply"}, [], "not-json"):
-                module.answer(fd, json.dumps(request).encode(), "not-installed", {})
+                module.answer(fd, json.dumps(request).encode(), "not-installed", {}, "session")
             self.assertFalse((self.root / "outside").exists())
         finally:
             os.close(fd)
@@ -289,22 +300,22 @@ elif sys.argv[1]=='read':
                             {"verb": "read", "reference": "https://example.org"},
                             {"verb": "op", "args": []}, {"verb": "op", "args": "whoami"}, {"verb": "op", "args": ["whoami", 1]},
                             {"verb": "script", "path": "relative-script"}):
-                with self.subTest(request=request), patch.object(module, "sys", SimpleNamespace(platform="linux")):
-                    module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {})
+                with self.subTest(request=request), patch.object(module, "sys", Platform("linux")):
+                    module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {}, "session")
                     self.assertEqual(module.receive(stream, module.time.monotonic() + 5)["status"], "invalid-request")
             self.assertFalse((self.root / "ran").exists())
             # A request that bypasses opq meets the broker's own platform rule.
-            with patch.object(module, "sys", SimpleNamespace(platform="darwin")):
+            with patch.object(module, "sys", Platform("darwin")):
                 for request in ({"verb": "op", "args": ["whoami"]}, {"verb": "script", "path": str(script)}):
                     with self.subTest(platform="darwin", verb=request["verb"]):
-                        module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {})
+                        module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), {}, "session")
                         self.assertEqual(module.receive(stream, module.time.monotonic() + 5)["status"], "platform-unsupported")
             self.assertFalse((self.root / "ran").exists())
             outside = self.root / "outside"
             os.mkfifo(outside, 0o600)
             outside_fd = os.open(outside, os.O_RDWR | os.O_NONBLOCK)
             try:
-                module.answer(fd, json.dumps({"reply": "../outside", "verb": "read", "reference": "op://fixture/item/password"}).encode(), str(op), {})
+                module.answer(fd, json.dumps({"reply": "../outside", "verb": "read", "reference": "op://fixture/item/password"}).encode(), str(op), {}, "session")
                 self.assertFalse(select.select([outside_fd], [], [], 0)[0])
             finally:
                 os.close(outside_fd)
@@ -488,7 +499,7 @@ elif sys.argv[1]=='read':
                                       "platform=unsupported"),
                                      ("reused-directory", ["op-broker", "--directory", str(reused)], {}, "directory=exists")):
             with self.subTest(form=form):
-                with patch.object(module, "sys", SimpleNamespace(platform="darwin")), \
+                with patch.object(module, "sys", Platform("darwin")), \
                      patch.object(sys, "argv", argv), patch.dict(os.environ, env), \
                      patch.object(module.shutil, "which", return_value=str(self.root / "op")), \
                      patch.object(module, "session", side_effect=module.Refusal("session=reached")), \
@@ -510,93 +521,54 @@ elif sys.argv[1]=='read':
             with self.subTest(state=state):
                 effect = outcome if isinstance(outcome, BaseException) else (lambda *_: outcome)
                 with patch.object(module, "call_op", side_effect=effect) as call, redirect_stderr(io.StringIO()) as stderr:
-                    renewed = module.keep_session("op", {}, ["whoami"])
+                    renewed = module.keep_session("op", {}, "session")
                 self.assertEqual((renewed, stderr.getvalue()), (state == "renewed", diagnostic))
                 call.assert_called_once_with(["op", "whoami"], {})
 
     def test_session_routes(self):
-        # Records each call; a vault list also acknowledges on HOME/ack, so the renewal is observed, not slept for.
-        # A vault list fails when HOME/expired existed as it started, as an app lock makes it fail.
-        body = """import os,sys,json
-home=os.environ['HOME']
-expired=os.path.exists(home+'/expired')
-with open(home+'/calls','a') as f:
-    f.write(json.dumps({'verb':sys.argv[1], 'session':os.environ.get('OP_SESSION'), 'biometric':os.environ.get('OP_BIOMETRIC_UNLOCK_ENABLED')})+'\\n')
-if sys.argv[1:3]==['vault','list']:
-    with open(home+'/ack','wb',buffering=0) as f: f.write(b'V')
-    if expired: sys.exit(1)
-elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
-"""
-        ack_path = self.root / "ack"
-        os.mkfifo(ack_path, 0o600)
-        ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
-        self.addCleanup(os.close, ack)
-        self.env["JARVIS_OP_KEEPALIVE_SECS"] = "1"
-        # A broker without a terminal, with each value of JARVIS_OP_APP_INTEGRATION, and with neither input.
-        # OP_SESSION alone is the service tests' route.
-        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1"}, None),
-                ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session"},
-                 b"op-broker: session=route-conflict"),
-                ("neither", {}, b"op-broker: session=OP_SESSION-required"),
-                ("empty-setting", {"JARVIS_OP_APP_INTEGRATION": ""}, b"op-broker: session=OP_SESSION-required"),
-                ("unknown-setting", {"JARVIS_OP_APP_INTEGRATION": "yes"}, b"op-broker: setting=JARVIS_OP_APP_INTEGRATION"))
-        base = dict(self.env)
-        for route, settings, key in rows:
-            with self.subTest(route=route):
-                self.env = dict(base, **settings)
-                self.log.unlink(missing_ok=True)
-                if key is not None:
-                    self.executable("op", body)
-                    process = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "op-broker"), "--directory",
-                                                str(self.root / "broker")], env=self.env, stdin=subprocess.DEVNULL,
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    try:
-                        _, stderr = process.communicate(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.communicate(timeout=10)
-                        self.fail("the broker served a route it must refuse")
-                    self.assertEqual(process.returncode, 2, stderr)
-                    self.assertEqual(stderr.splitlines()[0], key)
+        module = load("lib/op_fifo.py")
+        self.executable("op", OP)
+        # Service configuration comes from these environment settings. Refusals must precede any op call or ready FIFO.
+        rows = (("app-keepalive", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "1"},
+                 "keepalive=unsupported cause=per-terminal-authorization"),
+                ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session",
+                          "JARVIS_OP_KEEPALIVE_SECS": "1"}, "session=route-conflict"),
+                ("invalid-interval", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "bad"},
+                 "setting=JARVIS_OP_KEEPALIVE_SECS"),
+                ("neither", {}, "session=OP_SESSION-required"),
+                ("empty-setting", {"JARVIS_OP_APP_INTEGRATION": ""}, "session=OP_SESSION-required"),
+                ("unknown-setting", {"JARVIS_OP_APP_INTEGRATION": "yes"}, "setting=JARVIS_OP_APP_INTEGRATION"))
+        directory = self.root / "broker"
+        for platform in ("linux", "darwin"):
+            for route, settings, key in rows:
+                with self.subTest(platform=platform, route=route), \
+                     patch.object(module, "sys", Platform(platform)), \
+                     patch.object(sys, "argv", ["op-broker", "--directory", str(directory)]), \
+                     patch.dict(os.environ, dict(self.env, **settings), clear=True), \
+                     patch.object(module.os, "isatty", return_value=False), \
+                     patch.object(module.select, "select", side_effect=AssertionError("broker entered request loop")), \
+                     redirect_stderr(io.StringIO()) as stderr, patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                    with self.assertRaises(SystemExit) as refused:
+                        module.main("broker")
+                    self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]), (2, "op-broker: " + key))
+                    self.assertEqual(stdout.getvalue(), "")
                     self.assertFalse(self.log.exists())
-                    continue
-                process = self.start(body, args=["--directory", str(self.root / "broker")], terminal=False)
+                    self.assertFalse(directory.exists())
 
-                def read():
-                    output = self.root / "value"
-                    result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
-                                           "--output", output)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(output.read_bytes(), b"fixture-value")
-                    output.unlink()
-
-                def renewal(seconds):
-                    return bool(select.select([ack], [], [], seconds)[0]) and os.read(ack, 1) == b"V"
-
-                read()
-                self.assertTrue(renewal(10), "keepalive did not renew the app approval")
-                # A failed renewal disarms the keepalive, so a locked app raises no prompt with no request pending.
-                (self.root / "expired").touch()
-                self.assertTrue(renewal(10), "keepalive did not renew after a success")
-                self.assertTrue(select.select([process.stderr], [], [], 10)[0], "keepalive did not meet the failure")
-                self.assertEqual(process.stderr.readline(), b"op-broker: keepalive=failed exit=1\n")
-                # That vault list has exited; drop any acknowledgement a slow test left behind it.
-                try:
-                    os.read(ack, 4096)
-                except BlockingIOError:
-                    pass
-                self.assertFalse(renewal(2.5), "keepalive renewed after a failed renewal")
-                (self.root / "expired").unlink()
-                # A caller's successful call arms it again.
-                read()
-                self.assertTrue(renewal(10), "a successful call did not arm the keepalive again")
-                process.terminate()
-                _, stderr = process.communicate(timeout=10)
-                self.assertEqual(process.returncode, 0, stderr)
-                calls = self.calls()
-                self.assertEqual({call["verb"] for call in calls}, {"read", "vault"})
-                for call in calls:
-                    self.assertEqual((call["session"], call["biometric"]), (None, "true"))
+        # App calls without keepalive still use the native approval route. This fixture proves broker wiring, not approval.
+        self.env["JARVIS_OP_APP_INTEGRATION"] = "1"
+        process = self.start(terminal=False)
+        output = self.root / "value"
+        result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
+                               "--output", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_bytes(), b"fixture-value")
+        self.assertEqual([(call["verb"], call["session"], call["biometric"]) for call in self.calls()],
+                         [("read", None, "true")])
+        process.terminate()
+        _, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertFalse(self.directory.exists())
 
     @unittest.skipUnless(sys.platform == "linux", "op requests are Linux only")
     def test_keepalive(self):
@@ -651,22 +623,28 @@ elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
     def test_work_process_group(self):
         module = load("lib/op_fifo.py")
         # The descendant holds the work's stdout and this test's pipe, and sleeps past the deadline.
-        work = self.executable("work", "import subprocess,sys,time\n"
+        work = self.executable("work", "import os,signal,subprocess,sys,time\n"
             "subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],pass_fds=(int(sys.argv[1]),))\n"
             "sys.stdout.write('out'); sys.stdout.flush()\n"
             "if sys.argv[2]=='stay': time.sleep(60)\n"
+            "if sys.argv[2]=='signal': os.kill(os.getpid(), signal.SIGTERM)\n"
+            "if sys.argv[2]=='kill': os.kill(os.getpid(), signal.SIGKILL)\n"
             "sys.exit(3)\n")
-        for mode, deadline, expected in (("exit", 10, (3, b"out")), ("stay", 0.5, None)):
-            with self.subTest(mode=mode):
+        # Each launch form: the work leads its session, or op_tty.py leads it on a terminal with the work as its child.
+        rows = [(terminal, mode, deadline, expected) for terminal in (False, True)
+                for mode, deadline, expected in (("exit", 10, (3, b"out")), ("signal", 10, (-signal.SIGTERM, b"out")),
+                                                 ("kill", 10, (-signal.SIGKILL, b"out")), ("stay", 0.5, None))]
+        for terminal, mode, deadline, expected in rows:
+            with self.subTest(terminal=terminal, mode=mode):
                 held, holder = os.pipe()
                 try:
                     argv = [str(work), str(holder), mode]
-                    with patch.object(module, "CALL_SECONDS", deadline):
+                    with patch.object(module, "CALL_SECONDS", deadline), redirect_stderr(io.StringIO()):
                         if expected is None:
                             with self.assertRaises(subprocess.TimeoutExpired):
-                                module.run_work(argv, self.env, (holder,))
+                                module.run_work(argv, self.env, (holder,), stderr=True, terminal=terminal)
                         else:
-                            result = module.run_work(argv, self.env, (holder,))
+                            result = module.run_work(argv, self.env, (holder,), stderr=True, terminal=terminal)
                             self.assertEqual((result.returncode, result.stdout), expected)
                     os.close(holder)
                     holder = None
@@ -678,6 +656,93 @@ elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
                     if holder is not None:
                         os.close(holder)
 
+
+    @unittest.skipUnless(sys.platform == "linux", "op and @SCRIPT requests are Linux only")
+    def test_call_terminal(self):
+        # Records, for each call, what the 1Password app reads to name the caller in its approval prompt: whether
+        # op leads its own session, whether the session has a terminal, and whether the leader's executable reads.
+        body = """import json,os,sys
+home=os.environ['HOME']
+leader=os.getsid(0)
+try:
+    os.close(os.open('/dev/tty', os.O_RDWR)); terminal=True
+except OSError: terminal=False
+try:
+    os.readlink('/proc/%d/exe' % leader); readable=True
+except OSError: readable=False
+with open(home+'/calls','a') as f:
+    f.write(json.dumps({'verb':sys.argv[1], 'led':leader!=os.getpid(), 'terminal':terminal, 'leader_exe':readable})+'\\n')
+if sys.argv[1]=='read': sys.stdout.write('fixture-value')
+"""
+        script = self.script("probe-script", 'op script-probe\n')
+        output = self.root / "record"
+        # The OP_SESSION route never asks the app: an op or @SCRIPT request leads a new session with no terminal.
+        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1"},
+                 {"read", "item", "script-probe"}, {"led": True, "terminal": True, "leader_exe": True}),
+                ("session", {"OP_SESSION": "fixture-session"}, {"item", "script-probe"}, {"terminal": False}))
+        base = dict(self.env)
+        for route, settings, verbs, expected in rows:
+            with self.subTest(route=route):
+                self.env = dict(base, **settings)
+                self.log.unlink(missing_ok=True)
+                process = self.start(body, args=["--directory", str(self.root / "broker")], terminal=False, leader=True)
+                result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
+                                       "--output", output)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(output.read_bytes(), b"fixture-value")
+                output.unlink()
+                self.assertEqual(self.record(self.opq("op", "--", "item", "get", "fixture", output=output), output)[0], 0)
+                self.assertEqual(self.record(self.opq("@" + str(script), output=output), output)[0], 0)
+                process.terminate()
+                _, stderr = process.communicate(timeout=10)
+                self.assertEqual(process.returncode, 0, stderr)
+                calls = [call for call in self.calls() if call["verb"] in verbs]
+                self.assertEqual({call["verb"] for call in calls}, verbs)
+                for call in calls:
+                    self.assertEqual({key: call[key] for key in expected}, expected, call["verb"])
+
+    @unittest.skipUnless(sys.platform == "linux", "op and @SCRIPT requests are Linux only")
+    def test_failed_call_journal(self):
+        module = load("lib/op_fifo.py")
+        # Prints on stderr, then waits on its terminal, or with none forever: only the deadline ends it.
+        stall = self.executable("stall", "import os,signal,sys\n"
+            "sys.stderr.write('fixture-stderr\\n'); sys.stderr.flush()\n"
+            "try: terminal=os.open('/dev/tty', os.O_RDONLY)\n"
+            "except OSError: signal.pause()\n"
+            "os.read(terminal, 1)\n")
+        script = self.script("stall-script", 'exec "$HOME/bin/stall"\n')
+        missing = self.root / "missing-op"
+        directory = self.root / "requests"
+        directory.mkdir(mode=0o700)
+        fd = module.open_directory(directory)
+        reply = "0" * 32 + ".reply"
+        os.mkfifo(directory / reply, 0o600)
+        stream = module.open_fifo(fd, reply, os.O_RDWR)
+        deadline = ["op-broker: run=failed cause=deadline seconds=0.5"]
+        spawn = ["op-broker: run=failed cause=spawn errno=ENOENT"]
+        read = {"verb": "read", "reference": "op://fixture/item/password"}
+        op_request = {"verb": "op", "args": ["vault", "list"]}
+        # Each call a deadline or a failed start ends, under each launch form. Only the stderr of a call whose
+        # arguments the broker chooses reaches the journal, and no reply carries stderr.
+        rows = (("op-deadline", op_request, stall, "session", "run-failed", deadline),
+                ("op-deadline-terminal", op_request, stall, "app-integration", "run-failed", deadline),
+                ("read-deadline-terminal", read, stall, "app-integration", "read-failed",
+                 deadline + ["op-broker: stderr=fixture-stderr"]),
+                ("script-deadline-terminal", {"verb": "script", "path": str(script)}, stall, "app-integration",
+                 "run-failed", deadline),
+                ("op-spawn", op_request, missing, "session", "run-failed", spawn),
+                ("op-spawn-terminal", op_request, missing, "app-integration", "run-failed", spawn),
+                ("read-spawn-terminal", read, missing, "app-integration", "read-failed", spawn))
+        try:
+            for name, request, op, route, status, lines in rows:
+                with self.subTest(row=name), patch.object(module, "CALL_SECONDS", 0.5), \
+                     redirect_stderr(io.StringIO()) as journal:
+                    module.answer(fd, json.dumps(dict(request, reply=reply)).encode(), str(op), self.env, route)
+                    self.assertEqual(module.receive(stream, module.time.monotonic() + 5), {"status": status})
+                    self.assertEqual(journal.getvalue().splitlines(), lines)
+        finally:
+            os.close(stream)
+            os.close(fd)
 
 def deadline_worker():
     world = World()

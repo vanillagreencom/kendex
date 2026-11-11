@@ -103,7 +103,13 @@ fn fork_beside_and_rename_refuse_names_that_fold_onto_a_neighbour() {
     commit(&w.upstream, "one");
     declare(&w, "[skills.gh]\nsource = \"cat\"\n");
     sync_and_apply(&w);
-    fs::write(skill_file(&w), "edited").unwrap();
+    // A fork puts the publisher's keys back into the copy's frontmatter,
+    // so the edit keeps one.
+    fs::write(
+        skill_file(&w),
+        "---\nname: gh\ndescription: about gh\n---\nedited\n",
+    )
+    .unwrap();
 
     let local = w.home.join("app/.kendex-local/skills/Data-Science");
     fs::create_dir_all(&local).unwrap();

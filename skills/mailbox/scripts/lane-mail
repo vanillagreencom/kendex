@@ -112,6 +112,12 @@ Overseer side:
               or a wait hands it over. Prints the receipt below on stdout. No halt
               goes to `--item overseer`: no hook halts an overseer on it, and
               the watch acknowledges that mailbox with --ack
+              --require-reader, used by Jarvis owner-note, is accepted only
+              with --item overseer --directive without --host. It refuses
+              no-reader (cause=unnamed|pane-gone) or reader-unjudged
+              (cause=server) before appending. It judges the current recorded
+              pane, including during succession, not whether it is taking a
+              turn. Peer delivery remains advisory after its append.
               A send to a lane first reads the lane's record in the fleet
               state (--state-dir, else the checkout's) and matches the
               channel its host kind declares (lane-host capabilities).
@@ -264,9 +270,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               closes any ask this overseer sent with a separate `resolution` envelope,
               `re=MSGID`, and `by=explicit` when neither option is given.
               --text FILE records the file as the person's own answer with
-              `by=text`, and the relay posts it as theirs. Use it only for
-              an answer they gave elsewhere. The agent's own reply is a
-              notice with --ref.
+              `by=text` and `answer_source=resolve`. The Slack relay posts
+              it as theirs unless this ask already has an answer from Slack.
+              Use it only for an answer they gave elsewhere. The agent's
+              own reply is a notice with --ref.
               --text and --default require an owner ask; a peer ask or an
               ask with no audience refuses either as `option-conflict`.
               --default supplies the recommendation with `by=default` only
@@ -418,6 +425,8 @@ attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
+answer_source (`send` or `resolve` on new owner answers; absent on older
+answers whose producing verb cannot be identified),
 draft (a draft ask only: recipient, medium, text and text_hash),
 reserved (true on a reserved ask only), issue (a configured item ask),
 tracker_pending (true on the immutable ask while its tracker outcome is missing),
@@ -586,7 +595,8 @@ USAGE
 # explanation follows, then whatever the failing command itself wrote, captured
 # at the site so nothing precedes the key.
 lm_message() { # KEY VALUE
-  local text sep='='
+  local text sep='=' reader_outcome='The note or ask landed, and'
+  [ "${REQUIRE_READER:-0}" -eq 0 ] || reader_outcome='Nothing was appended because'
   case "$1" in
     verb-invalid) text='No such command. Run lane-mail --help.' ;;
     option-unknown) text='The option is not supported by this command. Run lane-mail --help.' ;;
@@ -602,9 +612,9 @@ lm_message() { # KEY VALUE
     repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
     repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
     lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
-    no-reader) text='The note or ask landed, and no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names, so it waits unread until one is named, and an ask'\''s answer with it.
+    no-reader) text="$reader_outcome"' no session reads that checkout'\''s overseer mailbox: its fleet record names no tmux pane, or binds it to a tmux server start time that is not epoch seconds (cause=unnamed), or names one that no longer runs on the tmux server the record binds it to by its start time, or on that server process where the record carries no start time (cause=pane-gone). The lane-mail hooks hand that mailbox only to the session the record names.
 fix=run `orch-runtime register --fleet` from the orch skill in the session that should read that checkout'\''s mail, which makes that session the checkout'\''s overseer, its turn end held at the context marks for a succession as a fleet overseer'\''s is; or start its fleet with the runtime'\''s `start-controller` request, as orch'\''s workflows/oversee.md § Controller start and adoption states' ;;
-    reader-unjudged) text='The note or ask landed, and whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
+    reader-unjudged) text="$reader_outcome"' whether a session reads that checkout'\''s overseer mailbox is unknown: a hosted peer keeps its fleet record and tmux server on its own host (cause=hosted), or the pane it names is on a tmux server this shell does not reach (cause=server).' ;;
     overseer-unreadable) text='The checkout overseer record could not be read. Nothing was appended.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use that spelling, or drain it and remove it.' ;;
@@ -700,6 +710,7 @@ MSGID=""
 TIMEOUT=0
 INTERVAL=5
 DIRECTIVE=0
+REQUIRE_READER=0
 HALT=0
 PEEK=0
 ACK=""
@@ -754,6 +765,7 @@ while [ "$#" -gt 0 ]; do
     --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
     --host) HOST=1; shift ;;
     --directive) DIRECTIVE=1; shift ;;
+    --require-reader) REQUIRE_READER=1; shift ;;
     --halt) DIRECTIVE=1; HALT=1; shift ;;
     --peek) PEEK=1; shift ;;
     --receipts) RECEIPTS=1; shift ;;
@@ -864,6 +876,8 @@ for given in $OPTS_GIVEN; do
         notice:*) ;;
         *) refuse option-unknown --delivery-id ;;
       esac ;;
+    --require-reader)
+      [ "$VERB:$ITEM:$DIRECTIVE:$HOST" = send:overseer:1:0 ] || refuse option-unknown "$given" ;;
     --thread-ts | --parent)
       [ "$VERB:$ITEM:$DIRECTIVE" = send:overseer:1 ] || refuse option-unknown "$given" ;;
     --once) [ "$VERB" = watch ] || refuse option-unknown --once ;;
@@ -1560,9 +1574,8 @@ lm_sent() {
   fi
 }
 
-# Whether the peer checkout's overseer mailbox has a reader, said on stderr
-# once a `peer send` directive or a `peer ask` has landed, so it never
-# refuses. The reader is the one session the checkout's fleet record names
+# Whether the checkout's overseer mailbox has a reader. Peer delivery reports
+# this after landing; --require-reader refuses before an owner directive. The reader is the one session the checkout's fleet record names
 # under `.overseer` by tmux server and pane: the lane-mail-check hooks hand the
 # mailbox to that session alone, and a live watch there reads it itself. No
 # record, or one naming no server pid and `%N` pane, or a `server_start` that
@@ -1573,17 +1586,18 @@ lm_sent() {
 # whatever its start, as the hooks read it, which hand it the mailbox and
 # write the start into the record. Which record carries no start is
 # lib/overseer-launch.sh § OL_JQ_DEFS's ol_unstarted, sourced here alone so
-# no other verb pays for it. A
-# hosted peer's record and tmux server sit on its own host, out of this
+# no other verb pays for it. A saved socket selects the recorded server as
+# overseer-host-tmux inspect does; old records retain the caller's server.
+# A hosted peer's record and tmux server sit on its own host, out of this
 # shell's reach.
 lm_peer_reader() {
-  local record server start pane rc=0
+  local record server start pane socket rc=0 TMUX="${TMUX:-}"
   # shellcheck source=../../orch/scripts/lib/overseer-launch.sh
   . "$ORCH_SCRIPTS/lib/overseer-launch.sh"
   # shellcheck source=../../orch/scripts/lib/tmux-server.sh
   . "$ORCH_SCRIPTS/lib/tmux-server.sh"
   if [ "$HOST" -eq 1 ]; then
-    lm_notice reader-unjudged "$ROOT" cause=hosted
+    lm_reader_report reader-unjudged "$ROOT" cause=hosted
     return 0
   fi
   record="$(jq -r "$OL_JQ_DEFS"'
@@ -1610,16 +1624,26 @@ lm_peer_reader() {
     *) pane="" ;;
   esac
   if [ -z "$server" ] || [ "$start" = invalid ] || [ -z "$pane" ]; then
-    lm_notice no-reader "$ROOT" cause=unnamed
+    lm_reader_report no-reader "$ROOT" cause=unnamed
     return 0
   fi
-  tmux_pane_live "$server" "$start" "$pane" || rc=$?
+  socket="$(jq -r '.server_socket // empty' <<<"$LM_OVERSEER_RECORD")" || refuse overseer-unreadable "$ROOT"
+  [ -z "$socket" ] || export TMUX="$socket,$server,0"
+  tmux_pane_live "$server" "$start" "$pane" "$socket" || rc=$?
   case "$rc" in
     0) ;;
-    1) lm_notice no-reader "$ROOT" cause=pane-gone ;;
-    *) lm_notice reader-unjudged "$ROOT" cause=server ;;
+    1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;
+    *) lm_reader_report reader-unjudged "$ROOT" cause=server "$TMUX_PANE_DETAIL" ;;
   esac
   return 0
+}
+
+lm_reader_report() { # KEY ROOT CAUSE [DETAIL]
+  if [ "$REQUIRE_READER" -eq 1 ]; then
+    REFUSE_EXTRA="$3"
+    refuse "$1" "$2" "${4:-}"
+  fi
+  lm_notice "$1" "$2" "$3"
 }
 
 # Owner sends use full resolution; peer asks and replies share data-only
@@ -1691,7 +1715,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
-    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
+    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
     --arg thread "$THREAD_TS" --slurpfile parent "$WORK_DIR/parent.json" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       $parent[0] as $parent |
@@ -1711,7 +1735,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
-      + (if $kind == "answer" and $by != "" then {closes: false} else {} end)
+      + (if $kind == "answer" and $by != "" then {closes: false, answer_source: $verb} else {} end)
       + (if $draft == [] then {} else {draft: $draft[0]} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
@@ -2332,6 +2356,10 @@ case "$VERB" in
       BY=text
     fi
     [ "$ITEM" != overseer ] || [ "$HOST" -eq 1 ] || lm_require_overseer full "$ROOT"
+    # Succession publishes the opened successor before stopping its predecessor.
+    # The current record (not its pending command) therefore still names a pane
+    # while neither session is taking a turn. No timer can make a dead pane read.
+    [ "$REQUIRE_READER" -eq 0 ] || lm_peer_reader
     # The delivery-id check runs under the lock on the disk that holds the
     # file; a provider's append takes no guard, so a hosted send carries none.
     [ -z "$DELIVERY_ID" ] || [ "$HOST" -eq 0 ] || refuse option-conflict '--host,--delivery-id'

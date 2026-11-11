@@ -79,8 +79,7 @@ word() {
     install:outside) INSTALL="$ROW/install"; PROJ="" ;;
     # the copy inside a repository of its own
     install:repo) INSTALL="$ROW/proj"; PROJ="$ROW/proj"; git init -q "$PROJ" ;;
-    # a linked worktree whose marker points at a pruned main checkout: git
-    # says "not a git repository" for a checkout that does carry settings
+    # Keep the broken marker so repository discovery must refuse.
     install:worktree-broken)
       git init -q "$ROW/wtmain"
       git -C "$ROW/wtmain" config user.email test@example.com
@@ -91,6 +90,9 @@ word() {
       git -C "$ROW/wtmain" worktree add -q -b wt "$ROW/wtlinked"
       rm -rf -- "${ROW:?}/wtmain/.git/worktrees"
       INSTALL="$ROW/wtlinked"; PROJ=""
+      if git -C "$INSTALL" rev-parse --show-toplevel >/dev/null 2>&1; then
+        echo 'startup: broken-marker=resolved' >&2; exit 2
+      fi
       ;;
     path:nogit) W_PATH="$TMP_ROOT/nogit" ;;
     path:mountgit) W_PATH="$TMP_ROOT/mountgit" ;;
@@ -125,7 +127,7 @@ build() {
 alias_text() {
   sed -e "s|$INSTALL/skills/second-opinion/scripts/second-opinion|<script>|g" -e "s|$INSTALL/skills/second-opinion/scripts|<scripts>|g" \
     -e "s|$INSTALL|<install>|g" -e "s|$TMP_ROOT|<root>|g" -e 's/<script>: line [0-9]*:/<script>: line *:/' \
-    -e 's|git said: not a git repository: .*|git said: not a git repository: <gitdir>|' -e 's/;/\\;/g' | paste -s -d ';' -
+    -e 's/;/\\;/g' | paste -s -d ';' -
 }
 
 run() {
@@ -159,8 +161,6 @@ err_word() {
     parser) printf 'Error: unknown argument: no-such-mode' ;;
     # the lookup's refusal, quoting git's own line
     unresolved:nogit) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: <script>: line *: git: command not found' ;;
-    # git spells the unreadable gitdir by version ((null), or its path)
-    unresolved:marker) printf 'second-opinion: could not resolve a repository at <scripts>;  git said: not a git repository: <gitdir>' ;;
     settings-header) printf 'kendex-env: table-header file=<install>/kendex.settings.toml lineno=1' ;;
     session-only) printf 'Error: project settings set session-only SECOND_OPINION_FOREGROUND_CAP\\; remove it there and pass --foreground or export it in this session' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
@@ -168,7 +168,7 @@ err_word() {
 }
 
 run_table() {
-  local title="$1" rows="$2" n=0 label world argv rc out err got row field
+  local title="$1" rows="$2" n=0 label world argv rc out err got row field control_rc
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
@@ -190,7 +190,33 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
+    if [[ "$err" == unresolved:marker ]]; then
+      assert_eq "${got%% err=*}" "rc=$rc out=$out" "$label"
+      # Keep Git's failing lookup, but let this disposable install continue
+      # without project settings. Only this row must reject that behavior.
+      python3 - "$INSTALL/skills/second-opinion/scripts/second-opinion" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert p.is_file() and not p.is_symlink()
+s = p.read_text()
+old = '      exit 1\n      ;;\n  esac\n  unset _git_diag'
+assert s.count(old) == 1
+changed = s.replace(old, old.replace('exit 1', ': "exit 1"; PROJECT_ROOT=""'))
+assert changed != s
+p.write_text(changed)
+PY
+      got="$(run "$argv")"
+      control_rc=0
+      (
+        PASS=0 FAIL=0
+        assert_eq "${got%% err=*}" "rc=$rc out=$out" "$label"
+        [[ "$FAIL" -eq 0 ]]
+      ) >"$ROW/control.log" 2>&1 || control_rc=$?
+      assert_eq "$control_rc" 1 "control: ignoring the broken marker rejects the same status/stdout assertion"
+    else
+      assert_eq "$got" "rc=$rc out=$out err=$(err_text "$err")" "$label"
+    fi
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
@@ -198,7 +224,7 @@ run_table() {
 run_table "the startup" "\
 an install outside a repository has nothing to load and runs on to the parser|install:outside|probe|1|-|parser
 no git on PATH: the lookup refuses above the parser, quoting git, nothing on stdout|install:outside path:nogit|probe|1|-|unresolved:nogit
-a linked worktree whose marker points at a pruned checkout refuses the same way|install:worktree-broken|probe|1|-|unresolved:marker
+a linked worktree whose marker points at a pruned checkout refuses the same way|install:worktree-broken|detect|1|-|unresolved:marker
 a lookup stopped at a mount point is the absence of a repository: runs on to the parser|install:outside path:mountgit|probe|1|-|parser
 a settings file the loader refuses ends the run naming the defect, not as an undeclared session|install:repo settings:header|detect|1|-|first:settings-header
 a project settings file declaring the session-only foreground cap is refused|install:repo settings:cap|detect|1|-|session-only

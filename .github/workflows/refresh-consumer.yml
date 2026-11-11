@@ -4,19 +4,20 @@
 # called workflow the github context is the caller's, so every github.*
 # value below names the consumer.
 #
-# An inline input check runs first with the caller's GitHub token. It can
-# skip every later step when saved inputs and source coverage remain current
-# and no rolling pull request needs review work. A full refresh checks out
-# the workflow commit, the one job.workflow_sha names, and installs the one stable
-# vN.Y.Z release tagged on that commit, where vN is the tag the caller named,
-# and stops before any install when the commit carries no such tag or more
-# than one. The default catalog follows main, with the engine's compatibility
-# refusal selecting the release catalog. A declared rev takes precedence. Full-refresh
-# steps run their scripts from that checkout. The consumer code
-# a run executes is the settings report in refresh-consumer.sh, which sources
-# the consumer's refreshed orch libraries, and the refreshed bot-instructions
-# render kendex runs once in the run's checkout, each under env -i with no
-# credential.
+# An inline input check runs first with the caller's GitHub token. When saved
+# inputs and source coverage remain current and no rolling pull request is
+# open, it skips the render step, and every later step unless one merged in
+# the last 24 hours, whose review threads the review step still answers. A
+# review-only or full run checks out the workflow commit, the one
+# job.workflow_sha names, and installs the one stable vN.Y.Z release tagged on
+# that commit, where vN is the tag the caller named, and stops before any
+# install when the commit carries no such tag or more than one. The default
+# catalog follows main, with the engine's compatibility refusal selecting the
+# release catalog. A declared rev takes precedence. Later steps run their
+# scripts from that checkout. The consumer code a run executes is the settings
+# report in refresh-consumer.sh, which sources the consumer's refreshed orch
+# libraries, and the refreshed bot-instructions render kendex runs once in the
+# run's checkout, each under env -i with no credential.
 #
 # Report lines, one per line: kendex-install: version=TAG commit=SHA on
 # success, kendex-install: cause=KEY value=VALUE on a refusal, and
@@ -85,7 +86,7 @@ jobs:
               return json.loads(command('gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/' + path))
           output = pathlib.Path(os.environ['GITHUB_OUTPUT'])
           with output.open('a') as stream:
-              stream.write('run=true\n')
+              stream.write('route=full\n')
           try:
               # GitHub's public git refs and REST APIs need no checkout or app token.
               refs = command('git', 'ls-remote', 'https://github.com/vanillagreencom/kendex.git',
@@ -106,11 +107,15 @@ jobs:
               query = urllib.parse.urlencode(dict(state='all', head=owner + ':kendex/refresh', per_page=100))
               pages = json.loads(command('gh', 'api', '--paginate', '--slurp', 'repos/' + os.environ['GH_REPO'] + '/pulls?' + query))
               cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=24)
-              for pr in (pr for page in pages for pr in page):
-                  merged = pr['merged_at']
-                  if pr['state'] == 'open' or (merged and datetime.datetime.fromisoformat(merged.replace('Z', '+00:00')) >= cutoff):
-                      print('refresh-check=full cause=reviews')
-                      raise SystemExit(0)
+              pulls = [pr for page in pages for pr in page]
+              # Only the render step closes, pushes, re-describes or arms an
+              # open rolling pull request, so one keeps the full path.
+              if any(pr['state'] == 'open' for pr in pulls):
+                  print('refresh-check=full cause=open-pull-request')
+                  raise SystemExit(0)
+              # The review step reads a pull request merged in this window.
+              reviews = any(pr['merged_at'] and datetime.datetime.fromisoformat(pr['merged_at'].replace('Z', '+00:00')) >= cutoff
+                            for pr in pulls)
               artifacts = api('actions/artifacts?name=kendex-refresh-current&per_page=100')['artifacts']
               # A fork or feature-branch artifact cannot attest the default branch.
               artifacts = [a for a in artifacts if not a['expired'] and
@@ -163,28 +168,30 @@ jobs:
                   report = api('actions/runs/' + str(recent['id']) + '/attempts/1/jobs?per_page=100')
                   jobs = report['jobs']
                   assert report['total_count'] == len(jobs)
-                  following = [job['steps'][index + 1]['conclusion'] for job in jobs
-                               for index, step in enumerate(job['steps'])
-                               if step['name'] == 'refresh-input-check' and step['conclusion'] == 'success']
-                  assert following == ['skipped']
-              if previous['inputs'] == inputs:
-                  with output.open('a') as stream:
-                      stream.write('run=false\n')
-                  print('refresh-check=skip cause=current')
-              else:
+                  # A review-only run checks out and installs too, so only its
+                  # skipped render step proves it left the record's render alone.
+                  steps = [step for job in jobs for step in job['steps']]
+                  assert [step['conclusion'] for step in steps if step['name'] == 'refresh-input-check'] == ['success']
+                  assert [step['conclusion'] for step in steps if step['name'] == 'Refresh and arm the rolling pull request'] == ['skipped']
+              if previous['inputs'] != inputs:
                   print('refresh-check=full cause=changed')
+              else:
+                  route = 'reviews' if reviews else 'skip'
+                  with output.open('a') as stream:
+                      stream.write('route=' + route + '\n')
+                  print('refresh-check=' + route + ' cause=current')
           except (AssertionError, AttributeError, IndexError, KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError, zipfile.BadZipFile):
               # Missing grants, expired artifacts and failed reads cannot authorize a skip.
               print('refresh-check=full cause=unreadable')
           PY
-      - if: steps.inputs.outputs.run == 'true'
+      - if: steps.inputs.outputs.route != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.repository.default_branch }}
           path: consumer
           fetch-depth: 0
           persist-credentials: false
-      - if: steps.inputs.outputs.run == 'true'
+      - if: steps.inputs.outputs.route != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ job.workflow_repository }}
@@ -192,7 +199,7 @@ jobs:
           path: kendex
           persist-credentials: false
       - name: Install the release tagged on this commit
-        if: steps.inputs.outputs.run == 'true'
+        if: steps.inputs.outputs.route != 'skip'
         working-directory: kendex
         env:
           GH_TOKEN: ""
@@ -250,9 +257,9 @@ jobs:
           printf '%s\n' "$HOME/.local/bin" >>"$GITHUB_PATH"
           printf 'kendex-install: version=%s commit=%s\n' "$tag" "$WORKFLOW_SHA"
       - name: Mint the repository app token
-        if: steps.inputs.outputs.run == 'true'
+        if: steps.inputs.outputs.route != 'skip'
         id: token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ secrets.KENDEX_APP_ID && secrets.KENDEX_APP_PRIVATE_KEY && secrets.KENDEX_APP_ID || secrets.FLEET_GH_APP_ID }}
           private-key: ${{ secrets.KENDEX_APP_ID && secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}
@@ -267,8 +274,10 @@ jobs:
           permission-environments: read
           permission-secrets: read
           permission-organization-secrets: ${{ github.event.repository.owner.type != 'User' && 'read' || '' }}
+      # The REST jobs reader recognizes this name: its skip proves a run left
+      # the recorded render alone.
       - name: Refresh and arm the rolling pull request
-        if: steps.inputs.outputs.run == 'true'
+        if: steps.inputs.outputs.route == 'full'
         id: refresh
         working-directory: consumer
         env:
@@ -279,10 +288,10 @@ jobs:
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-consumer.sh"
       - name: Mint the kendex issue token
-        if: steps.inputs.outputs.run == 'true'
+        if: steps.inputs.outputs.route != 'skip'
         id: issues-token
         continue-on-error: true
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           app-id: ${{ secrets.FLEET_GH_APP_ID }}
           private-key: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
@@ -292,7 +301,7 @@ jobs:
       # Thread-resolution rules: review-gate references/adoption.md,
       # Automatic consumer refresh.
       - name: File rendered-file findings upstream and resolve them
-        if: steps.inputs.outputs.run == 'true'
+        if: steps.inputs.outputs.route != 'skip'
         working-directory: consumer
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
@@ -302,7 +311,7 @@ jobs:
           set -euo pipefail
           exec "$GITHUB_WORKSPACE/kendex/refresh/refresh-reviews.sh"
       - name: Record a current refresh
-        if: steps.inputs.outputs.run == 'true' && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''
+        if: steps.inputs.outputs.route == 'full' && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kendex-refresh-current

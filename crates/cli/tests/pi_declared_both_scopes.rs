@@ -88,10 +88,28 @@ impl Declares {
     }
 }
 
+/// The catalog a declaration of `name` reads, under `root`.
+fn catalog(root: &Path, name: &str) {
+    write(
+        &root
+            .join("catalog/pi-extensions")
+            .join(name)
+            .join("package.json"),
+        &format!("{{\"name\": \"{name}\", \"pi\": {{ \"extensions\": [\"index.js\"] }}}}\n"),
+    );
+    write(
+        &root
+            .join("catalog/pi-extensions")
+            .join(name)
+            .join("index.js"),
+        "export {};\n",
+    );
+}
+
 /// A home whose global manifest declares `global`, and a project under it
-/// whose own manifest declares `project`, in the file `declares` names.
-/// Nothing is installed anywhere: the declarations alone are what the
-/// check reads.
+/// whose own manifest declares `project`, in the file `declares` names,
+/// each with the catalog it reads. Nothing is installed anywhere: the
+/// declarations alone are what the check reads.
 #[allow(clippy::unwrap_used)]
 fn fixture(
     global: Option<&str>,
@@ -110,8 +128,10 @@ fn fixture(
         );
     }
     write(&root.join(declares.file()), &manifest(project));
+    catalog(&root, project);
     if let Some(global) = global {
         write(&global_manifest_file(&home), &manifest(global));
+        catalog(&home, global);
     }
     (tmp, home, root)
 }

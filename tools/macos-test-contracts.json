@@ -2,13 +2,12 @@
   "linux_only_shards": [
     "node",
     "pi-claude-bridge",
-    "linear-controls-a",
-    "linear-controls-b",
+    "linear-controls",
     "worktree-restack",
     "guards-scans",
     "guards-tools-tail",
     "guards-commit-tail",
-    "orch-dev"
+    "jarvis"
   ],
   "native_replacements": {
     "skills/github/tests/pr-merge.test.sh": "skills/github/tests/native-contracts.test.sh",
@@ -19,7 +18,6 @@
     "hooks/tests/block-bare-cd.test.sh": "linux-duplicate",
     "hooks/tests/block-repo-copy.test.sh": "linux-duplicate",
     "hooks/tests/block-unsafe-rm.test.sh": "linux-duplicate",
-    "hooks/tests/block-worktree-refresh.test.sh": "linux-duplicate",
     "hooks/tests/cloud-git-hooks.test.sh": "linux-duplicate",
     "hooks/tests/command-safety.test.sh": "linux-duplicate",
     "hooks/tests/critical-path-deny.test.sh": "linux-duplicate",
@@ -106,9 +104,9 @@
     "skills/commit-guards/tests/install-git-hooks.test.sh": "mixed",
     "skills/commit-guards/tests/install-gitleaks.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/lane-readers.test.sh": "linux-duplicate",
-    "skills/commit-guards/tests/md-format.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/md-reflow.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/md-refs.test.sh": "linux-duplicate",
+    "skills/commit-guards/tests/md-type.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/path-captures.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/pre-commit-chain.test.sh": "linux-duplicate",
     "skills/commit-guards/tests/pre-push.test.sh": "linux-duplicate",
@@ -175,8 +173,6 @@
     "skills/harness-ci/tests/queue-selector.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/render-claims.test.sh": "linux-duplicate",
     "skills/harness-ci/tests/wiring-shapes.test.sh": "linux-duplicate",
-    "skills/iced-rs/tests/mouse-area-no-on-press-maybe.test.sh": "linux-duplicate",
-    "skills/jarvis/tests/controls-2.test.sh": "mixed",
     "skills/jarvis/tests/controls.test.sh": "mixed",
     "skills/jarvis/tests/session.test.sh": "mixed",
     "skills/linear/tests/must-fail-controls.sh": "linux-only",

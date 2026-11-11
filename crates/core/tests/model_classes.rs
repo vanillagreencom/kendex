@@ -754,3 +754,95 @@ fn plugin_qualified_declared_names_and_read_failures_stay_distinct() {
     fs::remove_file(source_file).unwrap();
     assert!(agent_model_request(&env, &project, HarnessId::Claude, "pack__worker").is_err());
 }
+
+/// What one edit leaves of the second catalog, cat2, after the apply.
+type Cat2Edit = fn(&std::path::Path, &std::path::Path);
+
+/// A native agent lookup stands on the catalog that carries the agent: a
+/// second catalog the scope declares a skill from, disabled, missing the
+/// skill or holding unparsable frontmatter, leaves the lookup and the
+/// planned closure as whole as they are with that catalog intact.
+#[test]
+fn an_agent_lookup_stands_on_its_own_catalog_beside_one_that_reads_short() {
+    let rows: [(&str, Cat2Edit); 4] = [
+        ("intact", |_, _| {}),
+        ("cat2 disabled", |project, _| {
+            let path = project.join("kendex.toml");
+            let text = fs::read_to_string(&path).unwrap();
+            let edited = text.replace("[sources.cat2]\n", "[sources.cat2]\nenabled = false\n");
+            assert_ne!(edited, text, "the edit disables cat2");
+            fs::write(path, edited).unwrap();
+        }),
+        ("skill s deleted", |_, cat2| {
+            fs::remove_dir_all(cat2.join("skills/s")).unwrap();
+        }),
+        ("skill s frontmatter unterminated", |_, cat2| {
+            fs::write(
+                cat2.join("skills/s/SKILL.md"),
+                "---\nname: s\ndescription: Short\n",
+            )
+            .unwrap();
+        }),
+    ];
+    for (case, edit) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("project");
+        let (cat, cat2) = (home.join("cat"), home.join("cat2"));
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        fs::create_dir_all(cat.join("agents")).unwrap();
+        fs::create_dir_all(cat2.join("skills/s")).unwrap();
+        fs::write(
+            cat.join("agents/worker.md"),
+            "---\nname: worker\ndescription: Work\nmodel: fast\n---\nBody.\n",
+        )
+        .unwrap();
+        fs::write(
+            cat2.join("skills/s/SKILL.md"),
+            "---\nname: s\ndescription: Short\n---\nBody.\n",
+        )
+        .unwrap();
+        for root in [&cat, &cat2] {
+            fs::write(root.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+        }
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 7\n[sources.cat]\n{}\n[sources.cat2]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n[skills.s]\nsource = \"cat2\"\n",
+                source_path(&cat),
+                source_path(&cat2)
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        let report = kendex_core::engine::audit(&env, &scope).unwrap();
+        kendex_core::apply::execute(&env, &report.plan).unwrap();
+        assert!(
+            project.join(".claude/skills/s/SKILL.md").is_file(),
+            "{case}: s installs before the edit"
+        );
+        edit(&project, &cat2);
+        match agent_model_request(&env, &project, HarnessId::Claude, "worker") {
+            Ok(AgentModelRequest::Managed { request, .. }) => assert_eq!(
+                request,
+                ModelRequest::Class {
+                    class: ModelClass::Fast
+                },
+                "{case}"
+            ),
+            other => panic!("{case}: {other:?}"),
+        }
+        let manifest = manifest::load_current(&project.join("kendex.toml"))
+            .unwrap()
+            .unwrap();
+        let (_, status) = kendex_core::engine::planned_closure(&env, &scope, &manifest);
+        assert_eq!(
+            status,
+            kendex_core::engine::DeclarationStatus::Complete,
+            "{case}"
+        );
+    }
+}

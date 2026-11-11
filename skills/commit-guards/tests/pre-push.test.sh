@@ -50,7 +50,7 @@ ZERO=0000000000000000000000000000000000000000
 # are dropped, so a row reads as the push does: what was judged, what was
 # found, and the verdict. todo-ban's per-hit lines quote the marker they found,
 # and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|todo-ban: index-count=|md-format: (staged-count|summary|no-match)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
+KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|todo-ban: index-count=|md-type: (staged-count|summary|no-match|finding)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
 # No fixture here carries a doc-limits sibling, so that lane states its skip on
 # every single run and would repeat one long line in every row below. It is
 # asserted once, directly, after the table; what the lane finds at push is
@@ -652,17 +652,17 @@ assert_eq "must-fail: without the URL test, refs describing another spelling set
 # it has none the whole tree is the scope, and imposing that absolute sweep on
 # them would refuse every push in a repository holding markdown that predates
 # the guard, so they are withheld and named instead.
-wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose HEAD carries a hard-wrapped document
+wrapped() { # VAR NAME [SKILL-SOURCE] [SETTINGS-LINE] — VAR gets a repo whose HEAD carries an unended document
   local __v="$1" r=""
   new_repo r "$2" "${3:-}"
   # %b for the caller's line: it arrives with its own escapes, as every other
   # fixture in this file writes them.
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n%b' "${4:-}" >"$r/kendex.settings.toml"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n%b' "${4:-}" >"$r/kendex.settings.toml"
   q git -C "$r" add kendex.settings.toml
   q git -C "$r" commit -q -m "feat: seed"
   q git -C "$r" push -q origin main
   q git -C "$r" checkout -q -b topic
-  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
+  printf '# Title\n\n```\nan unclosed fence\n' >"$r/DOC.md"
   q git -C "$r" add DOC.md
   # Committed with no hook, which is the state a replay leaves.
   q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: add the document"
@@ -689,7 +689,7 @@ dangling() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a 
 WRAPPED=""
 wrapped WRAPPED wrapped
 assert_eq "a replayed malformed document is judged under the range scope the push hands the lane" \
-  "rc=1 pre-push: step=base:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
+  "rc=1 pre-push: step=base:<oid>;md-type: summary=findings=0 introduced=0 unended=1 files=1 scope=range skipped=0;pre-push: result=1" \
   "$(push_ref "$WRAPPED" topic)"
 
 DANGLING=""
@@ -707,10 +707,10 @@ mkdir -p "$(dirname "$NARROW")"
 cp -R "$SKILL_TEMPLATE" "$NARROW"
 q test ! -L "$NARROW/scripts/commit-guards"
 NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
-NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-format md-refs py-names secrets\"" { matches++ } END { print matches+0 }' \
+NARROW_MATCHES="$(awk '$0 == "RANGE_SCOPED_CHECKS=\"byte-ceiling changelog-entries md-type md-refs py-names secrets\"" { matches++ } END { print matches+0 }' \
   "$NARROW/scripts/commit-guards")" || exit 2
 assert_eq "the narrowed edit matches one assignment" "1" "$NARROW_MATCHES"
-sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-format md-refs py-names secrets"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names secrets"#' \
+sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names secrets"$#RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries py-names secrets"#' \
   "$NARROW/scripts/commit-guards"
 rm -f -- "$NARROW/scripts/commit-guards.bak"
 NARROW_AFTER="$(cat -- "$NARROW/scripts/commit-guards")" || exit 2
@@ -719,8 +719,8 @@ assert_eq "the narrowed edit took" "rewritten" \
 
 NARROWED_FORMAT=""
 wrapped NARROWED_FORMAT narrowed-format "$NARROW"
-assert_eq "must-fail: with the range scope gone, md-format is withheld and the document pushes" \
-  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+assert_eq "must-fail: with the range scope gone, md-type is withheld and the document pushes" \
+  "rc=0 pre-push: step=base:<oid>;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_ref "$NARROWED_FORMAT" topic)"
 
 NARROWED_REFS=""
@@ -741,7 +741,7 @@ push_url() { # REPO REFSPEC -> the run's one line on stdout
 UNBASED=""
 wrapped UNBASED unbased
 assert_eq "with no base to vouch for, the lane is named rather than folded into a clean verdict" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-format;commit-guards: withheld-all=md-format;pre-push: result=0" \
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_url "$UNBASED" topic)"
 
 # The must-fail control for that: the same push with the old batch call, which
@@ -758,67 +758,98 @@ assert_eq "the folded edit took" "rewritten" \
 FOLDED_REPO=""
 wrapped FOLDED_REPO folded "$FOLDED"
 assert_eq "must-fail: folded back in, the same push reports that document clean" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-format: staged-count=0;pre-push: result=0" \
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-type: staged-count=0;pre-push: result=0" \
   "$(push_url "$FOLDED_REPO" topic)"
 
-# A project that configured those lanes to sweep the tree asked for the check
-# and gets it there too: that scope stages nothing either.
+# md-type is change-scoped: its bare run measures the pushed tree against
+# HEAD, which is that tree, so even under the sweep setting the whole-tree
+# scope, with no range to hand it, names it withheld rather than clean.
 SWEEPING=""
 wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
-assert_eq "a lane configured to sweep the tree runs under the whole-tree scope, and refuses the replayed document" \
-  "rc=1 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
+assert_eq "under the sweep setting the whole-tree scope still withholds md-type by name" \
+  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_url "$SWEEPING" topic)"
 
-# The same setting under a scope this lane CAN bound. A range is narrower than
-# that sweep, so handing one over would answer a smaller question under the
-# setting's name: a document already malformed, untouched by the range, would
-# read clean. The lane keeps the sweep the project configured.
-outdated() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose malformed document predates the range
-  local __v="$1" r=""
-  new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\nCOMMIT_GUARDS_MD_SCOPE = "all"\n' >"$r/kendex.settings.toml"
-  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
-  q git -C "$r" add kendex.settings.toml DOC.md
-  # The document predates the guard, so it is committed with none running, and
-  # so is every push below: the fixture is the state, not a row's subject.
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a malformed document"
+# md-type asks what a change introduced, so it takes the range a push hands
+# it even where the project configured the sweep: at push the index equals
+# HEAD, and a sweep would measure every finding against itself and block
+# nothing. A README that gains a value table refuses the push; one that only
+# carries the table it already had passes with the finding inherited.
+tabled() { # VAR NAME ADDS [SKILL-SOURCE] — VAR gets a repo whose topic edits a README; ADDS=1 adds the table there
+  local __v="$1" r="" table='| Key | Default |\n|---|---|\n| poll | 30 |\n'
+  new_repo r "$2" "${4:-}"
+  cp -R "$DOCS_WRITING" "$r/.agents/skills/docs-writing"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\nCOMMIT_GUARDS_MD_SCOPE = "all"\n' >"$r/kendex.settings.toml"
+  printf '# Tool\n\nA tool for people.\n\n## Setup\n\n' >"$r/README.md"
+  [ "$3" = 1 ] || printf "$table" >>"$r/README.md"
+  q git -C "$r" add kendex.settings.toml README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
   q git -C "$r" checkout -q -b topic
-  printf 'unrelated\n' >"$r/other.txt"
-  q git -C "$r" add other.txt
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: a change touching no markdown"
-  # On the remote, so the ref line below carries a destination oid and the
-  # scope resolves to --against rather than a boundary walk.
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
-  printf 'more\n' >>"$r/other.txt"
-  q git -C "$r" add other.txt
-  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: another such change"
+  if [ "$3" = 1 ]; then printf "$table" >>"$r/README.md"; else printf '\nMore setup.\n' >>"$r/README.md"; fi
+  q git -C "$r" add README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: edit the README"
+  eval "$__v=\$r"
+}
+DOCS_WRITING="$SKILL_DIR/../docs-writing"
+FINDING_KEEP='s/ rule=[^ ]* / /'
+
+ADDED=""
+tabled ADDED table-added 1
+assert_eq "under the sweep setting a push that adds a value table to a README is refused" \
+  "rc=1 pre-push: step=against:<oid>;md-type: finding=value-table path=README.md type=readme line=7 count=1 baseline=0 introduced=yes section=Setup;md-type: summary=findings=1 introduced=1 unended=0 files=1 scope=range skipped=0;pre-push: result=1" \
+  "$(push_ref "$ADDED" topic | sed "$FINDING_KEEP")"
+
+INHERITED=""
+tabled INHERITED table-inherited 0
+assert_eq "and a push that edits a README carrying a table its base had passes, the finding inherited" \
+  "rc=0 pre-push: step=against:<oid>;md-type: finding=value-table path=README.md type=readme line=7 count=1 baseline=1 introduced=no section=Setup;md-type: summary=findings=1 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
+  "$(push_ref "$INHERITED" topic | sed "$FINDING_KEEP")"
+
+# md-type asks what the branch introduced, so a restack takes its baseline
+# from the history boundary, as changelog-entries does. The base gains
+# pkg/README.md with a value table, landed with no hook, after the remote
+# head; two dots from that head would hold it against the branch. The branch
+# edits README.md: cleanly, which pushes, or adding a table, which is refused
+# naming README.md alone.
+md_restacked() { # VAR NAME ADDS — VAR gets a restacked repo whose topic edits README.md; ADDS=1 adds a table there
+  local __v="$1" r="" table='| Key | Default |\n|---|---|\n| poll | 30 |\n'
+  new_repo r "$2"
+  cp -R "$DOCS_WRITING" "$r/.agents/skills/docs-writing"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n' >"$r/kendex.settings.toml"
+  printf '# Tool\n\nA tool for people.\n\n## Setup\n\nRun it.\n' >"$r/README.md"
+  q git -C "$r" add kendex.settings.toml README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" remote set-head origin main
+  q git -C "$r" checkout -q -b topic
+  if [ "$3" = 1 ]; then printf "\n$table" >>"$r/README.md"; else printf '\nMore setup.\n' >>"$r/README.md"; fi
+  q git -C "$r" add README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: edit the README"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
+  q git -C "$r" checkout -q main
+  mkdir -p "$r/pkg"
+  printf "# Pkg\n\nA package.\n\n## Setup\n\n$table" >"$r/pkg/README.md"
+  q git -C "$r" add pkg/README.md
+  q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: the base's README"
+  q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
+  q git -C "$r" checkout -q topic
+  q git -C "$r" rebase -q main
   eval "$__v=\$r"
 }
 
-OUTDATED=""
-outdated OUTDATED outdated
-assert_eq "and keeps that sweep where the push HAS a range, so a malformed document outside the range still refuses" \
-  "rc=1 pre-push: step=against:<oid>;md-format: summary=violations=1 files=1 scope=all skipped=0;pre-push: result=1" \
-  "$(push_ref "$OUTDATED" topic)"
+MD_RESTACKED=""
+md_restacked MD_RESTACKED md-restacked 0
+assert_eq "a restacked branch is not refused for a README its base added after the remote head" \
+  "rc=0 pre-push: step=against:<oid>:history:<oid>;md-type: summary=findings=0 introduced=0 unended=0 files=1 scope=range skipped=0;pre-push: result=0" \
+  "$(push_ref "$MD_RESTACKED" topic --force-with-lease)"
 
-# The must-fail control: a copy of the batch that hands the range over
-# whatever the lane's configured scope is. The range changed no markdown, so
-# the same document reads clean and the push goes through.
-SUBST="$TMP/.subst/commit-guards"
-mkdir -p "$(dirname "$SUBST")"
-cp -R "$SKILL_TEMPLATE" "$SUBST"
-SUBST_BEFORE="$(cat -- "$SUBST/scripts/commit-guards")"
-sed -i.bak 's#^    if \[ "$MD_BARE_SCOPE" = all \]; then$#    if false; then#' "$SUBST/scripts/commit-guards"
-rm -f -- "$SUBST/scripts/commit-guards.bak"
-assert_eq "the substituting edit took" "rewritten" \
-  "$(if [ "$SUBST_BEFORE" = "$(cat -- "$SUBST/scripts/commit-guards")" ]; then echo unchanged; else echo rewritten; fi)"
-
-SUBSTITUTED=""
-outdated SUBSTITUTED substituted "$SUBST"
-assert_eq "must-fail: with the range substituted for the configured sweep, that document reads clean and pushes" \
-  "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
-  "$(push_ref "$SUBSTITUTED" topic)"
+MD_OWN_TABLE=""
+md_restacked MD_OWN_TABLE md-own-table 1
+assert_eq "a restacked branch that adds a table to its own README is refused, and the base's is not named" \
+  "rc=1 pre-push: step=against:<oid>:history:<oid>;md-type: finding=value-table path=README.md type=readme line=9 count=1 baseline=0 introduced=yes section=Setup;md-type: summary=findings=1 introduced=1 unended=0 files=1 scope=range skipped=0;pre-push: result=1" \
+  "$(push_ref "$MD_OWN_TABLE" topic --force-with-lease | sed "$FINDING_KEEP")"
 
 # ------------------------------------------------- two dots against three
 #
@@ -829,7 +860,7 @@ assert_eq "must-fail: with the range substituted for the configured sweep, that 
 # so both fixtures below diverge on purpose, each in the shape where the
 # difference decides.
 
-# md-format's shape: the destination FIXED the document and this branch was
+# md-type's shape: the destination FIXED the document and this branch was
 # rewritten off the fork point, so it still carries the malformed one. Two
 # dots see DOC.md differ between the destination's tree and HEAD and judge it.
 # Three dots ask what the branch adds since the fork, where DOC.md is
@@ -838,15 +869,15 @@ assert_eq "must-fail: with the range substituted for the configured sweep, that 
 reverting() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push would undo a fix
   local __v="$1" r="" fork=""
   new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-format"\n' >"$r/kendex.settings.toml"
-  printf '# Title\n\nA paragraph that is hard\nwrapped over two lines.\n' >"$r/DOC.md"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "md-type"\n' >"$r/kendex.settings.toml"
+  printf '# Title\n\n```\nan unclosed fence\n' >"$r/DOC.md"
   q git -C "$r" add kendex.settings.toml DOC.md
   q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: seed with a malformed document"
   fork="$(git -C "$r" rev-parse HEAD)"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin main
-  # The destination's branch: the document reflowed, which md-format passes.
+  # The destination's branch: the fence closed, which md-type passes.
   q git -C "$r" checkout -q -b topic
-  printf '# Title\n\nA paragraph that is hard wrapped over two lines.\n' >"$r/DOC.md"
+  printf '# Title\n\n```\na closed fence\n```\n' >"$r/DOC.md"
   q git -C "$r" add DOC.md
   q git -C "$r" -c core.hooksPath=/dev/null commit -q -m "feat: reflow the document"
   q git -C "$r" -c core.hooksPath=/dev/null push -q origin topic
@@ -862,7 +893,7 @@ reverting() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose force push wou
 REVERTING=""
 reverting REVERTING reverting
 assert_eq "a force push that would land a malformed document over the destination's fix is refused" \
-  "rc=1 pre-push: step=against:<oid>;md-format: summary=violations=1 files=1 scope=range skipped=0;pre-push: result=1" \
+  "rc=1 pre-push: step=against:<oid>;md-type: summary=findings=0 introduced=0 unended=1 files=1 scope=range skipped=0;pre-push: result=1" \
   "$(push_ref "$REVERTING" topic --force-with-lease)"
 
 # md-refs' shape: the destination is AHEAD, so the force push rolls it back and
@@ -913,7 +944,7 @@ assert_eq "the two-dot edit took" "rewritten" \
 DOTTED_FORMAT=""
 reverting DOTTED_FORMAT dotted-format "$DOTS"
 assert_eq "must-fail: with three dots, the reverted document is outside the range and pushes" \
-  "rc=0 pre-push: step=against:<oid>;md-format: no-match=range:*.md;pre-push: result=0" \
+  "rc=0 pre-push: step=against:<oid>;md-type: no-match=range:*.md;pre-push: result=0" \
   "$(push_ref "$DOTTED_FORMAT" topic --force-with-lease)"
 
 DOTTED_REFS=""

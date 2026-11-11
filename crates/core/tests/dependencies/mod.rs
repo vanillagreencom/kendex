@@ -1,7 +1,8 @@
 //! One item requiring another: what installs, what is held back, and what
 //! goes away. The manifest records choices — what was asked for, which
 //! optional extras were taken, what stays removed — and every plan derives
-//! the rest, so losing the lock loses nothing.
+//! the rest from readable catalogs. Offline removal also needs the lock's
+//! recorded ancestry.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -17,6 +18,8 @@ use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{Lock, Reason, load as load_lock, lock_path};
 use kendex_core::manifest::{self, ManifestFile};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
+
+mod compact_lock;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -285,6 +288,54 @@ fn a_dependency_the_catalog_lacks_is_a_finding() {
     }
 }
 
+/// An optional dependency chosen of a skill is weighed against what the
+/// skill's SKILL.md offers. One whose frontmatter will not parse offers
+/// nothing, so a choice of it is a finding and the declarations read
+/// incomplete rather than the choice dropping unsaid. One whose file will
+/// not read at all is not weighed: what it offers is unknown, so no choice
+/// of it is reported as unoffered, and the declaration stays incomplete.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_chosen_extra_is_weighed_against_what_the_skill_offers() {
+    use kendex_core::engine::DeclarationStatus::Incomplete;
+    let rows: [(&str, &[u8], bool, kendex_core::engine::DeclarationStatus); 3] = [
+        (
+            "frontmatter reads",
+            b"---\nname: dev\ndescription: the dev skill\n---\nBody.\n",
+            true,
+            Incomplete,
+        ),
+        (
+            "frontmatter unterminated",
+            b"---\nname: dev\ndescription: the dev skill\nBody.\n",
+            true,
+            Incomplete,
+        ),
+        (
+            "file not text",
+            b"---\nname: dev\ndescription: the dev skill\ndependencies:\n  optional: [extra]\n---\nBody \xFF\xFE.\n",
+            false,
+            Incomplete,
+        ),
+    ];
+    for (case, bytes, unoffered, expected) in rows {
+        let f =
+            fixture("[skills.dev]\nsource = \"cat\"\n[optional-dependencies]\ndev = [\"extra\"]\n");
+        fs::write(f.source.join("skills/dev/SKILL.md"), bytes).unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(
+            report.warnings.iter().any(|w| w.kind == ItemKind::Skill
+                && w.name == "dev"
+                && w.message.contains("extra")),
+            unoffered,
+            "{case}: {:?}",
+            report.warnings
+        );
+        let (_, status) = kendex_core::engine::planned_closure(&f.env, &f.scope, &manifest_of(&f));
+        assert_eq!(status, expected, "{case}");
+    }
+}
+
 /// A skill's tools can hold agents at different scopes. Dependencies use
 /// the capability table and report an unavailable companion on the skill.
 #[test]
@@ -442,4 +493,6 @@ mod agent_skills;
 mod hook_skills;
 mod hooks;
 mod more;
+mod removal_provenance;
+mod skill_hooks;
 mod two_catalogs;

@@ -104,63 +104,49 @@ if [[ "$tag" =~ $tag_shape ]]; then
   dir="${BASH_REMATCH[1]}"
   version="${BASH_REMATCH[2]}"
 fi
-# guard tag: begin
 if [[ -z "$dir" ]]; then
   say tag "$tag" "a release tag is <unscoped-name>-v<version>, for example pi-qol-v2.1.0; nothing was published" >&2
   exit 1
 fi
-# guard tag: end
 name="$scope/$dir"
 id="$name@$version"
 path="pi-extensions/$dir"
 
 tagged="$(git -C "$root" rev-parse --verify --quiet "refs/tags/$tag^{commit}")" || tagged=""
-# guard absent: begin
 if [[ -z "$tagged" ]]; then
   say absent "$tag" "no tag $tag in this checkout; push the tag, or fetch every tag, then run again" >&2
   exit 1
 fi
-# guard absent: end
 
-# guard off-main: begin
 if ! git -C "$root" merge-base --is-ancestor "$tagged" "$main_ref"; then
   say off-main "$tagged" "$tag names a commit that is not on $main_ref; npm-deploy tags only a commit the default branch holds, so nothing was published" >&2
   exit 1
 fi
-# guard off-main: end
 
 manifest="$(git -C "$root" show "$tagged:$path/package.json" 2>/dev/null)" || manifest=""
-# guard package: begin
 if [[ -z "$manifest" ]] || ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$manifest"; then
   say package "$dir" "$path/package.json at $tag is missing or not a JSON object" >&2
   exit 1
 fi
-# guard package: end
 declared_name="$(jq -r '.name // ""' <<<"$manifest")"
 declared_version="$(jq -r '.version // ""' <<<"$manifest")"
 prepack="$(jq -r '.scripts.prepack // ""' <<<"$manifest")"
 
-# guard name: begin
 if [[ "$declared_name" != "$name" ]]; then
   say name "$declared_name" "$path/package.json names $declared_name, the tag names $name" >&2
   exit 1
 fi
-# guard name: end
 
-# guard version: begin
 if [[ "$declared_version" != "$version" ]]; then
   say version "$declared_version" "$path/package.json declares $declared_version at $tag, the tag names $version; nothing was published" >&2
   exit 1
 fi
-# guard version: end
 
 npm_version="$(npm --version)" || npm_version=""
-# guard npm: begin
 if ! numeric_at_least "$npm_version" "$npm_floor"; then
   say npm "$npm_version" "npm trusted publishing needs npm $npm_floor or later" >&2
   exit 1
 fi
-# guard npm: end
 
 scratch="$(mktemp -d)" || { say scratch mktemp-failed >&2; exit 1; }
 trap 'rm -rf -- "${scratch:?}"' EXIT
@@ -182,23 +168,19 @@ registry() {
 # lookup SPEC FIELD WANT — registry, refusing a failed lookup.
 lookup() {
   registry "$@"
-  # guard lookup: begin
   if [[ "$status" -eq 2 ]]; then
     say lookup "$1" "cannot tell whether npm serves $1:" >&2
     cat -- "$view_err" >&2
     exit 1
   fi
-  # guard lookup: end
 }
 
 lookup "$name" name "$name"
-# guard first-release: begin
 if [[ "$status" -eq 1 ]]; then
   say first-release "$name" "npm serves no version of $name, and npm trusted publishing cannot make a package's first publish." \
     "An npm organization admin publishes it once by hand and adds its trusted publisher (the npm-deploy skill § Trusted publishing); nothing was published" >&2
   exit 1
 fi
-# guard first-release: end
 
 lookup "$id" version "$version"
 # guard served: begin
@@ -213,13 +195,11 @@ fi
 # HEAD lacks reads as a differing tree.
 tagged_tree="$(git -C "$root" rev-parse --verify --quiet "$tagged:$path")" || tagged_tree=""
 head_tree="$(git -C "$root" rev-parse --verify --quiet "HEAD:$path")" || head_tree=""
-# guard moved: begin
 if [[ "$tagged_tree" != "$head_tree" ]]; then
   say moved "$tag" "$path changed on this checkout's HEAD since $tag, and npm provenance would name HEAD as the source of the tag's package." \
     "Land a new version bump and tag it; a second run of this tag cannot publish. Nothing was published" >&2
   exit 1
 fi
-# guard moved: end
 
 if [[ "$dry_run" -eq 1 ]]; then
   say dry-run "$id"

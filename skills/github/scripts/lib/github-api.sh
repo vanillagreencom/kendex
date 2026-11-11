@@ -249,51 +249,71 @@ gh_rest() {
 
     check_gh_auth || return 1
 
+    # Auth may update the caller's environment; isolate only request cleanup.
+    (
+    local rest_errors
+    rest_errors=$(mktemp) || { github_error 'github-rest: category=unknown'; return 1; }
+    trap 'rm -f -- "$rest_errors"' EXIT
+
     while [ $attempt -le $max_retries ]; do
-        local response
+        local response diagnostic
         local exit_code=0
 
-        response=$(gh api "$endpoint" "$@" 2>&1) || exit_code=$?
+        # gh's debug modes mix successful HTTP traces into stderr evidence.
+        # https://cli.github.com/manual/gh_help_environment
+        response=$(GH_DEBUG= DEBUG= gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?
 
         if [ $exit_code -eq 0 ]; then
             echo "$response"
             return 0
         fi
 
-        # Handle errors
-        case "$response" in
-        *"401"* | *"Unauthorized"*)
-            github_error 'GitHub authentication failed'
-            return 1
-            ;;
-        *"403"* | *"rate limit"*)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
+        # gh emits successful pages on stdout before a later page can fail.
+        # Its failure diagnostic is on stderr: page bodies are never evidence.
+        # https://github.com/cli/cli/blob/trunk/pkg/cmd/api/api.go
+        diagnostic=$(cat -- "$rest_errors") || { github_error 'github-rest: category=unknown'; return 1; }
+        response="$diagnostic"
+        local status="" category=unknown retry=true
+        local status_pattern='HTTP(/[0-9.]+)?[[:space:]]+([0-9]{3})'
+        local body_status_pattern='"status"[[:space:]]*:[[:space:]]*"?([0-9]{3})'
+        if [[ "$response" =~ $status_pattern ]]; then
+            status="${BASH_REMATCH[2]}"
+        elif [[ "$response" =~ $body_status_pattern ]]; then
+            status="${BASH_REMATCH[1]}"
+        fi
+
+        # GitHub documents these response signals at:
+        # https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
+        # A 403 alone proves neither quota exhaustion nor missing permission.
+        case "$status" in
+        401) category=authentication; retry=false ;;
+        404) category=not-found; retry=false ;;
+        403 | 429)
+            [ "$status" != 403 ] || retry=false
+            case "$response" in
+            *"API rate limit exceeded"*) category=primary-rate-limit; retry=true ;;
+            *"secondary rate limit"*) category=secondary-rate-limit; retry=true ;;
+            *"Resource not accessible by integration"* | *"Resource not accessible by personal access token"*)
+                category=permission; retry=false
+                ;;
+            esac
+            if grep -Eiq '^x-ratelimit-remaining:[[:space:]]*0[[:space:]]*$' <<<"$response"; then
+                category=primary-rate-limit
+                retry=true
             fi
-            github_error 'GitHub rate limited'
-            return 1
-            ;;
-        *"404"* | *"Not Found"*)
-            github_error 'Resource not found'
-            return 1
-            ;;
-        *)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
-            fi
-            local clean_error
-            clean_error=$(echo "$response" | head -c 200 | tr '\n' ' ')
-            github_error "$clean_error"
-            return 1
             ;;
         esac
+        if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then
+            sleep $retry_delay
+            retry_delay=$((retry_delay * 2))
+            attempt=$((attempt + 1))
+            continue
+        fi
+        # Callers parse the category; arbitrary failure bodies may carry secrets.
+        github_error "github-rest: category=$category"
+        return 1
     done
+    )
 }
 
 # One REST collection, every page merged into one array. `--paginate` prints

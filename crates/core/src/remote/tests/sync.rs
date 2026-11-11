@@ -4,10 +4,13 @@
 use std::fs;
 
 use super::{REPO, fixture};
+use crate::env::Env;
+use crate::error::CoreError;
 use crate::manifest;
 use crate::model::Scope;
 use crate::remote::{
-    cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_source, sync_sources,
+    Synced, cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_record_sources,
+    sync_source, sync_sources,
 };
 
 #[test]
@@ -126,36 +129,116 @@ fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
 /// A refresh fetches what this scope installs from, not every catalog the
 /// manifest happens to name. A seeded manifest always carries the default
 /// catalog, so fetching all of them lets a repository nobody installed from
-/// fail — or merely slow — every refresh.
+/// fail — or merely slow — every refresh. Both refreshes over the sources in
+/// use, the lenient and the strict, read an item's and a bundle's source.
 #[test]
 fn a_refresh_skips_a_catalog_nothing_installs_from() {
-    let f = fixture();
+    type Refresh = fn(&Env, &Scope, &manifest::Manifest) -> crate::error::Result<Synced>;
+    let refreshes: [(&str, Refresh); 2] = [
+        ("lenient", |env, scope, manifest| {
+            Ok(sync_declared_sources(env, scope, manifest))
+        }),
+        ("strict", sync_record_sources),
+    ];
+    for user in ["item", "bundle"] {
+        for (refresh, run) in refreshes {
+            let case = format!("{refresh} {user}");
+            // Each pair gets its own cache, so only its own fetch can fill it.
+            let f = fixture();
+            let mut manifest = manifest::seed(&Scope::Global, &[]);
+            manifest.sources.insert(
+                "cat".to_owned(),
+                manifest::SourceDecl {
+                    repo: Some(REPO.to_owned()),
+                    path: None,
+                    rev: None,
+                    enabled: true,
+                },
+            );
+            // The seeded default is unreachable and nothing declares anything from it.
+            manifest
+                .sources
+                .get_mut(manifest::DEFAULT_SOURCE_NAME)
+                .unwrap()
+                .repo = Some("owner/gone".to_owned());
+            let users = match user {
+                "item" => &mut manifest.skills,
+                _ => &mut manifest.bundles,
+            };
+            users.insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
+
+            let synced = run(&f.env, &Scope::Global, &manifest);
+            assert!(
+                synced.as_ref().is_ok_and(|s| s.notes.is_empty()),
+                "{case}: {synced:?}"
+            );
+            assert_eq!(
+                cache_head(&f.env, REPO, None).map(|h| h.len()),
+                Some(7),
+                "{case}"
+            );
+            assert!(
+                sync_sources(&f.env, &manifest).is_err(),
+                "{case}: the unused catalog is still reachable, so this proves nothing"
+            );
+        }
+    }
+}
+
+/// One catalog, `cat`, that one installed skill comes from.
+fn one_catalog_in_use(repo: &str, rev: Option<&str>) -> manifest::Manifest {
     let mut manifest = manifest::seed(&Scope::Global, &[]);
+    manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
     manifest.sources.insert(
         "cat".to_owned(),
         manifest::SourceDecl {
-            repo: Some(REPO.to_owned()),
+            repo: Some(repo.to_owned()),
             path: None,
-            rev: None,
+            rev: rev.map(str::to_owned),
             enabled: true,
         },
     );
-    // The seeded default is unreachable and nothing declares anything from it.
-    manifest
-        .sources
-        .get_mut(manifest::DEFAULT_SOURCE_NAME)
-        .unwrap()
-        .repo = Some("owner/gone".to_owned());
     manifest
         .skills
         .insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
+    manifest
+}
 
-    assert!(
-        sync_sources(&f.env, &manifest).is_err(),
-        "the unused catalog is still reachable, so this proves nothing"
-    );
-    assert!(sync_declared_sources(&f.env, &manifest).notes.is_empty());
-    assert_eq!(cache_head(&f.env, REPO, None).unwrap().len(), 7);
+/// The strict refresh over the sources in use narrows which sources it
+/// reaches for, not what a failure of one of them means: each stays the
+/// error the all-source refresh returns.
+#[test]
+fn a_strict_refresh_of_the_sources_in_use_keeps_each_resolution_failure() {
+    type Expected = fn(&CoreError) -> bool;
+    let unknown_pin = "0".repeat(40);
+    let rows: [(&str, &str, Option<&str>, Expected); 2] = [
+        ("never fetched", "owner/gone", None, |e| {
+            matches!(e, CoreError::GitFailed { .. })
+        }),
+        ("unavailable pin", REPO, Some(&unknown_pin), |e| {
+            matches!(e, CoreError::PinUnavailable { .. })
+        }),
+    ];
+    for (case, repo, rev, expected) in rows {
+        let f = fixture();
+        let result = sync_record_sources(&f.env, &Scope::Global, &one_catalog_in_use(repo, rev));
+        assert!(result.as_ref().is_err_and(expected), "{case}: {result:?}");
+    }
+}
+
+/// An install record this build cannot read names no source for the strict
+/// refresh to add, and the refresh does not refuse over it: the planner
+/// reads the same file and reports it with its cause.
+#[test]
+fn a_strict_refresh_does_not_refuse_over_an_unreadable_record() {
+    let f = fixture();
+    let record = crate::lock::lock_path(&f.env, &Scope::Global);
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(&record, "not a record").unwrap();
+
+    let synced = sync_record_sources(&f.env, &Scope::Global, &one_catalog_in_use(REPO, None));
+    assert!(synced.is_ok(), "{synced:?}");
+    assert!(cache_head(&f.env, REPO, None).is_some());
 }
 
 /// A catalog out of reach must not strand the items that came from every
@@ -182,7 +265,7 @@ fn a_refresh_reports_an_unreachable_catalog_and_resolves_the_rest() {
     }
     manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
 
-    let notes = sync_declared_sources(&f.env, &manifest).notes;
+    let notes = sync_declared_sources(&f.env, &Scope::Global, &manifest).notes;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("gone"), "{notes:?}");
     // The reachable catalog resolved despite the other one failing first.
@@ -211,7 +294,7 @@ fn a_busy_source_is_one_failure_instead_of_one_pending_note_per_package() {
             .insert(name.to_owned(), manifest::ItemDecl::from_source("cat"));
     }
     let guard = super::store::lock_repo(&f.env, &super::key_for(&f.env), super::REPO).unwrap();
-    let synced = sync_declared_sources(&f.env, &manifest);
+    let synced = sync_declared_sources(&f.env, &Scope::Global, &manifest);
     drop(guard);
 
     assert_eq!(synced.failures.len(), 1, "{:?}", synced.failures);

@@ -233,9 +233,14 @@ fn install(
     bytes: &[u8],
     pre: Pre,
 ) -> PlannedOp {
+    let state = if item.kind == crate::model::ItemKind::Hook && !item.enabled {
+        "disabled "
+    } else {
+        ""
+    };
     PlannedOp {
         description: format!(
-            "Install {} {} for {}{}",
+            "Install {state}{} {} for {}{}",
             item.kind.name(),
             item.name,
             item.harness.display_name(),

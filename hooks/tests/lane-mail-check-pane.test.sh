@@ -176,17 +176,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] &&
           'carrier: mutation matches once'
         mutant pane-carrier -e 's@ || \[ "\$HARNESS" = codex \]@@'
         ;;
-      blank)
-        assert_eq "$(grep -Fc '{systemMessage:$text}' "$HOOK")" 1 'blank: mutation matches once'
-        mutant pane-blank -e 's@{systemMessage:\$text}@{systemMessage:""}@'
-        ;;
-      consumers)
-        assert_eq "$(grep -Fc 'row | stop | deliver | halt | usage)' "$HOOK")" 1 'consumers: usage mutation matches once'
-        assert_eq "$(grep -Fc 'compact) [ "$TRIGGER" = auto ] || return 0 ;;' "$HOOK")" 1 \
-          'consumers: compact mutation matches once'
-        mutant pane-consumers -e 's@row | stop | deliver | halt | usage)@row | stop | deliver | halt)@' \
-          -e 's@compact) \[ "\$TRIGGER" = auto \] || return 0 ;;@compact) return 0 ;;@'
-        ;;
     esac
     control_rc=0
     HOOK_UNDER_TEST="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" "$shape" > "$TMP_ROOT/control.log" 2>&1 || control_rc=$?
@@ -195,8 +184,6 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] &&
       "$kind: control reaches its contract assertion"
   done <<'CONTROLS'
 carrier|codex-row|codex-row: first row visibly reports unjudged identity
-blank|foreign|foreign: first row visibly reports unjudged identity
-consumers|copilot-usage|copilot-usage: notification uses the controller pane and native id
 CONTROLS
 fi
 

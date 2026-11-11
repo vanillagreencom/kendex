@@ -5,7 +5,8 @@ summary: "Guides a delegated desktop assistant through user decisions, checked r
 license: MIT
 user-invocable: true
 dependencies:
-  required: [communication, mailbox, orch, slack]
+  required: [commit-guards, communication, docs-writing, mailbox, orch, slack]
+  optional: [linear]
   agents: [cpa, legal, operator, auditor, researcher, scout, reviewer-arch, publicist]
   commands:
     - command: agent-browser
@@ -103,11 +104,13 @@ tags: [assistant, productivity]
 
 # Jarvis
 
+Jarvis is the main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the computer that runs Jarvis. A Jarvis satellite runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
+
 ## Setup
 
-Use the [home layout](references/home-layout.md) for the assistant home.
+Jarvis home is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
 
-The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the assistant home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
+The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
 
 Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
 
@@ -115,7 +118,7 @@ kendex does not insert package text into `AGENTS.md`. The fixed persona path is 
 
 ### Plain folder
 
-On first load, check the folder's `AGENTS.md`. If it lacks the persona, offer once, in one line, to add the text from [persona.md](persona.md). Add it only after the user agrees. The persona then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
+On first load, check the folder's `AGENTS.md`. If no line in it routes to [persona.md](persona.md), offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`: the installed file stays its one copy. The route then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
 
 ### App-managed home
 
@@ -148,7 +151,7 @@ Read the linked workflow or reference for the task before acting.
 | Check a result, report evidence or automate repeated work | [references/verification.md](references/verification.md) |
 | Reply, request a decision, report progress or use the user's input devices | [communication](../communication/SKILL.md) and the [local delivery routes](references/communication.md) |
 | Start a continuing session, reconcile open work or transfer control | [workflows/session.md](workflows/session.md) |
-| Report committed Markdown growth for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
+| Report committed Markdown growth and shape for explicit repositories and dates | [workflows/docs-audit.md](workflows/docs-audit.md) |
 | Run the weekly efficiency audit | [workflows/efficiency-audit.md](workflows/efficiency-audit.md) |
 | Save or revise a durable fact, preference, ruling or lesson | [references/memory.md](references/memory.md) |
 | Control a desktop or terminal, recover work or manage scratch files | [references/computer-use.md](references/computer-use.md) |
@@ -157,3 +160,4 @@ Read the linked workflow or reference for the task before acting.
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
+| Use Jarvis Voice on a Jarvis satellite, or forward a request to Jarvis main | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |

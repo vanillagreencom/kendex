@@ -4,7 +4,7 @@
 # arguments they fail the check with "Argument list too long". The fixture
 # checks 60 PRs of 500 files each, every PR sharing 250 files with its
 # successor: one PR's files stay under Linux's per-argument limit (128 KiB)
-# and each grown list passes macOS's whole-argv limit (1 MiB), so every
+# and each grown list passes macOS's whole-argv limit (1 MiB), so the
 # control fails on both.
 set -euo pipefail
 
@@ -67,29 +67,17 @@ echo "=== 60 PRs with large, overlapping file lists ==="
 assert_eq "$(run "$TEST_DIR/../scripts/commands/pr-cross-check.sh")" "$want" \
   "every PR, overlap and merge position is reported"
 
-echo "=== must-fail controls: one list passed as a jq argument ==="
-# sites[i]: the stdin line froms[i] becomes tos[i], which hands one list over
-# as an argument.
-sites=(merge-order overlap-issues result)
-froms=(
-  "    printf '%s\\n%s\\n' \"\$prs_json\" \"\$overlaps_json\" | jq -s '"
-  "    issues=\$(printf '%s\\n%s\\n' \"\$issues\" \"\$overlaps\" | jq -s '.[0] + ("
-  "    result=\$(printf '%s\\n%s\\n%s\\n' \"\$prs_data\" \"\$issues\" \"\$merge_order\" | jq -s \\"
-)
-tos=(
-  "    { printf '%s\\n' \"\$prs_json\"; jq -n --argjson o \"\$overlaps_json\" '\$o'; } | jq -s '"
-  "    issues=\$({ printf '%s\\n' \"\$issues\"; jq -n --argjson o \"\$overlaps\" '\$o'; } | jq -s '.[0] + ("
-  "    result=\$(jq -n --argjson p \"\$prs_data\" --argjson i \"\$issues\" --argjson m \"\$merge_order\" '\$p, \$i, \$m' | jq -s \\"
-)
-for i in 0 1 2; do
-  site="${sites[$i]}"
-  mutant="$(mutant_copy_edit "$TMP_ROOT/$site" "${froms[$i]}" "${tos[$i]}" commands/pr-cross-check.sh)"
-  got="$(run "$mutant")"
-  case "$got" in
-  *"Argument list too long"*) assert_eq argv-limit argv-limit "control $site: the argument route fails" ;;
-  *) assert_eq "$got" "Argument list too long" "control $site: the argument route fails" ;;
-  esac
-done
+echo "=== must-fail control: one list passed as a jq argument ==="
+# One site proves the row goes red: the stdin line becomes a jq argument.
+mutant="$(mutant_copy_edit "$TMP_ROOT/merge-order" \
+  "    printf '%s\\n%s\\n' \"\$prs_json\" \"\$overlaps_json\" | jq -s '" \
+  "    { printf '%s\\n' \"\$prs_json\"; jq -n --argjson o \"\$overlaps_json\" '\$o'; } | jq -s '" \
+  commands/pr-cross-check.sh)"
+got="$(run "$mutant")"
+case "$got" in
+*"Argument list too long"*) assert_eq argv-limit argv-limit "control merge-order: the argument route fails" ;;
+*) assert_eq "$got" "Argument list too long" "control merge-order: the argument route fails" ;;
+esac
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

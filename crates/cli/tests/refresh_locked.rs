@@ -31,7 +31,23 @@ pub(crate) fn changed(world: &World) -> BTreeSet<String> {
 
 #[allow(clippy::unwrap_used)]
 pub(crate) fn record(world: &World) -> serde_json::Value {
-    serde_json::from_str(&fs::read_to_string(world.project.join(RECORD)).unwrap()).unwrap()
+    // These pin/hold suites compare domain provenance, not storage layout.
+    // A predecessor fixture and its authorized rewrite have the same view.
+    let mut lock = kendex_core::lock::load(&world.project.join(RECORD)).unwrap();
+    lock.version = kendex_core::lock::LOCK_VERSION;
+    let stored: serde_json::Value =
+        serde_json::from_slice(&fs::read(world.project.join(RECORD)).unwrap()).unwrap();
+    let mut expanded = serde_json::to_value(lock).unwrap();
+    // Keep positions as committed, not re-rooted: legacy fixture writers
+    // consume this same view and v11 already requires portable positions.
+    for (key, entry) in expanded["entries"].as_object_mut().unwrap() {
+        for field in ["emitted", "outputStyle"] {
+            if let Some(position) = stored["entries"][key].get(field) {
+                entry[field] = position.clone();
+            }
+        }
+    }
+    expanded
 }
 
 /// The catalog's checked-out commit.

@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### 2.5.1
+
+- Session auto-rename on a GitHub Copilot enterprise login sends its request to the enterprise API host, as Pi's own requests do. It used the individual host, which refused the request, so the session kept its fallback name.
+- The session auto-rename request asks for the lowest reasoning effort the naming model accepts, and turns reasoning off where the model allows it. A reasoning model previously reasoned at its default effort and could spend all of `sessionAutoRename.maxTokens` before it wrote a title.
+- The thinking timer shows the elapsed time on the hidden-thinking line again. Pi 1.0.1 wraps that label in a mouse region, and the timer looked only for a bare label, so it showed no time.
+
 ### 2.5.0
 
 - Add an optional gateway privacy setting for main-agent and QOL model requests through OpenRouter and Vercel AI Gateway. It requires zero data retention and no prompt training while keeping other routing options. On a gateway session model, QOL uses Pi's documented session hooks to write compaction and branch summaries with these fields. A failed protected summary reports the provider error and cancels instead of falling back to Pi's unprotected summary. Error reports remain available when compaction notices are off and in headless sessions.

@@ -8,6 +8,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+VERIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Git with gh's credentials for a GitHub SSH remote or URL.
+GIT_AUTH="$VERIFY_LIB_DIR/../git-https-auth"
 
 # Colors for progress output (stderr)
 RED='\033[0;31m'
@@ -19,6 +22,9 @@ NC='\033[0m'
 # Global state
 VERIFY_DIR=""
 TEMP_BRANCH=""
+VERIFY_ROOT=""
+BRANCH_OWNED=false
+WORKTREE_ADD_ATTEMPTED=false
 START_TIME=""
 STEP=0
 TOTAL_STEPS=4
@@ -63,16 +69,85 @@ update_result() {
     RESULTS_JSON=$(echo "$RESULTS_JSON" | jq "$path = $value")
 }
 
+# Fetch REF until FETCH_HEAD is OID, the commit gh names for it. Each
+# configured remote is tried first, over the transport and host the user
+# already reaches it by (an SSH origin, a GitHub Enterprise remote), then the
+# repository's own URL as gh reported it. Only a fetch that delivers OID
+# counts, so a fork or another host serving the same ref name never does.
+fetch_verified() { # URL REF OID
+    local url="$1" ref="$2" oid="$3" source sources
+    sources=$(git remote) || sources=""
+    for source in $sources "$url"; do
+        if GIT_TERMINAL_PROMPT=0 "$GIT_AUTH" fetch --quiet "$source" "$ref" 2>/dev/null \
+            && [ "$(git rev-parse --verify --quiet 'FETCH_HEAD^{commit}')" = "$oid" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Git's own spelling of VERIFY_DIR, printed when Git can name it. Git records
+# a checkout under the real path it resolves, which Git for Windows writes as
+# C:/..., while `pwd -P` under its MSYS bash gave /tmp/...; so the inventory
+# is matched against Git's answer, not the shell's. A directory with no .git
+# file holds no checkout Git can answer for, and prints nothing.
+verify_dir_git_spelling() {
+    [ -f "$VERIFY_DIR/.git" ] || return 0
+    git -C "$VERIFY_DIR" rev-parse --show-toplevel
+}
+
 cleanup() {
-    local exit_code=$?
-    cd "$PROJECT_ROOT" 2>/dev/null || true
-    if [ -n "$VERIFY_DIR" ] && [ -d "$VERIFY_DIR" ]; then
-        git worktree remove "$VERIFY_DIR" --force 2>/dev/null || rm -rf "$VERIFY_DIR"
+    local exit_code="${1:-$?}" registered="" record git_spelling
+    trap - EXIT INT TERM
+    # Leave the checkout before Git removes it: Windows holds a process's cwd.
+    if ! cd -- "$PROJECT_ROOT"; then
+        echo "verify-cleanup: operation=project-directory root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+        [ "$exit_code" -ne 0 ] || exit_code=1
+        exit "$exit_code"
     fi
-    if [ -n "$TEMP_BRANCH" ]; then
-        git branch -D "$TEMP_BRANCH" 2>/dev/null || true
+    # A failed add can still register the checkout. Git's documented NUL
+    # inventory (available before our Git 2.41 minimum) decides its teardown;
+    # an unread inventory or failed removal grants no raw-deletion fallback.
+    if [ "$WORKTREE_ADD_ATTEMPTED" = true ]; then
+        if ! git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$VERIFY_ROOT/worktrees"; then
+            echo "verify-cleanup: operation=inventory root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+            exit "$exit_code"
+        fi
+        # An unknown spelling keeps the scratch: removing it could strand a
+        # registration this run cannot name.
+        if ! git_spelling=$(verify_dir_git_spelling); then
+            echo "verify-cleanup: operation=identity root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+            exit "$exit_code"
+        fi
+        while IFS= read -r -d '' record; do
+            case "$record" in
+                "worktree $VERIFY_DIR") registered="$VERIFY_DIR" ;;
+                "worktree $git_spelling") [ -z "$git_spelling" ] || registered="$git_spelling" ;;
+            esac
+        done <"$VERIFY_ROOT/worktrees"
+        if [ -n "$registered" ]; then
+            if ! git -C "$PROJECT_ROOT" worktree remove --force "$registered"; then
+                echo "verify-cleanup: operation=worktree-remove root=[$VERIFY_ROOT] branch=[$TEMP_BRANCH] worktree=[$VERIFY_DIR]" >&2
+                [ "$exit_code" -ne 0 ] || exit_code=1
+                exit "$exit_code"
+            fi
+        fi
     fi
-    exit $exit_code
+    if [ "$BRANCH_OWNED" = true ]; then
+        if ! git -C "$PROJECT_ROOT" branch -D "$TEMP_BRANCH" >&2; then
+            echo "verify-cleanup: operation=branch-delete branch=[$TEMP_BRANCH]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+        fi
+    fi
+    if [ -n "$VERIFY_ROOT" ]; then
+        if ! rm -rf -- "$VERIFY_ROOT"; then
+            echo "verify-cleanup: operation=scratch-remove root=[$VERIFY_ROOT]" >&2
+            [ "$exit_code" -ne 0 ] || exit_code=1
+        fi
+    fi
+    exit "$exit_code"
 }
 
 output_results() {
@@ -270,17 +345,6 @@ run_stack() {
     fi
 }
 
-# ── Stale Worktree Cleanup ───────────────────────────────────────────
-
-cleanup_stale_verifications() {
-    for wt in /tmp/gh-verify-*; do
-        [ -d "$wt" ] || continue
-        if [ "$(find "$wt" -maxdepth 0 -mmin +60 2>/dev/null)" ]; then
-            git worktree remove "$wt" --force 2>/dev/null || rm -rf "$wt"
-        fi
-    done
-}
-
 # ── Main: Merge Simulation + Build/Test ──────────────────────────────
 
 verify_prs() {
@@ -291,13 +355,7 @@ verify_prs() {
         exit 1
     fi
 
-    cleanup_stale_verifications
-
     START_TIME=$(date +%s)
-    TEMP_BRANCH="verify/cross-check-$$"
-    VERIFY_DIR="/tmp/gh-verify-$$"
-
-    trap cleanup EXIT INT TERM
     init_results
 
     RESULTS_JSON=$(echo "$RESULTS_JSON" | jq --argjson order \
@@ -307,13 +365,67 @@ verify_prs() {
 # Create verification worktree
     progress "Creating verification worktree..."
 
-    local default_branch
-    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
-    default_branch="${default_branch:-main}"
+    # The PR numbers come from the repository `gh pr list` selects, host
+    # included (GH_REPO and GH_HOST, then gh's default, then the remotes),
+    # which a fork's origin is not. `gh pr view` selects the same one; its PR
+    # URL names that host and repository, and gh names every commit fetched.
+    local pr_url host owner name repo_url base_json base_ref base_oid
+    pr_url=$(gh pr view "${pr_nums[0]}" --json url --jq .url 2>/dev/null) || pr_url=""
+    host="${pr_url#https://}"
+    host="${host%%/*}"
+    name="${pr_url#https://"$host"/}"
+    name="${name%/pull/"${pr_nums[0]}"}"
+    owner="${name%%/*}"
+    name="${name#*/}"
+    if [ -z "$host" ] || [ -z "$owner" ] || [ -z "$name" ] \
+        || [ "$pr_url" != "https://$host/$owner/$name/pull/${pr_nums[0]}" ] || [ "$name" != "${name%%/*}" ]; then
+        add_issue "high" "repository_unresolved" "Failed to resolve the repository PR #${pr_nums[0]} belongs to"
+        output_results
+        exit 1
+    fi
+    repo_url="https://$host/$owner/$name.git"
+    if ! base_json=$(gh api --hostname "$host" graphql -f owner="$owner" -f name="$name" \
+            -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){defaultBranchRef{name target{oid}}}}' 2>/dev/null) \
+        || ! base_ref=$(jq -er '.data.repository.defaultBranchRef.name' <<<"$base_json" 2>/dev/null) \
+        || ! base_oid=$(jq -er '.data.repository.defaultBranchRef.target.oid' <<<"$base_json" 2>/dev/null) \
+        || ! fetch_verified "$repo_url" "refs/heads/$base_ref" "$base_oid"; then
+        add_issue "high" "baseline_fetch_failed" "Failed to fetch the default branch of $host/$owner/$name"
+        output_results
+        exit 1
+    fi
 
-    git fetch origin "$default_branch" --quiet 2>/dev/null || true
-
-    if ! git worktree add "$VERIFY_DIR" -b "$TEMP_BRANCH" "origin/$default_branch" --quiet 2>/dev/null; then
+    local candidate
+    if ! candidate=$(mktemp -d "${TMPDIR:-/tmp}/gh-verify-XXXXXXXX"); then
+        add_issue "high" "worktree_failed" "Failed to acquire verification scratch"
+        output_results
+        exit 1
+    fi
+    VERIFY_ROOT="$candidate"
+    trap cleanup EXIT
+    trap 'cleanup 130' INT
+    trap 'cleanup 143' TERM
+    if [ ! -d "$VERIFY_ROOT" ] || [ -L "$VERIFY_ROOT" ]; then
+        add_issue "high" "worktree_failed" "Invalid verification scratch directory"
+        output_results
+        exit 1
+    fi
+    if ! VERIFY_ROOT=$(cd -- "$candidate" && pwd -P); then
+        VERIFY_ROOT="$candidate"
+        add_issue "high" "worktree_failed" "Failed to resolve verification scratch"
+        output_results
+        exit 1
+    fi
+    VERIFY_DIR="$VERIFY_ROOT/worktree"
+    TEMP_BRANCH="verify/cross-check-${VERIFY_ROOT##*/}"
+    # Non-forcing creation proves ref ownership separately from a partial add.
+    if ! git branch "$TEMP_BRANCH" "$base_oid" --quiet 2>/dev/null; then
+        add_issue "high" "worktree_failed" "Failed to acquire verification branch"
+        output_results
+        exit 1
+    fi
+    BRANCH_OWNED=true
+    WORKTREE_ADD_ATTEMPTED=true
+    if ! git worktree add "$VERIFY_DIR" "$TEMP_BRANCH" --quiet 2>/dev/null; then
         add_issue "high" "worktree_failed" "Failed to create verification worktree"
         output_results
         exit 1
@@ -325,17 +437,18 @@ verify_prs() {
 # Merge PRs sequentially
     progress "Merging PRs sequentially..."
 
-    local all_merged=true
+    local all_merged=true head_oid
     for pr_num in "${pr_nums[@]}"; do
         echo -e "  Merging PR #$pr_num..." >&2
 
-        if ! gh pr checkout "$pr_num" --detach 2>/dev/null; then
-            add_issue "high" "checkout_failed" "Failed to checkout PR #$pr_num"
+        head_oid=$(gh pr view "$pr_num" --json headRefOid --jq .headRefOid 2>/dev/null) || head_oid=""
+        if [ -z "$head_oid" ] || ! fetch_verified "$repo_url" "refs/pull/$pr_num/head" "$head_oid"; then
+            add_issue "high" "pr_fetch_failed" "Failed to fetch the head gh reports for PR #$pr_num"
             all_merged=false
             break
         fi
 
-        if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" 2>/dev/null; then
+        if ! git merge "$head_oid" --no-edit -m "Merge PR #$pr_num for verification" >&2; then
             # Captured whole, then windowed in-shell, for the reason the two
             # summary branches above carry: `| head -10` closing on
             # git leaves a 141 on an assignment errexit takes the branch down
@@ -469,7 +582,9 @@ verify_prs() {
 #
 # The sourcing contract: this file sets `errexit`, `nounset` and `pipefail` on
 # the sourcing shell, and at source time resolves PROJECT_ROOT through git and
-# assigns RESULTS_JSON, VERIFY_DIR, TEMP_BRANCH, START_TIME, STEP, TOTAL_STEPS
+# assigns VERIFY_LIB_DIR, GIT_AUTH, RESULTS_JSON,
+# VERIFY_DIR, VERIFY_ROOT, TEMP_BRANCH, BRANCH_OWNED,
+# WORKTREE_ADD_ATTEMPTED, START_TIME, STEP, TOTAL_STEPS
 # and RED/GREEN/YELLOW/BLUE/NC. Beyond those, the functions keep no `local`
 # discipline, so a sourcer must not rely on ANY unprefixed name surviving a
 # call to one — including ordinary lowercase names a driver reaches for.

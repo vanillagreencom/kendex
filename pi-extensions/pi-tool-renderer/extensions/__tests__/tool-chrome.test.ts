@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { Image, resetCapabilitiesCache, setCapabilities, visibleWidth } from "@earendil-works/pi-tui";
 
 import { stripAnsi } from "../tool-renderer/ansi.js";
-import { __test, withResultTheme } from "../tool-renderer/chrome.js";
+import { __test, registerToolChromeEvents, withResultTheme } from "../tool-renderer/chrome.js";
 import { clearTrackedToolExecutionComponents, refreshToolExecutionComponents } from "../tool-renderer/live-settings.js";
 import { RESERVED_IMAGE_ROW_MARKER, TOOL_RENDER_OVERLAY_CHECK_SYMBOL } from "../tool-renderer/overlay.js";
 import { clearPackageConfigCache, recordProjectTrust } from "../tool-renderer/package-config.js";
@@ -54,6 +54,58 @@ function toolComponent(cwd: string): any {
 }
 
 describe("tool chrome", () => {
+	test.each(["session_start", "turn_start"])("chrome survives a stale context captured at %s", (event) => {
+		const handlers = new Map<string, (...args: any[]) => void>();
+		registerToolChromeEvents({
+			on(name: string, handler: (...args: any[]) => void) { handlers.set(name, handler); },
+		} as any);
+		let stale = false;
+		let currentTheme = theme;
+		const ctx = {
+			cwd: tempCwd(),
+			get hasUI() {
+				if (stale) throw new Error("ExtensionContext is inactive");
+				return true;
+			},
+			get ui() {
+				if (stale) throw new Error("ExtensionContext is inactive");
+				return { theme: currentTheme };
+			},
+		};
+		const component = { cwd: ctx.cwd, toolName: "bash", toolCallId: "stale-context" };
+		const renderRule = () => __test.renderToolChromeLines(component, ["tool output"], 40)[0];
+		try {
+			handlers.get("session_start")!({}, ctx);
+			currentTheme = { fg: (token: string, text: string) => token === "borderMuted" ? `\x1b[94m${text}\x1b[39m` : text };
+			handlers.get(event)!({}, ctx);
+			stale = true;
+			expect(renderRule()).toBe(`\x1b[94m${"─".repeat(39)}\x1b[39m`);
+
+			handlers.get("session_shutdown")!();
+			expect(renderRule()).toBe(`\x1b[90m${"─".repeat(39)}\x1b[39m`);
+		} finally {
+			handlers.get("session_shutdown")!();
+		}
+	});
+
+	test("chrome patched before a reload draws with the theme of the module loaded after it", async () => {
+		const reloaded = await import("../tool-renderer/chrome.js?reload");
+		expect(reloaded.registerToolChromeEvents).not.toBe(registerToolChromeEvents);
+		const handlers = new Map<string, (...args: any[]) => void>();
+		reloaded.registerToolChromeEvents({
+			on(name: string, handler: (...args: any[]) => void) { handlers.set(name, handler); },
+		} as any);
+		const cwd = tempCwd();
+		const reloadedTheme = { fg: (token: string, text: string) => token === "borderMuted" ? `\x1b[95m${text}\x1b[39m` : text };
+		try {
+			handlers.get("session_start")!({}, { cwd, hasUI: true, ui: { theme: reloadedTheme } });
+			const component = { cwd, toolName: "bash", toolCallId: "reload" };
+			expect(__test.renderToolChromeLines(component, ["tool output"], 40)[0]).toBe(`\x1b[95m${"─".repeat(39)}\x1b[39m`);
+		} finally {
+			handlers.get("session_shutdown")!();
+		}
+	});
+
 	test("self-rendered tools regain outline rules after Pi trims empty shell rows", () => {
 		const cwd = tempCwd();
 		const rendered = ["", "● Bash $ echo hi", ""];

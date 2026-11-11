@@ -264,7 +264,13 @@ assert_contains "the partial failure names the created issue" "$ERR" "TEAM-1"
 assert_contains "the partial failure is reported as partial" "$ERR" '"partial":true'
 assert_contains "the created identifier reaches stdout" "$OUT" "TEAM-1"
 assert_jq "a partial failure claims no attachment record" \
-  "$OUT" '.attachments_requested == 1 and .attachments == []'
+  "$OUT" '.attachments_requested == 1 and .attachments == [] and .success == false and .partial == true
+    and .pending_attachments == [{url:"https://uploads.linear.app/asset/boom.pdf",repo_path:"boom.pdf"}]'
+run_linear issues create --title "Partial" --format ids --attach "$TMP_ROOT/boom.pdf"
+assert_eq "a --format=ids partial failure exits non-zero" "$RC" 1
+assert_jq "a --format=ids partial failure returns the retryable JSON, not the bare identifier" \
+  "$OUT" '.identifier == "TEAM-1" and .partial == true
+    and .pending_attachments == [{url:"https://uploads.linear.app/asset/boom.pdf",repo_path:"boom.pdf"}]'
 
 echo "=== agent-label guard still refuses BEFORE any upload ==="
 

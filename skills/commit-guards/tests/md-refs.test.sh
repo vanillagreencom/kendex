@@ -6,7 +6,7 @@
 # reserves its own INDEX row, judged only where the decisions directory is tracked; the same
 # section citation is
 # judged in a source file's comment text and a TOML file's string literals;
-# fenced code is never read; the scopes and the path list are md-format's.
+# fenced code is never read; the scopes and the path list are md-type's.
 # Two tables: the first holds what one document cites over a seeded world,
 # the second the walk, the scopes and the source carriers. A row runs the
 # judge once and reads back the exit status with every line printed, so the
@@ -181,7 +181,7 @@ cite_rows \
   "a #anchor citation matches a slug|refs||See \`docs/architecture/overview.md#fish--chips-v2-code\`.\n|rc=0 $(clean 1 3)" \
   "control: a #anchor citation naming no slug fails|refs||See \`docs/architecture/overview.md#nope\`.\n|rc=1 $(dead AGENTS.md 1 "anchor-missing=\`docs/architecture/overview.md#nope\`:docs/architecture/overview.md:nope");$(failed 1 1 3)" \
   "a root-relative citation resolves at the root|refs||See \`docs/guide.md § Guide\`.\n|rc=0 $(clean 1 3)" \
-  "a code span that is not a path shape is not a citation|refs||Run \`md-format --all\`, see \`*.md\`, \`changelog.d/<section>/<name>.md\`, \`foo.md:12\`.\n|rc=0 $(clean 0 3)" \
+  "a code span that is not a path shape is not a citation|refs||Run \`md-type --all\`, see \`*.md\`, \`changelog.d/<section>/<name>.md\`, \`foo.md:12\`.\n|rc=0 $(clean 0 3)" \
   "a citation in a fence is not read|refs||\`\`\`\n\`docs/nope.md § X\`\n\`\`\`\n|rc=0 $(clean 0 3)"
 
 echo "=== content citations: <path>::<phrase>, the file holds the phrase ==="
@@ -486,6 +486,25 @@ run_rows \
   "the document extra adds to the default list|fx_extra_docs extra-docs|COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--all|rc=1 $(dead docs/guide.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 1 3)" \
   "control: without it the default list does not read that document|fx_extra_docs extra-docs-unset||--all|rc=0 $(clean 0 2)" \
   "an extra is checked as the list is|fx_comment_ok extra-absolute|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=/etc/x|--all|rc=2 ${ERR}path-absolute=md-refs:/etc/x"
+# Rendered Codex instructions contain Markdown inside a TOML multiline string.
+# The link uses a tracked destination; its displayed basename is not a path.
+while IFS='|' read -r shape instruction expected; do
+  world_src "toml-link-$shape"
+  put .codex/agents/runtime.toml 'developer_instructions = """\n'"$instruction"'\n"""\n'
+  assert_eq "$shape: TOML section citation" "$expected" "$(run '' --all)"
+  [ "$shape" = link ] || continue
+  gg_mutant MUTANT_AWK lib/md-refs.awk '  s = mask_links(s, 0)' '  if (0) s = mask_links(s, 0)'
+  MDR="${MUTANT_AWK%/lib/md-refs.awk}/md-refs"
+  status=0
+  (PASS=0; FAIL=0; assert_eq "$shape" "$expected" "$(run '' --all)"; [ "$FAIL" -eq 0 ]) \
+    >"$TMP/control-toml-link.log" 2>&1 || status=$?
+  assert_eq "control: unmasked TOML link turns its assertion red" 1 "$status"
+  MDR="$SKILL_DIR/scripts/md-refs"
+done <<CASES
+link|Read [plugins.md § Invariants](../../docs/architecture/plugins.md#invariants).|rc=0 $(clean 0 2 1)
+bare|Read plugins.md § Invariants.|rc=1 $(dead .codex/agents/runtime.toml 2 "$(nocite 'plugins.md § Invariants.' plugins.md .codex/agents/runtime.toml)");$(failed 1 1 2 1)
+CASES
+
 fx_js_regex js-regex-control Rules
 gg_mutant MUTANT_READER lib/comment-text.sh '      if (js && c == "/"' '      if (0 && js && c == "/"'
 MDR="${MUTANT_READER%/lib/comment-text.sh}/md-refs"
@@ -570,6 +589,7 @@ warning() { printf 'md-refs: warning=%s:%s:%s:%s' "$1" "$2" "${3%%=*}" "${3#*=}"
 lock_cite="$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md .agents/skills/orch/SKILL.md)"
 warn_record="$(warning .agents/skills/orch/SKILL.md 3 "$lock_cite")"
 fx_lock_exact() { fx_lock_ref "$1" .agents/skills/orch/SKILL.md .agents/skills/orch/SKILL.md; }
+fx_lock_compact() { fx_lock_exact "$1"; put .kendex-lock.json '{"version":12,"installations":{"i":{"source":"cat","kind":"skill","name":"orch","harness":"codex"}},"entries":{"skill:orch:codex":{"installation":"i","emitted":{"paths":[".agents/skills/orch/SKILL.md"]}}}}'; }
 fx_lock_tree() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orch/SKILL.md; }
 fx_lock_authored() { fx_lock_ref "$1" .agents/skills/orch AGENTS.md; }
 fx_lock_boundary() { fx_lock_ref "$1" .agents/skills/orch .agents/skills/orchard/SKILL.md; }
@@ -589,6 +609,7 @@ fx_lock_target() {
 }
 run_rows \
   "an exact emitted citing file warns|fx_lock_exact lock-exact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
+  "a compact record keeps emitted citing files advisory|fx_lock_compact lock-compact||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
   "a file below an emitted directory warns|fx_lock_tree lock-tree||--all|rc=0 $warn_record;$(clean 1 1) warnings=1" \
   "strict install checks block for a lock-listed file|fx_lock_tree lock-strict||--all --strict|rc=1 $(dead .agents/skills/orch/SKILL.md 3 "$lock_cite");$(failed 1 1 1)" \
   "control: the same citation in an authored file blocks|fx_lock_authored lock-authored||--all|rc=1 $(dead AGENTS.md 3 "$(nocite 'skills/orch/references/oversee-events.md § Judgement rules' skills/orch/references/oversee-events.md AGENTS.md)");$(failed 1 1 1)" \
@@ -688,11 +709,11 @@ for row in \
 done
 
 echo "=== the skill's own shipped markdown resolves ==="
-fx_shipped() { # the four shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
+fx_shipped() { # the five shipped documents beside what they cite: consumer files by directory, and the one script a `::` citation reads for its phrase
   local doc
   repo "$1"
-  mkdir -p "$R/skills/commit-guards/scripts/lib"
-  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md; do
+  mkdir -p "$R/skills/commit-guards/scripts/lib" "$R/skills/commit-guards/references"
+  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md references/hooks-and-settings.md kendex.settings.toml.example; do
     cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
   done
   # A content citation is answered by the file's bytes, so this is the real
@@ -702,11 +723,11 @@ fx_shipped() { # the four shipped documents beside what they cite: consumer file
   put .claude/CLAUDE.md '@AGENTS.md\n'
 }
 # The shipped documents' own reference count is theirs to change: the pin is
-# the verdict over the two, then the four, files read, with N for that count.
+# the verdict over the two, then the five, files read, with N for that count.
 counted() { LC_ALL=C sed 's/references=[0-9][0-9]*/references=N/'; }
 fx_shipped shipped
 assert_eq "the shipped SKILL.md's references resolve (beside the fixture's CLAUDE.md shim)" "rc=0 $(clean N 2 1)" "$(run '' --all | counted)"
-assert_eq "and so do README.md, CHECKS.md and DEVELOPMENT.md when named, the content citation among them" "rc=0 $(clean N 4 1)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
+assert_eq "and so do README.md, CHECKS.md, DEVELOPMENT.md and references/hooks-and-settings.md when named, the content citation among them" "rc=0 $(clean N 5 1)" "$(run 'COMMIT_GUARDS_MD_REFS_PATHS=*/commit-guards/*.md' --all | counted)"
 fx_shipped shipped-planted
 put skills/commit-guards/SKILL.md "$(cat "$SKILL_DIR/SKILL.md")"'\n\nSee [gone](nowhere.md).\n'
 assert_eq "control: a planted dead link in the shipped SKILL.md fails, at the line it was planted on" \

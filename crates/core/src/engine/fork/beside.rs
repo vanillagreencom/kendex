@@ -83,7 +83,7 @@ pub fn fork_beside(
         ..
     } = captured;
     let mut ops = capture_ops(env, scope, kind, new_name, &edited, named(files, new_name)?)?;
-    let provenance = provenance(env, scope, kind, name, harness, &manifest, &decl)?;
+    let provenance = provenance(&manifest, &decl, read_at.clone());
     // An agent's configuration is keyed by its installed name, so a copy
     // under another one reads none of it: it would render without the
     // project's tool denies, without its instructions, and outside its own

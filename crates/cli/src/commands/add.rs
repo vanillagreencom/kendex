@@ -208,7 +208,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
     };
     let report = match planned {
         Err(kendex_core::error::CoreError::SourcePending { name }) => {
-            let manifest = ops::manifest_for_mutation(env, &scope)?;
+            let manifest = ops::manifest_for_request(env, &scope, &request)?;
             let synced = {
                 let _reading = ui::spinner("reading marketplaces");
                 let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;

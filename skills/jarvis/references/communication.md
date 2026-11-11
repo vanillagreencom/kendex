@@ -1,6 +1,6 @@
 # Communication
 
-Read [communication](../../communication/SKILL.md) before a message to the user.
+Read [communication](../../communication/SKILL.md) once per revision, on the terms of its [§ Reading routes](../../communication/SKILL.md#reading-routes), and apply it before every message to the user.
 
 ## Message types
 

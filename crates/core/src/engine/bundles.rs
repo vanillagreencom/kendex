@@ -187,6 +187,7 @@ fn installable(
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
 ) -> Vec<(ItemKind, String, ItemDecl, Vec<HarnessId>)> {
+    // `Catalogs::read` named why it did not open.
     let Some(catalog) = catalogs.get(&decl.source, decl.rev.as_deref(), state) else {
         state.mark_incomplete();
         return Vec::new();
@@ -211,8 +212,7 @@ fn installable(
         // so. Either way the removal pass keeps what this could not account
         // for.
         Err(problem) => {
-            state.mark_incomplete();
-            state.notes.push(match &problem {
+            let note = match &problem {
                 crate::error::CoreError::UnreadableBundle { .. } => {
                     format!("bundle {name}: {problem}")
                 }
@@ -220,7 +220,8 @@ fn installable(
                     "bundle {name}: the catalog '{}' could not be read — {problem}",
                     decl.source
                 ),
-            });
+            };
+            state.note_incomplete(note);
             return Vec::new();
         }
     };
@@ -228,10 +229,10 @@ fn installable(
     // renamed in its catalog would otherwise uninstall what it brought in
     // from every consumer that declared it, and say so only in passing.
     let Some(bundle) = offered else {
-        state.mark_incomplete();
         let offered = crate::source::bundles::names(config);
         let detail = super::desired::not_offered(&decl.source, "bundle", offered);
-        state.notes.push(format!("bundle {name}: {detail}"));
+        let note = format!("bundle {name}: {detail}");
+        state.note_incomplete(note);
         let kept = bundle_ref(name, &decl.source);
         state
             .kept_bundles
@@ -251,15 +252,20 @@ fn installable(
         }
         // A retired member is planned, for the item pass to keep or prune.
         if let Offer::NotOffered | Offer::Silent = catalog.offer(member.kind, &member.name) {
-            state.mark_incomplete();
+            let message = format!(
+                "the bundle {name} carries {}, which the catalog '{}' does not offer",
+                member.name, decl.source
+            );
+            state.mark_incomplete_for(format!(
+                "{} '{}': {message}",
+                member.kind.name(),
+                member.name
+            ));
             state.warnings.push(ItemWarning {
                 kind: member.kind,
                 name: member.name.clone(),
                 harness: None,
-                message: format!(
-                    "the bundle {name} carries {}, which the catalog '{}' does not offer",
-                    member.name, decl.source
-                ),
+                message,
                 remediation: Some(format!(
                     "add {} to that catalog, or drop it from the bundle {name}",
                     member.name
@@ -279,12 +285,12 @@ fn installable(
         );
         let harnesses = target_harnesses(&member_decl, manifest, member.kind, scope);
         if harnesses.is_empty() {
-            state.mark_incomplete();
-            state.notes.push(format!(
+            let note = format!(
                 "bundle {name}: no tool here holds a {}, so {} was not installed",
                 member.kind.name(),
                 member.name
-            ));
+            );
+            state.note_incomplete(note);
             continue;
         }
         installable.push((member.kind, member.name.clone(), member_decl, harnesses));
@@ -298,6 +304,8 @@ fn installable(
             }
         ));
     }
+    let set = bundle_ref(name, &decl.source);
+    state.read_bundles.insert(set, bundle.members);
     installable
 }
 

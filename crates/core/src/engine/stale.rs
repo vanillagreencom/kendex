@@ -180,6 +180,7 @@ mod tests {
 
     fn entry(path: std::path::PathBuf, rendered_hash: String) -> LockEntry {
         LockEntry {
+            requirer_provenance: None,
             name: "gh".into(),
             kind: ItemKind::Skill,
             harness: HarnessId::Claude,

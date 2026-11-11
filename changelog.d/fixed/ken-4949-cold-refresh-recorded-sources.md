@@ -1,0 +1,1 @@
+- `kendex refresh` on a machine that never fetched the project's sources now also fetches each subscription the committed install record names, even one no installed package uses, so the `apply` and `verify` that follow pass instead of failing the record row because that source's mirror cannot serve its revision. A subscription the record does not name is still not fetched.

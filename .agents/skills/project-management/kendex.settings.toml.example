@@ -1,0 +1,9 @@
+[env]
+
+# Label rules for new issues. How the label set is chosen:
+# .agents/skills/project-management/references/labels.md
+# § Creates Carry the Full Set.
+
+# Fixed label mappings or extra rules, in plain words, such as
+# "design: any change to a view, layout or UI copy". Empty = none.
+PM_LABEL_RULES = ""

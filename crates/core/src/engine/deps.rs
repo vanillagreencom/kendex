@@ -1,7 +1,7 @@
 //! Required and selected optional dependencies stay within one catalog: a
-//! skill's from its SKILL.md, a hook's from its header, and a required
-//! agent's from its skill assignment. Derived install reasons preserve the
-//! manifest as a record of user choices.
+//! skill's from its SKILL.md, agents and hooks included, a hook's from its
+//! header, and a required agent's from its skill assignment. Derived install
+//! reasons preserve the manifest as a record of user choices.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -28,14 +28,16 @@ pub(crate) struct Dependencies {
     pub(crate) optional: Vec<String>,
     pub(crate) required_skills: Vec<String>,
     pub(crate) required_agents: Vec<String>,
+    pub(crate) required_hooks: Vec<String>,
     pub(crate) requires_on: Option<Vec<String>>,
     pub(crate) commands: Vec<commands::CommandDependency>,
 }
 
 /// Each supported edge: the declaring kind and its dependency kind.
-const DEPENDENT_KINDS: [(ItemKind, ItemKind); 5] = [
+const DEPENDENT_KINDS: [(ItemKind, ItemKind); 6] = [
     (ItemKind::Skill, ItemKind::Skill),
     (ItemKind::Skill, ItemKind::Agent),
+    (ItemKind::Skill, ItemKind::Hook),
     (ItemKind::Agent, ItemKind::Skill),
     (ItemKind::Hook, ItemKind::Hook),
     (ItemKind::Hook, ItemKind::Skill),
@@ -53,28 +55,30 @@ const DECLARING_KINDS: [ItemKind; 2] = [ItemKind::Skill, ItemKind::Hook];
 /// read, or a hook's script. Read through the bounded parser every other
 /// frontmatter read of that kind goes through; there is no fallback to
 /// scanning the body, because a dependency the author never declared is not
-/// a dependency. A block that will not parse is left to the renderer, which
-/// reads the same bytes and reports what is wrong with them.
+/// a dependency. `None` where the block will not parse: what it declares is
+/// unknown, which is not declaring nothing; the renderer reads the same
+/// bytes and reports what is wrong with them.
 pub(crate) fn declared_dependencies(
     sealed: &SealedSource,
     kind: ItemKind,
     found: &std::path::Path,
-) -> Result<Dependencies> {
+) -> Result<Option<Dependencies>> {
     let declared = match kind {
         ItemKind::Skill => sealed
             .read_if_exists(&found.join("SKILL.md"))?
             .map(|text| declared_in(&text)),
         ItemKind::Hook => sealed.read_if_exists(found)?.map(|text| {
             crate::hook::parse_hook(&text)
+                .ok()
                 .map(|hook| Dependencies {
                     required: hook.requires,
                     optional: Vec::new(),
                     required_skills: hook.requires_skills,
                     required_agents: Vec::new(),
+                    required_hooks: Vec::new(),
                     requires_on: hook.requires_on,
                     commands: Vec::new(),
                 })
-                .unwrap_or_default()
         }),
         // No other kind's frontmatter has a dependency field to read.
         ItemKind::Agent
@@ -84,31 +88,28 @@ pub(crate) fn declared_dependencies(
         | ItemKind::PiExtension
         | ItemKind::OutputStyle => None,
     };
-    Ok(declared.unwrap_or_default())
+    Ok(declared.unwrap_or(Some(Dependencies::default())))
 }
 
 /// [`declared_dependencies`] over bytes a caller already holds — a listing
 /// reads each package's SKILL.md for its header anyway, and the sealed read
 /// checks containment per path component, so reading it a second time here
 /// costs the whole page.
-pub(crate) fn declared_in(text: &str) -> Dependencies {
-    let Ok((yaml, _)) = crate::frontmatter::split(text) else {
-        return Dependencies::default();
-    };
-    let Ok(parsed) = crate::frontmatter::parse_tolerant(yaml) else {
-        return Dependencies::default();
-    };
+pub(crate) fn declared_in(text: &str) -> Option<Dependencies> {
+    let (yaml, _) = crate::frontmatter::split(text).ok()?;
+    let parsed = crate::frontmatter::parse_tolerant(yaml).ok()?;
     let Some(crate::frontmatter::Value::Map(map)) = parsed.map.get("dependencies") else {
-        return Dependencies::default();
+        return Some(Dependencies::default());
     };
-    Dependencies {
+    Some(Dependencies {
         required: map.string_list("required").unwrap_or_default(),
         optional: map.string_list("optional").unwrap_or_default(),
         required_skills: Vec::new(),
         required_agents: map.string_list("agents").unwrap_or_default(),
+        required_hooks: map.string_list("hooks").unwrap_or_default(),
         requires_on: None,
         commands: commands::declared(&parsed.map).unwrap_or_default(),
-    }
+    })
 }
 
 /// One item the walk names: its kind and its name, since a skill and a hook
@@ -355,8 +356,13 @@ fn withheld_past_pin(
 /// What the walk came to, on the state the planner reads: every finding,
 /// and every withholding under the hook and tool it is asked about.
 fn record(wanted: BTreeMap<Node, Wanted>, state: &mut DesiredState) {
-    if wanted.values().any(|found| !found.findings.is_empty()) {
-        state.mark_incomplete();
+    for finding in wanted.values().flat_map(|found| &found.findings) {
+        state.mark_incomplete_for(format!(
+            "{} '{}': {}",
+            finding.kind.name(),
+            finding.name,
+            finding.message
+        ));
     }
     for ((kind, name), found) in wanted {
         state.warnings.extend(found.findings);
@@ -403,9 +409,9 @@ struct Wanted {
     /// companion and the pass judges pins: each asked again with the pin
     /// dropped ([`withheld_past_pin`]).
     left_out: Vec<HarnessId>,
-    /// For an agent, the assigned skills the scope already holds
-    /// ([`held_elsewhere`]): its edge brings none of them, and [`walk`]
-    /// only switches each on while the agent is on.
+    /// For an agent, assigned skills held on at least one tool
+    /// ([`held_elsewhere`]). [`walk`] switches them on while the agent is
+    /// on, even when its edge must still derive them on another tool.
     loads_held: Vec<String>,
 }
 
@@ -897,26 +903,17 @@ fn wanted_by(
         armed: parent_decl.enabled,
         ..Wanted::default()
     };
-    let dir = match catalog.offer(kind, parent) {
-        Offer::Item(_, dir) => dir,
-        // A retired item installs nothing, so it derives nothing either;
-        // what a copy kept as recorded runs with is its record's
-        // ([`withhold_kept_retired`]).
-        Offer::Retired(migration) => {
-            state.retire_planned(expansion, kind, parent, &parent_decl.source, migration);
-            return None;
-        }
-        Offer::NotOffered | Offer::Silent => return Some(wanted),
-    };
-    let Some(mut declared) = declared_by(catalog, manifest, kind, parent, &dir) else {
+    let offer = catalog.offer(kind, parent);
+    // A retired item installs nothing, so it derives nothing either;
+    // what a copy kept as recorded runs with is its record's
+    // ([`withhold_kept_retired`]).
+    if let Offer::Retired(migration) = offer {
+        state.retire_planned(expansion, kind, parent, &parent_decl.source, migration);
+        return None;
+    }
+    let Some((declared, dir)) = declared_by(catalog, manifest, kind, parent, offer, state) else {
         return Some(wanted);
     };
-    if kind == ItemKind::Agent {
-        (wanted.loads_held, declared.required_skills) = declared
-            .required_skills
-            .into_iter()
-            .partition(|skill| held_elsewhere(expansion, parent, skill));
-    }
     let header = hook_header(sealed, kind, &dir);
     if let Ok(Some(own)) = &header
         && state.judge_pins
@@ -952,7 +949,7 @@ fn wanted_by(
     // Each name taken to the companion it names, and that companion to
     // the catalog the plan writes it from. A name that resolves to nothing
     // derives nothing, which withholds an armed hook where it is required.
-    let mut companions: Vec<(ItemKind, String, Dependency)> = Vec::new();
+    let mut companions = Vec::new();
     let mut unresolved = Vec::new();
     for (_, dep_kind) in DEPENDENT_KINDS
         .iter()
@@ -966,6 +963,8 @@ fn wanted_by(
             (declared.required_agents.as_slice(), [].as_slice())
         } else if *dep_kind == kind {
             (declared.required.as_slice(), declared.optional.as_slice())
+        } else if *dep_kind == ItemKind::Hook {
+            (declared.required_hooks.as_slice(), [].as_slice())
         } else {
             (declared.required_skills.as_slice(), [].as_slice())
         };
@@ -973,12 +972,20 @@ fn wanted_by(
             .iter()
             .chain(optional.iter().filter(|o| chosen.contains(o)))
         {
+            let on = if kind == ItemKind::Agent {
+                assignment_harnesses(expansion, parent, name, &on, &mut wanted.loads_held)
+            } else {
+                on.clone()
+            };
+            if on.is_empty() {
+                continue;
+            }
             let Some(dep) = resolve(kind, *dep_kind, name, parent, catalog, &own.0, found) else {
                 unresolved.extend(on.iter().copied());
                 continue;
             };
             let selected = expansion.dependency(kind, parent, *dep_kind, &dep);
-            companions.push((*dep_kind, dep, selected));
+            companions.push((*dep_kind, dep, selected, on));
         }
     }
     if kind == ItemKind::Hook && wanted.armed {
@@ -988,8 +995,6 @@ fn wanted_by(
     derive(
         kind,
         parent,
-        &harnesses,
-        declared.requires_on.as_deref(),
         companions,
         manifest,
         catalogs,
@@ -1007,27 +1012,61 @@ fn wanted_by(
     Some(wanted)
 }
 
-/// What `parent`, offered at `dir`, declares it needs: an agent's
-/// assignment ([`agent_assignment`]), every other kind's own frontmatter.
-/// `None` where that frontmatter will not read, which the renderer
-/// reports.
+/// What `parent` declares it needs, and the directory its catalog offers
+/// it at: an agent's assignment ([`agent_assignment`]), every other kind's
+/// own frontmatter. `None` where its catalog does not offer it or did not
+/// read, or where its file will not read: what it offers is then unknown,
+/// so no choice made of it is weighed. Where the file reads but its
+/// frontmatter will not parse, or an agent will not read or parse,
+/// `parent` goes on as declaring nothing, so a choice made of it is still
+/// weighed ([`chosen_extras`]). Each way what it requires went unread, so
+/// this pass derives less than the catalog carries, a short read
+/// ([`DesiredState::short_reads`]). An apply reports each where it meets
+/// it, the item pass the offer and the renderer the frontmatter.
 fn declared_by(
     catalog: &OpenCatalog,
     manifest: &Manifest,
     kind: ItemKind,
     parent: &str,
-    dir: &std::path::Path,
-) -> Option<Dependencies> {
-    match kind {
-        ItemKind::Agent => Some(agent_assignment(catalog, manifest, parent, dir)),
-        ItemKind::Skill
-        | ItemKind::Hook
-        | ItemKind::Command
-        | ItemKind::McpServer
-        | ItemKind::Plugin
-        | ItemKind::PiExtension
-        | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, dir).ok(),
-    }
+    offer: Offer<'_>,
+    state: &mut DesiredState,
+) -> Option<(Dependencies, std::path::PathBuf)> {
+    let read = match offer {
+        Offer::Item(_, dir) => {
+            // The outer `Err` is a file that will not read, which is not
+            // weighed; the inner one a frontmatter that will not parse,
+            // which declares nothing.
+            let declared = match kind {
+                ItemKind::Agent => Ok(agent_assignment(catalog, manifest, parent, &dir)
+                    .ok_or("its frontmatter will not read or parse")),
+                ItemKind::Skill
+                | ItemKind::Hook
+                | ItemKind::Command
+                | ItemKind::McpServer
+                | ItemKind::Plugin
+                | ItemKind::PiExtension
+                | ItemKind::OutputStyle => declared_dependencies(&catalog.sealed, kind, &dir)
+                    .map(|declared| declared.ok_or("its frontmatter will not parse"))
+                    .map_err(|_| {
+                        state.mark_incomplete();
+                        "its file will not read"
+                    }),
+            };
+            declared.map(|declared| {
+                let declared = declared.unwrap_or_else(|why| {
+                    state.read_short(format!("{} '{parent}': {why}", kind.name()));
+                    Dependencies::default()
+                });
+                (declared, dir)
+            })
+        }
+        Offer::Retired(_) | Offer::NotOffered => Err("its catalog does not offer it"),
+        Offer::Silent => Err("its catalog did not read"),
+    };
+    read.map_err(|why| {
+        state.read_short(format!("{} '{parent}': {why}", kind.name()));
+    })
+    .ok()
 }
 
 /// The skills an agent a skill requires loads, as its required skills: the
@@ -1035,17 +1074,17 @@ fn declared_by(
 /// catalog's assignment for the rendering too, and the catalog's own
 /// (`mapping::upstream_skills`) otherwise. Only names this catalog offers:
 /// a row may name a skill another source carries, and one nothing installs
-/// is the agent pass's warning (`agent_skills::warn_uninstalled`). An
-/// agent that will not read or parse needs nothing; the renderer reports it.
-/// [`wanted_by`] makes the edge's required skills only those
-/// [`held_elsewhere`] finds the scope does not hold; the rest follow only
-/// the agent's switch.
+/// is the agent pass's warning (`agent_skills::warn_uninstalled`). `None`
+/// where an agent with no row will not read or parse; the renderer
+/// reports it.
+/// [`wanted_by`] derives only tools [`held_elsewhere`] finds the scope
+/// does not hold; held tools follow only the agent's switch.
 fn agent_assignment(
     catalog: &OpenCatalog,
     manifest: &Manifest,
     agent: &str,
     path: &std::path::Path,
-) -> Dependencies {
+) -> Option<Dependencies> {
     let available = list_items(&catalog.sealed, &catalog.config, ItemKind::Skill);
     let required_skills = match crate::mapping::declared_skills(manifest, agent) {
         Some((declared, _)) => declared
@@ -1054,38 +1093,58 @@ fn agent_assignment(
             .cloned()
             .collect(),
         None => {
-            let Ok(Some(text)) = catalog.sealed.read_if_exists(path) else {
-                return Dependencies::default();
-            };
-            let Ok(parsed) = crate::render::agent::parse_source_agent(&text) else {
-                return Dependencies::default();
-            };
+            let text = catalog.sealed.read_if_exists(path).ok()??;
+            let parsed = crate::render::agent::parse_source_agent(&text).ok()?;
             crate::mapping::upstream_skills(agent, parsed.role, &catalog.config, &available)
         }
     };
-    Dependencies {
+    Some(Dependencies {
         required_skills,
         ..Dependencies::default()
-    }
+    })
 }
 
-/// Whether the scope holds `skill`, which `agent`'s assignment names, for
-/// any reason but this agent's edge. The assignment is what the agent
-/// loads, not what it needs to install, so its edge is soft: it brings
-/// only a skill the scope does not already hold, and a skill held for any
-/// other reason — declared, a set's, required by another item or brought
-/// by another agent, the skill that requires this agent among them —
-/// keeps its own declaration, revision and reasons, with no revision
-/// disagreement, finding or reason from this edge. Only its switch
-/// follows the agent: one brought in parked is switched on while the
-/// agent is on ([`walk`]), never one the person declared off.
+/// Another reason satisfies this installation without adding an agent
+/// edge. An own-only assignment remains derivable on a revisit, when the
+/// agent may have gained tools. First derivation is item-wide and cannot
+/// distinguish an installation another agent supplied on a different tool.
+/// Held installations still follow the agent's switch ([`walk`]), never
+/// overriding a skill the person declared off.
 /// [`wanted_by`] drops the findings on the skills this edge does bring.
-fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str) -> bool {
-    match expansion.derived_from(ItemKind::Skill, skill) {
-        Some(Reason::RequiredBy { by }) => by.kind != ItemKind::Agent || by.name != agent,
-        Some(Reason::Requested | Reason::MemberOf { .. }) => true,
-        None => expansion.contains(ItemKind::Skill, skill),
+fn held_elsewhere(expansion: &Expansion, agent: &str, skill: &str, harness: HarnessId) -> bool {
+    expansion
+        .reasons(ItemKind::Skill, skill, harness)
+        .iter()
+        .any(|reason| match reason {
+            Reason::RequiredBy { by } => by.kind != ItemKind::Agent || by.name != agent,
+            Reason::Requested | Reason::MemberOf { .. } => true,
+        })
+}
+
+fn assignment_harnesses(
+    expansion: &Expansion,
+    agent: &str,
+    skill: &str,
+    harnesses: &[HarnessId],
+    loads_held: &mut Vec<String>,
+) -> Vec<HarnessId> {
+    let mut held = false;
+    let remaining = harnesses
+        .iter()
+        .copied()
+        .filter(|harness| {
+            if held_elsewhere(expansion, agent, skill, *harness) {
+                held = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    if held {
+        loads_held.push(skill.to_owned());
     }
+    remaining
 }
 
 /// Of `harnesses`, the tools the plan writes the hook's position on
@@ -1189,13 +1248,10 @@ fn chosen_extras(
 /// and for an armed hook the tools it is withheld from — every tool a
 /// companion misses, or every tool where the companion's catalog says
 /// nothing of it ([`silent`]).
-#[allow(clippy::too_many_arguments)]
 fn derive(
     kind: ItemKind,
     parent: &str,
-    harnesses: &[HarnessId],
-    requires_on: Option<&[String]>,
-    companions: Vec<(ItemKind, String, Dependency)>,
+    companions: Vec<(ItemKind, String, Dependency, Vec<HarnessId>)>,
     manifest: &Manifest,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
@@ -1206,12 +1262,11 @@ fn derive(
     let withholds = kind == ItemKind::Hook && wanted.armed;
     // Every companion's catalog is opened before any is read, since an
     // open may move what is already open.
-    for (_, _, selected) in &companions {
+    for (_, _, selected, _) in &companions {
         catalogs.get(&selected.decl.source, selected.decl.rev.as_deref(), state);
     }
-    for (dep_kind, dep, selected) in companions {
+    for (dep_kind, dep, selected, harnesses) in companions {
         let key = (selected.decl.source.clone(), selected.decl.rev.clone());
-        let harnesses = dependency_harnesses(dep_kind, harnesses, requires_on);
         let source = key.0.as_str();
         let found = &mut wanted.findings;
         let because = match catalogs.offer(&key, dep_kind, &dep) {

@@ -213,6 +213,7 @@ fn desired_document(
             path: format!("{}s/{name}.md", kind.name()),
             verbatim: true,
             tree: false,
+            skill_lines: None,
         }),
     )
 }

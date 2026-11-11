@@ -22,7 +22,7 @@ fn install(fixture: &Fixture, name: &str, armed: bool) -> PathBuf {
     fs::write(
         package.join("scripts/effect"),
         format!(
-            "#!/bin/sh\nprintf '%s\\n' '{name}' >> calls\ncase \"$1\" in\ncheck) test -f {name}.md ;;\nrender)\n  if [ \"${{2-}}\" = --dry-run ]; then\n    printf 'would write {name}.md\\nwould write region {name}-shared.md\\t## Fixture\\n'\n  else\n    printf 'owned\\n' > {name}.md\n    printf 'wrote {name}.md\\nwrote region {name}-shared.md\\t## Fixture\\n'\n  fi ;;\nesac\n"
+            "#!/bin/sh\nprintf '%s\\n' '{name}' >> calls\ncase \"$1\" in\ncheck) test -f {name}.md ;;\nrender)\n  if [ \"${{2-}}\" = --discover ]; then\n    printf 'would write {name}.md\\nwould write region {name}-shared.md\\t## Fixture\\n'\n  else\n    printf 'owned\\n' > {name}.md\n    printf 'wrote {name}.md\\nwrote region {name}-shared.md\\t## Fixture\\n'\n  fi ;;\nesac\n"
         ),
     )
     .unwrap();
@@ -292,6 +292,58 @@ fn selected_owner_failures_keep_write_and_discovery_failed() {
                 b"ran\n"
             );
         }
+    }
+}
+
+/// A package installed before `render --discover` refuses the flag the way
+/// the package at 33dd66732 did when run with it: `bot-instructions:
+/// usage=render --discover` first on stderr, exit 2. Its `--dry-run` is the
+/// owned-only listing, so discovery reads that instead. Any other refusal
+/// of `--discover` stays a failed discovery, with no second run.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn discovery_reads_the_preview_of_a_package_older_than_discover() {
+    let usage = "bot-instructions: usage=render --discover\\nunrecognized arguments: --discover";
+    let config = "bot-instructions: config=kendex.toml\\nthe manifest does not parse";
+    for (refusal, discovered, calls) in [
+        (usage, Some(OLD), "render --discover\nrender --dry-run\n"),
+        (config, None, "render --discover\n"),
+    ] {
+        let fixture = selected_fixture(SELECTIONS[0]);
+        fs::write(
+            fixture
+                .root
+                .join(".agents/skills")
+                .join(OLD)
+                .join("scripts/effect"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> calls\ncase \"$*\" in\n'render --discover') printf '{refusal}\\n' >&2; exit 2 ;;\n'render --dry-run') printf 'would write {OLD}.md\\n' ;;\nesac\n"
+            ),
+        )
+        .unwrap();
+        let mut generated = GeneratedPaths::default();
+        let result =
+            bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut generated);
+        match discovered {
+            Some(name) => {
+                result.unwrap();
+                assert_eq!(
+                    generated.whole,
+                    BTreeSet::from([fixture.root.join(format!("{name}.md"))]),
+                );
+            }
+            None => {
+                assert!(matches!(
+                    result,
+                    Err(kendex_core::error::CoreError::BotInstructionsRender { .. })
+                ));
+                assert!(generated.whole.is_empty());
+            }
+        }
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("calls")).unwrap(),
+            calls
+        );
     }
 }
 

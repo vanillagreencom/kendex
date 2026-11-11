@@ -27,6 +27,7 @@ const installed = (
   at: `${scope.scope === "project" ? scope.root : ""}/.${harness}/skills/${name}`,
   origin: { origin: "marketplace", source, repo },
   summary: null,
+  tags: null,
   package: { kind: "skill", name },
 });
 
@@ -41,6 +42,7 @@ const hook = (observed: string, declared: string): ProvenanceRow => ({
   at: `${hyprtrade.root}/.claude/settings.json`,
   origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
   summary: null,
+  tags: null,
   package: { kind: "hook", name: declared },
 });
 

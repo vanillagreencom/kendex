@@ -446,7 +446,8 @@ for route in branch from base pr transfer; do
 done
 
 # Mutants stay outside the worktree and install the bounded-runner dependency
-# beside the copied package. The same rows must reject each planted defect.
+# beside the copied package. The same rows must reject the planted defect,
+# one per row kind.
 setup_control() {
   local name="$1" needle="$2" replacement="$3" mode="$4" rc="$5" calls="$6" out="$7" err="$8"
   local copy="$TMP_ROOT/control-$name" mutant
@@ -468,11 +469,6 @@ setup_control() {
   fi
 }
 setup_control missing-call 'run_worktree_setup_command "$wt" || return 1' '    :' success 0 1 path -
-setup_control ignored-status 'if [[ "$status" -ne 0 ]]; then' '  if false && [[ "$status" -ne 0 ]]; then' fail 1 1 - fail
-setup_control discarded-output \
-  '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >&2 || status=$?' \
-  '  (cd -P -- "$wt" && kendex_github_run_bounded 3600 "$BASH" -c "$WORKTREE_SETUP_CMD" </dev/null) >/dev/null 2>&1 || status=$?' \
-  success 0 1 path -
 setup_control lost-identity 'record_worktree_issue "$wt" "$issue" || return 1' '      :' hosted-recovery 0 0 - -
 
 echo

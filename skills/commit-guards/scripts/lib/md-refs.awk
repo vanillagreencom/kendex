@@ -268,6 +268,7 @@ function in_url(s, p,   start, stop, token) {
 # rest of the line as the heading the prefix rule judges. A token that is not
 # a markdown path is prose naming a section and cites nothing.
 function emit_text_citation(s,   p, i, j, path, rest) {
+  s = mask_links(s, 0)
   p = 1
   while (1) {
     i = index(substr(s, p), SECTION_SEP)

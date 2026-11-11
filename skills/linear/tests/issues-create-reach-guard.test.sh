@@ -60,8 +60,8 @@ guard() { printf '[env]\nLINEAR_TEAM = "Configured"\n%b' "$1" >"$PROJECT/kendex.
 
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
 SYMPTOM_LINE='**Symptom**: the refresh printed "skipped" and left the render stale'
-# The body opens with its outcome, so the header-shape guard under the same key passes it.
-OUTCOME='Refresh keeps the render current in a linked worktree.'
+# Reach-isolation fixtures pass the opening guard under the same setting.
+OUTCOME=$'> **Story:** Refresh keeps the render current in a linked worktree.\n\n> **Why this matters:** Installed skills stay current after refresh.'
 
 echo "=== guard on: a body naming nothing it reaches is refused, one naming it creates ==="
 guard 'LINEAR_REQUIRE_REACH = "1"\n'
@@ -71,23 +71,26 @@ assert_contains "the refusal names the missing line" "$ERR" "Reached by"
 # The one sentence that routes the author somewhere instead of naming a gap.
 assert_contains "the refusal says an unnamed item is a decline" "$ERR" "decline"
 
+run_linear issues create --title "Opening without reach" \
+  --description "$(printf '%s\n\n## Filing record\n' "$OUTCOME")"
+assert_refused_before_api "a create with an opening but no reach"
+
 # A value that says "nothing here" is no value, and each half has its own
 # alternative: `[REACH]` is the placeholder this repo's templates ship (bold
 # leaves its `**` on it); TBD is the other, and so is the symptom read below.
 run_linear issues create --title "Template copied" \
-  --description "$(printf '**Reached by: [REACH]**\n')"
+  --description "$(printf '%s\n\n## Filing record\n\n**Reached by: [REACH]**\n' "$OUTCOME")"
 assert_refused_before_api "a whole-line bold [REACH] placeholder body"
 
 run_linear issues create --title "Null token" \
-  --description "$(printf '%s\n\nReached by: TBD\n' "$OUTCOME")"
+  --description "$(printf '%s\n\n## Filing record\n\nReached by: TBD\n' "$OUTCOME")"
 assert_refused_before_api "a TBD reach"
 
 run_linear issues create --title "Refresh skips a worktree" \
-  --description "$(printf '%s\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
 assert_created "a create whose body names the run that reaches it"
 
-printf '%s\n' 'Keep generated skill files current after refresh.' \
-  '' 'The work is complete when refresh updates the installed skill.' \
+printf '%s\n' "$OUTCOME" \
   '' '## Done when' '' '- [ ] Refresh updates the installed skill.' \
   '' '## Requirements' '' '- Update the installed skill during refresh.' \
   '' '## Filing record' '' "$REACH_LINE" \
@@ -95,34 +98,38 @@ printf '%s\n' 'Keep generated skill files current after refresh.' \
 run_linear issues create --title "Refresh updates the skill" --description-file "$TMP_ROOT/body.md"
 assert_created "a create with its reach under Filing record after the outcome"
 
-printf -- '- Reached by: `tools/guard` on a fresh clone\n' >"$TMP_ROOT/body.md"
+printf '%s\n\n## Filing record\n\n- Reached by: `tools/guard` on a fresh clone\n' "$OUTCOME" >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach is a list item arriving by --description-file"
 
 echo "=== guard on: a review-born priority 2 needs a reported symptom ==="
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
 assert_refused_before_api "a review-born priority-2 create with no Symptom line"
 assert_contains "the refusal names the missing line" "$ERR" "Symptom"
 assert_contains "the refusal routes the item to priority 3" "$ERR" "priority 3"
 
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n%s\nSymptom: none\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\nSymptom: none\n' "$OUTCOME" "$REACH_LINE")"
 assert_refused_before_api "a review-born priority-2 create whose Symptom is a null token"
 
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SYMPTOM_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SYMPTOM_LINE")"
 assert_created "a review-born priority-2 create carrying a reported symptom"
 
 # Priority 2 minted structurally reports none by construction; refusing it would abort a merge on an orphan child.
 run_linear issues create --title "Structural priority" --priority 2 \
-  --description "$(printf '%s\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
 assert_created "a structural priority-2 create with no Symptom line"
 
 echo "=== no key is on, an empty key is off, and help never trips ==="
 guard ''
 run_linear issues create --title "Default repo"
 assert_refused_before_api "a bare create with no LINEAR_REQUIRE_REACH key"
+
+run_linear issues create --title "Default opening without reach" \
+  --description "$(printf '%s\n\n## Filing record\n' "$OUTCOME")"
+assert_refused_before_api "a missing-reach create with no LINEAR_REQUIRE_REACH key"
 
 guard 'LINEAR_REQUIRE_REACH = ""\n'
 run_linear issues create --title "Unguarded repo"

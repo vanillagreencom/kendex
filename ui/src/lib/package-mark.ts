@@ -44,7 +44,7 @@ export function markFor(
 export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   const saved = useEditorStore((s) => s.saved);
   const settings = useEditorStore((s) => s.savedSettings);
-  const loadPlaces = useEditorStore((s) => s.loadPlaces);
+  const ensurePlaces = useEditorStore((s) => s.ensurePlaces);
   const rows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore(rowsKnown);
   // The scan rebuilds the group on every read, so what is held onto is
@@ -54,8 +54,8 @@ export function usePackageMark(group: ItemGroup | null): PlaceMark | null {
   // biome-ignore lint/correctness/useExhaustiveDependencies: which places, not which array
   const places = useMemo(() => scopes, [key]);
   useEffect(() => {
-    if (places.length > 0) void loadPlaces(places);
-  }, [places, loadPlaces]);
+    if (places.length > 0) void ensurePlaces(places);
+  }, [places, ensurePlaces]);
   if (!group) return null;
   return markFor(saved, rows, updatesLoaded, settings, group);
 }

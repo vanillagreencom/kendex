@@ -1,18 +1,13 @@
 ---
 name: reviewer
 description: "Load when reviewing a diff, classifying findings, or returning a verdict."
-summary: "Strict review and QA workflows: reviewer ethos, code-review classification, the finding JSON schema, and the QA-label lifecycle."
 license: MIT
 user-invocable: true
-dependencies:
-  required: [orch, github, code-quality, docs-writing, change-scope, project-management]
-  optional: [linear]
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [review]
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -45,8 +40,9 @@ Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted bas
 - Verify before reporting: if the repo contains the caller, config, test, or doc that settles a suspicion, read it. Never file "maybe X handles this" when X is in the repo.
 - Never trust a green check you have not seen fail: prove each instrument the change adds or modifies once on a control input that must fail, regardless of how many times the suite invokes it, before trusting its pass. An instrument carrying the statement [code-quality § Tests](../code-quality/SKILL.md#tests) takes in place of its control is judged on that statement. A missing must-fail control blocks only a new or changed instrument. Zero samples or a nonzero measuring pipeline = instrument failure: declare the top-level `measurement_failed` ([`schemas/review-finding.md`](./schemas/review-finding.md)), cite no numbers. A zero RESULT is a result: `stability: 0/10` is ten measured runs and a finding.
 - **Report the class, not the instance.** When a finding generalizes (the same missing guard at sibling sites), enumerate every affected site in that one finding and name the symbol that should hold the broken rule in its optional `owner` field.
-- **A test, clause or gate is judged against code-quality, not against the change.** Judge test protection against cost under [code-quality § Tests](../code-quality/SKILL.md#tests). A test with no protection takes a `fix` suggestion to remove it. Repair weak evidence where protection matters. Accept an omission the pull request body justifies. A compatibility or migration clause the repository's policy does not require ([§ Cleanup](../code-quality/SKILL.md#cleanup)), a new gate or scanner with no named failure, or an interface with one implementation ([§ Over-Engineering](../code-quality/SKILL.md#over-engineering)), is a blocker on that clause, gate or interface, whatever the issue's Done-when asked for; the change it rides is not the finding.
+- **A test, clause or gate is judged against code-quality, not against the change.** Judge test protection against cost under [code-quality § Tests](../code-quality/SKILL.md#tests); the test rows of the [finding-disposition](references/finding-disposition.md#decision-flow) decision table give each test finding's disposition. A compatibility or migration clause the repository's policy does not require ([§ Cleanup](../code-quality/SKILL.md#cleanup)), a new gate or scanner with no named failure, or an interface with one implementation ([§ Over-Engineering](../code-quality/SKILL.md#over-engineering)), is a blocker on that clause, gate or interface, whatever the issue's Done-when asked for; the change it rides is not the finding.
 - **A post-merge box the merge can prove is a finding.** A `Post-merge:` box in the issue's Done-when whose check the PR's own tests, CI or diff already prove, or whose `Why after merge:` names none of the three classes the project-management skill's SKILL.md § Disposition admits, is a `fix` suggestion on that box. Tick it in the PR's completion only when recorded evidence proves its check, and cite that evidence. For an unproved check, follow that Disposition: make it a pre-merge test or correct its post-merge admission. Drop a check only when that Disposition permits it.
+- **A practice or design finding names its cause.** Judge each finding in the classes [code-quality § Finding Evaluation](../code-quality/SKILL.md#finding-evaluation) names by that section, and write its one evaluation line where the [`schemas/review-finding.md`](./schemas/review-finding.md) `description` row places it.
 - **Duplicated judgment is a finding.** Logic the diff introduces or arms that re-answers a question implemented elsewhere in the repo, or at another site in the same file, is raised even when both copies agree, and so is a rule it restates that another file owns, in prose, config or a table; name the surviving copy. Also raise a new script, background watcher, setting or rule added beside the owner of the same concern. Cite [code-quality § Over-Engineering](../code-quality/SKILL.md#over-engineering) in the finding and name the owner the change should extend.
 - **Unrequested behaviour is a finding:** behaviour the diff adds that the linked issue does not ask for takes a `fix` suggestion to remove it, or a PR-body note saying why it is needed: a landing enabler or a defect the change introduces or arms, as dev SKILL.md § Engineering Rules lists.
 - **A behavior claim needs the code that makes it true.** For every sentence the diff adds to a `--help`, SKILL.md, CHANGELOG entry, comment, or diagnostic that claims program behavior, find the code that makes it true. None found is a blocker on the claim. Judge a policy or constraint under [code-quality § Comments and Prose](../code-quality/SKILL.md#comments-and-prose) and [docs-writing § Writing](../docs-writing/SKILL.md#writing), checking its authoritative rule.
@@ -63,7 +59,7 @@ Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted bas
 
 ## Output Contract
 
-Capture the starting fields before reviewing. Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
+Capture the starting fields before reviewing. Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path. That path must use the canonical form `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`, minted by `orch-runtime review-artifact --text path` and read by `hooks/reviewer-stop-check.sh`. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime review-artifact --text path --worktree [WORKTREE_PATH] --agent [AGENT]
@@ -87,15 +83,11 @@ The delegation's `Diff-range` is the fix diff: scope the pass to that range and 
 
 ## Mutation-Stability Pairing
 
-Judge control evidence under [code-quality § Tests](../code-quality/SKILL.md#tests) and [§ Prove Your Guards](../code-quality/SKILL.md#prove-your-guards). Use this command when the required control evidence is missing or a reachable concurrency failure needs repeated measurements. Existing sufficient evidence needs no new run. The script takes the worktree itself as `--worktree`, extracts a clean and a mutant copy of `--sha` under its own `mktemp -d` on the [§ Ethos](#ethos) base, runs the test in each, and removes them on exit unless `--keep` or a cleanup that reports `workspace kept`; before the call, run the [§ Ethos](#ethos) free-space check for two copies, each with its build output. In a [re-review](#re-review-rounds), consider only instruments the fix diff adds or changes:
+Judge control evidence under [code-quality § Tests](../code-quality/SKILL.md#tests) and [§ Prove Your Guards](../code-quality/SKILL.md#prove-your-guards). Use this command when the required control evidence is missing or a reachable concurrency failure needs repeated measurements. Existing sufficient evidence needs no new run. In a [re-review](#re-review-rounds), consider only instruments the fix diff adds or changes.
 
-```bash
-.agents/skills/reviewer/scripts/mutation-stability --worktree [WORKTREE_PATH] --sha [SHA] --test '[TEST_CMD]' --build '[BUILD_CMD]' --mutate '[MUTATE_CMD]' --stability [SAMPLE_COUNT]
-```
+Read [mutation-stability.md](workflows/mutation-stability.md) before preparing or running this probe.
 
-- Use `--stability 1` for a missing control. Repeated clean runs need a named concurrency failure to investigate. `TEST_CMD` takes the control scope [code-quality § Prove Your Guards](../code-quality/SKILL.md#prove-your-guards) sets. Clean repeats stop starting after `--stability-budget` seconds, with at least two completed runs unless `--stability` is 1, and at most `--stability` runs. A started run keeps `--timeout`, so the stability phase is bounded by budget plus two timeouts, excluding extraction and cleanup. The defaults are 60 seconds and 300 seconds. Report the completed sample count; a budget-limited sample proves only those runs.
-
-- A call that can outlast one foreground tool call runs through the orch job runner per [orch waiter-launch.md](../orch/references/waiter-launch.md) § Launch, with `[RUN_DIR]` from `mktemp -d "${TMPDIR:-/tmp}/waiter.XXXXXX"` on the [§ Ethos](#ethos) base in place of the worktree's `tmp/`, where the `reviewer-read-only` hook refuses the `launch.sh` write. Wait for its end inside your own turn, never through § Completion's monitor: run the foreground poll `sh -c 'bound=$(command -v timeout || command -v gtimeout) || { printf "%s\n" "reviewer: missing-command commands=timeout,gtimeout" >&2; exit 127; }; exec "$bound" "$@"' sh 540 sh -c 'until test -s "[RUN_DIR]/wait.exit"; do sleep 30; done'` under the harness's maximum command timeout, and run it again for as long as it exits 124. Never end the turn while `wait.exit` is empty and never wait for a completion notice: a subagent whose turn has ended is not woken when the run ends. Then read `wait.exit`, whose nonzero code stays nonzero, and the `mutation: … stability: …` line in `[RUN_DIR]/wait.log`. Never wait on `pgrep -f` or `ps | grep` of the command: the pattern also stands in the waiting shell's own command line, so the wait matches itself and never sees the run end.
+- Report the completed sample count; a budget-limited sample proves only those runs.
 - Choose a control that reaches the new or changed instrument through its real entry point.
 - A kill counts only when the mutated copy compiles. Use the suite's compile-without-running command for `--build`.
 - Judge a behavior-preserving swap under the port rule of [code-quality § Tests](../code-quality/SKILL.md#tests); the source diff alone cannot prove equivalence.

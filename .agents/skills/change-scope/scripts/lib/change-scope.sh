@@ -20,10 +20,11 @@
 # harness-ci wrapper that judges the queue-only class on the same base commit.
 # They read the sourcing script's variables rather than arguments: `repo` and
 # `base` as its --repo and --base, `work` its scratch directory, `changed` the
-# changed paths one per line, BASE_SETTINGS_KEYS and BASE_SETTINGS_FILES the
-# keys and files base_settings reads. base_file and base_settings set
-# MEASURE_CAUSE on a failed read. A script sources this file after it set
-# those, and before its first call.
+# changed paths one per line, BASE_SETTINGS_KEYS the keys base_settings
+# reads from the files BASE_SETTINGS_FILES, below, names. rev_file reads one
+# file at any commit; base_file and base_settings read at the commit --base
+# names and set MEASURE_CAUSE on a failed read. A script sources this file
+# after it set those, and before its first call.
 #
 # change_scope_read BASE HEAD REPO STDERR_FILE runs the classifier beside this
 # library over REPO's pull-request range BASE...HEAD, appends its stderr to
@@ -41,6 +42,8 @@ CHANGE_SCOPE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # The adopted caller can lack an inventory entry when adoption preserves its
 # configuration. Candidacy permits proof setup; release comparison owns it.
 HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
+# The settings files base_settings reads, in the ladder's order.
+BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # harness-only owns the names-only verdict. Its roots must also belong to
 # the caller's measurement roots before the inventory can leave the path set.
@@ -177,7 +180,7 @@ set_globs() { # GLOBS
 
 # One matcher and one glob grammar for the allowlist and the refusal lists.
 PATH_MATCH_HIT=""
-path_matches() { # MODE(every|any) — against GLOB_LIST, over $changed
+path_matches() { # MODE(every|any) [PATHS] — against GLOB_LIST, PATHS default $changed
   local path hit globs
   PATH_MATCH_HIT=""
   globs=""
@@ -193,7 +196,7 @@ path_matches() { # MODE(every|any) — against GLOB_LIST, over $changed
     else
       [ "$hit" = true ] || return 1
     fi
-  done <<<"$changed"
+  done <<<"${2-$changed}"
   [ "$1" = every ]
 }
 
@@ -202,25 +205,36 @@ path_matches() { # MODE(every|any) — against GLOB_LIST, over $changed
 # subshell every time: minutes over a repository's own refresh.
 TAB="$(printf '\t')"
 
-# The bytes of PATH as the commit --base names holds it, written to OUT:
-# status 0, 2 where that commit holds no PATH, and 1 where the commit or the
-# file could not be read. BASE_REV is that commit, resolved once.
-BASE_REV=""
-base_file() { # PATH OUT
+# The bytes of PATH as commit REV holds it, written to OUT: status 0, 2 where
+# that commit holds no PATH, 3 where it holds PATH as anything but a regular
+# file, and 1 where the commit or the file could not be read. A symlink is a
+# blob of its target's name, which no reader of a checkout sees: it follows
+# the link.
+rev_file() { # REV PATH OUT
   local listed kind blob
-  if [ -z "$BASE_REV" ]; then
-    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
-      BASE_REV=""
-    [ -n "$BASE_REV" ] || return 1
-  fi
-  listed="$(git -C "$repo" ls-tree "$BASE_REV" -- "$1" 2>/dev/null)" || return 1
+  listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
   [ -n "$listed" ] || return 2
+  case "${listed%% *}" in
+    100644 | 100755) ;;
+    *) return 3 ;;
+  esac
   kind="${listed#* }"
   kind="${kind%% *}"
   blob="${listed%%"$TAB"*}"
   blob="${blob##* }"
   [ "$kind" = blob ] || return 1
-  git -C "$repo" cat-file blob "$blob" >"$2" 2>/dev/null
+  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null || return 1
+}
+
+# rev_file at the commit --base names. BASE_REV is that commit, resolved once.
+BASE_REV=""
+base_file() { # PATH OUT
+  if [ -z "$BASE_REV" ]; then
+    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
+      BASE_REV=""
+    [ -n "$BASE_REV" ] || return 1
+  fi
+  rev_file "$BASE_REV" "$1" "$2"
 }
 
 # The settings the base endpoint's commit holds, read from the [env] tables

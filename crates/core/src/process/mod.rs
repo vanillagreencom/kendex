@@ -12,10 +12,12 @@
 //! line outranks config, so operations inside a cache pin `--git-dir` and
 //! `--work-tree` explicitly and the hostile setting is ignored.
 
+use std::convert::Infallible;
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -36,7 +38,13 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 /// gives up early and says so while the window is still theirs.
 pub const INTERACTIVE_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The longest pause between two looks at a start refused as busy, or at a
+/// child that closed its pipes but has not exited yet.
 const POLL: Duration = Duration::from_millis(10);
+
+/// The first pause before a second look at a child that closed its pipes,
+/// doubled up to [`POLL`]: an exit in progress finishes within it.
+const FIRST_REAP_PAUSE: Duration = Duration::from_micros(50);
 
 /// How long a timed-out process tree gets to end on its own before it is
 /// ended for it.
@@ -291,10 +299,22 @@ impl Hardened {
             ));
         };
         // Drained on threads: a child that fills a pipe buffer would block
-        // forever while we sat polling for its exit.
+        // forever while we sat waiting for its exit. Each reader holds a
+        // sender it never sends on, so the channel disconnects the moment
+        // both have returned or panicked, and the wait below wakes then:
+        // a git call that ends in 2 ms returns in 2 ms, not at the next
+        // tick of a poll.
+        let (reader_alive, readers) = mpsc::channel::<Infallible>();
+        let out_alive = reader_alive.clone();
         let cap = self.max_output;
-        let reading_out = std::thread::spawn(move || exchange(stdout, stdin, cap));
-        let reading_err = std::thread::spawn(move || read(&mut stderr, cap));
+        let reading_out = std::thread::spawn(move || {
+            let _alive = out_alive;
+            exchange(stdout, stdin, cap)
+        });
+        let reading_err = std::thread::spawn(move || {
+            let _alive = reader_alive;
+            read(&mut stderr, cap)
+        });
 
         // The deadline covers the READ, not only the wait: breaking on the
         // direct child's exit handed the pipes to `collect` with nothing
@@ -304,25 +324,31 @@ impl Hardened {
         // last because `try_wait` reaps, and `end_tree` signals the group by
         // the leader's pid: a number held only while the group still has a
         // member, so a kill after the reap can land on a stranger.
-        let status = loop {
-            if reading_out.is_finished() && reading_err.is_finished() {
-                match child.try_wait() {
-                    Ok(Some(status)) => break status,
-                    Ok(None) => {}
-                    Err(error) => return Err(CoreError::io(&self.label, error)),
-                }
-            }
-            if Instant::now() >= deadline {
+        match readers.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            Err(RecvTimeoutError::Disconnected) => {}
+            Err(RecvTimeoutError::Timeout) => {
                 end_tree(&mut child);
-                return Err(CoreError::io(
-                    &self.label,
-                    io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!("no result after {:?}", self.timeout),
-                    ),
-                ));
+                return Err(timed_out(&self.label, self.timeout));
             }
-            std::thread::sleep(POLL);
+            Ok(never) => match never {},
+        }
+        // A child closes its pipes on the way out a moment before it can be
+        // reaped, so the first look usually finds it gone or nearly so; one
+        // that closed them and kept running is still held to the deadline.
+        let mut pause = FIRST_REAP_PAUSE;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => return Err(CoreError::io(&self.label, error)),
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                end_tree(&mut child);
+                return Err(timed_out(&self.label, self.timeout));
+            }
+            std::thread::sleep(pause.min(left));
+            pause = (pause * 2).min(POLL);
         };
         Ok(Output {
             status,
@@ -502,6 +528,16 @@ pub fn respawn_detached(args: &[&str]) {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn();
+}
+
+fn timed_out(label: &str, timeout: Duration) -> CoreError {
+    CoreError::io(
+        label,
+        io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("no result after {timeout:?}"),
+        ),
+    )
 }
 
 fn collect(reader: JoinHandle<io::Result<Vec<u8>>>, label: &str) -> Result<Vec<u8>> {

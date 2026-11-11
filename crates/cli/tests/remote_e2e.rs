@@ -6,9 +6,12 @@
 use crate::test_util;
 
 use std::fs;
-use std::path::Path;
-use std::process::{Command, Output};
-use std::time::Duration;
+use std::io::{Read, Seek};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
+use kendex_core::attest::{Document, State};
 
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
     run(launch(home, cwd, args))
@@ -34,9 +37,46 @@ fn launch(home: &Path, cwd: &Path, args: &[&str]) -> Command {
     command
 }
 
+/// How long one run may take before the suite fails it: a fetch that
+/// never returns would otherwise hang the suite instead of failing it.
+const RUN_LIMIT: Duration = Duration::from_secs(120);
+
+/// The run to its end, or a failure at [`RUN_LIMIT`]. Its output goes to
+/// files rather than pipes, so a child that fills a pipe cannot stall
+/// while nothing reads it.
 #[allow(clippy::expect_used)]
 fn run(mut command: Command) -> Output {
-    command.output().expect("kendex binary runs")
+    let mut stdout = tempfile::tempfile().expect("stdout file");
+    let mut stderr = tempfile::tempfile().expect("stderr file");
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(stdout.try_clone().expect("stdout handle"))
+        .stderr(stderr.try_clone().expect("stderr handle"))
+        .spawn()
+        .expect("kendex binary runs");
+    let deadline = Instant::now() + RUN_LIMIT;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("the run reports its state") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("kendex {:?} ran past {RUN_LIMIT:?}", command.get_args());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let drain = |file: &mut fs::File| {
+        let mut bytes = Vec::new();
+        file.rewind().expect("output rewinds");
+        file.read_to_end(&mut bytes).expect("output reads");
+        bytes
+    };
+    Output {
+        status,
+        stdout: drain(&mut stdout),
+        stderr: drain(&mut stderr),
+    }
 }
 
 #[allow(clippy::unwrap_used)]
@@ -246,6 +286,240 @@ fn refresh_waits_for_the_download_another_process_is_finishing() {
     );
     assert!(!printed.contains("not fetched yet"), "{printed}");
     assert!(project.join(".claude/skills/gh/SKILL.md").is_file());
+}
+
+/// Preparing the sources a project's packages come from fetches those and
+/// leaves an unreachable subscription nothing installs from alone, while
+/// the all-source form still fails on it. Either way the project's manifest,
+/// lock and installed files stay as they were, though upstream has moved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn source_refresh_in_use_skips_an_unused_unreachable_source_and_writes_no_project_file() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let project = home.join("proj");
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.gone]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+    )
+    .unwrap();
+    let installed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let upstream = home.join("git/vanillagreencom/kendex");
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    let moved = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+    let before = test_util::lane::snapshot(&project);
+
+    let in_use = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project", "--in-use"],
+    );
+    assert!(in_use.status.success(), "{}", said(&in_use));
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    assert_eq!(
+        kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None),
+        Some(moved)
+    );
+    let all = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project"],
+    );
+    assert!(!all.status.success(), "control: {}", said(&all));
+    let conflicting = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--in-use", "--stale"],
+    );
+    assert_eq!(conflicting.status.code(), Some(2), "{}", said(&conflicting));
+
+    assert_eq!(test_util::lane::snapshot(&project), before);
+}
+
+/// A catalog served as `owner/<name>` under the rebased host, one skill
+/// named after it; its commit.
+#[allow(clippy::unwrap_used)]
+fn named_catalog(home: &Path, name: &str) -> String {
+    let upstream = home.join("git/owner").join(name);
+    fs::create_dir_all(upstream.join("skills").join(name)).unwrap();
+    fs::write(
+        upstream.join("skills").join(name).join("SKILL.md"),
+        format!("---\nname: {name}\ndescription: {name} flows\n---\nBody.\n"),
+    )
+    .unwrap();
+    git(&upstream, &["init", "--quiet", "-b", "main"]);
+    git(&upstream, &["add", "."]);
+    git(&upstream, &["commit", "--quiet", "-m", name]);
+    git_stdout(&upstream, &["rev-parse", "HEAD"])
+}
+
+/// The project's install record, as committed.
+#[allow(clippy::unwrap_used)]
+fn record_of(project: &Path) -> serde_json::Value {
+    serde_json::from_slice(&fs::read(project.join(".kendex-lock.json")).unwrap()).unwrap()
+}
+
+/// What a project's install record says on a worker that never fetched
+/// anything. A warm machine wrote it while `spare`, a subscription no
+/// package uses, sat in its cache, so the record names `spare`. `extra`,
+/// reachable and subscribed since, the record never named. The project is
+/// committed, then this machine's source cache goes. Returns the project
+/// and `spare`'s commit.
+#[allow(clippy::unwrap_used)]
+fn recorded_on_a_warm_machine(home: &Path) -> (PathBuf, String) {
+    let project = home.join("proj");
+    let spare = named_catalog(home, "spare");
+    named_catalog(home, "extra");
+    git(&project, &["init", "--quiet", "-b", "main"]);
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.spare]\nrepo = \"owner/spare\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+    )
+    .unwrap();
+    for args in [
+        &["source", "refresh", "--scope", "project"][..],
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    ] {
+        let output = kendex(home, &project, args);
+        assert!(output.status.success(), "warm {args:?}: {}", said(&output));
+    }
+    assert_eq!(
+        record_of(&project)["sources"]["spare"]["commit"].as_str(),
+        Some(spare.as_str()),
+        "the warm record names spare"
+    );
+    let mut manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    manifest.push_str("\n[sources.extra]\nrepo = \"owner/extra\"\n");
+    fs::write(project.join("kendex.toml"), manifest).unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "--quiet", "-m", "warm record"]);
+    let env = kendex_core::env::Env::host_rooted(home);
+    fs::remove_dir_all(env.source_cache_dir()).unwrap();
+    if env.drift_dir().exists() {
+        fs::remove_dir_all(env.drift_dir()).unwrap();
+    }
+    (project, spare)
+}
+
+/// Whether `owner/<name>`'s mirror answers on this machine.
+fn fetched(home: &Path, name: &str) -> bool {
+    let env = kendex_core::env::Env::host_rooted(home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    kendex_core::remote::mirror_commit(&env, &format!("owner/{name}"), None).is_some()
+}
+
+/// One `verify --json` run and the document it printed.
+#[allow(clippy::unwrap_used)]
+fn verified(home: &Path, project: &Path, args: &[&str]) -> (Output, Document) {
+    let output = kendex(home, project, args);
+    let document = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("the document does not parse: {error}\n{}", said(&output)));
+    (output, document)
+}
+
+/// The record row of a verify document.
+#[allow(clippy::unwrap_used)]
+fn record_row(document: &Document) -> &kendex_core::attest::Row {
+    document
+        .rows
+        .iter()
+        .find(|row| row.kind == "record" && row.name == ".kendex-lock.json")
+        .unwrap()
+}
+
+/// The shipped full route on a cold worker: refresh, apply and verify. The
+/// record pass reads `spare` from its mirror, so the refresh fetches it, and
+/// the record row passes with `spare` recorded at its commit. `extra`, which
+/// the record never named, stays unfetched and unrecorded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_cold_refresh_fetches_the_unused_subscription_the_record_names() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let (project, spare) = recorded_on_a_warm_machine(&home);
+
+    for args in [
+        ["refresh", "--scope", "project", "--yes", "--leave"],
+        ["apply", "--scope", "project", "--yes", "--leave"],
+    ] {
+        let output = kendex(&home, &project, &args);
+        assert!(output.status.success(), "{args:?}: {}", said(&output));
+    }
+    let (output, document) = verified(&home, &project, &["verify", "--scope", "project", "--json"]);
+
+    let record = record_row(&document);
+    assert_eq!(record.state, State::Ok, "{record:?}");
+    assert!(output.status.success(), "{}", said(&output));
+    let written = record_of(&project);
+    assert_eq!(
+        written["sources"]["spare"]["commit"].as_str(),
+        Some(spare.as_str())
+    );
+    assert!(written["sources"].get("extra").is_none(), "{written}");
+    assert!(!fetched(&home, "extra"));
+}
+
+/// The review preparation on a cold worker: `source refresh --in-use`
+/// fetches `spare`, which the record names, and not `extra`, so verifying
+/// at the record against the committed base passes. The all-source refresh
+/// is the control: it fetches `extra` too, and the same verify fails the
+/// record row on it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_review_preparation_fetches_what_verifying_at_the_record_reads() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let (project, _) = recorded_on_a_warm_machine(&home);
+    let at_record = [
+        "verify",
+        "--scope",
+        "project",
+        "--json",
+        "--at-record",
+        "--base",
+        "HEAD",
+    ];
+
+    let prepared = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project", "--in-use"],
+    );
+    assert!(prepared.status.success(), "{}", said(&prepared));
+    let (output, document) = verified(&home, &project, &at_record);
+    let record = record_row(&document);
+    assert_eq!(record.state, State::Ok, "{record:?}");
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(!fetched(&home, "extra"));
+
+    let all = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project"],
+    );
+    assert!(all.status.success(), "{}", said(&all));
+    let (output, document) = verified(&home, &project, &at_record);
+    let record = record_row(&document);
+    assert_eq!(record.state, State::Failed, "control: {record:?}");
+    // verify --json is the document harness-ci's change-class reads; a
+    // record problem names its subject first.
+    let detail = record.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("source extra:") && !detail.contains("source spare:"),
+        "control: {detail}"
+    );
+    assert!(!output.status.success(), "control: {}", said(&output));
 }
 
 #[test]
@@ -674,4 +948,102 @@ fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
         "the personal twin was fetched for a positional repository"
     );
     assert!(!proj.join("kendex.toml").exists());
+}
+
+/// The upstream at `upstream` offering its one skill `skill` as the
+/// `starter` bundle.
+#[allow(clippy::unwrap_used)]
+fn offer_bundle(upstream: &Path, skill: &str) {
+    fs::write(
+        upstream.join("kendex.toml"),
+        format!("[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"{skill}\"]\n"),
+    )
+    .unwrap();
+    git(upstream, &["add", "."]);
+    git(upstream, &["commit", "--quiet", "-m", "bundle"]);
+}
+
+/// A first add on a home that never downloaded the repository it names
+/// downloads it: nothing on disk declares that repository until the add
+/// lands, and the personal scope holds no package and no manifest. The
+/// `owner/tools` row names a repository the personal scope does not
+/// subscribe to, so a retry that downloads the personal default instead
+/// installs nothing; the default catalog's row is the reported spelling,
+/// whose alias the personal seed also declares.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_first_add_of_a_bundle_downloads_the_repository_it_names() {
+    // Whether the row serves its own catalog beside the default one, which
+    // the add must then leave undownloaded.
+    for (repo, skill, own_catalog) in [
+        ("owner/tools", "tools", true),
+        ("vanillagreencom/kendex", "gh", false),
+    ] {
+        let tmp = fixture();
+        let home = test_util::rooted(&tmp);
+        let proj = home.join("proj");
+        if own_catalog {
+            named_catalog(&home, skill);
+        }
+        offer_bundle(&home.join("git").join(repo), skill);
+        let env = kendex_core::env::Env::host_rooted(&home)
+            .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+        assert!(!env.global_manifest_file().exists());
+
+        let output = kendex(
+            &home,
+            &proj,
+            &[
+                "add",
+                repo,
+                "--bundle",
+                "starter",
+                "--harness",
+                "claude",
+                "-y",
+            ],
+        );
+
+        assert!(output.status.success(), "{repo}: {}", said(&output));
+        assert!(
+            proj.join(".claude/skills")
+                .join(skill)
+                .join("SKILL.md")
+                .exists(),
+            "{repo}: {}",
+            said(&output)
+        );
+        let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
+        assert!(manifest.contains("[bundles.starter]"), "{repo}: {manifest}");
+        if own_catalog {
+            assert_eq!(
+                kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None),
+                None,
+                "{repo}: the add downloaded the default catalog, which it never names"
+            );
+        }
+    }
+}
+
+/// The personal scope reads as subscribed to the default catalog before
+/// it writes a manifest, so refreshing it downloads that catalog, and
+/// subscribes the scope to nothing on disk.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_personal_refresh_with_no_manifest_downloads_the_default_catalog() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    assert!(!env.global_manifest_file().exists());
+
+    let output = kendex(&home, &home, &["source", "refresh", "--global"]);
+
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(
+        kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None).is_some(),
+        "{}",
+        said(&output)
+    );
+    assert!(!env.global_manifest_file().exists());
 }

@@ -1,0 +1,1 @@
+- Update the desktop app updater's dependencies to use a patched ZIP library while retaining signed update and digest verification.

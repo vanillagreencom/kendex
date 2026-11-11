@@ -173,7 +173,7 @@ Settings (env > .env.local > .kendex/settings.toml > kendex.settings.toml
   PREFLIGHT_MIGRATION_GLOBS  the migrations applied-migration-edited freezes
   PREFLIGHT_SOURCED_LIB_GLOBS
                              directories whose whole tree holds sourced shell
-                             libraries (default **/scripts/lib)
+                             libraries (default **/lib)
 
 Each replaces its shipped set rather than adding to it. Emptied, the JSONC
 set exempts nothing and every .json file is parsed as strict JSON, an empty
@@ -699,7 +699,7 @@ is_jsonc_path() { # PATH — file kind or configured JSONC-by-convention path
   esac
 }
 
-SOURCED_LIB_GLOBS="${PREFLIGHT_SOURCED_LIB_GLOBS-**/scripts/lib}"
+SOURCED_LIB_GLOBS="${PREFLIGHT_SOURCED_LIB_GLOBS-**/lib}"
 
 is_sourced_lib_tree() { # PATH — under a directory a configured glob names
   local dir="$1"
@@ -1545,6 +1545,9 @@ while IFS= read -r f; do
         [ -n "$raw" ] || continue
         parse_gcc "$raw" "$cpath"
         if [ "$GCC_SEV" = "error" ]; then
+          # A sourced library can run inside its caller's function, where local
+          # is valid. Standalone files keep ShellCheck's top-level-local error.
+          if [ "$sourced_lib" = 1 ] && [ "$GCC_CODE" = SC2168 ]; then continue; fi
           emit "$f" "$GCC_LINE" shellcheck-errors "$GCC_MSG"
         elif [ "$GCC_LINE" != 0 ] && [ "$vendored_mirror" = 0 ] && is_masked_code "$GCC_CODE"; then
           added_lines_of "$IDX" "$f"

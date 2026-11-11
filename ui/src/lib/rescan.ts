@@ -64,6 +64,7 @@
 // reason the registry writes above rescan at all.
 import { useAuditStore } from "@/stores/audit";
 import { useCommitOfferStore } from "@/stores/commit-offer";
+import { retainedReads } from "@/stores/retained-reads";
 import { useProjectChangesStore } from "@/stores/project-changes";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
@@ -254,6 +255,10 @@ export async function writingRepo<R>(
   try {
     return await body();
   } finally {
+    // Here as well as at the scan: the read behind can wait out one already
+    // running, and an answer kept from before this write is not current
+    // while it does.
+    retainedReads.moved();
     void readBehindWrites();
     void offerToCommit(roots);
   }

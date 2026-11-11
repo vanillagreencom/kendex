@@ -163,6 +163,14 @@ bi_record "$out"
 exact 'the other flag refusal names its own flag' \
   "bot-instructions: usage=--dry-run" "$bi_first" "$status" 2
 
+# Discovery's listing flag on a writing verb refuses before the verb runs.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main adopt --discover --repo "$spec_repo" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'adopt --discover refuses with the usage record naming the flag' \
+  "bot-instructions: usage=--discover" "$bi_first" "$status" 2
+
 # A doctrine block carrying a heading trips a content refusal, which leaves
 # the spec read as an input failure rather than a spec one. The subject is
 # still the spec copy.

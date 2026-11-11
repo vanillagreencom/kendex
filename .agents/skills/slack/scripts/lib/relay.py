@@ -1,5 +1,5 @@
-"""The listener: one process, every bound root on one machine, over one
-Socket Mode connection.
+"""The listener: one process, every bound root, with one inbound source.
+Queue mode uses the hosted receiver; Socket Mode owns one connection.
 
 Slack sends each Events API envelope to one of an app's open connections,
 with no pattern to which, so one relay holds its app's one connection for
@@ -10,6 +10,15 @@ routes a message event to the root bound to its channel: a top-level
 message, or an owner reply in any thread. One reader owns socket sends and
 queues acknowledged envelopes. The worker owns journal, API and mailbox
 calls, so their waits cannot block acknowledgements or pong replies.
+
+The worker also answers the optional slash commands, through the one
+COMMANDS table, and the Home tab: /lanes and /asks with the output of the
+command line their setting names, /report with one directive to
+SLACK_REPORT_ROOT's mailbox, each as one ephemeral reply to the payload's
+response_url; an app_home_opened event publishes SLACK_HOME_COMMAND's
+output as the opener's Home tab. SLACK_OWNERS gates both. Neither has a
+catch-up: a command acknowledged and then lost to a stop is gone, and the
+owner types it again.
 
 An event moves no position. It writes no `seen` or `thread` line; the
 catch-up writes both, and a start with no seeds writes the `seen` line of
@@ -57,7 +66,13 @@ Each root checks its presence pair at every poll through the settings reader
 when its settings files change. Other settings need slack setup or a restart.
 While SLACK_JARVIS_SESSION_FILE is younger than SLACK_JARVIS_SESSION_MAX_AGE a Jarvis session
 answers the overseer, and the relay holds mailbox posts except replies to
-messages the owner typed in the channel, which still post in their threads.
+messages the owner typed in the channel, which still post in their threads,
+a notice whose --ref names a /report directive, which posts as a new
+message, and a notice whose --ref names a directive a satellite forwarded,
+which posts under a root that quotes the request. oversee-report's report
+notice carries no --ref, so it is an ordinary owner notice under the hold,
+and oversee-report sends none during
+ORCH_REPORT_QUIET_HOURS.
 Reading the channel goes on. A reload that renames the file keeps the
 replaced one: the hold stands while either is fresh, and the replaced file
 is dropped once the new one is fresh or the replaced one stale. An emptied
@@ -65,7 +80,8 @@ setting ends the hold. When the file goes stale or
 absent the relay resumes. The Jarvis session's watch writes its last mailbox read
 count as one bare integer in tmp/lane-mail/overseer/to-overseer.seen. A resume
 skips notices and asks, including closed asks, on lines at or below that count, with no post and
-no mention, and journals their ids; later ones post. A missing or unreadable
+no mention, and journals their ids; later ones post, and so does a reply to
+a Slack-origin or forwarded directive at any line. A missing or unreadable
 seen file skips nothing. The count is clamped to the lines listed. Held answers
 still post; closure records update thread state independently of post age.
 `slack post --mention` checks the root's OS hold lock, including a renamed
@@ -99,9 +115,9 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
-from api import RETRIES, Slack
-from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail
-from markup import Verbatim, outbound, plain
+from api import MARKDOWN_LIMIT, RETRIES, Slack, markdown_checked
+from mailbox import CommandSetupError, LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail, run_bounded
+from markup import Verbatim, continuations, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
 from secret import checked_file
@@ -129,6 +145,11 @@ from store import (
 )
 from websocket import Closed, WebSocket
 
+# Reload keeps the process alive; internal warning state must not reach
+# configured commands or the root settings reader.
+STATUS_RENAMED = os.environ.pop("_KENDEX_SLACK_RENAMED_STATUS", "0") == "1"
+CALLER_ENV.pop("_KENDEX_SLACK_RENAMED_STATUS", None)
+
 ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
 # The package's code: the launcher and the modules it loads.
 SCRIPTS = Path(__file__).resolve().parents[1]
@@ -153,6 +174,54 @@ RETRY_MAX_SECONDS = 60
 RECONNECT_BOUND_SECONDS = 2 * RETRY_MAX_SECONDS
 NOT_OWNER = "Only the channel's owners steer this session; this message is not routed."
 NO_TEXT = "Only text and files are routed; this message has neither."
+NOT_OWNER_COMMAND = "Only the relay's owners run its commands; nothing ran."
+REPORT_TEXT = "The owner typed /report in Slack: send a progress report now."
+# Slack wants a slash command acknowledged within 3 seconds, which the
+# reader's acknowledgement meets; the worker answers through the payload's
+# response_url (https://docs.slack.dev/interactivity/implementing-slash-commands).
+# A configured command runs this many seconds before TERM and then KILL reach
+# its process group; `run_bounded` states the stop's further bound, and the
+# whole hold stays far inside the stall bound.
+COMMAND_SECONDS = 10
+# Four UTF-8 bytes per display character plus one read-chunk formatting
+# margin. Each stream has this byte cap, before decoding or secret checking.
+COMMAND_OUTPUT_BYTES = 4 * MARKDOWN_LIMIT + 4096
+# chat.postMessage's recommended bound on a message's `text`, which a
+# response_url reply carries (https://docs.slack.dev/reference/methods/chat.postMessage).
+REPLY_CHARS = 4000
+# A home view holds at most 100 blocks
+# (https://docs.slack.dev/reference/views/home-tab-views) and a section's
+# text at most 3000 characters
+# (https://docs.slack.dev/reference/block-kit/blocks/section-block).
+HOME_BLOCKS = 100
+SECTION_CHARS = 3000
+# A trigger_id keys /report's delivery. Slack documents no stability across
+# a redelivery; one with whitespace or none at all is no key.
+TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
+# The delivery id of a /report directive is its trigger_id under this
+# prefix. `report` writes it and `RootRelay.routes` reads it as typed in
+# Slack, so a notice whose --ref names the directive posts, held or not.
+# oversee-report's report notice names no directive: an ordinary notice.
+COMMAND_KEY = "command:"
+# A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
+# sends the request under this delivery key, its text ending in one
+# provenance line of these fields in this order. The relay reads this shape,
+# the key, the request time, the words string, and the framing line with its
+# decoded request-text, to show them; it validates no citation and applies
+# no word rule, which are the satellite's `forward` and the main session's to
+# judge.
+FORWARD_KEY = re.compile(r"forward-[0-9a-f]{64}")
+FORWARD_LINE = re.compile(
+    r"forwarded-request: satellite=(?P<satellite>\S+) request-ref=(?P<request_ref>\S+)"
+    r" request-at=(?P<request_at>(?P<asked_second>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]{1,9})?Z)"
+    r" confirmation-ref=(?P<confirmation_ref>\S+)"
+    r" confirmed-at=(?P<confirmed_at>\S+) key=(?P<key>forward-[0-9a-f]{64})"
+    r" confirmation-method=(?P<method>words|voice|physical) confirmation-text=(?P<words>\".*\"|null)")
+# The framing `forward` puts above the provenance line since its caller
+# became explicit: the request as one ASCII-escaped JSON string. A forward
+# without it is legacy, its whole text the request.
+FORWARD_FRAMING = "forwarded-confirmation: caller=unproved"
+FORWARD_REQUEST = re.compile(r"request-text: (\".*\")")
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -282,6 +351,27 @@ def fingerprint() -> str:
     return digest.hexdigest()[:12]
 
 
+def bounded(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters, the cut marked where one was made."""
+    if len(text) <= limit:
+        return text
+    marker = f"\n[cut at {limit} characters]"
+    return text[: limit - len(marker)] + marker
+
+
+def withheld(name: str, cause: str) -> str:
+    """What a reply or the Home tab shows in place of a failed command's output."""
+    return f"{name} failed ({cause}); its output is not shown."
+
+
+def home_blocks(text: str) -> List[Dict]:
+    """`text` as the mrkdwn sections of a home view, within Slack's block and
+    section limits."""
+    text = bounded(text, HOME_BLOCKS * SECTION_CHARS)
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": text[i : i + SECTION_CHARS]}}
+            for i in range(0, len(text), SECTION_CHARS)]
+
+
 def overdue_id(ask_id: str) -> str:
     """The journal id of a reserved ask's one post past its deadline."""
     return f"{ask_id}:overdue"
@@ -311,6 +401,48 @@ def jarvis_session_held(root: Path, presence: Presence, now: float) -> bool:
     if RelayLock(root, JARVIS_LOCK).held():
         return True
     return presence_fresh(touched_at(presence.jarvis_session_file), presence, now)
+
+
+def forwarded(envelope: Dict) -> Optional[Dict[str, Optional[str]]]:
+    """The citation of a forwarded owner directive, FORWARD_LINE's fields,
+    `request`, the request's words, and `asked_at`, its time cut to the
+    second; None for any other envelope. `words` is the decoded
+    confirmation words, None for a method confirmation."""
+    text = str(envelope.get("text", ""))
+    head, _, last = text.rstrip("\n").rpartition("\n")
+    line = FORWARD_LINE.fullmatch(last)
+    delivery_id = str(envelope.get("delivery_id", ""))
+    if (envelope.get("box") != "to-lane" or envelope.get("kind") != "directive"
+            or not FORWARD_KEY.fullmatch(delivery_id) or line is None or line["key"] != delivery_id):
+        return None
+    request = head.rstrip("\n")
+    framing, _, request_line = request.partition("\n")
+    framed = FORWARD_REQUEST.fullmatch(request_line) if framing == FORWARD_FRAMING else None
+    asked_at = line["asked_second"] + "Z"
+    try:
+        words = json.loads(line["words"])
+        parse_at(asked_at)
+        if framed is not None:
+            request = json.loads(framed[1])
+    except ValueError:
+        return None
+    if (line["method"] == "words") != isinstance(words, str):
+        return None
+    return dict(line.groupdict(), request=request, words=words, asked_at=asked_at)
+
+
+def forward_root(citation: Dict[str, Optional[str]]) -> str:
+    """The top-level post a forwarded directive's answers thread under, for
+    a person: the computer, the request time in each reader's zone, how
+    forwarding was confirmed and the request's words, so the owner can catch
+    a wrong one. A confirmation proves no caller, so the post asks the owner to
+    disown a request that is not theirs. References, the unproved-caller
+    framing and exact stamps stay in the directive the main reads."""
+    words = json.dumps(citation["words"], ensure_ascii=True)
+    confirmed = {"words": f"with {words}", "voice": "by voice", "physical": "physically"}
+    quoted = "\n".join(f"> {line}" if line else ">" for line in str(citation["request"]).splitlines())
+    return (f"Forwarded from {citation['satellite']}, {local_time(str(citation['asked_at']))}, "
+            f"confirmed {confirmed[str(citation['method'])]}:\n\n{quoted}\n\nNot your request? Reply in this thread.")
 
 
 def mention(binding: Binding) -> str:
@@ -372,7 +504,7 @@ class RootRelay:
         self.pending_live: Dict[str, Dict] = {}
         # The threads the due catch-up has read; None once one has read the
         # channel since the last connect or the last refused event delivery.
-        self.due: Optional[Set[str]] = set()
+        self.due: Optional[Set[str]] = set() if settings.inbound == "socket" else None
         self.catch_up_at = 0.0  # Slack's Retry-After, waited across polls
         self.discovered = False
         # The status record carries the compaction day across restarts; the
@@ -469,6 +601,7 @@ class RootRelay:
                 self.resume(events)
             else:
                 self.post_events(self.routes(events))
+            self.post_owner_unread(events)
         if self.post_failed is not None:
             raise self.post_failed
         self.last_ok = self.clock()
@@ -616,13 +749,13 @@ class RootRelay:
             self.journal.append(t="resolved", id=thread.envelope, reason="thread_not_found")
         return missing
 
-    def on_message(self, message: Dict, bot_user: str, active: bool = True) -> None:
-        """One live message event, without a thread-age or parent-origin gate."""
+    def on_message(self, message: Dict, bot_user: str, active: bool = True, path: str = "live") -> None:
+        """One message event, without a thread-age or parent-origin gate."""
         ts = str(message["ts"])
         thread_ts = str(message.get("thread_ts") or ts)
         if active and thread_ts == ts:
             self.bind_file_share(message)
-        self.handle(message, bot_user, path="live", active=active)
+        self.handle(message, bot_user, path=path, active=active)
         if active:
             self.pending_live.pop(ts, None)
 
@@ -677,6 +810,7 @@ class RootRelay:
             self.pending_live[ts] = message
             if not active:
                 return
+        if path in ("live", "queue"):
             self.ready()
         user = str(message.get("user", ""))
         if user not in self.binding.owner_ids.values():
@@ -749,17 +883,74 @@ class RootRelay:
         if not seen:
             return
         try:
-            cursor, read = self.mail.read_receipts()
-            events = self.mail.events()
+            read = self.read_membership()
         except Refusal as err:
             print_refusal(err)
             return
-        read |= {e["id"] for e in events if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
         for ts in seen:
             if self.state.delivered.get(ts) not in read:
                 continue
             if self.react("reactions.remove", ts, SEEN) and self.react("reactions.add", ts, READ):
                 self.journal.append(t="mark", ts=ts, name=READ)
+
+    def read_membership(self, strict: bool = False, references: Iterable[Dict] = ()) -> Set[str]:
+        cursor, read = self.mail.read_receipts(strict=True) if strict else self.mail.read_receipts()
+        # Compaction can remove a read original while its unread batch remains.
+        # Its snapshot's logical position still belongs to this read cursor.
+        return read | {e["id"] for e in [*self.mail.events(), *references]
+                       if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
+
+    def post_owner_unread(self, events: List[Dict]) -> None:
+        """Consume Jarvis's delivered deadline decision; receipts only veto it.
+        The mailbox remains the retained candidate store, including on refusal.
+        """
+        originals = {e["id"]: e for e in events if e.get("box") == "to-lane"
+                     and e.get("mail_class") in ("owner-note", "resolution")}
+        for batch in events:
+            if (batch.get("box") != "to-lane" or batch.get("kind") != "directive"
+                    or not re.fullmatch(r"jarvis-[0-9a-f]{64}", batch.get("delivery_id", ""))):
+                continue
+            # watch.py::line_value defines the producer's token encoding. Match
+            # the serialized bound root without decoding literal escapes. Only
+            # a page batch needs this metadata; idle and reaction reads do not.
+            root = "".join({"\n": r"\n", "\r": r"\r", "\t": r"\t"}.get(char, "\\u%04x" % ord(char))
+                           if ord(char) < 32 or 127 <= ord(char) < 160 or char.isspace() else char
+                           for char in str(self.mail.box.parent.parent.parent))
+            for line in batch["text"].split("\n"):
+                if not line.startswith("EVENT owner-unread "):
+                    continue
+                fields = re.fullmatch(r"EVENT owner-unread id=(\S+) at=(\S+) destination=local root=(\S+)", line)
+                if fields is None or fields[3] != root:
+                    notice("owner-unread-unadmitted", f"batch={batch['id']} reason=event-binding")
+                    continue
+                original = originals.get(fields[1])
+                if original is None or original["at"] != fields[2]:
+                    notice("owner-unread-unadmitted", f"batch={batch['id']} reason=original-missing")
+                    continue
+                page = dict(original, id="owner-unread:" + original["id"])
+                if (page["id"] in self.state.carried or page["id"] in self.state.unknown
+                        or at_epoch(original["at"]) < self.settings.horizon(self.clock())
+                        or before(self.state.start_at, self.state.start_ids, at_epoch(original["at"]), original["id"])):
+                    continue
+                if original.get("line") is None:
+                    self.post_failed = Refusal("lane-mail-failed", f"id={original['id']} field=line unavailable")
+                    continue
+
+                def admit() -> bool:
+                    read = self.read_membership(strict=True, references=(original,))
+                    touched = self.refresh_hold()
+                    return (original["id"] not in read
+                            and at_epoch(original["at"]) >= self.settings.horizon(self.clock())
+                            and not presence_fresh(touched, self.presence, self.clock()))
+
+                text = f"{mention(self.binding)} Owner message `{original['id']}` at `{original['at']}` remains unread."
+                try:
+                    landed = self._send(page, "notice", text, None, admission=admit)
+                except Refusal as err:
+                    self.post_failed = err
+                    continue
+                if landed is not None:
+                    self._out(page, "notice", "resolved", thread=landed)
 
     def user_name(self, user_id: str) -> str:
         """The name Slack shows for a user a message mentions, asked once
@@ -859,10 +1050,11 @@ class RootRelay:
 
     def routes(self, events: List[Dict], seen: int = 0) -> List[Tuple[Dict, str, Dict]]:
         """Each envelope not yet carried and what it takes: `ask`, `notice`, `reply`,
-        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume,
+        `answer`, `resolution`, `seen` for a notice or an ask the Jarvis session read on resume, never a reply,
         `overdue` for a reserved ask with a posted thread or unresolved post
         open past its deadline, or `skip`
-        for another that never posts; answers carry their ask's record."""
+        for another that never posts; answers carry their ask's record, and a
+        reply to a forwarded directive carries that directive with its `citation`."""
         closures = {str(e["id"]): e for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "close"}
         closed = {e.get("re") for e in closures.values()}
@@ -870,6 +1062,12 @@ class RootRelay:
         # but the owner is no longer the one it waits on.
         answered = {e.get("re") for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "resolution"}
+        # handle writes channel:ts on Slack answers; lane-mail tags each
+        # answer's producing verb. Only resolve notes lose their outbound
+        # post after a Slack answer, never independent send revisions.
+        slack_answered = {e.get("re") for e in events
+                          if e.get("box") == "to-lane" and e.get("kind") == "answer"
+                          and str(e.get("delivery_id", "")).startswith(self.channel + ":")}
         by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
@@ -896,32 +1094,51 @@ class RootRelay:
             box = envelope.get("box")
             kind = envelope.get("kind")
             owner = box == "to-overseer" and envelope.get("to") == "owner"
+            ref = envelope.get("ref")
+            reference = by_id.get(ref, {})
+            # A notice whose ref is a directive the owner typed in Slack:
+            # send_directive writes a message's thread pointer and channel:ts,
+            # `report` a /report's COMMAND_KEY. It is a reply, posted while
+            # held, and the Jarvis session reading it is no reason to skip it
+            # on resume, since only Slack shows it to the owner who typed there.
+            # post_notice threads it under the message, and a /report, which
+            # has no thread, gets a new message. A forwarded owner directive
+            # has no other Slack surface either: post_notice threads it under
+            # a root that quotes the request, posted with its first answer.
+            delivery_id = str(reference.get("delivery_id", ""))
+            citation = forwarded(reference) if owner and kind == "notice" else None
+            reply = owner and kind == "notice" and bool(
+                citation is not None or reference.get("thread_ts") or delivery_id.startswith(COMMAND_KEY)
+                or re.fullmatch(r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", delivery_id))
+            if (owner and kind in ("notice", "ask") and not reply
+                    and envelope["line"] is not None and envelope["line"] <= seen):
+                route = "seen"
             # `store.compact` drops an `out` line by this same age, so an
             # envelope whose line it may drop must never post again.
-            if owner and kind in ("notice", "ask") and envelope["line"] is not None and envelope["line"] <= seen:
-                route = "seen"
             elif at < horizon:
                 route = "skip"
             elif owner and kind == "ask":
                 route = "skip" if env_id in closed else "ask"
             elif before(state.start_at, state.start_ids, at, env_id):
                 route = "skip"
+            elif reply:
+                route = "reply"
             elif owner and kind == "notice":
-                ref = envelope.get("ref")
-                reference = by_id.get(ref, {})
-                # send_directive writes Slack's channel:ts and thread pointer.
-                # Owner asks originate here, so their rulings still post.
-                slack_reply = reference.get("thread_ts") or re.fullmatch(
-                    r"[CDG][A-Z0-9]+:[0-9]+\.[0-9]+", str(reference.get("delivery_id", ""))
-                )
+                # Owner asks originate here too, so their rulings still post.
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
-                route = "reply" if slack_reply else "notice" if not ref or owner_ask else "skip"
+                route = "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
-                route = "answer"
+                route = "skip" if (envelope.get("answer_source") == "resolve"
+                                   and envelope.get("re") in slack_answered) else "answer"
             else:
                 route = "skip"
-            ask = by_id.get(str(envelope.get("re", "")), {}) if route == "answer" else {}
-            routed.append((envelope, route, ask))
+            if route == "answer":
+                record = by_id.get(str(envelope.get("re", "")), {})
+            elif route == "reply" and citation is not None:
+                record = dict(reference, citation=citation)
+            else:
+                record = {}
+            routed.append((envelope, route, record))
         return routed
 
     def post_events(
@@ -929,16 +1146,16 @@ class RootRelay:
     ) -> None:
         """Posts what `routes` gives each envelope; `landed`, when given,
         collects the ids of the asks whose post landed."""
-        for envelope, route, ask in routed:
+        for envelope, route, record in routed:
             if route == "ask":
                 if self.post_ask(envelope) and landed is not None:
                     landed.append(str(envelope["id"]))
             elif route == "overdue":
                 self.post_overdue(envelope)
             elif route in ("notice", "reply"):
-                self.post_notice(envelope)
+                self.post_notice(envelope, record)
             elif route == "answer":
-                self.post_answer(envelope, ask)
+                self.post_answer(envelope, record)
             elif route == "resolution":
                 self.journal.append(t="resolved", id=str(envelope["re"]), source=str(envelope["id"]))
             elif route in ("skip", "seen"):
@@ -969,32 +1186,52 @@ class RootRelay:
             self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
-              attach: str = "") -> Optional[str]:
+              attach: str = "", admission: Optional[Callable[[], bool]] = None) -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
         the text as its comment, or the text posted as standard Markdown.
-        Slack's refusal goes to `post_refused`. A
-        text past the `markdown_text` cap goes as `text`, Slack's mrkdwn,
-        its Markdown marks shown literally: an ask or an answer the owner
-        never sees would stand at its deadline unread. A `Verbatim` block
-        mrkdwn cannot show as typed is refused like a secret. Returns the
+        Slack's refusal goes to `post_refused`. Questions must fit one
+        message. Long reports continue in order under the original root,
+        with acknowledged progress synced after each part. An ambiguous
+        write never retries. Returns the
         message ts or the upload's file id; None when nothing landed."""
         env_id = str(envelope["id"])
         try:
             text, body_arg = outbound(self.path, text, file_comment=bool(attach))
             secret_check(text.encode(), f"id={env_id}")
+            if kind in ("ask", "overdue"):
+                markdown_checked(text, f"id={env_id} kind={kind} fix=shorten-question-or-link-detail-in-file-issue-or-report")
             data = checked_file(attach, f"id={env_id} file={attach}") if attach else None
+            parts = [text] if attach else continuations(text)
+            digest = hashlib.sha256(json.dumps([thread_ts, parts], ensure_ascii=False).encode()).hexdigest()
+            progress = self.state.progress.get(env_id)
         except Refusal as err:
             self._out(envelope, kind, "refused", reason=err.key)
             print_refusal(err)
             return None
-        self._out(envelope, kind, "inflight")
+        if progress is not None and progress["hash"] != digest:
+            self._out(envelope, kind, "refused", reason="continuation-changed")
+            notice("continuation-changed", f"id={env_id} reason=hash-mismatch")
+            return None
+        if env_id in self.state.unknown:
+            return None
+        if admission is not None and not admission():
+            return None
         try:
             if data is not None:
+                self._out(envelope, kind, "inflight")
                 return self.api.upload(Path(attach).name, data, self.channel, text, thread_ts)
-            return str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=thread_ts,
-                                     **{body_arg: text})["ts"])
+            root = progress["thread"] if progress else thread_ts
+            start = progress["next"] if progress else 0
+            for index in range(start, len(parts)):
+                self._out(envelope, kind, "inflight")
+                ts = str(self.api.post("chat.postMessage", channel=self.channel, thread_ts=root,
+                                       **{body_arg: parts[index]})["ts"])
+                root = root or ts
+                if len(parts) > 1:
+                    self._out(envelope, kind, "progress", thread=root, next=index + 1, hash=digest)
+            return root
         except Refusal as err:
             self.post_refused(err, envelope, kind)
             return None
@@ -1084,7 +1321,14 @@ class RootRelay:
                       parent=self.parent_of({"ts": landed, "text": excerpt}, "bot", ask_id))
         self._out(reminder, "overdue", "resolved", thread=thread_ts or landed)
 
-    def post_notice(self, envelope: Dict) -> None:
+    def post_notice(self, envelope: Dict, record: Optional[Dict] = None) -> None:
+        """A notice, in its reference's thread when it has one. A forwarded
+        directive's root is posted first: a root Slack refused leaves both for
+        the next poll, and one refused before sending or whose response was
+        lost leaves the notice top-level."""
+        if (record and "citation" in record and str(record["id"]) not in self.state.carried
+                and not self.post_root(record)):
+            return
         ref = envelope.get("ref")
         thread_ts = self.state.post_thread(str(ref)) if ref else None
         attach = str(envelope.get("attach") or "")
@@ -1097,6 +1341,17 @@ class RootRelay:
             fields = {} if thread_ts else {"parent": self.parent_of(
                 {"ts": landed, "text": envelope.get("text", "")}, "bot", str(envelope["id"]))}
             self._out(envelope, "notice", "resolved", thread=thread_ts or landed, **fields)
+
+    def post_root(self, directive: Dict) -> bool:
+        """Post a forwarded directive's root top-level and journal it under
+        the directive's id, so its answers thread there across restarts.
+        False when Slack refused it and the directive stays uncarried."""
+        text = forward_root(directive["citation"])
+        ts = self._send(directive, "notice", text, None)
+        if ts is not None:
+            self._out(directive, "notice", "resolved", thread=ts,
+                      parent=self.parent_of({"ts": ts, "text": text}, "bot", str(directive["id"])))
+        return str(directive["id"]) in self.state.carried
 
     def post_answer(self, envelope: Dict, ask: Dict) -> None:
         ask_id = str(envelope.get("re", ""))
@@ -1143,6 +1398,7 @@ class RootRelay:
                 "compacted_day": self.compacted_day,
                 "channel": self.channel,
                 "poll_seconds": self.settings.poll_seconds,
+                "inbound": self.settings.inbound,
                 "last_poll": self.clock(),
                 "last_poll_ok": ok,
                 "last_error": error,
@@ -1182,6 +1438,12 @@ class Relay:
         self.sleep = sleep
         self.progress: Callable = lambda stage, done=False: None
         self.paths = roots
+        self.report_root = self.served("SLACK_REPORT_ROOT", settings.report_root)
+        # SLACK_OWNERS as Slack ids for commands and the Home tab, resolved
+        # on first use; a root's binding can hold an owner since removed.
+        self.owner_set: Optional[Set[str]] = None
+        self.status_renamed = STATUS_RENAMED
+        self.home_off = False
         self.roots: List[RootRelay] = []
         self.by_channel: Dict[str, RootRelay] = {}
         self.root_errors: Dict[Path, str] = {}
@@ -1206,6 +1468,17 @@ class Relay:
         self.reader: Optional[threading.Thread] = None
         for path in self.paths:
             self.start_root(path)
+
+    def served(self, name: str, path: Optional[Path]) -> Optional[Path]:
+        """A setting's checkout as the root this relay serves under that
+        path, refused at start when it is none of them: an overseer the
+        relay does not serve would answer into a channel no relay posts."""
+        if path is None:
+            return None
+        real = Path(os.path.realpath(path))
+        if real not in self.paths:
+            raise Refusal("setting-invalid", f"{name}={path} fix=name a checkout this relay's --root serves")
+        return real
 
     def claim_channel(self, path: Path, channel: str) -> None:
         for other, bound in self.channels.items():
@@ -1308,9 +1581,13 @@ class Relay:
         print(keyed("listening", f"{len(self.paths)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
             self.progress("poll")
-            result = 0 if self.poll_once() else 1
+            queue_ok = self.poll_queue() if self.settings.inbound == "queue" else True
+            result = 0 if self.poll_once() and queue_ok else 1
             self.progress("poll", True)
             return result
+        if self.settings.inbound == "queue":
+            self.run_queue()
+            self.reexec()
         app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write",
                         progress=self.progress)
         next_poll = retry_at = self.clock()
@@ -1325,6 +1602,34 @@ class Relay:
         self.progress("reload")
         self.reexec()
 
+    def run_queue(self) -> None:
+        """The queue owns inbound work; no socket or history source exists."""
+        next_poll = self.clock()
+        while True:
+            self.progress("queue")
+            self.poll_queue()
+            self.progress("queue", True)
+            if self.clock() >= next_poll:
+                self.progress("poll")
+                self.poll_once()
+                self.progress("poll", True)
+                if self.settled:
+                    return
+                next_poll = self.clock() + self.settings.poll_seconds
+            self.sleep(1)
+
+    def poll_queue(self) -> bool:
+        from inbound import drain
+
+        clean = True
+        for root in self.roots:
+            try:
+                drain(root, self.bot_user)
+            except Exception as err:
+                self.root_failed(root, err)
+                clean = False
+        return clean
+
     def reexec(self) -> NoReturn:
         """This image replaced by the launcher on the code on disk: the same
         process id and arguments, and the caller's own environment, so the
@@ -1336,6 +1641,7 @@ class Relay:
         try:
             os.execve(str(LAUNCHER), [str(LAUNCHER), *sys.argv[1:]], {
                 **CALLER_ENV, "_KENDEX_SLACK_RENAMED_SETTINGS": json.dumps(sorted(RENAMED_SETTINGS)),
+                "_KENDEX_SLACK_RENAMED_STATUS": "1" if self.status_renamed else "0",
             })
         except OSError as err:
             raise Refusal("reexec-failed", f"{LAUNCHER} ({err.strerror})") from err
@@ -1494,11 +1800,12 @@ class Relay:
 
     def envelope(self, socket: WebSocket, text: str) -> None:
         """One envelope: acknowledged by its envelope_id before anything
-        else, since the catch-up covers a stop after the acknowledgement
-        within its lookback, and the journal skips an envelope Slack
-        sent again. A `disconnect` drops the connection for a
-        new one; other envelopes enter the worker queue without any API,
-        journal or mailbox call."""
+        else. For a message event, the catch-up covers a stop after the
+        acknowledgement within its lookback, and the journal skips an
+        envelope Slack sent again; a slash command or Home event lost after
+        its acknowledgement is not recovered. A `disconnect` drops the
+        connection for a new one; other envelopes enter the worker queue
+        without any API, journal or mailbox call."""
         try:
             envelope = json.loads(text)
         except ValueError as err:
@@ -1512,10 +1819,19 @@ class Relay:
         self.incoming.put(envelope)
 
     def deliver(self, envelope: Dict) -> None:
-        """Route an acknowledged envelope on the worker."""
+        """Route an acknowledged envelope on the worker: a slash command, an
+        opened Home tab, or a message event by its channel."""
+        payload = envelope.get("payload") or {}
+        if envelope.get("type") == "slash_commands":
+            self.command(payload)
+            return
         if envelope.get("type") != "events_api":
             return
-        event = (envelope.get("payload") or {}).get("event") or {}
+        event = payload.get("event") or {}
+        if event.get("type") == "app_home_opened":
+            if event.get("tab") == "home":
+                self.home(str(event.get("user") or ""))
+            return
         root = self.by_channel.get(str(event.get("channel", "")))
         if event.get("type") != "message" or root is None:
             return
@@ -1524,3 +1840,170 @@ class Relay:
         except Refusal as err:
             self.root_failed(root, err)
             root.due = set()
+
+    # -- slash commands and the Home tab --------------------------------------
+
+    def owner_ids(self) -> Set[str]:
+        """The one owner gate of commands and the Home tab: SLACK_OWNERS,
+        which a running relay never rereads, resolved once it resolves."""
+        if self.owner_set is None:
+            self.owner_set = set(resolve_owner_ids(self.api, self.settings.owners).values())
+        return self.owner_set
+
+    def command(self, payload: Dict) -> None:
+        """One slash command, answered by one ephemeral reply to its
+        response_url. A dead token stops the relay; any other refusal is
+        printed and the relay goes on."""
+        name = str(payload.get("command") or "")
+        url = str(payload.get("response_url") or "")
+        if not url:
+            print(keyed("command-unanswerable", name or "-"), file=sys.stderr, flush=True)
+            return
+        try:
+            text = self.command_reply(name, payload)
+            self.api.respond(url, {"response_type": "ephemeral", "text": text})
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            print_refusal(err)
+
+    def command_reply(self, name: str, payload: Dict) -> str:
+        handler = COMMANDS.get(name)
+        if handler is None:
+            return f"{name} is not a command this relay answers."
+        try:
+            if str(payload.get("user_id") or "") not in self.owner_ids():
+                return NOT_OWNER_COMMAND
+            if name == "/status" and not self.status_renamed:
+                notice("command-renamed", "/status fix=/lanes remove-in=2.0.0", file=sys.stderr)
+                self.status_renamed = True
+            return handler(self, payload)
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            print_refusal(err)
+            return f"{name} failed ({err.key}); nothing more is shown here."
+
+    def command_output(self, setting: str, argv: Tuple[str, ...]) -> Tuple[str, str]:
+        """A configured command's stdout and an empty cause, or no text and
+        the cause it failed by: `start`, `timeout`, `exit-N` or `empty`,
+        printed as `command-failed`, or the refusal key of the secret-value
+        check, printed as that refusal. No payload field reaches its argv,
+        environment or stdin. It runs in the directory the relay started
+        in, with the caller's own environment, which holds no setting the
+        launcher loaded from the checkout's files, and its stderr goes to
+        the relay's stderr, never to Slack."""
+        self.progress("command:" + setting)
+        out, err = "", ""
+        result = None
+        setup = ""
+        try:
+            result = run_bounded(list(argv), Path.cwd(), COMMAND_SECONDS, env=CALLER_ENV,
+                                 command_output_limit=COMMAND_OUTPUT_BYTES)
+            out, err = result.stdout, result.stderr
+            cause = "" if result.returncode == 0 else f"exit-{result.returncode}"
+        except subprocess.TimeoutExpired as exc:
+            result = exc.result
+            err = exc.stderr
+            cause = "timeout"
+        except CommandSetupError as exc:
+            result = exc.result
+            err = result.stderr
+            cause = "start"
+            setup = f" operation={exc.operation} errno={exc.errno}"
+        except OSError:
+            cause = "start"
+        finally:
+            self.progress("command:" + setting, True)
+        if err:
+            sys.stderr.write(err)
+        cuts = []
+        if result is not None:
+            if result.scoring == "absent":
+                notice("command-score-unavailable", f"{setting} cause=absent", file=sys.stderr)
+            cuts = [stream for stream in ("stdout", "stderr") if getattr(result, stream + "_cut")]
+            if result.stderr_cut:
+                notice("command-output-cut", f"{setting} stream=stderr bytes={COMMAND_OUTPUT_BYTES}", file=sys.stderr)
+        annotation = f"{', '.join(cuts)} output cut at {COMMAND_OUTPUT_BYTES} bytes. " if cuts else ""
+        out = out.strip()
+        if not cause and not out and not (result and result.stdout_cut):
+            cause = "empty"
+        if cause:
+            print(keyed("command-failed", f"{setting} cause={cause}{setup}"), file=sys.stderr, flush=True)
+            return annotation, cause
+        try:
+            secret_check(out.encode(), f"command={setting}", complete=not result.stdout_cut)
+        except Refusal as refusal:
+            print_refusal(refusal)
+            if result.stdout_cut:
+                annotation += "Whole-output secret checking is unavailable. "
+            return annotation, refusal.key
+        return annotation + out, ""
+
+    def answer_with(self, name: str, setting: str, argv: Tuple[str, ...]) -> str:
+        """The reply of a command that shows a configured command's output."""
+        if not argv:
+            return f"{name} is not enabled on this relay; {setting} turns it on."
+        text, cause = self.command_output(setting, argv)
+        if cause:
+            return text + withheld(name, cause)
+        return bounded(text, REPLY_CHARS)
+
+    def report(self, payload: Dict) -> str:
+        """/report: one directive to SLACK_REPORT_ROOT's overseer, keyed by
+        the command's trigger_id, so a payload Slack sends again lands
+        nothing twice. lane-mail judges whether an overseer is recorded."""
+        root = self.report_root
+        if root is None:
+            return "/report is not enabled on this relay; SLACK_REPORT_ROOT turns it on."
+        trigger = payload.get("trigger_id")
+        if not isinstance(trigger, str) or not TRIGGER.fullmatch(trigger):
+            return "/report carried no usable trigger_id; nothing was sent."
+        outcome, value = LaneMail(root).directive(REPORT_TEXT, f"{COMMAND_KEY}{trigger}")
+        if outcome == "absent":
+            return f"No overseer is recorded at {root}; nothing was sent."
+        return f"Report requested from the overseer at {root} (id={value})."
+
+    def home(self, user: str) -> None:
+        """The Home tab of an owner who opened it: SLACK_HOME_COMMAND's
+        output, published by views.publish on each app_home_opened, and
+        nothing polls to keep it fresh. A failed command publishes its
+        cause in place of the output, since Slack keeps showing the last
+        view published. An unset setting and Slack's not_enabled are one
+        outcome, Home off for this process, printed once."""
+        if self.home_off:
+            return
+        if not self.settings.home_command:
+            self.home_disabled("setting")
+            return
+        try:
+            if user not in self.owner_ids():
+                return
+            text, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
+            if cause:
+                text += withheld("SLACK_HOME_COMMAND", cause)
+            # views.publish takes `view` as a JSON-encoded string
+            # (https://docs.slack.dev/reference/methods/views.publish).
+            self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": home_blocks(text)}))
+        except Refusal as err:
+            if err.key == "slack-auth-failed":
+                raise
+            if err.error == "not_enabled":
+                self.home_disabled("slack")
+                return
+            print_refusal(err)
+
+    def home_disabled(self, cause: str) -> None:
+        self.home_off = True
+        print(keyed("home-not-enabled", cause), file=sys.stderr, flush=True)
+
+
+# The one command dispatch table: each slash command the relay answers and
+# the reply its worker builds.
+COMMANDS: Dict[str, Callable[[Relay, Dict], str]] = {
+    "/lanes": lambda relay, payload: relay.answer_with("/lanes", "SLACK_STATUS_COMMAND", relay.settings.status_command),
+    "/asks": lambda relay, payload: relay.answer_with("/asks", "SLACK_ASKS_COMMAND", relay.settings.asks_command),
+    "/report": lambda relay, payload: relay.report(payload),
+}
+# Retired consumer name remains readable until kendex 2.0.0.
+COMMANDS["/status"] = COMMANDS["/lanes"]

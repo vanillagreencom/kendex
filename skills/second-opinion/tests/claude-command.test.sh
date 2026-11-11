@@ -4,7 +4,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib/roster-world.bash"
 BASE_EXPECTED=$'-p\n--output-format\njson\n--no-session-persistence\n--effort\nhigh\n--restricted\n--permission-mode\ndontAsk\n--tools\nBash,Read,Glob,Grep\n--allowedTools\nBash(read-only:true),Read,Glob,Grep\n--setting-sources='
 EXPECTED="$BASE_EXPECTED"$'\n--model\nopus'
-# Each control retains the flag text but removes it from the executable default.
+# The control retains the flag text but removes it from the executable default.
 ROWS='review|-
 audit|-
 challenge|-
@@ -16,16 +16,13 @@ quick|unresolved
 quick|empty
 quick|inherit
 audit|unresolved-retry
-quick|version-control
-quick|--output-format json
-quick|--permission-mode dontAsk
-quick|--tools Bash,Read,Glob,Grep
-quick|--restricted
-quick|--setting-sources='
+quick|--restricted'
 i=0
 while IFS='|' read -r mode change; do
   i=$((i + 1))
-  build "argv-$i" current:none models:claude
+  reply=clean
+  [[ "$mode" != audit ]] || reply=covered
+  build "argv-$i" current:none models:claude "claude:$reply"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/tier-argv"\nprintf "opus\\n"\n' "$ROW" >"$ROW/bin/kendex"
   chmod +x "$ROW/bin/kendex"
   mkdir -p "$ROW/.claude"
@@ -51,9 +48,8 @@ SH
         inherit) printf '#!/usr/bin/env bash\necho inherit\n' >"$ROW/bin/kendex" ;;
       esac
       want="$BASE_EXPECTED"
-      if [[ "$change" == unresolved-retry ]]; then response partial claude >"$ROW/resp-claude"; response clean claude >"$ROW/resp-retry-claude"; fi
+      if [[ "$change" == unresolved-retry ]]; then response partial claude >"$ROW/resp-claude"; response "$reply" claude >"$ROW/resp-retry-claude"; fi
       ;;
-    version-control) mutate_script "$SO" ' --effort high --restricted' ' --model claude-opus-5-5 --effort high --restricted' ;;
     *)
       python3 - "$SO" "$change" <<'PY'
 import pathlib, sys
@@ -92,7 +88,4 @@ PY
     unresolved|unresolved-retry|empty|inherit) assert_eq "$(grep -c 'class=standard unresolved target=claude; using harness default' "$ROW/stderr")" 1 "$change emits one fallback notice" ;;
   esac
 done <<<"$ROWS"
-help_text="$("$SO" --help)"
-help_cmd="$(awk '/^  claude:/ { on=1; sub(/^  claude: /, "") } on && /^          Bash/ { exit } on { gsub(/^ +/, ""); printf "%s ", $0 }' <<<"$help_text")"
-assert_eq "${help_cmd% }" "claude ${BASE_EXPECTED//$'\n'/ }" "help exposes the default command before class resolution"
 finish

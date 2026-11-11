@@ -15,6 +15,7 @@ use crate::test_util::source_path;
 #[allow(clippy::unwrap_used)]
 fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
     LockEntry {
+        requirer_provenance: None,
         name: name.to_owned(),
         kind,
         harness: HarnessId::Claude,
@@ -138,8 +139,11 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
         version: crate::lock::LOCK_VERSION,
         ..Lock::default()
     };
+    // What an install records as a folder source's provenance, which a
+    // read of the installed package's declaration is held to.
+    let cat = crate::source::declared_path_identity(&catalog.display().to_string());
     for (kind, name, source, repo) in [
-        (ItemKind::Skill, "gh", "cat", "cat"),
+        (ItemKind::Skill, "gh", "cat", cat.as_str()),
         (ItemKind::Skill, "mine", "local", "local"),
         (ItemKind::Hook, "watcher", "local", "local"),
         (ItemKind::McpServer, "server", "local", "local"),
@@ -149,6 +153,27 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
             entry(kind, name, source, repo),
         );
     }
+    // The marketplace skill's install wrote Claude's copy, and its record
+    // says where: a copy's record is what puts back the keys the install
+    // cut, and a record naming no position speaks for no copy.
+    lock.entries
+        .get_mut(&crate::lock::entry_key(
+            ItemKind::Skill,
+            "gh",
+            HarnessId::Claude,
+        ))
+        .unwrap_or_else(|| unreachable!("inserted above"))
+        .emitted = Some(crate::lock::EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".to_owned(),
+        // Joined onto the root the lock is written against, as an install
+        // joins it: `canonicalize` above keeps Windows' verbatim prefix.
+        paths: vec![
+            crate::paths::canonical(&project)
+                .unwrap()
+                .join(".claude/skills/gh"),
+        ],
+    });
     crate::lock::save(&crate::lock::lock_path(&env, &scope), &lock).unwrap();
     (tmp, env, scope)
 }

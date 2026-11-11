@@ -214,6 +214,9 @@ fn inspection_file_payload_is_identical_in_every_mode() {
 #[test]
 fn no_color_and_a_dumb_terminal_print_what_a_pipe_gets() {
     let at = fixture();
+    // The first check plans and leaves its memo; every check compared
+    // below reads it, so they all report the same verdicts.
+    check(&at, "plain", &[]);
     let piped = check(&at, "plain", &[]);
     assert!(
         !piped.0.is_empty(),

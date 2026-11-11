@@ -31,6 +31,7 @@
 //! | SKILL.md `name` matches the installed directory | breakage |
 //! | SKILL.md fits the harness's body cap | breakage |
 //! | SKILL.md has a description | advisory |
+//! | SKILL.md `metadata` values are strings, which the installed copy keeps | advisory |
 //! | Cursor rule keys outside description/globs/alwaysApply | advisory |
 
 use std::path::PathBuf;

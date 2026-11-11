@@ -18,7 +18,7 @@ use std::io::IsTerminal;
 use kendex_core::engine::ItemSafety;
 use kendex_core::model::{ItemKind, Scope};
 
-use super::offers::{Blocked, scope_flag};
+use super::offers::{Blocked, PiLeft, finish_with};
 use super::scope_label;
 use crate::ui;
 
@@ -47,11 +47,11 @@ fn items(scored: &[ItemSafety], has: impl Fn(&ItemSafety) -> bool) -> usize {
 }
 
 /// What a run wrote, in its own verb. `None` where the plan had nothing
-/// to do — which is a current scope only where nothing was refused
-/// either, since a plan empty *because* every write was refused is not a
-/// scope that is up to date.
-fn wrote(verb: &str, count: Option<usize>, skipped: usize) -> String {
-    match (count, skipped) {
+/// to do — which is a current scope only where nothing was refused or
+/// left for another verb either, since a plan empty *because* every write
+/// was refused is not a scope that is up to date.
+fn wrote(verb: &str, count: Option<usize>, outstanding: usize) -> String {
+    match (count, outstanding) {
         (None, 0) => "up to date".to_owned(),
         (None, _) => format!("{verb} 0 changes"),
         (Some(n), _) => format!("{verb} {n} change{}", plural(n)),
@@ -94,7 +94,20 @@ pub fn say_ledger(
     scored: &[ItemSafety],
     folded: Folded,
 ) {
-    let (line, steps) = ledger(scope, wrote, blocked, scored, folded);
+    say_ledger_with(scope, wrote, blocked, None, scored, folded);
+}
+
+/// [`say_ledger`] for a verb whose plan can leave declared Pi packages,
+/// which its own write never installs: `apply` and `refresh`.
+pub fn say_ledger_with(
+    scope: &Scope,
+    wrote: Wrote<'_>,
+    blocked: &[Blocked],
+    pi_left: Option<PiLeft>,
+    scored: &[ItemSafety],
+    folded: Folded,
+) {
+    let (line, steps) = ledger(scope, wrote, blocked, pi_left, scored, folded);
     ui::ledger(&line, &steps);
 }
 
@@ -102,8 +115,14 @@ pub fn say_ledger(
 /// carries no next step: the conflict lines above it are where the ways
 /// out are printed, and a closing line naming one of them again is the
 /// same sentence twice on one screen.
-pub fn say_preview(scope: &Scope, wrote: Wrote<'_>, blocked: &[Blocked], scored: &[ItemSafety]) {
-    let (line, _) = ledger(scope, wrote, blocked, scored, Folded::None);
+pub fn say_preview(
+    scope: &Scope,
+    wrote: Wrote<'_>,
+    blocked: &[Blocked],
+    pi_left: Option<PiLeft>,
+    scored: &[ItemSafety],
+) {
+    let (line, _) = ledger(scope, wrote, blocked, pi_left, scored, Folded::None);
     ui::ledger(&line, &[]);
 }
 
@@ -111,13 +130,15 @@ fn ledger(
     scope: &Scope,
     said: Wrote<'_>,
     blocked: &[Blocked],
+    pi_left: Option<PiLeft>,
     scored: &[ItemSafety],
     folded: Folded,
 ) -> (String, Vec<ui::Step>) {
     let skipped = blocked.len();
+    let (left, unsettled) = pi_left.map_or((0, 0), |pi| (pi.update_pi, pi.unsettled));
     let flagged = flagged(scored);
     let unread = unread(scored);
-    let mut parts = vec![wrote(said.verb, said.count, skipped)];
+    let mut parts = vec![wrote(said.verb, said.count, skipped + left + unsettled)];
     let mut steps: Vec<ui::Step> = Vec::new();
     // What this run's commit offer did in this project, read back off the
     // run's own record rather than passed down by each verb: the part has
@@ -128,10 +149,33 @@ fn ledger(
             "skipped {skipped} item{} on conflict",
             plural(skipped)
         ));
-        steps.push(ui::Step::Decision(format!(
-            "skipped — {}",
-            conflict_exit(scope, blocked)
-        )));
+        steps.push(ui::Step::Decision(conflict_exit(scope, blocked)));
+    }
+    // The plan's one completion where it has one, which beside packages
+    // left for update-pi is never the take-over (`engine::completion`), so
+    // one finish is said; the settle-with line above otherwise.
+    if let Some(pi) = pi_left
+        && left > 0
+    {
+        parts.push(format!(
+            "left {left} Pi package{} for update-pi",
+            plural(left)
+        ));
+        steps.push(ui::Step::Decision(match pi.finish {
+            Some(finish) => finish_with(finish, scope),
+            None => "left for update-pi — see the settle-with line above".to_owned(),
+        }));
+    }
+    // A package no named action settles still leaves the scope short of
+    // up to date, and the lines above say why for each.
+    if unsettled > 0 {
+        parts.push(format!(
+            "left {unsettled} Pi package{} unsettled",
+            plural(unsettled)
+        ));
+        steps.push(ui::Step::Decision(
+            "unsettled — the lines above say why".to_owned(),
+        ));
     }
     // A scored run says what safety found either way: a clean scan and
     // a scan nobody ran would otherwise close on the same line. Clean is
@@ -174,25 +218,28 @@ fn ledger(
     )
 }
 
-/// The next step for the skipped part. A command is named only where it
+/// The next step for the skipped part. An action is named only where it
 /// settles EVERY skipped item: the count above covers all of them, so a
 /// remedy that covers some of them and is printed as the answer to the
 /// count is a claim the output does not support. Where the set is mixed —
 /// or where the way out differs item by item — the conflict lines above
 /// are what carry each one's own, and pointing there is the whole answer.
+///
+/// The action is the engine's completion, keyed so a program reads it:
+/// one `finish-with=` line, the same data the conflicts section names.
 fn conflict_exit(scope: &Scope, blocked: &[Blocked]) -> String {
-    let every = |has: fn(&Blocked) -> bool| !blocked.is_empty() && blocked.iter().all(has);
-    if !every(|item| item.replace) {
-        return "see each conflict line above".to_owned();
+    let every = |has: &dyn Fn(&Blocked) -> bool| !blocked.is_empty() && blocked.iter().all(has);
+    let Some(finish) = blocked.first().and_then(|item| item.finish) else {
+        return "skipped — see each conflict line above".to_owned();
+    };
+    if !every(&|item| item.finish == Some(finish)) {
+        return "skipped — see each conflict line above".to_owned();
     }
-    let adopt = match every(|item| item.offer.as_ref().is_some_and(|offer| offer.adopt)) {
-        true => ", or the kendex adopt line under each conflict above",
+    let adopt = match every(&|item| item.offer.as_ref().is_some_and(|offer| offer.adopt)) {
+        true => " — or the adopt line under each conflict above",
         false => "",
     };
-    format!(
-        "kendex apply --replace-unmanaged{}{adopt}",
-        scope_flag(scope)
-    )
+    format!("{}{adopt}", finish_with(finish, scope))
 }
 
 /// A run that left out something it was asked for, ended where a script
@@ -213,9 +260,9 @@ pub fn refuse_skipped(skipped: Vec<(ItemKind, String)>) -> super::CliResult {
 /// conflict. Its own exit status, so automation tells a partial install
 /// from a run that refused before writing: the rest of the plan is
 /// written, the manifest included. `apply --replace-unmanaged` takes in
-/// an item whose every conflict it can replace (`Blocked::replace`, which
-/// `conflict_exit` reads); the conflict line above each item names the
-/// way out for the rest.
+/// an item whose every conflict it can replace, and `conflict_exit` names
+/// it where it settles every skipped item (`engine::completion`); the
+/// conflict line above each item names the way out for the rest.
 #[derive(Debug)]
 pub struct SkippedOnConflict {
     items: Vec<(ItemKind, String)>,
@@ -356,7 +403,7 @@ mod tests {
             ),
         ];
         for (case, scored, want) in rows {
-            let (line, _) = ledger(&Scope::Global, wrote(), &[], scored, Folded::None);
+            let (line, _) = ledger(&Scope::Global, wrote(), &[], None, scored, Folded::None);
             assert_eq!(line, format!("global: {want}"), "{case}");
         }
     }

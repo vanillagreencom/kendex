@@ -1,4 +1,6 @@
-# Bash compatibility fixtures
+# Test fixtures
+
+## Bash compatibility
 
 The [compatibility test](../bash32-lint.test.sh) reads these text files to check [bash32-lint](../../bash32-lint). It does not execute their contents.
 
@@ -10,3 +12,12 @@ The [compatibility test](../bash32-lint.test.sh) reads these text files to check
 | [bash32-overflagged.txt](bash32-overflagged.txt) | Valid source the text patterns reject. |
 
 The test checks the accepted limitations as well as the rejection cases. Update the applicable fixtures when a pattern changes.
+
+## Main-push proof
+
+The [CI event selection test](../ci-class-job-set-events.test.sh) serves two recorded GitHub responses to `tools/ci-job-set`'s push route through a `gh` stub, as trimmed copies of the real responses:
+
+| File | Purpose |
+|---|---|
+| [main-proof-runs.json](main-proof-runs.json) | The merge-group run list for head `43b6b58b`, run 41306604685. |
+| [main-proof-jobs.json](main-proof-jobs.json) | That run's latest jobs. The test keeps the non-shard jobs and clones one recorded shard leg for each shard and runner of the current roster. |

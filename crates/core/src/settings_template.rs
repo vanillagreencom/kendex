@@ -50,6 +50,8 @@
 //! only once the first is fixed. Everything the scan owns — every key, and
 //! every way one key is wrong — comes out in one read.
 
+use std::collections::BTreeSet;
+
 use crate::settings_seed::SETTINGS_TEMPLATE;
 
 /// Where a skill's template stands for one scope: the bytes it ships, that
@@ -123,6 +125,12 @@ pub struct TemplateRead {
     pub entries: Vec<TemplateEntry>,
     pub secrets: Vec<SecretEntry>,
     pub findings: Vec<TemplateFinding>,
+    /// Every key the author assigns under `[secrets]`, whatever is wrong
+    /// with the line that does it. `secrets` holds only the rows that
+    /// decoded, so a reader that must keep a credential's value out of
+    /// what it prints reads this instead: a defective row is still the
+    /// author saying the key holds one.
+    pub secret_keys: BTreeSet<String>,
 }
 
 /// Whether a shell can export this name.

@@ -74,7 +74,7 @@ pub(super) fn dependencies(
     let Some(text) = text else {
         return PackageDependencies::default();
     };
-    let declared = crate::engine::deps::declared_in(text);
+    let declared = crate::engine::deps::declared_in(text).unwrap_or_default();
     let dependency = |kind, dep: &String| row(browsed, offered, landing, kind, name, dep);
     PackageDependencies {
         required: declared
@@ -86,6 +86,12 @@ pub(super) fn dependencies(
                     .required_agents
                     .iter()
                     .filter_map(|dep| dependency(ItemKind::Agent, dep)),
+            )
+            .chain(
+                declared
+                    .required_hooks
+                    .iter()
+                    .filter_map(|dep| dependency(ItemKind::Hook, dep)),
             )
             .collect(),
         optional: declared

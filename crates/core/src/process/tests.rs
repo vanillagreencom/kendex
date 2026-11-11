@@ -502,7 +502,10 @@ fn an_inherited_ssh_command_keeps_its_options() {
 /// pipe it still owns; and a grandchild holding the pipes behind a child
 /// that returned its status at once, where waiting on the child alone
 /// declared the run over and then blocked in collection for the
-/// grandchild's whole run, with no deadline anywhere near it. Every
+/// grandchild's whole run, with no deadline anywhere near it; and a child
+/// that sends its own output elsewhere and keeps running, which is a
+/// package script that starts with `exec > install.log 2>&1`, where the
+/// pipes close long before there is a status to reap. Every
 /// script but the first writes a marker after a second the timeout does
 /// not allow, so a marker on disk afterwards is a process that outlived
 /// the kill. The error proves the run gave up at its deadline, where one
@@ -525,6 +528,11 @@ fn a_run_that_outlives_its_timeout_is_ended_with_everything_it_spawned() {
             "a grandchild holding the pipes",
             "/bin/sh",
             Some("(sleep 1; : > MARKER) & exit 0"),
+        ),
+        (
+            "a child running on with its pipes closed",
+            "/bin/sh",
+            Some("exec >&- 2>&-; sleep 1; : > MARKER"),
         ),
     ];
     for (label, program, script) in rows {

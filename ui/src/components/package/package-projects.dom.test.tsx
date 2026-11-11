@@ -64,6 +64,7 @@ const ownedBy = (...owned: [Scope, Origin][]): ProvenanceRow[] =>
     at: install(scope).path,
     origin,
     summary: null,
+    tags: null,
     package: { kind: "skill", name: "gh" },
   }));
 
@@ -594,6 +595,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         at: mine.at,
         origin: UNMANAGED,
         summary: null,
+        tags: null,
         package: null,
       },
       {
@@ -604,6 +606,7 @@ describe("a place whose copy the tool stores as another kind", () => {
         at: RULE.at,
         origin: OURS,
         summary: null,
+        tags: null,
         package: { kind: "hook", name: "gh" },
       },
     ]);

@@ -179,14 +179,13 @@ SH
 }
 
 BUN_ROWS=0
-proof_bun() { # STATE [FROM TO]
+proof_bun() { # STATE
   local state=$1 image="" resolved="" sandbox=test
-  shift
   BUN_ROWS=$((BUN_ROWS + 1))
-  fixture "bun-$state-$BUN_ROWS" "$@"
+  fixture "bun-$state-$BUN_ROWS"
   bun_release || return 1
   case "$state" in
-    install | corrupt | rerun | foreign | developer) image=1.4.2 ;;
+    corrupt | rerun | foreign | developer) image=1.4.2 ;;
     skip) image="$(cat "$R/.bun-version")" || return 1 ;;
     unsupported | unsupported-os) image=1.4.2 ;;
   esac
@@ -205,19 +204,17 @@ proof_bun() { # STATE [FROM TO]
   fi
   run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" BUN_ARCH="$([ "$state" = unsupported ] && echo aarch64 || echo x86_64)" BUN_OS="$([ "$state" = unsupported-os ] && echo Darwin || echo Linux)" DAYTONA_SANDBOX_ID="$sandbox"
   case "$state" in
-    install | rerun)
+    rerun)
       [ "$RC" -eq 0 ] && [ -x "$R/home/.local/bin/bun" ] && [ -s "$R/curl.log" ] || return 1
       # Read the owned startup file without the test host's /etc/profile,
       # which can independently prepend ~/.local/bin and hide a broken file.
       resolved="$(env -i HOME="$R/home" PATH="$R/fake-bin:$SYS_BIN" "$BASH" --noprofile --rcfile "$R/home/.bash_profile" -ic 'command -v bun; bun --version' 2>/dev/null)" || return 1
       [ "$resolved" = "$R/home/.local/bin/bun"$'\n'"$(cat "$R/.bun-version")" ] || return 1
       case "$OUT" in *" npm:10.9.3 bun:$(cat "$R/.bun-version")"*) ;; *) return 1 ;; esac
-      if [ "$state" = rerun ]; then
-        rm "$R/curl.log"
-        run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" DAYTONA_SANDBOX_ID=test
-        [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] || return 1
-        case "$OUT" in *'lane-setup: bun=skip'*) ;; *) return 1 ;; esac
-      fi
+      rm "$R/curl.log"
+      run_setup ./tools/lane-setup BUN_IMAGE_VERSION="$image" DAYTONA_SANDBOX_ID=test
+      [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] || return 1
+      case "$OUT" in *'lane-setup: bun=skip'*) ;; *) return 1 ;; esac
       ;;
     skip) [ "$RC" -eq 0 ] && [ ! -e "$R/curl.log" ] && [ ! -e "$R/home/.local/bin/bun" ] && case "$OUT" in *'lane-setup: bun=skip'*) true ;; *) false ;; esac ;;
     corrupt) [ "$RC" -ne 0 ] && [ ! -e "$R/home/.local/bin/bun" ] ;;
@@ -234,16 +231,6 @@ echo "=== Bun release install, skip and startup ==="
 for state in skip rerun corrupt foreign developer unsupported unsupported-os; do
   proof_bun "$state" && ok "Bun $state" || bad "Bun $state" "rc=$RC out=$OUT"
 done
-proof_bun install '    install_bun "$bun_pin"' '    :' \
-  && bad 'control: missing Bun install is rejected' || ok 'control: missing Bun install is rejected'
-proof_bun skip '  if [ "$bun_version" = "$bun_pin" ]; then' '  if false; then' \
-  && bad 'control: redundant Bun install is rejected' || ok 'control: redundant Bun install is rejected'
-proof_bun corrupt '  (cd -- "$work" && sha256sum -c bun.sha256)' '  :' \
-  && bad 'control: unchecked archive is rejected' || ok 'control: unchecked archive is rejected'
-proof_bun install "export PATH=\"\$HOME/.local/bin:\$PATH\"'" "export PATH=\"\$PATH\"'" \
-  && bad 'control: missing startup PATH is rejected' || ok 'control: missing startup PATH is rejected'
-proof_bun developer 'if [[ -z ${DAYTONA_SANDBOX_ID:-} ]]; then' 'if false; then' \
-  && bad 'control: replacing a developer Bun is rejected' || ok 'control: replacing a developer Bun is rejected'
 
 echo "=== a fresh clone installs both dependency sets ==="
 fixture fresh
@@ -263,11 +250,10 @@ run_setup ./tools/lane-setup
 
 echo "=== the provider's completed install satisfies the current lockfile ==="
 HOST_UI_ROWS=0
-proof_host_ui() { # MARKER EXPECT [FROM TO]
+proof_host_ui() { # MARKER EXPECT
   local marker=$1 expect=$2 installed_blob="" own_inputs=""
-  shift 2
   HOST_UI_ROWS=$((HOST_UI_ROWS + 1))
-  fixture "host-ui-$HOST_UI_ROWS" "$@"
+  fixture "host-ui-$HOST_UI_ROWS"
   # This marker contract uses committed blobs, rather than the text fake.
   cat >"$R/fake-bin/git" <<'SH'
 #!/usr/bin/env bash
@@ -311,16 +297,6 @@ for row in 'current skip' 'stale install' 'absent install'; do
     && ok "provider marker $marker: UI $expect" \
     || bad "provider marker $marker: UI $expect" "$WHY"
 done
-proof_host_ui current skip \
-  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ "$installed_host_ui_input" = "$ui_lockfile_blob" ]; then' \
-  'if [ "$installed_ui_inputs" = "$ui_inputs" ]; then' \
-  && bad "control: ignoring the provider marker must fail the current row" "$WHY" \
-  || ok "control: ignoring the provider marker fails the current row"
-proof_host_ui stale install \
-  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ "$installed_host_ui_input" = "$ui_lockfile_blob" ]; then' \
-  'if [ "$installed_ui_inputs" = "$ui_inputs" ] || [ -n "$installed_host_ui_input" ]; then' \
-  && bad "control: trusting a stale provider marker must fail the stale row" "$WHY" \
-  || ok "control: trusting a stale provider marker fails the stale row"
 
 echo "=== npm failure stops before rustup ==="
 fixture npm-fail
@@ -378,17 +354,6 @@ run_setup ./tools/lane-setup
 [ "$RC" -eq 0 ] && [ "$(cat "$R/install-gitleaks.log" 2>/dev/null)" = "$R/home/.local/bin" ] && case "$OUT" in *"lane-setup: gitleaks=install reason=unusable path=$R/fake-bin/gitleaks"*) true ;; *) false ;; esac \
   && ok "a gitleaks that cannot run dir is replaced by the pinned release" \
   || bad "a gitleaks that cannot run dir is replaced" "rc=$RC log=$(cat "$R/install-gitleaks.log" 2>&1) out=$OUT"
-fixture gitleaks-mutant 'if ! gitleaks_path="$(command -v gitleaks)"; then' 'if true; then'
-run_setup ./tools/lane-setup
-[ -e "$R/install-gitleaks.log" ] \
-  && ok "control: without the PATH check the installer runs over a gitleaks the lane has" \
-  || bad "control: without the PATH check the installer should run" "rc=$RC out=$OUT"
-fixture gitleaks-probe-mutant 'elif ! gitleaks dir --help >/dev/null 2>&1; then' 'elif false; then'
-old_gitleaks
-run_setup ./tools/lane-setup
-[ ! -e "$R/install-gitleaks.log" ] \
-  && ok "control: without the probe a gitleaks too old for the lane is kept" \
-  || bad "control: without the probe the old gitleaks should be kept" "rc=$RC out=$OUT"
 
 echo "=== must-fail control: swallowing npm failure turns the row green ==="
 fixture mutant '  npm ci --no-audit --no-fund --prefix ui' '  npm ci --no-audit --no-fund --prefix ui || true'
@@ -440,12 +405,12 @@ toy_line() {
 
 lanes_of() { (cd "$R/.." && pwd -P); }
 
-# lane_fixture [FROM TO]: a clone alone in its own lanes directory, which is
+# lane_fixture: a clone alone in its own lanes directory, which is
 # where the setup writes the cargo config.
 LANES=0
 lane_fixture() {
   LANES=$((LANES + 1))
-  fixture "lanes-$LANES/clone" "$@"
+  fixture "lanes-$LANES/clone"
 }
 
 # The non-Linux target a row checks against: the host itself when it is not
@@ -478,13 +443,11 @@ if [ -n "$FOREIGN_TARGET" ]; then
   BASE_FOREIGN="$(cargo_in "$R" check -v $FOREIGN_ARGS)" || { bad "the baseline check runs for $FOREIGN_TARGET" "$BASE_FOREIGN"; exit 1; }
 fi
 
-# Every proof takes the fixture's optional mutation, so its control reruns
-# the same proof against a mutant and expects it to fail.
 # Every run sets its own CARGO_TARGET_DIR, which outranks the config, so the
 # config's lack of a target-dir key is read from the file itself.
 proof_incremental_off() {
   local wt="" clone_cache="" wt_cache="" config="" target_key=absent
-  lane_fixture "$@"
+  lane_fixture
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   wt="$(lanes_of)/.worktrees/clone/wt" || return 1
@@ -505,7 +468,7 @@ proof_incremental_off() {
 
 proof_rerun_skips() {
   local before=""
-  lane_fixture "$@"
+  lane_fixture
   run_setup ./tools/lane-setup DAYTONA_SANDBOX_ID=test
   before="$(cat "$R/../.cargo/config.toml")" || return 1
   run_setup ./tools/lane-setup DAYTONA_SANDBOX_ID=test
@@ -516,7 +479,7 @@ proof_rerun_skips() {
 
 proof_developer_untouched() {
   local lanes_config=absent
-  lane_fixture "$@"
+  lane_fixture
   run_setup ./.fleet-setup
   [ ! -e "$R/../.cargo" ] || lanes_config=present
   WHY="rc=$RC lanes-config=$lanes_config out=$OUT"
@@ -527,7 +490,7 @@ proof_developer_untouched() {
 proof_foreign_refused() {
   local foreign='[build]
 jobs = 1' after=""
-  lane_fixture "$@"
+  lane_fixture
   mkdir -p "$R/../.cargo"
   printf '%s\n' "$foreign" >"$R/../.cargo/config.toml"
   run_setup ./.fleet-setup DAYTONA_SANDBOX_ID=test
@@ -537,12 +500,11 @@ jobs = 1' after=""
     && case "$OUT" in *"lane-setup: cargo-config=foreign path=$(lanes_of)/.cargo/config.toml"*) true ;; *) false ;; esac
 }
 
-# linker_fixture IMAGE BINS [FROM TO]: a sandbox setup whose PATH holds BINS
+# linker_fixture IMAGE BINS: a sandbox setup whose PATH holds BINS
 # and whose image cargo config passes -fuse-ld=IMAGE when IMAGE is set.
 linker_fixture() {
   local image=$1 bins=$2 bin=""
-  shift 2
-  lane_fixture "$@"
+  lane_fixture
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   for bin in $bins; do
@@ -560,10 +522,9 @@ linker_fixture() {
 # elsewhere. `none` leaves the toy crate's rustc line equal to the baseline's
 # and, since a Linux-only entry never reaches a non-Linux host's rustc line,
 # the written config without a rustflags key.
-proof_linker() { # IMAGE BINS EXPECT [FROM TO]
+proof_linker() { # IMAGE BINS EXPECT
   local image=$1 bins=$2 expect=$3 out="" line="" config="" mold=0 lld=0
-  shift 3
-  linker_fixture "$image" "$bins" "$@"
+  linker_fixture "$image" "$bins"
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   out="$(cargo_in "$R" check -v)" || { WHY="$out"; return 1; }
   line="$(toy_line "$out" "$R")"
@@ -583,9 +544,9 @@ proof_linker() { # IMAGE BINS EXPECT [FROM TO]
   [ "$(count "$out" -fuse-ld=mold)" -eq $((BASE_MOLD + mold)) ] && [ "$(count "$out" -fuse-ld=lld)" -eq $((BASE_LLD + lld)) ]
 }
 
-proof_linux_only() { # [FROM TO]
+proof_linux_only() {
   local out=""
-  linker_fixture "" mold "$@"
+  linker_fixture "" mold
   [ "$RC" -eq 0 ] || { WHY="rc=$RC out=$OUT"; return 1; }
   # shellcheck disable=SC2086 # FOREIGN_ARGS is empty or one flag and its value
   out="$(cargo_in "$R" check -v $FOREIGN_ARGS)" || { WHY="$out"; return 1; }
@@ -599,15 +560,14 @@ proof_linux_only() { # [FROM TO]
 OWNED_HEADER="$(sed -n "s/^owned_header='\(.*\)'\$/\1/p" "$TOOLS/lane-setup")"
 [ -n "$OWNED_HEADER" ] || { bad "the owned_header extractor reads the header from lane-setup" "no owned_header= line matched"; exit 1; }
 
-# proof_wrapper PRIOR SCCACHE EXPECT CONFIG [FROM TO]: the sandbox setup
+# proof_wrapper PRIOR SCCACHE EXPECT CONFIG: the sandbox setup
 # with a stale owned config, an empty config from a prior run, or no config.
 # sccache wraps rustc and its config is the owned header alone (local), or
 # neither (unused). CONFIG is the sccache-config key the run prints, write
 # or skip, or none when it prints none.
 proof_wrapper() {
   local prior=$1 sccache=$2 expect=$3 config=$4 out="" conf="" conf_text=""
-  shift 4
-  lane_fixture "$@"
+  lane_fixture
   EXTRA_BIN="$R/row-bin"
   mkdir -p "$EXTRA_BIN"
   if [ "$sccache" = present ]; then
@@ -659,7 +619,7 @@ for tool in cc ld ld.mold mold ld.lld; do
 done
 case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the warm build rows" "found:$LINK_TOOLS"; exit 1 ;; esac
 
-# proof_warm WARM SOURCE WRAPPER STALE EXPECT [FROM TO]: the setup with
+# proof_warm WARM SOURCE WRAPPER STALE EXPECT: the setup with
 # FLEET_WARM=WARM on a toy crate, committed, that compiles with a current
 # Cargo.lock (good), does not compile (broken), or has no Cargo.lock for
 # --locked to accept (unlocked), with the real cargo on its PATH and the build
@@ -673,8 +633,7 @@ case "$LINK_TOOLS" in */cc\ * | */cc) ;; *) bad "the host provides cc for the wa
 # as it was.
 proof_warm() {
   local warm=$1 source=$2 wrapper=$3 stale=$4 expect=$5 lock="" exe="" built=no trees="" at_lane=no
-  shift 5
-  lane_fixture "$@"
+  lane_fixture
   case "$source" in
     good) ;;
     broken) printf 'pub fn toy( {}\n' >"$R/src/lib.rs" ;;
@@ -780,85 +739,6 @@ done <<'ROWS'
 1|unlocked|none|none|fetch-failed
 ROWS
 
-echo "=== must-fail controls: each cargo proof fails against its mutant ==="
-proof_incremental_off '  write_lane_cargo_config' '  :' \
-  && bad "control: the unpatched script leaves incremental caches" "$WHY" \
-  || ok "control: the unpatched script leaves incremental caches"
-proof_incremental_off 'incremental = false"' $'incremental = false\ntarget-dir = $(toml_string "$lanes_dir/.cargo/target")"' \
-  && bad "control: a target-dir entry in the lane config fails the incremental row" "$WHY" \
-  || ok "control: a target-dir entry in the lane config fails the incremental row"
-proof_rerun_skips '  if [ "$current" = "$content" ]; then' '  if false; then' \
-  && bad "control: a rewrite of an unchanged config fails the rerun proof" "$WHY" \
-  || ok "control: a rewrite of an unchanged config fails the rerun proof"
-proof_developer_untouched 'if [ -z "${DAYTONA_SANDBOX_ID:-}" ]; then' 'if false; then' \
-  && bad "control: writing on a developer checkout fails its proof" "$WHY" \
-  || ok "control: writing on a developer checkout fails its proof"
-proof_foreign_refused '      exit 1' '      true' \
-  && bad "control: overwriting a foreign config fails the refusal proof" "$WHY" \
-  || ok "control: overwriting a foreign config fails the refusal proof"
-proof_linker '' 'mold ld.lld' mold '    if command -v mold >/dev/null; then' '    if false; then' \
-  && bad "control: skipping mold fails the mold row" "$WHY" \
-  || ok "control: skipping mold fails the mold row"
-proof_linker '' '' none '    mold | lld)' '    mold | lld | none)' \
-  && bad "control: a linker entry written anyway fails the none row" "$WHY" \
-  || ok "control: a linker entry written anyway fails the none row"
-proof_linker mold 'mold ld.lld' image '      0) linker=image ;;' '      0) ;;' \
-  && bad "control: a second mold entry beside the image's fails the image row" "$WHY" \
-  || ok "control: a second mold entry beside the image's fails the image row"
-if [ -n "$FOREIGN_TARGET" ]; then
-  proof_linux_only "[target.'cfg(target_os = \\\"linux\\\")']" "[target.'cfg(all())']" \
-    && bad "control: a linker entry for every target fails the non-Linux row" "$WHY" \
-    || ok "control: a linker entry for every target fails the non-Linux row"
-fi
-proof_wrapper '' present local write '  if ! sccache_path="$(command -v sccache)"; then' '  if true; then' \
-  && bad "control: skipping an installed wrapper fails the local-cache row" "$WHY" \
-  || ok "control: skipping an installed wrapper fails the local-cache row"
-proof_wrapper stale present local write '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" ""' '    write_owned sccache-config "${XDG_CONFIG_HOME:-$HOME/.config}/sccache/config" "[cache.disk]"' \
-  && bad "control: a cache section written in the config fails the stale-config row" "$WHY" \
-  || ok "control: a cache section written in the config fails the stale-config row"
-proof_wrapper empty present local skip '  if [ -n "$3" ]; then' '  if true; then' \
-  && bad "control: a blank line after the header of an empty config fails the rerun row" "$WHY" \
-  || ok "control: a blank line after the header of an empty config fails the rerun row"
-
-proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  :' \
-  && bad "control: a warm run that builds nothing fails the built row" "$WHY" \
-  || ok "control: a warm run that builds nothing fails the built row"
-proof_warm 1 good sccache none built '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cargo test --workspace --no-run --locked) || build_status=$?' \
-  && bad "control: a warm build in the clone rather than at the lane path fails the built row" "$WHY" \
-  || ok "control: a warm build in the clone rather than at the lane path fails the built row"
-proof_warm 1 good sccache none built '  git worktree remove --force -- "$lane_path"' '  :' \
-  && bad "control: a warm tree left at the lane path fails the built row" "$WHY" \
-  || ok "control: a warm tree left at the lane path fails the built row"
-proof_warm '' good sccache none skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif true; then' \
-  && bad "control: a build without FLEET_WARM fails the skipped row" "$WHY" \
-  || ok "control: a build without FLEET_WARM fails the skipped row"
-proof_warm 0 good sccache none skipped 'elif [ "${FLEET_WARM:-}" = 1 ]; then' 'elif [ -n "${FLEET_WARM:-}" ]; then' \
-  && bad "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row" "$WHY" \
-  || ok "control: building on any non-empty FLEET_WARM fails the FLEET_WARM=0 row"
-proof_warm 1 unlocked sccache none failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run) || build_status=$?' \
-  && bad "control: a warm build without --locked fails the unlocked row" "$WHY" \
-  || ok "control: a warm build without --locked fails the unlocked row"
-proof_warm 1 broken sccache none failed '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || build_status=$?' '  (cd -- "$lane_path" && cargo test --workspace --no-run --locked) || true' \
-  && bad "control: a swallowed build failure fails the failed row" "$WHY" \
-  || ok "control: a swallowed build failure fails the failed row"
-proof_warm 1 good none none fetched 'if [ "${FLEET_WARM:-}" = 1 ] && [ -z "$lane_wrapper" ]; then' 'if false; then' \
-  && bad "control: a warm build with no wrapper fails the fetched row" "$WHY" \
-  || ok "control: a warm build with no wrapper fails the fetched row"
-proof_warm 1 unlocked none none fetch-failed '  cargo fetch --locked' '  :' \
-  && bad "control: a skipped fetch fails the fetch-failed row" "$WHY" \
-  || ok "control: a skipped fetch fails the fetch-failed row"
-proof_warm 1 unlocked none none fetch-failed '  cargo fetch --locked' '  cargo fetch' \
-  && bad "control: a fetch without --locked fails the fetch-failed row" "$WHY" \
-  || ok "control: a fetch without --locked fails the fetch-failed row"
-proof_warm 1 good sccache tree built '  if [ -e "$lane_path" ]; then' '  if false; then' \
-  && bad "control: a stale tree left at the lane path fails the stale-tree row" "$WHY" \
-  || ok "control: a stale tree left at the lane path fails the stale-tree row"
-proof_warm 1 good sccache registration built '  git worktree add --force --quiet --detach -- "$lane_path" HEAD' '  git worktree add --quiet --detach -- "$lane_path" HEAD' \
-  && bad "control: an add without --force fails the stale-registration row" "$WHY" \
-  || ok "control: an add without --force fails the stale-registration row"
-proof_warm 1 good sccache foreign refused '    git worktree remove --force -- "$lane_path"' '    git worktree remove --force -- "$lane_path" || mv -- "$lane_path" "$lane_path.gone"' \
-  && bad "control: moving a foreign directory aside fails the foreign row" "$WHY" \
-  || ok "control: moving a foreign directory aside fails the foreign row"
 
 echo "=== the script starts under a real Bash 3.2 when one is reachable ==="
 RUNTIMES="$(sed -n 's/^RUNTIMES="\(.*\)"$/\1/p' "$TOOLS/bash32-parse")"

@@ -26,11 +26,16 @@ const A_MEMBER: [(&str, ItemKind, &str); 3] = [
     ("commit-guards", ItemKind::Hook, "block-bare-cd"),
 ];
 
-/// One requirement per kind the walk below must observe. The read answers
+/// One requirement per edge kind the walk below must observe. The read answers
 /// an unreadable file with nothing rather than an error, so a renamed
 /// frontmatter key would otherwise leave every closure assertion for that
 /// kind unreached and the whole test green.
-const REQUIREMENTS: [(&str, &str); 2] = [("orch", "dev"), ("lane-mail-deliver", "lane-mail-check")];
+const REQUIREMENTS: [(&str, &str); 4] = [
+    ("orch", "dev"),
+    ("lane-mail-deliver", "lane-mail-check"),
+    ("docs-writing-note", "docs-writing"),
+    ("docs-writing", "docs-writing-note"),
+];
 
 fn open() -> (SealedSource, SourceConfig) {
     let root = crate::test_util::checkout_root();
@@ -113,7 +118,8 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
             )
         });
         let declared = crate::engine::deps::declared_dependencies(&sealed, member.kind, &dir)
-            .expect("a member's frontmatter reads");
+            .expect("a member's frontmatter reads")
+            .expect("a member's frontmatter parses");
         for (kind, required) in declared
             .required
             .iter()
@@ -123,6 +129,12 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
                     .required_skills
                     .iter()
                     .map(|name| (ItemKind::Skill, name)),
+            )
+            .chain(
+                declared
+                    .required_hooks
+                    .iter()
+                    .map(|name| (ItemKind::Hook, name)),
             )
         {
             seen.push((member.name.clone(), required.clone()));
@@ -154,7 +166,8 @@ fn the_mail_hook_requires_the_session_row_hooks() {
     let hook = find_item(&sealed, &config, ItemKind::Hook, "lane-mail-check")
         .unwrap_or_else(|| panic!("the catalog offers hook 'lane-mail-check'"));
     let declared = crate::engine::deps::declared_dependencies(&sealed, ItemKind::Hook, &hook)
-        .expect("the mail hook's header reads");
+        .expect("the mail hook's header reads")
+        .expect("the mail hook's header parses");
     for row in ["session-start-row", "session-end-row", "stop-failure-row"] {
         assert!(
             declared.required.iter().any(|name| name == row),

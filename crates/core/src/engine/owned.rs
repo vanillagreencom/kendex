@@ -206,7 +206,7 @@ impl<'a> Retained<'a> {
             return Ok(None);
         }
         if let Some(source) = &mut item.source {
-            source.verbatim &= installed == *files;
+            source.follow(files, &installed);
         }
         *files = installed;
         let authored = *in_place;

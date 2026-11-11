@@ -1,6 +1,7 @@
 """The shipped producer with real mailbox writes and explicit step barriers."""
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
+import errno
 import importlib.util
 import io
 import json
@@ -16,7 +17,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
-from mail_world import make_project
+from mail_world import control_account, make_project
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "skills/jarvis/scripts"
@@ -38,11 +39,15 @@ class Producer(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.packages = self.root / "producer"
-        for name in ("jarvis", "mailbox"):
+        for name in ("jarvis", "mailbox", "slack"):
             shutil.copytree(REPO / "skills" / name / "scripts", self.packages / name / "scripts")
-        for name in ("orch", "slack", "github"):
+        for name in ("orch", "github"):
             self.packages.joinpath(name).symlink_to(REPO / "skills" / name, target_is_directory=True)
         self.scripts = self.packages / "jarvis/scripts"
+        # The public status dependency starts healthy; cases supply recorded
+        # CLI results without credentials or the relay's private files.
+        self.slack_command = self.packages / "slack/scripts/slack"
+        self.slack_command.write_text('#!/bin/sh\nprintf "slack: slack-relay=%s state=ok\\n" "$4"\n')
         self.mail_command = self.packages / "mailbox/scripts/lane-mail"
         self.home = self.project("home")
         self.peer = self.project("peer")
@@ -55,7 +60,8 @@ class Producer(unittest.TestCase):
                         REGISTRY=str(self.registry), PYTHONDONTWRITEBYTECODE="1")
         self.executable("kendex", '#!/bin/sh\ncat "$REGISTRY"\n')
         self.module = load(self.scripts / "lib/watch.py")
-        self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_LOG_DIR=str(self.root / "log"), JARVIS_WAKE_SETTLE_SECS="15")
+        self.settings = dict(JARVIS_CONTROL_HOST="", JARVIS_MAIN_HOST="", JARVIS_LOG_DIR=str(self.root / "log"),
+                             JARVIS_WAKE_SETTLE_SECS="15")
 
     def project(self, name):
         return make_project(self.root / name)
@@ -88,6 +94,9 @@ class Producer(unittest.TestCase):
     def watch(self):
         return self.module.Watch(self.home, BASH, self.settings)
 
+    def acquire_all(self, watch, now):
+        return [row for target in watch.destinations for row in watch.acquire(now, target.key)]
+
     def intercept_mail(self, body):
         self.mail_command.write_text('#!/bin/sh\n' + body + '\nexec ' + shlex.quote(BASH) + ' ' +
             shlex.quote(str(REPO / "skills/mailbox/scripts/lane-mail")) + ' "$@"\n')
@@ -98,6 +107,336 @@ class Producer(unittest.TestCase):
     def inbox(self):
         path = self.home / "tmp/lane-mail/overseer/to-lane.jsonl"
         return [json.loads(row) for row in path.read_text().splitlines()] if path.exists() else []
+
+    def initial_pass(self, side="local"):
+        args = [BASH, self.scripts / "vm-watch.sh", "--home", self.home, "--side", side]
+        if side.startswith("ssh:"):
+            result = subprocess.run(["ssh", side.split(":", 1)[1], "bash -s"],
+                                    input=shlex.join(map(str, args)) + "\n", cwd=self.home, env=self.env,
+                                    capture_output=True, text=True, timeout=30)
+        else:
+            result = self.command(args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.root / (side.replace(":", "-") + ".pass")
+        path.write_text(result.stdout)
+        return path
+
+    def native_events(self, root, box):
+        result = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "events",
+                               "--item", "overseer", "--box", box, "--after", "0"], root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        return self.module.mailbox_header(lines[0])[0], [json.loads(row) for row in lines[1:]]
+
+    def test_initial_pass_boundary_uses_logical_positions(self):
+        self.clock(-100 * 86400)
+        self.mail(self.peer, "notice", "expired before adoption", "--to", "owner")
+        self.bin.joinpath("date").unlink()
+        boundary = self.mail(self.peer, "notice", "retained adoption boundary", "--to", "owner")
+        boundary_id = boundary.stdout.split("id=", 1)[1].split()[0]
+        # The public pass marks notices seen before the real compactor runs.
+        self.read_pass()
+        compact = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "compact",
+                                "--item", "overseer"], self.peer)
+        self.assertEqual(compact.returncode, 0, compact.stderr)
+        captured = self.initial_pass()
+        self.assertIn("retained adoption boundary", captured.read_text())
+        count, retained = self.native_events(self.peer, "to-overseer")
+        physical = self.peer.joinpath("tmp/lane-mail/overseer/to-overseer.jsonl").read_bytes().splitlines()
+        self.assertGreater(count, len(physical))
+        self.assertEqual([row["id"] for row in retained], [boundary_id])
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            later = self.mail(self.peer, "notice", "switch-time adoption notice", "--to", "owner")
+            later_id = later.stdout.split("id=", 1)[1].split()[0]
+            watch.tick(0, watch.acquire(0))
+        body = self.inbox()[0]["text"]
+        self.assertEqual([line for line in body.splitlines() if line in
+                          ("retained adoption boundary", "switch-time adoption notice", "expired before adoption")],
+                         ["switch-time adoption notice"], "adopted boundary replay")
+        _, retained = self.native_events(self.peer, "to-overseer")
+        self.assertEqual([row["id"] for row in retained], [boundary_id, later_id])
+
+    def test_initial_pass_home_inbox_handoff(self):
+        before = self.owner_note("owner before boundary")
+        captured = self.initial_pass()
+        self.assertNotIn("owner before boundary", captured.read_text())
+        drained = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"])
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        self.assertIn(before, drained.stdout)
+        self.assertIn("owner before boundary", drained.stdout)
+        later = self.owner_note("owner after boundary")
+        with patch.dict(os.environ, self.env, clear=True):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            watch.accept(watch.acquire(0))
+        self.assertEqual([row["id"] for row in watch.state["unanswered"]["pending"]], [later])
+        _, retained = self.native_events(self.home, "to-lane")
+        self.assertEqual([(row["id"], row["text"]) for row in retained],
+                         [(before, "owner before boundary"), (later, "owner after boundary")])
+
+    def test_initial_pass_destination_and_root_identity(self):
+        equal = self.project("another/peer")
+        roots = (self.peer, equal)
+        self.registry.write_text("\n".join(map(str, roots)) + "\n")
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta gamma",
+                             JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        for root in roots:
+            self.mail(root, "notice", "before " + str(root), "--to", "owner")
+        # The shim gives each destination the same full paths, as separate machine views.
+        captured = [self.initial_pass(side) for side in ("local", "ssh:alpha")]
+        for root in roots:
+            self.mail(root, "notice", "between alias captures " + str(root), "--to", "owner")
+        captured.append(self.initial_pass("ssh:beta"))
+        expected_seeds = {json.loads(path.read_text().splitlines()[-1][8:])["side"]:
+                          json.loads(path.read_text().splitlines()[-1][8:])["roots"] for path in captured}
+        for root in roots:
+            self.assertLess(expected_seeds["ssh:alpha"][str(root)]["to-overseer"]["count"],
+                            expected_seeds["ssh:beta"][str(root)]["to-overseer"]["count"])
+        snapshots = []
+        original_atomic = self.module.atomic_json
+        def observe_save(path, state):
+            snapshots.append(json.loads(json.dumps(state)))
+            original_atomic(path, state)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(self.module, "atomic_json", side_effect=observe_save):
+                watch = self.module.Watch(self.home, BASH, self.settings, captured)
+            self.assertTrue(snapshots)
+            for saved in snapshots:
+                self.assertEqual(saved["cursors"], expected_seeds)
+                self.assertEqual((saved["offset"], saved["spans"], saved["due"], saved["pending"]), (0, [], None, None))
+                self.assertEqual(saved["legacy_control_host"], "alpha")
+            generation = watch.state["generation"]
+            for root in roots:
+                self.mail(root, "notice", "after " + str(root), "--to", "owner")
+            new_root = self.project("new/peer")
+            self.mail(new_root, "notice", "new root retained history", "--to", "owner")
+            self.registry.write_text("\n".join(map(str, (*roots, new_root))) + "\n")
+            self.settings["JARVIS_REMOTE_HOSTS"] = "gamma beta alpha"
+            watch = self.watch()
+            self.assertEqual(watch.state["generation"], generation)
+            watch.tick(0, self.acquire_all(watch, 0))
+        bodies = "\n".join(row["text"] for row in self.inbox())
+        blocks = bodies.split("EVENT mail ")[1:]
+        observed = []
+        for block in blocks:
+            header, _, text = block.split("\n", 2)
+            destination, root = re.search(r" destination=(\S+) root=(\S+)$", header).groups()
+            observed.append((destination, root, text.strip()))
+        expected = [(side, str(root), "after " + str(root))
+                    for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma") for root in roots]
+        expected.extend((side, str(root), "between alias captures " + str(root))
+                        for side in ("local", "ssh:alpha", "ssh:gamma") for root in roots)
+        expected.extend(("ssh:gamma", str(root), "before " + str(root)) for root in roots)
+        expected.extend((side, str(new_root), "new root retained history")
+                        for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma"))
+        self.assertCountEqual(observed, expected)
+
+    def test_control_user_passes(self):
+        # With JARVIS_CONTROL_USER set, the control host's mail and presence
+        # passes read and renew the account's clone, the one owner-note sends
+        # to, never the SSH user's clone of the same repository.
+        clones = {}
+        for name, base in (("ssh-user", self.root / "remote-home"), ("account", self.root / "overseer-account")):
+            clones[name] = make_project(base / "dev/app")
+            clones[name].joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
+            self.mail(clones[name], "notice", "reply in the " + name + " clone", "--to", "owner")
+        remote_registry = self.root / "remote-registry"
+        remote_registry.write_text(str(clones["ssh-user"]) + "\n")
+        control_account(self.executable, self.bin, self.root / "overseer-account", [clones["account"]])
+        self.executable("ssh", '#!/bin/sh\nshift\ncd "$REMOTE_HOME" || exit 1\n'
+                        'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" exec sh -c "$*"\n')
+        self.env.update(REMOTE_HOME=str(self.root / "remote-home"), REMOTE_REGISTRY=str(remote_registry),
+                        ACCOUNT=str(self.root / "overseer-account"))
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_CONTROL_USER="overseer")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module.Watch, "live", lambda watch, now=None: True):
+            watch = self.watch()
+            [(side, output, error, _)] = watch.acquire(0, "ssh:alpha")
+            presence = watch.presence("ssh:alpha")
+        self.assertIsNone(error)
+        self.assertEqual(re.findall(r"^EVENT mail repo=app file=to-overseer destination=ssh:alpha root=(\S+)$",
+                                    output, re.M), [str(clones["account"])])
+        self.assertIn("reply in the account clone", output)
+        self.assertEqual([tuple(row) for row in presence], [(str(clones["account"]), "ok", None)])
+        self.assertEqual([clone.joinpath("hold").exists() for clone in clones.values()], [False, True])
+
+    def test_initial_pass_refusals_leave_state_unchanged(self):
+        self.mail(self.peer, "notice", "retained through refusal", "--to", "owner")
+        captured = self.initial_pass()
+        original = captured.read_bytes()
+        footer = json.loads(original.splitlines()[-1][8:])
+        def changed(**fields):
+            record = dict(footer, **fields)
+            return original[:original.rfind(b"cursor: ")] + b"cursor: " + json.dumps(record).encode() + b"\n"
+        cases = [("malformed", b"cursor: {invalid}\n", "pass-unread"),
+                 ("later-invalid", b"cursor: {invalid}\n", "pass-unread"),
+                 ("truncated", original[:-1], "pass-unread"),
+                 ("two-passes", original * 2, "pass-unread"),
+                 ("no-roots", changed(roots=[]), "pass-unread"),
+                 ("duplicate", original, "destination-repeated"),
+                 ("failed-root", changed(roots={str(self.peer): {"cause": {"key": ["read", "exit", "1"]}}}), "root-failed")]
+        cases.extend((side, changed(side=side), "destination-unknown")
+                     for side in ("ssh:undeclared", "host", "relay", "report", "forward", "consumer"))
+        cases.append(("satellite-side", changed(side="ssh:alpha"), "destination-unknown"))
+        cases.extend((name, original, "state-exists")
+                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending", "second-init",
+                                  "legacy-dormant", "legacy-frozen"))
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for index, (name, data, code) in enumerate(cases):
+                with self.subTest(case=name):
+                    directory = self.root / ("refusal-%s" % index)
+                    directory.mkdir()
+                    self.settings["JARVIS_LOG_DIR"] = str(directory)
+                    self.settings.update(JARVIS_MAIN_HOST="main:/srv/home" if name == "satellite-side" else "",
+                                         JARVIS_CONTROL_HOST="alpha" if name == "satellite-side" else "")
+                    candidate = self.root / "candidate.pass"
+                    candidate.write_bytes(data)
+                    paths = [captured, candidate] if name in ("duplicate", "later-invalid") else [candidate]
+                    if name == "empty-state":
+                        directory.joinpath("batch.json").write_bytes(b"")
+                    elif name == "empty-log":
+                        directory.joinpath("events.log").write_bytes(b"")
+                    elif name == "footer-log":
+                        directory.joinpath("events.log").write_text(
+                            self.module.pass_output(footer["side"], footer["roots"], []))
+                        self.assertFalse(directory.joinpath("batch.json").exists())
+                    elif name in ("established", "pending", "second-init"):
+                        watch = (self.module.Watch(self.home, BASH, self.settings, [captured])
+                                 if name == "second-init" else self.watch())
+                        watch.accept(watch.acquire(0))
+                        if name == "pending":
+                            self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
+                            watch.batch(0)
+                            self.assertIsNotNone(watch.state["pending"])
+                            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+                    elif name in ("legacy-dormant", "legacy-frozen"):
+                        watch = self.watch()
+                        watch.append(self.module.pass_output("host", {"/srv/old": {"to-overseer": {"count": 7}}}, []))
+                        if name == "legacy-frozen":
+                            watch.state["legacy_control_host"] = "alpha"
+                            watch.save()
+                            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+                    files = {path.name: path.read_bytes() for path in directory.iterdir()}
+                    envelopes = {str(root): self.native_events(root, "to-overseer")[1]
+                                 for root in (self.home, self.peer)}
+                    inbox = self.inbox()
+                    with patch.object(self.module, "atomic_json", side_effect=AssertionError("unexpected save")), \
+                            patch.object(self.module, "run", side_effect=AssertionError("unexpected operation")):
+                        with self.assertRaises(self.module.Failure) as refusal:
+                            self.module.Watch(self.home, BASH, self.settings, paths)
+                    self.assertEqual(refusal.exception.record["key"], ["initial-pass", "refusal", code])
+                    self.assertEqual({path.name: path.read_bytes() for path in directory.iterdir()}, files)
+                    self.assertEqual(self.inbox(), inbox)
+                    self.assertEqual({str(root): self.native_events(root, "to-overseer")[1]
+                                      for root in (self.home, self.peer)}, envelopes)
+                    if name in ("established", "pending", "second-init", "footer-log"):
+                        resumed = self.watch()
+                        self.assertEqual(resumed.cursors["local"], footer["roots"])
+                        if name == "footer-log":
+                            self.assertEqual(resumed.state["spans"], [])
+                        if "batch.json" in files:
+                            saved = json.loads(files["batch.json"])
+                            self.assertEqual(resumed.state["generation"], saved["generation"])
+                            self.assertEqual(resumed.state["pending"], saved["pending"])
+                    elif name in ("legacy-dormant", "legacy-frozen"):
+                        saved = json.loads(files["batch.json"])
+                        resumed = self.watch()
+                        side = "host" if name == "legacy-dormant" else "ssh:alpha"
+                        self.assertEqual(resumed.cursors[side]["/srv/old"]["to-overseer"]["count"], 7)
+                        self.assertEqual(resumed.state["generation"], saved["generation"])
+                        self.assertNotIn("ssh:beta", resumed.cursors)
+
+    def test_initial_pass_pending_retry_and_restart(self):
+        captured = self.initial_pass()
+        self.settings.update(JARVIS_WAKE_SETTLE_SECS="0", JARVIS_CONTROL_HOST="alpha")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            generation = watch.state["generation"]
+            self.mail(self.peer, "notice", "first after adoption", "--to", "owner")
+            watch.accept(watch.acquire(0))
+            self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
+            watch.batch(0)
+            pending = json.loads(watch.path.read_text())["pending"]
+            self.assertIn("first after adoption", pending["body"])
+            self.mail(self.peer, "notice", "second after adoption", "--to", "owner")
+            watch.accept(watch.acquire(1))
+            before = (watch.path.read_bytes(), watch.log.read_bytes())
+            with self.assertRaises(self.module.Failure) as refusal:
+                self.module.Watch(self.home, BASH, self.settings, [captured])
+            self.assertEqual(refusal.exception.record["key"], ["initial-pass", "refusal", "state-exists"])
+            self.assertEqual((watch.path.read_bytes(), watch.log.read_bytes()), before)
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+            watch = self.watch()
+            self.assertEqual(watch.state["generation"], generation)
+            self.assertEqual(watch.state["legacy_control_host"], "alpha")
+            self.assertEqual(watch.state["pending"], pending)
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("acknowledgement barrier before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(1)
+            landed = self.inbox()[0]
+            self.assertEqual(landed["delivery_id"], pending["key"])
+            self.assertEqual(landed["text"], pending["body"].rstrip("\n"))
+            with self.assertRaises(self.module.Failure):
+                self.module.Watch(self.home, BASH, self.settings, [captured])
+            resumed = self.watch()
+            self.assertEqual(resumed.state["pending"], pending)
+            resumed.batch(2)
+            self.assertEqual(self.inbox(), [landed])
+            resumed.batch(3)
+            self.assertEqual(len(self.inbox()), 2)
+            self.assertIn("second after adoption", self.inbox()[1]["text"])
+            self.assertNotIn("first after adoption", self.inbox()[1]["text"])
+
+    def test_initial_pass_initialization_exits(self):
+        self.mail(self.peer, "notice", "handled before initialization", "--to", "owner")
+        captured = self.initial_pass()
+        log = Path(self.settings["JARVIS_LOG_DIR"])
+        self.home.joinpath("kendex.settings.toml").write_text('[env]\nJARVIS_LOG_DIR = '+json.dumps(str(log))+'\n')
+        # Run the real CLI dispatcher in a child with a parent-process deadline.
+        # Any continuing work fails at the existing executor/acquisition boundary.
+        probe = '''import importlib.util,sys
+from unittest.mock import patch
+spec=importlib.util.spec_from_file_location("watch",sys.argv[1])
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+sys.argv=[sys.argv[1],"loop","--bash",sys.argv[2],"--home",sys.argv[3],"--initial-pass",sys.argv[4]]
+with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("executor started")), patch.object(module.Watch,"acquire",side_effect=AssertionError("mail acquired")), patch.object(module.Watch,"_poll",side_effect=AssertionError("scheduler started")):
+ module.main()
+'''
+        inbox = self.inbox()
+        result = self.command([sys.executable, "-B", "-c", probe, self.scripts / "lib/watch.py", BASH, self.home, captured])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(log.joinpath("batch.json").read_text())
+        self.assertEqual(state["cursors"], {"local": json.loads(captured.read_text().splitlines()[-1][8:])["roots"]})
+        self.assertEqual((state["offset"], state["spans"], state["due"], state["pending"]), (0, [], None, None))
+        self.assertTrue(state["generation"])
+        self.assertFalse(log.joinpath("events.log").exists())
+        self.assertEqual(self.inbox(), inbox)
+
+    def test_initial_pass_instrument_control(self):
+        case = Producer(methodName="test_initial_pass_boundary_uses_logical_positions")
+        case.setUp()
+        try:
+            path = case.scripts / "lib/watch.py"
+            source = path.read_text()
+            old = "seeds[side] = roots"
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, "seeds[side] = {}")
+            self.assertNotEqual(source, mutant)
+            path.write_text(mutant)
+            case.module = load(path)
+            with self.assertRaisesRegex(AssertionError, "adopted boundary replay"):
+                case.test_initial_pass_boundary_uses_logical_positions()
+        finally:
+            case.doCleanups()
 
     def test_mail_pass_markers_restore_and_unreachable(self):
         self.mail(self.home, "notice", "owner message", "--to", "owner")
@@ -111,7 +450,7 @@ class Producer(unittest.TestCase):
         with self.registry.open("a") as out:
             out.write(str(noted) + " (worktree of ignored)\n" + str(missing) + "\n")
         output, cursor = self.read_pass()
-        self.assertIn("EVENT mail repo=home file=to-overseer\n", output)
+        self.assertIn("EVENT mail repo=home file=to-overseer destination=local root="+str(self.home)+"\n", output)
         self.assertIn("peer answer\n", output)
         self.assertIn("ask to=owner ref= options=yes,no recommend=yes deadline=", output)
         self.assertNotIn("already delivered at home", output)
@@ -209,51 +548,121 @@ class Producer(unittest.TestCase):
         return result.stdout.split("id=", 1)[1].split()[0]
 
     def test_owner_unanswered_reminder(self):
-        owner = self.owner_note("owner asks")
-        self.clock(11 * 60)
-        reminder, failed = "EVENT owner-unanswered id=" + owner + " ", "EVENT owner-unanswered-failed "
+        # A check runs from an owner row's delivery until a check finds it covered.
+        reminder, failed = "EVENT owner-unanswered ", "EVENT owner-unanswered-failed "
+        windows = self.root / "windows"
+        helper = self.scripts / "owner-unanswered"
+        helper.rename(self.scripts / "owner-unanswered-real")
+        helper.write_text('printf "%s\\n" "$*" >> ' + shlex.quote(str(windows)) +
+                          '\nexec "$BASH" "${BASH_SOURCE[0]%/*}/owner-unanswered-real" "$@"\n')
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
                 ThreadPoolExecutor(max_workers=1) as passes:
             # The mail pass never finishes, so a poll runs only the check it schedules.
             pending = Future()
 
-            def poll(watch, now, header):
-                """One _poll at now: whether it submitted a check, and the header lines it added."""
-                before = watch.log.read_text().count(header) if watch.log.exists() else 0
+            def step(watch, now, header, submits, added, waiting):
+                """One _poll at now: whether it checks, the header lines it adds, and the saved waiting ids.
+
+                A check's result is accepted by the poll after the one that submits it.
+                """
+                def reminders():
+                    bodies = [row["text"] for row in self.inbox()]
+                    if watch.log.exists():
+                        bodies.append(watch.log.read_text())
+                    return [line for body in bodies for line in body.splitlines() if line.startswith(header)]
+                before = reminders()
                 prior = watch.unanswered_pending
                 watch._poll(passes, pending, now)
                 submitted = watch.unanswered_pending is not None and watch.unanswered_pending is not prior
                 if submitted:
                     watch.unanswered_pending.result(timeout=60)
-                return submitted, (watch.log.read_text().count(header) if watch.log.exists() else 0) - before
+                after = reminders()
+                self.assertEqual((submitted, len(after) - len(before)), (submits, added), now)
+                self.assertEqual(after[:len(before)], before, now)
+                saved = json.loads(watch.path.read_text()).get("unanswered", {}).get("pending", [])
+                self.assertEqual([row["id"] for row in saved], waiting, now)
 
-            watch = self.watch()
-            watch.next_presence["local"] = 10 ** 9
-            # Each row: now, the header counted, whether the poll submits a check, lines it adds.
-            for now, header, submits, added in ((0, reminder, True, 0), (1, reminder, False, 1),
-                                                (299, reminder, False, 0), (300, "EVENT owner-unanswered ", True, 0),
-                                                (301, "EVENT owner-unanswered ", False, 0)):
-                self.assertEqual(poll(watch, now, header), (submits, added), now)
-            data = watch.log.read_bytes()
-            spans = self.module.decode_log(data, 0)[0]
-            self.assertEqual(data[spans[0][0]:spans[0][1]].decode().split("\n")[1], "owner asks")
-            self.assertIn(["local", str(self.home)], [span[2] for span in spans if len(span) == 3])
+            def started():
+                watch = self.watch()
+                watch.next_presence["local"] = 10 ** 9
+                return watch
+
+            watch = started()
+            # Idle: a pass delivers no owner row, so no interval checks.
+            watch.accept(self.acquire_all(watch, 0))
+            for now in (0, 300, 600):
+                step(watch, now, reminder, False, 0, [])
+            self.assertFalse(windows.exists())
+            # Distinct stamps, first the older, so a window bound by any row but the oldest drops first.
+            self.clock(-120)
+            first = self.owner_note("first ask")
+            self.bin.joinpath("date").unlink()
+            second = self.owner_note("second ask")
+            both, late = [first, second], "EVENT owner-unanswered id=" + second + " "
+            # Each row: now, the header counted, whether the poll checks, lines it adds, saved waiting ids.
+            # Delivery starts the check at once; young rows stay waiting unreminded.
+            watch.accept(self.acquire_all(watch, 0))
+            step(watch, 601, reminder, True, 0, both)
+            # A row delivered after the check read the inbox waits for the next check.
+            third = self.owner_note("third ask")
+            watch.accept(self.acquire_all(watch, 0))
+            step(watch, 602, reminder, False, 0, both + [third])
+            at = {row["id"]: row["at"] for row in self.inbox()}
+            self.assertLess(at[first], at[second])
+            # Partial coverage: the covered rows leave, the other keeps the check alive.
+            for covered in (first, third):
+                self.mail(self.home, "notice", covered + " done", "--to", "owner", "--ref", covered)
+            for row in ((901, reminder, True, 0, both + [third]), (902, reminder, False, 0, [second])):
+                step(watch, *row)
+            # Each window starts at the oldest waiting row, never a default window.
+            self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text()), [at[first], at[first]])
+            # Ten minutes after delivery the row is reminded once, with its text and home origin.
+            self.clock(11 * 60)
+            for row in ((1201, late, True, 0, [second]), (1202, late, False, 1, [second]),
+                        (1501, reminder, True, 0, [second]), (1502, reminder, False, 0, [second])):
+                step(watch, *row)
+            self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text())[-1], at[second])
+            bodies = [row["text"] for row in self.inbox()] + [watch.log.read_text()]
+            reminders = [block for body in bodies for block in body.split("EVENT ")
+                         if block.startswith("owner-unanswered id=")]
+            self.assertEqual([block.split("\n")[1] for block in reminders], ["second ask"])
+            self.assertIn(" destination=local root=" + str(self.home), reminders[0].split("\n")[0])
+            # A day after delivery the watch's own window still lists the row,
+            # past the helper's default day, and the default handoff is read.
+            self.clock(25 * 3600)
+            for row in ((1801, reminder, True, 0, [second]), (1802, reminder, False, 0, [second])):
+                step(watch, *row)
+            self.assertNotIn("--handoff", windows.read_text())
+            # A failed read is reported once and covers nothing.
             self.intercept_mail('[ "$1" != events ] || exit 1')
-            for now, submits, added in ((600, True, 0), (601, False, 1), (900, True, 0), (901, False, 0)):
-                self.assertEqual(poll(watch, now, failed), (submits, added), now)
+            for row in ((2101, failed, True, 0, [second]), (2102, failed, False, 1, [second]),
+                        (2401, failed, True, 0, [second]), (2402, failed, False, 0, [second])):
+                step(watch, *row)
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
-            # The batch sent at 300 is this loop's own directive, never an owner message.
+            # Restart with a waiting row checks at once and keeps the reminder deduplicated.
+            watch = started()
+            for row in ((0, reminder, True, 0, [second]), (1, reminder, False, 0, [second])):
+                step(watch, *row)
+            # Full coverage ends the check.
+            self.mail(self.home, "notice", "second done", "--to", "owner", "--ref", second)
+            for row in ((300, reminder, True, 0, [second]), (301, reminder, False, 0, []),
+                        (600, reminder, False, 0, [])):
+                step(watch, *row)
+            # Restart with nothing waiting stays idle. The loop's own batch
+            # directive in the inbox is not an owner delivery.
             self.assertTrue(any(row.get("delivery_id", "").startswith("jarvis-") for row in self.inbox()))
-            for now, submits in ((1200, True), (1201, False)):
-                self.assertEqual(poll(watch, now, "EVENT owner-unanswered"), (submits, 0), now)
-            # batch.json keeps the reported id across a restart.
-            restarted = self.watch()
-            restarted.next_presence["local"] = 10 ** 9
-            for now, submits in ((0, True), (1, False)):
-                self.assertEqual(poll(restarted, now, "EVENT owner-unanswered"), (submits, 0), now)
-            self.intercept_mail('[ "$1" != events ] || exit 1')
-            for now, submits, added in ((300, True, 0), (301, False, 1)):
-                self.assertEqual(poll(restarted, now, failed), (submits, added), now)
+            watch = started()
+            watch.accept(self.acquire_all(watch, 0))
+            step(watch, 0, reminder, False, 0, [])
+            # A home the project list omits still waits on its owner rows; its
+            # to-overseer mail stays out of the pass.
+            self.registry.write_text(str(self.peer) + "\n")
+            fourth = self.owner_note("fourth ask")
+            self.mail(self.home, "notice", "home mail while unlisted", "--to", "owner")
+            before = watch.log.read_text()
+            watch.accept(self.acquire_all(watch, 0))
+            self.assertNotIn("EVENT mail ", watch.log.read_text()[len(before):])
+            step(watch, 1, reminder, True, 0, [fourth])
 
     def test_owner_unread_is_the_inbox_receipt(self):
         # The page keys on owner-unread; a read row only reminds the session.
@@ -277,7 +686,8 @@ class Producer(unittest.TestCase):
         self.assertNotIn("EVENT owner-unread", again, "second pass")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.accept_unanswered(*watch.unanswered())
+            watch.accept(self.acquire_all(watch, 0))
+            watch.accept_unanswered(*watch.unanswered(watch.state["unanswered"]["pending"]))
             log = watch.log.read_text()
         self.assertIn("EVENT owner-unanswered id=" + read + " ", log)
         self.assertIn("EVENT owner-unanswered id=" + unread + " ", log)
@@ -383,6 +793,93 @@ class Producer(unittest.TestCase):
             bodies = [row["text"] for row in self.inbox() if row["kind"] == "directive"]
             self.assertEqual(sum(body.count("answer from equal host path") for body in bodies), 1)
 
+    def test_nested_project_reads_its_outer_mailbox_once(self):
+        # A folder listed inside another project's git tree resolves to that
+        # project's mailbox. Each row then moves the read to the folder.
+        env_script = self.scripts / "lib/jarvis-env.sh"
+        text, case = env_script.read_text(), "  common-root)\n"
+        self.assertEqual(text.count(case), 1)
+        env_script.write_text(text.replace(case, case + '    [[ "$2" != "${UNRESOLVED:-}" ]] || exit 1\n'))
+
+        def watch_pass(home, roots, cursor, unresolved="", broken=""):
+            self.registry.write_text("".join(str(root) + "\n" for root in roots))
+            delivered = []
+            with patch.dict(os.environ, dict(self.env, UNRESOLVED=str(unresolved), BROKEN=str(broken)), clear=True):
+                output = self.module.mail_pass(BASH, home, "local", cursor, delivered)
+            return output, json.loads(output.splitlines()[-1][8:])["roots"], delivered
+
+        def header(root):
+            return "EVENT mail repo=%s file=to-overseer destination=local root=%s\n" % (root.name, root)
+
+        for name, home, mailbox, change in (
+                # The outer project is unregistered.
+                ("outer-unlisted", self.project("outer-unlisted/home"), None, "unlist"),
+                # The home drops off the project list and reads its to-lane alone.
+                ("home-unlisted", self.project("home-unlisted/home"), "home", "unlist"),
+                # The home's mailbox checkout does not resolve for two passes.
+                ("home-unresolved", self.home, "home", "unresolved")):
+            with self.subTest(row=name):
+                mailbox = home if mailbox == "home" else self.project(name + "/outer")
+                nested = mailbox / "packaging/jarvis-home"
+                nested.mkdir(parents=True)
+                roots = [home, nested] + ([] if mailbox == home else [mailbox])
+                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+                self.mail(mailbox, "send", name + " first-answer", "--re", ask.stdout.split("id=", 1)[1].split()[0])
+                output, cursor, _ = watch_pass(home, roots, {})
+                self.assertEqual(output.count(name + " first-ask"), 1)
+                self.assertIn(header(mailbox), output)
+
+                later = [root for root in roots if root != mailbox] if change == "unlist" else roots
+                unresolved = home if change == "unresolved" else ""
+                output, cursor, _ = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " first-", output)
+                self.mail(mailbox, "notice", name + " second-notice", "--to", "owner")
+                directive = self.owner_note(name + " second-directive") if mailbox == self.home else None
+                output, cursor, _ = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " first-", output)
+                self.assertEqual(output.count(name + " second-notice"), 1)
+                self.assertIn(header(nested), output)
+                # A repeat pass under the new reader delivers no row again.
+                output, cursor, delivered = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " ", output)
+                self.assertEqual(delivered, [])
+
+                if unresolved:
+                    # The recovered home takes the read back. Its to-lane
+                    # cursor is its own, so the row the folder skipped is
+                    # delivered to it and no mail event repeats.
+                    output, cursor, delivered = watch_pass(home, roots, cursor)
+                    self.assertNotIn(name + " first-", output)
+                    self.assertNotIn(name + " second-", output)
+                    self.assertEqual([row["id"] for row in delivered], [directive])
+
+        # A root whose mailbox another root reads takes the reader's outcome:
+        # one alert per failure, and a pass with no failure leaves no cause.
+        self.intercept_mail('[ "$(pwd -P)" != "${BROKEN:-}" ] || exit 3')
+        for name, passes in (
+                # The folder's own lookup fails, recovers and fails again.
+                ("nested-lookup", (("all", "nested", "", ["jarvis-home"]), ("all", "", "", []),
+                                   ("all", "nested", "", ["jarvis-home"]))),
+                # The folder fails a read, then the outer project takes the read back.
+                ("former-reader", (("nested", "", "nested", ["jarvis-home"]), ("all", "", "", []))),
+                # The folder holds the outer project's failure and reports it no
+                # second time when it takes the read over.
+                ("reader-read", (("all", "", "outer", ["outer"]), ("nested", "", "nested", []),
+                                 ("all", "", "", [])))):
+            with self.subTest(row=name):
+                outer = self.project(name + "/outer")
+                nested = outer / "packaging/jarvis-home"
+                nested.mkdir(parents=True)
+                root = dict(outer=outer, nested=nested)
+                listed = dict(all=[self.home, outer, nested], nested=[self.home, nested])
+                _, cursor, _ = watch_pass(self.home, listed[passes[0][0]], {})
+                for roots, unresolved, broken, alerts in passes:
+                    output, cursor, _ = watch_pass(self.home, listed[roots], cursor,
+                                                   root.get(unresolved, ""), root.get(broken, ""))
+                    self.assertEqual(re.findall(r"^EVENT root-unreachable repo=(\S+)", output, re.M), alerts)
+                    if not unresolved and not broken:
+                        self.assertEqual([key for key, record in cursor.items() if "cause" in record], [])
+
     def test_quoted_boundaries_and_text_limit(self):
         ordinary = 'print("hello") C:\\work\\file /a\\w+/ café'
         # One serializer table spans message data, tokens and complete units.
@@ -455,6 +952,9 @@ class Producer(unittest.TestCase):
             with watch.log.open("a") as out:
                 out.write("EVENT mail repo=peer file=to-lane\nopen fragment")
             watch.batch(0)
+            owner = owner.replace("\n", " destination=local root="+str(self.home)+"\n", 1)
+            peer = peer.replace("\n", " destination=local root="+str(self.peer)+"\n", 1)
+            later = later.replace("\n", " destination=local root="+str(self.peer)+"\n", 1)
             self.assertEqual(self.inbox()[0]["text"], owner.rstrip("\n"))
             self.assertLessEqual(len(self.inbox()[0]["text"].encode()), self.module.CAP)
             watch.batch(1)
@@ -494,28 +994,32 @@ class Producer(unittest.TestCase):
                     watch = self.watch()
                     # Leave one byte free. This forces the later warning to
                     # remain behind a complete home block before restart.
-                    header = "EVENT custom\n"
+                    header = "EVENT custom destination=local root="+str(self.home)+"\n"
                     filler = header + "o" * (self.module.CAP - len(header.encode()) - 2) + "\n"
                     peer = "EVENT custom\npeer traffic\n"
-                    watch.append(self.module.pass_output("local", {}, [(self.home, filler), (None, peer)]))
+                    watch.append(self.module.pass_output("local", {}, [(self.home, filler.replace(" destination=local root="+str(self.home), "", 1)), (None, peer)]))
                     watch.accept_presence(side, [result])
                     warning = watch.state["spans"][-1]
+                    warning_body = watch.log.read_bytes()[warning[0]:warning[1]]
                     origin = warning[2] if len(warning) == 3 else None
-                    self.assertEqual(origin, expected_origin, "presence origin")
+                    self.assertEqual(origin, (["ssh:host.example", result[0]] if side == "host" and result[0] else expected_origin), "presence origin")
                     scope = result[0] if result[0] is not None else side
-                    standing = json.loads(json.dumps(watch.state["presence_failures"][side]))
+                    standing = json.loads(json.dumps(watch.state["presence_failures"][watch.destination_key(side)]))
                     size = watch.log.stat().st_size
                     changed_detail = dict(result[2], detail="another extraction path")
                     watch.accept_presence(side, [(result[0], "failed", changed_detail)])
                     watch.accept_presence(side, [(result[0], "skipped", None)])
-                    watch.accept([("local", self.module.pass_output("local", {}, []), None)])
+                    watch.accept([("local", self.module.pass_output("local", {}, []), None, [])])
                     self.assertEqual(watch.log.stat().st_size, size)
-                    self.assertEqual(watch.state["presence_failures"][side], standing)
+                    self.assertEqual(watch.state["presence_failures"][watch.destination_key(side)], standing)
                     watch.batch(0)
                     self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
-                    self.assertIn(warning, watch.state["spans"])
+                    for resumed in (watch, self.watch()):
+                        data = resumed.log.read_bytes()
+                        self.assertIn((warning_body, origin),
+                                      [(data[span[0]:span[1]], span[2] if len(span) == 3 else None)
+                                       for span in resumed.state["spans"]])
                     watch = self.watch()
-                    self.assertIn(warning, watch.state["spans"])
                     watch.batch(1)
                     body = self.inbox()[-1]["text"]
                     if expected_origin == ["local", str(self.home)]:
@@ -525,9 +1029,330 @@ class Producer(unittest.TestCase):
                     self.assertIn("EVENT presence-renew-failed", body)
                     if result[0] is not None:
                         watch.accept_presence(side, [(str(self.root / "other-success"), "ok", None)])
-                        self.assertIn(scope, watch.state["presence_failures"][side])
+                        self.assertIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
                     watch.accept_presence(side, [(result[0], "ok", None)])
-                    self.assertNotIn(scope, watch.state["presence_failures"][side])
+                    self.assertNotIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
+
+    def test_reclaim_delivered_identity(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            generation = watch.state["generation"]
+            expected = []
+            keys = []
+            for index in range(5):
+                # Identical physical layouts must not reuse a retired delivery key.
+                body = "EVENT custom\ncycle-%s\n" % index
+                expected.append(body.rstrip("\n"))
+                self.append(watch, body)
+                watch.batch(index)
+                self.assertEqual(watch.log.read_bytes(), b"")
+                self.assertEqual([row["text"] for row in self.inbox()], expected)
+                keys.append(self.inbox()[-1]["delivery_id"])
+                self.assertEqual(len(set(keys)), len(keys))
+                watch = self.watch()
+                self.assertEqual(watch.state["generation"], generation)
+            # Cursor-only retired history is reclaimed without needing a send.
+            watch.append(self.module.pass_output("ssh:alpha", {"/srv/app": {"to-lane": {"count": 19}}}, []))
+            watch.batch(6)
+            self.assertEqual(watch.log.read_bytes(), b"")
+            self.assertEqual(self.watch().cursors["ssh:alpha"]["/srv/app"]["to-lane"]["count"], 19)
+            self.assertEqual([row["text"] for row in self.inbox()], expected)
+
+    def test_reclaim_deferred_bytes(self):
+        self.settings.update(JARVIS_WAKE_SETTLE_SECS="0", JARVIS_CONTROL_HOST="alpha",
+                             JARVIS_REMOTE_HOSTS="beta gamma")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            generation = watch.state["generation"]
+            filler_header = "EVENT custom\nretired prefix\n"
+            filler = filler_header + "x" * (self.module.CAP - len(filler_header) - 1) + "\n"
+            local = "EVENT custom\nlocal deferred\n" + "l" * 32000 + "\n"
+            remote = "EVENT custom\nremote deferred\n" + "r" * 32000 + "\n"
+            expected_local = local.replace("\n", " destination=local root=" + str(self.peer) + "\n", 1).encode()
+            expected_remote = remote.replace("\n", " destination=ssh:alpha root=/srv/same/peer\n", 1).encode()
+            self.append(watch, filler)
+            watch.append(self.module.pass_output("local", {str(self.peer): {"to-overseer": {"count": 7}}},
+                                                [(self.peer, local)]))
+            # Recover a producer footer appended before its state checkpoint.
+            before = watch.path.read_bytes()
+            watch.append(self.module.pass_output("ssh:alpha", {"/srv/same/peer": {"to-overseer": {"count": 11}}},
+                                                [("/srv/same/peer", remote)]))
+            watch.path.write_bytes(before)
+            watch = self.watch()
+            unreclaimed = watch.log.read_bytes()
+            watch.batch(0)
+            self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
+            # Two deferred 32 KB blocks outweigh the delivered 60 KiB filler.
+            self.assertEqual(watch.log.read_bytes(), unreclaimed, "unreclaimed log")
+            expected = [(expected_local, ["local", str(self.peer)]),
+                        (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
+            def retained(watch):
+                data = watch.log.read_bytes()
+                self.assertEqual([data[span[0]:span[1]] for span in watch.state["spans"]],
+                                 [body for body, _ in expected], "retained event bytes")
+                self.assertEqual([span[2:] for span in watch.state["spans"]],
+                                 [[origin] if origin else [] for _, origin in expected])
+                return data
+            retained(watch)
+            # Keep the backlog nonempty across receipts and restarts. The first
+            # receipt retires filler and local, more than the two 32 KB blocks
+            # it retains; the second retires only remote and keeps two blocks.
+            for index, reclaims in enumerate((True, False)):
+                self.settings.update(JARVIS_CONTROL_HOST="beta", JARVIS_REMOTE_HOSTS="gamma" if index == 0 else "gamma alpha")
+                watch = self.watch()
+                self.assertEqual(watch.state["generation"], generation)
+                self.assertEqual(watch.state["legacy_control_host"], "alpha")
+                self.assertEqual(watch.cursors["local"][str(self.peer)]["to-overseer"]["count"], 7)
+                self.assertEqual(watch.cursors["ssh:alpha"]["/srv/same/peer"]["to-overseer"]["count"], 11)
+                later = ("EVENT custom\nlater-%s\n" % index + "n" * 32000 + "\n").encode()
+                watch.append(self.module.pass_output("consumer", {}, [(None, later.decode())]))
+                expected.append((later, None))
+                watch.batch(index + 1)
+                body, _ = expected.pop(0)
+                self.assertEqual(self.inbox()[-1]["text"], body.decode().rstrip("\n"))
+                self.assertEqual(retained(self.watch()).startswith(expected[0][0]), reclaims,
+                                 "reclaimed at receipt %d" % index)
+            for index, (body, _) in enumerate(expected):
+                watch = self.watch()
+                watch.batch(index + 4)
+                self.assertEqual(self.inbox()[-1]["text"], body.decode().rstrip("\n"))
+            self.assertEqual(watch.log.read_bytes(), b"")
+
+    def test_reclaim_unfinished_input(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        expected = []
+        for name, unfinished, closure in (
+                ("open", b"EVENT custom\nunfinished open\n", b'cursor: {"side":"consumer","roots":{}}\n'),
+                ("fragment", b"EVENT custom\nunfinished fragment", b'\ncursor: {"side":"consumer","roots":{}}\n')):
+            with self.subTest(tail=name), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / name)
+                watch = self.watch()
+                self.append(watch, "EVENT custom\nretired before " + name + "\n")
+                with watch.log.open("ab") as out:
+                    out.write(unfinished)
+                before = watch.log.read_bytes()
+                watch.batch(0)
+                self.assertEqual(watch.log.read_bytes(), before)
+                watch = self.watch()
+                watch.batch(1)
+                self.assertEqual(watch.log.read_bytes(), before)
+                with watch.log.open("ab") as out:
+                    out.write(closure)
+                self.watch().batch(2)
+                expected.extend(["EVENT custom\nretired before " + name, unfinished.decode().rstrip("\n")])
+                self.assertEqual([row["text"] for row in self.inbox()], expected)
+                self.assertEqual(watch.log.read_bytes(), b"")
+
+    def test_reclaim_crash_recovery(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        stages = (("prepared", "prepared"), ("marker", "prepared"), ("ready", "ready"),
+                  ("partial", "ready"), ("suffix-sync", "ready"), ("truncate", "ready"), ("commit", None))
+        for stage, recovery_phase in stages:
+            with self.subTest(stage=stage), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / stage)
+                watch = self.watch()
+                filler_header = "EVENT custom\nretired-" + stage + "\n"
+                filler = filler_header + "x" * (self.module.CAP - len(filler_header) - 1) + "\n"
+                # The retained suffix fits within the retired filler, so this receipt reclaims.
+                retained = ["EVENT custom\nretained-%s-%s\n" % (stage, index) + "r" * 16000 + "\n"
+                            for index in range(2)]
+                footer = 'cursor: {"side":"local","roots":{"/srv/local":{"to-overseer":{"count":7}}}}\n'
+                watch.append(filler + "".join(retained) + footer)
+                original_end = watch.log.stat().st_size
+                inode = watch.log.stat().st_ino
+                generation = watch.state["generation"]
+                first = len(self.inbox())
+                original_open, original_atomic, original_fsync = Path.open, self.module.atomic_json, os.fsync
+                rewritten = False
+                def saved(path, state):
+                    original_atomic(path, state)
+                    phase = state.get("reclaim", {}).get("phase")
+                    if (stage == phase or stage == "commit" and state.get("log_base", 0)):
+                        raise InterruptedError(stage)
+                class InterruptedLog:
+                    def __init__(self, stream):
+                        self.stream = stream
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        return self.stream.__exit__(*args)
+                    def __getattr__(self, name):
+                        return getattr(self.stream, name)
+                    def write(self, data):
+                        nonlocal rewritten
+                        if data == ("".join(retained) + footer).encode() and self.stream.tell() == 0:
+                            rewritten = True
+                            if stage == "partial":
+                                self.stream.write(data[:-1])
+                                self.stream.flush()
+                                raise InterruptedError(stage)
+                        result = self.stream.write(data)
+                        if stage == "marker" and data == b"\x00":
+                            self.stream.flush()
+                            raise InterruptedError(stage)
+                        return result
+                    def truncate(self, size):
+                        result = self.stream.truncate(size)
+                        if stage == "truncate":
+                            raise InterruptedError(stage)
+                        return result
+                def opened(path, *args, **kwargs):
+                    stream = original_open(path, *args, **kwargs)
+                    return InterruptedLog(stream) if path == watch.log and args and args[0] == "r+b" else stream
+                def synced(fd):
+                    original_fsync(fd)
+                    if stage == "suffix-sync" and rewritten and os.fstat(fd).st_ino == inode:
+                        raise InterruptedError(stage)
+                with patch.object(Path, "open", opened), patch.object(self.module, "atomic_json", side_effect=saved), \
+                        patch.object(self.module.os, "fsync", side_effect=synced):
+                    with self.assertRaises(InterruptedError):
+                        watch.batch(0)
+                interrupted_state = json.loads(watch.path.read_text())
+                self.assertIsNone(interrupted_state["pending"])
+                self.assertEqual(interrupted_state.get("reclaim", {}).get("phase"), recovery_phase)
+                # Appenders run after the interrupted owner releases its inode
+                # lock. Post-truncate appends deliberately cross the old EOF.
+                consumers = ["EVENT custom\nafter-%s-%s\n" % (stage, index) + "z" * 32000 + "\n"
+                             for index in range(3 if stage in ("truncate", "commit") else 1)]
+                with watch.log.open("ab") as out:
+                    self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                    out.write(("".join(consumers) + 'cursor: {"side":"consumer","roots":{}}\n').encode())
+                if stage in ("truncate", "commit"):
+                    self.assertGreater(watch.log.stat().st_size, original_end)
+                if stage == "partial":
+                    # Undo itself may be interrupted. A second recovery must
+                    # restore it again, without consuming the appended tail.
+                    def restore_interrupted(path, *args, **kwargs):
+                        stream = original_open(path, *args, **kwargs)
+                        if path != watch.log or not args or args[0] != "r+b":
+                            return stream
+                        class Restore(InterruptedLog):
+                            def write(self, data):
+                                self.stream.write(data[:1])
+                                self.stream.flush()
+                                raise InterruptedError("undo")
+                        return Restore(stream)
+                    with patch.object(Path, "open", restore_interrupted), self.assertRaises(InterruptedError):
+                        self.watch()
+                recovery_events = []
+                fail_sync = recovery_phase is not None
+                def recovery_synced(fd):
+                    if os.fstat(fd).st_ino == inode:
+                        if fail_sync:
+                            recovery_events.append("log-fsync-failed")
+                            raise OSError(errno.EIO, "recovery log sync")
+                        original_fsync(fd)
+                        recovery_events.append("log-fsync")
+                    else:
+                        original_fsync(fd)
+                def recovery_saved(path, state):
+                    recovery_events.append("state-save")
+                    if recovery_phase is not None:
+                        self.assertEqual(recovery_events[0], "log-fsync", "log durability before recovery state")
+                    original_atomic(path, state)
+                with patch.object(self.module.os, "fsync", side_effect=recovery_synced), \
+                        patch.object(self.module, "atomic_json", side_effect=recovery_saved):
+                    if fail_sync:
+                        durable_state = watch.path.read_bytes()
+                        with self.assertRaises(OSError) as caught:
+                            self.watch()
+                        self.assertEqual(caught.exception.errno, errno.EIO)
+                        self.assertEqual(recovery_events, ["log-fsync-failed"])
+                        self.assertEqual(watch.path.read_bytes(), durable_state, "failed sync retains transaction")
+                        recovery_events.clear()
+                        fail_sync = False
+                    recovered = self.watch()
+                self.assertEqual(recovery_events[:2] if recovery_phase else recovery_events,
+                                 ["log-fsync", "state-save"] if recovery_phase else ["state-save"])
+                base = recovered.state.get("log_base", 0)
+                recovered = self.watch()
+                self.assertEqual(recovered.state.get("log_base", 0), base)
+                self.assertNotIn("reclaim", recovered.state)
+                self.assertEqual(recovered.state["generation"], generation)
+                self.assertEqual(recovered.log.stat().st_ino, inode)
+                data = recovered.log.read_bytes()
+                self.assertEqual([data[span[0]:span[1]].decode() for span in recovered.state["spans"]],
+                                 [*retained, *consumers])
+                self.assertEqual(recovered.cursors,
+                                 {"local": {"/srv/local": {"to-overseer": {"count": 7}}}, "consumer": {}})
+                for at in range(len(consumers) + len(retained)):
+                    recovered.batch(at + 1)
+                self.assertEqual(recovered.log.read_bytes(), b"")
+                self.assertEqual("\n".join(row["text"] for row in self.inbox()[first:]) + "\n",
+                                 filler + "".join(retained) + "".join(consumers))
+
+    def test_reclaim_preopened_appender(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            self.append(watch, "EVENT custom\nretired before appender\n")
+            inode = watch.log.stat().st_ino
+            body = "EVENT custom\npreopened consumer\n"
+            code = '''import fcntl,sys
+with open(sys.argv[1], "ab") as out:
+ print("opened", flush=True)
+ sys.stdin.readline()
+ print("locking", flush=True)
+ fcntl.flock(out, fcntl.LOCK_EX)
+ out.write(sys.argv[2].encode()); out.flush()
+ print("appended", flush=True)
+'''
+            child = subprocess.Popen([sys.executable, "-B", "-c", code, str(watch.log),
+                                      body + 'cursor: {"side":"consumer","roots":{}}\n'],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True, bufsize=1)
+            def acknowledged(value):
+                self.assertTrue(select.select([child.stdout], [], [], 30)[0], value)
+                self.assertEqual(child.stdout.readline().strip(), value)
+            try:
+                acknowledged("opened")
+                atomic = self.module.atomic_json
+                def saved(path, state):
+                    atomic(path, state)
+                    if state.get("reclaim", {}).get("phase") == "prepared":
+                        child.stdin.write("lock\n")
+                        child.stdin.flush()
+                        acknowledged("locking")
+                with patch.object(self.module, "atomic_json", side_effect=saved):
+                    watch.batch(0)
+                acknowledged("appended")
+                self.assertEqual(child.wait(timeout=30), 0)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=30)
+                child.stdin.close()
+                child.stdout.close()
+                child.stderr.close()
+            self.assertEqual(watch.log.stat().st_ino, inode)
+            self.watch().batch(1)
+            self.watch().batch(2)
+            self.assertEqual([row["text"] for row in self.inbox()],
+                             ["EVENT custom\nretired before appender", body.rstrip("\n")])
+
+    def test_reclaim_instrument_control(self):
+        controls = (
+            ("test_reclaim_deferred_bytes", "source.write(suffix)",
+             'source.write(b"\\x00" * len(suffix))', "retained event bytes"),
+            ("test_reclaim_crash_recovery", '        os.fsync(source.fileno())\n        # The undo image',
+             '        # The undo image', "log durability before recovery state"))
+        for method, old, replacement, assertion in controls:
+            with self.subTest(method=method):
+                case = Producer(methodName=method)
+                case.setUp()
+                try:
+                    path = case.scripts / "lib/watch.py"
+                    source = path.read_text()
+                    self.assertEqual(source.count(old), 1)
+                    mutant = source.replace(old, replacement)
+                    self.assertNotEqual(source, mutant)
+                    path.write_text(mutant)
+                    case.module = load(path)
+                    with self.assertRaisesRegex(AssertionError, assertion):
+                        getattr(case, method)()
+                finally:
+                    case.doCleanups()
 
     def test_saved_selection_after_append_restart(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -554,7 +1379,16 @@ class Producer(unittest.TestCase):
             staged.accept_presence("local", [(str(self.home), "failed", warning)])
             self.assertEqual(json.loads(staged.path.read_text())["pending"], pending)
             resumed = self.watch()
-            resumed.batch(1)
+            original_run = self.module.run
+            def append_during_send(args, *positional, **keywords):
+                result = original_run(args, *positional, **keywords)
+                if list(map(str, args[:3])) == [BASH, str(self.mail_command), "send"]:
+                    with resumed.log.open("ab") as out:
+                        self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                        out.write(b'EVENT custom\nconsumer during send\ncursor: {"side":"consumer","roots":{}}\n')
+                return result
+            with patch.object(self.module, "run", side_effect=append_during_send):
+                resumed.batch(1)
             self.assertEqual(len(self.inbox()), 1)
             self.assertEqual(self.inbox()[0]["id"], original_id)
             resumed.batch(2)
@@ -562,6 +1396,8 @@ class Producer(unittest.TestCase):
             self.assertIn("new during restart", self.inbox()[1]["text"])
             self.assertNotIn("original", self.inbox()[1]["text"])
             self.assertIn("EVENT presence-renew-failed", self.inbox()[1]["text"])
+            self.assertEqual(self.inbox()[1]["text"].count("consumer during send"), 1)
+            self.assertEqual(resumed.log.read_bytes(), b"")
 
     def test_failed_send_retains_selection(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -572,9 +1408,38 @@ class Producer(unittest.TestCase):
             watch.batch(0)
             saved = json.loads(watch.path.read_text())["pending"]
             self.assertIn("retained", saved["body"])
+            before = watch.log.read_bytes()
+            self.append(watch, "EVENT mail\nproducer after failure\n")
+            consumer = b'EVENT custom\nconsumer after failure\ncursor: {"side":"consumer","roots":{}}\n'
+            with watch.log.open("ab") as out:
+                self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                out.write(consumer)
+            watch = self.watch()
+            self.assertEqual(watch.state["pending"], saved)
+            self.assertTrue(watch.log.read_bytes().startswith(before))
+            self.assertNotIn("log_base", watch.state)
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
-            self.watch().batch(1)
-            self.assertEqual(len(self.inbox()), 1)
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("receipt before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(1)
+            landed = self.inbox()
+            watch = self.watch()
+            self.assertEqual(watch.state["pending"], saved)
+            watch.batch(2)
+            self.assertEqual(self.inbox(), landed)
+            self.assertEqual(landed[0]["delivery_id"], saved["key"])
+            self.assertEqual(landed[0]["text"], saved["body"].rstrip("\n"))
+            watch = self.watch()
+            watch.batch(3)
+            self.assertEqual([row["text"] for row in self.inbox()],
+                             [saved["body"].rstrip("\n"),
+                              "EVENT mail\nproducer after failure\nEVENT custom\nconsumer after failure"])
+            self.assertEqual(watch.log.read_bytes(), b"")
 
     def test_report_deadline_restart_and_receipt(self):
         clock = self.root / "clock"
@@ -671,6 +1536,97 @@ class Producer(unittest.TestCase):
             finally:
                 os.close(read_fd)
 
+    def test_relay_transitions_and_restart(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        # States and reconnect fields are the public main.py HELP/status
+        # contract. Only Slack decides whether a reconnect is sustained.
+        rows = (
+            ("ok connection=reconnecting", []),
+            ("failing connection=reconnecting", ["relay-down"]),
+            ("failing connection=reconnecting", []),
+            ("stale connection=disconnected", []),
+            ("never fix=start", []),
+            (None, ["relay-unavailable"]),
+            (None, []),
+            ("ok connection=connected", ["relay-up"]),
+            ("ok connection=reconnecting", []),
+            ("failing cause=binding-missing", ["relay-down"]),
+            ("unrecognized", ["relay-unavailable"]),
+            ("ok connection=connected", ["relay-up"]),
+        )
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            expected = []
+            for at, (reading, emitted) in enumerate(rows):
+                with self.subTest(reading=reading, at=at):
+                    public = "slack: slack-relay=" + str(self.home) + " state=" + (reading or "") + "\n"
+                    self.slack_command.write_text('#!/bin/sh\n' +
+                        ("echo unavailable >&2\nexit 2\n" if reading is None else
+                         "printf %s " + shlex.quote(public) + "\n"))
+                    before = watch.path.read_bytes()
+                    watch.accept_relay(watch.relay_status())
+                    if at == 1:
+                        # Crash after durable event/footer append, before the
+                        # batch checkpoint: the successor must recover it once.
+                        watch.path.write_bytes(before)
+                    watch = self.watch()
+                    watch.batch(at)
+                    expected.extend(emitted)
+                    bodies = [row["text"] for row in self.inbox()]
+                    headers = [line.split()[1] for body in bodies for line in body.splitlines()]
+                    self.assertEqual(headers, expected)
+                    self.assertTrue(all(" home=" + str(self.home) + " " in body for body in bodies))
+            self.assertEqual(watch.cursors["relay"], {"state": "ok"})
+            # The real supported CLI reports an unbound home explicitly.
+            shutil.copyfile(REPO / "skills/slack/scripts/slack", self.slack_command)
+            reading = watch.relay_status()
+            self.assertNotIsInstance(reading, self.module.Failure)
+            self.assertEqual(reading[0], "failing")
+            self.assertIn("cause=binding-missing", reading[1])
+
+    def test_relay_wait_keeps_mail_acquisition_and_pending_delivery(self):
+        import threading
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        self.mail(self.peer, "notice", "healthy acquisition during relay wait", "--to", "owner")
+        self.slack_command.write_text('#!/bin/sh\nprintf "slack: slack-relay=%s state=stale\\n" "$4"\n')
+        ready, release = threading.Event(), threading.Event()
+        original = self.module.run
+        calls = []
+        def transport(args, *positional, **keywords):
+            if len(args) > 1 and Path(args[1]) == self.slack_command:
+                calls.append(list(map(str, args)))
+                ready.set()
+                if not release.wait(30):
+                    raise AssertionError("relay status barrier not released")
+            return original(args, *positional, **keywords)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module, "run", side_effect=transport), ThreadPoolExecutor(max_workers=4) as passes:
+            watch = self.watch()
+            watch.next_report = watch.next_presence["local"] = 10 ** 9
+            self.append(watch, "EVENT mail repo=peer file=to-lane\npending before relay wait\n")
+            self.intercept_mail("exit 1")
+            watch.batch(0)
+            saved = dict(watch.state["pending"])
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            pending = passes.submit(watch.acquire, 0)
+            try:
+                pending = watch._poll(passes, pending, 1)
+                self.assertTrue(ready.wait(30))
+                pending.result(timeout=30)
+                pending = watch._poll(passes, pending, 2)
+                watch.batch(2)
+                delivered = self.inbox()
+                self.assertEqual(delivered[0]["delivery_id"], saved["key"])
+                self.assertEqual(delivered[0]["text"], saved["body"].rstrip("\n"))
+                self.assertIn("healthy acquisition during relay wait", "\n".join(row["text"] for row in delivered))
+                self.assertFalse(watch.relay_pending.done())
+                self.assertEqual(calls, [[BASH, str(self.slack_command), "listen", "--status", "--root", str(self.home)]])
+            finally:
+                release.set()
+            watch.relay_pending.result(timeout=30)
+            watch._poll(passes, pending, 3)
+            self.assertIn("EVENT relay-down ", self.inbox()[-1]["text"])
+
     def test_settings_precedence_and_transport(self):
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
@@ -685,8 +1641,11 @@ class Producer(unittest.TestCase):
         private.unlink()
         shared.unlink()
         example = (REPO / "skills/jarvis/kendex.settings.toml.example").read_text()
-        consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
         declared = set(re.findall(r'^(JARVIS_[A-Z_]+)\s*=', example, re.M))
+        # The watch reads its settings by quoted key; session-backend.sh reads
+        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load.
+        consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
+        consumed |= set(re.findall(r'\$\{(JARVIS_[A-Z_]+)', (SCRIPTS / "lib/session-backend.sh").read_text()))
         self.assertEqual(declared, consumed)
         with patch.dict(os.environ, self.env, clear=True):
             defaults = self.module.config(BASH, self.home)
@@ -705,22 +1664,22 @@ class Producer(unittest.TestCase):
         shutil.rmtree(self.peer / ".agents")
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.tick(0, watch.acquire(0))
+            watch.tick(0, self.acquire_all(watch, 0))
             self.assertFalse((self.root / "ssh.log").exists())
             self.settings["JARVIS_CONTROL_HOST"] = "host.example"
             watch = self.watch()
-            watch.tick(1, watch.acquire(1))
+            watch.tick(1, self.acquire_all(watch, 1))
             self.assertEqual((self.root / "ssh.log").read_text().splitlines(), ["host.example"])
             self.assertIn("remote owner", watch.log.read_text())
-            self.assertIn("host", watch.cursors)
-            self.assertNotIn("cause", watch.cursors["host"][str(self.peer)])
-            self.assertGreater(watch.cursors["host"][str(self.peer)]["to-overseer"]["count"], 0)
+            self.assertIn("ssh:host.example", watch.cursors)
+            self.assertNotIn("cause", watch.cursors["ssh:host.example"][str(self.peer)])
+            self.assertGreater(watch.cursors["ssh:host.example"][str(self.peer)]["to-overseer"]["count"], 0)
             self.executable("ssh", '#!/bin/sh\necho "Traceback /jarvis-pass-$$/watch.py" >&2\nexit 1\n')
-            watch.accept(watch.acquire(2))
+            watch.accept(self.acquire_all(watch, 2))
             size = watch.log.stat().st_size
-            first = watch.state["host_failure"]
-            watch.accept(watch.acquire(3))
-            self.assertEqual(watch.state["host_failure"], first)
+            first = watch.state["ssh:host.example_failure"]
+            watch.accept(self.acquire_all(watch, 3))
+            self.assertEqual(watch.state["ssh:host.example_failure"], first)
             self.assertEqual(watch.log.stat().st_size, size)
 
     def test_hold_paths_and_failed_renewal_reset(self):
@@ -817,7 +1776,7 @@ class Producer(unittest.TestCase):
                 watch.accept_presence("local", results)
                 self.assertFalse(self.home.joinpath("hold").exists())
                 self.append(watch, "EVENT mail repo=peer file=to-lane\ndelivery after "+type(error).__name__+"\n")
-                watch.tick(0, watch.acquire(0))
+                watch.tick(0, self.acquire_all(watch, 0))
                 self.assertIn("delivery after "+type(error).__name__, self.inbox()[-1]["text"])
 
     def test_dependency_failure_denies_presence_with_cause(self):
@@ -878,23 +1837,31 @@ class Producer(unittest.TestCase):
                     self.assertFalse(any(root.joinpath("hold").exists() for root in (self.home, self.peer)))
                     watch.accept_presence(side, results)
                     self.assertIn("EVENT presence-renew-failed", watch.log.read_text())
-                    recorded = watch.state["presence_failures"][side]
+                    recorded = watch.state["presence_failures"][watch.destination_key(side)]
                     self.assertEqual([cause["key"] for cause in recorded.values()], [expected])
 
     def test_log_checkpoint_skips_unchanged_and_processed_bytes(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
             watch = self.watch()
-            watch.accept(watch.acquire(0))
+            watch.accept(self.acquire_all(watch, 0))
             size = watch.log.stat().st_size
-            watch.accept(watch.acquire(1))
+            watch.accept(self.acquire_all(watch, 1))
             self.assertEqual(watch.log.stat().st_size, size)
             with watch.log.open("ab") as out:
                 out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512)
             watch.batch(0)
-            checkpoint = watch.state["offset"]
+            self.assertEqual(watch.log.read_bytes(), b"")
             watch = self.watch()
             self.append(watch, "EVENT mail repo=peer file=to-lane\nnew tail\n")
+            watch.batch(1)
+            # Unfinished input pins a real prefix, so idle and restart reads
+            # must still start at the checkpoint rather than rescan footers.
+            with watch.log.open("ab") as out:
+                out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512 + b'EVENT custom\nwaiting\n')
+            watch = self.watch()
+            checkpoint = watch.state["offset"]
+            self.assertGreater(checkpoint, 0)
             original = Path.open
             starts = []
             class Observed:
@@ -922,7 +1889,6 @@ class Producer(unittest.TestCase):
                 stream = original(path, *args, **kwargs)
                 return Observed(stream) if path == watch.log and args and args[0] == "rb" else stream
             with patch.object(Path, "open", opened), patch.object(Path, "read_bytes", side_effect=AssertionError("whole-log read")):
-                watch.batch(1)
                 for at in (2, 3, 4):
                     watch.batch(at)
                 watch = self.watch()
@@ -939,131 +1905,238 @@ class Producer(unittest.TestCase):
             with restored.log.open("a") as out:
                 out.write(output)
             recovered = self.watch()
-            self.assertTrue(any(span[2] == ["local", str(self.peer)] for span in recovered.state["spans"]))
+            self.assertTrue(any(span[2:] == [["local", str(self.peer)]] for span in recovered.state["spans"]))
             recovered.batch(5)
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
-    def test_instrument_control(self):
-        for relative, old, new in (
-                ("jarvis/scripts/lib/watch.py",
-                 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):',
-                 'if False and result and report_key(result) != self.cursors.get("report", {}).get("event"):'),
-                ("orch/scripts/oversee-report",
-                 '[[ -n "$STATE" && "$EVERY_ISSUES" -gt 0 ]] || exit 0',
-                 '[[ "$EVERY_ISSUES" -gt 0 ]] || exit 0')):
-            case = Producer(methodName="test_report_deadline_restart_and_receipt")
-            case.setUp()
-            try:
-                if relative.startswith("orch/"):
-                    case.packages.joinpath("orch").unlink()
-                    shutil.copytree(REPO / "skills/orch/scripts", case.packages / "orch/scripts")
-                path = case.packages / relative
-                source = path.read_text()
-                self.assertEqual(source.count(old), 1)
-                mutant = source.replace(old, new)
-                self.assertNotEqual(source, mutant)
-                path.write_text(mutant)
-                case.module = load(case.scripts / "lib/watch.py")
-                with self.assertRaises(AssertionError):
-                    case.test_report_deadline_restart_and_receipt()
-            finally:
-                case.doCleanups()
-        # This uncompiled source control stays in the instrument. A zeroed
-        # settle must fail the same five-event behavioral assertion.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'now + int(self.settings["JARVIS_WAKE_SETTLE_SECS"])'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, "now")
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            self.module = load(path)
-            self.module.LIB = self.scripts / "lib"
-            with self.assertRaises(AssertionError):
-                self.test_fixed_settle_and_five_event_feed()
-        # Drop only the supplied target at the changed boundary. The same
-        # finite table must reject this mutation through its origin assertion.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = '[(root,\n                        event("presence-renew-failed"'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, '[(None,\n                        event("presence-renew-failed"')
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_priority_cap_boundaries_and_timeout")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                with self.assertRaisesRegex(AssertionError, "presence origin"):
-                    case.test_priority_cap_boundaries_and_timeout()
-            finally:
-                case.doCleanups()
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'args = [bash, lane_mail(), "events",'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, 'args = [bash, Path(root) / ".agents/skills/mailbox/scripts/lane-mail", "events",')
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_producer_helpers_keep_target_data")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                # read_pass starts the shipped child; mutate its private copy too.
-                case.scripts.joinpath("lib/watch.py").write_text(mutant)
-                with self.assertRaises(AssertionError):
-                    case.test_producer_helpers_keep_target_data()
-            finally:
-                case.doCleanups()
-        # The private watcher's rule, unanswered plus no watch-loop process,
-        # must fail the read row, which also has no process.
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            start, end = source.index("def owner_unread("), source.index("def mail_pass(")
-            mutant = source[:start] + (
-                "def owner_unread(bash, root, cursor, count, now, reported, events):\n"
-                "    listed = [json.loads(line) for line in checked([bash, LIB.parent / 'owner-unanswered', '--root',\n"
-                "              root, '--older', '10'], root).split('\\n') if line]\n"
-                "    alive = run(['pgrep', '-f', 'watch-loop --home ' + str(root)]).returncode == 0\n"
-                "    owned = [] if alive else listed\n"
-                "    events.extend(event('owner-unread', id=row['id'], at=row['at'])\n"
-                "                  for row in owned if row['id'] not in reported)\n"
-                "    return [row['id'] for row in owned]\n\n\n") + source[end:]
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_owner_unread_is_the_inbox_receipt")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                case.scripts.joinpath("lib/watch.py").write_text(mutant)
-                with self.assertRaisesRegex(AssertionError, "only the unread rows page"):
-                    case.test_owner_unread_is_the_inbox_receipt()
-            finally:
-                case.doCleanups()
-        with tempfile.TemporaryDirectory() as folder:
-            source = (SCRIPTS / "lib/watch.py").read_text()
-            old = 'if error.record["key"][1:] == ["refusal", "dependency"]:\n                raise error'
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, old.replace("raise error", "return False"))
-            self.assertNotEqual(source, mutant)
-            path = Path(folder) / "watch.py"
-            path.write_text(mutant)
-            case = Producer(methodName="test_dependency_failure_denies_presence_with_cause")
-            case.setUp()
-            try:
-                case.module = load(path)
-                case.module.LIB = case.scripts / "lib"
-                with self.assertRaises(AssertionError):
-                    case.test_dependency_failure_denies_presence_with_cause()
-            finally:
-                case.doCleanups()
+    def test_satellite_is_no_fleet_contact(self):
+        self.settings.update(JARVIS_MAIN_HOST="main.example:/srv/home", JARVIS_CONTROL_HOST="host.example")
+        ssh_log = self.root / "ssh.log"
+        self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$*" >> ' + shlex.quote(str(ssh_log)) + '\nexit 255\n')
+        self.mail(self.peer, "ask", "peer question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+        self.mail(self.home, "notice", "home note", "--to", "owner")
 
+        class Submitted:
+            def __init__(self):
+                self.names = []
+
+            def submit(self, work, *args):
+                self.names.append(work.__name__)
+                return Future()
+
+        block = "EVENT forward-failed request=vgs-audit:r key=forward-r cause=send-failed\n"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            watch.tick(0, self.acquire_all(watch, 0))
+            passes = Submitted()
+            watch._poll(passes, Future(), 1)
+            watch.accept_forward(block)
+            self.watch().accept_forward(block)
+        log = watch.log.read_text()
+        self.assertIn("home note", log)
+        self.assertNotIn("peer question", log)
+        self.assertTrue((self.home / "tmp/lane-mail/overseer/to-overseer.seen").exists())
+        self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-overseer.seen").exists())
+        self.assertFalse(ssh_log.exists())
+        self.assertEqual(passes.names, ["relay_status", "forward"])
+        self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
+                         [block.split("\n")[0]])
+
+    def test_remote_identity_restart(self):
+        # Both independent machine views expose the same path and initial
+        # bytes. The transport shim shares fixture storage, never identity.
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta alpha beta",
+                             JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        self.registry.write_text(str(self.peer)+"\n")
+        self.mail(self.peer, "notice", "same-path notice", "--to", "owner")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            for target in watch.destinations:
+                watch.accept(watch.acquire(0, target.key))
+            watch.batch(0)
+            expected = ["local", "ssh:alpha", "ssh:beta"]
+            def sources():
+                bodies = [row["text"] for row in self.inbox() if row.get("delivery_id", "").startswith("jarvis-")]
+                headers = [line for body in bodies for line in body.splitlines() if line.startswith("EVENT mail ")]
+                return [re.search(r" destination=(\S+) root=(\S+)$", line).groups() for line in headers]
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected])
+            self.settings["JARVIS_REMOTE_HOSTS"] = "beta alpha"
+            watch = self.watch()
+            for target in reversed(watch.destinations):
+                watch.accept(watch.acquire(1, target.key))
+            watch.batch(1)
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected])
+            self.mail(self.peer, "notice", "next independent notice", "--to", "owner")
+            for target in watch.destinations:
+                watch.accept(watch.acquire(2, target.key))
+            self.watch().batch(2)
+            self.assertCountEqual(sources(), [(key, str(self.peer)) for key in expected] * 2)
+
+    def test_legacy_host_migration(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            root = Path("/srv/app")
+            header = "EVENT mail repo=app file=to-overseer\n"
+            selected = header + "s" * 32000 + "\n"
+            retained = header + "r" * 32000 + "\nretained old bytes\n"
+            watch.append(self.module.pass_output("host", {str(root): {"to-overseer": {"count": 4}}},
+                                                 [(root, selected), (root, retained)]))
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("acknowledgement barrier before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(0)
+            saved = json.loads(watch.path.read_text())
+            pending = saved["pending"]
+            self.assertIsNotNone(pending)
+            body = selected.replace("\n", " destination=host root=/srv/app\n", 1)
+            self.assertEqual(pending["body"].encode(), body.encode())
+            self.assertTrue(pending["key"].startswith("jarvis-"))
+            self.assertEqual([span[2] for span in pending["retained"]], [["host", str(root)]])
+            pending_bytes = json.dumps(pending, sort_keys=True).encode()
+            delivered = self.inbox()
+            self.assertEqual(len(delivered), 1)
+            self.assertEqual(delivered[0]["text"], body.rstrip("\n"))
+            self.assertEqual(delivered[0]["delivery_id"], pending["key"])
+            generation = saved["generation"]
+            self.assertNotIn("legacy_control_host", saved)
+            saved["host_failure"] = {"key": ["host-pass", "exit", "255"], "detail": "old failure"}
+            saved["presence_failures"] = {"host": {"/srv/app": {"key": ["hold", "exit", "1"]}}}
+            watch.path.write_text(json.dumps(saved))
+            with watch.log.open("a") as out:
+                out.write('cursor: {"side":"host","roots":{"/srv/app":{"to-overseer":{"count":5}}}}\n')
+            self.settings["JARVIS_CONTROL_HOST"] = "alpha"
+            resumed = self.watch()
+            self.assertEqual(resumed.cursors["ssh:alpha"]["/srv/app"]["to-overseer"]["count"], 5)
+            self.assertEqual(resumed.state["generation"], generation)
+            self.assertEqual(json.dumps(json.loads(resumed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
+            self.assertEqual(resumed.state["ssh:alpha_failure"], saved["host_failure"])
+            self.assertEqual(resumed.state["presence_failures"]["ssh:alpha"], saved["presence_failures"]["host"])
+            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+            changed = self.watch()
+            self.assertNotIn("ssh:beta", changed.cursors)
+            self.assertEqual(changed.state["legacy_control_host"], "alpha")
+            self.assertEqual(json.dumps(json.loads(changed.path.read_text())["pending"], sort_keys=True).encode(),
+                             pending_bytes)
+            changed.batch(1)
+            self.assertEqual(self.inbox(), delivered)
+            self.assertIsNone(changed.state["pending"])
+            self.assertEqual([span[2] for span in changed.state["spans"]], [["ssh:alpha", str(root)]])
+            self.watch().batch(2)
+            self.watch().batch(3)
+            final = self.inbox()
+            self.assertEqual(len(final), 2)
+            self.assertEqual(final[0], delivered[0])
+            self.assertEqual(final[1]["text"],
+                             retained.replace("\n", " destination=host root=/srv/app\n", 1).rstrip("\n"))
+            self.assertNotEqual(final[1]["delivery_id"], pending["key"])
+
+    def test_healthy_destination_during_blocked_host(self):
+        import threading
+        self.settings.update(JARVIS_CONTROL_HOST="slow", JARVIS_REMOTE_HOSTS="healthy", JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        self.registry.write_text(str(self.peer)+"\n")
+        self.mail(self.peer, "notice", "healthy before timeout", "--to", "owner")
+        ready, release = threading.Event(), threading.Event()
+        original = self.module.run
+        def transport(args, *positional, **keywords):
+            if list(map(str, args[:2])) == ["ssh", "slow"]:
+                ready.set()
+                if not release.wait(30):
+                    raise AssertionError("transport barrier not released")
+                return subprocess.CompletedProcess(args, 255, "", "transport failed")
+            return original(args, *positional, **keywords)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module, "run", side_effect=transport), ThreadPoolExecutor(max_workers=8) as passes:
+            watch = self.watch()
+            watch.next_presence = {target.key: 10 ** 9 for target in watch.destinations}
+            watch.next_report = 10 ** 9
+            local = Future()
+            local.set_result(watch.acquire(0))
+            try:
+                pending = watch._poll(passes, local, 0)
+                self.assertTrue(ready.wait(30))
+                watch.mail_pending["ssh:healthy"].result(timeout=30)
+                pending = watch._poll(passes, pending, 1)
+                bodies = "\n".join(row["text"] for row in self.inbox())
+                self.assertIn("destination=ssh:healthy root="+str(self.peer), bodies)
+                self.assertIn("healthy before timeout", bodies)
+                self.assertFalse(watch.mail_pending["ssh:slow"].done())
+            finally:
+                release.set()
+            watch.mail_pending["ssh:slow"].result(timeout=30)
+            watch._poll(passes, pending, 2)
+            self.assertIn("ssh:slow_failure", watch.state)
+
+    def test_instrument_control(self):
+        # Each planted defect, in a disposable producer copy, turns its row red.
+        gate = "if self.unanswered_pending is None and waiting and now >= self.next_unanswered:"
+        report = 'if result and report_key(result) != self.cursors.get("report", {}).get("event"):'
+        keep = 'if row["id"] not in checked_ids or row["id"] in listed]'
+        window = '"--since", min(row["at"] for row in waiting)'
+        unlisted = 'alone = side == "local" and home not in roots'
+        satellite = "roots = [home] if satellite else project_roots()"
+        shared = "reader[common][1] if isinstance(common, Path) else root) for"
+        nested = "test_nested_project_reads_its_outer_mailbox_once"
+        for name, old, new in (
+                # Each root sharing a mailbox reads it separately.
+                (nested, shared, "root) for"),
+                # The first listed root reads a shared mailbox, not its own checkout.
+                (nested, "rank = (root != common, index)", "rank = (False, index)"),
+                # A new reader of a mailbox starts from its own cursor.
+                (nested, "if last is not None:", "if False:"),
+                # A recovered home takes the to-lane cursor of the root that stood in.
+                (nested, 'side == "local" and root == home)', "False)"),
+                # The last reader keeps no claim on the mailbox.
+                (nested, 'if field != "mailbox"}', 'if True}'),
+                # A root another root reads for keeps its own outcome.
+                (nested, "state[str(root)] = record", "pass"),
+                # It clears its failure but does not take the reader's.
+                (nested, 'if "cause" in read else {}', "if False else {}"),
+                ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
+                 'if current != "ok":'),
+                ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',
+                 'spans=pending["retained"]'),
+                ("test_remote_identity_restart", 'self.cursors[self.destination_key(record["side"])] = record["roots"]',
+                 'self.cursors["shared-remote" if record["side"].startswith("ssh:") else record["side"]] = record["roots"]'),
+                # The watch never pages a report the cursor has not seen.
+                ("test_report_deadline_restart_and_receipt", report, "if False and " + report[len("if "):]),
+                # An idle interval with no waiting owner row checks nothing.
+                ("test_owner_unanswered_reminder", gate, gate.replace(" waiting ", " (waiting or True) ")),
+                # A row delivered during a check waits for the next one.
+                ("test_owner_unanswered_reminder", keep, 'if row["id"] in listed]'),
+                # The window starts at the oldest waiting row.
+                ("test_owner_unanswered_reminder", window, window.replace("min(", "max(")),
+                # A home the project list omits still delivers owner rows.
+                ("test_owner_unanswered_reminder", unlisted, "alone = False"),
+                # That home's read takes its to-lane alone.
+                ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if'),
+                # A satellite reads no other root.
+                ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
+                # The control host's presence pass runs as JARVIS_CONTROL_USER.
+                ("test_control_user_passes", 'subprocess.Popen(host_args(destination, "bash -s"),',
+                 'subprocess.Popen(["ssh", destination.host, "bash -s"],')):
+            with self.subTest(row=name, planted=new):
+                case = Producer(methodName=name)
+                case.setUp()
+                try:
+                    path = case.packages / "jarvis/scripts/lib/watch.py"
+                    source = path.read_text()
+                    self.assertEqual(source.count(old), 1)
+                    mutant = source.replace(old, new)
+                    self.assertNotEqual(source, mutant)
+                    path.write_text(mutant)
+                    case.module = load(case.scripts / "lib/watch.py")
+                    with self.assertRaises(AssertionError):
+                        getattr(case, name)()
+                finally:
+                    case.doCleanups()
 
 if __name__ == "__main__":
     unittest.main()

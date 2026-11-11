@@ -27,7 +27,7 @@
 # post Slack refuses failing the poll and made again, a post whose response
 # was lost journaled unknown, a refused history read failing the poll, asks
 # and notices sent as markdown_text, an ask's deadline as Slack's date token,
-# a notice and an ask past its cap sent as text, a first
+# a notice and an ask past its cap sent as Markdown continuations, a first
 # start reading Slack from the binding moment and posting nothing from the
 # mailbox's past but open asks, daily compaction retaining aged posts in live
 # threads and removing inactive ones, aged unposted envelopes skipped,
@@ -45,7 +45,7 @@
 # of the read rule, a refused mark
 # raised, each settled Slack answer unsettled, a refused receipts read raised,
 # the markup unread, &amp; unescaped first, the outbound text and the report
-# bytes unchecked, the body sent as text, the text fallback gone, the
+# bytes unchecked, the body sent as text, the
 # deadline as its raw stamp, the post failure swallowed, the envelope horizon removed,
 # live-thread post retention removed, the start horizon removed, the history
 # seed at zero, and a refused connection read as a lost response.
@@ -131,6 +131,73 @@ ASK2_TS="$(sk_state '.messages.C001[] | select(.text | contains("Merge now?")) |
 sk_lm "$ROOT" resolve --item overseer --id "$ASK2" --text "$(sk_text a2 'yes, after lunch')" >/dev/null
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$ASK2_TS | Answered in the chat: yes, after lunch" "an answer typed in the chat is shown in the ask's thread"
+
+# Slack-thread output distinguishes each send answer from a resolve note,
+# including independent revisions while a Slack-answered ask is still open.
+answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
+  local assertion="$1" root="$2" channel="$3" prefix="$4" only="${5:-}"
+  local name origin revision close before expected ask ts note sources
+  while IFS='|' read -r name origin revision close before expected sources; do
+    [ -z "$only" ] || [ "$name" = "$only" ] || continue
+    sk_lm "$root" ask --item overseer --to owner --reserved --file "$(sk_text "$prefix-$name" "Answer origin $prefix-$name?")" --options approve,cancel >"$SK_TMP/$prefix-$name.out" || return 1
+    ask="$(sed 's/^id=//' "$SK_TMP/$prefix-$name.out")"
+    sk_poll "$root"
+    ts="$(sk_state ".messages.${channel}[] | select(.text | contains(\"Answer origin $prefix-$name?\")) | .ts")"
+    [ -n "$ts" ] || { bad "[$prefix-$name] posts the question before answering"; return 1; }
+    note=approve
+    if [ "$origin" = slack ]; then
+      sk_inject "$channel" U001 'approve' "$ts" >/dev/null || return 1
+      sk_poll "$root"
+    elif [ "$origin" = chat ]; then
+      sk_lm "$root" send --item overseer --re "$ask" --file "$(sk_text "$prefix-send-$name" approve)" >/dev/null || return 1
+      sk_poll "$root"
+    fi
+    if [ "$revision" = chat ]; then
+      sk_lm "$root" send --item overseer --re "$ask" --file "$(sk_text "$prefix-revision-$name" cancel)" >/dev/null || return 1
+      sk_poll "$root"
+    elif [ "$revision" = slack ]; then
+      sk_inject "$channel" U001 'cancel' "$ts" >/dev/null || return 1
+      sk_poll "$root"
+    fi
+    [ "$RC" -eq 0 ] || return 1
+    assert_eq "$(jq -c '.open_asks' "$root/tmp/slack/status.json")" "[\"$ask\"]" "[$prefix-$name] leaves the question open for revisions"
+    # Controls target the final thread assertion; normal rows also prove
+    # that a send revision reaches Slack before the close exists.
+    if [ -z "$only" ]; then
+      "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+        "$before" "[$prefix-$name] posts independent chat answers before closure"
+    fi
+    if [ "$origin" = slack ] || [ "$revision" = slack ]; then
+      note="Owner already answered in Slack; closer record for ask $ask."
+    fi
+    if [ "$close" = explicit ]; then
+      sk_lm "$root" resolve --item overseer --id "$ask" >/dev/null || return 1
+    else
+      sk_lm "$root" resolve --item overseer --id "$ask" --text "$(sk_text "$prefix-close-$name" "$note")" >/dev/null || return 1
+    fi
+    sk_poll "$root"
+    assert_eq "$RC=$(jq -c '.open_asks' "$root/tmp/slack/status.json")" "0=[]" "[$prefix-$name] closes the question in relay status"
+    assert_eq "$(jq -sc --arg re "$ask" '[.[] | select(.kind == "answer" and .re == $re) | .answer_source]' "$(sk_box "$root")/to-lane.jsonl")" \
+      "$sources" "[$prefix-$name] mailbox identifies each answer's producing verb"
+    "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+      "$expected" "[$prefix-$name] posts only an answer the owner gave outside Slack"
+    sk_poll "$root"
+    "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+      "$expected" "[$prefix-$name] preserves the thread text across restart"
+    assert_eq "$(jq -s --arg id "$ask" '[.[] | select(.t == "resolved" and .id == $id)] | length' "$(sk_journal "$root")")" \
+      "1" "[$prefix-$name] consumes closure once across restart"
+  done <<'ANSWER_ORIGINS'
+empty-explicit|none|none|explicit|||[]
+slack-explicit|slack|none|explicit|||["send"]
+slack-note|slack|none|text|||["send","resolve"]
+chat-note|none|none|text||Answered in the chat: approve|["resolve"]
+chat-explicit|chat|none|explicit|Answered in the chat: approve|Answered in the chat: approve|["send"]
+slack-chat-explicit|slack|chat|explicit|Answered in the chat: cancel|Answered in the chat: cancel|["send","send"]
+slack-chat-note|slack|chat|text|Answered in the chat: cancel|Answered in the chat: cancel|["send","send","resolve"]
+chat-slack-note|chat|slack|text|Answered in the chat: approve|Answered in the chat: approve|["send","send","resolve"]
+ANSWER_ORIGINS
+}
+answer_origins assert_eq "$ROOT" C001 origin || exit 1
 
 # A voice host or bridge supplies a delivery id; only a complete option line
 # from the ask may reach Slack, never that writer's header or instructions.
@@ -324,7 +391,7 @@ SECRET_ID="$(jq -r 'select(.kind == "notice") | .id' "$(sk_box "$GAMMA")/to-over
 assert_eq "$RC=$(sed -n '/^slack: secret-value=/p' <<<"$ERR")" "0=slack: secret-value=id=$SECRET_ID" "a notice matching the secret-value pattern is refused by id"
 assert_eq "$(sk_state '[.messages.C002[] | select(.text | contains("xoxb"))] | length')" "0" "nothing matching the pattern is posted"
 assert_eq "$(jq -r "select(.t == \"out\" and .id == \"$SECRET_ID\") | .state" "$(sk_journal "$GAMMA")")" "refused" "the refusal is journaled"
-refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\" and .state != \"inflight\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
+refused_line() { jq -r "select(.t == \"out\" and .id == \"$2\" and .state != \"inflight\" and .state != \"progress\") | [.state, .reason] | join(\" \")" "$(sk_journal "$1")"; } # ROOT ID
 notice_id() { jq -r "select(.text == \"$2\") | .id" "$(sk_box "$1")/to-overseer.jsonl"; } # ROOT TEXT
 mkdir -p "$GAMMA/tmp/progress-reports"
 LEAK="$GAMMA/tmp/progress-reports/leak.md"
@@ -346,20 +413,21 @@ LONG="$(python3 -c 'print("x" * 12001)')"
 sk_lm "$GAMMA" notice --item overseer --to owner --file "$(sk_text s5 "$LONG")" >/dev/null
 sk_poll "$GAMMA"
 LONG_ID="$(notice_id "$GAMMA" "$LONG")"
-assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[] | select(.text | startswith("xxxx")) | .body_arg] | join(" ")')" \
-  "0=resolved =text" "a notice past the markdown_text cap lands whole as text, Slack's mrkdwn, and is not journaled refused"
+assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ID")=$(sk_state '[.messages.C002[] | select(.body_arg == "markdown_text" and (.text | test("^[^\\n]*[0-9]+/[0-9]+\\n\\n"))) | .body_arg] | unique | join(" ")')" \
+  "0=resolved =markdown_text" "a notice past the cap lands as standard Markdown continuations"
 sk_lm "$GAMMA" ask --item overseer --to owner --file "$(sk_text s7 "q$LONG")" --options a,b --recommend a >"$SK_TMP/ask-long.out"
 LONG_ASK="$(sed 's/^id=//' "$SK_TMP/ask-long.out")"
+LONG_ASK_POSTS="$(sk_state '[.calls[] | select(. == "chat.postMessage")] | length')"
 sk_poll "$GAMMA"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_ASK\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '[.messages.C002[] | select(.text | contains("qxxxx")) | [.body_arg, (.text | contains("xxxx\n\nOptions: a, b. Recommended: a.") | tostring)] | join(" ")] | join(",")')" \
-  "0=open=text true" "an ask past the cap lands as text with its options tail and stands open"
+assert_eq "$RC=$(refused_line "$GAMMA" "$LONG_ASK")=$(jq -cs --arg id "$LONG_ASK" '[.[] | select(.t == "out" and .id == $id) | .state]' "$(sk_journal "$GAMMA")")=$(sk_state '[.calls[] | select(. == "chat.postMessage")] | length')" \
+  "0=refused text-too-long=[\"refused\"]=$LONG_ASK_POSTS" "an oversized ask refuses before API writes, open delivery or continuation state"
 LONG_REPORT="$GAMMA/tmp/progress-reports/long.md"
 printf '# Long\n' > "$LONG_REPORT"
 UPLOADS="$(sk_state '.uploads | length')"
 sk_lm "$GAMMA" notice --item overseer --to owner --attach "$LONG_REPORT" --file "$(sk_text s6 "y$LONG")" >/dev/null
 sk_poll "$GAMMA"
 LONG_FILE_ID="$(notice_id "$GAMMA" "y$LONG")"
-assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\" and .state != \"inflight\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
+assert_eq "$RC=$(jq -r "select(.t == \"out\" and .id == \"$LONG_FILE_ID\" and .state != \"inflight\" and .state != \"progress\") | .state" "$(sk_journal "$GAMMA")")=$(sk_state '.uploads | length')" \
   "0=file=$((UPLOADS + 1))" "a notice past the cap beside a report uploads with it as the comment, the cap being markdown_text's alone"
 
 # --- a 429 ends a catch-up read unretried; a post's 429 is honoured by Retry-After ----------
@@ -774,6 +842,18 @@ while IFS=$'\t' read -r sent want; do
 done <<<"$(markup_rows)"
 
 # --- controls, one mutant per rule ------------------------------------------------------------
+sk_mutant answer-origin relay.py 'envelope\.get\("re"\) in slack_answered' 'envelope.get("re") in slack_answered and False'
+ORIGIN_CONTROL="$(sk_new_root origin-control)"
+sk_bind "$ORIGIN_CONTROL"
+answer_origins sk_assert_red "$ORIGIN_CONTROL" "$(sk_channel "$ORIGIN_CONTROL")" control-origin slack-note || exit 1
+sk_bin_reset
+
+sk_mutant answer-revision relay.py 'envelope\.get\("answer_source"\) == "resolve"' 'True'
+REVISION_CONTROL="$(sk_new_root revision-control)"
+sk_bind "$REVISION_CONTROL"
+answer_origins sk_assert_red "$REVISION_CONTROL" "$(sk_channel "$REVISION_CONTROL")" control-revision slack-chat-note || exit 1
+sk_bin_reset
+
 sk_mutant program-answer relay.py '        elif envelope.get\("delivery_id"\):\n[\s\S]*?\n        else:' '        else:'
 PROGRAM_CONTROL="$(sk_new_root program-control)"
 sk_bind "$PROGRAM_CONTROL"
@@ -1012,7 +1092,7 @@ while IFS=$'\t' read -r error methods <&3; do
   sk_bin_reset
 done 3<<<"$(settle_rows)"
 
-sk_mutant mark-read-refused relay.py '        try:\n            cursor, read = self\.mail\.read_receipts\(\)\n            events = self\.mail\.events\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        cursor, read = self.mail.read_receipts()\n        events = self.mail.events()\n'
+sk_mutant mark-read-refused relay.py '        try:\n            read = self\.read_membership\(\)\n        except Refusal as err:\n            print_refusal\(err\)\n            return\n' '        read = self.read_membership()\n'
 sk_inject "$MU_CH" U001 'refused read' >/dev/null
 touch "$MU/tmp/drain-refused"
 sk_lm "$MU" notice --item overseer --to owner --file "$(sk_text n21 'Held back.')" >/dev/null
@@ -1051,13 +1131,6 @@ sk_mutant body-arg markup.py 'return markdown, "markdown_text"' 'return markdown
 sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n13 'Plain again.')" >/dev/null
 sk_poll "$ZETA"
 assert_eq "$(sk_state ".messages.${ZETA_CH}[] | select(.text == \"Plain again.\") | .body_arg")" "text" "control: the body sent as text, Slack renders mrkdwn"
-sk_bin_reset
-
-sk_mutant length markup.py 'return ""\.join\(_render\(part, mrkdwn=True\) for part in parts\), "text"' 'return "".join(_render(part, mrkdwn=True) for part in parts), "markdown_text"'
-sk_lm "$ZETA" notice --item overseer --to owner --file "$(sk_text n14 "$LONG")" >/dev/null
-sk_poll "$ZETA"
-assert_eq "$RC=${ERR1%% id=*}=$(sk_state "[.messages.${ZETA_CH}[] | select(.text | startswith(\"xxxx\"))] | length")" \
-  "1=slack: slack-api-failed=chat.postMessage error=msg_blocks_too_long=0" "control: the text fallback gone, Slack refuses a notice past the cap and it never lands"
 sk_bin_reset
 
 sk_mutant deadline relay.py 'It stands at \{local_time\(str\(envelope\[.deadline.\]\)\)\}' 'It stands at {envelope["deadline"]}'

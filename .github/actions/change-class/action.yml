@@ -100,7 +100,7 @@ outputs:
   docs_only:
     description: >-
       true where the shipped harness-only --mode docs accepts every changed
-      path (docs/, changelog.d/, root Markdown), whatever the class; false on
+      path (the built-in docs set plus trusted declared text), whatever the class; false on
       every other diff and where harness-only cannot read the diff (an
       unsupported event, a missing or unresolvable endpoint, an unreadable or
       empty diff). A wiring error from harness-only or from the action itself
@@ -115,7 +115,7 @@ outputs:
       default-branch claim reaches a path it changes; the render bullet of
       skills/harness-ci/references/wiring.md § Per-lane verdicts names the
       events a claimed lane runs on. A trivial class or
-      docs_only=true on a non-render class runs none. On pull_request and
+      docs_only=true on a non-render class runs none, except that changed declared text keeps its claiming lanes and the ordinary unclaimed-path fallback. On pull_request and
       push, with queue-only-default true, a base that names no
       HARNESS_CI_PER_PUSH_REASON runs none, where both renders read it. On schedule and
       workflow_dispatch every lane runs. When the
@@ -134,6 +134,7 @@ outputs:
       Why lanes answered as it did: render, trivial, docs-only or queue-only
       where lanes is false; full-run on schedule and workflow_dispatch;
       render-claim where a declared lane claims a path a render changes;
+      declared-text where changed declared product text keeps its checks;
       queue-only-reader-absent where a render lacks the queue-only default's
       reader; queue-only-lanes-from-unset where queue-only-default is true
       with no lanes-from; lane-producer-unavailable when the selected classifier lacks

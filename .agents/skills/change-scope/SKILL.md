@@ -1,27 +1,14 @@
 ---
 name: change-scope
 description: "Load to classify a diff's change class, or to read the shared path rules and branch measurement a tier, review depth or CI selection rests on."
-summary: "The shared change classifier: one class per diff range, from the trusted base commit's settings, the shared path rules, the branch measurement and the render proof, consumed by CI selection, review depth and tier admission through their own mappings."
 license: MIT
 user-invocable: true
-dependencies:
-  commands:
-    - command: git
-      purpose: Read the judged range, the base commit's settings and the private proof checkout
-    - command: jq
-      purpose: Read the verify document the render class is proved from
-    - command: kendex
-      purpose: Prove the render class by re-rendering the head
-      optional: true
-    - command: python3
-      purpose: Compare an adopted refresh caller with its released template
-      optional: true
 metadata:
-  author: vanillagreen
-  source: kendex
+  author: "vanillagreen"
+  source: "kendex"
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-tags: [automation, review]
+compatibility: "Requires these commands on PATH: git, jq"
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -39,7 +26,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/change-scope/scripts/harness-only --event pull_request --base "$BASE" --head "$HEAD" --repo "$DIR"
 ```
 
-`change-scope` takes an explicit repository, base and head and answers one class for that range: `render`, `trivial`, `micro`, `small` or `standard`. It reads its settings from the commit `--base` names, never from the judged tree or an author-writable field: a branch cannot choose the roots, test paths, ceilings or exclusions its own size is scored against. `harness-only` reads the changed paths and the docs set; `lib/branch-growth.sh` measures production, test and render-mirror lines over the same range, pairing a render with the source it mirrors and setting test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`; `references/narrow-change.conf` holds the path rules, the `instruction` floor and the `micro` and `small` production ceilings, and `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions. `render` is proved by `kendex verify --json` over a private checkout of the head and the positions its passing rows own; `trivial` is a documentation-only diff within `HARNESS_CI_TRIVIAL_MAX_LINES`; `small` is one subsystem, the first directory past a render root, with documentation and test paths belonging to none; an agent instruction file never answers below `small`; everything unproved is `standard`. stdout is one `change_class=<class>` line; stderr carries `changed-path:` lines, the reader's notes and one `class: class=<class> measured=true|false cause=<name> ...` line, where `measured=false` marks a fallback to `standard`, never a verdict; exit 2 is a wiring error with no verdict. Flags, settings and every cause: `change-scope --help`.
+`change-scope` takes an explicit repository, base and head and answers one class for that range: `render`, `trivial`, `micro`, `small` or `standard`. It reads its settings from the commit `--base` names, never from the judged tree or an author-writable field: a branch cannot choose the roots, test paths, ceilings or exclusions its own size is scored against. `harness-only` reads the changed paths and the docs set; `lib/branch-growth.sh` measures production, test and render-mirror lines over the same range, pairing a render with the source it mirrors and setting test paths aside by its built-in rule and `ORCH_SIZE_TEST_PATHS`; `references/narrow-change.conf` holds the path rules, the `instruction` floor and the `micro` and `small` production ceilings, and `HARNESS_CI_STANDARD_PATHS` adds the repository's own exclusions. `render` is proved by `kendex verify --json` over a private checkout of the head and the positions its passing rows own; `trivial` is a documentation-only diff within `HARNESS_CI_TRIVIAL_MAX_LINES`; a changed `kendex.settings.toml` or `.kendex/settings.toml` joins the trivial set where it changes only comments, blank lines and the `[env]` keys the base's `HARNESS_CI_TRIVIAL_SETTINGS` names, and a diff of such files alone has no ceiling; `small` is one subsystem, the first directory past a render root, with documentation and test paths belonging to none; an agent instruction file never answers below `small`; everything unproved is `standard`. stdout is one `change_class=<class>` line; stderr carries `changed-path:` lines, the reader's notes and one `class: class=<class> measured=true|false cause=<name> ...` line, where `measured=false` marks a fallback to `standard`, never a verdict; exit 2 is a wiring error with no verdict. Flags, settings and every cause: `change-scope --help`.
 
 - Consume the class, keep the mapping. harness-ci maps it to lane selection and the queue-only route, reviewer to review depth, orch to a work tier; this package decides none of those.
 - Read the class through `lib/change-scope.sh`: `change_scope_read BASE HEAD REPO STDERR_FILE` sets `CHANGE_SCOPE_CLASS` and `CHANGE_SCOPE_MEASURED`, `change_scope_rank` and `change_scope_floor` own the class order. A `measured=false` answer is a refusal to read, not a class; never treat it as one.

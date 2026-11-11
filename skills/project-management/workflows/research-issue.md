@@ -48,9 +48,15 @@ Write the description to a file, then:
 
 `--state "Backlog"` is mandatory, never the team-default Triage.
 
-`[REACH]` is the ask, run, or decision that raised the question.
+`[REACH]` is the ask, run, or decision that raised the question. Fill Story and Why this matters from the topic and caller's questions, following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
 
 ```markdown
+> **Story:** [Who needs this research.] [What they cannot decide today.] [What the findings let them decide, and its consequence.]
+
+> **Why this matters:** [The cost of leaving the question unanswered, and the benefit of deciding with evidence.]
+
+## Filing record
+
 **Reached by**: [REACH]
 
 ## Summary
@@ -130,7 +136,7 @@ Reply with a structured section per item.
 
 ## 3. Publish the Assets
 
-Read the current description (`issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
+Read the current description (`issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [publish-artifacts.md](publish-artifacts.md). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ```markdown
 ## Assets
@@ -171,6 +177,6 @@ Requirements:
 6. Return only after findings.md and raw-exa.json exist.
 </delegation_format>
 
-On return, verify both files exist, that every required section in findings.md is non-empty, and that no raw JSON block was embedded. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) before reporting the result. Comment on the research issue with a concise summary, the findings path, the researcher identity, and the raw metadata path.
+On return, verify both files exist, that every required section in findings.md is non-empty, and that no raw JSON block was embedded. Apply [publish-artifacts.md](publish-artifacts.md) before reporting the result. Comment on the research issue with a concise summary, the findings path, the researcher identity, and the raw metadata path.
 
 **If managed**: invoke `research-complete [RESEARCH_ISSUE_ID]` directly. **If standalone**: set the research issue Done after verification and present `research-complete [RESEARCH_ISSUE_ID]` as the next command.
