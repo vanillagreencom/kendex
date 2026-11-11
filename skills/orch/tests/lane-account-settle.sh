@@ -10,6 +10,9 @@
 # they assert are the arguments the check slept on. The readings come from
 # /proc, so on a host without it the in-range rows are skipped; the refusals
 # come before any reading and run everywhere.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

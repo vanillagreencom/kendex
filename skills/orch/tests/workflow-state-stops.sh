@@ -6,6 +6,9 @@
 #
 # Rows on the store's three decisions until the runtime's `state` family holds
 # them. Each row's comment names the failure a real run reaches through it.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -235,10 +235,11 @@ run_release "$TMP/released/kendex" "$TMP/native/tools/guard"
 run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
 [ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] && ok 'kendex suites only: the next engine passes' || bad 'kendex suites only: the next engine passes' "$RC $RAN $OUT"
 
-# The catalog job sets CI=true. Offline released-package runs keep their proof.
+# The catalog job sets CI=true, and runs the orch suites an offline run does.
 RELEASE_TEST_CI=true run_release "$TMP/main/kendex" "$TMP/native/tools/guard"
-[ "$RC:$RAN" = '0:' ] && [[ "$OUT" != *'selected-suite=skills/orch/tests/'* ]] \
-  && ok 'CI released packages exclude the orch corpus' || bad 'CI released packages exclude the orch corpus' "$RC $RAN $OUT"
+[ "$RC:$RAN" = '0:zzz-caller zzz-second ' ] \
+  && ok 'CI released packages run the orch suites a checkout shard gives a kendex' \
+  || bad 'CI released packages run the orch suites a checkout shard gives a kendex' "$RC $RAN $OUT"
 
 # Each part runs its share of the selected suites, and the parts cover them;
 # a part with no share runs nothing.

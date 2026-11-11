@@ -13,7 +13,7 @@
 #                            key; SELECT_IN, SELECT_WITH, SELECT_EVENT
 #                            and SELECT_ARG steer it (see below)
 #   lanes / measured         a measured row's lanes, and with its shards
-#   ROSTER                   the surviving CI shard roster
+#   ROSTER, ORCH             the whole shard roster, and orch's shards
 #   QUEUE_ALL                the whole macOS-capable roster, in order
 #   macos_shards SHARDS       SHARDS less the selector's Linux-only shards
 #   LINUX, BOTH              the runner lists, as ci-job-set spells them
@@ -79,7 +79,8 @@ queue_only_of() { # PATH
 }
 
 # The whole shard roster, in the matrix's order.
-ROSTER='["review-gate","refresh","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls","worktree","worktree-restack","rest","jarvis","slack","mailbox","node","pi-claude-bridge"]'
+ROSTER='["review-gate","refresh","orch-oversee","orch-dev","orch-state","orch-rest","guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear","linear-controls","worktree","worktree-restack","rest","jarvis","slack","mailbox","node","pi-claude-bridge"]'
+ORCH='"orch-oversee","orch-dev","orch-state","orch-rest"'
 # The expected queue list comes from each row's shards, with the platform
 # exclusions held to the workflow by orch-shard-partition.test.sh.
 macos_shards() { # SHARDS: the macOS-capable members in the same order
@@ -92,9 +93,9 @@ QUEUE_ALL="$(macos_shards "$ROSTER")"
 LINUX='["ubuntu-latest"]'
 BOTH='["ubuntu-latest","macos-latest"]'
 ALL_OFF="shell_shards=false shell_os=[] ui=false bot_instructions=false cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[]"
-ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[]"
+ALL_ON="shell_shards=true shell_os=$BOTH ui=true bot_instructions=true cargo_linux=true cargo_macos=true cargo_lint=true cargo_windows=true cargo_windows_check=true catalog=true smoke=true shards=$ROSTER queue_macos_shards=$QUEUE_ALL skipped_suites=[] runtimes=true"
 # `render` and `trivial` run the one verify job.
-VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[]"
+VERIFY_ROW="shell_shards=false shell_os=[] ui=false bot_instructions=true cargo_linux=false cargo_macos=false cargo_lint=false cargo_windows=false cargo_windows_check=false catalog=false smoke=false shards=[] queue_macos_shards=[] skipped_suites=[] runtimes=false"
 # Every measured class runs cargo_linux and bot_instructions. The shell
 # shards run per package, on the runners LEGS names: none, linux or both;
 # the platform lanes stand down only on an all-prose diff, the macOS legs
@@ -111,13 +112,15 @@ lanes() { # LEGS UI PLATFORM BUILD [CATALOG] — a measured row's lanes
   printf 'shell_shards=%s shell_os=%s ui=%s bot_instructions=true cargo_linux=true cargo_macos=%s cargo_lint=%s cargo_windows=%s cargo_windows_check=%s catalog=%s smoke=%s' \
     "$shell" "$os" "$2" "$3" "$4" "$3" "$4" "${5:-$4}" "${5:-$4}"
 }
-measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE [CATALOG] — one measured row
-  printf '%s shards=%s queue_macos_shards=%s skipped_suites=[]' "$(lanes "$1" "$2" "$3" "$4" "${7:-$4}")" "$5" "$6"
+measured() { # LEGS UI PLATFORM BUILD SHARDS QUEUE [CATALOG [RUNTIMES]] — one measured row
+  local runtimes=false
+  case "$5" in *'"orch-oversee"'*) runtimes=true ;; esac
+  printf '%s shards=%s queue_macos_shards=%s skipped_suites=[] runtimes=%s' "$(lanes "$1" "$2" "$3" "$4" "${7:-$4}")" "$5" "$6" "${8:-$runtimes}"
 }
 # The selections tools/tests/ci-aggregate.test.sh evaluates the workflow
 # against.
 PROSE_ROW="$(measured none false false false '[]' '[]')"
 CODE_ROW="$(measured none false true false '[]' '[]')"
 UI_ROW="$(measured none true true false '[]' '[]')"
-ORCH_SHARDS="[\"guards-scans\",\"rest\"]"
+ORCH_SHARDS="[$ORCH,\"guards-scans\",\"rest\"]"
 ORCH_CODE_ROW="$(measured both false true false "$ORCH_SHARDS" "$(macos_shards "$ORCH_SHARDS")" true)"

@@ -13,6 +13,10 @@
 # JSON the document's sentence writes to the file its fence names. Each pin has
 # a control a moved, commented or altered decoy cannot satisfy. Only the
 # worktree skill's push and gh are stood in.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/workflows/merge-pr-restack.md, skills/orch/workflows/submit-pr.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

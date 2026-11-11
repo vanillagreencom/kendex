@@ -4,6 +4,9 @@
 # `ORCH_STATE_DIR=… workflow-state …` prefix. ORCH_STATE_DIR stays supported as
 # a fallback. These tests fail against a unguarded script that lacks the flag
 # (`--state-dir` dispatches as an unknown command).
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -50,6 +50,9 @@
 #      and the final job mode runs no suites; each rule has a must-fail control
 #
 # Bash 3.2 compatible.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

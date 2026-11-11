@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests for the merge group's narrowed row: a diff of skill Markdown alone
-# keeps the row its paths select and skips, inside its shards, each suite
+# keeps the row its paths select, save an orch leg left with no suite, and
+# skips, inside its shards, each suite
 # whose own `# Inputs:` note covers no changed document. tools/guard
 # --note-skips names those suites, tools/ci-job-set publishes them as
 # `skipped_suites=`, and each shell suite step of skill-tests.yml runs the
@@ -168,6 +169,8 @@ step_dir() { # STEP-NAME — the stub tree, its step.sh, or `no-step`
   : >"$dir/skills/review-gate/tests/b.test.sh"
   # A package no shard claims, which the pooled step takes as a candidate.
   : >"$dir/skills/pooled/tests/c.test.sh"
+  # An orch suite, which each orch shard step takes as a candidate.
+  : >"$dir/skills/orch/tests/d.sh"
   printf '#!/usr/bin/env bash\nprintf "%%s " "$@" >>"$CALLS"\n' | tee "$dir/skills/orch/tests/run-all.sh" >"$dir/tools/tests/run-all.sh"
   awk -v name="$1" '
     $0 == "      - name: " name { found = 1; next }
@@ -216,9 +219,9 @@ while IFS= read -r step; do
 done <<<"$steps"
 
 # THE REAL TREE. KEN-4773's one line in Jarvis's decisions reference keeps
-# the row its paths select and skips the long Jarvis suites, whose notes
-# leave that reference out; SKILL.md, which command-declarations declares,
-# keeps that suite.
+# the row its paths select, save the four orch legs, every suite of which it
+# skips, and skips the long Jarvis suites, whose notes leave that reference
+# out; SKILL.md, which command-declarations declares, keeps that suite.
 real() { # PATHS — the selection with its skips cut, and the skips
   local got
   got="$(SELECT_WITH="${2:-$JOB_SET}" selection micro false "$(printf '%s\n' $1)")"
@@ -226,7 +229,8 @@ real() { # PATHS — the selection with its skips cut, and the skips
 }
 DECISIONS="skills/jarvis/references/decisions.md .agents/skills/jarvis/references/decisions.md"
 narrow="$(real "$DECISIONS")"
-check "real: the decisions reference keeps the row its paths select" "$(real "$DECISIONS" "$WHOLE" | sed 's/|.*//')" "${narrow%|*}"
+check "real: the decisions reference keeps the row its paths select, save the orch legs" \
+  "$(real "$DECISIONS" "$WHOLE" | sed 's/|.*//; s/"orch-[a-z]*",//g')" "${narrow%|*}"
 check "real: and that row runs the Jarvis shard" "" "$(shards_miss +jarvis "$(field shards <<<"${narrow%|*}")")"
 for long in controls succession session task; do
   check "real: and skips the long $long suite" true \

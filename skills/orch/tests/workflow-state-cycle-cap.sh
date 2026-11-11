@@ -16,6 +16,9 @@
 # --issue` reads from `review_fix_round`: § 4 Fix Delegation sets it on every
 # round whatever its items' outcomes, and no other round touches it.
 # The failing direction runs first so a green pass is evidence.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/small.md.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -23,22 +23,28 @@ trivial|true|docs/architecture/overview.md|$VERIFY_LANES|[]
 trivial|true|AGENTS.md|$VERIFY_LANES|[]
 standard|false|crates/core/src/lib.rs|$SHARD_BUILD|+rest
 small|false|crates/cli/src/main.rs|$SHARD_BUILD|+rest
-micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +rest +jarvis
-micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE| +guards-scans +guards-tools
-micro|false|skills/orch/scripts/lanes|$SHARD_CODE| +guards-scans +guards-tools +rest
-standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE| +guards-tools +rest
+micro|false|crates/cli/src/commands/tier_model.rs|$SHARD_BUILD|+refresh +orch-rest +rest +jarvis
+micro|false|skills/orch/SKILL.md .agents/skills/orch/SKILL.md|$SHARD_PROSE|+orch-rest +guards-scans +guards-tools
+micro|false|skills/orch/scripts/lanes|$SHARD_CODE|$ORCH_ALL +guards-scans +guards-tools +rest
+micro|false|skills/orch/tests/dev-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/review-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/lane-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/orch/tests/dev-review-lane-workflow-state-future.sh|$SHARD_CODE|$ORCH_ALL
+micro|false|skills/agent-runtime/runtime/src/lib.rs|$SHARD_CODE|$ORCH_ALL +rest
+standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE|$ORCH_ALL +guards-tools +rest
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
-micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tools
+micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL +guards-tools
 micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
-micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
-micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
+micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree $ORCH_ALL -guards-scans
+micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox $ORCH_ALL +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
 micro|false|skills/bot-instructions/scripts/bot-instructions|$SHARD_CODE|+linear +linear-controls +guards-tools
 micro|false|skills/preflight/scripts/preflight|$SHARD_CODE|+linear -linear-controls +guards-commit
 micro|false|skills/doc-limits/scripts/doc-limits|$SHARD_CODE|+rest +guards-commit
 micro|false|skills/github/scripts/lib/gh-auth.sh|$SHARD_CODE|+rest +worktree
-micro|false|skills/orch/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
+micro|false|skills/change-scope/scripts/lib/branch-growth.sh|$SHARD_CODE|+review-gate +rest
 micro|false|$SETTINGS_TOML|$SHARD_CODE|+guards-tools
 micro|false|$LOCAL_TOML|$SHARD_CODE|+guards-tools
 micro|false|$DISCOVER_RS|$SHARD_BUILD|+guards-hooks +guards-hooks-tail +guards-tools-tail +rest
@@ -68,6 +74,34 @@ micro|maybe|skills/orch/SKILL.md|exit=2 invalid-docs-only value=maybe|
 ROWS
 [ "$selection_rows" -ge 39 ] ||
   { echo "the selection table read $selection_rows rows" >&2; exit 1; }
+
+# The runtimes' Rust targets run where a path other than prose under the orch
+# or agent-runtime package, source or render, a lane source, or a path one of
+# their tests/rust/ files names changed: the hook they install and the
+# lane-mail they run. A skill's Markdown runs none of them.
+while IFS='|' read -r paths expected; do
+  check "runtimes over '$paths'" "$expected" \
+    "$(selection micro false "$(printf '%s\n' $paths)" | field runtimes)"
+done <<'ROWS'
+skills/orch/runtime/src/ops/approve.rs .agents/skills/orch/runtime/src/ops/approve.rs|true
+skills/orch/scripts/lanes|true
+skills/agent-runtime/runtime/src/lib.rs|true
+skills/orch/workflows/merge-pr.md .agents/skills/orch/workflows/merge-pr.md|false
+hooks/lane-mail-check.sh|true
+skills/mailbox/scripts/lane-mail|true
+tools/ci-job-set|true
+ROWS
+
+# A narrowed orch diff starts the orch legs that keep a suite once its skips
+# leave theirs out, on either runner, and no other: a leg that kept none would
+# build both runtimes and run nothing.
+narrowed="$(selection micro false "$(printf '%s\n' skills/orch/workflows/merge-pr.md .agents/skills/orch/workflows/merge-pr.md)")"
+kept_orch="$(cd "$ROOT" && SKIPPED_SUITES="$(field skipped_suites <<<"$narrowed")" "$JOB_SET" --suite-list skills/orch/tests/*.sh | grep -v '/run-all\.sh$')"
+keeping="$(for os in Linux macOS; do printf '%s\n' "$kept_orch" | RUNNER_OS=$os bash "$ROOT/skills/orch/tests/run-all.sh" --shard-of; done | cut -d' ' -f1 | sort -u | tr '\n' ' ')"
+[ "$keeping" != "orch-dev orch-oversee orch-rest orch-state " ] ||
+  bad "the narrowed orch document keeps a suite in every orch shard, so the row below proves nothing"
+check "a narrowed orch diff starts the orch legs that keep a suite, and no other" "$keeping" \
+  "$(field shards <<<"$narrowed" | grep -o 'orch-[a-z]*' | sort | tr '\n' ' ')"
 
 awk '
   $0 == "      .bun-version) want_shard node ;;" { sub(/want_shard node/, ":"); n++ }
@@ -121,7 +155,7 @@ mkdir -p "$TMP/forgot/tools"
 cp -R "$ROOT/tools/lib" "$TMP/forgot/tools/lib"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/forgot/tools/"
 forgot="$TMP/forgot/tools/ci-job-set"
-RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\]"$/'
+RENDER_ROW='/^      printf .%s. "macos=false ui=false .* cargo_windows_check=false catalog=\$catalog smoke=\$catalog shards=\[\] skipped_suites=\[\] runtimes=false"$/'
 [ "$(awk "$RENDER_ROW { n++ } END { print n + 0 }" "$JOB_SET")" -eq 1 ] ||
   { echo "the render row is no longer one line in $JOB_SET" >&2; exit 1; }
 # LANE|WORD dropped from the render row
@@ -140,8 +174,9 @@ while IFS='|' read -r lane word; do
 done <<'ROWS'
 cargo_windows_check| cargo_windows_check=false
 macos|macos=false[ ]
+runtimes| runtimes=false
 ROWS
-[ "$forgot_rows" -eq 2 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
+[ "$forgot_rows" -eq 3 ] || { echo "the forgotten-lane table read $forgot_rows rows" >&2; exit 1; }
 
 # A `trivial` diff changing a path tools/rust-reads names takes the measured
 # row. The fixture crate reads docs/a.md and assets/x.json through
@@ -184,7 +219,8 @@ check "a file the Rust source reads at run time is no build input" "$TOOL_ROW" \
 # The lanes intentionally take the union. Root README is a run-time Rust
 # read, which selects cargo but does not change these two jobs.
 # The local suite runner consumes this result, without the class selector's
-# conservative package unions. Offline orch retains its existing shard environment.
+# conservative package unions. An orch suite takes the shard shard_of gives it,
+# and orch-rest is a checkout shard.
 # Only Linux takes a checkout, at the shard gate and at the orch shard gate;
 # the `macos` column marks the one row per gate that also asserts macOS none.
 while IFS='|' read -r path shard expected macos; do
@@ -195,7 +231,7 @@ while IFS='|' read -r path shard expected macos; do
     "$("$JOB_SET" --suite-kendex macOS "$path" "$shard")"
 done <<'ROWS'
 skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout|macos
+skills/orch/tests/claude-model-classes.sh|orch-rest|checkout|macos
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
 skills/orch/tests/dev_return.sh|orch-dev|none
 skills/github/tests/pr-view.test.sh||checkout|macos

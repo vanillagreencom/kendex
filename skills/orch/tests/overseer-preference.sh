@@ -3,6 +3,9 @@
 # of old exact model ids and of model classes. Each model is classified
 # through fixtures/tier-model/kendex, kendex's answers as it gives them;
 # tier-model-fixture.sh holds a real kendex to that fixture.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

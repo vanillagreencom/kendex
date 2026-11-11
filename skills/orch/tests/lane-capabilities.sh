@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Surface: the stored provider reply in lane_capabilities_read.
-# Inputs: scripts/lib/lane-capabilities.sh, scripts/lib/lane-claims.sh,
-# scripts/lane-host,
-# scripts/oversee-report, scripts/lib/*.sh, git-context,
-# skills/mailbox/scripts/* and skills/github/scripts/lib/*.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"

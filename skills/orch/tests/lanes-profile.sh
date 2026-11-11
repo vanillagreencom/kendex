@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: lanes' Claude usage-refusal profile check.
-# Inputs: scripts/lanes, its sourced libraries and lib/lanes-fixture.sh.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 # The curl boundary returns Claude Code's account/organization profile shape.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

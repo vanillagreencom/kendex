@@ -13,6 +13,10 @@
 # than the verb answers 1 from its unknown-command arm, and a caller reading
 # either as "none stands" would tell a lane that has already written its record
 # to write it again at every turn end.
+# Inputs: hooks/, skills/agent-runtime/, skills/agent-runtime/scripts/,
+# skills/change-scope/references/, skills/change-scope/scripts/,
+# skills/communication/references/reports.md, skills/mailbox/scripts/, skills/orch/runtime/,
+# skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/start.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

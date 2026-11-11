@@ -5,6 +5,10 @@
 # writes and the delegation templates read; it is seeded like `qa_labels`.
 # Row per key: the seeded value, and the same read on a key nothing seeds,
 # which is what tells a seeded empty list apart from an absent one.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/workflows/dev-start.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

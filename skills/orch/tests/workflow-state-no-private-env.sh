@@ -7,6 +7,9 @@
 # reads the fleet state in a checkout whose settings move the state directory
 # and whose private env file or [env] table would run its own code. The
 # must-fail controls close the file, one per rule, each on a private copy.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

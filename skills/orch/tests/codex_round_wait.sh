@@ -3,6 +3,13 @@
 # production dev and reviewer artifact checkers. A barrier holds each
 # consumer until the caller polls its job. These rows prove shell
 # transport and continuation.
+# Inputs: hooks/, skills/agent-runtime/, skills/agent-runtime/scripts/,
+# skills/change-scope/references/, skills/change-scope/scripts/,
+# skills/communication/references/reports.md, skills/mailbox/scripts/, skills/orch/SKILL.md,
+# skills/orch/references/codex-runtime.md, skills/orch/references/waiter-launch.md,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/workflows/review-pr.md, skills/orch/workflows/review.md, skills/reviewer/,
+# skills/reviewer/SKILL.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

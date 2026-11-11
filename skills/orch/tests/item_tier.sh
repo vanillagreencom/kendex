@@ -5,6 +5,11 @@
 # orch/scripts beside change-scope/scripts, with no harness-ci. Range and
 # Location rows use change-scope's shared path rules. The range rows use a real Git repository. The ceilings come from narrow-change.conf, so
 # a boundary row follows the list rather than a second copy of its numbers.
+# Inputs: hooks/, skills/agent-runtime/, skills/agent-runtime/scripts/,
+# skills/change-scope/references/, skills/change-scope/scripts/,
+# skills/communication/references/reports.md, skills/github/scripts/, skills/mailbox/scripts/,
+# skills/orch/SKILL.md, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/workflows/review-pr.md.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

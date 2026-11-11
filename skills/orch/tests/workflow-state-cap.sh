@@ -5,6 +5,9 @@
 # the boundary; the roster of caps is derived from the table, never spelled;
 # and no script or workflow resolves a cap outside it. Split from
 # workflow-state-cycle-cap.sh, which owns the rereview_panel write itself.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -3,6 +3,9 @@
 # overseer carries for each value, and the words the fleet's own launchers
 # take from the same table. One row per value the setting takes, plus the
 # value it does not; the control below removes the policy's default arm.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

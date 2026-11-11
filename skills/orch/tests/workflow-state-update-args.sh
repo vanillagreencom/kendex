@@ -8,6 +8,9 @@
 # apostrophe or a quote — jq fails, nothing is written, and § 8 re-derives the
 # live blocker as a decline. The control at
 # the end runs the interpolated form on the same text and shows it failing.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/review.md.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

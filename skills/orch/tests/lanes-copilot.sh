@@ -7,6 +7,9 @@
 # answering fixed bodies in the shape its `quota_snapshots.premium_interactions`
 # object carries, and curl through a shim on PATH for the request's own row,
 # so every row runs offline; lanes.sh holds every other harness's rows.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every account this suite measures lives under LANES_HOME; an inherited

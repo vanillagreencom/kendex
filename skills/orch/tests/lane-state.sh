@@ -18,6 +18,9 @@
 #
 # The sandbox, its pgrep stub and its assertions are lib/oversee-watch-harness.sh;
 # § capture runs a tmux server private to this suite.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # An inherited or configured provider would turn the rows hosted.

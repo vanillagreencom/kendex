@@ -6,6 +6,9 @@
 # behaviours that prose was trying to enforce — which is the point of the
 # exercise: a rule a tool applies cannot be re-fumbled, and a rule a test pins
 # cannot silently drift.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/SKILL.md, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: session_rows_lane_write and session_rows_lane_verdict.
-# Inputs: scripts/lib/session-rows.sh and mailbox's locked append library.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

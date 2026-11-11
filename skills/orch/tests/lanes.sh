@@ -9,6 +9,9 @@
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. Every run gets its own empty claim store unless the
 # row stages one, so no row reads another's claims or the checkout's.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane

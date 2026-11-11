@@ -6,14 +6,14 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
 
 mkdir -p "$R/skills/orch/scripts" "$R/skills/orch/tests/lib" "$R/tools/tests"
-printf '#!/usr/bin/env bash\nlaunch_status=0\n' > "$R/skills/orch/scripts/open-terminal"
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\n' > "$R/skills/orch/scripts/dispatcher"
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\n' > "$R/skills/orch/tests/lib/launch.sh"
-for row in 'direct|scripts/open-terminal' 'helper|tests/lib/launch.sh' 'indirect|scripts/dispatcher'; do
+printf '#!/usr/bin/env bash\nlaunch_status=0\n' > "$R/skills/orch/scripts/launcher"
+printf 'source "$PWD/skills/orch/scripts/launcher"\n' > "$R/skills/orch/scripts/dispatcher"
+printf 'source "$PWD/skills/orch/scripts/launcher"\n' > "$R/skills/orch/tests/lib/launch.sh"
+for row in 'direct|scripts/launcher' 'helper|tests/lib/launch.sh' 'indirect|scripts/dispatcher'; do
   IFS='|' read -r name input <<<"$row"
   printf 'source "$PWD/skills/orch/%s"\nprintf "%s\\n" >> "$SUITE_LOG"\nexit "$launch_status"\n' "$input" "$name" > "$R/skills/orch/tests/$name.sh"
 done
-printf 'printf "named\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/open-terminal.test.sh"
+printf 'printf "named\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/launcher.test.sh"
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 git -C "$R" add -A
@@ -23,7 +23,7 @@ BASE="$(git -C "$R" rev-parse HEAD)"
 SUITE_LOG="$TMP/suites"
 
 launch_selection() { # SCOPED STATUS GUARD
-  printf '#!/usr/bin/env bash\nlaunch_status=%s\n# changed\n' "$2" > "$R/skills/orch/scripts/open-terminal"
+  printf '#!/usr/bin/env bash\nlaunch_status=%s\n# changed\n' "$2" > "$R/skills/orch/scripts/launcher"
   : > "$SUITE_LOG"
   RC=0
   OUT="$(cd "$R" && DEV_VALIDATE_SCOPED="$1" SUITE_LOG="$SUITE_LOG" "$3" --selection --range "$BASE" 2>&1)" || RC=$?
@@ -32,8 +32,8 @@ launch_selection() { # SCOPED STATUS GUARD
 for status in 0 1; do
   launch_selection true "$status" "$GUARD"
   [ "$RC" -eq "$status" ] && [ "$SELECTED" = 'direct helper named ' ] \
-    && ok "open-terminal scoped fixture returns status $status with direct, named and helper coverage" \
-    || bad "open-terminal scoped fixture returns status $status with direct, named and helper coverage" "rc=$RC selected=$SELECTED out=$OUT"
+    && ok "launcher scoped fixture returns status $status with direct, named and helper coverage" \
+    || bad "launcher scoped fixture returns status $status with direct, named and helper coverage" "rc=$RC selected=$SELECTED out=$OUT"
 done
 
 # Restore main's reach without removing any file text or input references.
@@ -49,7 +49,7 @@ fi
 
 # Normal range selection still includes the production caller. This is the
 # mapper CI already owns, not the local scoped branch above.
-printf '#!/usr/bin/env bash\nlaunch_status=0\n# changed\n' > "$R/skills/orch/scripts/open-terminal"
+printf '#!/usr/bin/env bash\nlaunch_status=0\n# changed\n' > "$R/skills/orch/scripts/launcher"
 : > "$SUITE_LOG"
 RC=0
 OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
@@ -60,9 +60,8 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
 # A skill doc and its render, each read by a suite outside the skill: tools/
 # reads the source, the orch consumer tree reads the render. tools/ also reads
 # skills/AGENTS.md, Markdown in no skill package. The real tools/ci-job-set
-# answers which trees the merge group runs: tools/ in its shards, the orch
-# corpus in none until KEN-4733 (REVISIT(D026)), so the orch reader of a
-# skill doc stays in the scoped run.
+# answers which trees the merge group runs: tools/ and orch in their shards,
+# so a scoped run seeds neither reader of a skill doc.
 mkdir -p "$R/skills/demo/references" "$R/.agents/skills/demo/references"
 printf '# Guide\n' > "$R/skills/demo/references/guide.md"
 cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
@@ -74,11 +73,11 @@ git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm docs
 BASE="$(git -C "$R" rev-parse HEAD)"
-doc_change() { # [script|outside]: edit the doc pair, and open-terminal or skills/AGENTS.md too
+doc_change() { # [script|outside]: edit the doc pair, and launcher or skills/AGENTS.md too
   printf '# Guide\nchanged\n' > "$R/skills/demo/references/guide.md"
   cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
   case "${1:-}" in
-    script) printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/open-terminal" ;;
+    script) printf '#!/usr/bin/env bash\nlaunch_status=0\n# beside docs\n' > "$R/skills/orch/scripts/launcher" ;;
     outside) printf '# Skills\nchanged\n' > "$R/skills/AGENTS.md" ;;
   esac
   : > "$SUITE_LOG"
@@ -91,12 +90,12 @@ doc_selection() { # GUARD: the scoped selection's selected-suite lines in PLAN
 }
 doc_change
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh ' ] && [ "$SELECTED" = 'doc-render ' ] \
-  && ok 'scoped: a skill doc and its render select only the reader CI does not run' \
-  || bad 'scoped: a skill doc and its render select only the reader CI does not run' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
+[ "$RC" -eq 0 ] && [ "$PLAN" = '' ] && [ "$SELECTED" = '' ] \
+  && ok 'scoped: a skill doc and its render select no reader the merge group runs' \
+  || bad 'scoped: a skill doc and its render select no reader the merge group runs' "rc=$RC plan=$PLAN selected=$SELECTED out=$OUT"
 doc_change outside
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/orch/tests/doc-render.sh tools/tests/doc-outside.sh ' ] \
+[ "$RC" -eq 0 ] && [ "$PLAN" = 'tools/tests/doc-outside.sh ' ] \
   && ok 'scoped: Markdown outside a skill package still selects its reader' \
   || bad 'scoped: Markdown outside a skill package still selects its reader' "rc=$RC plan=$PLAN out=$OUT"
 git -C "$R" checkout -q -- skills/AGENTS.md
@@ -113,10 +112,10 @@ doc_selection "$MUTANT_TOOLS/guard"
 cp "$REPO/tools/ci-job-set" "$MUTANT_TOOLS/ci-job-set"
 doc_change script
 doc_selection "$GUARD"
-[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct doc-render helper named ' ] \
+[ "$RC" -eq 0 ] && [ "$SELECTED" = 'direct helper named ' ] \
   && ok 'scoped: a script beside the docs still selects its own suites' \
   || bad 'scoped: a script beside the docs still selects its own suites' "rc=$RC selected=$SELECTED out=$OUT"
-git -C "$R" checkout -q -- skills/orch/scripts/open-terminal
+git -C "$R" checkout -q -- skills/orch/scripts/launcher
 doc_change
 RC=0
 OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$?
@@ -127,9 +126,8 @@ git -C "$R" checkout -q -- skills/demo .agents/skills/demo
 
 # .kendex-generated.json, read as data by a tools/ suite and an orch suite. A
 # scoped run reads the rows the range changed: skill Markdown rows alone
-# select no tools/ suite, and any other changed row, or a side that is no list
-# of paths, maps the file as today. The orch reader runs on every row while
-# the merge group runs no orch suite.
+# select no suite the merge group runs, and any other changed row, or a side
+# that is no list of paths, maps the file as today.
 jq -n '[".agents/skills/demo/SKILL.md", ".agents/skills/demo/kendex.settings.toml.example",
   ".agents/skills/demo/references/guide.md", ".agents/skills/demo/scripts/tool", ".claude/skills/demo"]' \
   > "$R/.kendex-generated.json"
@@ -154,7 +152,7 @@ for row in \
   'a markdown and a non-Markdown render row added;. + [".agents/skills/demo/references/new.md", ".claude/skills/other"] | sort;reader' \
   'a side that is no list of paths;{rows: .};reader'; do
   IFS=';' read -r name filter expected <<<"$row"
-  if [ -n "$expected" ]; then expected=$READERS; else expected=$ORCH_READER; fi
+  if [ -n "$expected" ]; then expected=$READERS; else expected=''; fi
   inventory_change "$filter"
   doc_selection "$GUARD"
   [ "$RC" -eq 0 ] && [ "$PLAN" = "$expected" ] \
@@ -421,22 +419,22 @@ fi
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
+printf 'source "$PWD/skills/orch/scripts/launcher"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
+printf '# Inputs: skills/orch/scripts/launcher\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
 mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$TMP/serial-bin"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+printf '# Inputs: skills/orch/scripts/launcher\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm cancellation
 BASE="$(git -C "$R" rev-parse HEAD)"
-printf '# changed\n' >> "$R/skills/orch/scripts/open-terminal"
+printf '# changed\n' >> "$R/skills/orch/scripts/launcher"
 if python3 - "$R" "$GUARD" "$BASE" "$TMP" <<'PY'
 import errno
 import os
@@ -474,7 +472,7 @@ read -r line < "$FIFO"
 ''')
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
-                "skills/orch/tests/open-terminal.test.sh", "tools/tests/later.sh"]
+                "skills/orch/tests/launcher.test.sh", "tools/tests/later.sh"]
 complete_plan = ["hooks/tests/startup.sh", *packages, *shell_suites]
 # Each row stops a different execution state. The fallback consumes these
 # machine-read suite paths, including later package batteries.
@@ -484,7 +482,7 @@ for phase, expected in (
     ("npm-probe", [*packages, *shell_suites]),
     ("npm-later", shell_suites),
     ("loading", shell_suites),
-    ("running", ["helper", "open-terminal.test", "tools/tests/later.sh"]),
+    ("running", ["helper", "launcher.test", "tools/tests/later.sh"]),
 ):
   fifo = Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)

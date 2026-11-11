@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: lane_run_detached, portable recovery process-group separation.
-# Inputs: skills/orch/scripts/lib/** skills/github/scripts/lib/group-leader.sh skills/orch/tests/lib/assertions.sh skills/orch/tests/lib/git-env.sh
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 . "$TEST_DIR/lib/git-env.sh"

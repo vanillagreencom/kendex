@@ -9,6 +9,9 @@
 # server is a native fixture named tmux, a pid reused by another program is
 # this suite's own shell. A ps fixture supplies absent and failed reads.
 # The must-fail controls close the file, one per rule, each on a library copy.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"

@@ -7,6 +7,9 @@
 # stdout whole where stdout is the protocol, and the keyed first stderr line
 # of a refusal. A report's age is its file's modification time, so each case
 # stamps the files it plants against the stubbed clock.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/merge-pr.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

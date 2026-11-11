@@ -9,6 +9,9 @@
 # A real suite run with all four exported at a sandbox repository leaves
 # that repository's log and index untouched. Neutralize lib/git-env.sh beside
 # links to the rest and the same run writes to it.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

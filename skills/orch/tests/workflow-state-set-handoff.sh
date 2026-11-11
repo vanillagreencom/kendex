@@ -8,6 +8,9 @@
 # is not a JSON object, and refuses the set outright when its own clock
 # cannot be read. The `fleet_log` half of the same rule is
 # workflow-state-append-file.sh; both call one `stamp_judge`.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

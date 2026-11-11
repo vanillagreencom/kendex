@@ -8,6 +8,9 @@
 # No reader here reads the wall clock: every read is handed the time, derived
 # from the stamp of the record written last, so the age rows sit exactly on the
 # bound and one second past it.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/growth-state.sh

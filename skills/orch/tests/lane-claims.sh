@@ -5,6 +5,9 @@
 # (ESRCH) is pruned. Each row plants a record in the store's own row format
 # and runs against the shipped library and, as its must-fail control,
 # against a private copy with that rule undone.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/assertions.sh

@@ -4,6 +4,9 @@
 # both readers the header names, grep and Python's re. Every row must get its
 # verdict from both. A token row is built here from a prefix and a generated
 # tail, so this file holds no string a secret scanner takes for a key.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

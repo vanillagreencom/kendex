@@ -3,6 +3,9 @@
 # takeover read is exactly the last ORCH_TAKEOVER_ROWS rows but cycle and token rows, the audit read
 # every proposal and ruling row and no other kind, and any other reader is
 # refused.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

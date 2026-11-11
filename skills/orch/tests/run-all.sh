@@ -20,6 +20,11 @@
 #   bash skills/orch/tests/run-all.sh --report-job   # final passing job report
 #   bash skills/orch/tests/run-all.sh --local --suite FILE # guard's direct run
 #   bash skills/orch/tests/run-all.sh --checkout-kendex < PATHS # release leg's suites
+#   bash skills/orch/tests/run-all.sh --shard-of < PATHS # each suite's shard
+#
+# --shard-of reads suite paths on stdin and prints `SHARD PATH` for each,
+# shard_of's answer under RUNNER_OS. It runs no suite. tools/ci-job-set reads
+# it to start no orch leg whose every suite a diff skips.
 #
 # --local gives each suite its CI leg's kendex environment. CI installs the
 # checkout build only on selected Linux legs; a local login PATH can contain
@@ -49,7 +54,9 @@
 # a set and that set negated therefore partition the battery: every suite
 # runs in exactly one of them, and a suite added later lands in the negated
 # run rather than in neither. --shard intersects shard_of membership with
-# these filters. Its macOS table spreads suites across the existing CI pools.
+# these filters, and where rejectors alone reject every suite of the shard,
+# as a narrowed CI step's do, it runs none and passes. Its macOS table
+# spreads suites across the existing CI pools.
 #
 # Suites run as many at a time as `nproc` reports, or 4 where it cannot
 # answer (a stock macOS has no nproc). A suite's stdout and stderr are held
@@ -246,6 +253,12 @@ if [ "${1-}" = --checkout-kendex ]; then
   CHECKOUT_KENDEX_QUERY=1
   shift
 fi
+SHARD_OF_QUERY=0
+if [ "${1-}" = --shard-of ]; then
+  [ "$#" -eq 1 ] || { echo 'run-all.sh: shard-of-arguments' >&2; exit 1; }
+  SHARD_OF_QUERY=1
+  shift
+fi
 
 # CI supplies its review policy. Local batteries have no timing policy.
 REVIEW_SECS="${RUN_ALL_REVIEW_SECS:-}"
@@ -289,7 +302,7 @@ if [ "${1-}" = --shard ]; then
     *) echo "run-all.sh: shard-platform value=$RUNNER_OS" >&2; exit 1 ;;
   esac
   case "$shard" in
-    orch-oversee|orch-oversee-succeed|orch-dev|orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
+    orch-oversee|orch-dev|orch-state|orch-rest) SHARD="$shard"; shift 2 ;;
     *) echo "run-all.sh: unknown-shard shard=$shard" >&2; exit 1 ;;
   esac
 fi
@@ -304,7 +317,6 @@ FILTER="$*"
 
 shard_of() { # BASE
   case "$1" in
-    *oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
     # The account-reader family stays together, in Linux's dev pool off
@@ -316,6 +328,16 @@ shard_of() { # BASE
     *) OWNING_SHARD=orch-rest ;;
   esac
 }
+
+if [ "$SHARD_OF_QUERY" -eq 1 ]; then
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    entry=${file##*/}
+    shard_of "${entry%.sh}"
+    printf '%s %s\n' "$OWNING_SHARD" "$file"
+  done
+  exit 0
+fi
 
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
@@ -405,11 +427,6 @@ if [ -n "$DIRECT_SUITE" ]; then
 fi
 
 matches() { # BASE FILTER
-  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
-    case "$1:$2" in
-      open-terminal-lane-hosted-*:=open-terminal-lane-hosted) return 0 ;;
-    esac
-  fi
   case "$2" in
     =*) [ "$1" = "${2#=}" ] ;;
     *) case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac ;;
@@ -465,11 +482,16 @@ if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
   fi
 fi
 PROFILE_SELECTED=0
+SHARD_MEMBERS=0
 for TEST_DIR in "${TEST_DIRS[@]}"; do
 for test_file in "$TEST_DIR"/*.sh; do
   [[ -f "$test_file" ]] || continue
   base=$(basename "$test_file" .sh)
   [[ "$base" == "run-all" ]] && continue
+  if [ -n "$SHARD" ]; then
+    shard_of "$base"
+    [ "$OWNING_SHARD" != "$SHARD" ] || SHARD_MEMBERS=$((SHARD_MEMBERS + 1))
+  fi
   wanted "$base" || continue
   PROFILE_SELECTED=$((PROFILE_SELECTED + 1))
   if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
@@ -492,6 +514,12 @@ RUN=${#SUITES[@]}
 if [[ "$RUN" -eq 0 ]]; then
   if [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] && [ "$PROFILE_SELECTED" -gt 0 ]; then
     printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: no native contracts selected\n' "$BATTERY"
+    exit 0
+  fi
+  # A shard step whose suite list skips every suite of its shard rejects
+  # each one; a selector that matches none of the shard still refuses.
+  if [ -n "$SHARD" ] && [ "$SHARD_MEMBERS" -gt 0 ] && [ "${#SELECT[@]}" -eq 0 ] && [ "${#REJECT[@]}" -gt 0 ]; then
+    printf 'total suites=0 seconds=0 pass=0 fail=0\n%s tests: every %s suite rejected\n' "$BATTERY" "$SHARD"
     exit 0
   fi
   if [[ -n "$FILTER" ]]; then

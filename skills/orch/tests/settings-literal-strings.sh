@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: shell settings readers, including every vendored project loader.
-# Inputs: scripts/lib/kendex-env.sh tests/lib/assertions.sh
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 # The catalog root argument lets the same assertions judge disposable source
 # copies for must-fail controls. No reader is replaced by a test parser.
 set -euo pipefail

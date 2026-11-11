@@ -5,6 +5,9 @@
 # times, stubs the Linear CLI's label list and issue list, and calls
 # escapes_read at a fixed NOW. It asserts the per-week lines the renderer
 # reads, or the return status and the cause an unread count names.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

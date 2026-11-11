@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Surface: lib/state-archive.sh archive_write and archive_root.
-# Inputs: scripts/orch-env, scripts/git-context and their libraries.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 # State cleanup and mailbox compaction share this writer. The archive root
 # follows project settings and preserves the compatible fallback and modes.
 set -euo pipefail

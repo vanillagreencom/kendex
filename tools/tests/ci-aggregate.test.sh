@@ -181,11 +181,12 @@ gate_pairs() { # WORKFLOW
   done | LC_ALL=C sort -u
 }
 
-# Every lane a gate reads: the job conditions, the platform matrix and the
-# suite list each shard leg's steps read.
+# Every lane a gate reads: the job conditions, the platform matrix, the
+# suite list each shard leg's steps read and the lanes a step's own
+# condition reads.
 lanes_read() { # WORKFLOW
   { gate_pairs "$1" | sed 's/:.*//'
-    { matrix_expr "$1" os; matrix_expr "$1" shard; grep -E '^      SKIPPED_SUITES: ' "$1"; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
+    { matrix_expr "$1" os; matrix_expr "$1" shard; grep -E '^      SKIPPED_SUITES: |^        if: .*needs\.changes\.outputs\.' "$1"; } | grep -oE "$OUTPUT_NAME" | sed 's/^needs\.changes\.outputs\.//' || true
   } | LC_ALL=C sort -u
 }
 
@@ -477,12 +478,13 @@ queue_lane() { # WORKFLOW EVENT RESULT SELECTION — CI's selection for the queu
   [ -n "$expr" ] || { printf 'no-lane'; return 0; }
   gh_eval value "$(context_json "$2" "$3" "$4" "$TMP/published-map")" "$expr"
 }
-# A merge group touching a shared orch script still selects its surviving consumers.
-open_terminal="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/open-terminal)"
-open_terminal_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$open_terminal")")"
+# A merge group touching an orch script selects orch-rest among the orch
+# shards.
+orch_script="$(SELECT_EVENT=merge_group selection micro false skills/orch/scripts/orch-runtime)"
+orch_script_queue="$(macos_shards "$(sed -n 's/.* shards=\([^ ]*\).*/\1/p' <<<"$orch_script")")"
 linux_only="$(measured linux false true false '["node","pi-claude-bridge","linear-controls"]' '[]')"
-check "the portability row selects rest" true \
-  "$(jq -c 'index("rest") != null' <<<"$open_terminal_queue")"
+check "the portability row selects orch-rest" true \
+  "$(jq -c 'index("orch-rest") != null' <<<"$orch_script_queue")"
 only_mailbox="$(measured linux false true false '["mailbox"]' '["mailbox"]')"
 only_worktree="$(measured both false true false '["worktree"]' '["worktree"]')"
 only_slack="$(measured both false true false '["slack"]' '["slack"]')"
@@ -498,7 +500,7 @@ while IFS='|' read -r event result sel expected; do
   check "CI's queue lane is $lane on $event at $result under '$sel'" "$lane" \
     "$(queue_lane "$WORKFLOW" "$event" "$result" "$sel")"
 done <<ROWS
-merge_group|success|$open_terminal|$open_terminal_queue
+merge_group|success|$orch_script|$orch_script_queue
 merge_group|success|$ORCH_CODE_ROW|$(macos_shards "$ORCH_SHARDS")
 merge_group|success|$only_mailbox|["mailbox"]
 merge_group|success|$only_worktree|["worktree"]
@@ -1059,10 +1061,10 @@ while IFS='|' read -r row event sel result expected; do
   check "$CI_JOB queue macOS legs on $row" "$expected" \
     "$(queue_aggregate "$queue_expr" "$event" "$sel" "$result")"
 done <<ROWS
-selected-failed|merge_group|$open_terminal|failure|true 1
-selected-cancelled|merge_group|$open_terminal|cancelled|true 1
-selected-skipped|merge_group|$open_terminal|skipped|true 1
-selected-passed|merge_group|$open_terminal|success|true 0
+selected-failed|merge_group|$orch_script|failure|true 1
+selected-cancelled|merge_group|$orch_script|cancelled|true 1
+selected-skipped|merge_group|$orch_script|skipped|true 1
+selected-passed|merge_group|$orch_script|success|true 0
 unselected-docs|merge_group|$VERIFY_ROW|skipped|false 0
 ROWS
 

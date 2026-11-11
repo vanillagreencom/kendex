@@ -3,6 +3,9 @@
 # report is named MM-DD-HH-MM.md in UTC, with -succession before the extension
 # for the one a succession writes, under ORCH_PROGRESS_REPORT_DIR joined to the
 # project root, and the directory exists once the path is printed.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -6,6 +6,9 @@
 # own files. One archive takes what goes, those two and each --archive path
 # first, and a failed archive removes nothing. Where no fleet state stands,
 # the close-out runs the prune too.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -2,7 +2,9 @@
 # Surface: lane_model_recovery's consecutive successful replacement bound and
 # how it records the runtime's answer to the replacement's launch, and the
 # exit lib/lane-relaunch.sh gives the hosted session lookup form.
-# Inputs: skills/orch/scripts/** skills/github/scripts/lib/** skills/mailbox/scripts/** skills/orch/tests/fixtures/lane-model-recovery-base.sh
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/github/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"

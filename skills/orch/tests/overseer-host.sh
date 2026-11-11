@@ -5,6 +5,9 @@
 # real tmux server on a private socket. The dispatcher rows use a fixture
 # provider that records its argv; the provider rows read panes as Jarvis's
 # live check does.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # mutant_scripts and mutate_file, the two halves of the controls.

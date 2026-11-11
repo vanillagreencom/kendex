@@ -117,13 +117,13 @@ while IFS='|' read -r path expected; do
     "$(SELECT_IN="$SEL_WORLD" selection micro false "$path" | field shards)"
 done <<ROWS
 skills/price-handling/scripts/x|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
-skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh","guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
-skills/orch/scripts/lib/branch-growth.sh|["review-gate","refresh","guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
+skills/github/scripts/lib/gh-auth.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","worktree","worktree-restack","rest"]
+skills/orch/scripts/lib/kendex-env.sh|["review-gate","refresh",$ORCH,"guards-scans","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","rest"]
 skills/preflight/scripts/preflight|["guards-scans","guards-commit","guards-commit-tail","guards-hooks","guards-hooks-tail","guards-tools","guards-tools-tail","linear"]
 kendex.settings.toml|["guards-tools","guards-tools-tail"]
 install.sh|[]
 README.md|[]
-crates/demo/src/discover.rs|["refresh","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","jarvis","node"]
+crates/demo/src/discover.rs|["refresh","orch-rest","guards-hooks","guards-hooks-tail","guards-tools-tail","rest","jarvis","node"]
 .claude/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 .pi/kendex/hooks/lane-mail-check|["guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
 hooks/block-bare-cd.sh|["guards-scans","guards-hooks","guards-hooks-tail","guards-tools-tail","node"]
@@ -137,6 +137,17 @@ agents/reviewer.md|[]
 .kendex-lock.json|[]
 skills/CLAUDE.md|["guards-scans"]
 refresh/runner.sh|["review-gate","refresh","guards-scans"]
+ROWS
+# A Rust target of the runtimes is no shell suite: a path only it names runs
+# those targets and no shell shard, and a path nothing names runs neither.
+# PATH|SHARDS RUNTIMES, every row micro and not docs-only.
+while IFS='|' read -r path expected; do
+  world_rows=$((world_rows + 1))
+  got="$(SELECT_IN="$SEL_WORLD" selection micro false "$path")"
+  check "world Rust targets over '$path'" "$expected" "$(field shards <<<"$got") $(field runtimes <<<"$got")"
+done <<'ROWS'
+assets/rust-read.json|[] true
+assets/unread.json|[] false
 ROWS
 [ "$world_rows" -ge 20 ] || { echo "the world table read $world_rows rows" >&2; exit 1; }
 

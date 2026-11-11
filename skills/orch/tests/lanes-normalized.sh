@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Surface: normalized usage-cache records. Inputs: the production lanes reader
 # and a counting endpoint. The helper controls login and reset failures.
+# Inputs: skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

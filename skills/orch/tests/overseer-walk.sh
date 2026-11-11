@@ -2,9 +2,10 @@
 # Surface: ol_walk and its Jarvis select consumer over the runtime's account
 # judge, its replies planted from fixtures/accounts-pick; the rows that ask
 # the retained `lanes pick` directly run it over the usage fixture.
-# Inputs: orch/scripts/, jarvis/scripts/, mailbox/scripts/, lib/lanes-fixture.sh,
-# lib/runtime-stub.sh, fixtures/accounts-pick/, lib/assertions.sh and
-# lib/growth-state.sh. Only the usage endpoint is a fixture.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/jarvis/scripts/,
+# skills/mailbox/scripts/, skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
+# Only the usage endpoint is a fixture.
 set -euo pipefail
 export MSYS=winsymlinks:nativestrict
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

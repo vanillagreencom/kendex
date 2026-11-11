@@ -13,6 +13,10 @@
 # is the table; this suite pins the script that applies it. The same script
 # resolves the mode itself, so a ladder value that file does not define reads
 # back as `engineer` here rather than as itself.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/references/communication-modes.md, skills/orch/runtime/, skills/orch/scripts/,
+# skills/orch/tests/, skills/orch/workflows/oversee.md.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# The workflow's shell rosters must cover every eligible surviving suite once.
-# REVISIT(D026): KEN-4718 subtracts the complete top-level orch corpus from CI.
-# Shared runner use does not remove independently owned tools, hooks or skills.
+# The workflow's shell rosters must cover every eligible suite once, the orch
+# battery's four shards among them. Shared runner use does not remove
+# independently owned tools, hooks or skills.
 # Missing, duplicate and wrong-shard controls judge the workflow's real calls.
 #
 # It reaches the cargo lanes too. The macOS kendex-cli lane runs as legs over
@@ -272,7 +272,7 @@ if [[ -n "$battery" ]]; then
     [[ "$prior" != --battery ]] || batteries+=("$word")
     prior="$word"
   done
-  key="${RUN_ALL_NATIVE_CONTRACTS:+native}-$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
+  key="${RUN_ALL_NATIVE_CONTRACTS:+native}-${RUNNER_OS:-}-$(printf '%s\n' "$@" | cksum | tr ' ' '-')"
   cache="$PARTITION_POOL_CLAIMS/$key"
   if [[ ! -f "$cache" ]]; then
     # No job deadline or inherited pool bound applies to stub fixture suites.
@@ -378,13 +378,12 @@ shell_partition_args() { # <workflow> ; actual arguments from the shell roster i
   done
 }
 
-# The universe comes from source discovery, with the approved orch subtraction.
+# The universe comes from source discovery.
 UNIV="$TMP/universe"
 (
   cd "$ROOT" || exit 1
   for f in skills/*/tests/*.sh tools/tests/*.test.sh hooks/tests/*.sh refresh/tests/*.test.sh; do
-    # REVISIT(D026): the CI denominator subtracts the complete orch corpus.
-    case "$f" in skills/orch/tests/*) continue ;; esac
+    [[ "$f" != skills/orch/tests/run-all.sh ]] || continue
     case "$f" in "$LINEAR_PREFIX"*) continue ;; esac
     printf '%s\n' "$f"
   done
@@ -461,7 +460,11 @@ linear|linear, bot-instructions and preflight suites|skills/bot-instructions/tes
 linear|linear, bot-instructions and preflight suites|skills/preflight/tests|precision.test
 worktree|worktree suites|skills/worktree/tests|worktree_output_prune
 worktree-restack|worktree restack suites|skills/worktree/tests|worktree_create_restack
-jarvis|Jarvis suites|skills/jarvis/tests|task.test'
+jarvis|Jarvis suites|skills/jarvis/tests|task.test
+orch-oversee|orch suites — the oversee entries and the status report|skills/orch/tests|oversee_report
+orch-dev|'"'"'orch suites: the dev and review names and, on Linux, the account readers'"'"'|skills/orch/tests|lanes-usage-pct
+orch-state|'"'"'orch suites: the lane and workflow-state suites'"'"'|skills/orch/tests|lane-state
+orch-rest|orch suites — every suite the shards above do not run|skills/orch/tests|setup'
 
 # These three controls must reject their private mutants before baseline assertions.
 baseline_tmp="$TMP"
@@ -494,23 +497,30 @@ for package in slack review-gate jarvis; do
   edited "$WORKFLOW" "$wf_owner_removed" "$package-owner-removed"
 done
 
-# Pooled rest would rediscover the removed corpus without its explicit exclusion.
-wf_orch_rest="$TMP/wf-orch-rediscovered.yml"
-awk '$0 == "              orch) continue ;;" { sub(/continue/, "needle=\"\""); n++ }
-     { print } END { exit n != 1 }' "$WORKFLOW" > "$wf_orch_rest"
-edited "$WORKFLOW" "$wf_orch_rest" orch-rediscovered
-claims_file "$wf_orch_rest" "$TMP/orch-rediscovered"
-check "must-fail: pooled rediscovery names the forbidden orch corpus" \
-  "$(cd "$ROOT" && printf '%s\n' skills/orch/tests/*.sh | grep -vxF skills/orch/tests/run-all.sh | sort)" \
-  "$(comm -13 "$UNIV" <(sort -u "$TMP/orch-rediscovered"))"
+# Each orch shard is one step's. Dropping a step leaves the suites shard_of
+# gives that shard in no shard: the rest step still finds the orch battery
+# claimed by the other three steps, so it runs none of them.
+wf_orch_dropped="$TMP/wf-orch-dev-dropped.yml"
+awk '
+  index($0, "- name: '"'"'orch suites: the dev and review names") { drop = 1; hits++; next }
+  drop && substr($0, 1, 8) == "      - " { drop = 0 }
+  drop { next }
+  { print }
+  END { exit hits != 1 }
+' "$WORKFLOW" > "$wf_orch_dropped" || bad "orch-dev step removal matched other than once"
+edited "$WORKFLOW" "$wf_orch_dropped" orch-dev-dropped
+claims_file "$wf_orch_dropped" "$TMP/orch-dev-dropped"
+check "must-fail: a dropped orch shard step leaves its suites in no shard" \
+  "$(selected --shard orch-dev | sed 's#^#skills/orch/tests/#; s#$#.sh#' | sort)" \
+  "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-dev-dropped"))"
 [[ "$FAIL" -eq 0 ]] || exit 1
-printf 'control: forbidden-orch suites=%s\n' "$(comm -13 "$UNIV" <(sort -u "$TMP/orch-rediscovered") | wc -l | tr -d ' ')"
+printf 'control: orch-dev-dropped suites=%s\n' "$(comm -23 <(sort -u "$HEAD_CLAIMS") <(sort -u "$TMP/orch-dev-dropped")| wc -l | tr -d ' ')"
 
 # The old literal Slack declaration answered its own search after removal.
 wf_self_claim="$TMP/wf-slack-self-claim.yml"
 awk '
-  /github \| slack \| mailbox\) needle="--battery skills\/\$x\/tests"/ {
-    $0 = "              github | slack | mailbox) if [ \"$x\" = slack ]; then needle=\"--battery skills/slack/tests\"; else needle=\"--battery skills/$x/tests\"; fi ;;"; hits++
+  /github \| slack \| mailbox \| orch\) needle="--battery skills\/\$x\/tests"/ {
+    $0 = "              github | slack | mailbox | orch) if [ \"$x\" = slack ]; then needle=\"--battery skills/slack/tests\"; else needle=\"--battery skills/$x/tests\"; fi ;;"; hits++
   }
   { print }
   END { exit hits != 1 }
@@ -559,6 +569,12 @@ check "a shard and exact selector intersect" \
 check "a shard and exact rejector intersect" \
   "$(selected --shard orch-dev | grep -vxF lanes-usage-pct)" \
   "$(selected --shard orch-dev '!=lanes-usage-pct')"
+# A narrowed shard step rejects every suite its suite list skipped, which can
+# be every suite of its shard: that leg runs none and passes.
+set --
+for name in $(selected --shard orch-oversee); do set -- "$@" "!=$name"; done
+check "a shard whose rejectors reject each of its suites runs none and passes" \
+  "0|" "$(status_of --shard orch-oversee "$@")|$(selected --shard orch-oversee "$@")"
 for args in '--shard' '--shard unknown' '--shard orch-state =lanes-usage-pct'; do
   # These words are the argument contract under test, with no shell quoting.
   # shellcheck disable=SC2086
@@ -995,7 +1011,10 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
       [[ -z "${PARTITION_ONLY_SHARD:-}" || "$shard" == "$PARTITION_ONLY_SHARD" ]] || continue
-      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      grep -qxF "$shard" <<< "$excluded" && continue
+      # The runner names its platform in RUNNER_OS, and run-all.sh's shard_of
+      # reads it: the account readers leave orch-dev on macOS.
+      ( cd "$PART" && RUNNER_OS="$PARTITION_RUNNER_OS" RUN_ALL_NATIVE_CONTRACTS="$native" GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -1076,6 +1095,16 @@ unselected_owners() { # <ci-job-set> <owners file> [repository] [field] ; missed
 
 check "must-fail: a tail with no suite calls has no selection owners" "" \
   "$(suite_owners "$wf_hook_noop" | awk -F '\t' '$1 == "guards-hooks-tail" { print $2 }')"
+
+# run-all.sh refuses a shard that shard_of gives no suite, so an orch leg the
+# macOS roster keeps for such a shard fails every run that selects orch. § 4c
+# holds the queue's macOS legs to the same exclusions.
+check "each orch shard a macOS leg runs owns a suite under RUNNER_OS=macOS" "" \
+  "$(comm -23 <(sed -n "s/^        shard: &skill-suite-shards .*'\[\([^]]*\)\]'.*/\1/p" "$WORKFLOW" | tr -d ' "' | tr ',' '\n' | grep '^orch-' | sort -u) \
+      <(excluded_shards "$WORKFLOW" macos-latest | sort -u) |
+    while IFS= read -r shard; do
+      [[ -n "$(PARTITION_RUNNER_OS=macOS selected --shard "$shard")" ]] || printf '%s\n' "$shard"
+    done)"
 
 OWNERS="$TMP/owners"
 { suite_owners "$WORKFLOW"; suite_owners "$WORKFLOW" directories 3; } | sort -u > "$OWNERS"
@@ -1501,18 +1530,74 @@ unbuilt_checkout_legs() { # WORKFLOW ; each checkout shard whose Linux leg build
 suite_owners "$WORKFLOW" > "$TMP/kendex-owners"
 : > "$TMP/checkout-suites"
 while IFS=$'\t' read -r shard path; do
-  policy="$(cd "$ROOT" && "$JOB_SET" --suite-kendex Linux "$path")" ||
+  policy="$(cd "$ROOT" && "$JOB_SET" --suite-kendex Linux "$path" "$shard")" ||
     { bad "ci-job-set gave no kendex policy for $path"; continue; }
   [[ "$policy" != checkout ]] || printf '%s\t%s\n' "$shard" "$path" >> "$TMP/checkout-suites"
 done < "$TMP/kendex-owners"
-check "the checkout-kendex legs read from ci-job-set include jarvis, refresh and rest" "" \
-  "$(comm -23 <(printf '%s\n' jarvis refresh rest) <(cut -f1 "$TMP/checkout-suites" | sort -u))"
+check "the checkout-kendex legs read from ci-job-set include jarvis, orch-rest, refresh and rest" "" \
+  "$(comm -23 <(printf '%s\n' jarvis orch-rest refresh rest) <(cut -f1 "$TMP/checkout-suites" | sort -u))"
 check "every Linux leg running a checkout-kendex suite builds kendex from this checkout" "" \
   "$(unbuilt_checkout_legs "$WORKFLOW")"
 plant "$WORKFLOW" " || matrix.shard == 'jarvis') && runner.os == 'Linux'" ") && runner.os == 'Linux'" \
   "$TMP/kendex-unbuilt.yml" "skill-suites-shard/kendex from this checkout"
 check "must-fail: a build step dropping jarvis names the leg whose picker rows would skip" jarvis \
   "$(unbuilt_checkout_legs "$TMP/kendex-unbuilt.yml")"
+
+# --- 4f. The package runtimes on each leg whose suites run them ------------
+# orch-runtime's wrapper refuses `setup-required` where no build matches the
+# checkout, and the orch package's scripts, the hook, lane-mail-session.sh and
+# second-opinion's room-check.test.sh run it, so a Linux leg owning one of
+# those suites builds both runtimes first, read from that
+# step's real `if:`. The runtimes' own Rust targets run in one step, the
+# orch-rest Linux leg's, wherever the changes job's `runtimes` line is not
+# false.
+step_if() { # WORKFLOW STEP ; that step's `if:` text, its `${{ }}` stripped
+  awk -v name="      - name: $2" '
+    found && /^        if: / {
+      sub(/^        if: /, "")
+      if (substr($0, 1, 3) == "${{") { $0 = substr($0, 4); sub(/}}[ ]*$/, "") }
+      print; exit
+    }
+    /^      - / { found = ($0 == name) }' "$1"
+}
+RUNTIME_STEP="the package runtimes, built"
+unbuilt_runtime_legs() { # WORKFLOW ; each shard owning a suite that runs orch-runtime and builds no runtime
+  local cond shard
+  cond="$(step_if "$1" "$RUNTIME_STEP")"
+  [[ -n "$cond" ]] || { printf 'no-build-condition\n'; return 0; }
+  for shard in $(cut -f1 "$TMP/runtime-suites" | sort -u); do
+    [[ "$(gh_eval value "$(jq -cn --arg shard "$shard" '{matrix: {shard: $shard}, runner: {os: "Linux"}}')" "$cond")" == true ]] ||
+      printf '%s\n' "$shard"
+  done
+}
+suite_owners "$WORKFLOW" files > "$TMP/runtime-owners"
+: > "$TMP/runtime-suites"
+while IFS=$'\t' read -r shard path; do
+  case "$path" in
+    skills/orch/tests/* | hooks/tests/* | skills/mailbox/tests/lane-mail-session.sh | skills/second-opinion/tests/room-check.test.sh)
+      printf '%s\t%s\n' "$shard" "$path" >> "$TMP/runtime-suites" ;;
+  esac
+done < "$TMP/runtime-owners"
+check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, mailbox and rest" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail mailbox orch-dev orch-oversee orch-rest orch-state rest)" \
+  "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
+check "every leg owning a suite that runs orch-runtime builds the package runtimes first" "" \
+  "$(unbuilt_runtime_legs "$WORKFLOW")"
+plant "$WORKFLOW" " || matrix.shard == 'guards-hooks-tail'" "" \
+  "$TMP/runtime-unbuilt.yml" "skill-suites-shard/$RUNTIME_STEP"
+check "must-fail: a build step dropping guards-hooks-tail names the leg whose hook suites would refuse" guards-hooks-tail \
+  "$(unbuilt_runtime_legs "$TMP/runtime-unbuilt.yml")"
+TARGETS_STEP="the package runtimes' Rust targets"
+targets_runs() { # WORKFLOW SHARD OS RUNTIMES ; whether the targets step runs on that leg
+  gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg runtimes "$4" \
+    '{matrix: {shard: $shard}, runner: {os: $os}, needs: {changes: {outputs: {runtimes: $runtimes}}}}')" \
+    "$(step_if "$1" "$TARGETS_STEP")"
+}
+check "the runtimes' targets run on the orch-rest Linux leg where runtimes is true, and where no classifier ran" \
+  "true true false false false" \
+  "$(targets_runs "$WORKFLOW" orch-rest Linux true) $(targets_runs "$WORKFLOW" orch-rest Linux '') $(targets_runs "$WORKFLOW" orch-rest Linux false) $(targets_runs "$WORKFLOW" orch-rest macOS true) $(targets_runs "$WORKFLOW" orch-dev Linux true)"
+check "one step runs each runtime manifest's targets" "1" \
+  "$(grep -c "for manifest in skills/agent-runtime/runtime/Cargo.toml skills/orch/runtime/Cargo.toml; do" "$WORKFLOW")"
 
 # Unknown additions use actual workflow discovery and per-path selection.
 # The input families include the removed empty-shard seams.

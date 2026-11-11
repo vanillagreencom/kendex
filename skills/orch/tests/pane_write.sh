@@ -7,6 +7,9 @@
 # provider's send. Every row runs against a private tmux server, whose `lane`
 # window runs `cat` into a file, so what reached the program is read back
 # rather than inferred from the tmux calls made.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

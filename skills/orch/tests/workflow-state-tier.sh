@@ -9,6 +9,9 @@
 # defaults answer, and the re-review default is already one. Every
 # row resolves from a settings-free checkout with the caps stripped from the
 # process environment, so the numbers are the table's.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/small.md.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

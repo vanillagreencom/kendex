@@ -11,6 +11,10 @@
 # LIB_UNDER_TEST names another copy of the library, with its adapters beside
 # it, for the must-fail controls at the end; each control runs only the one
 # table its planted defect reaches.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/,
+# skills/orch/workflows/review-pr.md.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 

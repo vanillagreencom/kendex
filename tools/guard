@@ -2154,7 +2154,6 @@ reach_join() { # ROLE PATH [changed]
 # That holds only in a tree whose suites the merge group runs, which
 # tools/ci-job-set --suite-shards answers; in a tree it runs in no shard, or
 # where it cannot answer, such a path seeds that tree's suites as on main.
-# REVISIT(D026): until KEN-4733 that tree is skills/orch.
 # A changed .kendex-generated.json is read as the rows it lists: where the
 # rows other than skill Markdown are the same list on both sides, the
 # change only adds, removes or reorders skill Markdown rows and seeds no
@@ -2614,8 +2613,6 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_script=""
     if [ -n "$release_version" ]; then
       case "$d" in pi-extensions/*) continue ;; esac
-      # REVISIT(D026): CI excludes the orch corpus until KEN-4733 restores it.
-      [ "$d:${CI:-false}" != skills/orch:true ] || continue
       release_suites=$(skill_suites "$d" shell) || { say scan "$d/tests"; continue; }
       [ -n "$release_suites" ] || continue
       release_inputs=$(skill_files "$d") || { say scan "$d"; continue; }

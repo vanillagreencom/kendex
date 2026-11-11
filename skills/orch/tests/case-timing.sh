@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # bash-runtime: 3.2
 # Surface: shared assertion timing and run-all case reports.
-# Inputs: lib/assertions.sh, run-all.sh, scripts/lib/lane-process.sh.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
+# skills/change-scope/scripts/, skills/communication/references/reports.md, skills/mailbox/scripts/,
+# skills/orch/runtime/, skills/orch/scripts/, skills/orch/tests/.
 # The job-log reading consumes the case records as a machine-readable format.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"

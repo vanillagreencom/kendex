@@ -12,6 +12,10 @@
 # would, so no row compiles anything. ORCH_UNDER_TEST names another orch
 # package directory whose scripts/ are copied instead, which is how a control
 # runs a mutated wrapper.
+# Inputs: skills/agent-runtime/, skills/agent-runtime/runtime/, skills/agent-runtime/scripts/,
+# skills/change-scope/references/, skills/change-scope/scripts/,
+# skills/communication/references/reports.md, skills/mailbox/scripts/, skills/orch/runtime/,
+# skills/orch/scripts/, skills/orch/tests/.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/../../.." && pwd -P)"
