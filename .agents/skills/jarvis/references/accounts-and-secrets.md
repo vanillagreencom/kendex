@@ -73,7 +73,7 @@ Restart=on-failure
 
 Keep the ledger in the user's private account home. Store references to protected credentials rather than their values.
 
-No message or memory file carries a full account number, a PIN or a total account balance. Keep only the last 4 digits of an account number and read a balance on demand from its source. Prepaid credits and investment values count as balances. Transaction, invoice and cost amounts may stay.
+No message, memory file or history file (handoffs, progress logs, session records) carries a full account number, a PIN or a total account balance. Keep only the last 4 digits of an account number and read a balance on demand from its source. Prepaid credits and investment values count as balances. Transaction, invoice and cost amounts may stay.
 
 | Entry | Content |
 |---|---|
