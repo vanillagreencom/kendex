@@ -2,6 +2,15 @@
 
 Pi Codex bridge adds `pi-codex` models to Pi. Each model runs through the Codex CLI app server and the login that Codex already owns. Pi's tools run in Pi: the bridge offers them to Codex and returns their results.
 
+## Features
+
+- Lists the models `codex app-server` reports for the current account.
+- Offers Pi's active tools to Codex and runs each call in Pi.
+- Continues the same Codex thread across Pi turns, and starts a new thread when Pi's tools, system prompt or history no longer match it.
+- Maps Pi's thinking levels to the efforts each Codex model lists.
+- Keeps every configured MCP server stopped.
+- Refuses Codex's native tools: shell, exec, file edits, browsers and sub-agents.
+
 ## Install
 
 ```sh
@@ -24,20 +33,11 @@ source = "kendex"
 
 A login kept in the system keyring (`cli_auth_credentials_store = "keyring"`) has no `auth.json`, so the bridge treats it as absent. Sign in with file storage to use the bridge.
 
-## Features
-
-- Lists the models `codex app-server` reports for the current account.
-- Offers Pi's active tools to Codex and runs each call in Pi.
-- Continues the same Codex thread across Pi turns, and starts a new thread when Pi's tools, system prompt or history no longer match it.
-- Maps Pi's thinking levels to the efforts each Codex model lists.
-- Keeps every configured MCP server stopped.
-- Refuses Codex's native tools: shell, exec, file edits, browsers and sub-agents.
-
 ## Settings
 
-| Setting | Default | Effect |
-|---|---|---|
-| `enabled` | `true` | Register the `pi-codex` provider. Takes effect after `/reload`. |
+| Setting | What it changes |
+|---|---|
+| `enabled` | Registers the `pi-codex` provider. On (`true`) by default. Takes effect after `/reload`. |
 
 ## How it works
 
