@@ -37,6 +37,13 @@ printf 'Bad kendex.toml\n' >"$SANDBOX/manifest-bad/.github/ci-lanes.conf"
 repo="$(new_repo lanes-output)"
 mkdir -p "$repo/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$repo/$READER"
+# The manifest a manifest row replaces, and the installed bot-instructions
+# copy whose check its admission runs at both ends.
+printf 'schema = 7\n' >"$repo/kendex.toml"
+mkdir -p "$repo/.agents/skills/bot-instructions/schemas"
+cp "$BOT_INSTRUCTIONS_PACKAGE/SKILL.md" "$repo/.agents/skills/bot-instructions/"
+cp "$BOT_INSTRUCTIONS_PACKAGE/schemas/renders.md" "$repo/.agents/skills/bot-instructions/schemas/"
+cp -R "$BOT_INSTRUCTIONS_PACKAGE/scripts" "$repo/.agents/skills/bot-instructions/"
 commit_paths "$repo" baseline seed.txt
 # One base per state of the opt-back in the base commit's settings.
 base_with_settings() { # NAME SETTINGS — prints the base commit

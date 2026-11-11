@@ -186,9 +186,9 @@
 #            Where HARNESS_CI_TRIVIAL_PATHS names the repository's own
 #            allowlist as blank-separated globs, it replaces that set, within
 #            the same ceiling. A changed kendex.settings.toml or
-#            .kendex/settings.toml joins the set where the settings
-#            admission below admits it; a diff of admitted settings files
-#            alone has no ceiling.
+#            .kendex/settings.toml joins the set where the base commit's
+#            HARNESS_CI_TRIVIAL_SETTINGS admits it, below; a diff of
+#            admitted settings files alone has no ceiling.
 #   micro    production additions within the micro ceiling.
 #   small    one subsystem, production additions within the small ceiling. A
 #            path's subsystem is its first directory, with a leading render
@@ -221,90 +221,64 @@
 # A changed kendex configuration file refuses every narrow class, not only
 # render: those files decide what is rendered and what each judgement below
 # reads. harness-only removes a byte-exact top-level kendex.toml schema step first.
-# A hand edit counts the same as the engine's: that line decides no render or
-# classifier input. The render path still verifies the head. Product paths
-# use the existing size rules without render verification.
-# Two admissions lift that refusal, both on --event pull_request or
-# merge_group alone.
-#
-# Settings: a changed kendex.settings.toml or .kendex/settings.toml joins
-# the trivial set where every changed configuration source is one of those
-# two files, each a regular file at every endpoint that holds it, an
-# endpoint without it read as an empty file, loaded there by orch's
+# HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of [env] key names read
+# from the base commit alone, admits a changed kendex.settings.toml or
+# .kendex/settings.toml to the trivial set, on --event pull_request or
+# merge_group. Admission needs every changed configuration source to be one
+# of those two files, each a regular file at every endpoint that holds it,
+# an endpoint without it read as an empty file, loaded there by orch's
 # kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
 # multiline string delimiter, and changed only in comment lines, blank
-# lines and [env] assignments of declared keys with no CI reader found. A
-# key in the settings this script reads from the base, or any HARNESS_CI_*
-# key, never qualifies, so a change to HARNESS_CI_TRIVIAL_SETTINGS itself is
-# refused. A key is declared where, at the base commit, the
-# kendex.settings.toml.example of a package directly under skills/ or
-# .agents/skills/ assigns it, in a comment or not, or names its family on a
-# `# keys:` line, as tools/guard reads one: comma- or blank-separated items
-# with one <NAME>, standing for one or more characters. An undeclared key,
-# such as a tool's own environment variable, is refused. A declared key has
-# a CI reader, and is refused, where at the base commit:
-#   - it occurs as a whole word in .github/workflows/, .github/actions/ or
-#     .github/ci-lanes.conf, the CI definitions;
-#   - it occurs as a whole word, outside the settings files themselves,
-#     in any file of a package CI runs, named as skills/<name> or
-#     .agents/skills/<name> behind any checkout prefix, <name> a glob read
-#     against the base tree; of a repository file or directory CI runs,
-#     behind any prefix, a bare name included, but never a render root
-#     alone, ORCH_SIZE_RENDER_ROOTS or orch's default, which holds every
-#     installed package; or matching a path glob CI runs, such as a
-#     ci-lanes.conf claim, `*` matching across `/`;
-#   - it belongs to a family such a package's example declares.
-# What CI runs is named in a workflow or action YAML file's `run:` values,
-# by the local actions its `uses: ./` names, on every line of an action's
-# file that is not YAML, and by the ci-lanes.conf claims. A setting value, a
-# `with:` input and a `paths` filter name no reader.
-# No reader found is not no reader: a key read only by a script CI reaches
-# indirectly, through make, npm or cargo test for example, is not found,
-# and a `!glob` below keeps it heavy.
-# The base's HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of key
-# names, changes that default: a glob admits a key undeclared or read,
-# never one the floor refuses, and a `!glob` refuses the keys it matches,
-# winning over both. A diff of admitted settings files alone is
-# trivial at any line count. Beside any other path, the trivial rule
+# lines and [env] assignments of keys a glob names. A key in the settings
+# this script reads from the base, or any HARNESS_CI_* key, never
+# qualifies, whatever the globs say, so a change to the allowlist itself is
+# refused. Unset or blank, no key qualifies. A diff of admitted settings
+# files alone is trivial at any line count. Beside any other path, the trivial rule
 # judges those paths and the ceiling, over the whole diff, as it does for any
 # diff, with no agent instruction file beside it. It answers
-# `cause=allowlisted-settings` where a glob admitted a changed key, else
-# `cause=declared-unread-settings`, then `settings=<file>[,<file>]
-# keys=<key>[,<key>]|- lines=<n>`, keys naming those whose loaded value
-# differs. harness-only's
+# `cause=allowlisted-settings settings=<file>[,<file>] keys=<key>[,<key>]|-
+# lines=<n>`, keys naming those whose loaded value differs. harness-only's
 # refusals, cause=base-inventory-absent and an empty path list answer ahead
 # of the configuration-source rule and print no admission line. Once that rule
 # holds the change, every other answer, whatever its class or cause, is
 # that refusal, measured, and prints one `settings-admission:
 # admitted=false cause=<c> [<field>=<value>]...` line. Its cause is the
 # admission rule that refused: unsupported-event, base-settings-unreadable,
-# configuration-file, settings-unreadable, settings-not-regular,
-# settings-bytes-dropped, multiline-string, settings-unparsed,
-# unadmitted-change, undeclared-key key=<k>, readers-unreadable step=<s>
-# (a base blob git could not read included), or read-key key=<k>
-# reader=<path>, whose reader is HARNESS_CI_TRIVIAL_SETTINGS for a `!glob`.
-# After admission it is class-<class> rule=<cause>, the class and cause a
-# later rule would have answered. The queue-only line is judged as before.
+# allowlist-unset, configuration-file, settings-unreadable,
+# settings-not-regular, settings-bytes-dropped, multiline-string,
+# settings-unparsed or unadmitted-change. After admission it is
+# class-<class> rule=<cause>, the class and cause a later rule would have
+# answered. The queue-only line is judged as before.
+# A hand edit counts the same as the engine's: that line decides no render or
+# classifier input. The render path still verifies the head. Product paths
+# use the existing size rules without render verification.
 #
-# Manifest: a consumer's kendex.toml, where it is the only changed path, a
-# regular file at every endpoint that holds it, no line at either endpoint
-# starts with the key is_source_catalog, and bot-instructions renders the
-# outputs each endpoint that holds it commits, leaves only the configuration-source
-# refusal behind. That render is the trusted sibling package's
-# `check --staged` over an index read from the endpoint, with the endpoint's
-# own .agents/skills/bot-instructions as --spec; passing at both endpoints
-# against the same committed outputs, the edit changes nothing a lane's
-# bot-instructions check renders. Every later rule judges it,
+# A consumer's kendex.toml, on --event pull_request or merge_group, where it
+# is the only changed path, a regular file at every endpoint that holds it,
+# no line at either endpoint starts with the key is_source_catalog, and
+# bot-instructions renders at each endpoint the outputs that endpoint
+# commits, leaves only the configuration-source refusal behind. That render
+# is `check --staged` over an index read from the endpoint, run by the base
+# commit's installed .agents/skills/bot-instructions out of a private
+# checkout of that commit, as the queue selector is, with that copy as
+# --spec: a change to the manifest alone leaves the copy byte-identical, so
+# it is the checker a lane's bot-instructions check runs. Both endpoints
+# are asked, one without the manifest included, which that check reports
+# as a finding, so a diff that adds or deletes the manifest keeps the
+# refusal; passing at both against the same committed outputs, the edit
+# changes nothing a lane's bot-instructions check renders. Every later rule judges it,
 # HARNESS_CI_STANDARD_PATHS included, and the size rules with a floor of
 # small: trivial, micro and small answer `small cause=consumer-manifest
 # lines=<n>`, and past the small ceiling it is standard. That answer also
 # prints one `light-ci: kind=manifest` line after the per-push line, which
 # lib/change-class.sh reads to stand lanes down: ../references/wiring.md
 # § Per-lane verdicts. A refused candidate prints one `manifest-admission:
-# admitted=false cause=<c>` line: unsupported-event, or
-# manifest-not-regular, manifest-unreadable, source-catalog,
+# admitted=false cause=<c>` line: unsupported-event, or, with
+# side=base|head, manifest-not-regular, manifest-unreadable, source-catalog,
 # bot-instructions-render, where that check reported findings, or
-# bot-instructions-unread, where it could not answer, with side=base|head.
+# bot-instructions-unread, where it could not answer, with
+# detail=checkout-failed or detail=checker-absent where the base's copy
+# could not be run.
 # A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
@@ -452,10 +426,9 @@ changed=""
 # unreadable, and an unreadable diff reads queue-only.
 QUEUE_ONLY=true
 QUEUE_CAUSE="cause=paths-unread" QUEUE_INPUTS=run
-# An admitted settings change: its class-line fields, its cause, its files,
-# the refusal it keeps, and the keys one file changed.
+# A settings change HARNESS_CI_TRIVIAL_SETTINGS admitted: its class-line
+# fields, its files, the refusal it keeps, and the keys one file changed.
 SETTINGS_ADMITTED=""
-SETTINGS_CAUSE=""
 SETTINGS_FILES=""
 SETTINGS_REFUSAL=""
 SETTINGS_FILE_KEYS=""
@@ -998,257 +971,27 @@ settings_note() { printf 'settings-admission: admitted=false %s\n' "$1" >&2; }
 
 # The keys a merge-group run reads from the base never qualify, the
 # allowlist itself included: their breakage stops the queue that would merge
-# the repair. No setting reaches this floor.
-settings_key_eligible() { # KEY
+# the repair.
+settings_key_admitted() { # KEY
+  local glob
   case "$1" in
     '' | [0123456789]* | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_]*) return 1 ;;
     HARNESS_CI_*) return 1 ;;
   esac
   case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac
-}
-
-# The base commit's readers of a key, built once from its own CI
-# definitions, as the header states: SETTINGS_READER_SPECS, the git
-# pathspecs a key is searched for in; SETTINGS_FAMILIES, the `# keys:`
-# families the settings examples of the packages they reach declare; and
-# SETTINGS_DECLARED, every key and family a top-level package's settings
-# example declares, the last two as settings_declared prints them. Names are
-# taken only from what CI runs: settings_run_text's text and the lane claims
-# ci_lanes_read gives. A package name or a path glob stays a pathspec, whose
-# `*` git matches across `/` as a ci-lanes.conf glob does, so it covers every
-# package or path it can name; a token of glob characters alone, such as a
-# cron field, names none. A name is reached behind any prefix, such as a
-# checkout directory or $GITHUB_WORKSPACE, where some suffix of it is a file
-# or directory of the base tree, a bare name included, but a render root,
-# the measurement's own, names no reader by itself: it holds every installed
-# package, settings examples included. SETTINGS_READERS_STEP names the read
-# that failed.
-SETTINGS_READERS=""
-SETTINGS_READERS_STEP=""
-SETTINGS_READER_SPECS=()
-SETTINGS_FAMILIES=""
-SETTINGS_DECLARED=""
-# git grep's own status, or 2 where it wrote an error: a blob it cannot read
-# exits 1, the status of no match, beside `unable to read` on stderr.
-settings_grep() {
-  local status=0
-  : >"$work/reader-grep-error" || return 2
-  git -C "$repo" grep --no-color --no-line-number --no-column "$@" \
-    2>"$work/reader-grep-error" || status=$?
-  if [ -s "$work/reader-grep-error" ]; then
-    cat -- "$work/reader-grep-error" >&2
-    return 2
-  fi
-  return "$status"
-}
-# `KIND<TAB>NAME<TAB>PATH` for each key and key family declared in the
-# settings examples REV holds, as `git grep -z` printed their lines on stdin.
-# The grammar is that of tools/guard's settings_declared, its twin: an
-# assignment or a commented-out one declares its key, and a `# keys:` item
-# spelled as a key with one <NAME> after its first character declares a
-# family, <NAME> standing for one or more characters.
-settings_declared() { # REV
-  tr '\0' '\t' | awk -v rev="$1:" '{
-    tab = index($0, "\t")
-    path = substr($0, length(rev) + 1, tab - length(rev) - 1)
-    line = substr($0, tab + 1)
-    if (match(line, /^[ \t]*(#[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/)) {
-      key = substr(line, 1, RLENGTH - 1)
-      gsub(/^[ \t#]+|[ \t]+$/, "", key)
-      print "key\t" key "\t" path
-    } else if (match(line, /^[ \t]*#[ \t]*keys:/)) {
-      n = split(substr(line, RLENGTH + 1), items, /[ \t,]+/)
-      for (i = 1; i <= n; i++)
-        if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print "family\t" items[i] "\t" path
-    }
-  }'
-}
-# Whether one of LINES, settings_declared's, declares KEY, with
-# SETTINGS_READER the example that does.
-settings_declares() { # KEY LINES
-  local kind name path
-  while IFS="$TAB" read -r kind name path; do
-    case "$kind" in
-      key) [ "$name" = "$1" ] || continue ;;
-      family) case "$1" in "${name%%<NAME>*}"?*"${name#*<NAME>}") ;; *) continue ;; esac ;;
-      *) continue ;;
-    esac
-    SETTINGS_READER="$path"
-    return 0
-  done <<<"$2"
-  return 1
-}
-# The text of the CI definitions REV holds that CI runs, as `git grep -z`
-# printed their lines on stdin: every line of a file that is not YAML, such
-# as an action's script, and of a workflow or action YAML file only each
-# `run:` value with the lines indented past its key, and each local action a
-# `uses: ./` names. Setting values, `with:` inputs and `paths` filters name
-# no program CI runs.
-settings_run_text() { # REV
-  tr '\0' '\t' | awk -v rev="$1:" '{
-    tab = index($0, "\t")
-    path = substr($0, length(rev) + 1, tab - length(rev) - 1)
-    line = substr($0, tab + 1)
-    if (path != last) { last = path; block = -1; yaml = (path ~ /\.ya?ml$/) }
-    if (!yaml) { print line; next }
-    if (block >= 0) {
-      if (line ~ /^[ \t]*$/) next
-      match(line, /^ */)
-      if (RLENGTH > block) { print line; next }
-      block = -1
-    }
-    if (match(line, /^ *(- +)?run:/)) {
-      block = RLENGTH - 4
-      print substr(line, RLENGTH + 1)
-    } else if (match(line, /^ *(- +)?uses:[ \t]*/)) {
-      value = substr(line, RLENGTH + 1)
-      gsub(/["\047]/, "", value)
-      sub(/[ \t].*/, "", value)
-      if (value ~ /^\.\//) print value
-    }
-  }'
-}
-settings_readers_load() {
-  local status=0 kind spec examples=()
-  case "$SETTINGS_READERS" in
-    loaded) return 0 ;;
-    failed) return 1 ;;
-  esac
-  SETTINGS_READERS=failed
-  SETTINGS_READER_SPECS=(.github/workflows .github/actions .github/ci-lanes.conf)
-  settings_grep -z -I -e '' "$BASE_REV" -- .github/workflows .github/actions \
-    >"$work/reader-definitions" || status=$?
-  [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=definitions; return 1; }
-  settings_run_text "$BASE_REV" <"$work/reader-definitions" >"$work/reader-text" ||
-    { SETTINGS_READERS_STEP=definitions; return 1; }
-  status=0
-  base_file .github/ci-lanes.conf "$work/reader-lanes" || status=$?
-  case "$status" in
-    0)
-      ci_lanes_read "$work/reader-lanes" || { SETTINGS_READERS_STEP=lanes; return 1; }
-      printf '%s' "${lane_globs[@]}" >>"$work/reader-text" ||
-        { SETTINGS_READERS_STEP=lanes; return 1; } ;;
-    2) ;;
-    *) SETTINGS_READERS_STEP=lanes; return 1 ;;
-  esac
-  # shellcheck source=../../orch/scripts/lib/branch-growth.sh
-  if [ -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ] &&
-    . "$ORCH_DIR/scripts/lib/branch-growth.sh" &&
-    declare -F branch_growth_render_roots_from_env >/dev/null; then
-    branch_growth_render_roots_from_env
-  else
-    SETTINGS_READERS_STEP=roots
-    return 1
-  fi
-  status=0
-  grep -o -E '[A-Za-z0-9_.*/-]+' "$work/reader-text" >"$work/reader-tokens" || status=$?
-  [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=definitions; return 1; }
-  git -C "$repo" -c core.quotePath=false ls-tree -r -t --name-only "$BASE_REV" \
-    >"$work/reader-tree" 2>/dev/null ||
-    { SETTINGS_READERS_STEP=tree; return 1; }
-  awk -v roots="$BRANCH_GROWTH_RENDER_ROOTS" 'BEGIN { n = split(roots, r, /[ \t]+/); for (i = 1; i <= n; i++) root[r[i]] = 1 }
-    NR == FNR { known[$0] = 1; next }
-    {
-      sub(/^(\.?\/)+/, "")
-      rest = $0; pre = ""
-      while ((i = index(rest, "skills/")) > 0) {
-        pre = pre substr(rest, 1, i - 1); rest = substr(rest, i + 7)
-        name = rest; sub(/\/.*/, "", name)
-        if (("/" pre) ~ /\/$/ && name !~ /^\.*$/)
-          print "package\t" ((pre ~ /(^|\/)\.agents\/$/) ? ".agents/skills/" : "skills/") name
-        pre = pre "skills/"
-      }
-      if (index($0, "*")) {
-        if ($0 ~ /[A-Za-z0-9_]/ && ("/" $0 "/") !~ /\/\.\.\//) print "glob\t" $0
-        next
-      }
-      path = $0; sub(/\/+$/, "", path)
-      while (path != "") {
-        if ((path in known) && !(path in root)) print "path\t:(literal)" path
-        if (!(i = index(path, "/"))) break
-        path = substr(path, i + 1)
-      }
-    }' "$work/reader-tree" "$work/reader-tokens" | LC_ALL=C sort -u >"$work/reader-specs" ||
-    { SETTINGS_READERS_STEP=specs; return 1; }
-  while IFS="$TAB" read -r kind spec; do
-    SETTINGS_READER_SPECS+=("$spec")
-    [ "$kind" != package ] || examples+=("$spec/kendex.settings.toml.example")
-  done <"$work/reader-specs"
-  status=0
-  settings_grep -z -E -e '=|keys:' "$BASE_REV" -- \
-    ':(glob).agents/skills/*/kendex.settings.toml.example' \
-    ':(glob)skills/*/kendex.settings.toml.example' >"$work/reader-declared" || status=$?
-  [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=declarations; return 1; }
-  SETTINGS_DECLARED="$(settings_declared "$BASE_REV" <"$work/reader-declared")" ||
-    { SETTINGS_READERS_STEP=declarations; return 1; }
-  if [ "${#examples[@]}" -gt 0 ]; then
-    status=0
-    settings_grep -z -E -e 'keys:' "$BASE_REV" -- "${examples[@]}" \
-      >"$work/reader-families" || status=$?
-    [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=families; return 1; }
-    SETTINGS_FAMILIES="$(settings_declared "$BASE_REV" <"$work/reader-families" |
-      awk -F '\t' '$1 == "family"')" || { SETTINGS_READERS_STEP=families; return 1; }
-  fi
-  SETTINGS_READERS=loaded
-}
-
-# Whether a declared KEY is read at the base, as SETTINGS_READER, the first
-# reader found: 0 read, 1 no reader found, 2 where the readers could not be
-# read. The settings files are no reader: a key's own assignment names it.
-SETTINGS_READER=""
-settings_key_read() { # KEY
-  local found file excluded=() status=0
-  SETTINGS_READER=""
-  settings_readers_load || return 2
-  if settings_declares "$1" "$SETTINGS_FAMILIES"; then return 0; fi
-  for file in $BASE_SETTINGS_FILES; do excluded+=(":(exclude)$file"); done
-  found="$(settings_grep -l -w -F -e "$1" "$BASE_REV" -- "${SETTINGS_READER_SPECS[@]}" \
-    "${excluded[@]}")" || status=$?
-  case "$status" in
-    0) found="${found%%$'\n'*}"; SETTINGS_READER="${found#"$BASE_REV":}" ;;
-    1) return 1 ;;
-    *) SETTINGS_READERS_STEP=search; return 2 ;;
-  esac
-}
-
-# A changed eligible KEY's admission: the base's `!glob` refuses it, then a
-# glob admits it, then it needs a package's declaration and no CI reader
-# found. Returns 1, with the admission line, where it is refused;
-# SETTINGS_CAUSE names the rule that admitted.
-settings_key_admitted() { # KEY
-  local word removal="" addition="" status=0
   set -f
-  for word in ${HARNESS_CI_TRIVIAL_SETTINGS:-}; do
+  for glob in $HARNESS_CI_TRIVIAL_SETTINGS; do
     # shellcheck disable=SC2254
-    case "$word" in
-      '!'*) case "$1" in ${word#!}) removal="$word" ;; esac ;;
-      *) case "$1" in $word) addition="$word" ;; esac ;;
+    case "$1" in
+      $glob) set +f; return 0 ;;
     esac
   done
   set +f
-  if [ -n "$removal" ]; then
-    settings_note "cause=read-key key=$1 reader=HARNESS_CI_TRIVIAL_SETTINGS glob=$removal"
-    return 1
-  fi
-  if [ -n "$addition" ]; then
-    SETTINGS_CAUSE=allowlisted-settings
-    return 0
-  fi
-  if settings_readers_load && ! settings_declares "$1" "$SETTINGS_DECLARED"; then
-    settings_note "cause=undeclared-key key=$1"
-    return 1
-  fi
-  settings_key_read "$1" || status=$?
-  case "$status" in
-    0) settings_note "cause=read-key key=$1 reader=$SETTINGS_READER" ;;
-    1) return 0 ;;
-    *) settings_note "cause=readers-unreadable step=$SETTINGS_READERS_STEP base=$BASE_REV" ;;
-  esac
   return 1
 }
 
-# FILE without its comment lines, blank lines and eligible [env]
-# assignments, at RESIDUE, and each eligible key it assigns on stdout. The
+# FILE without its comment lines, blank lines and admitted [env]
+# assignments, at RESIDUE, and each admitted key it assigns on stdout. The
 # reader validates headers; settings_values runs it on the same bytes.
 # Returns 2 where the lines this loop read are not FILE's bytes: Bash's read
 # drops a NUL, as the reader's own loop does, and git counts a file holding
@@ -1270,7 +1013,7 @@ settings_scan() { # FILE RESIDUE
         '['*) section="${trimmed#\[}" section="${section%\]}" ;;
         *=*)
           kendex_trim key "${trimmed%%=*}"
-          if [ "$section" = env ] && settings_key_eligible "$key"; then
+          if [ "$section" = env ] && settings_key_admitted "$key"; then
             printf '%s\n' "$key" >&3
             continue
           fi ;;
@@ -1389,7 +1132,7 @@ settings_file_admitted() { # PATH
 # SETTINGS_ADMITTED, their class-line fields. Returns 1, with the admission
 # line, where admission refuses the change. Another event defines no range
 # the size rules read, and a base whose settings cannot be read holds no
-# readers or globs.
+# allowlist.
 settings_admission() {
   local path files="" file key keys=""
   case "$event" in
@@ -1402,7 +1145,10 @@ settings_admission() {
     settings_note "$MEASURE_CAUSE"
     return 1
   }
-  SETTINGS_CAUSE=declared-unread-settings
+  case "${HARNESS_CI_TRIVIAL_SETTINGS:-}" in
+    *[![:space:]]*) ;;
+    *) settings_note "cause=allowlist-unset"; return 1 ;;
+  esac
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     change_class_path "$path" before-render
@@ -1419,9 +1165,7 @@ settings_admission() {
   while IFS= read -r file; do
     settings_file_admitted "$file" || return 1
     for key in ${SETTINGS_FILE_KEYS//,/ }; do
-      case ",$keys," in *",$key,"*) continue ;; esac
-      settings_key_admitted "$key" || return 1
-      keys="$keys,$key"
+      case ",$keys," in *",$key,"*) ;; *) keys="$keys,$key" ;; esac
     done
   done <<<"$files"
   keys="${keys#,}"
@@ -1432,20 +1176,35 @@ settings_admission() {
 # The manifest admission the header states, which owns the rule. Returns 1,
 # with the admission line, where it refuses the change.
 manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
-# Whether bot-instructions renders, from REV's tree, the outputs REV commits,
-# asked of each endpoint that holds the manifest, the render's input:
-# its own `check --staged`, run by the trusted sibling package over an index
-# read from REV, with the judged copy REV installs under .agents/skills as
-# its doctrine data, as that package's SKILL.md tells CI to run it. Both
-# endpoints passing against the same committed outputs is both rendering the
-# same files, whatever the manifest edit changed.
+# The checker the header names, at MANIFEST_CHECKER: the base commit's
+# installed bot-instructions, out of a private checkout of that commit, as
+# queue_selection runs the base's own command, so neither the judged tree nor
+# this script's own kendex chooses the code that judges the manifest.
+MANIFEST_CHECKER=""
+manifest_checker() {
+  local tree="$work/manifest-checker" log="$work/manifest-checker-log"
+  if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
+    cat -- "$log" >&2 2>/dev/null || true
+    manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed"
+    return 1
+  fi
+  MANIFEST_CHECKER="$tree/.agents/skills/bot-instructions"
+  if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
+    [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
+    return 1
+  fi
+}
+# Whether bot-instructions renders, from REV's tree, the outputs REV commits:
+# MANIFEST_CHECKER's own `check --staged` over an index read from REV, with
+# the environment queue_selection gives the base's command.
 manifest_render_check() { # SIDE REV
   local index="$work/manifest-index-$1" status=0
   GIT_INDEX_FILE="$index" git -C "$repo" read-tree "$2" >/dev/null 2>&1 || status=2
   [ "$status" -ne 0 ] ||
-    GIT_INDEX_FILE="$index" "$BOT_INSTRUCTIONS_DIR/scripts/bot-instructions" \
-      --repo "$repo" --spec "$repo/.agents/skills/bot-instructions" --staged check \
-      >"$work/manifest-check-$1" 2>&1 </dev/null || status=$?
+    env -i PATH="$PATH" HOME="${HOME:-}" GIT_INDEX_FILE="$index" \
+      "$MANIFEST_CHECKER/scripts/bot-instructions" --repo "$repo" --spec "$MANIFEST_CHECKER" \
+      --staged check >"$work/manifest-check-$1" 2>&1 </dev/null || status=$?
   case "$status" in
     0) return 0 ;;
     1) cat -- "$work/manifest-check-$1" >&2; manifest_note "cause=bot-instructions-render side=$1" ;;
@@ -1456,7 +1215,7 @@ manifest_render_check() { # SIDE REV
   return 1
 }
 manifest_admission() {
-  local side rev status held=""
+  local side rev status
   case "$event" in
     pull_request | merge_group) ;;
     *) manifest_note "cause=unsupported-event event=$event"; return 1 ;;
@@ -1467,7 +1226,9 @@ manifest_admission() {
     status=0
     rev_file "$rev" kendex.toml "$work/manifest-$side" || status=$?
     case "$status" in
-      0) held="$held $side" ;;
+      0) ;;
+      # An endpoint without the manifest holds no catalog key; the render
+      # check below still asks it.
       2) continue ;;
       3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
       *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
@@ -1480,11 +1241,9 @@ manifest_admission() {
       *) manifest_note "cause=manifest-unreadable side=$side"; return 1 ;;
     esac
   done
-  for side in $held; do
-    rev="$base_rev"
-    [ "$side" = base ] || rev="$head_rev"
-    manifest_render_check "$side" "$rev" || return 1
-  done
+  manifest_checker || return 1
+  manifest_render_check base "$base_rev" || return 1
+  manifest_render_check head "$head_rev" || return 1
   MANIFEST_ADMITTED=true
 }
 
@@ -1970,7 +1729,7 @@ if [ -n "$SETTINGS_ADMITTED" ]; then
     outside="$(LC_ALL=C sort -u -- "$docs_outside")" && [ "$outside" = "$SETTINGS_FILES" ]; then
     docs_trivial=true
   fi
-  settings_cause="cause=$SETTINGS_CAUSE $SETTINGS_ADMITTED"
+  settings_cause="cause=allowlisted-settings $SETTINGS_ADMITTED"
 fi
 if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
   if [ "$within_trivial" = true ]; then
