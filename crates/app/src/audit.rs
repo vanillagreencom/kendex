@@ -65,6 +65,13 @@ pub struct AuditView {
     /// read, and left off the wire entirely when it is empty.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub undone: Vec<String>,
+    /// What the step behind the write, the configuration owner's render
+    /// (`kendex_core::bot_instructions::render`), failed with. The write
+    /// stands either way: this is why its account is short, never why the
+    /// action is reported as refused. Left off the wire on a plain read and
+    /// on a write whose every step finished.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unfinished: Option<String>,
     /// Set when this one scope couldn't be read at all — a corrupt or
     /// future-version lock or manifest. Carried as data so one scope's
     /// failure never blanks every other scope's audit (drift/plan/notes/
@@ -103,6 +110,7 @@ impl AuditView {
             adoptable: adoptable(),
             exits: Vec::new(),
             undone: Vec::new(),
+            unfinished: None,
             error: Some(ScopeError::from(error)),
         }
     }
@@ -135,6 +143,7 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
         safety,
         adoptable: adoptable(),
         undone: Vec::new(),
+        unfinished: None,
         error: None,
     }
 }
@@ -142,19 +151,27 @@ pub fn view(env: &Env, scope: &Scope) -> AuditView {
 /// Execute a report and answer with the scope's standing beside what the
 /// removal did about any repository effect leaving with it — the one way a
 /// command here writes a report it holds.
+///
+/// An error means the write did not happen. Once it has, the answer is the
+/// written scope's standing whatever the render behind it does: a render
+/// that fails rides on the view as `unfinished`, so the window can say what
+/// was written beside what then failed, rather than "couldn't update" over
+/// a package that moved.
 pub(crate) fn settle_report(
     env: &Env,
     scope: &Scope,
     report: &engine::EngineReport,
 ) -> Result<AuditView, String> {
     let undone = crate::repo_effects::write(env, report)?;
-    let rendered = crate::repo_effects::after_writing(
-        &undone,
-        kendex_core::bot_instructions::render(env, scope).map_err(|error| error.to_string()),
-    )?;
+    let rendered = kendex_core::bot_instructions::render(env, scope);
     let mut settled = view_after_apply(env, scope, report);
-    if let Some(skipped) = rendered.skipped() {
-        settled.notes.push(skipped.line());
+    match rendered {
+        Ok(rendered) => {
+            if let Some(skipped) = rendered.skipped() {
+                settled.notes.push(skipped.line());
+            }
+        }
+        Err(error) => settled.unfinished = Some(error.to_string()),
     }
     settled.undone = undone;
     Ok(settled)

@@ -905,6 +905,80 @@ fn a_risky_plan_and_its_settle_are_one_question_after_the_safety_report() {
     }
 }
 
+/// The settle lands the Pi hook carrier, and the plan derived after it adds
+/// the Pi hook the first yes never listed. Declining that further question
+/// keeps the landed settle, still counted on the closing line, and writes
+/// none of the scope's plan: neither the added hook nor the ops the first
+/// yes covered.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn declining_what_the_settle_added_keeps_the_settle_and_writes_no_plan() {
+    use kendex_core::model::ItemKind::PiExtension;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = committed_consumer(&home, NO_DEPENDENCIES);
+    let path = project.join("kendex.toml");
+    let text = fs::read_to_string(&path).unwrap()
+        + "\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"echo guarded\"\nagents = \"all\"\nharnesses = [\"pi\"]\n";
+    write(&path, &text);
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
+    );
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "declare hook"]);
+    let clone = fresh_clone(&home, &project);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "project", "--leave"])
+        .current_dir(&clone)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(
+        command,
+        &[("[y]", "y"), ("[y]", "n")],
+        pty::Stderr::Terminal,
+    );
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert_eq!(printed.matches("[y]").count(), 2, "{printed}");
+    // The settle's own writes and nothing else: no skill, no hook and no
+    // inventory, and the record, which this consumer's git ignores, holds
+    // the two settled packages alone.
+    assert_eq!(
+        git(
+            &home,
+            &clone,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        " M .pi/settings.json\n?? .pi/packages/@vanillagreen/pi-hooks/package.json\n",
+        "{printed}"
+    );
+    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let mut recorded: Vec<_> = record
+        .entries
+        .values()
+        .map(|entry| (entry.kind, entry.name.as_str()))
+        .collect();
+    recorded.sort();
+    assert_eq!(
+        recorded,
+        [
+            (PiExtension, "@vanillagreen/pi-hooks"),
+            (PiExtension, "pi-widgets")
+        ],
+        "{printed}"
+    );
+    assert!(
+        printed.contains("refreshed 2 changes"),
+        "the two landed Pi installs are counted: {printed}"
+    );
+}
+
 /// A global refresh with two pending changes, the defect a person met: one
 /// question lists both changes before it asks, counts exactly them, and
 /// is asked once, and the closing line counts what landed.

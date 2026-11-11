@@ -165,8 +165,6 @@ pub struct ProjectOffer {
     /// `null` where the choice stands; the reason otherwise.
     pub push: Option<Why>,
     pub pull_request: Option<Why>,
-    /// The pull request already open for this branch.
-    pub open_number: Option<u32>,
     pub message: String,
     pub new_branch: String,
     /// The repository every `gh` call is bound to, from the chosen remote.
@@ -620,7 +618,6 @@ fn drawn(
         recovers_refused_push: offer.recovers_refused_push(),
         push: offer.push.as_ref().err().map(Why::from),
         pull_request: offer.pull_request.as_ref().err().map(Why::from),
-        open_number: offer.open.as_ref().map(|open| whole(open.number)),
         message: offer.message.clone(),
         new_branch: offer.new_branch.clone(),
         repo: offer.remote.as_ref().map(|remote| remote.url.clone()),

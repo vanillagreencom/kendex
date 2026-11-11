@@ -410,7 +410,6 @@ describe("the setup of a package holding the commit", () => {
     recoversRefusedPush: false,
     push: { kind: "noRemote" },
     pullRequest: { kind: "noRemote" },
-    openNumber: null,
     message: "chore: kendex app",
     newBranch: "kendex/renders",
     repo: null,

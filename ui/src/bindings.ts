@@ -962,6 +962,14 @@ export type AuditView_Deserialize = {
 	 */
 	undone: string[],
 	/**
+	 *  What the step behind the write, the configuration owner's render
+	 *  (`kendex_core::bot_instructions::render`), failed with. The write
+	 *  stands either way: this is why its account is short, never why the
+	 *  action is reported as refused. Left off the wire on a plain read and
+	 *  on a write whose every step finished.
+	 */
+	unfinished: string | null,
+	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
 	 *  failure never blanks every other scope's audit (drift/plan/notes/
@@ -1007,6 +1015,14 @@ export type AuditView_Serialize = {
 	 *  read, and left off the wire entirely when it is empty.
 	 */
 	undone?: string[],
+	/**
+	 *  What the step behind the write, the configuration owner's render
+	 *  (`kendex_core::bot_instructions::render`), failed with. The write
+	 *  stands either way: this is why its account is short, never why the
+	 *  action is reported as refused. Left off the wire on a plain read and
+	 *  on a write whose every step finished.
+	 */
+	unfinished?: string | null,
 	/**
 	 *  Set when this one scope couldn't be read at all — a corrupt or
 	 *  future-version lock or manifest. Carried as data so one scope's
@@ -4262,8 +4278,6 @@ export type ProjectOffer = {
 	/**  `null` where the choice stands; the reason otherwise. */
 	push: Why | null,
 	pullRequest: Why | null,
-	/**  The pull request already open for this branch. */
-	openNumber: number | null,
 	message: string,
 	newBranch: string,
 	/**  The repository every `gh` call is bound to, from the chosen remote. */
@@ -5419,39 +5433,37 @@ export type SourceReadRefused =
 /**  Anything else that stopped the read, in core's words. */
 { kind: "failed"; message: string };
 
-/**  Everything the Sources page shows for one declared source in one scope. */
-export type SourceRow = {
-	scope: Scope,
-	name: string,
-	reference: string,
-	isRemote: boolean,
-	enabled: boolean,
-	/**  Cache HEAD for remotes — freshness display. */
-	head: string | null,
-	declaredItems: string[],
-};
-
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter = SourcesAfter_Serialize | SourcesAfter_Deserialize;
 
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter_Deserialize = {
-	sources: SourceRow[],
 	undone: string[],
 };
 
 /**
- *  What a source action leaves: every declared source across every scope,
- *  and the account of the write (`crates/app/src/repo_effects.rs::execute`).
+ *  What a source action leaves: the account of the write
+ *  (`crates/app/src/repo_effects.rs::execute`).
+ * 
+ *  Nothing is read back behind the write. The window reads every
+ *  subscription again itself once the toggle answers, so a read here would
+ *  only be a way for a written toggle to be reported as refused.
  */
 export type SourcesAfter_Serialize = {
-	sources: SourceRow[],
 	undone?: string[],
 };
 

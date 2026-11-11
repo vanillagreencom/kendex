@@ -92,7 +92,6 @@ const offer = (over: Partial<ProjectOffer> = {}): ProjectOffer => ({
   recoversRefusedPush: true,
   push: null,
   pullRequest: null,
-  openNumber: null,
   message: "chore: kendex refresh",
   newBranch: "kendex/renders",
   repo: "acme/site",
