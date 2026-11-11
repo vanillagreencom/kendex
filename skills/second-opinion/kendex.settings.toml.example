@@ -12,11 +12,13 @@
 # pi-copilot and pi-copilot-gpt, Pi on the Copilot pool, run only when named
 # here; "claude pi-copilot-gpt codex" sends a Claude session's review to GPT
 # on Copilot before codex.
+# ci: unread
 SECOND_OPINION_MODELS = "claude codex"
 
 # The most opinions one review collects. 2 or more sends the same change to
 # that many different models. With fewer eligible models, the review runs on
 # those it has and reports reduced coverage.
+# ci: unread
 SECOND_OPINION_COUNT = "1"
 
 # The model running this session, so a review never asks it to judge its own
@@ -73,6 +75,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # SECOND_OPINION_PI_DEEPSEEK_INLINE_DIFF = "1"
 
 # Seconds to wait for a reviewer to answer before giving up on it.
+# ci: unread
 SECOND_OPINION_TIMEOUT = "1080"
 
 # Where review records are written when no output file is named. A folder

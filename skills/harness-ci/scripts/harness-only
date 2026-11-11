@@ -19,6 +19,7 @@
 #   harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
 #                [--repo DIR] [--output FILE] [--paths-output FILE]
 #                [--outside-output FILE] [--declared-output FILE]
+#                [--base-inventory-output FILE]
 #
 #   --mode    harness (default) | docs | render-candidate.
 #   --event   pull_request | merge_group | push. Any other event answers false.
@@ -42,6 +43,12 @@
 #   --declared-output  docs mode: changed paths admitted by the trusted
 #             declaration. Missing where declaration discovery failed.
 #             The shared lane owner refuses missing evidence.
+#   --base-inventory-output  harness and render-candidate modes: overwrite
+#             this file with the paths of the range base's
+#             .kendex-generated.json, one per line, once that inventory
+#             reads and validates; a verdict reached before then writes
+#             none. change-class reads it for the settings declarations
+#             the base installs. Default: do not write a file.
 #
 # stdout carries the selected verdict line and nothing else:
 # harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
@@ -90,6 +97,8 @@ outside_output=""
 declared_output=""
 declared=""
 declared_available=true
+base_inventory_output=""
+base_inventory_listed=""
 changed=""
 outside=""
 base_rev=""
@@ -104,6 +113,7 @@ usage() {
 Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
                     [--repo DIR] [--output FILE] [--paths-output FILE]
                     [--outside-output FILE] [--declared-output FILE]
+                    [--base-inventory-output FILE]
 
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, root .md or .markdown files,
@@ -129,6 +139,9 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
   --declared-output  docs mode: write changed paths admitted by
             HARNESS_CI_DOCS_PATHS, one per line. Missing on an unreadable
             or invalid declaration; consumers must refuse that evidence.
+  --base-inventory-output  harness and render-candidate modes: write the
+            base inventory's paths, one per line, once it validates.
+            A verdict reached before then writes none.
 
   HARNESS_CI_DOCS_PATHS adds exact repository-relative .md or .markdown
   files from the --base commit's [env] settings tables only. No globs,
@@ -188,6 +201,7 @@ while [ "$#" -gt 0 ]; do
     --paths-output) need_value "$1" "$#" "${2:-}"; paths_output="$2"; shift 2 ;;
     --outside-output) need_value "$1" "$#" "${2:-}"; outside_output="$2"; shift 2 ;;
     --declared-output) need_value "$1" "$#" "${2:-}"; declared_output="$2"; shift 2 ;;
+    --base-inventory-output) need_value "$1" "$#" "${2:-}"; base_inventory_output="$2"; shift 2 ;;
     --mode)
       need_value "$1" "$#" "${2:-}"
       case "$2" in
@@ -249,6 +263,8 @@ verdict() { # true|false [FIELDS REASON]
   if [ -n "$declared_output" ] && [ "$declared_available" = true ]; then
     write_paths "$declared_output" "$declared" declared-output-write-failed
   fi
+  [ -z "$base_inventory_output" ] || [ -z "$base_inventory_listed" ] ||
+    write_paths "$base_inventory_output" "${base_inventory_listed#$'\n'}" base-inventory-output-write-failed
   if [ -n "$output" ]; then
     if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
@@ -510,6 +526,11 @@ base_inventory="$(inventory_paths "$base_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
 head_inventory="$(inventory_paths "$head_inventory" 2>/dev/null)" \
   || verdict false "cause=invalid-generated-paths" "generated paths are invalid"
+# Validated paths hold no newline, so one per line is the whole list. The
+# leading newline marks an empty inventory read, which writes an empty file.
+if listed="$(jq -r '.[]' <<<"$base_inventory" 2>/dev/null)"; then
+  base_inventory_listed=$'\n'"$listed"
+fi
 
 # The inventory's own change, for change-class: `names-only` where every entry
 # the inventory gains names a render mirror this diff adds, ROOT/SOURCE with
