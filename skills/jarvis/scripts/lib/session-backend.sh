@@ -20,6 +20,12 @@ case "$verb" in
     cat >/dev/null
     orch_release_lock
     exit ;;
+  caller-slice)
+    # The user-manager slice the caller runs in, orch's own cgroup read;
+    # nothing outside the user manager or where no cgroup v2 file exists.
+    source "$SCRIPT_DIR/lib/job-unit.sh"
+    job_unit_slice /proc/self/cgroup
+    exit ;;
 esac
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"

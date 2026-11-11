@@ -189,12 +189,12 @@ class Session:
         self.emitted = False
         self.terminated = None
 
-    def run(self, argv, *, input=None, check=True, env=None):
+    def run(self, argv, *, input=None, check=True, env=None, launcher=()):
         self.operation = argv[3] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
-        result = subprocess.run(argv, input=input, text=True, capture_output=True,
+        result = subprocess.run([*launcher, *argv], input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
             self.refuse(result)
@@ -217,14 +217,38 @@ class Session:
     def backend(self, verb, *args, check=True, env=None):
         return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check, env=env)
 
-    def tmux(self, *args, check=True, socket=None):
+    def tmux(self, *args, check=True, socket=None, launcher=()):
         # The server this starts reads the user's own tmux config, found by
         # tmux's own search, or runs on tmux's defaults where there is none:
         # the attached session looks and behaves as the user's others do. The
         # runtime names windows and panes by id and launches panes by argv, so
         # no user option changes what it owns.
         target = ["-S", socket] if socket else ["-L", self.label]
-        return self.run(["tmux", *target, *map(str, args)], check=check)
+        return self.run(["tmux", *target, *map(str, args)], check=check, launcher=launcher)
+
+    def server_scope(self):
+        # The tmux server keeps the cgroup of the client that forks it, so a
+        # server a user-manager unit starts (the watch loop's service, a boot
+        # unit, an app's scope) ends with that unit's stop. A transient scope
+        # in the caller's slice holds it apart. A caller outside the user
+        # manager keeps the start it had: a manager that does not linger stops
+        # its units at the last logout, which a login session's server
+        # outlives. On macOS tmux's daemon(3) leaves the job's process group,
+        # which is what launchd kills when a job ends (launchd.plist(5),
+        # AbandonProcessGroup).
+        slice_name = self.backend("caller-slice").stdout.strip()
+        if not slice_name:
+            return []
+        scope = ["systemd-run", "--user", "--scope", "--quiet", "--collect", "--slice=" + slice_name]
+        try:
+            probe = self.run([*scope, "true"], check=False)
+            cause = None if probe.returncode == 0 else (probe.stderr.strip().split("\n")[0] or "exit=" + str(probe.returncode))
+        except OSError as failure:
+            cause = type(failure).__name__ + ": " + str(failure)
+        if cause is None:
+            return scope
+        print("jarvis-session: tmux-scope=unavailable slice=" + slice_name + " cause=" + json.dumps(cause), file=sys.stderr)
+        return []
 
     @contextmanager
     def pane_command(self, argv):
@@ -1223,6 +1247,8 @@ os.execvpe(argv[0],argv,env)
                     if not succeeding or adopted or not self.terminal(predecessor):
                         raise Refusal("name-conflict")
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
+                # new-session is the one call that can start the home's server.
+                launcher = self.server_scope() if creation[0] == "new-session" else []
                 # A first launch runs in the pane it creates, held on a tmux
                 # channel until the record owns that pane: replacing the pane
                 # would free its pty while opening another, which macOS can
@@ -1234,7 +1260,8 @@ os.execvpe(argv[0],argv,env)
                     BASH, "--noprofile", "--norc", "-c", "tmux wait-for " + channel + " && { " + prepared["line"] + '; }; result=$?; exit "$result"']
                 with self.pane_command(runner) as command:
                     created = self.tmux(*creation, "-c", self.home,
-                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *command)
+                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *command,
+                                        launcher=launcher)
                     socket, server, started, window, pane = created.stdout.strip().split("\t")
                     record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
                                   server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
