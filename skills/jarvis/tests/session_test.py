@@ -25,6 +25,7 @@ import tempfile
 import time
 import traceback
 import unittest
+import uuid
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1428,6 +1429,64 @@ class SessionContract(unittest.TestCase):
                               capture_output=True, text=True, check=True).stdout.split()
         self.assertEqual(created.read_text().split(), [str(record["process"]["pid"])])
         self.assertEqual(pane, [str(record["process"]["pid"])])
+
+    def test_server_outlives_the_unit_that_started_it(self):
+        # A Start from a user service, as the watch loop's restart runs it.
+        # Where the manager opens a scope, the service's stop leaves the
+        # session's server and pane; where it refuses one, Start keeps the
+        # unscoped start and logs the refusal once.
+        path = os.environ["PATH"]
+        run, systemctl = shutil.which("systemd-run", path=path), shutil.which("systemctl", path=path)
+        if not run or not systemctl:
+            self.skipTest("no user systemd manager: systemd-run or systemctl is not installed")
+        probe = subprocess.run([run, "--user", "--quiet", "--collect", "--wait", "true"], capture_output=True, text=True, timeout=30)
+        if probe.returncode:
+            self.skipTest("no user systemd manager: " + (probe.stderr.strip().split("\n")[0] or "exit=" + str(probe.returncode)))
+        stub = self.root / "bin/systemd-run"
+        log = self.record.parent / "session.log"
+        # A slice the test plants, apart from app.slice, where the manager
+        # puts a scope that names none: the server's scope must take it.
+        planted = "jarvistest" + uuid.uuid4().hex[:12] + ".slice"
+        self.addCleanup(subprocess.run, [systemctl, "--user", "stop", planted], capture_output=True, timeout=30)
+        for row, refused in (("scope", False), ("scope-refused", True)):
+            with self.subTest(row):
+                if refused:
+                    stub.write_text("#!/bin/sh\necho 'Failed to connect to bus: No medium found' >&2\nexit 1\n")
+                    stub.chmod(0o755)
+                    self.addCleanup(stub.unlink, missing_ok=True)
+                unit = "jarvis-test-" + uuid.uuid4().hex[:12]
+                self.addCleanup(subprocess.run, [systemctl, "--user", "stop", unit + ".service"], capture_output=True, timeout=30)
+                out, rc, script = (self.root / (row + suffix) for suffix in (".out", ".rc", ".sh"))
+                argv = [str(SCRIPT), "start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                        "--mode", "new", "--origin", "manual"]
+                script.write_text(shlex.join(argv) + " > " + shlex.quote(str(out)) + '; printf "%s\\n" "$?" > '
+                                  + shlex.quote(str(rc)) + "\nexec sleep 300\n")
+                logged = log.read_text().count("jarvis-session: tmux-scope=unavailable ") if log.exists() else 0
+                subprocess.run([run, "--user", "--quiet", "--collect", "--unit=" + unit, "--slice=" + planted, "--working-directory=" + str(self.root),
+                                *("--setenv=" + key + "=" + value for key, value in self.env.items()),
+                                "--", self.env["JARVIS_TEST_BASH"], str(script)], check=True, capture_output=True, timeout=30)
+                deadline = time.monotonic() + 60
+                while not rc.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                validate(out.read_text(), int(rc.read_text()), "start")
+                self.wait()
+                record = json.loads(self.record.read_text())
+                cgroup = [line for line in Path("/proc", str(record["server_pid"]), "cgroup").read_text().splitlines()
+                          if line.startswith("0::")]
+                self.assertEqual(len(cgroup), 1, cgroup)
+                self.assertEqual(log.read_text().count("jarvis-session: tmux-scope=unavailable ") - logged, int(refused))
+                if refused:
+                    self.assertTrue(cgroup[0].endswith("/" + unit + ".service"), cgroup)
+                    continue
+                self.assertTrue(cgroup[0].endswith(".scope") and unit not in cgroup[0] and "/" + planted + "/" in cgroup[0], cgroup)
+                subprocess.run([systemctl, "--user", "stop", unit + ".service"], check=True, capture_output=True, timeout=30)
+                os.kill(record["server_pid"], 0)
+                pane = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_dead}"],
+                                      capture_output=True, text=True, env=self.env, timeout=10)
+                self.assertEqual((pane.returncode, pane.stdout.strip()), (0, "0"), pane.stderr)
+                self.assertEqual(self.call("status")[0]["state"], "running")
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
 
     def test_start_model_and_effort(self):
         # The stated pair is read as a preference entry reads it, launched in
