@@ -1,5 +1,8 @@
 schema = 7
 
+[model-bindings.copilot]
+standard = "gpt-6.1-sol"
+
 [sources."."]
 path = "."
 enabled = true
