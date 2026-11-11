@@ -1354,6 +1354,17 @@ operation: string | null } |
  */
 { kind: "unreadable"; said: string[] };
 
+/**  A choice the offer puts to a person. */
+export type Choice = {
+	route: Route,
+	effect: RouteEffect,
+	/**
+	 *  The choice an answer that names none takes. Leaving the files is
+	 *  always the default: no other choice is taken unasked.
+	 */
+	default: boolean,
+};
+
 /**  The modal's answers. */
 export type Chosen = {
 	name: string,
@@ -3569,6 +3580,21 @@ export type MissingWhy =
 { kind: "unreadable"; said: string };
 
 /**
+ *  How much an item needs from the person. The producer decides which: a
+ *  renderer draws the class it is handed and never infers it from words.
+ */
+export type Need = 
+/**
+ *  The run cannot go on with this item until something outside the run
+ *  changes. Drawn as a failure, with the way out where there is one.
+ */
+"blocked" | 
+/**  The run waits on a choice among the ways it offers. */
+"decision" | 
+/**  Information. Nothing to choose. */
+"notice";
+
+/**
  *  Why a file has no preview beside it. A reason rather than silence: a
  *  list where some rows open and others do not is a list the reader
  *  cannot trust.
@@ -4168,6 +4194,11 @@ export type ProjectChanges = {
 export type ProjectFlag = {
 	root: string,
 	count: number,
+	/**
+	 *  What the state needs from the person, as core classes it: every
+	 *  state that allows no offer is blocked until it changes.
+	 */
+	need: Need,
 	reason: FlagReason,
 };
 
@@ -4217,6 +4248,17 @@ export type ProjectOffer = {
 	others: number,
 	branch: string,
 	remote: string | null,
+	/**
+	 *  The choices this offer carries, in the order they are drawn, each
+	 *  bound to what it changes: `commit_offer::Offer::choices`, the list
+	 *  the terminal keys. Leave is last and is the default.
+	 */
+	choices: Choice[],
+	/**
+	 *  Whether a refused push can be recovered by opening a pull request
+	 *  from a branch of its own.
+	 */
+	recoversRefusedPush: boolean,
 	/**  `null` where the choice stands; the reason otherwise. */
 	push: Why | null,
 	pullRequest: Why | null,
@@ -4651,6 +4693,28 @@ export type RestoreResult = { kind: "effect"; effect: RestoreEffect } |
  *  writing anything.
  */
 { kind: "refused"; refused: Refused; done: RestoreEffect };
+
+/**  One of the four ways an offer is answered. */
+export type Route = "commit" | "push" | "pullRequest" | "leave";
+
+/**  What a route changes, and where: the target the choice is bound to. */
+export type RouteEffect = 
+/**  A commit of the files on the branch the checkout is on. */
+{ kind: "commit"; branch: string } | 
+/**  That commit, pushed to the branch of the same name on the remote. */
+{ kind: "push"; remote: string; branch: string } | 
+/**
+ *  That commit, pushed to the branch a pull request is already open
+ *  for, which adds the commit to it.
+ */
+{ kind: "addToPullRequest"; remote: string; branch: string; number: number } | 
+/**
+ *  A commit on a new branch, pushed, and a pull request from it into
+ *  the branch the checkout was on, which the checkout moves to.
+ */
+{ kind: "openPullRequest"; branch: string; base: string } | 
+/**  Nothing: the files stay as diffs. */
+{ kind: "leave" };
 
 /**
  *  What one installation of an item is waiting on, and what may be done

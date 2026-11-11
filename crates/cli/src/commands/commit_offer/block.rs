@@ -15,10 +15,12 @@
 use std::path::Path;
 
 use kendex_core::commit_offer::{
-    Carry, Failed, Offer, Operation, Scan, Stale, Staleness, Step, Unavailable,
+    Carry, Failed, Offer, Operation, Route, RouteEffect, Scan, Stale, Staleness, Step, Unavailable,
+    Withheld,
 };
+use kendex_core::decision::Need;
 
-use super::{Asking, Choice};
+use super::Asking;
 use crate::ui::{self, Key, Span, Status, Style};
 
 /// Enough paths to recognise what is there without burying the choices
@@ -48,9 +50,11 @@ fn plural(n: usize) -> &'static str {
     }
 }
 
-/// The line that opens a block.
-fn headed(style: &Style, what: &str) -> Vec<String> {
-    style.callout(what, None, &[])
+/// The line that opens a block, marked with what the block needs from
+/// the person: a block whose offer cannot be made is drawn as a failure,
+/// never as one more decision.
+fn headed(style: &Style, need: Need, what: &str) -> Vec<String> {
+    style.head(Status::of(need), what)
 }
 
 /// The head line for what one scan carries.
@@ -75,6 +79,7 @@ fn quoted(style: &Style, line: &str) -> Vec<String> {
 pub fn no_branch(style: &Style, scan: &Scan) -> Vec<String> {
     headed(
         style,
+        scan.branch.need(),
         &format!("{}; this checkout is on no branch", headed_by(scan)),
     )
 }
@@ -82,6 +87,7 @@ pub fn no_branch(style: &Style, scan: &Scan) -> Vec<String> {
 pub fn in_progress(style: &Style, scan: &Scan, operation: Operation) -> Vec<String> {
     headed(
         style,
+        scan.branch.need(),
         &format!(
             "{}; {} is in progress",
             headed_by(scan),
@@ -95,6 +101,7 @@ pub fn in_progress(style: &Style, scan: &Scan, operation: Operation) -> Vec<Stri
 pub fn no_terminal(style: &Style, scan: &Scan) -> Vec<String> {
     headed(
         style,
+        Need::Decision,
         &format!(
             "{}; run again with --commit, --push, --pull-request or --leave",
             headed_by(scan)
@@ -102,10 +109,12 @@ pub fn no_terminal(style: &Style, scan: &Scan) -> Vec<String> {
     )
 }
 
-/// The head of a block whose files could not be read or vouched for.
+/// The head of a block whose files could not be read or vouched for: the
+/// offer is blocked until the read runs.
 fn unchecked(style: &Style, root: &Path) -> Vec<String> {
     headed(
         style,
+        Need::Blocked,
         &format!(
             "{}: the files kendex wrote could not be checked",
             kendex_core::paths::slashed(root)
@@ -133,7 +142,7 @@ pub fn not_vouched(style: &Style, root: &Path, why: &str) -> Vec<String> {
 /// date: the head line, then each package and why, in place of the commit
 /// choices.
 pub fn stale(style: &Style, scan: &Scan, stale: &[Stale]) -> Vec<String> {
-    let mut lines = headed(style, &headed_by(scan));
+    let mut lines = headed(style, Need::Decision, &headed_by(scan));
     for held in stale {
         let name = &held.disclosure.name;
         let mut say = |status, line: String, said: &[String]| {
@@ -313,7 +322,7 @@ fn set_up_label(stale: &[Stale]) -> String {
 /// choice is missing. The choices follow, from [`pick`].
 pub fn offer(style: &Style, offer: &Offer) -> Vec<String> {
     let paths = offer.scan.carried();
-    let mut lines = headed(style, &headed_by(&offer.scan));
+    let mut lines = headed(style, Need::Decision, &headed_by(&offer.scan));
     for path in paths.iter().take(PATHS_SHOWN) {
         lines.extend(said_as(style, Status::Notice, path));
     }
@@ -399,39 +408,33 @@ pub fn reasons(offer: &Offer) -> Vec<String> {
 }
 
 /// Why the choice a flag named is not on offer, as the reason line the
-/// offer would have printed for it, or `None` where the choice stands.
-///
-/// A pull request already open for this branch removes `pr` the way a
-/// precondition does, and a flag naming it gets the same kind of answer.
-pub fn not_on_offer(offer: &Offer, choice: Choice) -> Option<String> {
-    match choice {
-        Choice::Commit | Choice::Leave => None,
-        Choice::Push => offer
-            .push
-            .as_ref()
-            .err()
-            .map(|why| format!("no push: {}", said(why))),
-        Choice::Pr => match (&offer.pull_request, &offer.open) {
-            (Err(why), _) => Some(format!("no pull request: {}", said(why))),
-            (Ok(()), Some(open)) => Some(format!(
-                "no pull request: pull request #{} is already open for this branch",
-                open.number
-            )),
-            (Ok(()), None) => None,
-        },
-    }
+/// offer would have printed for it, or `None` where the choice stands:
+/// [`Offer::withheld`]'s answer, in words.
+pub fn not_on_offer(offer: &Offer, choice: Route) -> Option<String> {
+    let lead = match choice {
+        Route::Push => "no push",
+        Route::PullRequest => "no pull request",
+        Route::Commit | Route::Leave => "",
+    };
+    offer.withheld(choice).map(|withheld| match withheld {
+        Withheld::Unavailable(why) => format!("{lead}: {}", said(&why)),
+        Withheld::AlreadyOpen(number) => {
+            format!("{lead}: pull request #{number} is already open for this branch")
+        }
+    })
 }
 
 /// A flag named a choice that is not on offer: the head line, then the
 /// reason, and nothing is asked. A push the branch's rules would refuse
 /// names the flag that takes the route they allow, where that route is on
 /// offer.
-pub fn flag_refused(style: &Style, offer: &Offer, choice: Choice, reason: &str) -> Vec<String> {
-    let mut lines = headed(style, &headed_by(&offer.scan));
+pub fn flag_refused(style: &Style, offer: &Offer, choice: Route, reason: &str) -> Vec<String> {
+    let mut lines = headed(style, Need::Blocked, &headed_by(&offer.scan));
     lines.extend(said_as(style, Status::Failed, reason));
-    if choice == Choice::Push
-        && offer.push == Err(Unavailable::PullRequestRequired)
-        && not_on_offer(offer, Choice::Pr).is_none()
+    if choice == Route::Push
+        && offer.withheld(Route::Push)
+            == Some(Withheld::Unavailable(Unavailable::PullRequestRequired))
+        && offer.withheld(Route::PullRequest).is_none()
     {
         lines.extend(said_as(
             style,
@@ -456,51 +459,46 @@ fn said(why: &Unavailable) -> String {
     }
 }
 
-/// The choices this offer carries, in the order the design fixes, skipping
-/// the ones the preconditions removed. `leave` is always last and is
-/// always the default.
-pub fn choices(offer: &Offer) -> Vec<(Choice, String)> {
-    let mut choices = vec![(Choice::Commit, "commit them".to_owned())];
-    // A push stands only with a remote to push to; the pair is how the
-    // offer was built, and reading both keeps that true here.
-    if let (Ok(()), Some(remote)) = (&offer.push, &offer.remote) {
-        choices.push((
-            Choice::Push,
-            match &offer.open {
-                Some(open) => format!(
-                    "commit them and add a commit to pull request #{}",
-                    open.number
-                ),
-                None => format!("commit them and push to {}/{}", remote.name, offer.branch),
-            },
-        ));
+/// The choices this offer carries, [`Offer::choices`], each with the words
+/// its button says.
+pub fn choices(offer: &Offer) -> Vec<(Route, String)> {
+    offer
+        .choices()
+        .into_iter()
+        .map(|choice| (choice.route, label(&choice.effect)))
+        .collect()
+}
+
+fn label(effect: &RouteEffect) -> String {
+    match effect {
+        RouteEffect::Commit { .. } => "commit them".to_owned(),
+        RouteEffect::Push { remote, branch } => {
+            format!("commit them and push to {remote}/{branch}")
+        }
+        RouteEffect::AddToPullRequest { number, .. } => {
+            format!("commit them and add a commit to pull request #{number}")
+        }
+        RouteEffect::OpenPullRequest { .. } => {
+            "commit them on a new branch and open a pull request".to_owned()
+        }
+        RouteEffect::Leave => "leave them as diffs".to_owned(),
     }
-    // Where a pull request is already open for this branch, `pr` is not
-    // offered: the branch already has one.
-    if offer.pull_request.is_ok() && offer.open.is_none() {
-        choices.push((
-            Choice::Pr,
-            "commit them on a new branch and open a pull request".to_owned(),
-        ));
-    }
-    choices.push((Choice::Leave, "leave them as diffs".to_owned()));
-    choices
 }
 
 /// What each choice is pressed with. The letter is the one its label
 /// leads with where that is free: `c`ommit, `p`ush, pull `r`equest, and
 /// Enter for `leave`, the default.
-fn key(choice: Choice) -> Key {
+fn key(choice: Route) -> Key {
     match choice {
-        Choice::Commit => Key::Char('c'),
-        Choice::Push => Key::Char('p'),
-        Choice::Pr => Key::Char('r'),
-        Choice::Leave => Key::Enter,
+        Route::Commit => Key::Char('c'),
+        Route::Push => Key::Char('p'),
+        Route::PullRequest => Key::Char('r'),
+        Route::Leave => Key::Enter,
     }
 }
 
 /// The choices as keyed buttons, each answering with its choice.
-pub fn keyed(choices: &[(Choice, String)]) -> Vec<(ui::Choice<'_>, Choice)> {
+pub fn keyed(choices: &[(Route, String)]) -> Vec<(ui::Choice<'_>, Route)> {
     choices
         .iter()
         .map(|(choice, label)| {
@@ -517,7 +515,7 @@ pub fn keyed(choices: &[(Choice, String)]) -> Vec<(ui::Choice<'_>, Choice)> {
 
 /// Draw the choices and read the one pressed. Enter leaves the files as
 /// diffs; a key the offer does not show picks nothing.
-pub fn pick(choices: &[(Choice, String)]) -> std::io::Result<Choice> {
+pub fn pick(choices: &[(Route, String)]) -> std::io::Result<Route> {
     ui::choose(&keyed(choices))
 }
 
@@ -921,9 +919,9 @@ pub enum Recover {
 
 /// The choices offered again after the `pr` route could not make its
 /// branch: the same list without `pr`.
-pub fn without_pull_request(offer: &Offer) -> Vec<(Choice, String)> {
+pub fn without_pull_request(offer: &Offer) -> Vec<(Route, String)> {
     choices(offer)
         .into_iter()
-        .filter(|(choice, _)| *choice != Choice::Pr)
+        .filter(|(choice, _)| *choice != Route::PullRequest)
         .collect()
 }

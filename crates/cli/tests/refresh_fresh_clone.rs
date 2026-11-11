@@ -846,20 +846,23 @@ fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
         fs::read_to_string(&skill).unwrap()
     );
 }
+/// One question covers the Pi settle and the plan after it, and the
+/// safety report of what that plan writes comes before it. A yes writes
+/// both with no second question, since the plan after the settle writes
+/// nothing the yes did not list; a no or a cancel writes neither.
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
+fn a_risky_plan_and_its_settle_are_one_question_after_the_safety_report() {
     use kendex_core::drift::snapshot::{SnapshotFile, load};
     use kendex_core::{env::Env, model::Scope};
-    // The settle's consent, then the final one.
-    type Steps = &'static [(&'static str, &'static str)];
-    let rows: [(Steps, i32, bool, &str); 3] = [
-        (&[("[y]", "y"), ("[y]", "\n")], 0, false, "plain"),
-        (&[("[y]", "y"), ("[y]", "y")], 0, true, "plain"),
-        (&[("[y]", "y"), ("[y]", "\x1b")], 130, false, "pretty"),
+    // (answer, exit, written, look)
+    let rows: [(&str, i32, bool, &str); 3] = [
+        ("\n", 0, false, "plain"),
+        ("y", 0, true, "plain"),
+        ("\x1b", 130, false, "pretty"),
     ];
-    for (answers, status, installed, mode) in rows {
+    for (answer, status, written, mode) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = declared_consumer(&home, NO_DEPENDENCIES);
@@ -879,23 +882,86 @@ fn an_unchanged_risky_plan_can_be_refused_after_its_safety_report() {
             .envs(test_util::fixture_env(&home))
             .env("KENDEX_UI", mode)
             .env("PATH", std::env::var("PATH").unwrap_or_default());
-        let output = pty::conversation(command, answers, pty::Stderr::Terminal);
+        let output = pty::conversation(command, &[("[y]", answer)], pty::Stderr::Terminal);
         let printed = said(&output);
         assert_eq!(output.status.code(), Some(status), "{printed}");
-        let committed = project.join(".git/refs/heads/main").is_file();
-        assert_eq!(committed, status != 130, "{printed}");
-        assert!(!printed.contains("settling added"), "{printed}");
-        let partial = printed.contains("refreshed 1 change");
-        assert_eq!(partial, !installed, "{printed}");
+        assert_eq!(printed.matches("[y]").count(), 1, "{printed}");
         let safety = printed.find("[critical]").unwrap();
-        let confirm = printed.rfind("[y]").unwrap();
+        let confirm = printed.find("[y]").unwrap();
         assert!(safety < confirm, "{printed}");
+        let committed = project.join(".git/refs/heads/main").is_file();
+        assert_eq!(committed, written, "{printed}");
         let target = project.join(".claude/skills/deploy/SKILL.md");
-        assert_eq!(target.is_file(), installed, "{printed}");
+        assert_eq!(target.is_file(), written, "{printed}");
+        let settled = project.join(".pi/packages/pi-widgets/index.js");
+        assert_eq!(settled.is_file(), written, "{printed}");
         let env = Env::host_rooted(&home);
         let scope = Scope::Project { root: project };
-        assert!(matches!(load(&env, &scope), SnapshotFile::Current(_)));
+        assert_eq!(
+            matches!(load(&env, &scope), SnapshotFile::Current(_)),
+            written,
+            "{printed}"
+        );
     }
+}
+
+/// A global refresh with two pending changes, the defect a person met: one
+/// question lists both changes before it asks, counts exactly them, and
+/// is asked once, and the closing line counts what landed.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_refresh_lists_and_counts_its_two_changes_in_one_question() {
+    use kendex_core::{env::Env, model::Scope};
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::host_rooted(&home);
+    let catalog = home.join("catalog/pi-extensions");
+    let package = |name: &str, version: &str| {
+        write(
+            &catalog.join(name).join("package.json"),
+            &format!(
+                "{{\"name\":\"{name}\",\"version\":\"{version}\",\"pi\":{{\"extensions\":[\"index.js\"]}}}}\n"
+            ),
+        );
+        write(
+            &catalog.join(name).join("index.js"),
+            &format!("export const version = \"{version}\";\n"),
+        );
+    };
+    package("pi-one", "1.0.0");
+    package("pi-two", "1.0.0");
+    write(
+        &kendex_core::manifest::manifest_path(&env, &Scope::Global),
+        "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-one]\nsource = 'cat'\n[pi-extensions.pi-two]\nsource = 'cat'\n",
+    );
+    let installed = kendex(&home, &home, &["refresh", "--scope", "global", "--yes"]);
+    assert_eq!(installed.status.code(), Some(0), "{}", said(&installed));
+    package("pi-one", "1.1.0");
+    package("pi-two", "1.1.0");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["refresh", "--scope", "global"])
+        .current_dir(&home)
+        .env_clear()
+        .envs(test_util::fixture_env(&home))
+        .env("KENDEX_BACKGROUND_REFRESH", "off")
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = pty::conversation(command, &[("[y]", "y")], pty::Stderr::Terminal);
+    let printed = said(&output);
+    assert_eq!(output.status.code(), Some(0), "{printed}");
+    assert_eq!(printed.matches("[y]").count(), 1, "{printed}");
+    let question = printed.find("write 2 changes?").unwrap();
+    for name in ["pi-one", "pi-two"] {
+        let listed = printed
+            .find(&format!("update Pi extension {name}:"))
+            .unwrap();
+        assert!(listed < question, "{printed}");
+        let bytes = fs::read_to_string(home.join(format!(".pi/agent/packages/{name}/index.js")));
+        assert_eq!(bytes.unwrap(), "export const version = \"1.1.0\";\n");
+    }
+    assert!(printed.contains("global: refreshed 2 changes"), "{printed}");
 }
 
 /// A later user-package choice cannot erase the project's write or commit.

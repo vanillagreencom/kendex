@@ -17,7 +17,7 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use kendex_core::commit_offer::{self, Before, Branch, Offer, Probe};
+use kendex_core::commit_offer::{self, Before, Branch, Offer, Probe, Route};
 use kendex_core::engine::GeneratedPaths;
 use kendex_core::env::Env;
 use kendex_core::model::Scope;
@@ -96,23 +96,14 @@ impl CommitFlags {
     }
 }
 
-/// One of the four choices.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Choice {
-    Commit,
-    Push,
-    Pr,
-    Leave,
-}
-
 impl CommitFlags {
     /// The choice a flag named, or `None` where the person is to be asked.
-    fn answered(&self) -> Option<Choice> {
+    fn answered(&self) -> Option<Route> {
         match (self.commit, self.push, self.pull_request, self.leave) {
-            (true, _, _, _) => Some(Choice::Commit),
-            (_, true, _, _) => Some(Choice::Push),
-            (_, _, true, _) => Some(Choice::Pr),
-            (_, _, _, true) => Some(Choice::Leave),
+            (true, _, _, _) => Some(Route::Commit),
+            (_, true, _, _) => Some(Route::Push),
+            (_, _, true, _) => Some(Route::PullRequest),
+            (_, _, _, true) => Some(Route::Leave),
             _ => None,
         }
     }
@@ -332,7 +323,7 @@ fn make(
             }
             Branch::On(_) => {}
         }
-        if answered == Some(Choice::Leave) {
+        if answered == Some(Route::Leave) {
             return Ok(Some(Outcome::Nothing));
         }
         // The setting turns off the asking, not the choices — which is why
@@ -387,8 +378,8 @@ fn make(
         // `push` is, so a push the rules would refuse is refused before the
         // commit rather than after it.
         let probe = match answered {
-            Some(Choice::Commit) => Probe::Skip,
-            Some(Choice::Push) | Some(Choice::Pr) | Some(Choice::Leave) | None => Probe::Gh,
+            Some(Route::Commit) => Probe::Skip,
+            Some(Route::Push) | Some(Route::PullRequest) | Some(Route::Leave) | None => Probe::Gh,
         };
         let offer = match commit_offer::offer(scan, &session.command, probe) {
             Ok(offer) => offer,
@@ -407,7 +398,7 @@ fn answer(
     offer: &Offer,
     generated: &GeneratedPaths,
     before: &Before,
-    answered: Option<Choice>,
+    answered: Option<Route>,
     message: Option<String>,
 ) -> Result<Outcome, Box<dyn std::error::Error>> {
     let Some(choice) = answered else {
@@ -431,7 +422,7 @@ struct Held {
     /// A setup already ran in this offer.
     set_up: bool,
     /// The choice a flag named, if one did.
-    answered: Option<Choice>,
+    answered: Option<Route>,
     /// Who gives the setup its yes.
     yes: Yes,
     /// The verb carries `--allow-repo-effects`.

@@ -26,7 +26,9 @@ fn the_blocked_refresh_keeps_the_plain_output_hierarchy() {
         .collect();
     assert_eq!(
         shape,
-        [0, 2, 4, 4, 4, 2, 0, 2, 4, 2, 4, 0, 2, 2, 0, 2, 2, 2],
+        [
+            0, 2, 4, 4, 4, 2, 0, 2, 4, 2, 4, 0, 2, 2, 2, 2, 2, 2, 0, 2, 2, 2
+        ],
         "{printed}"
     );
     assert!(FRAMING.into_iter().all(|symbol| !printed.contains(symbol)));

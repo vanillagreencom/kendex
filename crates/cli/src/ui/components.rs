@@ -37,6 +37,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// The status a producer's class of attention is drawn with: a blocked
+    /// item as a failure, never as one more decision.
+    pub fn of(need: kendex_core::decision::Need) -> Status {
+        match need {
+            kendex_core::decision::Need::Blocked => Status::Failed,
+            kendex_core::decision::Need::Decision => Status::Decision,
+            kendex_core::decision::Need::Notice => Status::Notice,
+        }
+    }
+
     fn symbol(self) -> Symbol {
         match self {
             Status::Done => Symbol::Done,
@@ -263,18 +273,11 @@ impl Style {
     /// Something that needs the reader: what it is, why where there is more
     /// to say than what, and what they can press about it.
     pub fn callout(&self, what: &str, why: Option<&str>, choices: &[Choice<'_>]) -> Vec<String> {
-        let mark = self.glyph(Symbol::Decision);
-        let (what, why) = (escaped(what), why.map(escaped));
-        let mut lines = match self.look {
-            Look::Plain => std::iter::once(format!("{mark} {what}"))
-                .chain(why.map(|why| format!("  {why}")))
-                .collect(),
-            Look::Rich { palette, width } => {
-                let lead = format!("{} ", paint(palette, Token::Warn, mark));
-                let mut lines = vec![String::new()];
-                lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
-                    strong(palette, Token::Emphasis, chunk)
-                }));
+        let mut lines = self.head(Status::Decision, what);
+        let why = why.map(escaped);
+        match self.look {
+            Look::Plain => lines.extend(why.map(|why| format!("  {why}"))),
+            Look::Rich { width, .. } => {
                 if let Some(why) = why {
                     lines.extend(fitted(
                         width,
@@ -285,11 +288,29 @@ impl Style {
                         str::to_owned,
                     ));
                 }
-                lines
             }
-        };
+        }
         lines.extend(self.choices(choices));
         lines
+    }
+
+    /// The line that opens a block, marked with what its subject needs: a
+    /// decision, a failure for what is blocked, or a notice. Set off by a
+    /// blank line rich, and at column 0 plain.
+    pub fn head(&self, status: Status, what: &str) -> Vec<String> {
+        let mark = self.glyph(status.symbol());
+        let what = escaped(what);
+        match self.look {
+            Look::Plain => vec![format!("{mark} {what}")],
+            Look::Rich { palette, width } => {
+                let lead = format!("{} ", paint(palette, status.token(), mark));
+                let mut lines = vec![String::new()];
+                lines.extend(fitted(width, &lead, 2, 2, &[Span::Prose(&what)], |chunk| {
+                    strong(palette, Token::Emphasis, chunk)
+                }));
+                lines
+            }
+        }
     }
 
     /// Keyed buttons under what they answer, the default drawn as the

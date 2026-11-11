@@ -246,25 +246,21 @@ pub fn confirm_and_apply(
     report: &EngineReport,
     yes: bool,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    match confirm_plan_and_apply(env, report, yes, None)? {
+    match confirm_plan_and_apply(env, report, yes)? {
         PlanApplication::Applied(applied) => Ok(applied),
         PlanApplication::Declined => Err("cancelled — these changes were not written".into()),
     }
 }
 
-pub(super) enum PlanApplication {
+enum PlanApplication {
     Applied(usize),
     Declined,
 }
 
-/// Plan consent shared by verbs that handle a decline as their own outcome.
-/// `before` is a reading an earlier write of the same run took, which the
-/// offer after this write covers from ([`apply_report_since`]).
-pub(super) fn confirm_plan_and_apply(
+fn confirm_plan_and_apply(
     env: &Env,
     report: &EngineReport,
     yes: bool,
-    before: Option<&kendex_core::commit_offer::Before>,
 ) -> Result<PlanApplication, Box<dyn std::error::Error>> {
     // The count is the consequence: an answer given to a bare "apply?" is
     // an answer to the verb's name rather than to what it writes. An empty
@@ -277,7 +273,7 @@ pub(super) fn confirm_plan_and_apply(
             return Ok(PlanApplication::Declined);
         }
     }
-    apply_report_since(env, report, before).map(PlanApplication::Applied)
+    apply_report(env, report).map(PlanApplication::Applied)
 }
 
 /// Execute a report's plan — the one way a CLI verb holding an
@@ -312,6 +308,27 @@ pub(super) fn apply_report_since(
     report: &EngineReport,
     before: Option<&kendex_core::commit_offer::Before>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
+    let wrote = apply_report_accounted(env, report, before)?;
+    wrote.after?;
+    Ok(wrote.applied)
+}
+
+/// What [`apply_report_since`] wrote, apart from what failed after it.
+pub(super) struct Wrote {
+    pub applied: usize,
+    /// A step after the write: the configuration render and the commit
+    /// offer. Its failure leaves the write on disk.
+    pub after: CliResult,
+}
+
+/// [`apply_report_since`] for a caller that accounts for what it wrote:
+/// `Err` only where the write itself did not land, so a failure in a
+/// step after it never reads as a write that wrote nothing.
+pub(super) fn apply_report_accounted(
+    env: &Env,
+    report: &EngineReport,
+    before: Option<&kendex_core::commit_offer::Before>,
+) -> Result<Wrote, Box<dyn std::error::Error>> {
     for warning in &report.warnings {
         ui::report::run_model_warning(&warning.message);
     }
@@ -320,6 +337,19 @@ pub(super) fn apply_report_since(
         None => before_writing(report),
     };
     let applied = write_report(env, report)?;
+    Ok(Wrote {
+        applied,
+        after: after_write(env, report, &before),
+    })
+}
+
+/// What follows a plan's write: the configuration its packages render,
+/// and the commit offer over both.
+fn after_write(
+    env: &Env,
+    report: &EngineReport,
+    before: &kendex_core::commit_offer::Before,
+) -> CliResult {
     let mut generated = report.generated.clone();
     let bot_instructions = kendex_core::bot_instructions::render(env, &report.plan.scope)?;
     if let Some(skipped) = bot_instructions.skipped() {
@@ -333,8 +363,7 @@ pub(super) fn apply_report_since(
         }
     }
     bot_instructions.add_to(&mut generated);
-    super::commit_offer::after_writing(env, &report.plan.scope, &generated, &before)?;
-    Ok(applied)
+    super::commit_offer::after_writing(env, &report.plan.scope, &generated, before)
 }
 
 /// What the project held before `report` writes, read the only time it

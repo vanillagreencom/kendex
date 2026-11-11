@@ -399,6 +399,15 @@ describe("the setup of a package holding the commit", () => {
     others: 0,
     branch: "main",
     remote: null,
+    choices: [
+      {
+        route: "commit",
+        effect: { kind: "commit", branch: "main" },
+        default: false,
+      },
+      { route: "leave", effect: { kind: "leave" }, default: true },
+    ],
+    recoversRefusedPush: false,
     push: { kind: "noRemote" },
     pullRequest: { kind: "noRemote" },
     openNumber: null,

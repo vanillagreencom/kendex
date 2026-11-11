@@ -32,6 +32,29 @@ const offer: ProjectOffer = {
   others: 0,
   branch: "main",
   remote: "origin",
+  choices: [
+    {
+      route: "commit",
+      effect: { kind: "commit", branch: "main" },
+      default: false,
+    },
+    {
+      route: "push",
+      effect: { kind: "push", remote: "origin", branch: "main" },
+      default: false,
+    },
+    {
+      route: "pullRequest",
+      effect: {
+        kind: "openPullRequest",
+        branch: "kendex/renders",
+        base: "main",
+      },
+      default: false,
+    },
+    { route: "leave", effect: { kind: "leave" }, default: true },
+  ],
+  recoversRefusedPush: true,
   push: null,
   pullRequest: null,
   openNumber: null,

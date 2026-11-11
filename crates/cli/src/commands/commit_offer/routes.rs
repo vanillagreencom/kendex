@@ -10,7 +10,9 @@ use kendex_core::commit_offer::{self, Before, Committed, Offer, Selection};
 use kendex_core::engine::GeneratedPaths;
 
 use super::block::{self, AfterRefusal, Recover, Retry};
-use super::{Asking, Choice, Outcome};
+use kendex_core::commit_offer::Route;
+
+use super::{Asking, Outcome};
 use crate::ui;
 
 type Taken = Result<Outcome, Box<dyn std::error::Error>>;
@@ -23,15 +25,15 @@ pub fn take(
     offer: &Offer,
     generated: &GeneratedPaths,
     since: &Before,
-    choice: Choice,
+    choice: Route,
     given: Option<String>,
     asking: Asking,
 ) -> Taken {
     match choice {
-        Choice::Leave => Ok(Outcome::Nothing),
-        Choice::Commit => straight(offer, generated, since, given, asking, Push::No),
-        Choice::Push => straight(offer, generated, since, given, asking, Push::Yes),
-        Choice::Pr => pull_request(offer, generated, since, given, asking),
+        Route::Leave => Ok(Outcome::Nothing),
+        Route::Commit => straight(offer, generated, since, given, asking, Push::No),
+        Route::Push => straight(offer, generated, since, given, asking, Push::Yes),
+        Route::PullRequest => pull_request(offer, generated, since, given, asking),
     }
 }
 
@@ -164,7 +166,7 @@ fn pushed(
             // branch of its own, so it is offered only where a pull
             // request can be opened from that branch — and only to a
             // person, since a flag answered one question and not this one.
-            if offer.pull_request.is_err() || asking == Asking::No {
+            if !offer.recovers_refused_push() || asking == Asking::No {
                 return Ok(Outcome::PushRefused);
             }
             match block::after_push_refusal()? {
@@ -369,10 +371,12 @@ fn without_pull_request(
     }
     let choices = block::without_pull_request(offer);
     match block::pick(&choices)? {
-        Choice::Leave => Ok(Outcome::CommitRefused),
-        Choice::Commit => straight(offer, generated, since, given, asking, Push::No),
-        Choice::Push => straight(offer, generated, since, given, asking, Push::Yes),
+        Route::Leave => Ok(Outcome::CommitRefused),
+        Route::Commit => straight(offer, generated, since, given, asking, Push::No),
+        Route::Push => straight(offer, generated, since, given, asking, Push::Yes),
         // Filtered out of the list this answer came from.
-        Choice::Pr => unreachable!("the pull-request choice was picked from a list without it"),
+        Route::PullRequest => {
+            unreachable!("the pull-request choice was picked from a list without it")
+        }
     }
 }

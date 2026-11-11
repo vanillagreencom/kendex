@@ -115,6 +115,7 @@ describe("the review of one project's pending changes", () => {
         flag: {
           root: ROOT,
           count: 2,
+          need: "blocked",
           reason: { kind: "inProgress", operation: "a rebase" },
         },
       },
