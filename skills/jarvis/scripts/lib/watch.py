@@ -751,17 +751,20 @@ class Watch:
         source.seek(end)
         marked = source.read(1) == b"\x00"
         phase = transaction["phase"]
+        # A restarted process can see unsynced log changes in page cache.
+        # Synchronize before retiring their recovery record in either branch.
         if phase == "ready" and not marked:
             # Truncate removed the marker. Never overwrite subsequent consumer appends.
+            os.fsync(source.fileno())
             self.commit_reclaim(transaction["cut"])
             return
         if phase == "ready":
             source.seek(transaction["cut"])
             source.write(base64.b64decode(transaction["suffix"]))
             source.flush()
-            os.fsync(source.fileno())
         elif phase != "prepared":
             raise RuntimeError("reclaim-phase-invalid: " + str(phase))
+        os.fsync(source.fileno())
         # The undo image restores old coordinates. The owner-only marker is
         # below both checkpoints and outside every live event span.
         self.state["offset"] = self.state["cursor_offset"] = end + int(marked)

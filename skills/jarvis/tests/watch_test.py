@@ -1,6 +1,7 @@
 """The shipped producer with real mailbox writes and explicit step barriers."""
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
+import errno
 import importlib.util
 import io
 import json
@@ -1138,8 +1139,9 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
     def test_reclaim_crash_recovery(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
-        stages = ("prepared", "marker", "ready", "partial", "suffix-sync", "truncate", "commit")
-        for stage in stages:
+        stages = (("prepared", "prepared"), ("marker", "prepared"), ("ready", "ready"),
+                  ("partial", "ready"), ("suffix-sync", "ready"), ("truncate", "ready"), ("commit", None))
+        for stage, recovery_phase in stages:
             with self.subTest(stage=stage), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
                 self.settings["JARVIS_LOG_DIR"] = str(self.root / stage)
                 watch = self.watch()
@@ -1201,7 +1203,9 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         patch.object(self.module.os, "fsync", side_effect=synced):
                     with self.assertRaises(InterruptedError):
                         watch.batch(0)
-                self.assertIsNone(json.loads(watch.path.read_text())["pending"])
+                interrupted_state = json.loads(watch.path.read_text())
+                self.assertIsNone(interrupted_state["pending"])
+                self.assertEqual(interrupted_state.get("reclaim", {}).get("phase"), recovery_phase)
                 # Appenders run after the interrupted owner releases its inode
                 # lock. Post-truncate appends deliberately cross the old EOF.
                 consumers = ["EVENT custom\nafter-%s-%s\n" % (stage, index) + "z" * 32000 + "\n"
@@ -1226,7 +1230,36 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         return Restore(stream)
                     with patch.object(Path, "open", restore_interrupted), self.assertRaises(InterruptedError):
                         self.watch()
-                recovered = self.watch()
+                recovery_events = []
+                fail_sync = recovery_phase is not None
+                def recovery_synced(fd):
+                    if os.fstat(fd).st_ino == inode:
+                        if fail_sync:
+                            recovery_events.append("log-fsync-failed")
+                            raise OSError(errno.EIO, "recovery log sync")
+                        original_fsync(fd)
+                        recovery_events.append("log-fsync")
+                    else:
+                        original_fsync(fd)
+                def recovery_saved(path, state):
+                    recovery_events.append("state-save")
+                    if recovery_phase is not None:
+                        self.assertEqual(recovery_events[0], "log-fsync", "log durability before recovery state")
+                    original_atomic(path, state)
+                with patch.object(self.module.os, "fsync", side_effect=recovery_synced), \
+                        patch.object(self.module, "atomic_json", side_effect=recovery_saved):
+                    if fail_sync:
+                        durable_state = watch.path.read_bytes()
+                        with self.assertRaises(OSError) as caught:
+                            self.watch()
+                        self.assertEqual(caught.exception.errno, errno.EIO)
+                        self.assertEqual(recovery_events, ["log-fsync-failed"])
+                        self.assertEqual(watch.path.read_bytes(), durable_state, "failed sync retains transaction")
+                        recovery_events.clear()
+                        fail_sync = False
+                    recovered = self.watch()
+                self.assertEqual(recovery_events[:2] if recovery_phase else recovery_events,
+                                 ["log-fsync", "state-save"] if recovery_phase else ["state-save"])
                 base = recovered.state.get("log_base", 0)
                 recovered = self.watch()
                 self.assertEqual(recovered.state.get("log_base", 0), base)
@@ -1294,21 +1327,27 @@ with open(sys.argv[1], "ab") as out:
                              ["EVENT custom\nretired before appender", body.rstrip("\n")])
 
     def test_reclaim_instrument_control(self):
-        case = Producer(methodName="test_reclaim_deferred_bytes")
-        case.setUp()
-        try:
-            path = case.scripts / "lib/watch.py"
-            source = path.read_text()
-            old = "source.write(suffix)"
-            self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, 'source.write(b"\\x00" * len(suffix))')
-            self.assertNotEqual(source, mutant)
-            path.write_text(mutant)
-            case.module = load(path)
-            with self.assertRaisesRegex(AssertionError, "retained event bytes"):
-                case.test_reclaim_deferred_bytes()
-        finally:
-            case.doCleanups()
+        controls = (
+            ("test_reclaim_deferred_bytes", "source.write(suffix)",
+             'source.write(b"\\x00" * len(suffix))', "retained event bytes"),
+            ("test_reclaim_crash_recovery", '        os.fsync(source.fileno())\n        # The undo image',
+             '        # The undo image', "log durability before recovery state"))
+        for method, old, replacement, assertion in controls:
+            with self.subTest(method=method):
+                case = Producer(methodName=method)
+                case.setUp()
+                try:
+                    path = case.scripts / "lib/watch.py"
+                    source = path.read_text()
+                    self.assertEqual(source.count(old), 1)
+                    mutant = source.replace(old, replacement)
+                    self.assertNotEqual(source, mutant)
+                    path.write_text(mutant)
+                    case.module = load(path)
+                    with self.assertRaisesRegex(AssertionError, assertion):
+                        getattr(case, method)()
+                finally:
+                    case.doCleanups()
 
     def test_saved_selection_after_append_restart(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
