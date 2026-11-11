@@ -103,7 +103,7 @@ Remove unused code rather than leaving renamed variables, commented blocks, remo
 
 A finding of bad code or test practice, bloat, unnecessary machinery or scope, patchwork or non-holistic design carries one evaluation line. These classes are examples for judgement, not a checklist: a finding qualifies when its cost comes from how the code or test was decided. Other findings carry no line.
 
-A documentation finding, such as a false claim, a fact kept in two homes or prose that breaks the writing rules, carries the same line, and under `misled` or `missing` its owner is a [docs-writing](../docs-writing/SKILL.md) section.
+A documentation finding, such as a false claim, a fact kept in two homes or prose that breaks the writing rules, carries the same line, and under `missing` its owner is a [docs-writing](../docs-writing/SKILL.md) section.
 
 ```text
 code-quality: [misled|missing|not followed]: [reason]; owner: [guidance or route]
