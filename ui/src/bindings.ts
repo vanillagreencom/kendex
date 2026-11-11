@@ -962,11 +962,12 @@ export type AuditView_Deserialize = {
 	 */
 	undone: string[],
 	/**
-	 *  What the step behind the write, the configuration owner's render
-	 *  (`kendex_core::bot_instructions::render`), failed with. The write
-	 *  stands either way: this is why its account is short, never why the
-	 *  action is reported as refused. Left off the wire on a plain read and
-	 *  on a write whose every step finished.
+	 *  What a step behind the write failed with: the configuration owner's
+	 *  render (`kendex_core::bot_instructions::render`), or, behind an adopt
+	 *  or a fork, the settle of the scope that follows it (`settle_after`).
+	 *  The write stands either way: this is why its account is short, never
+	 *  why the action is reported as refused. Left off the wire on a plain
+	 *  read and on a write whose every step finished.
 	 */
 	unfinished: string | null,
 	/**
@@ -1016,11 +1017,12 @@ export type AuditView_Serialize = {
 	 */
 	undone?: string[],
 	/**
-	 *  What the step behind the write, the configuration owner's render
-	 *  (`kendex_core::bot_instructions::render`), failed with. The write
-	 *  stands either way: this is why its account is short, never why the
-	 *  action is reported as refused. Left off the wire on a plain read and
-	 *  on a write whose every step finished.
+	 *  What a step behind the write failed with: the configuration owner's
+	 *  render (`kendex_core::bot_instructions::render`), or, behind an adopt
+	 *  or a fork, the settle of the scope that follows it (`settle_after`).
+	 *  The write stands either way: this is why its account is short, never
+	 *  why the action is reported as refused. Left off the wire on a plain
+	 *  read and on a write whose every step finished.
 	 */
 	unfinished?: string | null,
 	/**

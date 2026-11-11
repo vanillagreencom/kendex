@@ -12,7 +12,7 @@ use kendex_core::package::{self, detail, diff};
 use serde::Serialize;
 use specta::Type;
 
-use crate::audit::{AuditView, settle_report};
+use crate::audit::{AuditView, settle_after, settle_report, settle_scope};
 use crate::refusal::SourceReadRefused;
 
 pub mod update;
@@ -78,7 +78,8 @@ pub fn package_fork(
 ) -> Result<AuditView, String> {
     let env = env()?;
     let plan = engine::fork::fork(&env, &scope, kind, &name, harness).map_err(|e| e.to_string())?;
-    settle(&env, &scope, &plan)
+    apply::execute(&env, &plan).map_err(|e| e.to_string())?;
+    Ok(settle_after(&env, &scope))
 }
 
 /// Why installing beside did not finish, by phase: a refusal wrote
@@ -117,20 +118,10 @@ pub fn package_fork_beside(
     .map_err(|e| refused(e.to_string()))?;
     // A plan that fails to apply rolls back: nothing recorded, a refusal.
     apply::execute(&env, &plan).map_err(|e| refused(e.to_string()))?;
-    render_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
-}
-
-/// Apply one plan, then render the scope it changed.
-fn settle(env: &Env, scope: &Scope, plan: &apply::Plan) -> Result<AuditView, String> {
-    apply::execute(env, plan).map_err(|e| e.to_string())?;
-    render_scope(env, scope)
-}
-
-/// Bring a scope's installs in line with its manifest and answer with the
-/// standing that leaves.
-fn render_scope(env: &Env, scope: &Scope) -> Result<AuditView, String> {
-    let report = engine::audit(env, scope).map_err(|e| e.to_string())?;
-    settle_report(env, scope, &report)
+    // The fork has landed. `Recorded` already says so to the window, which
+    // closes the name dialog and shows what landed beside the failure; it
+    // reads no view off this answer.
+    settle_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
 }
 
 /// Discard one package's edits and re-render it — the door back to "the
