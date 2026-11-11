@@ -1,6 +1,6 @@
 ---
 name: communication
-description: "Load before writing a message to a person: a reply, report, briefing, decision request, or issue or comment addressed to the user."
+description: "Load before writing a message to a person: a reply, report, briefing, decision request, or work-item description or comment."
 summary: "Plain-language messages, reader modes, decision questions, reports, threads and spoken replies."
 license: MIT
 user-invocable: true

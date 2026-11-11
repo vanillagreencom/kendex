@@ -277,8 +277,10 @@ require_issue_reach() {
 # calls that capture stdout can miss a stderr advisory and file no explanation.
 # Linear accepts arbitrary text, so this caller holds the opening requirement.
 # A header over ISSUE_HEADER_MAX characters prints one advisory on stderr and
-# the write proceeds. A refused body prints the refusal alone. The reach
-# guard's setting turns the filing bar on or off.
+# the write proceeds, as does an opening holding machine detail: the
+# communication package keeps message-format checks advisory.
+# A refused body prints the refusal alone. The reach guard's setting turns the
+# filing bar on or off.
 #
 # STORED is the issue's current description, which `issues update` passes. A
 # body equal to it apart from a leading owner action line only places,
@@ -307,10 +309,26 @@ require_issue_header_shape() {
 		def opening_value:
 			gsub("\n> ?"; " ") | gsub("^\\s+|\\s+$"; "")
 			| length > 0 and (test("^(\\[[^]\\r\\n]+\\]\\s*)+$") | not);
-		def opening:
-			(try capture("^> \\*\\*Story:\\*\\*(?<story>[^\\n]*(?:\\n>[^\\n]*)*)\\n[ \\t]*\\n(?:[ \\t]*\\n)*> \\*\\*Why this matters:\\*\\*(?<why>[^\\n]*(?:\\n>[^\\n]*)*)(?:\\n[ \\t]*\\n(?:[ \\t]*\\n)*(?:#{1,6}[ \\t]+[\\s\\S]*)?|\\n?)$") catch null) // null
-			| . != null and (.story | opening_value) and (.why | opening_value);
+		def opening_parts:
+			(try capture("^> \\*\\*Story:\\*\\*(?<story>[^\\n]*(?:\\n>[^\\n]*)*)\\n[ \\t]*\\n(?:[ \\t]*\\n)*> \\*\\*Why this matters:\\*\\*(?<why>[^\\n]*(?:\\n>[^\\n]*)*)(?:\\n[ \\t]*\\n(?:[ \\t]*\\n)*(?:#{1,6}[ \\t]+[\\s\\S]*)?|\\n?)$") catch null) // null;
+		def opening: opening_parts | . != null and (.story | opening_value) and (.why | opening_value);
 		def long_header($max): "linear: advisory=issue-header-length line=\(.line) length=\(.length) max=\($max) fix=Keep each header to one short sentence and move the detail under a section.";
+		# Machine detail the owner, who reads only the opening, cannot use. Only
+		# the opening is read: the body keeps its paths and ids. A slack-ts is a
+		# message ts, epoch seconds and six digits (docs.slack.dev
+		# messaging/retrieving-messages); a mailbox-id is what lane-mail mints,
+		# epoch seconds, pid and $RANDOM. A file path has a slash and a
+		# letter-led extension, or starts at a root; a URL is not one.
+		def opening_detail: [
+			{kind: "file-path", pattern: "(?<![\\w:/.~-])(?:(?:~|\\.{1,2})?/[\\w.-]+(?:/[\\w.-]+)*|(?:[\\w.-]+/)+[\\w.-]*\\w\\.[A-Za-z][A-Za-z0-9]{0,7}\\b)"},
+			{kind: "slack-ts", pattern: "(?<![\\w.])[0-9]{10}\\.[0-9]{6}(?!\\w|\\.[0-9])"},
+			{kind: "mailbox-id", pattern: "(?<![\\w-])[0-9]{10}-[0-9]+-[0-9]+(?![\\w-])"},
+			{kind: "utc-time", pattern: "\\b[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}(?::[0-9]{2}(?:\\.[0-9]+)?)?(?:Z|[ ]?UTC)\\b"}];
+		def opening_detail_advice($line):
+			(.story + "\n" + .why) as $text
+			| [opening_detail[] | .pattern as $p | select($text | test($p)) | .kind]
+			| select(length > 0)
+			| "linear: advisory=issue-opening-detail line=\($line) kinds=\(join(",")) fix=Write the opening for the owner: project-management templates/issue-description-template.md, communication references/reports.md § Work-item descriptions and comments.";
 		[$desc | gsub("\r\n"; "\n") | split("\n") | to_entries[]
 			| {line: (.key + 1), length: (.value | length), text: .value}] as $lines
 		| ($has_stored and ($desc | without_owner_action) == ($stored | without_owner_action)) as $moves_action
@@ -334,7 +352,8 @@ require_issue_header_shape() {
 			 fix: "Open with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading."}
 			| . + {error: (.rule + " line=\(.line)\nfix=" + .fix)} | tojson
 		  else
-			$long[] | long_header($max)
+			($lines | map(select(.line >= $first.line) | .text) | join("\n") | opening_parts | opening_detail_advice($first.line)),
+			($long[] | long_header($max))
 		  end') || return 1
 	[[ -n $verdict ]] || return 0
 	printf '%s\n' "$verdict" >&2

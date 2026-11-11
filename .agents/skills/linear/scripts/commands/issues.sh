@@ -159,7 +159,11 @@ Create Options:
   action line (`**Name, what you do:** ...`), with an unquoted blank line
   between the blocks and before the first heading, if any. A header line over
   500 characters prints one `linear: advisory=issue-header-length line=N
-  length=N` line on stderr, and the write proceeds.
+  length=N` line on stderr, and the write proceeds. A quoted opening holding
+  a file path, a Slack message ts, a mailbox id or a UTC time stamp prints one
+  `linear: advisory=issue-opening-detail line=N kinds=KIND[,KIND]` line naming
+  the description template and the reader rule, and the write proceeds; the
+  body below the opening is not read for it.
   Unfilled placeholders count as empty. Authors and reviewers
   judge the prose. Update judges the body after it reads the issue: a body
   equal to the stored one apart from a leading owner action line, which it
