@@ -202,10 +202,13 @@ class Task(Session):
                         self.write(record)
                     if acquired:
                         self.close_window(record, allow_unmarked=True)
+                    self.stop_browser(record)
                     shutil.rmtree(scratch)
                     record["cleanup"] = {"at": time.time(), "state": "done"}
                 except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as teardown:
-                    record["cleanup"]["reason"] = type(teardown).__name__
+                    record["cleanup"]["reason"] = teardown.reason if isinstance(teardown, Refusal) else type(teardown).__name__
+                    if isinstance(teardown, Refusal) and teardown.detail:
+                        record["cleanup"]["detail"] = teardown.detail
                 if recorded:
                     try:
                         self.write(record)
@@ -219,6 +222,17 @@ class Task(Session):
         allow_unmarked = allow_unmarked or not terminal.get("marked", True)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
+
+    def stop_browser(self, record):
+        # The harness starts the task's browser in its own session or service
+        # unit, so it outlives the task window and would write its profile
+        # back into removed scratch.
+        if record["browser_profile"]:
+            env = dict(self.env, JARVIS_BROWSER_PROFILE=record["browser_profile"], JARVIS_BROWSER_PORT="0")
+            stopped = self.run([sys.executable, "-I", "-B", str(Path(__file__).resolve().parents[1] / "jarvis-browser"),
+                                "--stop"], check=False, env=env)
+            if stopped.returncode:
+                raise Refusal("browser-running", stopped.stderr.strip())
 
     def complete(self, outcome):
         with self.locked():
@@ -238,6 +252,7 @@ class Task(Session):
             if not record["cleanup"] or record["cleanup"]["state"] != "done":
                 if record["terminal"]:
                     self.close_window(record)
+                self.stop_browser(record)
                 scratch = Path(record["scratch"])
                 if scratch.exists():
                     shutil.rmtree(scratch)

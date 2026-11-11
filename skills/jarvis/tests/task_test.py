@@ -9,6 +9,7 @@ import shlex
 import shutil
 import signal
 import runpy
+import select
 import subprocess
 import sys
 import tempfile
@@ -1119,6 +1120,111 @@ while True: signal.pause()
         self.assertTrue(Path(record["scratch"]).is_dir())
         wrapper.unlink()
         self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
+
+    def browser_harness(self, name, exit_status):
+        """Make the codex fixture start the task's browser as a service unit
+        does: the real jarvis-browser in its own session, outliving the task
+        window. The fixture browser writes B once running and, on SIGTERM, T1
+        while its profile still exists or T0 once it is gone, to a FIFO the
+        test reads; the FIFO's end is the browser's exit."""
+        alive = self.root / ("browser-" + name)
+        os.mkfifo(alive, 0o600)
+        reader = os.open(alive, os.O_RDONLY | os.O_NONBLOCK)
+        self.addCleanup(os.close, reader)
+        browser = self.bin / ("browser-" + name)
+        # The fixture also exits once the test's root is removed, so a
+        # browser no stop reached does not outlive the test.
+        browser.write_text("#!" + sys.executable + "\nimport os,signal,sys,time\nfrom pathlib import Path\n"
+            + "profile=Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('--user-data-dir=')))\n"
+            + "alive=os.open(os.environ['JARVIS_TEST_BROWSER_ALIVE'],os.O_WRONLY)\n"
+            + "def stop(*_):\n os.write(alive,b'T1' if profile.is_dir() else b'T0')\n os._exit(0)\n"
+            + "signal.signal(signal.SIGTERM,stop)\n"
+            + "os.write(alive,b'B')\n"
+            + "profile.joinpath('running').touch()\n"
+            + "while os.path.isdir(" + repr(str(self.root)) + "): time.sleep(0.1)\n")
+        browser.chmod(0o755)
+        harness = self.bin / "codex"
+        harness.write_text("#!" + sys.executable + "\nimport os,signal,subprocess,sys,time\nfrom pathlib import Path\n"
+            + "profile=Path(os.environ['JARVIS_BROWSER_PROFILE'])\n"
+            + "env=dict(os.environ,JARVIS_BROWSER_COMMAND=" + repr(str(browser))
+            + ",JARVIS_TEST_BROWSER_ALIVE=" + repr(str(alive)) + ")\n"
+            + "subprocess.Popen([sys.executable,'-B'," + repr(str(self.skills / "jarvis/scripts/jarvis-browser"))
+            + ",'about:blank'],env=env,start_new_session=True,stdin=subprocess.DEVNULL,"
+            + "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+            + "deadline=time.monotonic()+10\n"
+            + "while not profile.joinpath('running').exists() and time.monotonic()<deadline: time.sleep(0.02)\n"
+            + ("sys.exit(" + str(exit_status) + ")\n" if exit_status is not None
+               else "print('\\u276f\\u00a0',flush=True)\nwhile True: signal.pause()\n"))
+        harness.chmod(0o755)
+        return reader
+
+    def browser_signals(self, reader, until_exit=True):
+        """What the fixture browser wrote: through its exit, or its first byte."""
+        seen, deadline = b"", time.monotonic() + 10
+        while time.monotonic() < deadline:
+            select.select([reader], [], [], max(0, deadline - time.monotonic()))
+            try:
+                chunk = os.read(reader, 16)
+            except BlockingIOError:
+                continue
+            # Before the browser opens the FIFO, macOS reads it as ended.
+            if not chunk and not seen:
+                time.sleep(0.02)
+                continue
+            seen += chunk
+            if not chunk or not until_exit:
+                return seen + (b"" if chunk else b"$")
+        return seen
+
+    def test_failed_browser_launch_stops_its_browser(self):
+        # A ps that cannot list every process's argv leaves the profile's
+        # browser unread.
+        unread_ps = "#!" + self.env["JARVIS_TEST_BASH"] + "\n" + \
+            '[[ " $* " != *" -A "*" args= "* ]] || exit 1\nexec ' + shlex.quote(shutil.which("ps")) + ' "$@"\n'
+        for row, readable in (("stopped", True), ("unread", False)):
+            with self.subTest(row=row):
+                reader = self.browser_harness(row, exit_status=3)
+                if not readable:
+                    self.bin.joinpath("ps").write_text(unread_ps)
+                    self.bin.joinpath("ps").chmod(0o755)
+                refused = self.launch("codex", "-" + row, success=False, model="gpt-5")
+                self.assertIn("refused=native-exited", refused.stderr)
+                record = next(task for task in self.saved_tasks() if task["name"] == "Inspect codex-" + row)
+                self.assertEqual(record["failure"]["reason"], "native-exited")
+                if readable:
+                    self.assertEqual(record["cleanup"]["state"], "done")
+                    self.assertFalse(Path(record["scratch"]).exists())
+                    self.assertEqual(self.browser_signals(reader), b"BT1$")
+                    continue
+                self.assertEqual({key: record["cleanup"].get(key) for key in ("state", "reason", "detail")},
+                                 {"state": "pending", "reason": "browser-running",
+                                  "detail": "jarvis-browser: stop=failed cause=process-unread"})
+                self.assertTrue(Path(record["browser_profile"]).is_dir())
+                self.bin.joinpath("ps").unlink()
+                self.assertEqual(self.call("cleanup", "--id", record["id"])["cleanup"]["state"], "done")
+                self.assertFalse(Path(record["scratch"]).exists())
+                self.assertEqual(self.browser_signals(reader), b"BT1$")
+
+    def test_cleanup_stops_running_task_browser(self):
+        reader = self.browser_harness("completed", exit_status=None)
+        record = self.launch("codex", model="gpt-5")
+        self.assertEqual(self.browser_signals(reader, until_exit=False), b"B")
+        Path(record["result_path"]).write_text("Output: checked\n")
+        self.call("complete", "--id", record["id"], "--outcome", "succeeded")
+        cleaned = self.call("cleanup", "--id", record["id"])
+        self.assertEqual(cleaned["cleanup"]["state"], "done")
+        self.assertFalse(Path(record["scratch"]).exists())
+        self.assertEqual(self.browser_signals(reader), b"T1$")
+
+    def test_browser_stop_controls(self):
+        self.regression_controls((
+            ("rollback-browser", "task.py", (("self.stop_browser(record)\n                    shutil.rmtree(scratch)",
+                "shutil.rmtree(scratch)"),),
+             "test_failed_browser_launch_stops_its_browser"),
+            ("cleanup-browser", "task.py", (("self.stop_browser(record)\n                scratch = Path(record",
+                "scratch = Path(record"),),
+             "test_cleanup_stops_running_task_browser"),
+        ))
 
 
 if __name__ == "__main__":

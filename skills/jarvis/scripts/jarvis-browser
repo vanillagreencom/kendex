@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -71,6 +72,44 @@ def set_downloads(profile, downloads):
         raise
 
 
+def stop_profile(profile):
+    """Stop every process running on PROFILE; return the failure's cause, or None once none runs."""
+    # A browser started in its own session or service unit keeps no tie to
+    # its launcher; the --user-data-dir argument each launch passes is what
+    # names its profile. ps joins argv with spaces, so it matches between spaces.
+    argument = " --user-data-dir=" + str(profile) + " "
+
+    def holders():
+        try:
+            listed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=", "-o", "args="], stdin=subprocess.DEVNULL,
+                                    capture_output=True, text=True, errors="replace", timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if listed.returncode:
+            return None
+        return [int(row.split(None, 1)[0]) for row in listed.stdout.splitlines()
+                if argument in " " + row.strip() + " "]
+
+    pids = holders()
+    # SIGTERM lets Chromium shut down cleanly; SIGKILL ends one that does not.
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        if pids is None:
+            return "process-unread"
+        if not pids:
+            return None
+        for pid in pids:
+            try:
+                os.kill(pid, signum)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return "signal-refused"
+        deadline = time.monotonic() + 1
+        while (pids := holders()) and time.monotonic() < deadline:
+            time.sleep(0.05)
+    return "process-unread" if pids is None else "still-running" if pids else None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, epilog=(
         "Platform: Linux and macOS. JARVIS_BROWSER_PROFILE: required absolute assistant profile. "
@@ -80,7 +119,9 @@ def main():
         "JARVIS_BROWSER_CLASS: optional window class, the Wayland app id on Linux. "
         "The plain invocation is the service form: the browser replaces this process as the unit's main process. "
         "Use --detach from a terminal, not from a service unit. "
-        "The --shim launchers use --detach."))
+        "The --shim launchers use --detach. "
+        "--stop exits 0 once no process runs on the profile, and 2 with stop=failed cause=KEY where one may still run: "
+        "process-unread, signal-refused or still-running."))
     parser.add_argument("url", nargs="?", help="URL to open; required unless a report flag is given")
     parser.add_argument("--detach", action="store_true",
                         help="terminal form: check the request, then start the browser in its own session with no output "
@@ -90,6 +131,9 @@ def main():
                         "for the requested profile's live debugging endpoint")
     report.add_argument("--shim", action="store_true",
                         help="print a directory whose xdg-open, x-www-browser and www-browser open their URL here")
+    report.add_argument("--stop", action="store_true",
+                        help="stop every browser running on the profile, however it was started: SIGTERM, "
+                             "then SIGKILL to one still running a second later")
     args = parser.parse_args()
     if sys.platform not in ("linux", "darwin"):
         parser.exit(2, "jarvis-browser: platform=unsupported\n")
@@ -103,11 +147,16 @@ def main():
     if args.shim:
         print(Path(__file__).resolve().parent / "browser-shim")
         return
-    if args.url is None and not args.port:
+    if args.url is None and not (args.port or args.stop):
         parser.error("a URL is required to launch the browser")
     profile = Path(os.environ.get("JARVIS_BROWSER_PROFILE", ""))
     if not profile.is_absolute():
         parser.exit(2, "jarvis-browser: setting=JARVIS_BROWSER_PROFILE\nSupply an absolute assistant-owned profile path.\n")
+    if args.stop:
+        cause = stop_profile(profile)
+        if cause:
+            parser.exit(2, "jarvis-browser: stop=failed cause=" + cause + "\n")
+        return
     if args.port:
         try:
             print(profile_port(profile))
