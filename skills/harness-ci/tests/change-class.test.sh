@@ -1897,6 +1897,177 @@ no head parse|a head the settings reader refuses|  if ! head_values="$(settings_
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
 
+# A consumer's kendex.toml alone is small, with the light-ci record, at
+# most: every later rule still judges it, and a source catalog's manifest,
+# one whose bot-instructions render does not match the outputs an end
+# commits, or one that is not a regular file, keeps the configuration
+# refusal. Every base installs the bot-instructions copy whose check the
+# admission runs. The configured base renders its review-bot file from the
+# manifest with that copy, so an edit outside the [bot-instructions] table
+# can move the render, through a derived exclusion, and one beside it can
+# leave it alone.
+manifest_repo="$(new_repo change-class-manifest)"
+printf 'schema = 7\n\n[skills.demo]\nsource = "cat"\n' >"$manifest_repo/kendex.toml"
+mkdir -p "$manifest_repo/.agents/skills/bot-instructions/schemas"
+cp "$BOT_INSTRUCTIONS_PACKAGE/SKILL.md" "$manifest_repo/.agents/skills/bot-instructions/"
+cp "$BOT_INSTRUCTIONS_PACKAGE/schemas/renders.md" "$manifest_repo/.agents/skills/bot-instructions/schemas/"
+cp -R "$BOT_INSTRUCTIONS_PACKAGE/scripts" "$manifest_repo/.agents/skills/bot-instructions/"
+commit_paths "$manifest_repo" 'a consumer manifest' seed.txt
+manifest_base="$(git -C "$manifest_repo" rev-parse HEAD)"
+printf '[env]\nHARNESS_CI_STANDARD_PATHS = "kendex.toml"\n' >"$manifest_repo/kendex.settings.toml"
+git -C "$manifest_repo" add -A
+git -C "$manifest_repo" commit -q -m 'the repository keeps its manifest on the full run'
+manifest_standard="$(git -C "$manifest_repo" rev-parse HEAD)"
+git -C "$manifest_repo" checkout -q -B manifest-case "$manifest_base"
+printf 'is_source_catalog = true\n' >>"$manifest_repo/kendex.toml"
+git -C "$manifest_repo" commit -q -am 'a source catalog manifest'
+manifest_catalog="$(git -C "$manifest_repo" rev-parse HEAD)"
+git -C "$manifest_repo" checkout -q -B manifest-case "$manifest_base"
+mkdir -p "$manifest_repo/.claude/agents" "$manifest_repo/.codex/agents"
+printf 'x\n' >"$manifest_repo/.claude/agents/a.md"
+printf 'x\n' >"$manifest_repo/.codex/agents/a.md"
+printf '# fixture\n\n## Code Review Rules\n\nHand-written.\n' >"$manifest_repo/AGENTS.md"
+# Its own writer inventory: a derived exclusion of a tree it lacks is dead
+# config the render refuses.
+printf '%s\n' '[".claude/agents/a.md",".codex/agents/a.md",".kendex-generated.json"]' \
+  >"$manifest_repo/.kendex-generated.json"
+cat >"$manifest_repo/kendex.toml" <<'MANIFEST'
+schema = 7
+
+[install]
+harnesses = ["claude"]
+
+[skills.demo]
+source = "cat"
+
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "fixture is a repository whose manifest a lane's check renders from."
+
+[bot-instructions.bots]
+codex = true
+
+[bot-instructions.exclusions]
+derive_render = true
+MANIFEST
+git -C "$manifest_repo" add -A
+# adopt takes the hand-written region and reports what render migrates.
+"$BOT_INSTRUCTIONS_PACKAGE/scripts/bot-instructions" --repo "$manifest_repo" \
+  --spec "$manifest_repo/.agents/skills/bot-instructions" adopt >/dev/null 2>&1 || true
+"$BOT_INSTRUCTIONS_PACKAGE/scripts/bot-instructions" --repo "$manifest_repo" \
+  --spec "$manifest_repo/.agents/skills/bot-instructions" render >/dev/null
+git -C "$manifest_repo" add -A
+git -C "$manifest_repo" commit -q -m 'a consumer that renders its review-bot file'
+manifest_configured="$(git -C "$manifest_repo" rev-parse HEAD)"
+# An installed copy whose check differs from the classifier's sibling, as a
+# consumer's copy from an older release does: it reports a finding on a
+# manifest line the sibling's check accepts.
+manifest_installed="$manifest_repo/.agents/skills/bot-instructions/scripts"
+git -C "$manifest_repo" mv -- "${manifest_installed#"$manifest_repo"/}/bot-instructions" \
+  "${manifest_installed#"$manifest_repo"/}/bot-instructions.real"
+cat >"$manifest_installed/bot-instructions" <<'SKEWED'
+#!/usr/bin/env bash
+if git -C "$2" show :kendex.toml | grep -q '^# a line the installed copy refuses'; then
+  echo 'toml-schema: kendex.toml: a line the installed copy refuses'
+  exit 1
+fi
+exec "$(dirname "$0")/bot-instructions.real" "$@"
+SKEWED
+chmod +x "$manifest_installed/bot-instructions"
+git -C "$manifest_repo" add -A
+git -C "$manifest_repo" commit -q -m 'a consumer whose installed checker differs from the sibling'
+manifest_skewed="$(git -C "$manifest_repo" rev-parse HEAD)"
+git -C "$manifest_repo" checkout -q -B manifest-case "$manifest_configured"
+git -C "$manifest_repo" rm -q -r -- .agents/skills/bot-instructions
+git -C "$manifest_repo" commit -q -m 'a consumer whose copy of the package is gone'
+manifest_uninstalled="$(git -C "$manifest_repo" rev-parse HEAD)"
+manifest_refused='class=standard measured=true cause=configuration-source path=kendex.toml glob=kendex.toml'
+manifest_summary='summary = "fixture is a repository whose manifest a lane'"'"'s check renders from."'
+manifest_harnesses='harnesses = ["claude"]~harnesses = ["claude", "codex"]'
+# label | base | event | edit: `lines N` appends N comment lines, a
+# manifest the render still parses, `text T` appends T, `swap A~B` replaces
+# the one line A with B, `link` replaces the file with a symlink, `delete`
+# removes it | the class line after `class: ` | the light-ci line after
+# `light-ci: ` | the admission line after `admitted=false `; `-` for no line
+# The one line A of the manifest replaced with B, for a `swap A~B` edit.
+manifest_swap() { # A~B
+  LINE="${1%%~*}" WITH="${1#*~}" awk '$0 == ENVIRON["LINE"] { hits++; print ENVIRON["WITH"]; next }
+    { print } END { exit hits == 1 ? 0 : 3 }' "$manifest_repo/kendex.toml" >"$SANDBOX/manifest-swap" ||
+    { echo "FAIL: '${1%%~*}' does not occur once in the manifest" >&2; exit 1; }
+  mv -- "$SANDBOX/manifest-swap" "$manifest_repo/kendex.toml"
+}
+# Commits the row's EDIT on BASE, the manifest_ variable it names.
+manifest_case() { # LABEL BASE EDIT
+  local from_var="manifest_$2" added
+  git -C "$manifest_repo" checkout -q -B manifest-case "${!from_var}"
+  case "$3" in
+    lines\ *)
+      for ((added = 1; added <= ${3#lines }; added++)); do printf '# note %s\n' "$added"; done \
+        >>"$manifest_repo/kendex.toml" ;;
+    text\ *) printf '%s\n' "${3#text }" >>"$manifest_repo/kendex.toml" ;;
+    swap\ *) manifest_swap "${3#swap }" ;;
+    link) rm -- "${manifest_repo:?}/kendex.toml" && ln -s seed.txt "$manifest_repo/kendex.toml" ;;
+    delete) rm -- "${manifest_repo:?}/kendex.toml" ;;
+  esac
+  git -C "$manifest_repo" add -A
+  git -C "$manifest_repo" commit -q -m "$1"
+}
+# SCRIPT's class, light-ci and admission lines for the committed case.
+manifest_answer() { # SCRIPT EVENT BASE
+  local from_var="manifest_$3" err light_got note_got
+  err=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+    -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS "$1" --repo "$manifest_repo" \
+    --event "$2" --base "${!from_var}" --head HEAD 2>&1 >/dev/null) || true
+  light_got=$(sed -n 's/^light-ci: //p' <<<"$err")
+  note_got=$(sed -n 's/^manifest-admission: admitted=false //p' <<<"$err")
+  printf '%s | %s | %s\n' "$(sed -n 's/^class: //p' <<<"$err")" "${light_got:--}" "${note_got:--}"
+}
+manifest_rows=0
+while IFS='|' read -r label from event edit class light note; do
+  manifest_rows=$((manifest_rows + 1))
+  manifest_case "$label" "$from" "$edit"
+  assert_eq "$label" "$class | $light | $note" "$(manifest_answer "$CHANGE_CLASS" "$event" "$from")"
+done <<ROWS
+a consumer manifest edit|base|merge_group|lines 2|class=small measured=true cause=consumer-manifest lines=2|kind=manifest|-
+a consumer manifest edit past the small ceiling|base|pull_request|lines 151|class=standard measured=true cause=production-past-small production=151|-|-
+a manifest the repository's standard paths name|standard|merge_group|lines 2|class=standard measured=true cause=repository-standard-path path=kendex.toml glob=kendex.toml|-|-
+a source catalog key at the head, quoted and spaced|base|merge_group|text   "is_source_catalog"=false|$manifest_refused|-|cause=source-catalog side=head
+a source catalog key at the base|catalog|merge_group|lines 2|$manifest_refused|-|cause=source-catalog side=base
+a bot-instructions table the head adds|base|merge_group|text  [bot-instructions]|$manifest_refused|-|cause=bot-instructions-render side=head
+a skills row beside an unchanged bot-instructions table|configured|merge_group|swap [skills.demo]~[skills.other]|class=small measured=true cause=consumer-manifest lines=2|kind=manifest|-
+a bot-instructions value no enabled bot renders|configured|merge_group|swap $manifest_summary~summary = "fixture is a repository whose summary changed."|class=small measured=true cause=consumer-manifest lines=2|kind=manifest|-
+a bot-instructions value the render reads|configured|merge_group|swap derive_render = true~derive_render = false|$manifest_refused|-|cause=bot-instructions-render side=head
+a harness outside the table that moves a derived exclusion|configured|pull_request|swap $manifest_harnesses|$manifest_refused|-|cause=bot-instructions-render side=head
+a head that deletes the manifest its outputs render from|configured|merge_group|delete|$manifest_refused|-|cause=bot-instructions-render side=head
+a line the installed checker refuses and the sibling accepts|skewed|merge_group|text # a line the installed copy refuses|$manifest_refused|-|cause=bot-instructions-render side=head
+an end that installs no bot-instructions copy|uninstalled|merge_group|swap [skills.demo]~[skills.other]|$manifest_refused|-|cause=bot-instructions-unread side=base detail=checker-absent
+a head manifest that is a symlink|base|merge_group|link|$manifest_refused|-|cause=manifest-not-regular side=head
+a push event|base|push|lines 2|$manifest_refused|-|cause=unsupported-event event=push
+ROWS
+require_rows change-class-manifest "$manifest_rows"
+
+# Must-fail controls, `;`-separated since a line holds `|`: without the
+# head's render check, a head that moves the review-bot render, or deletes
+# the manifest it renders from, stands the lanes down; with the classifier's
+# sibling as the checker, a line the consumer's own copy refuses does.
+manifest_controls=0
+while IFS=';' read -r control from edit line replacement; do
+  manifest_controls=$((manifest_controls + 1))
+  manifest_case "$control" "$from" "$edit"
+  manifest_control="$(mutant "manifest-control-$manifest_controls" change-class "$line" "$replacement")"
+  assert_eq "must-fail: $control" \
+    'class=small measured=true cause=consumer-manifest | kind=manifest | -' \
+    "$(manifest_answer "$manifest_control" merge_group "$from" | sed 's/ lines=[0-9]*//')"
+done <<CONTROLS
+no head render check admits a harness that moves the render;configured;swap $manifest_harnesses;  manifest_render_check head "\$head_rev" || return 1;-
+no head render check admits a head that deletes the manifest;configured;delete;  manifest_render_check head "\$head_rev" || return 1;-
+the sibling as the checker admits a line the installed copy refuses;skewed;text # a line the installed copy refuses;  MANIFEST_CHECKER="\$tree/.agents/skills/bot-instructions";  MANIFEST_CHECKER="$BOT_INSTRUCTIONS_PACKAGE"
+CONTROLS
+require_rows change-class-manifest-controls "$manifest_controls"
+
 # A lane and CI classify one diff alike. CI's classify step may carry
 # ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
 # item-tier or dev-validate-run through orch's lib/change-class.sh, which the

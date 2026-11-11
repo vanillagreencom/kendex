@@ -160,7 +160,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local class="$1" docs="$2" EVENT="$3" REPO="$4" HEAD="$5"
   local queue_only="$6" work="$7" lanes_from="$8" queue_default="${9:-false}"
   local queue_inputs="${10:-}"
-  local declaration="" lanes_root="" judged_root="" per_push
+  local declaration="" lanes_root="" judged_root="" per_push light
   local base_lane_count declaration_comparison no_changed_paths unclaimed_path
   local render_base render_head path index delta name claimed
   local lane_hits=() lane_changed=() render_hits=()
@@ -184,6 +184,9 @@ fi
 # change-class's per-push record. An absent line stands nothing down.
 per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
   die "cause=queue-record-unreadable" "could not read change-class's per-push line"
+# change-class's light-ci record, likewise.
+light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
+  die "cause=light-record-unreadable" "could not read change-class's light-ci line"
 
 declaration=""
 if [ -n "$lanes_from" ]; then
@@ -241,6 +244,24 @@ case "$lane_state" in
     printf '::warning title=lane declaration %s::%s %s; no lane verdict is published\n' \
       "$lane_state" "$declaration" "${declaration_note:-}" ;;
 esac
+
+# A consumer manifest's small class runs only the base lanes claiming a
+# changed path, through the claim pass below; with none, it runs no lane.
+# The record counts only beside the class it was printed for.
+if [ "$light" = manifest ] && [ "$class" = small ] && [ "$lanes_cause" != full-run ]; then
+  lanes=false lanes_cause=manifest
+  if [ "$lane_state" = malformed ]; then
+    lanes=true lanes_cause=manifest-declaration-unreadable
+  elif [ "$lane_state" = read ]; then
+    while IFS= read -r path; do
+      index=0
+      while [ "$index" -lt "$lane_count" ]; do
+        ! ci_lanes_claims "$index" "$path" || lanes=true lanes_cause=manifest-claim
+        index=$((index + 1))
+      done
+    done <"${work:?}/paths"
+  fi
+fi
 
 # This local comparison needs no decision record: branch claims cannot
 # stand down checks for other paths, since the author controls those claims.

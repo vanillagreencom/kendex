@@ -65,9 +65,12 @@
 #                      the remaining skip conditions follow
 #                      skills/harness-ci/references/wiring.md
 #                      § Per-lane verdicts.
-#   lanes_cause        why: render, trivial, docs-only or queue-only where
-#                      lanes=false; full-run on schedule and
-#                      workflow_dispatch; declared-text where declared product
+#   lanes_cause        why: render, trivial, docs-only, manifest or
+#                      queue-only where lanes=false; full-run on schedule
+#                      and workflow_dispatch; manifest-claim where a
+#                      declared lane claims a consumer manifest's changed
+#                      path; manifest-declaration-unreadable where its lane
+#                      declaration cannot be read; declared-text where declared product
 #                      text keeps its checks; render-claim where a declared lane
 #                      claims a path a render changes;
 #                      queue-only-reader-absent where a render lacks the
@@ -303,9 +306,11 @@ fi
 
 # Whether the lanes run. A `render` diff was proved by re-rendering it, a
 # `trivial` one is inside its allowlist and line ceiling, and a docs-only one
-# changes no path outside the documentation set at any size. Declared text
-# keeps its owning checks through the shared producer. Every other diff
-# runs the lanes.
+# changes no path outside the documentation set at any size. A consumer
+# manifest's small class with the light-ci record runs only the lanes its
+# claims reach. Declared text keeps its owning checks through the shared
+# producer. The queue-only default and the nightly run follow the producer's
+# rules; every other diff runs the lanes.
 # A separately checked-out default branch can predate the installed producer
 # while the action already carries it. With no decision, run every lane.
 if declare -F change_class_lanes >/dev/null; then

@@ -252,6 +252,33 @@
 # A hand edit counts the same as the engine's: that line decides no render or
 # classifier input. The render path still verifies the head. Product paths
 # use the existing size rules without render verification.
+#
+# A consumer's kendex.toml, on --event pull_request or merge_group, where it
+# is the only changed path, a regular file at every endpoint that holds it,
+# no line at either endpoint starts with the key is_source_catalog, and
+# bot-instructions renders at each endpoint the outputs that endpoint
+# commits, leaves only the configuration-source refusal behind. That render
+# is `check --staged` over an index read from the endpoint, run by the base
+# commit's installed .agents/skills/bot-instructions out of a private
+# checkout of that commit, as the queue selector is, with that copy as
+# --spec: a change to the manifest alone leaves the copy byte-identical, so
+# it is the checker a lane's bot-instructions check runs. Both endpoints
+# are asked, one without the manifest included, which that check reports
+# as a finding, so a diff that adds or deletes the manifest keeps the
+# refusal; passing at both against the same committed outputs, the edit
+# changes nothing a lane's bot-instructions check renders. Every later rule judges it,
+# HARNESS_CI_STANDARD_PATHS included, and the size rules with a floor of
+# small: trivial, micro and small answer `small cause=consumer-manifest
+# lines=<n>`, and past the small ceiling it is standard. That answer also
+# prints one `light-ci: kind=manifest` line after the per-push line, which
+# lib/change-class.sh reads to stand lanes down: ../references/wiring.md
+# § Per-lane verdicts. A refused candidate prints one `manifest-admission:
+# admitted=false cause=<c>` line: unsupported-event, or, with
+# side=base|head, manifest-not-regular, manifest-unreadable, source-catalog,
+# bot-instructions-render, where that check reported findings, or
+# bot-instructions-unread, where it could not answer, with
+# detail=checkout-failed or detail=checker-absent where the base's copy
+# could not be run.
 # A harness's own registry files refuse every narrow class but
 # render, the files it executes as configuration: its hooks, its permissions,
 # and the MCP servers it may run. kendex writes keys in those and never the
@@ -405,6 +432,8 @@ SETTINGS_ADMITTED=""
 SETTINGS_FILES=""
 SETTINGS_REFUSAL=""
 SETTINGS_FILE_KEYS=""
+# An admitted consumer manifest, which answers no narrower class than small.
+MANIFEST_ADMITTED=""
 
 usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
 
@@ -476,12 +505,22 @@ harness_err="$work/harness-stderr"
 # paths alone, so every answer for that change but trivial, a later read
 # failure included, is that refusal, measured, with the answer it replaced
 # on the admission line that settings_note, with the admission below, prints.
+#
+# An admitted manifest's narrow answers are its own small, the one class
+# the light-ci line marks for the lanes.
 answer() { # CLASS FIELDS [measured]
-  local queue_line per_push_line rule
+  local queue_line per_push_line rule light_line=""
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
     rule="${2%% *}"
     settings_note "cause=class-$1 rule=${rule#cause=}"
     set -- standard "$SETTINGS_REFUSAL" measured
+  fi
+  if [ -n "$MANIFEST_ADMITTED" ]; then
+    case "$1" in
+      trivial | micro | small)
+        set -- small "cause=consumer-manifest lines=$total"
+        light_line="light-ci: kind=manifest" ;;
+    esac
   fi
   measured=true
   [ "$1" != standard ] || measured=false
@@ -500,7 +539,8 @@ answer() { # CLASS FIELDS [measured]
       "the docs reader did not complete declaration discovery"
     # harness-only owns the resolved endpoints; render move checks read them.
     # The two records below are the ones the action's log carries.
-    { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"; } >"$work/class-log"
+    { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"
+      [ -z "$light_line" ] || printf '%s\n' "$light_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
       "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" >&2
   fi
@@ -513,6 +553,7 @@ answer() { # CLASS FIELDS [measured]
     fi
   fi
   printf '%s\n%s\n' "$queue_line" "$per_push_line" >&2
+  [ -z "$light_line" ] || printf '%s\n' "$light_line" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
@@ -1132,9 +1173,87 @@ settings_admission() {
   SETTINGS_ADMITTED="settings=${files//$'\n'/,} keys=${keys:--}"
 }
 
+# The manifest admission the header states, which owns the rule. Returns 1,
+# with the admission line, where it refuses the change.
+manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
+# The checker the header names, at MANIFEST_CHECKER: the base commit's
+# installed bot-instructions, out of a private checkout of that commit, as
+# queue_selection runs the base's own command, so neither the judged tree nor
+# this script's own kendex chooses the code that judges the manifest.
+MANIFEST_CHECKER=""
+manifest_checker() {
+  local tree="$work/manifest-checker" log="$work/manifest-checker-log"
+  if [ -z "$base_rev" ] || ! private_checkout "$tree" "$base_rev" "$log"; then
+    cat -- "$log" >&2 2>/dev/null || true
+    manifest_note "cause=bot-instructions-unread side=base detail=checkout-failed"
+    return 1
+  fi
+  MANIFEST_CHECKER="$tree/.agents/skills/bot-instructions"
+  if [ ! -f "$MANIFEST_CHECKER/scripts/bot-instructions" ] ||
+    [ ! -x "$MANIFEST_CHECKER/scripts/bot-instructions" ]; then
+    manifest_note "cause=bot-instructions-unread side=base detail=checker-absent"
+    return 1
+  fi
+}
+# Whether bot-instructions renders, from REV's tree, the outputs REV commits:
+# MANIFEST_CHECKER's own `check --staged` over an index read from REV, with
+# the environment queue_selection gives the base's command.
+manifest_render_check() { # SIDE REV
+  local index="$work/manifest-index-$1" status=0
+  GIT_INDEX_FILE="$index" git -C "$repo" read-tree "$2" >/dev/null 2>&1 || status=2
+  [ "$status" -ne 0 ] ||
+    env -i PATH="$PATH" HOME="${HOME:-}" GIT_INDEX_FILE="$index" \
+      "$MANIFEST_CHECKER/scripts/bot-instructions" --repo "$repo" --spec "$MANIFEST_CHECKER" \
+      --staged check >"$work/manifest-check-$1" 2>&1 </dev/null || status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) cat -- "$work/manifest-check-$1" >&2; manifest_note "cause=bot-instructions-render side=$1" ;;
+    *)
+      [ ! -s "$work/manifest-check-$1" ] || cat -- "$work/manifest-check-$1" >&2
+      manifest_note "cause=bot-instructions-unread side=$1" ;;
+  esac
+  return 1
+}
+manifest_admission() {
+  local side rev status
+  case "$event" in
+    pull_request | merge_group) ;;
+    *) manifest_note "cause=unsupported-event event=$event"; return 1 ;;
+  esac
+  for side in base head; do
+    rev="$base_rev"
+    [ "$side" = base ] || rev="$head_rev"
+    status=0
+    rev_file "$rev" kendex.toml "$work/manifest-$side" || status=$?
+    case "$status" in
+      0) ;;
+      # An endpoint without the manifest holds no catalog key; the render
+      # check below still asks it.
+      2) continue ;;
+      3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
+      *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
+    esac
+    status=0
+    grep -qE -- "^[[:space:]]*[\"']?is_source_catalog" "$work/manifest-$side" || status=$?
+    case "$status" in
+      0) manifest_note "cause=source-catalog side=$side"; return 1 ;;
+      1) ;;
+      *) manifest_note "cause=manifest-unreadable side=$side"; return 1 ;;
+    esac
+  done
+  manifest_checker || return 1
+  manifest_render_check base "$base_rev" || return 1
+  manifest_render_check head "$head_rev" || return 1
+  MANIFEST_ADMITTED=true
+}
+
 if path_class_matches before-render standard; then
   SETTINGS_REFUSAL="cause=$CHANGE_CLASS_PATH_CAUSE"
-  settings_admission || answer standard "$SETTINGS_REFUSAL" measured
+  if [ "$changed" = kendex.toml ]; then
+    manifest_admission || answer standard "$SETTINGS_REFUSAL" measured
+  else
+    settings_admission || answer standard "$SETTINGS_REFUSAL" measured
+  fi
 fi
 
 # Repository exclusions add to the shared list and precede every render and

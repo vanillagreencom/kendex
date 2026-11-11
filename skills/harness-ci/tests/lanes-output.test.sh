@@ -27,10 +27,23 @@ for root in default no-reader; do
 done
 mkdir -p "$SANDBOX/default/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$SANDBOX/default/$READER"
+# A declaration whose `check` lane claims the consumer manifest, and one no
+# reader can read.
+mkdir -p "$SANDBOX/manifest-claim/.github" "$SANDBOX/manifest-bad/.github"
+printf 'check src/* kendex.toml\nother elsewhere/*\nmac:nightly macos/*\n' \
+  >"$SANDBOX/manifest-claim/.github/ci-lanes.conf"
+printf 'Bad kendex.toml\n' >"$SANDBOX/manifest-bad/.github/ci-lanes.conf"
 
 repo="$(new_repo lanes-output)"
 mkdir -p "$repo/$(dirname "$READER")"
 cp "$CHANGE_CLASS" "$repo/$READER"
+# The manifest a manifest row replaces, and the installed bot-instructions
+# copy whose check its admission runs at both ends.
+printf 'schema = 7\n' >"$repo/kendex.toml"
+mkdir -p "$repo/.agents/skills/bot-instructions/schemas"
+cp "$BOT_INSTRUCTIONS_PACKAGE/SKILL.md" "$repo/.agents/skills/bot-instructions/"
+cp "$BOT_INSTRUCTIONS_PACKAGE/schemas/renders.md" "$repo/.agents/skills/bot-instructions/schemas/"
+cp -R "$BOT_INSTRUCTIONS_PACKAGE/scripts" "$repo/.agents/skills/bot-instructions/"
 commit_paths "$repo" baseline seed.txt
 # One base per state of the opt-back in the base commit's settings.
 base_with_settings() { # NAME SETTINGS — prints the base commit
@@ -75,12 +88,16 @@ verdicts() {
 # before the default does, and the local command then passes false.
 # LANE VERDICTS is the action's; `-` where no declaration is read.
 write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
-  local path
+  local path prefix
   git -C "$repo" checkout -q -B row "$2"
   git -C "$repo" clean -qfd
   for path in $3; do
     mkdir -p "$repo/$(dirname "$path")"
-    awk -v lines="$4" 'BEGIN { for (i=1; i<=lines; i++) print "line " i }' >"$repo/$path"
+    # A manifest stays a TOML document its review-bot check parses.
+    prefix=""
+    [ "$path" != kendex.toml ] || prefix="# "
+    awk -v lines="$4" -v prefix="$prefix" 'BEGIN { for (i=1; i<=lines; i++) print prefix "line " i }' \
+      >"$repo/$path"
   done
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$1"
@@ -123,6 +140,10 @@ reader-absent|pull_request|default|src/main.sh|21|no-reader|yes|true|queue-only-
 opted-back|pull_request|optback|src/main.sh|21|default|yes|true|small|false|lane_check=true,lane_other=false,lane_mac=false
 opted-back-queue-only|pull_request|undeclared|src/main.sh|21|default|yes|true|small|true|lane_check=true,lane_other=false,lane_mac=false
 blank-reason|pull_request|blank|src/main.sh|21|default|yes|false|queue-only|true|-
+manifest|merge_group|default|kendex.toml|3|default|yes|false|manifest|true|lane_check=false,lane_other=false,lane_mac=false
+manifest-claim|merge_group|default|kendex.toml|3|manifest-claim|yes|true|manifest-claim|true|lane_check=true,lane_other=false,lane_mac=false
+manifest-declaration-unreadable|merge_group|default|kendex.toml|3|manifest-bad|yes|true|manifest-declaration-unreadable|true|-
+manifest-past-small|merge_group|default|kendex.toml|151|default|yes|true|standard|true|lane_check=true,lane_other=true,lane_mac=false
 ROWS
 require_rows lanes-output "$rows"
 
@@ -329,5 +350,34 @@ for command in "$CHANGE_CLASS" "$legacy_control"; do
   assert_eq "an older library caller without declaration evidence: $command" \
     "$expected" "$answer exit=$status"
 done
+
+# The light-ci record stands lanes down beside the small class alone, the
+# one change-class prints it with. The control drops the class condition.
+printf 'light-ci: kind=manifest\n' >"$legacy_work/class-log"
+printf 'kendex.toml\n' >"$legacy_work/paths"
+: >"$legacy_work/outside"
+light_answers() { # COMMAND
+  local class
+  for class in small micro standard; do
+    (
+      shopt -s extglob
+      . "${1%/*}/lib/change-class.sh"
+      die() { printf '%s\n' "$1"; exit 2; }
+      change_class_lanes "$class" docs_only=false merge_group "$repo" HEAD true "$legacy_work" ""
+      printf '%s lanes=%s lanes_cause=%s\n' "$class" "$lanes" "$lanes_cause"
+    )
+  done
+}
+assert_eq "the light-ci record stands lanes down beside small alone" \
+  "small lanes=false lanes_cause=manifest
+micro lanes=true lanes_cause=micro
+standard lanes=true lanes_cause=standard" "$(light_answers "$CHANGE_CLASS")"
+light_control="$(mutant light-any-class lib/change-class.sh \
+  'if [ "$light" = manifest ] && [ "$class" = small ] && [ "$lanes_cause" != full-run ]; then' \
+  'if [ "$light" = manifest ] && [ "$lanes_cause" != full-run ]; then')"
+assert_eq "must-fail: the record read beside any class stands micro and standard down" \
+  "small lanes=false lanes_cause=manifest
+micro lanes=false lanes_cause=manifest
+standard lanes=false lanes_cause=manifest" "$(light_answers "$light_control")"
 
 report lanes-output
