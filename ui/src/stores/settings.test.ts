@@ -66,7 +66,14 @@ describe("settings store", () => {
       backgroundFailureAnnounced: false,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.clearAllMocks();
     vi.mocked(commands.scanMachine).mockResolvedValue({

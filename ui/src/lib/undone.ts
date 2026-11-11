@@ -1,21 +1,9 @@
 // The lines a write's answer accounts for, and why that account is short.
 // They are Rust's; this side only puts them on the screen.
 import { toast } from "sonner";
-import { namesInWords, UNFINISHED_STEP, unfinishedTitle } from "@/lib/copy";
+import { UNFINISHED_STEP, unfinishedTitle } from "@/lib/copy";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useProblemsStore } from "@/stores/problems";
-
-/** One write whose later step failed: what it was about, and why. */
-interface Unfinished {
-  subject: string;
-  why: string;
-}
-
-/** The failed-step accounts the error dialog is showing, and the dialog
- *  that shows them. Read only while that same dialog is still up: once it
- *  is dismissed or another error replaces it, it says nothing about what
- *  is on screen. */
-let shown: { dialog: unknown; accounts: Unfinished[] } | null = null;
 
 /** Say the step behind a landed write that failed — `AuditView.unfinished`,
  *  on the answer or on the view it nests — beside what the surface already
@@ -27,42 +15,19 @@ let shown: { dialog: unknown; accounts: Unfinished[] } | null = null;
  *  person just took, and because the commit offer waits behind that dialog
  *  (`asks-first.ts`): the person reads what landed and what did not before
  *  being asked what to do with the files, and leaving or refusing the
- *  commit afterwards takes neither back.
- *
- *  A run over several places or items answers once per write, and the
- *  error dialog shows one thing at a time. An account arriving while the
- *  dialog still shows an earlier one joins it rather than replacing it,
- *  so every write whose later step failed stays named. */
+ *  commit afterwards takes neither back. A run over several writes keeps
+ *  each one's account through the dialog's own join rule
+ *  (`useProblemsStore`). */
 export function sayUnfinished(
   subject: string,
   unfinished: string | null | undefined,
 ): void {
   if (unfinished === null || unfinished === undefined) return;
-  const problems = useProblemsStore.getState();
-  const said: Unfinished = {
-    subject,
-    why: unfinished === "" ? NO_REASON_GIVEN : unfinished,
-  };
-  const accounts =
-    shown !== null && problems.dialog === shown.dialog
-      ? [...shown.accounts, said]
-      : [said];
-  problems.showError({
-    title: unfinishedTitle(
-      namesInWords([...new Set(accounts.map((one) => one.subject))]),
-    ),
-    message: unfinishedReasons(accounts),
+  useProblemsStore.getState().showError({
+    title: unfinishedTitle(subject),
+    message: unfinished === "" ? NO_REASON_GIVEN : unfinished,
     steps: [UNFINISHED_STEP],
   });
-  shown = { dialog: useProblemsStore.getState().dialog, accounts };
-}
-
-/** One reason where every write failed for the same one, else each
- *  subject beside its own. On one line: the dialog does not keep breaks. */
-function unfinishedReasons(accounts: Unfinished[]): string {
-  const reasons = new Set(accounts.map((one) => one.why));
-  if (reasons.size === 1) return accounts[0].why;
-  return accounts.map((one) => `${one.subject}: ${one.why}`).join("; ");
 }
 
 /** Show the account, every line of it, uncut. Nothing below the window

@@ -302,7 +302,14 @@ describe("updates store", () => {
     // state nothing in `read` tells apart from a settled one.
     expect(useUpdatesStore.getState().read.status).toBe("landed");
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
 
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
@@ -334,7 +341,14 @@ describe("updates store", () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, read: READ_LANDED });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "error",
@@ -390,7 +404,14 @@ describe("updates store", () => {
   // silent about a write that never happened.
   it("surfaces an update whose transport failed instead of staying silent", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.packageUpdate).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -416,7 +437,14 @@ describe("updates store", () => {
   // other.
   it("says a step behind a landed update that failed, beside the update", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
@@ -455,7 +483,14 @@ describe("updates store", () => {
     const checking = useUpdatesStore.getState().check();
 
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     await useUpdatesStore.getState().updateOne(row({ pinned: true }));
 
@@ -479,7 +514,14 @@ describe("updates store", () => {
   // that landed. The rows say they are last-known, which is the truth.
   it("reports an update that committed even when the read behind it fails", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.packageUpdate).mockResolvedValue({
       status: "ok",
@@ -566,7 +608,14 @@ describe("updates store", () => {
     expect(rows.length).toBeGreaterThan(0);
     for (const [_what, subject, command, error] of rows) {
       useProblemsStore.setState({
-        dialog: { open: false, title: "", steps: [], actions: [] },
+        dialog: {
+          open: false,
+          title: "",
+          steps: [],
+          actions: [],
+          joined: [],
+          run: null,
+        },
       });
       machineAnswers();
       vi.mocked(command).mockResolvedValue({ status: "error", error } as never);
@@ -608,7 +657,14 @@ describe("updates store", () => {
     const kept = [row({})];
     useUpdatesStore.setState({ rows: kept, read: READ_LANDED });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.updateSetIgnored).mockResolvedValue({
       status: "error",

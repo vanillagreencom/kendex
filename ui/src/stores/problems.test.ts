@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { AuditView } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { deriveProblems } from "./problems";
+import { deriveProblems, useProblemsStore } from "./problems";
 
 const globalScope = { scope: "global" as const };
 const projectScope = { scope: "project" as const, root: "/home/dana/api" };
@@ -75,5 +75,112 @@ describe("deriveProblems", () => {
       "manifest-invalid",
       "scan-failure",
     ]);
+  });
+});
+
+describe("the error dialog's join rule", () => {
+  beforeEach(() => {
+    useProblemsStore.getState().closeError();
+  });
+
+  const fail = (title: string) =>
+    useProblemsStore.getState().showError({ title, message: `${title} why` });
+  const inOneRun = (work: () => Promise<void>) =>
+    useProblemsStore.getState().inOneRun(work);
+
+  // Every state a failure can arrive in: with or without a run, over a
+  // closed dialog, over one the run opened, and over one the run did not.
+  it("joins a failure only to the dialog its own run opened", async () => {
+    const rows: {
+      name: string;
+      act: () => Promise<void>;
+      shown: string[];
+    }[] = [
+      {
+        name: "outside a run, over a closed dialog",
+        act: async () => fail("a"),
+        shown: ["a"],
+      },
+      {
+        name: "outside a run, over an open dialog",
+        act: async () => {
+          fail("a");
+          fail("b");
+        },
+        shown: ["b"],
+      },
+      {
+        name: "in a run, over a dialog it opened",
+        act: () =>
+          inOneRun(async () => {
+            fail("a");
+            fail("b");
+            fail("c");
+          }),
+        shown: ["a", "b", "c"],
+      },
+      {
+        name: "in a run, over a dialog up before it began",
+        act: async () => {
+          fail("a");
+          await inOneRun(async () => {
+            fail("b");
+            fail("c");
+          });
+        },
+        shown: ["b", "c"],
+      },
+      {
+        name: "in a run, after its dialog was dismissed",
+        act: () =>
+          inOneRun(async () => {
+            fail("a");
+            useProblemsStore.getState().closeError();
+            fail("b");
+          }),
+        shown: ["b"],
+      },
+      {
+        name: "in a run inside a run",
+        act: () =>
+          inOneRun(async () => {
+            fail("a");
+            await inOneRun(async () => fail("b"));
+            fail("c");
+          }),
+        shown: ["a", "b", "c"],
+      },
+      {
+        name: "after the run ended",
+        act: async () => {
+          await inOneRun(async () => fail("a"));
+          fail("b");
+        },
+        shown: ["b"],
+      },
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      useProblemsStore.getState().closeError();
+      await row.act();
+      const { dialog } = useProblemsStore.getState();
+      expect(dialog.open, row.name).toBe(true);
+      expect(
+        [dialog, ...dialog.joined].map((one) => [one.title, one.message]),
+        row.name,
+      ).toEqual(row.shown.map((title) => [title, `${title} why`]));
+    }
+  });
+
+  it("ends the run when its work throws", async () => {
+    await expect(
+      inOneRun(async () => {
+        throw new Error("transport");
+      }),
+    ).rejects.toThrow("transport");
+    fail("a");
+    fail("b");
+
+    expect(useProblemsStore.getState().dialog.joined).toEqual([]);
   });
 });

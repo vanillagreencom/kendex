@@ -60,7 +60,14 @@ describe("updates store: edited places", () => {
   // carry on to their success paths over an IPC failure.
   it("a fork whose transport failed does not proceed as success", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.packageFork).mockRejectedValue(new Error("ipc down"));
     vi.mocked(commands.updatesOverview).mockResolvedValue({
@@ -85,7 +92,14 @@ describe("updates store: edited places", () => {
 
   it("a discard whose transport failed surfaces the failure", async () => {
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.mocked(commands.applyDiscardEdits).mockRejectedValue(
       new Error("ipc down"),
@@ -149,7 +163,14 @@ describe("updates store: edited places", () => {
     expect(writes.length).toBeGreaterThan(0);
     for (const write of writes) {
       useProblemsStore.setState({
-        dialog: { open: false, title: "", steps: [], actions: [] },
+        dialog: {
+          open: false,
+          title: "",
+          steps: [],
+          actions: [],
+          joined: [],
+          run: null,
+        },
       });
       write.answer();
 
@@ -170,7 +191,14 @@ describe("updates store: edited places", () => {
   it("refuses to discard edits from rows a failed check left behind", async () => {
     useUpdatesStore.setState({ read: READ_PENDING });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
 
     await takeNewVersion(
@@ -296,7 +324,14 @@ describe("updates store: installing beside an edited place", () => {
       read: READ_LANDED,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.clearAllMocks();
     vi.mocked(commands.updatesOverview).mockResolvedValue({

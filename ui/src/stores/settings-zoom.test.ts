@@ -78,7 +78,14 @@ function freshZoomStore() {
   webviewAt = settings.zoom ?? 100;
   useSettingsStore.setState({ settings, zoom: webviewAt, capabilities: [] });
   useProblemsStore.setState({
-    dialog: { open: false, title: "", steps: [], actions: [] },
+    dialog: {
+      open: false,
+      title: "",
+      steps: [],
+      actions: [],
+      joined: [],
+      run: null,
+    },
   });
   vi.clearAllMocks();
   windowTakes();

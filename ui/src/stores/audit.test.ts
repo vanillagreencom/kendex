@@ -1,8 +1,10 @@
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuditView } from "@/bindings";
+import type { AuditView, DriftRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { adoptAll } from "@/lib/adopt-all";
 import { ADOPTABLE } from "@/lib/adoptable";
+import type { MergedDriftRow } from "@/lib/drift-merge";
 import { READ_LANDED } from "@/lib/read-state";
 import { rescansSettled } from "@/lib/rescan";
 import { useAuditStore } from "./audit";
@@ -227,7 +229,14 @@ describe("audit store run() actions", () => {
       backgroundFailureAnnounced: false,
     });
     useProblemsStore.setState({
-      dialog: { open: false, title: "", steps: [], actions: [] },
+      dialog: {
+        open: false,
+        title: "",
+        steps: [],
+        actions: [],
+        joined: [],
+        run: null,
+      },
     });
     vi.clearAllMocks();
     // Every one of these actions reads the machine again behind itself, on
@@ -393,6 +402,50 @@ describe("audit store run() actions", () => {
     }
     // The success the surface says for the write still stands beside it.
     expect(toast.success).toHaveBeenCalledWith("Now managing lint");
+  });
+
+  // "Start managing all" goes on past an item whose write landed with a
+  // step behind it failing, so the next item can still be refused. The
+  // reverse order never arises: a refusal stops the run.
+  it("keeps a landed item's failed step on screen when the next is refused", async () => {
+    vi.mocked(commands.adoptItem).mockImplementation(async (_s, _k, name) =>
+      name === "deploy"
+        ? { status: "ok", data: { ...emptyView, unfinished: "settle: denied" } }
+        : { status: "error", error: "lint is locked" },
+    );
+    const item = (name: string): MergedDriftRow => ({
+      kind: "hook",
+      name,
+      state: "unmanaged",
+      installations: [
+        {
+          kind: "hook",
+          name,
+          harness: "claude",
+          scope: globalScope,
+          state: "unmanaged",
+          detail: "",
+        },
+      ] as DriftRow[],
+    });
+
+    await adoptAll(
+      [item("deploy"), item("lint")],
+      () => null,
+      (kind, name, harnesses, quiet) =>
+        useAuditStore
+          .getState()
+          .adopt(globalScope, kind, name, harnesses, quiet),
+    );
+
+    const { dialog } = useProblemsStore.getState();
+    const said = [dialog, ...dialog.joined];
+    expect(said.map((failure) => failure.message)).toEqual([
+      "settle: denied",
+      "lint is locked",
+    ]);
+    expect(said[0].title).toContain("deploy");
+    expect(said[1].title).toContain("lint");
   });
 
   it("says nothing more about a write whose every step finished", async () => {

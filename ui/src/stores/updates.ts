@@ -243,11 +243,15 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
           failed = true;
           reportUpdate(error);
         };
-        const answer = await caught(applyRows(rows, report, what));
-        // A rejection escapes the sequence without touching the record —
-        // only this catch saw it, and the places that did commit before it
-        // are still in there to be said.
-        if (answer.status === "error") report(answer.error);
+        // One run, so each place's failure joins the dialog the first one
+        // opened instead of replacing what an earlier place said.
+        await useProblemsStore.getState().inOneRun(async () => {
+          const answer = await caught(applyRows(rows, report, what));
+          // A rejection escapes the sequence without touching the record —
+          // only this catch saw it, and the places that did commit before
+          // it are still in there to be said.
+          if (answer.status === "error") report(answer.error);
+        });
         await reload();
         // Said off what the applies answered, never off the rows the click
         // covered: a place the plan held back needs attention on its own
