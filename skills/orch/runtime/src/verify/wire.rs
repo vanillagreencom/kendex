@@ -24,10 +24,10 @@
 //! Value sets are from docs.github.com/en/rest: checks/runs,
 //! checks/suites, commits/statuses, actions/workflow-runs,
 //! actions/workflow-jobs, actions/workflows, pulls/pulls, repos/rules,
-//! repos/repos and branches/branches, API
-//! version 2022-11-28, and from docs.github.com/en/graphql/reference for
-//! the source proof's objects; each field's form cites the schema line it
-//! follows. A word outside a documented set refuses the reply, except in
+//! repos/repos and branches/branches, and from
+//! docs.github.com/en/graphql/reference for the source proof's objects;
+//! each field's form cites the schema line it follows. A word outside a
+//! documented set refuses the reply, except in
 //! a set another reader reads as no word it judges (a run's status and
 //! conclusion, a workflow's state, a rule's type): there it decodes as
 //! `Other`, which the verification's readers refuse. GitHub adds fields to
@@ -630,38 +630,6 @@ pub(crate) struct Job {
     /// Required (actions/workflow-jobs, `check_run_url`: string): the check
     /// run the job reports as.
     pub(crate) check_run_url: String,
-    /// Optional (actions/workflow-jobs, `steps`: array, not in the required
-    /// list).
-    #[allow(
-        dead_code,
-        reason = "documented: a job's steps decode so the reply is the documented shape"
-    )]
-    #[serde(default)]
-    pub(crate) steps: Optional<Vec<JobStep>>,
-}
-
-/// One step of a job (actions/workflow-jobs, `steps[]`: `name`, `status`,
-/// `conclusion` and `number` required).
-#[allow(
-    dead_code,
-    reason = "documented: a job's steps decode so the reply is the documented shape"
-)]
-#[derive(Debug, Deserialize)]
-pub(crate) struct JobStep {
-    /// Required (`steps[].name`: string).
-    pub(crate) name: String,
-    /// Required, not nullable (`steps[].status`: enum).
-    pub(crate) status: RunStatus,
-    /// Required, nullable (`steps[].conclusion`: string or null).
-    pub(crate) conclusion: Nullable<RunConclusion>,
-    /// Required (`steps[].number`: integer).
-    pub(crate) number: u64,
-    /// Optional, nullable (`steps[].started_at`: date-time or null).
-    #[serde(default)]
-    pub(crate) started_at: Nullable<String>,
-    /// Optional, nullable (`steps[].completed_at`: date-time or null).
-    #[serde(default)]
-    pub(crate) completed_at: Nullable<String>,
 }
 
 impl WorkflowRun {
@@ -1608,7 +1576,7 @@ mod tests {
             json!({
                 "id": 72, "run_id": 20, "name": "Classify the diff", "head_sha": "abc",
                 "status": "completed", "conclusion": "success",
-                "check_run_url": "https://api.github.com/repos/o/r/check-runs/72", "steps": []
+                "check_run_url": "https://api.github.com/repos/o/r/check-runs/72"
             }),
             &[
                 ("id", Required),
@@ -1618,19 +1586,6 @@ mod tests {
                 ("status", Required),
                 ("conclusion", Nullable),
                 ("check_run_url", Required),
-                ("steps", Optional),
-            ],
-        );
-        catalogue::<JobStep>(
-            json!({"name": "classify", "status": "completed", "conclusion": "success", "number": 1,
-                   "started_at": "2026-01-29T15:10:00Z", "completed_at": "2026-01-29T15:11:00Z"}),
-            &[
-                ("name", Required),
-                ("status", Required),
-                ("conclusion", Nullable),
-                ("number", Required),
-                ("started_at", OptionalNullable),
-                ("completed_at", OptionalNullable),
             ],
         );
         catalogue::<RunsPage>(

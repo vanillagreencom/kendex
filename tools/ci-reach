@@ -15,25 +15,12 @@
 #   QUEUE_REACH_DOCS_ONLY  true|false, the docs verdict for the same diff
 #   QUEUE_REACH_PATHS      a file holding the change's paths, one per line
 #
-# stdin:  one failed check per line: its name, then, tab-separated, the name
-#         of each of its failed steps as the jobs API spells it; a line with
-#         the name alone is a check whose steps were not read.
-# stdout: `setup NAME` where every failed step of a check a job maps to
-#         runs nothing of the checkout, `within NAME` where the change's
-#         selection runs that check's job, `outside NAME` where it does not,
-#         and no line for a name no job maps to, which the caller reads as
-#         unread. `CI`, the aggregate every other job reports into, is
-#         `within` where another named check is, `setup` where every other
-#         named check is, and `outside` where every other named check is
-#         `outside` or `setup`.
-# A step runs the checkout where its step in skill-tests.yml uses a local
-# action, sets a working directory, names a path through one of the
-# checkout's tracked top-level entries, its own or a second checkout's, or
-# runs cargo, which reads the checkout's manifests unnamed. Any other step,
-# the runner's own `Set up job` and `Complete job` among them, fails alike at
-# every head, so no change makes it fail; a change under .github/ can, so it
-# reads every step as one that runs the checkout. A failed step the workflow
-# names nowhere is not read as a setup step.
+# stdin:  one failed check name per line.
+# stdout: `within NAME` where the change's selection runs that check's job,
+#         `outside NAME` where it does not, and no line for a name no job
+#         maps to, which the caller reads as unread. `CI`, the aggregate
+#         every other job reports into, is `within` where another named
+#         check is and `outside` where every other named check is `outside`.
 # Exit 0 with the lines. Every refusal starts `ci-reach: cause=<name>` on
 # stderr and exits 2: a selection tools/ci-job-set refused, its refusal
 # above, among them.
@@ -109,128 +96,18 @@ answer() { # NAME — within, outside, or nothing for a name no job maps to
   esac
 }
 
-tab="$(printf '\t')"
-classes=""
-# `change<tab>NAME` or `setup<tab>NAME` for each name a step of the workflow
-# answers to: its `name:`, else the `Run <uses>` or `Run <first run line>`
-# the jobs API gives an unnamed step. Read with substr, as the macOS leg's
-# awk has no regex interval.
-step_classes() {
-  local top
-  top="$(git -C "$TOOLS_DIR/.." ls-files)" || die tree-unread
-  top="$(printf '%s\n' "$top" | sed 's#/.*##' | LC_ALL=C sort -u)" || die tree-unread
-  TOP="$top" awk '
-    BEGIN { n = split(ENVIRON["TOP"], t, "\n"); for (i = 1; i <= n; i++) top[t[i]] = 1 }
-    function reads(text,   count, w, i, seg) {
-      if (text ~ /(^|[^A-Za-z0-9_-])cargo([ \t]|$)/) return 1
-      count = split(text, w, /[^A-Za-z0-9._\/-]+/)
-      for (i = 1; i <= count; i++) {
-        if (w[i] ~ /[.]/ && w[i] in top) return 1
-        seg = w[i]
-        while (index(seg, "/") > 0) {
-          if (substr(seg, 1, index(seg, "/") - 1) in top) return 1
-          seg = substr(seg, index(seg, "/") + 1)
-        }
-      }
-      return 0
-    }
-    function flush(   class) {
-      if (!open) return
-      class = change ? "change" : "setup"
-      if (name != "") print class "\t" name
-      else if (uses != "") print class "\tRun " uses
-      else if (first != "") print class "\tRun " first
-      open = 0
-    }
-    function key(text,   k, v) {
-      if (!index(text, ": ")) return
-      k = substr(text, 1, index(text, ": ") - 1)
-      v = substr(text, index(text, ": ") + 2)
-      if (k == "name") {
-        if (v ~ /^'"'"'.*'"'"'$/ || v ~ /^".*"$/) v = substr(v, 2, length(v) - 2)
-        name = v
-      } else if (k == "uses") {
-        sub(/ +#.*$/, "", v)
-        uses = v
-        if (substr(v, 1, 2) == "./") change = 1
-      } else if (k == "working-directory") {
-        change = 1
-      } else if (k == "run") {
-        if (v ~ /^[|>]/) inrun = 1
-        else { first = v; if (reads(v)) change = 1 }
-      }
-    }
-    {
-      match($0, /^ */)
-      if ($0 !~ /^[ \t]*$/ && RLENGTH < 6) { flush(); inrun = 0; next }
-    }
-    substr($0, 1, 8) == "      - " {
-      flush()
-      open = 1; name = ""; uses = ""; first = ""; change = 0; inrun = 0
-      key(substr($0, 9))
-      next
-    }
-    open && substr($0, 1, 8) == "        " && substr($0, 9, 1) != " " {
-      inrun = 0
-      key(substr($0, 9))
-      next
-    }
-    open && inrun && substr($0, 1, 10) == "          " {
-      if (first == "") first = substr($0, 11)
-      if (reads($0)) change = 1
-    }
-    END { flush() }
-  ' "$TOOLS_DIR/../.github/workflows/skill-tests.yml" || die workflow-unread
-}
-
-# change, setup, or nothing for a failed step no step of the workflow names.
-step_class() { # STEP
-  local step="$1"
-  case "$step" in
-    "Set up job" | "Complete job") echo setup; return 0 ;;
-    "Post "*) step="${step#Post }" ;;
-  esac
-  if grep -Fxq -- "change$tab$step" <<<"$classes"; then
-    echo change
-  elif grep -Fxq -- "setup$tab$step" <<<"$classes"; then
-    echo setup
-  fi
-}
-
-# Whether the failed steps, tab-separated, were read and each is a setup step.
-setup_only() { # STEPS
-  local step class rest="$1$tab"
-  [ -n "$1" ] || return 1
-  while [ -n "$rest" ]; do
-    step="${rest%%"$tab"*}"
-    rest="${rest#*"$tab"}"
-    [ -n "$step" ] || continue
-    class="$(step_class "$step")" || exit 2
-    [ "$class" = setup ] || return 1
-  done
-}
-
-steps_read=false
-case "$names" in *"$tab"*) steps_read=true ;; esac
-if grep -q '^\.github/' <<<"$paths"; then steps_read=false; fi
-[ "$steps_read" = false ] || classes="$(step_classes)" || exit 2
-ci=false within=false unmapped=false outside=false others=0
-while IFS= read -r line; do
-  [ -n "$line" ] || continue
-  name="${line%%"$tab"*}"
-  steps=""
-  [ "$name" = "$line" ] || steps="${line#*"$tab"}"
+ci=false within=false unmapped=false others=0
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
   if [ "$name" = CI ]; then
     ci=true
     continue
   fi
   others=$((others + 1))
   got="$(answer "$name")" || exit 2
-  if [ -n "$got" ] && [ "$steps_read" = true ] && setup_only "$steps"; then got=setup; fi
   case "$got" in
     within) within=true ;;
-    outside) outside=true ;;
-    setup) ;;
+    outside) ;;
     *) unmapped=true ;;
   esac
   [ -z "$got" ] || printf '%s %s\n' "$got" "$name"
@@ -239,6 +116,6 @@ if [ "$ci" = true ]; then
   if [ "$within" = true ]; then
     echo "within CI"
   elif [ "$others" -gt 0 ] && [ "$unmapped" = false ]; then
-    if [ "$outside" = true ]; then echo "outside CI"; else echo "setup CI"; fi
+    echo "outside CI"
   fi
 fi
