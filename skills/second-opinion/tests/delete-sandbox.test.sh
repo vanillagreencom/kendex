@@ -7,7 +7,9 @@ export GIT_CONFIG_KEY_1=maintenance.auto GIT_CONFIG_VALUE_1=false
 . "$(dirname "$0")/lib/roster-world.bash"
 
 capture() {
-  build "$1" current:none models:codex+claude
+  local reply=clean
+  [[ "$3" != audit ]] || reply=covered
+  build "$1" current:none models:codex+claude "codex:$reply" "claude:$reply"
   ln -s lane-codex "$ROW/bin/codex"
   ln -s lane-claude "$ROW/bin/claude"
   mutate_script "$ROW/bin/lane-$2" 'cat >' 'printf "%s\n" "$@" >"'"$ROW"'/argv"; cat >'

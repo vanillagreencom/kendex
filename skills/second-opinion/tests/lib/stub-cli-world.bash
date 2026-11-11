@@ -199,7 +199,8 @@ stdout_of() {
     # the response shapes the gate sorts: a blocker; prose claiming an earlier
     # turn; the review inside a json fence, and inside a bare one; a self-reported no-review, and
     # one that says it reviewed; no qa_metadata; the finding arrays lost;
-    # blockers as a string
+    # blockers as a string; an audit listing its required input read, and one
+    # marking it unread while claiming a review
     blocker) printf '%s' "$BLOCKER" ;;
     prose:delivered) printf '%s\n' "$PROSE_DELIVERED" ;;
     prose:sql) printf '%s\n' "$PROSE_SQL" ;;
@@ -208,6 +209,8 @@ stdout_of() {
     fenced-bare) printf 'Here is my review of the changes:\n\n%s\n%s\n%s\n' '```' "$GOOD" '```' ;;
     noreview) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"No review performed","blockers":[],"suggestions":[],"questions":["Which diff, branch, or PR should be reviewed?"],"qa_metadata":{"review_performed":false,"reason":"no_scope_provided"}}' ;;
     performed) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, no issues","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"review_performed":true}}' ;;
+    covered) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Clean","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"required_inputs":[{"input":"required.txt","read":true}]}}' ;;
+    unread) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Pinned diff and standards unread","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"review_performed":true,"required_inputs":[{"input":"diff","read":false}]}}' ;;
     noqa) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Nothing to evaluate","blockers":[],"suggestions":[],"questions":[]}' ;;
     truncated) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"Reviewed the diff, one issue noted"}' ;;
     blockers-string) printf '{"agent":"external-claude","timestamp":"2026-07-18T00:00:00Z","verdict":"pass","summary":"ok","blockers":"none","suggestions":[],"questions":[],"qa_metadata":{}}' ;;
