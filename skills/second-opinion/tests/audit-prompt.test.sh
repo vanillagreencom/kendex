@@ -12,7 +12,7 @@ PACKET=$'CALLER-PACKET\nRun exactly one simple command per tool call.\nRead requ
 AUDIT_RANGE="" EXPECT_ENDPOINT="" EXPECT_DIFF="" EXPECT_PAGED=""
 
 suite_reset() {
-  W_SCRIPT="$HERMETIC"
+  W_SCRIPT="$HERMETIC" W_STDOUT=covered
   AUDIT_RANGE="" EXPECT_ENDPOINT="" EXPECT_DIFF="-" EXPECT_PAGED="-"
   git -C "$WORK" config gc.auto 0
   git -C "$WORK" config maintenance.auto false
@@ -116,7 +116,7 @@ ROWS='linked historical range supplies binding and deleted bytes without reviewe
 existing-code audit supplies binding without inferring a diff|linked
 explicit empty audit range still permits existing-code examination|linked empty-range
 oversized audit range retains owner-only omitted deleted bytes for read tools|linked large
-format retry carries the complete bound request|linked historical stdout:prose:delivered stdout2:good
+format retry carries the complete bound request|linked historical stdout:prose:delivered stdout2:covered
 replacement target receives the same caller-bound request|linked historical models:claude+lane_a target:- lane:lane_a env:SECOND_OPINION_LANE_A_MODEL=codex rc:7 rc2:0'
 if [[ "${1:-}" == linked ]]; then ROWS="${ROWS%%$'\n'*}"; fi
 EXPECTED='rc=0 binding=ok packet=ok endpoint=ok diff=ok paged=ok continuity=ok'

@@ -20,7 +20,9 @@ quick|--restricted'
 i=0
 while IFS='|' read -r mode change; do
   i=$((i + 1))
-  build "argv-$i" current:none models:claude
+  reply=clean
+  [[ "$mode" != audit ]] || reply=covered
+  build "argv-$i" current:none models:claude "claude:$reply"
   printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$@" >"%s/tier-argv"\nprintf "opus\\n"\n' "$ROW" >"$ROW/bin/kendex"
   chmod +x "$ROW/bin/kendex"
   mkdir -p "$ROW/.claude"
@@ -46,7 +48,7 @@ SH
         inherit) printf '#!/usr/bin/env bash\necho inherit\n' >"$ROW/bin/kendex" ;;
       esac
       want="$BASE_EXPECTED"
-      if [[ "$change" == unresolved-retry ]]; then response partial claude >"$ROW/resp-claude"; response clean claude >"$ROW/resp-retry-claude"; fi
+      if [[ "$change" == unresolved-retry ]]; then response partial claude >"$ROW/resp-claude"; response "$reply" claude >"$ROW/resp-retry-claude"; fi
       ;;
     *)
       python3 - "$SO" "$change" <<'PY'

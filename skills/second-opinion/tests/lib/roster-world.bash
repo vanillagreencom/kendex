@@ -86,6 +86,8 @@ HEAD_SHA="$(git -C "$WORK" rev-parse HEAD)"
 response() {
   case "$1" in
     clean) printf '{"agent":"external-%s","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{}}\n' "$2" ;;
+    # a clean audit that lists its required input read
+    covered) printf '{"agent":"external-%s","timestamp":"2026-01-01T00:00:00Z","verdict":"pass","summary":"clean","blockers":[],"suggestions":[],"questions":[],"qa_metadata":{"required_inputs":[{"input":"prompt","read":true}]}}\n' "$2" ;;
     # one blocker in parse, one suggestion on the README
     parse) printf '{"agent":"external-%s","timestamp":"2026-01-01T00:00:00Z","verdict":"action_required","summary":"one blocker","blockers":[{"id":1,"title":"Off-by-one in parse","location":"src/app.rs (`parse`)","description":"d","recommendation":"fix","priority":2,"estimate":1}],"suggestions":[{"id":1,"title":"Clarify README","location":"README.md","description":"d","recommendation":"r","priority":3,"estimate":1,"category":"fix"}],"questions":[],"qa_metadata":{}}\n' "$2" ;;
     # two blockers (parse again, and db), two suggestions (parse, which a

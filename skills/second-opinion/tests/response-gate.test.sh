@@ -17,6 +17,34 @@
 #     (`-` when no second call ran)
 
 . "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
+# shellcheck source=lib/install.bash
+. "$(dirname "${BASH_SOURCE[0]}")/lib/install.bash"
+
+# The suite's must-fail control: a hermetic copy of the script,
+# scripts/second-opinion-uncovered, that keeps both required-input checks'
+# text and disarms them; each audit coverage row turns red against it.
+PROJ="$TMP_ROOT/proj"
+mkdir -p "$PROJ/skills"
+second_opinion_install "$SKILL_DIR" "$PROJ/skills"
+SCRIPTS="$PROJ/skills/second-opinion/scripts"
+cp -- "$SCRIPTS/second-opinion" "$SCRIPTS/second-opinion-uncovered"
+python3 - "$SCRIPTS/second-opinion-uncovered" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+assert not path.is_symlink()
+text = path.read_text()
+for old, new in (('.read != true)', '.read == never)'),
+                 ('[[ "$MODE" == "audit" ]] || return 1', '[[ "$MODE" == never ]] || return 1')):
+    assert text.count(old) == 1, (old, text.count(old))
+    text = text.replace(old, new)
+path.write_text(text)
+PY
+suite_word() {
+  case "$1" in
+    script:*) W_SCRIPT="$SCRIPTS/second-opinion-${1#script:}" ;;
+    *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
+  esac
+}
 
 artifact() {
   local file="$OUT"
@@ -67,6 +95,7 @@ suite_err_word() {
     unparseable:*) printf '→ retry response still not parseable\nerror=Failed to extract JSON from claude response after retry raw_length=%s raw_response=%s retry_response=%s\n→ retry response preserved: %s\n→ raw response preserved: %s\n--- First 30 lines of raw response ---\n%s\n' "$a" "$(gate_record "$b" raw)" "$(gate_record "$b" retry)" "$(gate_record "$b" retry)" "$(gate_record "$b" raw)" "$(stdout_of "prose:$c")" ;;
     still-incomplete) printf '→ retry response JSON is still structurally incomplete\n' ;;
     rejected:noreview:*) printf 'error=claude self-reported that no review was performed (%s) — refusing to write a review artifact response=<out>.noreview.json\n→ rejected response preserved: <out>.noreview.json\n' "$b" ;;
+    rejected:nocoverage) printf 'error=claude returned an audit with no qa_metadata.required_inputs coverage (missing_input_coverage) — refusing to write a review artifact response=<out>.noreview.json\n→ rejected response preserved: <out>.noreview.json\n' ;;
     rejected:noqa) printf 'error=claude returned non-conforming JSON with no qa_metadata object (missing_qa_metadata) — refusing to write a review artifact response=<out>.noreview.json\n→ rejected response preserved: <out>.noreview.json\n' ;;
     rejected:incomplete) printf 'error=claude returned structurally incomplete JSON after retry — verdict and the blockers/suggestions/questions arrays are required (incomplete_schema) — refusing to write a review artifact response=<out>.incomplete.json\n→ rejected response preserved: <out>.incomplete.json\n' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s\n' "$1" ;;
@@ -81,10 +110,12 @@ gate_record() {
   esac
 }
 DEFAULTS="capture"
-run_table "the response gate" "$DEFAULTS" "\
-audit captures a clean starting tree even with no diff|diff:empty stdout:good|audit --range=|0|<out>|header:audit written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=- scope=-/-/-/- retry=-
+ROWS="\
+audit captures a clean starting tree even with no diff|diff:empty stdout:covered|audit --range=|0|<out>|header:audit written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=216:retry=-:head=- scope=-/-/-/- retry=-
 a review inside a json fence is the review, no retry|stdout:fenced|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=207:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 a review inside a bare fence is the review, no retry|stdout:fenced-bare|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=203:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
+an audit with no required-input coverage: exit 4, no retry, the response kept|stdout:good|audit|4|-|header:audit rejected:nocoverage|calls=1 files=out.noreview.json=review:external-claude:Clean home=absent tmp=0 dirty=- art=- scope=-/-/-/- retry=-
+an audit marking a required input unread while claiming a review: exit 4, no retry, the response kept|stdout:unread|audit|4|-|header:audit rejected:noreview:required_input_unread|calls=1 files=out.noreview.json=review:external-claude:Pinned diff and standards unread home=absent tmp=0 dirty=- art=- scope=-/-/-/- retry=-
 a self-reported review_performed=true is written|stdout:performed|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Reviewed the diff, no issues home=absent tmp=0 dirty=- art=external-claude:pass:Reviewed the diff, no issues:b=:ts=$CLOCK:raw=206:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 an empty diff exits 3 before the CLI runs|diff:empty|review|3|-|header:review no-scope|calls=0 files=- home=absent tmp=0 dirty=- art=- scope=- retry=-
 prose claiming an earlier turn is retried with the full request; the retry's review is written, the prose kept beside it|stdout:prose:delivered stdout2:blocker|review|0|<out>|header:review retrying:unparseable recovered:450:out written|calls=2 files=out=review:external-claude:One blocker found,out.raw.txt=prose:delivered home=absent tmp=0 dirty=- art=external-claude:action_required:One blocker found:b=Null deref in parser:ts=$CLOCK:raw=74:retry=348:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=unparseable:scope-branch/<head>/file.txt/git diff <head>:prev=prose:delivered
@@ -98,4 +129,18 @@ finding arrays lost: retried naming the missing fields, the retry's review writt
 blockers as a string is incomplete too: retried, the retry's review written|stdout:blockers-string stdout2:blocker|review|0|<out>|header:review retrying:incomplete recovered:450:out written|calls=2 files=out=review:external-claude:One blocker found,out.raw.txt=review:external-claude:ok home=absent tmp=0 dirty=- art=external-claude:action_required:One blocker found:b=Null deref in parser:ts=$CLOCK:raw=161:retry=348:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=incomplete:scope-branch/<head>/file.txt/git diff <head>:prev=review:external-claude:ok
 finding arrays lost, then blockers as a string: exit 4, the retry kept as the incomplete sidecar, the first as the raw|stdout:truncated stdout2:blockers-string|review|4|-|header:review retrying:incomplete still-incomplete rejected:incomplete|calls=2 files=out.incomplete.json=review:external-claude:ok,out.raw.txt=review:external-claude:Reviewed the diff, one issue noted home=absent tmp=0 dirty=- art=- scope=scope-branch/<head>/file.txt/git diff <head> retry=incomplete:scope-branch/<head>/file.txt/git diff <head>:prev=review:external-claude:Reviewed the diff, one issue noted
 "
+run_table "the response gate" "$DEFAULTS" "$ROWS"
+
+# Each audit coverage row passes above and must fail against the disarmed
+# copy. The control reuses the row directories, so the table's are removed.
+while IFS= read -r CONTROL_ROW; do
+  control_rc=0
+  (
+    chmod -R u+rwX "${TMP_ROOT:?}"/row-* && rm -rf -- "${TMP_ROOT:?}"/row-* || exit 3
+    PASS=0 FAIL=0
+    run_table "control uncovered: ${CONTROL_ROW%%|*}" "$DEFAULTS script:uncovered" "$CONTROL_ROW"
+    [[ "$FAIL" -eq 0 ]]
+  ) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 "control uncovered turns red: ${CONTROL_ROW%%|*}"
+done < <(grep -F 'an audit ' <<<"$ROWS")
 finish

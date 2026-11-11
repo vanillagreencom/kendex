@@ -2201,7 +2201,7 @@ build_audit_prompt() {
   cat <<'AUDIT'
 
 Wrapper audit context (authoritative; overrides requests above to re-read Git bindings or write/validate an artifact):
-Use the wrapper's starting binding below, not Git commands or linked Git metadata. Return the JSON response on stdout; the wrapper checks its response schema and records it. Read all required sources and standards with your read tools. If any required input cannot be read, report qa_metadata.review_performed=false with a reason; do not claim a completed review.
+Use the wrapper's starting binding below, not Git commands or linked Git metadata. Return the JSON response on stdout; the wrapper checks its response schema and records it. Read all required sources and standards with your read tools, and list each one, the supplied diff included, in qa_metadata.required_inputs as {"input": "<path or name>", "read": true|false}. If any required input cannot be read, mark it read false and report qa_metadata.review_performed=false with a reason; do not claim a completed review.
 --- begin audit binding ---
 AUDIT
   jq -n --arg cwd "$CWD" --arg head "$REVIEW_START_HEAD" \
@@ -3222,7 +3222,19 @@ response_reports_no_review() {
     | (($qa | type) == "object")
       and (($qa.review_performed == false)
            or ((($qa.reason // "") | tostring)
-               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i")))
+               | test("no[ _-]?(scope|review)|not[ _-]?reviewed"; "i"))
+           or ($qa.required_inputs
+               | if type == "array" then any(.[]; type != "object" or .read != true)
+                 else false end))
+  ' >/dev/null 2>&1
+}
+
+# An audit's required inputs are read only where qa_metadata.required_inputs
+# lists them, so an audit response without that list attests no coverage.
+response_missing_input_coverage() {
+  [[ "$MODE" == "audit" ]] || return 1
+  ! printf '%s' "$1" | jq -e '
+    .qa_metadata.required_inputs? | type == "array" and length > 0
   ' >/dev/null 2>&1
 }
 
@@ -3248,7 +3260,7 @@ preserve_no_review_and_fail() {
   local suffix="${3:-noreview}"
   local sidecar reason
   if [[ -z "$errmsg" ]]; then
-    reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // "review_performed=false"' 2>/dev/null) || reason="review_performed=false"
+    reason=$(printf '%s' "$json" | jq -r '.qa_metadata.reason? // (if .qa_metadata.review_performed? == false then "review_performed=false" else "required_input_unread" end)' 2>/dev/null) || reason="review_performed=false"
     errmsg="self-reported that no review was performed ($reason)"
   fi
 
@@ -3379,6 +3391,10 @@ if $REVIEW_LIKE; then
   if response_missing_qa_metadata "$RESULT"; then
     preserve_no_review_and_fail "$RESULT" \
       "returned non-conforming JSON with no qa_metadata object (missing_qa_metadata)"
+  fi
+  if response_missing_input_coverage "$RESULT"; then
+    preserve_no_review_and_fail "$RESULT" \
+      "returned an audit with no qa_metadata.required_inputs coverage (missing_input_coverage)"
   fi
   # Stamp the authoritative timestamp ourselves. The reviewing model serializes
   # a `timestamp` field, but a model-supplied value is unverifiable — it can emit
