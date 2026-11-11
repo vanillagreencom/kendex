@@ -230,27 +230,37 @@
 # endpoint without it read as an empty file, loaded there by orch's
 # kendex-env.sh, holding no byte that reader's line loop drops (a NUL), no
 # multiline string delimiter, and changed only in comment lines, blank
-# lines and [env] assignments of keys no CI reads. A key in the settings
-# this script reads from the base, or any HARNESS_CI_* key, never
-# qualifies, so a change to HARNESS_CI_TRIVIAL_SETTINGS itself is refused.
-# Any other key is read, and refused, where at the base commit:
+# lines and [env] assignments of declared keys with no CI reader found. A
+# key in the settings this script reads from the base, or any HARNESS_CI_*
+# key, never qualifies, so a change to HARNESS_CI_TRIVIAL_SETTINGS itself is
+# refused. A key is declared where, at the base commit, the
+# kendex.settings.toml.example of a package directly under skills/ or
+# .agents/skills/ assigns it, in a comment or not, or names its family on a
+# `# keys:` line, as tools/guard reads one: comma- or blank-separated items
+# with one <NAME>, standing for one or more characters. An undeclared key,
+# such as a tool's own environment variable, is refused. A declared key has
+# a CI reader, and is refused, where at the base commit:
 #   - it occurs as a whole word in .github/workflows/, .github/actions/ or
 #     .github/ci-lanes.conf, the CI definitions;
-#   - it occurs as a whole word in any file of a package those definitions
-#     name as skills/<name> or .agents/skills/<name>, behind any checkout
-#     prefix, <name> a glob read against the base tree, or of a repository
-#     file or directory they name, behind any prefix;
-#   - it matches a family a `# keys:` line of such a package's
-#     kendex.settings.toml.example declares, <NAME> read as a wildcard.
+#   - it occurs as a whole word, outside the settings files themselves,
+#     in any file of a package those definitions name as skills/<name> or
+#     .agents/skills/<name>, behind any checkout prefix, <name> a glob read
+#     against the base tree; of a repository file or directory they name,
+#     behind any prefix, a bare name included; or matching a path glob they
+#     name, such as a ci-lanes.conf claim, `*` matching across `/`;
+#   - it belongs to a family such a package's example declares.
+# No reader found is not no reader: a key read only by a script CI reaches
+# indirectly, through make, npm or cargo test for example, is not found,
+# and a `!glob` below keeps it heavy.
 # The base's HARNESS_CI_TRIVIAL_SETTINGS, blank-separated globs of key
-# names, changes that default: a glob admits a key those readers count as
-# read, never one the floor refuses, and a `!glob` refuses the keys it
-# matches, winning over both. A diff of admitted settings files alone is
+# names, changes that default: a glob admits a key undeclared or read,
+# never one the floor refuses, and a `!glob` refuses the keys it matches,
+# winning over both. A diff of admitted settings files alone is
 # trivial at any line count. Beside any other path, the trivial rule
 # judges those paths and the ceiling, over the whole diff, as it does for any
 # diff, with no agent instruction file beside it. It answers
 # `cause=allowlisted-settings` where a glob admitted a changed key, else
-# `cause=unread-settings`, then `settings=<file>[,<file>]
+# `cause=declared-unread-settings`, then `settings=<file>[,<file>]
 # keys=<key>[,<key>]|- lines=<n>`, keys naming those whose loaded value
 # differs. harness-only's
 # refusals, cause=base-inventory-absent and an empty path list answer ahead
@@ -261,14 +271,17 @@
 # admission rule that refused: unsupported-event, base-settings-unreadable,
 # configuration-file, settings-unreadable, settings-not-regular,
 # settings-bytes-dropped, multiline-string, settings-unparsed,
-# unadmitted-change, readers-unreadable step=<s>, or read-key key=<k>
+# unadmitted-change, undeclared-key key=<k>, readers-unreadable step=<s>
+# (a base blob git could not read included), or read-key key=<k>
 # reader=<path>, whose reader is HARNESS_CI_TRIVIAL_SETTINGS for a `!glob`.
 # After admission it is class-<class> rule=<cause>, the class and cause a
 # later rule would have answered. The queue-only line is judged as before.
 #
 # Manifest: a consumer's kendex.toml, where it is the only changed path, a
 # regular file at every endpoint that holds it, and no line at either
-# endpoint starts with the key is_source_catalog, quoted or not, leaves
+# endpoint starts with the key is_source_catalog or opens the
+# bot-instructions table, a header, a dotted key or an inline table, quoted
+# or not, leaves
 # only the configuration-source refusal behind. Every later rule judges it,
 # HARNESS_CI_STANDARD_PATHS included, and the size rules with a floor of
 # small: trivial, micro and small answer `small cause=consumer-manifest
@@ -277,8 +290,8 @@
 # lib/change-class.sh reads to stand lanes down: ../references/wiring.md
 # § Per-lane verdicts. A refused candidate prints one `manifest-admission:
 # admitted=false cause=<c>` line: unsupported-event, or
-# manifest-not-regular, manifest-unreadable or source-catalog with
-# side=base|head.
+# manifest-not-regular, manifest-unreadable, source-catalog or
+# bot-instructions-input with side=base|head.
 # A hand edit counts the same as the engine's: that line decides no render or
 # classifier input. The render path still verifies the head. Product paths
 # use the existing size rules without render verification.
@@ -986,27 +999,81 @@ settings_key_eligible() { # KEY
 
 # The base commit's readers of a key, built once from its own CI
 # definitions, as the header states: SETTINGS_READER_SPECS, the git
-# pathspecs a key is searched for in, and SETTINGS_FAMILIES, one
-# `GLOB<TAB>PATH` line per declared family member. A package name stays a
-# pathspec, whose `*` git matches across `/`, so a glob covers every
-# package it can name. A path is reached behind any prefix, such as a
-# checkout directory or $GITHUB_WORKSPACE, where some suffix of it is a
-# file or directory of the base tree. SETTINGS_READERS_STEP names the
-# read that failed.
+# pathspecs a key is searched for in; SETTINGS_FAMILIES, the `# keys:`
+# families the settings examples of the packages they reach declare; and
+# SETTINGS_DECLARED, every key and family a top-level package's settings
+# example declares, the last two as settings_declared prints them. A package
+# name or a path glob stays a pathspec, whose `*` git matches across `/` as
+# a ci-lanes.conf glob does, so it covers every package or path it can
+# name; a token of glob characters alone, such as a cron field, names none.
+# A name is reached behind any prefix, such as a checkout directory or
+# $GITHUB_WORKSPACE, where some suffix of it is a file or directory of the
+# base tree, a bare name included. SETTINGS_READERS_STEP names the read that
+# failed.
 SETTINGS_READERS=""
 SETTINGS_READERS_STEP=""
 SETTINGS_READER_SPECS=()
 SETTINGS_FAMILIES=""
-settings_grep() { git -C "$repo" grep --no-color --no-line-number --no-column "$@"; }
+SETTINGS_DECLARED=""
+# git grep's own status, or 2 where it wrote an error: a blob it cannot read
+# exits 1, the status of no match, beside `unable to read` on stderr.
+settings_grep() {
+  local status=0
+  : >"$work/reader-grep-error" || return 2
+  git -C "$repo" grep --no-color --no-line-number --no-column "$@" \
+    2>"$work/reader-grep-error" || status=$?
+  if [ -s "$work/reader-grep-error" ]; then
+    cat -- "$work/reader-grep-error" >&2
+    return 2
+  fi
+  return "$status"
+}
+# `KIND<TAB>NAME<TAB>PATH` for each key and key family declared in the
+# settings examples REV holds, as `git grep -z` printed their lines on stdin.
+# The grammar is that of tools/guard's settings_declared, its twin: an
+# assignment or a commented-out one declares its key, and a `# keys:` item
+# spelled as a key with one <NAME> after its first character declares a
+# family, <NAME> standing for one or more characters.
+settings_declared() { # REV
+  tr '\0' '\t' | awk -v rev="$1:" '{
+    tab = index($0, "\t")
+    path = substr($0, length(rev) + 1, tab - length(rev) - 1)
+    line = substr($0, tab + 1)
+    if (match(line, /^[ \t]*(#[ \t]*)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=/)) {
+      key = substr(line, 1, RLENGTH - 1)
+      gsub(/^[ \t#]+|[ \t]+$/, "", key)
+      print "key\t" key "\t" path
+    } else if (match(line, /^[ \t]*#[ \t]*keys:/)) {
+      n = split(substr(line, RLENGTH + 1), items, /[ \t,]+/)
+      for (i = 1; i <= n; i++)
+        if (items[i] ~ /^[A-Z_][A-Z0-9_]*<NAME>[A-Z0-9_]*$/) print "family\t" items[i] "\t" path
+    }
+  }'
+}
+# Whether one of LINES, settings_declared's, declares KEY, with
+# SETTINGS_READER the example that does.
+settings_declares() { # KEY LINES
+  local kind name path
+  while IFS="$TAB" read -r kind name path; do
+    case "$kind" in
+      key) [ "$name" = "$1" ] || continue ;;
+      family) case "$1" in "${name%%<NAME>*}"?*"${name#*<NAME>}") ;; *) continue ;; esac ;;
+      *) continue ;;
+    esac
+    SETTINGS_READER="$path"
+    return 0
+  done <<<"$2"
+  return 1
+}
 settings_readers_load() {
-  local status=0 spec examples=() families
+  local status=0 kind spec examples=()
   case "$SETTINGS_READERS" in
     loaded) return 0 ;;
     failed) return 1 ;;
   esac
   SETTINGS_READERS=failed
   SETTINGS_READER_SPECS=(.github/workflows .github/actions .github/ci-lanes.conf)
-  settings_grep -h -I -o -E '[A-Za-z0-9_.*/-]*/[A-Za-z0-9_.*/-]*' "$BASE_REV" -- \
+  settings_grep -h -I -o -E '[A-Za-z0-9_.*/-]+' "$BASE_REV" -- \
     "${SETTINGS_READER_SPECS[@]}" >"$work/reader-tokens" || status=$?
   [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=definitions; return 1; }
   git -C "$repo" -c core.quotePath=false ls-tree -r -t --name-only "$BASE_REV" \
@@ -1023,7 +1090,10 @@ settings_readers_load() {
           print "package\t" ((pre ~ /(^|\/)\.agents\/$/) ? ".agents/skills/" : "skills/") name
         pre = pre "skills/"
       }
-      if (index($0, "*")) next
+      if (index($0, "*")) {
+        if ($0 ~ /[A-Za-z0-9_]/ && ("/" $0 "/") !~ /\/\.\.\//) print "glob\t" $0
+        next
+      }
       path = $0; sub(/\/+$/, "", path)
       while (path != "") {
         if (path in known) print "path\t:(literal)" path
@@ -1036,38 +1106,36 @@ settings_readers_load() {
     SETTINGS_READER_SPECS+=("$spec")
     [ "$kind" != package ] || examples+=("$spec/kendex.settings.toml.example")
   done <"$work/reader-specs"
+  status=0
+  settings_grep -z -E -e '=|keys:' "$BASE_REV" -- \
+    ':(glob).agents/skills/*/kendex.settings.toml.example' \
+    ':(glob)skills/*/kendex.settings.toml.example' >"$work/reader-declared" || status=$?
+  [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=declarations; return 1; }
+  SETTINGS_DECLARED="$(settings_declared "$BASE_REV" <"$work/reader-declared")" ||
+    { SETTINGS_READERS_STEP=declarations; return 1; }
   if [ "${#examples[@]}" -gt 0 ]; then
     status=0
-    settings_grep -z -E -e '^#[[:space:]]*keys:' "$BASE_REV" -- "${examples[@]}" \
+    settings_grep -z -E -e 'keys:' "$BASE_REV" -- "${examples[@]}" \
       >"$work/reader-families" || status=$?
     [ "$status" -le 1 ] || { SETTINGS_READERS_STEP=families; return 1; }
-    families="$(tr '\0' '\t' <"$work/reader-families" | awk -v rev="$BASE_REV:" '{
-        tab = index($0, "\t")
-        path = substr($0, length(rev) + 1, tab - length(rev) - 1)
-        words = substr($0, tab + 1)
-        sub(/^#[[:space:]]*keys:/, "", words); gsub(/<[^>]*>/, "*", words)
-        n = split(words, word, /[[:space:]]+/)
-        for (i = 1; i <= n; i++) if (word[i] != "") print word[i] "\t" path
-      }')" || { SETTINGS_READERS_STEP=families; return 1; }
-    SETTINGS_FAMILIES="$families"
+    SETTINGS_FAMILIES="$(settings_declared "$BASE_REV" <"$work/reader-families" |
+      awk -F '\t' '$1 == "family"')" || { SETTINGS_READERS_STEP=families; return 1; }
   fi
   SETTINGS_READERS=loaded
 }
 
-# Whether KEY is read at the base, as SETTINGS_READER, the first reader
-# found: 0 read, 1 unread, 2 where the readers could not be read.
+# Whether a declared KEY is read at the base, as SETTINGS_READER, the first
+# reader found: 0 read, 1 no reader found, 2 where the readers could not be
+# read. The settings files are no reader: a key's own assignment names it.
 SETTINGS_READER=""
 settings_key_read() { # KEY
-  local glob path found status=0
+  local found file excluded=() status=0
   SETTINGS_READER=""
   settings_readers_load || return 2
-  while IFS="$TAB" read -r glob path; do
-    [ -n "$glob" ] || continue
-    # shellcheck disable=SC2254
-    case "$1" in $glob) SETTINGS_READER="$path"; return 0 ;; esac
-  done <<<"$SETTINGS_FAMILIES"
-  found="$(settings_grep -l -w -F -e "$1" "$BASE_REV" -- "${SETTINGS_READER_SPECS[@]}")" ||
-    status=$?
+  if settings_declares "$1" "$SETTINGS_FAMILIES"; then return 0; fi
+  for file in $BASE_SETTINGS_FILES; do excluded+=(":(exclude)$file"); done
+  found="$(settings_grep -l -w -F -e "$1" "$BASE_REV" -- "${SETTINGS_READER_SPECS[@]}" \
+    "${excluded[@]}")" || status=$?
   case "$status" in
     0) found="${found%%$'\n'*}"; SETTINGS_READER="${found#"$BASE_REV":}" ;;
     1) return 1 ;;
@@ -1076,8 +1144,9 @@ settings_key_read() { # KEY
 }
 
 # A changed eligible KEY's admission: the base's `!glob` refuses it, then a
-# glob admits it, then its readers decide. Returns 1, with the admission
-# line, where it is refused; SETTINGS_CAUSE names the rule that admitted.
+# glob admits it, then it needs a package's declaration and no CI reader
+# found. Returns 1, with the admission line, where it is refused;
+# SETTINGS_CAUSE names the rule that admitted.
 settings_key_admitted() { # KEY
   local word removal="" addition="" status=0
   set -f
@@ -1096,6 +1165,10 @@ settings_key_admitted() { # KEY
   if [ -n "$addition" ]; then
     SETTINGS_CAUSE=allowlisted-settings
     return 0
+  fi
+  if settings_readers_load && ! settings_declares "$1" "$SETTINGS_DECLARED"; then
+    settings_note "cause=undeclared-key key=$1"
+    return 1
   fi
   settings_key_read "$1" || status=$?
   case "$status" in
@@ -1261,7 +1334,7 @@ settings_admission() {
     settings_note "$MEASURE_CAUSE"
     return 1
   }
-  SETTINGS_CAUSE=unread-settings
+  SETTINGS_CAUSE=declared-unread-settings
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     change_class_path "$path" before-render
@@ -1291,11 +1364,13 @@ settings_admission() {
 # The manifest admission the header states. Only kendex.toml changes, so
 # the settings every rule reads are the base's as before, and the manifest
 # decides no CI input outside a source catalog, which renders from its own
-# kendex.toml. Returns 1, with the admission line, where it refuses the
+# kendex.toml, and outside its [bot-instructions] table, which a consumer
+# lane's bot-instructions check renders from, written as a header, a dotted
+# key or an inline table. Returns 1, with the admission line, where it refuses the
 # change.
 manifest_note() { printf 'manifest-admission: admitted=false %s\n' "$1" >&2; }
 manifest_admission() {
-  local side rev status
+  local side rev status check
   case "$event" in
     pull_request | merge_group) ;;
     *) manifest_note "cause=unsupported-event event=$event"; return 1 ;;
@@ -1311,13 +1386,16 @@ manifest_admission() {
       3) manifest_note "cause=manifest-not-regular side=$side"; return 1 ;;
       *) manifest_note "cause=manifest-unreadable side=$side rev=${rev:-unresolved}"; return 1 ;;
     esac
-    status=0
-    grep -qE "^[[:space:]]*[\"']?is_source_catalog" -- "$work/manifest-$side" || status=$?
-    case "$status" in
-      0) manifest_note "cause=source-catalog side=$side"; return 1 ;;
-      1) ;;
-      *) manifest_note "cause=manifest-unreadable side=$side"; return 1 ;;
-    esac
+    for check in "source-catalog ^[[:space:]]*[\"']?is_source_catalog" \
+      "bot-instructions-input ^[[:space:]]*(\[\[?[[:space:]]*)?[\"']?bot-instructions[\"']?[[:space:]]*[].=]"; do
+      status=0
+      grep -qE -- "${check#* }" "$work/manifest-$side" || status=$?
+      case "$status" in
+        0) manifest_note "cause=${check%% *} side=$side"; return 1 ;;
+        1) ;;
+        *) manifest_note "cause=manifest-unreadable side=$side"; return 1 ;;
+      esac
+    done
   done
   MANIFEST_ADMITTED=true
 }

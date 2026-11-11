@@ -115,7 +115,10 @@ outputs:
       default-branch claim reaches a path it changes; the render bullet of
       skills/harness-ci/references/wiring.md § Per-lane verdicts names the
       events a claimed lane runs on. A trivial class or
-      docs_only=true on a non-render class runs none, except that changed declared text keeps its claiming lanes and the ordinary unclaimed-path fallback. On pull_request and
+      docs_only=true on a non-render class runs none, except that changed declared text keeps its claiming lanes and the ordinary unclaimed-path fallback. A consumer
+      manifest's small class with change-class's light-ci record runs only
+      the lanes a default-branch claim reaches, and every lane where the
+      declaration cannot be read. On pull_request and
       push, with queue-only-default true, a base that names no
       HARNESS_CI_PER_PUSH_REASON runs none, where both renders read it. On schedule and
       workflow_dispatch every lane runs. When the
@@ -131,8 +134,11 @@ outputs:
     value: ${{ steps.classify.outputs.lanes }}
   lanes_cause:
     description: >-
-      Why lanes answered as it did: render, trivial, docs-only or queue-only
-      where lanes is false; full-run on schedule and workflow_dispatch;
+      Why lanes answered as it did: render, trivial, docs-only, manifest or
+      queue-only where lanes is false; full-run on schedule and
+      workflow_dispatch; manifest-claim where a declared lane claims a
+      consumer manifest's changed path; manifest-declaration-unreadable where
+      a manifest's lane declaration cannot be read;
       render-claim where a declared lane claims a path a render changes;
       declared-text where changed declared product text keeps its checks;
       queue-only-reader-absent where a render lacks the queue-only default's

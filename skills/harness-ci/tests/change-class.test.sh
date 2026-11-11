@@ -1651,9 +1651,9 @@ assert_eq "a base settings file the reader refuses answers standard, unmeasured"
   "class: class=standard measured=false cause=base-settings-unreadable base=$refused_base" \
   "$(printf '%s\n' "$refused_err" | grep '^class: ')"
 
-# A settings change of keys no CI reads is trivial and nothing else: every
-# other answer is the configuration-source refusal, and the admission line
-# names the rule or the answer that held it. The base's
+# A settings change of declared keys with no CI reader found is trivial and
+# nothing else: every other answer is the configuration-source refusal, and
+# the admission line names the rule or the answer that held it. The base's
 # HARNESS_CI_TRIVIAL_SETTINGS names a gate key and a HARNESS_CI_ key on
 # purpose, so only the floor can refuse them.
 settings_repo="$(new_repo change-class-settings)"
@@ -1672,10 +1672,13 @@ SECOND_OPINION_TOOL = "a"
 SETTINGS
 printf '[env]\nSECOND_OPINION_EFFORT = "low"\n' >"$settings_repo/.kendex/settings.toml"
 # The base's readers: a workflow naming a key, a package behind a checkout
-# prefix with its tests and a declared key family, a glob over packages, a
-# repository path behind the workspace variable, and a package nothing names.
+# prefix with its tests and a comma-separated key family, a glob over
+# packages, a repository path behind the workspace variable, a bare root
+# script name, and a lane glob. The package nothing names declares the keys
+# the rows change, one in a commented-out assignment.
 mkdir -p "$settings_repo/.github/workflows" "$settings_repo/.agents/skills/probe/tests" \
-  "$settings_repo/.agents/skills/idle" "$settings_repo/skills/globbed/scripts" "$settings_repo/tools"
+  "$settings_repo/.agents/skills/idle" "$settings_repo/skills/globbed/scripts" \
+  "$settings_repo/tools" "$settings_repo/suites/unit"
 cat >"$settings_repo/.github/workflows/ci.yml" <<'WORKFLOW'
 env:
   WORKFLOW_KEY: on
@@ -1683,12 +1686,27 @@ steps:
   - run: classifier/.agents/skills/probe/scripts/probe
   - run: skills/*/tests/run.sh
   - run: $GITHUB_WORKSPACE/tools/check.sh
+  - run: bash lint.sh
 WORKFLOW
+printf 'unit suites/**\n' >"$settings_repo/.github/ci-lanes.conf"
 printf 'echo "$PROBE_TEST_KEY"\n' >"$settings_repo/.agents/skills/probe/tests/run.sh"
-printf '# keys: PROBE_<NAME>_CMD\n' >"$settings_repo/.agents/skills/probe/kendex.settings.toml.example"
+printf '# keys: PROBE_<NAME>_MODEL, PROBE_<NAME>_CMD\n' >"$settings_repo/.agents/skills/probe/kendex.settings.toml.example"
 printf 'echo "$GLOBBED_KEY"\n' >"$settings_repo/skills/globbed/scripts/tool.sh"
 printf 'echo "$TOOL_KEY"\n' >"$settings_repo/tools/check.sh"
+printf 'echo "$ROOT_KEY"\n' >"$settings_repo/lint.sh"
+printf 'echo "$LANE_KEY"\n' >"$settings_repo/suites/unit/run.sh"
 printf 'echo "$IDLE_KEY"\n' >"$settings_repo/.agents/skills/idle/tool.sh"
+cat >"$settings_repo/.agents/skills/idle/kendex.settings.toml.example" <<'EXAMPLE'
+[env]
+SECOND_OPINION_MODEL = "a"
+# IDLE_KEY = "x"
+WORKFLOW_KEY = "x"
+PROBE_TEST_KEY = "x"
+GLOBBED_KEY = "x"
+TOOL_KEY = "x"
+ROOT_KEY = "x"
+LANE_KEY = "x"
+EXAMPLE
 commit_paths "$settings_repo" 'settings with no allowlist' seed.txt
 settings_bare="$(git -C "$settings_repo" rev-parse HEAD)"
 
@@ -1776,7 +1794,7 @@ done
 
 model_b='swap~kendex.settings.toml~SECOND_OPINION_MODEL = "a"~SECOND_OPINION_MODEL = "b"'
 admitted='class=trivial measured=true cause=allowlisted-settings settings=kendex.settings.toml'
-unread='class=trivial measured=true cause=unread-settings settings=kendex.settings.toml'
+unread='class=trivial measured=true cause=declared-unread-settings settings=kendex.settings.toml'
 removed='reader=HARNESS_CI_TRIVIAL_SETTINGS glob=!OTHER_*'
 refused='class=standard measured=true cause=configuration-source path=kendex.settings.toml glob=kendex.settings.toml'
 refused_dot='class=standard measured=true cause=configuration-source path=.kendex/settings.toml glob=.kendex/settings.toml'
@@ -1796,6 +1814,10 @@ a key only a prefixed package's tests name|bare|pull_request|after~kendex.settin
 a key only a package a workflow glob reaches names|bare|pull_request|after~kendex.settings.toml~[env]~GLOBBED_KEY = "y"|-|-|dirty|$refused|cause=read-key key=GLOBBED_KEY reader=skills/globbed/scripts/tool.sh
 a key only a prefixed repository path names|bare|pull_request|after~kendex.settings.toml~[env]~TOOL_KEY = "y"|-|-|dirty|$refused|cause=read-key key=TOOL_KEY reader=tools/check.sh
 a generated name in a declared key family|bare|pull_request|after~kendex.settings.toml~[env]~PROBE_ANY_NAME_CMD = "y"|-|-|dirty|$refused|cause=read-key key=PROBE_ANY_NAME_CMD reader=.agents/skills/probe/kendex.settings.toml.example
+a key in a comma-separated declared family|bare|pull_request|after~kendex.settings.toml~[env]~PROBE_ANY_MODEL = "y"|-|-|dirty|$refused|cause=read-key key=PROBE_ANY_MODEL reader=.agents/skills/probe/kendex.settings.toml.example
+a key only a bare root script name reads|bare|pull_request|after~kendex.settings.toml~[env]~ROOT_KEY = "y"|-|-|dirty|$refused|cause=read-key key=ROOT_KEY reader=lint.sh
+a key only a lane glob's file reads|bare|pull_request|after~kendex.settings.toml~[env]~LANE_KEY = "y"|-|-|dirty|$refused|cause=read-key key=LANE_KEY reader=suites/unit/run.sh
+an undeclared key no reader names|bare|pull_request|after~kendex.settings.toml~[env]~SHELLCHECK_OPTS = "-e SC2086"|-|-|dirty|$refused|cause=undeclared-key key=SHELLCHECK_OPTS
 an addition admits a key a workflow names|allow|pull_request|after~kendex.settings.toml~[env]~WORKFLOW_KEY = "y"|-|-|dirty|$admitted keys=WORKFLOW_KEY lines=1|-
 a removal refuses an unread key|allow|pull_request|swap~kendex.settings.toml~OTHER_KEY = "x"~OTHER_KEY = "y"|-|-|dirty|$refused|cause=read-key key=OTHER_KEY $removed
 a removal wins over an addition|allow|pull_request|after~kendex.settings.toml~[env]~SECOND_OPINION_ROOM = "y"|-|-|dirty|$refused|cause=read-key key=SECOND_OPINION_ROOM reader=HARNESS_CI_TRIVIAL_SETTINGS glob=!SECOND_OPINION_ROOM
@@ -1923,15 +1945,62 @@ no HARNESS_CI_ floor|a HARNESS_CI_ key the allowlist names|    HARNESS_CI_*) ret
 no gate-key floor|a gate key the allowlist names|  case " $BASE_SETTINGS_KEYS " in *" $1 "*) return 1 ;; esac|-
 no byte comparison|a gate key the allowlist names;a HARNESS_CI_ key the allowlist names;an allowlisted name outside the env table;an allowlist only the head adds;an allowlist the head widens|  if ! cmp -s -- "$work/settings-residue-base" "$work/settings-residue-head"; then|  if false; then
 no head parse|a head the settings reader refuses|  if ! head_values="$(settings_values "$work/settings-head" $keys)"; then|  if ! head_values=""; then
-no package readers|a key only a prefixed package's tests name;a key only a package a workflow glob reaches names;a generated name in a declared key family|        if (("/" pre) ~ /\/$/ && name !~ /^\.*$/)|        if (0)
-no path readers|a key only a prefixed repository path names|        if (path in known) print "path\t:(literal)" path|-
-no family match|a generated name in a declared key family|    case "$1" in $glob) SETTINGS_READER="$path"; return 0 ;; esac|-
+no package readers|a key only a prefixed package's tests name;a key only a package a workflow glob reaches names;a generated name in a declared key family;a key in a comma-separated declared family|        if (("/" pre) ~ /\/$/ && name !~ /^\.*$/)|        if (0)
+no path readers|a key only a prefixed repository path names;a key only a bare root script name reads|        if (path in known) print "path\t:(literal)" path|-
+no path globs|a key only a lane glob's file reads|        if ($0 ~ /[A-Za-z0-9_]/ && ("/" $0 "/") !~ /\/\.\.\//) print "glob\t" $0|-
+no family match|a generated name in a declared key family;a key in a comma-separated declared family|  if settings_declares "$1" "$SETTINGS_FAMILIES"; then return 0; fi|-
+no declaration|an undeclared key no reader names|  if settings_readers_load && ! settings_declares "$1" "$SETTINGS_DECLARED"; then|  if false; then
 CONTROLS
 require_rows change-class-settings-controls "$settings_controls"
 
+# A reader blob git cannot read refuses the admission rather than reading as
+# no reader found: git grep exits 1, its no-match status, beside `unable to
+# read`. One base loses the package file the key search reads, one the
+# workflow read first. The control reads that status alone.
+lost_reader_repo() { # NAME PATH — prints the repo and its base
+  local lost blob
+  lost="$(new_repo "$1")" || return
+  mkdir -p "$lost/.github/workflows" "$lost/tools" "$lost/.agents/skills/decl"
+  printf 'steps:\n  - run: tools/lost-check.sh\n' >"$lost/.github/workflows/lost.yml"
+  printf 'echo "a reader whose blob goes missing"\n' >"$lost/tools/lost-check.sh"
+  printf 'LOST_KEY = "x"\n' >"$lost/.agents/skills/decl/kendex.settings.toml.example"
+  printf '[env]\nLOST_KEY = "x"\n' >"$lost/kendex.settings.toml"
+  commit_paths "$lost" 'readers whose blob goes missing' seed.txt || return
+  printf '[env]\nLOST_KEY = "y"\n' >"$lost/kendex.settings.toml"
+  git -C "$lost" commit -q -am 'a declared key changes' || return
+  blob="$(git -C "$lost" rev-parse "HEAD~1:$2")" || return
+  rm -- "${lost:?}/.git/objects/${blob:0:2}/${blob:2}" || return
+  printf '%s %s' "$lost" "$(git -C "$lost" rev-parse HEAD~1)"
+}
+read -r lost_search lost_search_base <<<"$(lost_reader_repo change-class-lost-search tools/lost-check.sh)"
+read -r lost_definitions lost_definitions_base \
+  <<<"$(lost_reader_repo change-class-lost-definitions .github/workflows/lost.yml)"
+lost_reader_rows() { # SCRIPT — each base's admission cause and step
+  local script="$1" repo_dir base_rev err
+  for repo_dir in "$lost_search $lost_search_base" "$lost_definitions $lost_definitions_base"; do
+    base_rev="${repo_dir#* }"
+    err=$(env -u HARNESS_CI_TRIVIAL_PATHS -u HARNESS_CI_TRIVIAL_MAX_LINES \
+      -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS "$script" --repo "${repo_dir%% *}" \
+      --event pull_request --base "$base_rev" --head HEAD 2>&1 >/dev/null) || true
+    sed -n 's/^settings-admission: admitted=false \(cause=[^ ]*\( step=[^ ]*\)\{0,1\}\).*/\1/p; s/^class: class=\([^ ]*\) .*/class=\1/p' <<<"$err" |
+      tr '\n' ' '
+    printf '\n'
+  done
+}
+lost_expected="cause=readers-unreadable step=search class=standard 
+cause=readers-unreadable step=definitions class=standard "
+assert_eq "a reader blob git cannot read refuses at the read that needs it" \
+  "$lost_expected" "$(lost_reader_rows "$CHANGE_CLASS")"
+lost_control="$(mutant lost-reader-blob change-class \
+  '  if [ -s "$work/reader-grep-error" ]; then' '  if false; then')"
+assert_eq "must-fail: a lost blob read as no match admits the key" \
+  "class=trivial 
+class=trivial " "$(lost_reader_rows "$lost_control")"
+
 # A consumer's kendex.toml alone is small, with the light-ci record, at
 # most: every later rule still judges it, and a source catalog's manifest,
-# or one that is not a regular file, keeps the configuration refusal.
+# one carrying the bot-instructions render input, or one that is not a
+# regular file, keeps the configuration refusal.
 manifest_repo="$(new_repo change-class-manifest)"
 printf 'schema = 7\n\n[skills.demo]\nsource = "cat"\n' >"$manifest_repo/kendex.toml"
 commit_paths "$manifest_repo" 'a consumer manifest' seed.txt
@@ -1974,6 +2043,8 @@ a consumer manifest edit past the small ceiling|base|pull_request|lines 151|clas
 a manifest the repository's standard paths name|standard|merge_group|lines 2|class=standard measured=true cause=repository-standard-path path=kendex.toml glob=kendex.toml|-|-
 a source catalog key at the head, quoted and spaced|base|merge_group|text   "is_source_catalog"=false|$manifest_refused|-|cause=source-catalog side=head
 a source catalog key at the base|catalog|merge_group|lines 2|$manifest_refused|-|cause=source-catalog side=base
+a bot-instructions table header at the head|base|merge_group|text  [bot-instructions]|$manifest_refused|-|cause=bot-instructions-input side=head
+a bot-instructions dotted key at the head|base|merge_group|text "bot-instructions".schema = 1|$manifest_refused|-|cause=bot-instructions-input side=head
 a head manifest that is a symlink|base|merge_group|link|$manifest_refused|-|cause=manifest-not-regular side=head
 a push event|base|push|lines 2|$manifest_refused|-|cause=unsupported-event event=push
 ROWS
