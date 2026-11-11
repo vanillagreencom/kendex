@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
 # Surface: the filing bar on authored descriptions. Missing quoted openings
-# and invalid post-merge box fields refuse; header length remains advisory.
+# and invalid post-merge box fields refuse; header length and machine detail
+# in the opening remain advisory.
 # An owner action placed on a stored legacy body is judged on its own length.
 # Inputs: linear scripts, this suite, its assertion library, and the mailbox
 # owner-action producer. Real create/update/bulk-description routes must use
@@ -176,6 +177,53 @@ for length in 500 501; do
   fi
 done
 
+# detail_advisory — the opening-detail advisory in ERR as "LINE KINDS".
+detail_advisory() {
+  sed -n 's/^linear: advisory=issue-opening-detail line=\([0-9]*\) kinds=\([^ ]*\) .*$/\1 \2/p' <<<"$ERR"
+}
+# The filing agent follows the advisory to the two files that hold the rules.
+assert_detail_routes() { # DESC
+  assert "$1 names the description template" grep -q 'project-management templates/issue-description-template.md' <<<"$ERR"
+  assert "$1 names the reader rule" grep -q 'communication references/reports.md' <<<"$ERR"
+}
+
+# Machine detail in the opening is advised on and written; the plain rows are
+# prose that shares a shape with a pattern.
+PLAIN_WHY='The owner can use the updated instructions.'
+while IFS='|' read -r shape story why kinds; do
+  candidate="> **Story:** $story"$'\n\n'"> **Why this matters:** ${why:-$PLAIN_WHY}"$'\n\n## Context'
+  rc=0
+  require_issue_header_shape "$candidate" 2>"$ERR_FILE" || rc=$?
+  ERR="$(cat "$ERR_FILE")"
+  assert_eq "opening detail $shape files" "$rc" 0
+  if [[ -z "$kinds" ]]; then
+    assert_eq "opening detail $shape prints no diagnostic" "$ERR" ""
+  else
+    assert_eq "opening detail $shape names its kinds" "$(detail_advisory)" "1 $kinds"
+    assert_detail_routes "opening detail $shape"
+  fi
+done <<'ROWS'
+plain|The owner reads the item and knows what changes.||
+url|The owner opens https://linear.app/x/issue/a.md to read it.||
+fractions|Agents and/or owners work 24/7 on version 1.5/2.0.||
+date-only|It ran on 2026-11-11 and again on Nov 10.||
+relative-path|The owner sees skills/linear/SKILL.md in the item.||file-path
+root-path|It writes /home/dev/x without asking.||file-path
+home-path|It writes ~/.cargo/bin/kendex.||file-path
+slack-ts|The owner said so in Slack 1794379603.893169.||slack-ts
+mailbox-id|Directive 1794379719-3476856-13832 asked for it.||mailbox-id
+utc-z|It ran at 2026-11-11T06:49:47.079Z.||utc-time
+utc-word|It ran at 2026-11-11 06:49 UTC.||utc-time
+why-block|The owner reads the item.|It costs a read of tmp/notes.md.|file-path
+several|At 2026-11-11T06:49:47Z it read tmp/a.md.||file-path,utc-time
+ROWS
+
+# The body keeps its paths, ids and times.
+rc=0
+require_issue_header_shape "$OUTCOME"$'\n\nRead skills/linear/SKILL.md, Slack 1794379603.893169 at 2026-11-11T06:49:47Z.' 2>"$ERR_FILE" || rc=$?
+assert_eq "a body with machine detail outside the opening files" "$rc" 0
+assert_eq "machine detail outside the opening prints no advisory" "$(cat "$ERR_FILE")" ""
+
 # Material invalid openings reach the real command routes with valid reach.
 for operation in create update bulk-update; do
   case "$operation" in
@@ -296,6 +344,24 @@ body "$OUTCOME" '' 'The work is complete when refresh writes the render.' \
   '' '## Filing record' '' "$SOURCE_LINE" '**Symptom**: the render stayed stale' "$REACH_LINE"
 run_linear issues create --title "Template body" --description-file "$TMP_ROOT/body.md"
 assert_advised "a template-shaped create" issueCreate
+
+echo "=== opening detail: each authored-description route writes and advises ==="
+DETAIL_OPENING="$(printf '%s\n\n%s\n\n%s' '> **Story:** The owner sees skills/linear/SKILL.md in the item.' "$WHY" '## Context')"
+while IFS='|' read -r operation expected; do
+  case "$operation" in
+    create) detail_args=(issues create --title 'Opening detail'); mutation=issueCreate ;;
+    update) detail_args=(issues update CC-1); mutation=issueUpdate ;;
+    bulk-update) detail_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
+  esac
+  run_linear "${detail_args[@]}" --description "$DETAIL_OPENING"$'\n\n'"$REACH_LINE"
+  assert_written "$operation with machine detail in the opening" "$mutation"
+  assert_eq "$operation advises once per written issue" "$(detail_advisory)" "$(printf "$expected")"
+done <<'ROWS'
+create|1 file-path
+update|1 file-path
+bulk-update|1 file-path\n1 file-path
+ROWS
+
 
 echo "=== update: --description and --description-file ==="
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n' "$SOURCE_LINE" "$OUTCOME")"
