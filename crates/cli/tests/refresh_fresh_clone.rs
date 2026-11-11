@@ -1635,14 +1635,16 @@ fn a_settle_whose_record_save_fails_keeps_what_it_installed() {
     let clone = fresh_clone(&home, &origin);
     let cache = clone.join(".cache/kendex");
     fs::create_dir_all(&cache).unwrap();
-    fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).unwrap();
+    let Some(unwritable) = test_util::unwritable_dir(&cache) else {
+        return;
+    };
 
     let output = kendex(
         &home,
         &clone,
         &["refresh", "--scope", "project", "--yes", "--leave"],
     );
-    fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
+    drop(unwritable);
     let printed = said(&output);
 
     assert_eq!(output.status.code(), Some(1), "{printed}");

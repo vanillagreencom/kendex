@@ -452,13 +452,6 @@ fn apply_and_replace_hold_a_moved_sibling_catalog() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
-    use std::os::unix::fs::PermissionsExt;
-    // Root writes through a mode bit, so the settle lands and the failure
-    // this case is about is never reached on such a runner.
-    if rustix::process::geteuid().is_root() {
-        eprintln!("skipped: root writes through the unwritable agents folder this case needs");
-        return;
-    }
     let f = fixture();
     // A declared agent nothing has installed yet: the settle behind the
     // keep is what writes it, into a folder that refuses the write.
@@ -478,7 +471,9 @@ fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
     .unwrap();
     let agents = f.project.join(".claude/agents");
     fs::create_dir_all(&agents).unwrap();
-    fs::set_permissions(&agents, fs::Permissions::from_mode(0o555)).unwrap();
+    let Some(unwritable) = test_util::unwritable_dir(&agents) else {
+        return;
+    };
 
     let kept = adopt(
         &f.env,
@@ -487,9 +482,7 @@ fn a_failed_settle_after_keeping_answers_with_the_kept_files() {
         "deploy",
         &[kendex_core::model::HarnessId::Claude],
     );
-    // Writable again before any assertion can fail: a folder left 0555 is
-    // one the temp dir cannot clean up.
-    fs::set_permissions(&agents, fs::Permissions::from_mode(0o755)).unwrap();
+    drop(unwritable);
     let kept =
         kept.unwrap_or_else(|error| panic!("the kept files were reported as refused: {error}"));
 
