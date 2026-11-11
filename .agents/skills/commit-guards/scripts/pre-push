@@ -233,18 +233,24 @@ tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
 #
 # Where no boundary can be established at all the caller falls to the whole
 # tree: nothing on the branch has been vetted against the destination, and the
-# whole tree is the only honest scope left. The cases that land there are
-# listed once, in ../references/hooks-and-settings.md § Pre-push scope.
+# whole tree is the only honest scope left. Each return that leaves no base
+# decides its cause where it returns and hands it back in WHY, which the
+# caller's base-none line prints; no list of those causes is kept elsewhere.
 #
 # When byte-ceiling is enabled in COMMIT_GUARDS_CHECKS, its `--all` run has
 # no source blob. It holds an oversized binary file to its row in the byte
 # baseline and fails one with no row; ../CHECKS.md § byte-ceiling states the
 # scopes apart. Trying the boundary first limits these size refusals for
 # repositories that adopted the check with existing oversized binaries.
-local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was chosen (sole|default|shared); 1 when there is none
-  local __v="$1" __r="$2" local_oid="$3" status=0 line="" selected="" count=0
+#
+# WHY is `<key> <explanation>`. On 0 it is empty for a base that one survivor
+# or the default branch decided, and otherwise names why the default branch
+# did not decide the common-ancestor base. On 1 it names why there is no base.
+# The cause local is `__why`, so a caller's `why` is the variable answered.
+local_boundary() { # VAR WHY LOCAL-OID — VAR gets the base, WHY the cause above; 1 when there is none
+  local __v="$1" __w="$2" local_oid="$3" status=0 line="" selected="" count=0 __why=""
   local boundaries=() survivors=()
-  eval "$__v=''; $__r=''"
+  eval "$__v=''; $__w=''"
   # One baseline must descend from every reached boundary. Traversal order
   # cannot establish that: a merge can also reach an older donor boundary.
   # Where none does — a branch cut from one published branch that merged
@@ -254,10 +260,13 @@ local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was
   # lanes no history, and changelog-entries would pass the branch's own major.
   #
   # A remote spelled as a URL rather than as a name (`git push https://... main`)
-  # matches no tracking refs, so nothing is excluded, the walk reaches the
-  # root, and there is no boundary — which falls through to the whole tree
-  # below. Wider, never narrower.
-  tracking_describes_push || return 1
+  # has no remote.<name>.url entry, so tracking_describes_push fails and the
+  # whole tree is the scope. Wider, never narrower.
+  if ! tracking_describes_push; then
+    __why="tracking-unmatched The refs this repository keeps for the remote are not established to describe the URL git is pushing to."
+    eval "$__w=\$__why"
+    return 1
+  fi
   git rev-list --boundary "$local_oid" --not --remotes="$REMOTE" \
     >"$GG_TMP/boundary" 2>"$GG_TMP/boundary.err" || status=$?
   [ "$status" -eq 0 ] \
@@ -267,7 +276,17 @@ local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was
       -?*) boundaries+=("${line#-}") ;;
     esac
   done <"$GG_TMP/boundary"
-  [ "${#boundaries[@]}" -gt 0 ] || return 1
+  # An empty walk is a tip a tracking ref already holds; a walk that listed
+  # commits but no boundary is history no tracking ref shares.
+  if [ "${#boundaries[@]}" -eq 0 ]; then
+    if [ -s "$GG_TMP/boundary" ]; then
+      __why="history-unshared None of the branch's commits has a parent that a tracking ref for this remote holds."
+    else
+      __why="tip-published A tracking ref for this remote already holds $(gg_shown "$local_oid"), so the branch adds no commit over it to bound."
+    fi
+    eval "$__w=\$__why"
+    return 1
+  fi
   # Independent removes supplied ancestors. A sole survivor therefore bounds
   # all the reached history; incomparable survivors have no single one.
   git merge-base --independent "${boundaries[@]}" \
@@ -282,19 +301,22 @@ local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was
   done <"$GG_TMP/independent"
   case "$count" in
     0) gg_fail boundary-empty "$local_oid" "git merge-base returned no independent boundary from a nonempty set." ;;
-    1) eval "$__r=sole" ;;
+    1) ;;
     *)
-      if default_base selected; then
-        eval "$__r=default"
-      else
+      if ! default_base selected __why; then
         # Every survivor descends from this base, so it is wider than any of
         # them and can take in commits already published: a content refusal
-        # the caller names the way past. git exits 1 when the survivors share
-        # no ancestor, and only then is there no base.
+        # whose base-shared line names why the default branch did not decide.
+        # git exits 1 when the survivors share no ancestor, and only then is
+        # there no base.
         selected="$(git merge-base --octopus "${survivors[@]}" 2>"$GG_TMP/boundary.err")" || status=$?
         case "$status" in
-          0) eval "$__r=shared" ;;
-          1) return 1 ;;
+          0) eval "$__w=\$__why" ;;
+          1)
+            __why="boundaries-unshared:${__why%% *} The published branches it builds on share no ancestor, and the default branch did not decide: ${__why#* }"
+            eval "$__w=\$__why"
+            return 1
+            ;;
           *) gg_fail_cause boundary-common "$status" "$GG_TMP/boundary.err" "git merge-base could not find the common ancestor of the reached boundaries of $(gg_shown "$local_oid") (exit $status)" ;;
         esac
       fi
@@ -306,14 +328,38 @@ local_boundary() { # VAR ROUTE LOCAL-OID — VAR gets the base, ROUTE how it was
 # HEAD's merge base with the remote's default branch: git's record of the
 # remote's HEAD, which a caller reads only where tracking_describes_push holds.
 # Past it, HEAD's commits are not the default branch's, which is what the
-# pull request for this branch will carry. A record git keeps after a prune
-# deleted the ref it names resolves no merge base, so it counts as none;
-# `git remote set-head <remote> --auto` repairs it.
-default_base() { # VAR — VAR gets the merge base; 1 when no usable default branch resolves
-  local __v="$1" __ref="" __mb=""
-  __ref="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>/dev/null)" || return 1
-  __mb="$(git merge-base "$__ref" HEAD 2>/dev/null)" || return 1
-  eval "$__v=\$__mb"
+# pull request for this branch will carry.
+#
+# Three cases leave none, and WHY, when named, gets the one that occurred as
+# `<key> <explanation>`. Only a missing or dangling record is repaired by
+# `git remote set-head <remote> --auto`; a default branch that shares no
+# history with HEAD stays the same record after it, so that case names no
+# remedy. A git failure in reading any of it is no case of the three and
+# refuses.
+default_base() { # VAR [WHY] — VAR gets the merge base; 1 when no usable default branch resolves
+  local __v="$1" __w="${2:-}" __ref="" __mb="" __status=0 __cause=""
+  __ref="$(git symbolic-ref --quiet "refs/remotes/$REMOTE/HEAD" 2>"$GG_TMP/default.err")" || __status=$?
+  case "$__status" in
+    0)
+      if git rev-parse --verify --quiet "$__ref^{commit}" >/dev/null 2>&1; then
+        __mb="$(git merge-base "$__ref" HEAD 2>"$GG_TMP/default.err")" || __status=$?
+        case "$__status" in
+          0)
+            eval "$__v=\$__mb"
+            return 0
+            ;;
+          1) __cause="default-unrelated The remote's default branch shares no history with HEAD." ;;
+          *) gg_fail_cause default-merge-base "$__status" "$GG_TMP/default.err" "git merge-base could not compare HEAD with the remote's default branch (exit $__status)" ;;
+        esac
+      else
+        __cause="default-dangling Git's record of the remote's default branch names a ref that no longer exists; git remote set-head <remote> --auto repairs it."
+      fi
+      ;;
+    1) __cause="default-unrecorded Git records no default branch for this remote; git remote set-head <remote> --auto records it." ;;
+    *) gg_fail_cause default-record "$__status" "$GG_TMP/default.err" "git symbolic-ref could not read the record of the remote's default branch (exit $__status)" ;;
+  esac
+  [ -z "$__w" ] || eval "$__w=\$__cause"
+  return 1
 }
 
 # The baseline for the lanes that ask what the branch changed over its base
@@ -563,16 +609,14 @@ while IFS=' ' read -r local_ref local_oid remote_ref remote_oid || [ -n "$local_
     fi
     continue
   fi
-  base="" route=""
-  if local_boundary base route "$local_oid"; then
-    [ "$route" != shared ] \
-      || gg_message base-shared "$ref:$base" "=== pre-push: no default branch for this remote resolves, so $ref is judged from $(gg_shown "$base"), the common ancestor of the published branches it builds on. That range can include their own commits; git remote set-head <remote> --auto records the default branch and narrows it."
+  base="" why=""
+  if local_boundary base why "$local_oid"; then
+    [ -z "$why" ] \
+      || gg_message base-shared "$ref:$base:${why%% *}" "=== pre-push: $ref is judged from $(gg_shown "$base"), the common ancestor of the published branches it builds on, so the range can include their own commits. The default branch did not decide it: ${why#* }"
     judge "base:$base" "$ref" --base "$base"
   else
-    # local_boundary states why no base means the whole tree. The message
-    # names the outcome, not a cause: several causes end here, and the
-    # contract the message points at lists them.
-    gg_message base-none "$ref" "=== pre-push: no usable base found for $ref at this remote; the causes are in commit-guards references/hooks-and-settings.md § Pre-push scope. Judging the whole tree."
+    # The cause is local_boundary's, decided at the return that left no base.
+    gg_message base-none "$ref:${why%% *}" "=== pre-push: no usable base found for $ref at this remote, so the whole tree is judged. ${why#* }"
     judge "all" "$ref"
   fi
 done <"$GG_TMP/refs"

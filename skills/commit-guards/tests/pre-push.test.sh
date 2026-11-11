@@ -127,8 +127,12 @@ printf '%s\n' "$gg_suite"
 # leaves it. Each default gives a different merge base, so the pair holds
 # whatever order git lists the incomparable boundaries in. `unrecorded` and
 # `dangling` also carry the topic's own major, which their base must judge.
-first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|unrecorded|dangling|disconnected) [SKILL-SOURCE]
-  local __v="$1" r="" donor=""
+# `published` cuts the topic at the published tip, so it adds no commit.
+# `unrelated` records main as the default while the topic merges two
+# published branches of an orphan lineage, so the default shares no history
+# with HEAD and re-recording it changes nothing.
+first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|unrecorded|dangling|disconnected|published|unrelated) [SKILL-SOURCE]
+  local __v="$1" r="" donor="" root=""
   new_repo r "$2" "${4:-}"
   q git -C "$r" config gc.auto 0
   q git -C "$r" config maintenance.auto false
@@ -145,6 +149,30 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|u
     q git -C "$r" checkout -q --orphan topic
     q git -C "$r" rm -q --cached app.json lib.json
     q git -C "$r" commit -q -m "feat: unrelated history"
+    eval "$__v=\$r"
+    return 0
+  fi
+  if [ "$3" = published ]; then
+    q git -C "$r" checkout -q -b topic origin/main
+    eval "$__v=\$r"
+    return 0
+  fi
+  if [ "$3" = unrelated ]; then
+    q git -C "$r" remote set-head origin main
+    q git -C "$r" checkout -q --orphan staging
+    q git -C "$r" commit -q -m "feat: lineage root"
+    root="$(git -C "$r" rev-parse HEAD)" || exit 2
+    printf 'staging\n' >"$r/staging.txt"
+    q git -C "$r" add staging.txt
+    q git -C "$r" commit -q -m "feat: staging change"
+    q git -C "$r" -c core.hooksPath=/dev/null push -q origin staging
+    q git -C "$r" checkout -q -b pages "$root"
+    printf 'pages\n' >"$r/pages.txt"
+    q git -C "$r" add pages.txt
+    q git -C "$r" commit -q -m "feat: pages change"
+    q git -C "$r" -c core.hooksPath=/dev/null push -q origin pages
+    q git -C "$r" checkout -q -b topic origin/staging
+    q git -C "$r" merge -q --no-ff origin/pages -m "fix: take the pages change"
     eval "$__v=\$r"
     return 0
   fi
@@ -194,15 +222,16 @@ first_push_merge() { # VAR NAME MODE(clean|own-major|main-default|side-default|u
 }
 
 first_push_judgment() { # REPO -> status and machine-readable scope/finding fields
-  local r="$1" rc=0 out="" scope="" major="" shared=""
+  local r="$1" rc=0 out="" scope="" major="" shared="" none=""
   out="$(git -C "$r" push --dry-run origin HEAD:refs/heads/topic 2>&1)" || rc=$?
   scope="$(printf '%s\n' "$out" | sed -n 's/^pre-push: step=//p')" || exit 2
   major="$(printf '%s\n' "$out" | sed -n 's/^changelog-entries: major-breaking=//p' | paste -sd ' ' -)" || exit 2
   shared="$(printf '%s\n' "$out" | sed -n 's/^pre-push: base-shared=//p')" || exit 2
-  printf 'rc=%s scope=%s major=%s shared=%s' "$rc" "$scope" "$major" "$shared"
+  none="$(printf '%s\n' "$out" | sed -n 's/^pre-push: base-none=//p')" || exit 2
+  printf 'rc=%s scope=%s major=%s shared=%s none=%s' "$rc" "$scope" "$major" "$shared" "$none"
 }
 
-for FIRST_MODE in clean own-major main-default side-default unrecorded dangling disconnected; do
+for FIRST_MODE in clean own-major main-default side-default unrecorded dangling disconnected published unrelated; do
   FIRST=""
   first_push_merge FIRST "first-$FIRST_MODE" "$FIRST_MODE"
   FIRST_BASE="$(git -C "$FIRST" rev-parse origin/main)" || exit 2
@@ -227,10 +256,10 @@ for FIRST_MODE in clean own-major main-default side-default unrecorded dangling 
     # both published branches grew from, so the topic's own major is judged,
     # and the prerequisite's with it.
     case "$FIRST_MODE" in
-      main-default) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared=" ;;
-      side-default) FIRST_EXPECT="rc=1 scope=base:$FIRST_SIDE major=app.json:1.0.0:2.0.0 shared=" ;;
+      main-default) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared= none=" ;;
+      side-default) FIRST_EXPECT="rc=1 scope=base:$FIRST_SIDE major=app.json:1.0.0:2.0.0 shared= none=" ;;
       unrecorded | dangling)
-        FIRST_EXPECT="rc=1 scope=base:$FIRST_SEED major=app.json:1.0.0:2.0.0 lib.json:1.0.0:2.0.0 shared=refs/heads/topic:$FIRST_SEED"
+        FIRST_EXPECT="rc=1 scope=base:$FIRST_SEED major=app.json:1.0.0:2.0.0 lib.json:1.0.0:2.0.0 shared=refs/heads/topic:$FIRST_SEED:default-$FIRST_MODE none="
         ;;
     esac
     if [ "$FIRST_MODE" = dangling ]; then
@@ -241,15 +270,25 @@ for FIRST_MODE in clean own-major main-default side-default unrecorded dangling 
     fi
   elif [ "$FIRST_MODE" = disconnected ]; then
     assert_eq "first-push disconnected history reaches no boundary" "" "$FIRST_BOUNDARIES"
-    FIRST_EXPECT='rc=0 scope=all major= shared='
+    FIRST_EXPECT='rc=0 scope=all major= shared= none=refs/heads/topic:history-unshared'
+  elif [ "$FIRST_MODE" = published ]; then
+    assert_eq "first-push published tip adds no commit over the tracking refs" "" \
+      "$(git -C "$FIRST" rev-list --boundary HEAD --not --remotes=origin)"
+    FIRST_EXPECT='rc=0 scope=all major= shared= none=refs/heads/topic:tip-published'
+  elif [ "$FIRST_MODE" = unrelated ]; then
+    FIRST_ROOT="$(git -C "$FIRST" rev-parse origin/staging^)" || exit 2
+    FIRST_RELATED=0
+    git -C "$FIRST" merge-base origin/HEAD HEAD >/dev/null || FIRST_RELATED=$?
+    assert_eq "first-push unrelated fixture's default branch shares no history with HEAD" 1 "$FIRST_RELATED"
+    FIRST_EXPECT="rc=0 scope=base:$FIRST_ROOT major= shared=refs/heads/topic:$FIRST_ROOT:default-unrelated none="
   else
     FIRST_SEED="$(git -C "$FIRST" rev-parse origin/main^^)" || exit 2
     assert_eq "first-push $FIRST_MODE reaches the older boundary first" \
       "$(printf '%s\n%s' "$FIRST_SEED" "$FIRST_BASE")" "$FIRST_BOUNDARIES"
     q git -C "$FIRST" merge-base --is-ancestor "$FIRST_SEED" "$FIRST_BASE"
     case "$FIRST_MODE" in
-      clean) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared=" ;;
-      own-major) FIRST_EXPECT="rc=1 scope=base:$FIRST_BASE major=lib.json:1.0.0:2.0.0 shared=" ;;
+      clean) FIRST_EXPECT="rc=0 scope=base:$FIRST_BASE major= shared= none=" ;;
+      own-major) FIRST_EXPECT="rc=1 scope=base:$FIRST_BASE major=lib.json:1.0.0:2.0.0 shared= none=" ;;
     esac
   fi
   assert_eq "first-push boundary judgment: $FIRST_MODE" "$FIRST_EXPECT" "$(first_push_judgment "$FIRST")"
@@ -266,7 +305,7 @@ UNSAFE_FIRST=""
 first_push_merge UNSAFE_FIRST unsafe-first own-major "$UNSAFE_BOUNDARY"
 UNSAFE_TIP="$(git -C "$UNSAFE_FIRST" rev-parse HEAD)" || exit 2
 assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
-  "rc=0 scope=base:$UNSAFE_TIP major= shared=" "$(first_push_judgment "$UNSAFE_FIRST")"
+  "rc=0 scope=base:$UNSAFE_TIP major= shared= none=" "$(first_push_judgment "$UNSAFE_FIRST")"
 
 # Keeping the incomparable survivor git lists last, not the default branch's
 # merge base, takes main's tip under a side default and hides the
@@ -274,13 +313,13 @@ assert_eq "must-fail: a HEAD baseline hides the branch's own major" \
 SURVIVOR_BOUNDARY="$TMP/.survivor-boundary/commit-guards"
 mkdir -p "$(dirname "$SURVIVOR_BOUNDARY")"
 cp -R "$SKILL_TEMPLATE" "$SURVIVOR_BOUNDARY"
-gg_mutant SURVIVOR_LANE pre-push 'if default_base selected; then' 'if default_base gg_unused; then'
+gg_mutant SURVIVOR_LANE pre-push 'if ! default_base selected __why; then' 'if ! default_base gg_unused __why; then'
 cp -- "$SURVIVOR_LANE" "$SURVIVOR_BOUNDARY/scripts/pre-push"
 SURVIVOR_FIRST=""
 first_push_merge SURVIVOR_FIRST survivor-first side-default "$SURVIVOR_BOUNDARY"
 SURVIVOR_MAIN="$(git -C "$SURVIVOR_FIRST" rev-parse origin/main)" || exit 2
 assert_eq "must-fail: the last listed survivor hides the prerequisite's major" \
-  "rc=0 scope=base:$SURVIVOR_MAIN major= shared=" "$(first_push_judgment "$SURVIVOR_FIRST")"
+  "rc=0 scope=base:$SURVIVOR_MAIN major= shared= none=" "$(first_push_judgment "$SURVIVOR_FIRST")"
 
 # Falling to the whole tree when no default branch resolves, as the lane did
 # before the common-ancestor base, hands changelog-entries no history: the
@@ -288,14 +327,40 @@ assert_eq "must-fail: the last listed survivor hides the prerequisite's major" \
 WHOLE_BOUNDARY="$TMP/.whole-boundary/commit-guards"
 mkdir -p "$(dirname "$WHOLE_BOUNDARY")"
 cp -R "$SKILL_TEMPLATE" "$WHOLE_BOUNDARY"
-gg_mutant WHOLE_LANE pre-push 'if default_base selected; then' 'if default_base selected || return 1; then'
+gg_mutant WHOLE_LANE pre-push 'if ! default_base selected __why; then' 'if ! default_base selected __why && return 1; then'
 cp -- "$WHOLE_LANE" "$WHOLE_BOUNDARY/scripts/pre-push"
 for WHOLE_MODE in unrecorded dangling; do
   WHOLE_FIRST=""
   first_push_merge WHOLE_FIRST "whole-$WHOLE_MODE" "$WHOLE_MODE" "$WHOLE_BOUNDARY"
   assert_eq "must-fail: the whole tree passes the topic's own major ($WHOLE_MODE default)" \
-    "rc=0 scope=all major= shared=" "$(first_push_judgment "$WHOLE_FIRST")"
+    "rc=0 scope=all major= shared= none=refs/heads/topic:" "$(first_push_judgment "$WHOLE_FIRST")"
 done
+
+# A lane that stops telling an empty walk from history no tracking ref shares
+# names the published tip as unshared history, a cause that did not occur.
+PUBLISHED_BOUNDARY="$TMP/.published-boundary/commit-guards"
+mkdir -p "$(dirname "$PUBLISHED_BOUNDARY")"
+cp -R "$SKILL_TEMPLATE" "$PUBLISHED_BOUNDARY"
+gg_mutant PUBLISHED_LANE pre-push 'if [ -s "$GG_TMP/boundary" ]; then' 'if true; then'
+cp -- "$PUBLISHED_LANE" "$PUBLISHED_BOUNDARY/scripts/pre-push"
+PUBLISHED_FIRST=""
+first_push_merge PUBLISHED_FIRST published-first published "$PUBLISHED_BOUNDARY"
+assert_eq "must-fail: a collapsed empty-walk cause names a published tip as unshared history" \
+  "rc=0 scope=all major= shared= none=refs/heads/topic:history-unshared" "$(first_push_judgment "$PUBLISHED_FIRST")"
+
+# A lane that names the unrecorded case for a default branch sharing no
+# history with HEAD sends the pusher to a set-head that changes nothing.
+UNRELATED_BOUNDARY="$TMP/.unrelated-boundary/commit-guards"
+mkdir -p "$(dirname "$UNRELATED_BOUNDARY")"
+cp -R "$SKILL_TEMPLATE" "$UNRELATED_BOUNDARY"
+gg_mutant UNRELATED_LANE pre-push '1) __cause="default-unrelated ' '1) __cause="default-unrecorded '
+cp -- "$UNRELATED_LANE" "$UNRELATED_BOUNDARY/scripts/pre-push"
+UNRELATED_FIRST=""
+first_push_merge UNRELATED_FIRST unrelated-first unrelated "$UNRELATED_BOUNDARY"
+UNRELATED_ROOT="$(git -C "$UNRELATED_FIRST" rev-parse origin/staging^)" || exit 2
+assert_eq "must-fail: an unrelated default named as unrecorded is refused" \
+  "rc=0 scope=base:$UNRELATED_ROOT major= shared=refs/heads/topic:$UNRELATED_ROOT:default-unrecorded none=" \
+  "$(first_push_judgment "$UNRELATED_FIRST")"
 
 # --------------------------------------------------------------- the ref lines
 #
@@ -347,10 +412,10 @@ for row in \
   "a raw oid on the left still lands a branch, so it is judged|origin|$TIP $TIP refs/heads/main $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: result=0" \
   "a ref line missing a field is refused, never announced as carrying nothing|origin|refs/heads/main $TIP refs/heads/main|rc=2 pre-push: ref-line-short=refs/heads/main;pre-push: result=2" \
   "a second ref line at the same scope is not judged twice|origin|refs/heads/main $TIP refs/heads/main $SEED@@refs/heads/main $TIP refs/heads/mirror $SEED|rc=0 pre-push: step=against:<oid>;byte-ceiling: result=0:1:1:against:<oid>;pre-push: scope-repeat=against:<oid>;pre-push: result=0" \
-  "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
+  "a remote spelled as a URL matches no tracking ref, so the whole tree is the scope, and HEAD is named as the branch it resolves to|$CREDENTIAL_URL|HEAD $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0" \
   "no ref lines at all is stated, not silently clean|origin||rc=0 pre-push: no-refs=0;pre-push: result=0" \
   "the boundary stands where git pushes to the URL the tracking refs were fetched from|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0" \
-  "and falls to the whole tree where git is pushing somewhere those refs do not describe|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0|$TMP/fork.git"; do
+  "and falls to the whole tree where git is pushing somewhere those refs do not describe|origin|refs/heads/main $TIP refs/heads/main $ZERO|rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0|$TMP/fork.git"; do
   IFS='|' read -r label remote reflines expect url <<<"$row"
   assert_eq "$label" "$expect" "$(direct "$remote" "$reflines" "$url")"
 done
@@ -409,7 +474,7 @@ rm -rf -- "${DIRECT:?}/.agents/skills/doc-limits"
 # once per URL — so no single URL is the one the tracking refs describe, under
 # either invocation, and there is no boundary to vouch for.
 MULTI_LINE="refs/heads/main $TIP refs/heads/main $ZERO"
-MULTI_WHOLE="rc=0 pre-push: base-none=refs/heads/main;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+MULTI_WHOLE="rc=0 pre-push: base-none=refs/heads/main:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
 MULTI_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
 q git -C "$DIRECT" remote set-url --add origin "$TMP/second.git"
 assert_eq "a remote carrying two URLs takes no boundary, under the one its refs came from" \
@@ -470,7 +535,7 @@ rewritten_push() { # -> the run's one line on stdout
 }
 
 REWRITE_BOUNDED="rc=0 pre-push: step=base:<oid>;byte-ceiling: result=0:1:1:base:<oid>;pre-push: result=0"
-REWRITE_WHOLE="rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
+REWRITE_WHOLE="rc=0 pre-push: base-none=refs/heads/topic:tracking-unmatched;pre-push: step=all;byte-ceiling: result=0:2:1:all:;pre-push: result=0"
 assert_eq "a push through a rewritten spelling of the remote keeps its boundary" \
   "$REWRITE_BOUNDED" "$(rewritten_push)"
 
@@ -923,7 +988,7 @@ push_url() { # REPO REFSPEC -> the run's one line on stdout
 UNBASED=""
 wrapped UNBASED unbased
 assert_eq "with no base to vouch for, the lane is named rather than folded into a clean verdict" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
+  "rc=0 pre-push: base-none=refs/heads/topic:tracking-unmatched;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_url "$UNBASED" topic)"
 
 # The must-fail control for that: the same push with the old batch call, which
@@ -940,7 +1005,7 @@ assert_eq "the folded edit took" "rewritten" \
 FOLDED_REPO=""
 wrapped FOLDED_REPO folded "$FOLDED"
 assert_eq "must-fail: folded back in, the same push reports that document clean" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;md-type: staged-count=0;pre-push: result=0" \
+  "rc=0 pre-push: base-none=refs/heads/topic:tracking-unmatched;pre-push: step=all;md-type: staged-count=0;pre-push: result=0" \
   "$(push_url "$FOLDED_REPO" topic)"
 
 # md-type is change-scoped: its bare run measures the pushed tree against
@@ -949,7 +1014,7 @@ assert_eq "must-fail: folded back in, the same push reports that document clean"
 SWEEPING=""
 wrapped SWEEPING sweeping "" 'COMMIT_GUARDS_MD_SCOPE = "all"\n'
 assert_eq "under the sweep setting the whole-tree scope still withholds md-type by name" \
-  "rc=0 pre-push: base-none=refs/heads/topic;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
+  "rc=0 pre-push: base-none=refs/heads/topic:tracking-unmatched;pre-push: step=all;commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type;pre-push: result=0" \
   "$(push_url "$SWEEPING" topic)"
 
 # md-type asks what a change introduced, so it takes the range a push hands
