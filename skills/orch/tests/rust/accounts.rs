@@ -950,6 +950,64 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
     drop(child);
 }
 
+/// A Copilot home or a Pi root is never a seat: a pick of a Copilot pool
+/// reads no seat, the fleet's overseer included. Named as the fleet's
+/// overseer at monthly 93 with the reset 30 days out, where a seat would
+/// keep 25 points and be `seat-reserve`, each is judged as an ordinary
+/// account under the turn-end hook's trigger of 3: `lane`, `room`, no
+/// `need`.
+#[test]
+fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_account() {
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let pool = |alias: &str, harness: &str| {
+        let mut row = through_host(measured(alias, 0, 0));
+        row["harness"] = json!(harness);
+        row["config_dir"] = json!(format!("/home/me/.{alias}"));
+        row["monthly_pct"] = json!(93);
+        row["headroom_pct"] = Value::Null;
+        row["weekly_pct"] = Value::Null;
+        row["session_5h_pct"] = Value::Null;
+        row["resets"]["monthly"] = json!(stamp(now() + 30 * 86_400));
+        row
+    };
+    world.plant_host_listing("fleet-vm", &[pool("cli", "copilot"), pool("pi1", "pi")]);
+    let judged: Vec<Value> = [
+        ("copilot", None, "/home/me/.cli"),
+        (
+            "pi",
+            Some("github-copilot/claude-opus-5-5"),
+            "/home/me/.pi1",
+        ),
+    ]
+    .into_iter()
+    .map(|(harness, model, dir)| {
+        world.write_fleet(Vec::new(), Some(dir));
+        let reply = world.pick(&PickRequest {
+            harness: harness.to_owned(),
+            model: model.map(str::to_owned),
+            lane: Some(dir.to_owned()),
+            min_headroom_pct: Some(3),
+            ..PickRequest::default()
+        });
+        json!([
+            harness,
+            reply["answer"],
+            reply["record"]["verdict"],
+            reply["record"]["wall"],
+            reply["record"].get("need")
+        ])
+    })
+    .collect();
+    assert_eq!(
+        judged,
+        vec![
+            json!(["copilot", "lane", "room", 93, null]),
+            json!(["pi", "lane", "room", 93, null]),
+        ]
+    );
+}
+
 /// The provider's rows under a host are the judge's own, read from the
 /// roster with the host. Under `ORCH_LANE_HOST=fleet-vm` the listing
 /// carries the provider's rows: the seat with the most room is held to the
@@ -1169,10 +1227,12 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
 
 /// A Claude home signed in by a token, its `setup-token` beside it and no
 /// credential file, reads nothing on this machine while the provider
-/// measured its week: a Fable lane named on it is judged on that week, the
-/// provider's reading standing as an account's one reading does. Named
-/// where nothing lists it and nothing reads it, a home is `unmeasured`,
-/// exit 5, never `no-record`.
+/// measured its week: a Fable lane named on it, and the chooser's Fable
+/// pick, are judged on that week, the provider's reading standing as an
+/// account's one reading does; where the provider read no figure the home
+/// is `unmeasured`, exit 5, on its own `no_credentials`. Named where
+/// nothing lists it and nothing reads it, a home is `unmeasured`, exit 5,
+/// never `no-record`.
 #[test]
 fn a_token_signed_home_is_judged_on_the_providers_week_and_an_unlisted_one_is_unmeasured() {
     let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
@@ -1190,14 +1250,51 @@ fn a_token_signed_home_is_judged_on_the_providers_week_and_an_unlisted_one_is_un
     )
     .unwrap();
     let fable = world.pick(&named(&dir, claude(Some("claude-fable-5-1"))));
+    let chooser = world.pick(&claude(Some("claude-fable-5-1")));
     assert_eq!(
         (
             &fable["answer"],
             &fable["record"]["measured_through"],
-            &fable["record"]["wall"]
+            &fable["record"]["wall"],
+            chosen(&chooser).as_deref(),
+            &chooser["record"]["measured_through"]
         ),
-        (&json!("lane"), &json!("host"), &json!(20)),
-        "{fable}"
+        (
+            &json!("lane"),
+            &json!("host"),
+            &json!(20),
+            Some(dir.as_str()),
+            &json!("host")
+        ),
+        "the named form and the chooser alike: {fable} {chooser}"
+    );
+    // A provider row that read no figure leaves nothing to judge: the home
+    // is unmeasured on this machine's own status.
+    let mut local = measured("tclaude", 0, 0);
+    local["status"] = json!("no_credentials");
+    let mut unread = through_host(measured("tclaude", 20, 0));
+    unread["config_dir"] = json!(dir);
+    unread["status"] = json!("no_usage_data");
+    unread["headroom_pct"] = Value::Null;
+    unread["weekly_pct"] = Value::Null;
+    unread["session_5h_pct"] = Value::Null;
+    unread["verdict"] = json!("unmeasured");
+    world.plant_host_listing("fleet-vm", &[local, unread]);
+    let host_unread = world.pick(&named(&dir, claude(Some("claude-fable-5-1"))));
+    assert_eq!(
+        (
+            &host_unread["answer"],
+            &host_unread["exit"],
+            &host_unread["record"]["measured_through"],
+            &host_unread["record"]["status"]
+        ),
+        (
+            &json!("unmeasured"),
+            &json!(5),
+            &json!("local"),
+            &json!("no_credentials")
+        ),
+        "{host_unread}"
     );
     let unlisted = world.path().join("home/.tokenhome");
     std::fs::create_dir_all(&unlisted).unwrap();
@@ -1210,6 +1307,112 @@ fn a_token_signed_home_is_judged_on_the_providers_week_and_an_unlisted_one_is_un
         (&alone["answer"], &alone["exit"], &alone["record"]["status"]),
         (&json!("unmeasured"), &json!(5), &json!("no_credentials")),
         "{alone}"
+    );
+}
+
+/// A credentialed home whose own read failed is no token-signed home: its
+/// failure is the account's reading of the model's window, not an absence
+/// the provider's shared week fills. Beside a provider row that measured
+/// the week and no Fable window, a local copy refused with HTTP 503 and one
+/// whose usage body held no window are each `unmeasured` for a Fable lane,
+/// exit 5, with the local status and its cause, and the chooser leaves each
+/// out as unmeasured rather than launching onto a window nobody read.
+#[test]
+fn a_failed_local_read_beside_the_providers_shared_week_is_unmeasured_for_the_model() {
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let dir = world.dir("fclaude");
+    let fable = claude(Some("claude-fable-5-1"));
+    let failed = [
+        ("unreachable", "usage query refused with HTTP 503"),
+        (
+            "no_usage_data",
+            "authenticated, but the usage response carried no weekly, monthly or model window",
+        ),
+    ];
+    let judged: Vec<Value> = failed
+        .iter()
+        .map(|(status, _)| {
+            let mut local = measured("fclaude", 0, 0);
+            local["status"] = json!(status);
+            local["headroom_pct"] = Value::Null;
+            local["weekly_pct"] = Value::Null;
+            local["session_5h_pct"] = Value::Null;
+            let mut provider = through_host(measured("fclaude", 20, 0));
+            provider["config_dir"] = json!(dir);
+            world.plant_host_listing("fleet-vm", &[local, provider]);
+            let reply = world.pick(&named(&dir, fable.clone()));
+            let chooser = world.pick(&fable);
+            json!([
+                reply["answer"],
+                reply["exit"],
+                reply["record"]["measured_through"],
+                reply["record"]["status"],
+                reply["record"]["detail"],
+                chooser["answer"],
+                left_out(&chooser)
+            ])
+        })
+        .collect();
+    let unmeasured: Vec<Value> = failed
+        .iter()
+        .map(|(status, detail)| {
+            json!([
+                "unmeasured",
+                5,
+                "local",
+                status,
+                detail,
+                "none",
+                [[dir, "unmeasured"]]
+            ])
+        })
+        .collect();
+    assert_eq!(judged, unmeasured);
+}
+
+/// The account a Pi lane spends follows its model's provider, and
+/// `accounts billed` answers it by the pick's own rule: a `pi-claude/`
+/// model spends a Claude seat, a `github-copilot/` or `anthropic/` one the
+/// Pi root, and any other provider, or a model named without one, nothing
+/// the pick measures. A verb that answered otherwise would have its caller
+/// judge a Pi lane on an account the lane does not spend.
+#[test]
+fn the_billed_verb_names_the_account_a_pi_lane_spends_by_its_models_provider() {
+    let world = World::new(&[]);
+    let models = [
+        "pi-claude/claude-opus-5-5",
+        "github-copilot/claude-opus-5-5",
+        "anthropic/claude-opus-5-5",
+        "openai/gpt-5",
+        "claude-opus-5-5",
+    ];
+    let answers: Vec<Value> = models
+        .iter()
+        .map(|model| {
+            let mut command = world.command();
+            command.args([
+                "accounts",
+                "billed",
+                "--harness",
+                "pi",
+                "--native-model",
+                model,
+            ]);
+            World::reply(command)["billed"].clone()
+        })
+        .collect();
+    assert_eq!(
+        answers,
+        vec![
+            json!("claude"),
+            json!("pi"),
+            json!("pi"),
+            json!("unmeasured"),
+            json!("unmeasured")
+        ],
+        "{models:?}"
     );
 }
 

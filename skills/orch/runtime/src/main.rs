@@ -612,6 +612,17 @@ enum AccountsOp {
         #[arg(long)]
         host: Option<String>,
     },
+    /// The kind of account a launch of `--harness` on `--native-model`
+    /// spends, by the pick's own billing rule: `claude`, `codex`,
+    /// `copilot`, `pi`, or `unmeasured` where nothing measures the model's
+    /// provider.
+    Billed {
+        #[arg(long)]
+        harness: String,
+        /// The selector the harness runs, its provider included.
+        #[arg(long, default_value = "")]
+        native_model: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2310,6 +2321,12 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 },
             )
         }
+        AccountsOp::Billed {
+            harness,
+            native_model,
+        } => Ok(serde_json::json!({
+            "billed": ops::accounts::pick_harness(&harness, &native_model),
+        })),
     }
 }
 

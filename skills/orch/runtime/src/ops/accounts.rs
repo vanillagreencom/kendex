@@ -572,7 +572,7 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// model's wall), except that `admit` (the overseer walk's
 /// [`PickRequest::admit_unread_scope`]) judges it on the provider's shared
 /// windows, its buckets as read, marked `scope: unread`; and a local copy
-/// that read nothing at all is no reading, so the provider's measured one
+/// with no credential file is no reading, so the provider's measured one
 /// stands as an account's one reading does. An account with one reading
 /// keeps it. The roster is never resolved: it reports both readings.
 fn resolve(rows: &[AccountRow], billed: &str, model: &str, admit: bool) -> Vec<AccountRow> {
@@ -635,14 +635,15 @@ fn prefer(
         }
         return admitted;
     }
-    // A local copy that read nothing, a home signed in by a token with no
-    // credential file among them, is no reading: the provider's measured
-    // reading is the account's one, judged as a provider-only account is.
-    if provider.measured() && !own.answers() && !own.plan_ended() {
+    // A home with no credential file, one signed in by a token, is no
+    // reading: the provider's measured reading is the account's one, judged
+    // as a provider-only account is.
+    if provider.measured() && own.status == "no_credentials" {
         return provider;
     }
-    // This machine's reading carries no fresh window scoped to the model:
-    // the account is unmeasured for it, with the cause in its detail.
+    // This machine's reading carries no fresh window scoped to the model,
+    // or its own read failed: the account is unmeasured for it, with the
+    // cause in its status and detail.
     let mut unmeasured = own;
     if unmeasured.measured() {
         unmeasured.status = "no_usage_data".to_owned();
