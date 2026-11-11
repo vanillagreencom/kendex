@@ -200,6 +200,45 @@ fn orphan_consumer(home: &Path, drops_key: bool, pending_pi: bool) -> PathBuf {
     project
 }
 
+/// A global copied skill whose source then changes: an update with no set
+/// change, which the global scope writes without consent of its own. The
+/// project scope comes first in a run, so this write is the one a refusal
+/// raised only inside the project scope's own write would let through.
+/// Returns the installed copy and the global lock.
+#[allow(clippy::unwrap_used)]
+fn global_update_without_consent(home: &Path) -> (PathBuf, PathBuf) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let catalog = home.join("global-catalog");
+    let source = catalog.join("skills/ship/SKILL.md");
+    write(
+        &source,
+        "---\nname: ship\ndescription: ship it\n---\nShip it.\n",
+    );
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\n{}\n\n[skills.ship]\nsource = \"cat\"\n",
+            test_util::source_path(&catalog)
+        ),
+    );
+    let installed = kendex(
+        home,
+        home,
+        &["refresh", "--scope", "global", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let copy = home.join(".claude/skills/ship/SKILL.md");
+    assert!(copy.is_file(), "the fixture installs {}", copy.display());
+    write(
+        &source,
+        "---\nname: ship\ndescription: ship it\n---\nShip it twice.\n",
+    );
+    (copy, env.global_lock_file())
+}
+
+/// Every scope's consent is asked before the first scope writes, so a
+/// refused run leaves the global update after the project scope unwritten
+/// too, not only the project scope that needed the consent.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn orphan_settings_cleanup_needs_yes_before_any_scope_writes() {
@@ -207,21 +246,27 @@ fn orphan_settings_cleanup_needs_yes_before_any_scope_writes() {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = orphan_consumer(&home, drops_key, pending_pi);
+        let (global_copy, global_lock) = global_update_without_consent(&home);
         let settings = project.join("kendex.settings.toml");
         let lock = project.join(".kendex-lock.json");
         let before = fs::read_to_string(&settings).unwrap();
         let lock_before = fs::read(&lock).unwrap();
+        let global_copy_before = fs::read(&global_copy).unwrap();
+        let global_lock_before = fs::read(&global_lock).unwrap();
         let verified_before = kendex(&home, &project, &["verify", "--scope", "project"]);
         let refused = kendex(&home, &project, &["refresh", "--leave"]);
         assert!(!refused.status.success());
         assert_eq!(fs::read_to_string(&settings).unwrap(), before);
         assert_eq!(fs::read(&lock).unwrap(), lock_before);
+        assert_eq!(fs::read(&global_copy).unwrap(), global_copy_before);
+        assert_eq!(fs::read(&global_lock).unwrap(), global_lock_before);
         let accepted = kendex(&home, &project, &["refresh", "--yes", "--leave"]);
         assert!(accepted.status.success(), "{}", said(&accepted));
         assert_eq!(
             fs::read_to_string(&settings).unwrap(),
             before.replacen("# Old choice.\n", "", 1)
         );
+        assert_ne!(fs::read(&global_copy).unwrap(), global_copy_before);
         if !drops_key && !pending_pi {
             let verified_after = kendex(&home, &project, &["verify", "--scope", "project"]);
             assert_eq!(verified_before.status.code(), verified_after.status.code());
