@@ -40,47 +40,38 @@ fn workflow() -> String {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn linux_bundling_installs_the_xdg_mime_provider() {
-    let workflow = workflow();
-    let apt_options = workflow
-        .lines()
-        .skip_while(|line| *line != "env:")
-        .skip(1)
-        .take_while(|line| line.starts_with("  "))
-        .find_map(|line| line.strip_prefix("  APT_ACQUIRE_OPTIONS: "))
-        .unwrap();
-    let script = run_script(&step(&workflow, "name: Linux webview dependencies"))
-        .replace("${{ env.APT_ACQUIRE_OPTIONS }}", apt_options);
+    // The step hands its package list to tools/apt-install, whose own suite,
+    // tools/tests/apt-install.test.sh, proves the list reaches apt-get
+    // install on each mirror and architecture. A stub stands in for it here.
+    let script = run_script(&step(&workflow(), "name: Linux webview dependencies"));
     let installs_xdg_utils = |script: &str| {
         let temp = tempfile::tempdir().unwrap();
         let root = rooted(&temp);
-        let bin = root.join("bin");
-        fs::create_dir(&bin).unwrap();
-        let log = root.join("sudo.log");
-        let sudo = bin.join("sudo");
-        fs::write(&sudo, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SUDO_LOG\"\n").unwrap();
-        let mut permissions = fs::metadata(&sudo).unwrap().permissions();
+        let tools = root.join("tools");
+        fs::create_dir(&tools).unwrap();
+        let log = root.join("apt-install.log");
+        let stub = tools.join("apt-install");
+        fs::write(
+            &stub,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$APT_INSTALL_LOG\"\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&stub).unwrap().permissions();
         permissions.set_mode(0o755);
-        fs::set_permissions(&sudo, permissions).unwrap();
+        fs::set_permissions(&stub, permissions).unwrap();
         let status = std::process::Command::new("/bin/bash")
             .arg("-c")
             .arg(script)
+            .current_dir(&root)
             .env_clear()
-            .env("PATH", &bin)
-            .env("SUDO_LOG", &log)
+            .env("APT_INSTALL_LOG", &log)
             .status()
             .unwrap();
         assert!(status.success());
 
         let calls = fs::read_to_string(log).unwrap();
-        let installs: Vec<&str> = calls
-            .lines()
-            .filter(|line| {
-                let mut arguments = line.split_ascii_whitespace();
-                arguments.next() == Some("apt-get")
-                    && arguments.any(|argument| argument == "install")
-            })
-            .collect();
-        assert_eq!(installs.len(), 1, "apt-get install calls: {calls}");
+        let installs: Vec<&str> = calls.lines().collect();
+        assert_eq!(installs.len(), 1, "tools/apt-install calls: {calls}");
         installs[0]
             .split_ascii_whitespace()
             .any(|package| package == "xdg-utils")
