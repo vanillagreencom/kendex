@@ -1949,8 +1949,9 @@ jobs:
       # time and by the Linux cargo job above.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
-      # runs of this workflow the one test in `catalog_render_lint` took
-      # 801-1012s, and over the eleven of those whose step was not killed at
+      # runs of this workflow the slow one of the two tests in
+      # `catalog_render_lint`, `installed_catalog_passes_comment_and_prose_lanes`,
+      # took 801-1012s, and over the eleven of those whose step was not killed at
       # its bound every other target together took 235-267s. That test
       # installs every package on every harness and lints the result, so it
       # carries the lane and it carries a leg of its own.
@@ -2029,6 +2030,16 @@ jobs:
       # uses that existing leg's room. verify_ remains with verify-lock.
       # The split removes that family from rest to meet the 600s split figure;
       # hosted PR timing must confirm both legs, independently of their bounds.
+      # render-lint: in merge-group Skill Tests runs 42557012510 to
+      # 42960972919, its longest passing test step took 464s. Its cost is
+      # installed_catalog_passes_comment_and_prose_lanes, the slow one of the
+      # two tests in catalog_render_lint, whose reference pass runs once per
+      # top-level scope in parallel. On one Linux host held to cores 0-2
+      # (macos-latest has 3), that test takes 101.0-102.1s with the reference
+      # pass run per scope and 181.8-185.1s with one pass over the tree; the
+      # timings are on KEN-5028. Scaled by 102.1/181.8, the 464s step
+      # is an estimated 261s, and 261s * 1.25 = 326s fits the 480s bound.
+      # This is an estimate, not a macOS measurement.
       # All filters are libtest substrings; new integration tests still land
       # in one leg. Whole-crate bounds retain their measured 534s core and
       # 81s app maxima with the existing allowance.

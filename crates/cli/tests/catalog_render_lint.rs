@@ -1,8 +1,8 @@
 //! The trusted repository catalog must install files its shipped lanes accept.
 //!
 //! Its own target rather than a module of `catalog_check`: installing every
-//! package on every harness and linting the result costs more than the rest of
-//! this crate's tests together, so it answers to a step bound of its own in
+//! package on every harness and linting the result takes minutes on a macOS
+//! runner, so it answers to a step bound of its own in
 //! `.github/workflows/skill-tests.yml`.
 #![cfg(unix)]
 
@@ -51,15 +51,14 @@ fn scoped_command(
         // Include extensionless scripts and hooks. The shipped extractor
         // decides which installed files have a comment grammar.
         .env("COMMIT_GUARDS_COMMENT_PATHS", scope)
-        // A source-only control must not parse shell code as Markdown.
+        // A glob scope's Markdown is its `.md` files. A source-only control
+        // must not parse shell code as Markdown.
         .env(
             "COMMIT_GUARDS_MD_REFS_PATHS",
-            if scope == "*" {
-                "*.md"
-            } else if scope.ends_with(".md") {
-                scope
-            } else {
-                "__no_markdown__"
+            match scope.strip_suffix('*') {
+                Some(prefix) => format!("{prefix}*.md"),
+                None if scope.ends_with(".md") => scope.to_owned(),
+                None => "__no_markdown__".to_owned(),
             },
         )
         .env("COMMIT_GUARDS_MD_REFS_SOURCE_PATHS", scope)
@@ -81,7 +80,7 @@ fn success(output: Output) {
 /// directory, and each top-level file under its own name. Read out of the
 /// staged paths, so a harness directory the renderer gains later takes a scope
 /// with no edit here, and every staged path falls in exactly one.
-fn comment_scopes(staged: &[String]) -> Vec<String> {
+fn lane_scopes(staged: &[String]) -> Vec<String> {
     let mut scopes: Vec<String> = staged
         .iter()
         .map(|path| match path.split_once('/') {
@@ -251,14 +250,36 @@ fn each_lane_names_its_own_planted_defect(home: &Path, project: &Path, scripts: 
     }
 }
 
-/// The whole staged tree through both lanes. The comments lane costs a fork
-/// per installed file and is this crate's slowest work on macOS, so it runs
-/// once per scope, concurrently, rather than once over the tree. The scopes
-/// partition the staged set and the lanes' own reached counts must add back
-/// up to it: that, not the exit statuses alone, is what says no scope quietly
-/// dropped a path.
+/// One run of a lane per scope, all at once, in scope order.
 #[allow(clippy::expect_used)]
-fn every_staged_path_passes_both_lanes(home: &Path, project: &Path, scripts: &Path) {
+fn each_scope(
+    home: &Path,
+    project: &Path,
+    program: &Path,
+    args: &[&str],
+    scopes: &[String],
+) -> Vec<Output> {
+    std::thread::scope(|threads| {
+        let handles: Vec<_> = scopes
+            .iter()
+            .map(|scope| threads.spawn(|| scoped_command(home, project, program, args, scope)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|handle| handle.join().expect("a lane thread finishes"))
+            .collect()
+    })
+}
+
+/// The whole staged tree through every lane. The comments and reference
+/// lanes cost a fork or more per file they read and are this crate's slowest
+/// work on macOS, so each runs once per scope, concurrently, rather than once
+/// over the tree. The scopes partition the staged set and the lanes' own
+/// reached counts must add back up to it: that, not the exit statuses alone,
+/// is what says no scope quietly dropped a path. A scope narrows only which
+/// files the reference lane reads for citations; it resolves each citation
+/// against the whole index, so a citation into another scope is still judged.
+fn every_staged_path_passes_each_lane(home: &Path, project: &Path, scripts: &Path) {
     // Git discovers the complete installed tree. No catalog or harness path
     // allowlist can hide a newly shipped file from an applicable lane.
     success(command(home, project, Path::new("git"), &["add", "-A"]));
@@ -266,18 +287,8 @@ fn every_staged_path_passes_both_lanes(home: &Path, project: &Path, scripts: &Pa
 
     let staged = staged_paths(project);
     assert!(!staged.is_empty(), "the installed tree staged no path");
-    let scopes = comment_scopes(&staged);
-    let comments = scripts.join("comments");
-    let outputs = std::thread::scope(|threads| {
-        let handles: Vec<_> = scopes
-            .iter()
-            .map(|scope| threads.spawn(|| scoped_command(home, project, &comments, &[], scope)))
-            .collect();
-        handles
-            .into_iter()
-            .map(|handle| handle.join().expect("a comments lane thread finishes"))
-            .collect::<Vec<_>>()
-    });
+    let scopes = lane_scopes(&staged);
+    let outputs = each_scope(home, project, &scripts.join("comments"), &[], &scopes);
 
     let mut total = 0;
     for (scope, output) in scopes.iter().zip(&outputs) {
@@ -297,6 +308,23 @@ fn every_staged_path_passes_both_lanes(home: &Path, project: &Path, scripts: &Pa
         scopes.len(),
         staged.len()
     );
+
+    let references = each_scope(
+        home,
+        project,
+        &scripts.join("md-refs"),
+        &["--all", "--strict"],
+        &scopes,
+    );
+    assert_reference_coverage(&references, &staged);
+    for (scope, output) in scopes.iter().zip(&references) {
+        assert!(
+            output.status.success(),
+            "scope {scope}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[test]
@@ -308,48 +336,49 @@ fn installed_catalog_passes_comment_and_prose_lanes() {
     install_whole_catalog(&home, &project);
     let scripts = project.join(".claude/skills/commit-guards/scripts");
     each_lane_names_its_own_planted_defect(&home, &project, &scripts);
-    every_staged_path_passes_both_lanes(&home, &project, &scripts);
-    let references = command(
-        &home,
-        &project,
-        &scripts.join("md-refs"),
-        &["--all", "--strict"],
-    );
-    assert_reference_coverage(&references, &staged_paths(&project));
-    success(references);
+    every_staged_path_passes_each_lane(&home, &project, &scripts);
     install_reference_controls(&home, &project, &scripts);
 }
 
 /// These callers select every staged Markdown file for the document pass.
-/// Markdown, source, and skipped counts must cover the selected paths.
-/// Counts plus the hook and extensionless controls reject a scan that admits
-/// too few files.
-fn assert_reference_coverage(output: &Output, staged: &[String]) {
-    let said = String::from_utf8_lossy(&output.stdout);
-    let summary = said
-        .lines()
-        .find_map(|line| line.strip_prefix("md-refs: summary="))
-        .unwrap_or_else(|| panic!("reference scan has no summary: {output:?}"));
-    let count = |name: &str| {
-        summary
-            .split_whitespace()
-            .find_map(|field| {
-                field
-                    .strip_prefix(name)
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
-            .unwrap_or_else(|| panic!("reference scan has no {name} count: {summary}"))
-    };
+/// Markdown, source, and skipped counts, summed over the runs that partition
+/// the staged set, must cover the selected paths. Counts plus the hook and
+/// extensionless controls reject a scan that admits too few files.
+fn assert_reference_coverage(outputs: &[Output], staged: &[String]) {
+    let mut markdown = 0;
+    let mut reached = 0;
+    for output in outputs {
+        let said = String::from_utf8_lossy(&output.stdout);
+        let summary = said
+            .lines()
+            .find_map(|line| line.strip_prefix("md-refs: summary="))
+            .unwrap_or_else(|| panic!("reference scan has no summary: {output:?}"));
+        let count = |name: &str| {
+            summary
+                .split_whitespace()
+                .find_map(|field| {
+                    field
+                        .strip_prefix(name)
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or_else(|| panic!("reference scan has no {name} count: {summary}"))
+        };
+        markdown += count("markdown=");
+        reached += count("markdown=") + count("sources=") + count("skipped=");
+    }
     assert!(!staged.is_empty(), "installed catalog staged no files");
     assert_eq!(
-        count("markdown=") + count("sources=") + count("skipped="),
+        reached,
         staged.len(),
-        "{summary}"
+        "{} reference scans reached {reached} of {} staged paths",
+        outputs.len(),
+        staged.len()
     );
     assert_eq!(
-        count("markdown="),
+        markdown,
         staged.iter().filter(|path| path.ends_with(".md")).count(),
-        "{summary}"
+        "{} reference scans selected {markdown} Markdown files",
+        outputs.len()
     );
 }
 
@@ -387,7 +416,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         success(output);
 
         success(command(
@@ -403,7 +432,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         assert_eq!(output.status.code(), Some(1), "{output:?}");
         let expected = format!("md-refs: citation-target={relative}:");
         assert!(
@@ -431,7 +460,7 @@ fn install_reference_controls(home: &Path, project: &Path, scripts: &Path) {
             &["--all", "--strict"],
             relative,
         );
-        assert_reference_coverage(&output, &expected_paths);
+        assert_reference_coverage(std::slice::from_ref(&output), &expected_paths);
         success(output);
         fs::write(path, original).unwrap();
         success(command(
@@ -455,7 +484,7 @@ fn the_scope_partition_accounts_for_every_staged_path() {
     .map(|path| (*path).to_owned())
     .collect();
 
-    let scopes = comment_scopes(&staged);
+    let scopes = lane_scopes(&staged);
     assert_eq!(scopes, vec![".claude/*", ".opencode/*", "kendex.toml"]);
 
     // Each row is one scope set and what its runs reported. The whole set
