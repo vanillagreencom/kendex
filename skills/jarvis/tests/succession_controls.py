@@ -22,7 +22,6 @@ def main():
         skills = scratch / "skills"
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
-        source = skills / "jarvis/scripts/lib/session.py"
         # Each planted defect proves succession_test.py goes red: without the
         # identity check, succession stops a process the record does not own;
         # without the pane comparison, adoption takes a process its named
@@ -36,9 +35,25 @@ def main():
         # reject a worker that records no stop cause and a successor that
         # does not take the transfer its worker left, before its native
         # session starts and during its Start, and task windows a failed
-        # taken transfer leaves open.
+        # taken transfer leaves open, whether its runner has ended or still
+        # lives when the retry starts.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
-        defects = (("known wall exclusion", backend,
+        defects = (("successor setup readiness", backend,
+                    (("jq '.hasCompletedOnboarding == true'", "jq 'true'"),),
+                    "test_successor_setup_readiness"),
+                   ("automatic Start recovery", session,
+                    (('if ended and "recovery" not in record["transfer"]:', 'if False:'),),
+                    "test_failed_start_recovers_or_notifies"),
+                   ("retry only after the predecessor ends", session,
+                    (('if ended and "recovery" not in record["transfer"]:', 'if "recovery" not in record["transfer"]:'),),
+                    "test_failed_transfer_retries_after_predecessor_end"),
+                   ("failed successor window closes before the retry", session,
+                    (('                        self.end_task_session(window)\n', '                        pass\n'),),
+                    "test_failed_transfer_retries_after_predecessor_end"),
+                   ("exhausted recovery notice", session,
+                    (('"--to", "owner", "--file", note.name', '"--to", "overseer", "--file", note.name'),),
+                    "test_failed_start_recovers_or_notifies"),
+                   ("known wall exclusion", backend,
                     (('    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""',
                       '    exclude="" mark=context caller="" OL_WALK_REFUSE_ID=""'),),
                     "test_known_wall_selection"),
@@ -102,10 +117,16 @@ def main():
                       "                            pass\n"),),
                     "test_reaped_predecessor_scope"),
                    ("tasks end with a failed taken transfer", session,
-                    (('        self.end_task_session(window)\n', '        self.end_task_session()\n'),),
+                    (('file=sys.stderr)\n        self.end_task_session(window)\n', 'file=sys.stderr)\n        False and self.end_task_session(window)\n'),
+                     ('elif "recovery" in record["transfer"]:', 'elif False:')),
+                    "test_reaped_predecessor_scope"),
+                   ("tasks end with a live failed runner", session,
+                    (('the retry opens.\n                    self.end_owned(predecessor)\n',
+                      'the retry opens.\n                    if not self.terminal(predecessor):\n'
+                      '                        self.end_task_session()\n'),),
                     "test_reaped_predecessor_scope"))
         # The rows the latest change added, which its pre-change revision fails.
-        cases = ("test_reaped_predecessor_scope",)
+        cases = ("test_successor_setup_readiness", "test_failed_start_recovers_or_notifies", "test_failed_transfer_retries_after_predecessor_end")
         if args.case and args.case not in {case for _, _, _, case in defects}:
             parser.error("no planted defect for case " + args.case)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
@@ -137,10 +158,11 @@ def main():
             finally:
                 target.write_text(clean)
         if args.main_ref:
-            result = subprocess.run(["git", "-C", str(ROOT), "show", args.main_ref + ":skills/jarvis/scripts/lib/session.py"],
-                                    capture_output=True, text=True, check=True, timeout=30,
-                                    env={k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")})
-            source.write_text(result.stdout)
+            for relative in (session, backend):
+                result = subprocess.run(["git", "-C", str(ROOT), "show", args.main_ref + ":skills/" + relative],
+                                        capture_output=True, text=True, check=True, timeout=30,
+                                        env={k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")})
+                (skills / relative).write_text(result.stdout)
             for case in cases:
                 if args.case and case != args.case:
                     continue

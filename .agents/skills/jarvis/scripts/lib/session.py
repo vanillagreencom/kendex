@@ -197,10 +197,13 @@ class Session:
         result = subprocess.run(argv, input=input, text=True, capture_output=True,
                                 cwd=self.home, env=env or self.env, timeout=remaining)
         if check and result.returncode:
-            print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
-            print(result.stderr, file=sys.stderr)
-            raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
+            self.refuse(result)
         return result
+
+    def refuse(self, result):
+        print("jarvis-session: operation=" + self.operation + " exit=" + str(result.returncode), file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        raise Refusal("launch-failed", "The session operation failed. Check the Jarvis session log.", "failed")
 
     def failure_log(self, key, failure):
         # A signal's own handler frame names no operation: the frame it interrupted does.
@@ -764,8 +767,10 @@ os.execvpe(argv[0],argv,env)
                 if not spent_account:
                     raise Refusal("record-unreadable")
             choice = record.get("choice") or {}
-            choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
-                                             choice.get("model", ""), choice.get("effort", ""), spent_account).stdout)
+            selected = self.backend("select", record["harness"], record["account"], self.home,
+                                    choice.get("model", ""), choice.get("effort", ""), spent_account)
+            sys.stderr.write(selected.stderr)
+            choice = json.loads(selected.stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
             self.env.pop("CLAUDE_CONFIG_DIR", None)
@@ -773,7 +778,7 @@ os.execvpe(argv[0],argv,env)
                 self.env["CLAUDE_CONFIG_DIR"] = os.environ["CLAUDE_CONFIG_DIR"]
             return self._hand_over(record, choice, predecessor, saved_handoff)
 
-    def _hand_over(self, record, choice, predecessor, saved_handoff):
+    def _hand_over(self, record, choice, predecessor, saved_handoff, *, recovery=None):
         # Save the handoff, record the transition and detach its worker: the
         # one route succession and adoption take. The caller holds the lock.
         # Every successor, a retry included, takes the record's stored private brief.
@@ -792,6 +797,8 @@ os.execvpe(argv[0],argv,env)
         if saved.read_bytes() != contents:
             raise Refusal("record-unreadable")
         transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
+        if recovery is not None:
+            transfer["recovery"] = recovery
         spent_account = choice.pop("spent_account", "")
         if spent_account:
             transfer["spent_account"] = spent_account
@@ -803,6 +810,8 @@ os.execvpe(argv[0],argv,env)
                        "private_brief": record.get("private_brief"),
                        "launch": {"id": str(uuid.uuid4()), "file": "", "reason": "new-requested",
                                   "brief": start_brief(record.get("private_brief"))}}
+        if recovery is not None and record.get("worker_ended"):
+            next_record["worker_ended"] = record["worker_ended"]
         next_record["worker"] = json.loads(self.backend("process", os.getpid()).stdout)
         self.write(next_record)
         self.detach("succeed", next_record)
@@ -834,7 +843,7 @@ os.execvpe(argv[0],argv,env)
                     if not self.successor_adopts(record):
                         return
                     # No native session starts beside the predecessor's.
-                    process = record["predecessor"].get("process")
+                    process = (record.get("predecessor") or {}).get("process")
                     if not (process and self.worker_live({"worker": process})):
                         owner = self._take_transfer(record, identity)
                 if owner or phase not in ("saved", "waiting"):
@@ -914,19 +923,60 @@ os.execvpe(argv[0],argv,env)
             with self.locked():
                 record = self.read()
                 if self._current_request(record, generation, "succeed"):
-                    self._fail_transfer(record)
+                    self._fail_transfer(record, runner=True)
             return 1
 
-    def _fail_transfer(self, record):
+    def _fail_transfer(self, record, *, runner=False):
         # A succession that fails after its predecessor ended leaves no
         # controller. The caller holds the lock and has closed every
         # successor window but the one it runs in, a runner's, which the
         # record releases first and which then ends with the task windows.
         window = (record.get("terminal") or {}).get("window")
+        # A recovery transfer follows one that already ended the predecessor.
+        ended = "recovery" in record["transfer"] or record["transfer"]["phase"] in ("predecessor-ended", "confirmed", "brief-delivered")
+        # Native Start can fail after selection passed. Retry the recorded
+        # eligible choice once through the same worker and brief path, but
+        # only once this transfer ended the predecessor: before that, the
+        # predecessor's window still holds the home's session name.
+        if ended and "recovery" not in record["transfer"]:
+            try:
+                live = self.terminal(record)
+                # A runner runs in the failed successor's window: closing it
+                # would end the runner before the retry starts, so a runner
+                # whose window reads as not owned leaves the transfer failed.
+                if live or not runner:
+                    if not live:
+                        # The retry opens the home's session afresh, which the
+                        # failed successor's window would refuse as name-conflict.
+                        self.end_task_session(window)
+                    choice = dict(record["choice"], spent_account=record["transfer"].get("spent_account", ""))
+                    self._hand_over(record, choice, record if live else None, record["transfer"]["handoff"], recovery=True)
+                    return
+            except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+                self.failure_log("recovery-failed", failure)
+                record = self.read()
         record.update(state="failed", reason="handover-failed", history=None, terminal=None,
                       detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
         record.pop("worker", None)
         self.write(record)
+        # The mailbox's owner notice is also the Slack relay's existing input.
+        # Only the locked, exhausted transfer sends it; status never sends.
+        # A transfer that failed before the predecessor ended sends none.
+        # lane-mail refuses an owner notice whose text repeats one from the
+        # last 24 hours, so the failed launch and its time tell outages apart.
+        # Run from the home, lane-mail resolves the one overseer mailbox its
+        # readers and the relay share, at the main checkout of a worktree home.
+        if ended:
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, suffix=".md") as note:
+                note.write("Jarvis stopped after succession failed to start its successor (launch "
+                           + record["launch"]["id"] + " at " + time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                           + "). Restart Jarvis for " + self.home + ". Check its session log if Start fails again.\n")
+                note.flush()
+                notice = self.run([BASH, str(BACKEND.parents[3] / "mailbox/scripts/lane-mail"), "notice",
+                                   "--item", "overseer", "--to", "owner", "--file", note.name], check=False)
+                sys.stderr.write(notice.stderr)
+                if notice.returncode:
+                    print("jarvis-session: owner-notice=failed exit=" + str(notice.returncode), file=sys.stderr)
         self.end_task_session(window)
 
     def stop(self, origin):
@@ -1017,8 +1067,22 @@ os.execvpe(argv[0],argv,env)
                 process_binding = "#{||:#{pane_dead},#{==:#{pane_pid}," + str(record["process"]["pid"]) + "}}"
                 condition = "#{&&:" + condition + "," + process_binding + "}"
             action = "kill-pane" if adopted else "kill-window" if window else "kill-session"
-            self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=record["terminal"]["server"])
-            if (window or adopted) and self.terminal(record):
+            socket = record["terminal"]["server"]
+            closed = self.tmux("if-shell", "-F", "-t", pane, condition, action + " -t " + pane, socket=socket, check=False)
+            # The pane can end, and its server with it, between the read
+            # above and this close: a failed successor's runner exits by
+            # design once it hands over. tmux's own answer that the pane or
+            # its server is gone is a close done; any other failure refuses.
+            # tmux 3.8 prints these for a missing pane, a server that exited
+            # leaving its socket file, and a socket file that is gone.
+            gone = closed.returncode != 0 and closed.stderr.strip() in (
+                "can't find pane: " + pane, "no server running on " + socket,
+                "error connecting to " + socket + " (No such file or directory)")
+            if closed.returncode and not gone:
+                self.refuse(closed)
+            if gone and not window:
+                self.end_task_session()
+            elif not gone and (window or adopted) and self.terminal(record):
                 raise Refusal("handover-failed", "The predecessor's terminal remains open. Retry jarvis-session succeed for this home.", "failed")
             if (window or adopted) and record.get("process"):
                 while self.worker_live({"worker": record["process"]}):
@@ -1156,6 +1220,13 @@ os.execvpe(argv[0],argv,env)
                     self.end_owned(predecessor)
                 elif adopted:
                     self.end_task_session()
+                elif "recovery" in record["transfer"]:
+                    # A recovery's predecessor is a failed successor, whose
+                    # unfinished tasks fail with it. A runner that outlives
+                    # its failure still holds its pane: that pane's owned
+                    # session ends with its task windows. With no such pane,
+                    # the task windows alone hold the name the retry opens.
+                    self.end_owned(predecessor)
                 existing = self.tmux("has-session", "-t", "=jarvis", check=False)
                 if existing.returncode == 0:
                     if not succeeding or adopted or not self.terminal(predecessor):

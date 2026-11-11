@@ -987,11 +987,41 @@ class SessionContract(unittest.TestCase):
             # cannot become launch-failed without another Start request.
             unexpected_running = state == "failed" and answer["state"] == "running"
             if (answer["state"] in ("blocked", "failed") and not transient_cleanup) or unexpected_running:
-                self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.session_log())
+                self.fail(str(answer) + "\n" + self.record.read_text() + "\n" + self.ownership_reads() + "\n" + self.session_log())
             time.sleep(0.05)
         target = (json.loads(self.record.read_text()).get("terminal") or {}).get("pane", "")
         screen = subprocess.run(["tmux", "-L", self.label, "capture-pane", "-p", "-t", target], capture_output=True, text=True).stdout
-        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n" + self.session_log())
+        self.fail("state did not settle: " + str(answer) + "\n" + self.record.read_text() + "\n" + screen + "\n"
+                  + self.ownership_reads() + "\n" + self.session_log())
+
+    def ownership_reads(self):
+        # The values the backend's live read compares for the saved
+        # controller and predecessor, read again at the failure, so a failed
+        # run names the comparison that rejected a pane its capture still shows.
+        try:
+            saved = json.loads(self.record.read_text())
+        except (OSError, ValueError) as failure:
+            return "ownership-read: saved=unread " + repr(failure)
+        lines = []
+        for role, owner in (("controller", saved), ("predecessor", saved.get("predecessor"))):
+            terminal = (owner or {}).get("terminal")
+            if not terminal:
+                lines.append("ownership-read: role=" + role + " terminal=none")
+                continue
+            lines.append("ownership-read: role=" + role + " saved=" + json.dumps({
+                "terminal": terminal, "server_pid": owner.get("server_pid"), "server_started_at": owner.get("server_started_at"),
+                "generation": owner.get("generation"), "pending_generation": (owner.get("pending") or {}).get("generation"),
+                "process": owner.get("process")}, sort_keys=True))
+            fields = "#{pid} #{start_time} #{session_name} #{window_id} #{@jarvis-generation}"
+            for argv in (["display-message", "-p", "-t", terminal["pane"], fields],
+                         ["list-panes", "-a", "-F", fields + " #{pane_id} #{pane_pid} #{pane_dead} #{@jarvis-task}"]):
+                read = subprocess.run(["tmux", "-S", terminal["server"], *argv], capture_output=True, text=True, env=self.env, timeout=10)
+                lines.append("ownership-read: role=" + role + " " + argv[0] + " rc=" + str(read.returncode)
+                             + "\n" + read.stdout + read.stderr)
+            server = subprocess.run(["ps", "-o", "pid=,comm=", "-p", str(owner.get("server_pid"))],
+                                    capture_output=True, text=True, timeout=10)
+            lines.append("ownership-read: role=" + role + " ps rc=" + str(server.returncode) + "\n" + server.stdout + server.stderr)
+        return "\n".join(lines)
 
     def session_log(self):
         try:
@@ -1317,6 +1347,8 @@ class SessionContract(unittest.TestCase):
         reserved.mkdir()
         allowed = Path(self.env["HOME"]) / ".2claude"
         allowed.mkdir()
+        for account in (reserved, allowed):
+            (account / ".claude.json").write_text('{"hasCompletedOnboarding":true}')
         # The external meter and model classifier are fixtures. The real
         # selector must skip the reserved account despite its greater room.
         meter = self.root / "bin/meter"
@@ -2149,6 +2181,58 @@ class SessionContract(unittest.TestCase):
                     except runtime["Refusal"] as refusal:
                         self.fail("refusal=" + refusal.reason)
                 self.assertIsNone(terminal)
+
+    def test_owned_close_of_a_pane_already_gone(self):
+        # A failed successor's runner exits by design once it hands over: its
+        # pane, and with no other session its server, can end between
+        # end_owned's liveness read and its close. Each row ends the pane or
+        # the server right after that read. The close is done either way, and
+        # a session end (window=False) also ends the task windows left behind.
+        tmux = ["tmux", "-L", self.label]
+        for gone, window in (("pane", False), ("server", False), ("pane", True), ("server", True)):
+            with self.subTest(gone=gone, window=window):
+                # A failed row leaves its server; each row starts on none.
+                subprocess.run([*tmux, "kill-server"], capture_output=True, env=self.env)
+                pane, window_id = subprocess.run(
+                    [*tmux, "new-session", "-d", "-s", "jarvis", "-P", "-F", "#{pane_id} #{window_id}",
+                     self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                    check=True, capture_output=True, text=True, env=self.env).stdout.split()
+                subprocess.run([*tmux, "set-option", "-p", "-t", pane, "@jarvis-generation", "1"], check=True, env=self.env)
+                task = subprocess.run([*tmux, "new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{pane_id}",
+                                       self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                      check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+                subprocess.run([*tmux, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"], check=True, env=self.env)
+                socket, server, started = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{socket_path} #{pid} #{start_time}"],
+                                                         check=True, capture_output=True, text=True, env=self.env).stdout.split()
+                record = {"terminal": {"server": socket, "session": "jarvis", "window": window_id, "pane": pane},
+                          "server_pid": int(server), "server_started_at": int(started), "generation": 1,
+                          "pending": {"generation": 1}}
+                with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+                    runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+                    session = runtime["Session"](self.home)
+                    read = session.terminal
+                    reads = []
+
+                    def raced(owner):
+                        answer = read(owner)
+                        if answer and not reads:
+                            subprocess.run([*tmux, "kill-pane", "-t", pane] if gone == "pane" else [*tmux, "kill-server"],
+                                           check=True, env=self.env)
+                        reads.append(answer)
+                        return answer
+
+                    session.terminal = raced
+                    errors = io.StringIO()
+                    try:
+                        with redirect_stderr(errors):
+                            session.end_owned(record, window=window)
+                    except runtime["Refusal"] as refusal:
+                        self.fail("refusal=" + refusal.reason + "\n" + errors.getvalue())
+                self.assertTrue(reads[0])
+                windows = subprocess.run([*tmux, "list-panes", "-s", "-t", "=jarvis", "-F", "#{pane_id}"],
+                                         capture_output=True, text=True, env=self.env)
+                # A window end leaves the task window to the successor.
+                self.assertEqual(windows.stdout.split(), [task] if gone == "pane" and window else [])
 
     def test_bad_arguments_have_no_object(self):
         for arguments in ([], ["unknown"], ["status"], ["_worker", "start", str(self.home), "1"],

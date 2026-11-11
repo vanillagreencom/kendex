@@ -69,7 +69,7 @@ def await_inspections(events, count):
 
 def brief_taken(fixture, harness, identity, event, **fields):
     # The native hook's stamp, written by its real library at the default wait.
-    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_taken "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2" "$3"'
+    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; key="$(tmux display-message -p -t "$TMUX_PANE" "#{pid} #{pane_id}")"; session_rows_jarvis_taken "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2" "$3"'
     result = subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness, event],
                             input=json.dumps({"session_id": identity, **fields}), text=True, capture_output=True)
     with Path(fixture["rows"]).open("a") as stream:
@@ -205,7 +205,7 @@ def main():
     payload = {"session_id": identity}
     if harness != "copilot":
         payload["transcript_path"] = str(file)
-    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2"'
+    shell = 'source "$1/mailbox/scripts/lib/file-lock.sh"; source "$1/orch/scripts/lib/lane-context.sh"; source "$1/orch/scripts/lib/session-rows.sh"; SESSION_ROWS_WAIT=10; key="$(tmux display-message -p -t "$TMUX_PANE" "#{pid} #{pane_id}")"; session_rows_jarvis_write "$JARVIS_RECORD" "$JARVIS_GENERATION" "$key" "$2"'
     subprocess.run([fixture["bash"], "-c", shell, "fixture", fixture["skills"], harness],
                    input=json.dumps(payload), text=True, check=True)
     if barrier:
