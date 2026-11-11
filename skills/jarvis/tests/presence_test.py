@@ -143,6 +143,13 @@ class Presence(unittest.TestCase):
             no_renew(epoch+480)
             subprocess.run([str(workflow), "update", "oversee", '.overseer.session_id = "s1"'],
                            cwd=root, env=os.environ, check=True, capture_output=True)
+            def warnings():
+                # Delivered warnings leave the input log; the mailbox owns their receipts.
+                _, rows = module.mailbox_events(BASH, root, "to-lane")
+                bodies = [row["text"] for row in rows] + [watch.log.read_text()]
+                return [line.split(" cause=", 1)[0] for body in bodies for line in body.splitlines()
+                        if line.startswith("EVENT presence-renew-failed ")]
+            warning = "EVENT presence-renew-failed repo=ssh:host side=ssh:host"
             failure.touch()
             for elapsed in (600, 601, 720, 721):
                 clock.write_text(str(epoch+elapsed))
@@ -151,7 +158,7 @@ class Presence(unittest.TestCase):
                     renew()
                 watch.tick(epoch+elapsed, watch.acquire(epoch+elapsed))
                 module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
-            self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 1)
+            self.assertEqual(warnings(), [warning])
             failure.unlink()
             # A successful ordinary mail poll cannot confirm a hold renewal.
             watch.tick(epoch+722, watch.acquire(epoch+722))
@@ -160,7 +167,7 @@ class Presence(unittest.TestCase):
             failure.touch()
             clock.write_text(str(epoch+723))
             renew()
-            self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 1)
+            self.assertEqual(warnings(), [warning])
             failure.unlink()
             clock.write_text(str(epoch+840))
             hook("lane-mail-deliver.sh")
@@ -170,7 +177,7 @@ class Presence(unittest.TestCase):
             clock.write_text(str(epoch+960))
             hook("lane-mail-deliver.sh")
             renew()
-            self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
+            self.assertEqual(warnings(), [warning, warning])
             failure.unlink()
             # A session can end during transport, before any host permission
             # request. Both a failed and a successful transport must skip.
@@ -199,7 +206,7 @@ class Presence(unittest.TestCase):
                     self.assertTrue(all(status == "skipped" for _, status, _ in results), results)
                     watch.accept_presence("host", results)
                     self.assertEqual(remote_hold.stat().st_mtime, before)
-                    self.assertEqual(watch.log.read_text().count("EVENT presence-renew-failed"), 2)
+                    self.assertEqual(warnings(), [warning, warning])
                 finally:
                     os.close(read_fd)
                     os.close(release_fd)

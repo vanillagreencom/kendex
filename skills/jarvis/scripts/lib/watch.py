@@ -240,6 +240,12 @@ def atomic_json(path, value):
             raise
     try:
         os.replace(temporary, path)
+        # Reclamation may overwrite the log only after this state is durable.
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -619,6 +625,11 @@ class Watch:
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {
             "generation": uuid.uuid4().hex, "offset": 0, "spans": [], "due": None, "pending": None}
         self._saved = json.loads(json.dumps(self.state)) if self.path.exists() else None
+        # Recovery must precede migration saves and decoding a possibly overwritten log.
+        if "reclaim" in self.state:
+            with self.log.open("r+b") as source:
+                fcntl.flock(source, fcntl.LOCK_EX)
+                self.recover_reclaim(source)
         if seeds is not None:
             # Include the whole vector in the first save, even the legacy binding save.
             self.state["cursors"] = seeds
@@ -725,6 +736,81 @@ class Watch:
                 self.state["cursor_offset"] = at
         self.state["cursor_offset"] = max(self.state.get("cursor_offset", 0), end)
 
+    def commit_reclaim(self, cut):
+        self.state["log_base"] = self.state.get("log_base", 0) + cut
+        for field in ("offset", "cursor_offset"):
+            self.state[field] -= cut
+        self.state["spans"] = [[span[0] - cut, span[1] - cut, *span[2:]]
+                               for span in self.state["spans"]]
+        del self.state["reclaim"]
+        self.save()
+
+    def recover_reclaim(self, source):
+        transaction = self.state["reclaim"]
+        end = transaction["end"]
+        source.seek(end)
+        marked = source.read(1) == b"\x00"
+        phase = transaction["phase"]
+        # A restarted process can see unsynced log changes in page cache.
+        # Synchronize before retiring their recovery record in either branch.
+        if phase == "ready" and not marked:
+            # Truncate removed the marker. Never overwrite subsequent consumer appends.
+            os.fsync(source.fileno())
+            self.commit_reclaim(transaction["cut"])
+            return
+        if phase == "ready":
+            source.seek(transaction["cut"])
+            source.write(base64.b64decode(transaction["suffix"]))
+            source.flush()
+        elif phase != "prepared":
+            raise RuntimeError("reclaim-phase-invalid: " + str(phase))
+        os.fsync(source.fileno())
+        # The undo image restores old coordinates. The owner-only marker is
+        # below both checkpoints and outside every live event span.
+        self.state["offset"] = self.state["cursor_offset"] = end + int(marked)
+        del self.state["reclaim"]
+        self.save()
+
+    def reclaim(self):
+        if self.state["pending"] is not None or not self.log.exists():
+            return
+        # Keep the inode: a consumer may have opened it before waiting for this lock.
+        with self.log.open("r+b") as source:
+            fcntl.flock(source, fcntl.LOCK_EX)
+            self.ingest(source)
+            self.save()
+            end = source.seek(0, os.SEEK_END)
+            # Open blocks and non-LF fragments pin all bytes until their real boundary.
+            if self.state["offset"] != end or self.state.get("cursor_offset", 0) != end:
+                return
+            cut = min((span[0] for span in self.state["spans"]), default=end)
+            # Each pass copies the retained suffix. Waiting until the retired
+            # prefix is at least that large keeps a backlog drain linear.
+            if not cut or end - cut > cut:
+                return
+            source.seek(cut)
+            suffix = source.read()
+            # Consumer appends need not sync; persist the snapshot before preparing undo.
+            os.fsync(source.fileno())
+            self.state["reclaim"] = {"phase": "prepared", "cut": cut, "end": end,
+                                     "suffix": base64.b64encode(suffix).decode()}
+            self.save()
+            # Supported producers escape NUL. Its position distinguishes an
+            # interrupted overwrite from a completed cut followed by appends.
+            source.seek(end)
+            source.write(b"\x00")
+            source.flush()
+            os.fsync(source.fileno())
+            self.state["reclaim"]["phase"] = "ready"
+            self.save()
+            source.seek(0)
+            source.write(suffix)
+            source.flush()
+            os.fsync(source.fileno())
+            source.truncate(len(suffix))
+            os.fsync(source.fileno())
+            self.commit_reclaim(cut)
+
     def append(self, output):
         data = output.encode()
         _, _, records = decode_log(data, 0)
@@ -757,6 +843,7 @@ class Watch:
             if not eligible:
                 self.state["due"] = None
                 self.save()
+                self.reclaim()
                 return
             if self.state["due"] is None:
                 self.state["due"] = now + int(self.settings["JARVIS_WAKE_SETTLE_SECS"])
@@ -777,7 +864,9 @@ class Watch:
                     retained.append(span)
             if not selected:
                 raise RuntimeError("event-too-large limit=61440")
-            identity = json.dumps([self.state["generation"], selected]).encode()
+            base = self.state.get("log_base", 0)
+            logical = [[span[0] + base, span[1] + base, *span[2:]] for span in selected]
+            identity = json.dumps([self.state["generation"], logical]).encode()
             self.state["pending"] = {"key": BATCH_KEY + hashlib.sha256(identity).hexdigest(),
                                      "body": body.decode(), "retained": retained, "end": end}
             # Selection is durable before the mailbox append. A retry uses
@@ -799,6 +888,7 @@ class Watch:
             return
         self.state.update(spans=[self.canonical_span(span) for span in pending["retained"]], pending=None, due=None)
         self.save()
+        self.reclaim()
         print("watch-loop: batch=" + pending["key"] + " id=" + receipt[0] + " inbox=overseer", flush=True)
 
     def live(self, now=None):

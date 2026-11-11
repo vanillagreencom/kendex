@@ -1,6 +1,7 @@
 """The shipped producer with real mailbox writes and explicit step barriers."""
 import contextlib
 from concurrent.futures import Future, ThreadPoolExecutor
+import errno
 import importlib.util
 import io
 import json
@@ -564,14 +565,20 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
 
                 A check's result is accepted by the poll after the one that submits it.
                 """
-                before = watch.log.read_text().count(header) if watch.log.exists() else 0
+                def reminders():
+                    bodies = [row["text"] for row in self.inbox()]
+                    if watch.log.exists():
+                        bodies.append(watch.log.read_text())
+                    return [line for body in bodies for line in body.splitlines() if line.startswith(header)]
+                before = reminders()
                 prior = watch.unanswered_pending
                 watch._poll(passes, pending, now)
                 submitted = watch.unanswered_pending is not None and watch.unanswered_pending is not prior
                 if submitted:
                     watch.unanswered_pending.result(timeout=60)
-                after = watch.log.read_text().count(header) if watch.log.exists() else 0
-                self.assertEqual((submitted, after - before), (submits, added), now)
+                after = reminders()
+                self.assertEqual((submitted, len(after) - len(before)), (submits, added), now)
+                self.assertEqual(after[:len(before)], before, now)
                 saved = json.loads(watch.path.read_text()).get("unanswered", {}).get("pending", [])
                 self.assertEqual([row["id"] for row in saved], waiting, now)
 
@@ -615,11 +622,11 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         (1501, reminder, True, 0, [second]), (1502, reminder, False, 0, [second])):
                 step(watch, *row)
             self.assertEqual(re.findall(r"--since (\S+) ", windows.read_text())[-1], at[second])
-            data = watch.log.read_bytes()
-            spans = [span for span in self.module.decode_log(data, 0)[0]
-                     if data[span[0]:span[1]].startswith(b"EVENT owner-unanswered id=")]
-            self.assertEqual([data[span[0]:span[1]].decode().split("\n")[1] for span in spans], ["second ask"])
-            self.assertEqual(spans[0][2], ["local", str(self.home)])
+            bodies = [row["text"] for row in self.inbox()] + [watch.log.read_text()]
+            reminders = [block for body in bodies for block in body.split("EVENT ")
+                         if block.startswith("owner-unanswered id=")]
+            self.assertEqual([block.split("\n")[1] for block in reminders], ["second ask"])
+            self.assertIn(" destination=local root=" + str(self.home), reminders[0].split("\n")[0])
             # A day after delivery the watch's own window still lists the row,
             # past the helper's default day, and the default handoff is read.
             self.clock(25 * 3600)
@@ -993,6 +1000,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     watch.append(self.module.pass_output("local", {}, [(self.home, filler.replace(" destination=local root="+str(self.home), "", 1)), (None, peer)]))
                     watch.accept_presence(side, [result])
                     warning = watch.state["spans"][-1]
+                    warning_body = watch.log.read_bytes()[warning[0]:warning[1]]
                     origin = warning[2] if len(warning) == 3 else None
                     self.assertEqual(origin, (["ssh:host.example", result[0]] if side == "host" and result[0] else expected_origin), "presence origin")
                     scope = result[0] if result[0] is not None else side
@@ -1006,9 +1014,12 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     self.assertEqual(watch.state["presence_failures"][watch.destination_key(side)], standing)
                     watch.batch(0)
                     self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
-                    self.assertIn(warning, watch.state["spans"])
+                    for resumed in (watch, self.watch()):
+                        data = resumed.log.read_bytes()
+                        self.assertIn((warning_body, origin),
+                                      [(data[span[0]:span[1]], span[2] if len(span) == 3 else None)
+                                       for span in resumed.state["spans"]])
                     watch = self.watch()
-                    self.assertIn(warning, watch.state["spans"])
                     watch.batch(1)
                     body = self.inbox()[-1]["text"]
                     if expected_origin == ["local", str(self.home)]:
@@ -1021,6 +1032,327 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                         self.assertIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
                     watch.accept_presence(side, [(result[0], "ok", None)])
                     self.assertNotIn(scope, watch.state["presence_failures"][watch.destination_key(side)])
+
+    def test_reclaim_delivered_identity(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            generation = watch.state["generation"]
+            expected = []
+            keys = []
+            for index in range(5):
+                # Identical physical layouts must not reuse a retired delivery key.
+                body = "EVENT custom\ncycle-%s\n" % index
+                expected.append(body.rstrip("\n"))
+                self.append(watch, body)
+                watch.batch(index)
+                self.assertEqual(watch.log.read_bytes(), b"")
+                self.assertEqual([row["text"] for row in self.inbox()], expected)
+                keys.append(self.inbox()[-1]["delivery_id"])
+                self.assertEqual(len(set(keys)), len(keys))
+                watch = self.watch()
+                self.assertEqual(watch.state["generation"], generation)
+            # Cursor-only retired history is reclaimed without needing a send.
+            watch.append(self.module.pass_output("ssh:alpha", {"/srv/app": {"to-lane": {"count": 19}}}, []))
+            watch.batch(6)
+            self.assertEqual(watch.log.read_bytes(), b"")
+            self.assertEqual(self.watch().cursors["ssh:alpha"]["/srv/app"]["to-lane"]["count"], 19)
+            self.assertEqual([row["text"] for row in self.inbox()], expected)
+
+    def test_reclaim_deferred_bytes(self):
+        self.settings.update(JARVIS_WAKE_SETTLE_SECS="0", JARVIS_CONTROL_HOST="alpha",
+                             JARVIS_REMOTE_HOSTS="beta gamma")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            generation = watch.state["generation"]
+            filler_header = "EVENT custom\nretired prefix\n"
+            filler = filler_header + "x" * (self.module.CAP - len(filler_header) - 1) + "\n"
+            local = "EVENT custom\nlocal deferred\n" + "l" * 32000 + "\n"
+            remote = "EVENT custom\nremote deferred\n" + "r" * 32000 + "\n"
+            expected_local = local.replace("\n", " destination=local root=" + str(self.peer) + "\n", 1).encode()
+            expected_remote = remote.replace("\n", " destination=ssh:alpha root=/srv/same/peer\n", 1).encode()
+            self.append(watch, filler)
+            watch.append(self.module.pass_output("local", {str(self.peer): {"to-overseer": {"count": 7}}},
+                                                [(self.peer, local)]))
+            # Recover a producer footer appended before its state checkpoint.
+            before = watch.path.read_bytes()
+            watch.append(self.module.pass_output("ssh:alpha", {"/srv/same/peer": {"to-overseer": {"count": 11}}},
+                                                [("/srv/same/peer", remote)]))
+            watch.path.write_bytes(before)
+            watch = self.watch()
+            unreclaimed = watch.log.read_bytes()
+            watch.batch(0)
+            self.assertEqual(self.inbox()[-1]["text"], filler.rstrip("\n"))
+            # Two deferred 32 KB blocks outweigh the delivered 60 KiB filler.
+            self.assertEqual(watch.log.read_bytes(), unreclaimed, "unreclaimed log")
+            expected = [(expected_local, ["local", str(self.peer)]),
+                        (expected_remote, ["ssh:alpha", "/srv/same/peer"])]
+            def retained(watch):
+                data = watch.log.read_bytes()
+                self.assertEqual([data[span[0]:span[1]] for span in watch.state["spans"]],
+                                 [body for body, _ in expected], "retained event bytes")
+                self.assertEqual([span[2:] for span in watch.state["spans"]],
+                                 [[origin] if origin else [] for _, origin in expected])
+                return data
+            retained(watch)
+            # Keep the backlog nonempty across receipts and restarts. The first
+            # receipt retires filler and local, more than the two 32 KB blocks
+            # it retains; the second retires only remote and keeps two blocks.
+            for index, reclaims in enumerate((True, False)):
+                self.settings.update(JARVIS_CONTROL_HOST="beta", JARVIS_REMOTE_HOSTS="gamma" if index == 0 else "gamma alpha")
+                watch = self.watch()
+                self.assertEqual(watch.state["generation"], generation)
+                self.assertEqual(watch.state["legacy_control_host"], "alpha")
+                self.assertEqual(watch.cursors["local"][str(self.peer)]["to-overseer"]["count"], 7)
+                self.assertEqual(watch.cursors["ssh:alpha"]["/srv/same/peer"]["to-overseer"]["count"], 11)
+                later = ("EVENT custom\nlater-%s\n" % index + "n" * 32000 + "\n").encode()
+                watch.append(self.module.pass_output("consumer", {}, [(None, later.decode())]))
+                expected.append((later, None))
+                watch.batch(index + 1)
+                body, _ = expected.pop(0)
+                self.assertEqual(self.inbox()[-1]["text"], body.decode().rstrip("\n"))
+                self.assertEqual(retained(self.watch()).startswith(expected[0][0]), reclaims,
+                                 "reclaimed at receipt %d" % index)
+            for index, (body, _) in enumerate(expected):
+                watch = self.watch()
+                watch.batch(index + 4)
+                self.assertEqual(self.inbox()[-1]["text"], body.decode().rstrip("\n"))
+            self.assertEqual(watch.log.read_bytes(), b"")
+
+    def test_reclaim_unfinished_input(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        expected = []
+        for name, unfinished, closure in (
+                ("open", b"EVENT custom\nunfinished open\n", b'cursor: {"side":"consumer","roots":{}}\n'),
+                ("fragment", b"EVENT custom\nunfinished fragment", b'\ncursor: {"side":"consumer","roots":{}}\n')):
+            with self.subTest(tail=name), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / name)
+                watch = self.watch()
+                self.append(watch, "EVENT custom\nretired before " + name + "\n")
+                with watch.log.open("ab") as out:
+                    out.write(unfinished)
+                before = watch.log.read_bytes()
+                watch.batch(0)
+                self.assertEqual(watch.log.read_bytes(), before)
+                watch = self.watch()
+                watch.batch(1)
+                self.assertEqual(watch.log.read_bytes(), before)
+                with watch.log.open("ab") as out:
+                    out.write(closure)
+                self.watch().batch(2)
+                expected.extend(["EVENT custom\nretired before " + name, unfinished.decode().rstrip("\n")])
+                self.assertEqual([row["text"] for row in self.inbox()], expected)
+                self.assertEqual(watch.log.read_bytes(), b"")
+
+    def test_reclaim_crash_recovery(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        stages = (("prepared", "prepared"), ("marker", "prepared"), ("ready", "ready"),
+                  ("partial", "ready"), ("suffix-sync", "ready"), ("truncate", "ready"), ("commit", None))
+        for stage, recovery_phase in stages:
+            with self.subTest(stage=stage), patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+                self.settings["JARVIS_LOG_DIR"] = str(self.root / stage)
+                watch = self.watch()
+                filler_header = "EVENT custom\nretired-" + stage + "\n"
+                filler = filler_header + "x" * (self.module.CAP - len(filler_header) - 1) + "\n"
+                # The retained suffix fits within the retired filler, so this receipt reclaims.
+                retained = ["EVENT custom\nretained-%s-%s\n" % (stage, index) + "r" * 16000 + "\n"
+                            for index in range(2)]
+                footer = 'cursor: {"side":"local","roots":{"/srv/local":{"to-overseer":{"count":7}}}}\n'
+                watch.append(filler + "".join(retained) + footer)
+                original_end = watch.log.stat().st_size
+                inode = watch.log.stat().st_ino
+                generation = watch.state["generation"]
+                first = len(self.inbox())
+                original_open, original_atomic, original_fsync = Path.open, self.module.atomic_json, os.fsync
+                rewritten = False
+                def saved(path, state):
+                    original_atomic(path, state)
+                    phase = state.get("reclaim", {}).get("phase")
+                    if (stage == phase or stage == "commit" and state.get("log_base", 0)):
+                        raise InterruptedError(stage)
+                class InterruptedLog:
+                    def __init__(self, stream):
+                        self.stream = stream
+                    def __enter__(self):
+                        return self
+                    def __exit__(self, *args):
+                        return self.stream.__exit__(*args)
+                    def __getattr__(self, name):
+                        return getattr(self.stream, name)
+                    def write(self, data):
+                        nonlocal rewritten
+                        if data == ("".join(retained) + footer).encode() and self.stream.tell() == 0:
+                            rewritten = True
+                            if stage == "partial":
+                                self.stream.write(data[:-1])
+                                self.stream.flush()
+                                raise InterruptedError(stage)
+                        result = self.stream.write(data)
+                        if stage == "marker" and data == b"\x00":
+                            self.stream.flush()
+                            raise InterruptedError(stage)
+                        return result
+                    def truncate(self, size):
+                        result = self.stream.truncate(size)
+                        if stage == "truncate":
+                            raise InterruptedError(stage)
+                        return result
+                def opened(path, *args, **kwargs):
+                    stream = original_open(path, *args, **kwargs)
+                    return InterruptedLog(stream) if path == watch.log and args and args[0] == "r+b" else stream
+                def synced(fd):
+                    original_fsync(fd)
+                    if stage == "suffix-sync" and rewritten and os.fstat(fd).st_ino == inode:
+                        raise InterruptedError(stage)
+                with patch.object(Path, "open", opened), patch.object(self.module, "atomic_json", side_effect=saved), \
+                        patch.object(self.module.os, "fsync", side_effect=synced):
+                    with self.assertRaises(InterruptedError):
+                        watch.batch(0)
+                interrupted_state = json.loads(watch.path.read_text())
+                self.assertIsNone(interrupted_state["pending"])
+                self.assertEqual(interrupted_state.get("reclaim", {}).get("phase"), recovery_phase)
+                # Appenders run after the interrupted owner releases its inode
+                # lock. Post-truncate appends deliberately cross the old EOF.
+                consumers = ["EVENT custom\nafter-%s-%s\n" % (stage, index) + "z" * 32000 + "\n"
+                             for index in range(3 if stage in ("truncate", "commit") else 1)]
+                with watch.log.open("ab") as out:
+                    self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                    out.write(("".join(consumers) + 'cursor: {"side":"consumer","roots":{}}\n').encode())
+                if stage in ("truncate", "commit"):
+                    self.assertGreater(watch.log.stat().st_size, original_end)
+                if stage == "partial":
+                    # Undo itself may be interrupted. A second recovery must
+                    # restore it again, without consuming the appended tail.
+                    def restore_interrupted(path, *args, **kwargs):
+                        stream = original_open(path, *args, **kwargs)
+                        if path != watch.log or not args or args[0] != "r+b":
+                            return stream
+                        class Restore(InterruptedLog):
+                            def write(self, data):
+                                self.stream.write(data[:1])
+                                self.stream.flush()
+                                raise InterruptedError("undo")
+                        return Restore(stream)
+                    with patch.object(Path, "open", restore_interrupted), self.assertRaises(InterruptedError):
+                        self.watch()
+                recovery_events = []
+                fail_sync = recovery_phase is not None
+                def recovery_synced(fd):
+                    if os.fstat(fd).st_ino == inode:
+                        if fail_sync:
+                            recovery_events.append("log-fsync-failed")
+                            raise OSError(errno.EIO, "recovery log sync")
+                        original_fsync(fd)
+                        recovery_events.append("log-fsync")
+                    else:
+                        original_fsync(fd)
+                def recovery_saved(path, state):
+                    recovery_events.append("state-save")
+                    if recovery_phase is not None:
+                        self.assertEqual(recovery_events[0], "log-fsync", "log durability before recovery state")
+                    original_atomic(path, state)
+                with patch.object(self.module.os, "fsync", side_effect=recovery_synced), \
+                        patch.object(self.module, "atomic_json", side_effect=recovery_saved):
+                    if fail_sync:
+                        durable_state = watch.path.read_bytes()
+                        with self.assertRaises(OSError) as caught:
+                            self.watch()
+                        self.assertEqual(caught.exception.errno, errno.EIO)
+                        self.assertEqual(recovery_events, ["log-fsync-failed"])
+                        self.assertEqual(watch.path.read_bytes(), durable_state, "failed sync retains transaction")
+                        recovery_events.clear()
+                        fail_sync = False
+                    recovered = self.watch()
+                self.assertEqual(recovery_events[:2] if recovery_phase else recovery_events,
+                                 ["log-fsync", "state-save"] if recovery_phase else ["state-save"])
+                base = recovered.state.get("log_base", 0)
+                recovered = self.watch()
+                self.assertEqual(recovered.state.get("log_base", 0), base)
+                self.assertNotIn("reclaim", recovered.state)
+                self.assertEqual(recovered.state["generation"], generation)
+                self.assertEqual(recovered.log.stat().st_ino, inode)
+                data = recovered.log.read_bytes()
+                self.assertEqual([data[span[0]:span[1]].decode() for span in recovered.state["spans"]],
+                                 [*retained, *consumers])
+                self.assertEqual(recovered.cursors,
+                                 {"local": {"/srv/local": {"to-overseer": {"count": 7}}}, "consumer": {}})
+                for at in range(len(consumers) + len(retained)):
+                    recovered.batch(at + 1)
+                self.assertEqual(recovered.log.read_bytes(), b"")
+                self.assertEqual("\n".join(row["text"] for row in self.inbox()[first:]) + "\n",
+                                 filler + "".join(retained) + "".join(consumers))
+
+    def test_reclaim_preopened_appender(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            self.append(watch, "EVENT custom\nretired before appender\n")
+            inode = watch.log.stat().st_ino
+            body = "EVENT custom\npreopened consumer\n"
+            code = '''import fcntl,sys
+with open(sys.argv[1], "ab") as out:
+ print("opened", flush=True)
+ sys.stdin.readline()
+ print("locking", flush=True)
+ fcntl.flock(out, fcntl.LOCK_EX)
+ out.write(sys.argv[2].encode()); out.flush()
+ print("appended", flush=True)
+'''
+            child = subprocess.Popen([sys.executable, "-B", "-c", code, str(watch.log),
+                                      body + 'cursor: {"side":"consumer","roots":{}}\n'],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     text=True, bufsize=1)
+            def acknowledged(value):
+                self.assertTrue(select.select([child.stdout], [], [], 30)[0], value)
+                self.assertEqual(child.stdout.readline().strip(), value)
+            try:
+                acknowledged("opened")
+                atomic = self.module.atomic_json
+                def saved(path, state):
+                    atomic(path, state)
+                    if state.get("reclaim", {}).get("phase") == "prepared":
+                        child.stdin.write("lock\n")
+                        child.stdin.flush()
+                        acknowledged("locking")
+                with patch.object(self.module, "atomic_json", side_effect=saved):
+                    watch.batch(0)
+                acknowledged("appended")
+                self.assertEqual(child.wait(timeout=30), 0)
+            finally:
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=30)
+                child.stdin.close()
+                child.stdout.close()
+                child.stderr.close()
+            self.assertEqual(watch.log.stat().st_ino, inode)
+            self.watch().batch(1)
+            self.watch().batch(2)
+            self.assertEqual([row["text"] for row in self.inbox()],
+                             ["EVENT custom\nretired before appender", body.rstrip("\n")])
+
+    def test_reclaim_instrument_control(self):
+        controls = (
+            ("test_reclaim_deferred_bytes", "source.write(suffix)",
+             'source.write(b"\\x00" * len(suffix))', "retained event bytes"),
+            ("test_reclaim_crash_recovery", '        os.fsync(source.fileno())\n        # The undo image',
+             '        # The undo image', "log durability before recovery state"))
+        for method, old, replacement, assertion in controls:
+            with self.subTest(method=method):
+                case = Producer(methodName=method)
+                case.setUp()
+                try:
+                    path = case.scripts / "lib/watch.py"
+                    source = path.read_text()
+                    self.assertEqual(source.count(old), 1)
+                    mutant = source.replace(old, replacement)
+                    self.assertNotEqual(source, mutant)
+                    path.write_text(mutant)
+                    case.module = load(path)
+                    with self.assertRaisesRegex(AssertionError, assertion):
+                        getattr(case, method)()
+                finally:
+                    case.doCleanups()
 
     def test_saved_selection_after_append_restart(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -1047,7 +1379,16 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             staged.accept_presence("local", [(str(self.home), "failed", warning)])
             self.assertEqual(json.loads(staged.path.read_text())["pending"], pending)
             resumed = self.watch()
-            resumed.batch(1)
+            original_run = self.module.run
+            def append_during_send(args, *positional, **keywords):
+                result = original_run(args, *positional, **keywords)
+                if list(map(str, args[:3])) == [BASH, str(self.mail_command), "send"]:
+                    with resumed.log.open("ab") as out:
+                        self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                        out.write(b'EVENT custom\nconsumer during send\ncursor: {"side":"consumer","roots":{}}\n')
+                return result
+            with patch.object(self.module, "run", side_effect=append_during_send):
+                resumed.batch(1)
             self.assertEqual(len(self.inbox()), 1)
             self.assertEqual(self.inbox()[0]["id"], original_id)
             resumed.batch(2)
@@ -1055,6 +1396,8 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             self.assertIn("new during restart", self.inbox()[1]["text"])
             self.assertNotIn("original", self.inbox()[1]["text"])
             self.assertIn("EVENT presence-renew-failed", self.inbox()[1]["text"])
+            self.assertEqual(self.inbox()[1]["text"].count("consumer during send"), 1)
+            self.assertEqual(resumed.log.read_bytes(), b"")
 
     def test_failed_send_retains_selection(self):
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
@@ -1065,9 +1408,38 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             watch.batch(0)
             saved = json.loads(watch.path.read_text())["pending"]
             self.assertIn("retained", saved["body"])
+            before = watch.log.read_bytes()
+            self.append(watch, "EVENT mail\nproducer after failure\n")
+            consumer = b'EVENT custom\nconsumer after failure\ncursor: {"side":"consumer","roots":{}}\n'
+            with watch.log.open("ab") as out:
+                self.module.fcntl.flock(out, self.module.fcntl.LOCK_EX)
+                out.write(consumer)
+            watch = self.watch()
+            self.assertEqual(watch.state["pending"], saved)
+            self.assertTrue(watch.log.read_bytes().startswith(before))
+            self.assertNotIn("log_base", watch.state)
             shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
-            self.watch().batch(1)
-            self.assertEqual(len(self.inbox()), 1)
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("receipt before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(1)
+            landed = self.inbox()
+            watch = self.watch()
+            self.assertEqual(watch.state["pending"], saved)
+            watch.batch(2)
+            self.assertEqual(self.inbox(), landed)
+            self.assertEqual(landed[0]["delivery_id"], saved["key"])
+            self.assertEqual(landed[0]["text"], saved["body"].rstrip("\n"))
+            watch = self.watch()
+            watch.batch(3)
+            self.assertEqual([row["text"] for row in self.inbox()],
+                             [saved["body"].rstrip("\n"),
+                              "EVENT mail\nproducer after failure\nEVENT custom\nconsumer after failure"])
+            self.assertEqual(watch.log.read_bytes(), b"")
 
     def test_report_deadline_restart_and_receipt(self):
         clock = self.root / "clock"
@@ -1479,9 +1851,17 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             with watch.log.open("ab") as out:
                 out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512)
             watch.batch(0)
-            checkpoint = watch.state["offset"]
+            self.assertEqual(watch.log.read_bytes(), b"")
             watch = self.watch()
             self.append(watch, "EVENT mail repo=peer file=to-lane\nnew tail\n")
+            watch.batch(1)
+            # Unfinished input pins a real prefix, so idle and restart reads
+            # must still start at the checkpoint rather than rescan footers.
+            with watch.log.open("ab") as out:
+                out.write(b'cursor: {"side":"consumer","roots":{}}\n' * 512 + b'EVENT custom\nwaiting\n')
+            watch = self.watch()
+            checkpoint = watch.state["offset"]
+            self.assertGreater(checkpoint, 0)
             original = Path.open
             starts = []
             class Observed:
@@ -1509,7 +1889,6 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 stream = original(path, *args, **kwargs)
                 return Observed(stream) if path == watch.log and args and args[0] == "rb" else stream
             with patch.object(Path, "open", opened), patch.object(Path, "read_bytes", side_effect=AssertionError("whole-log read")):
-                watch.batch(1)
                 for at in (2, 3, 4):
                     watch.batch(at)
                 watch = self.watch()
@@ -1526,7 +1905,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             with restored.log.open("a") as out:
                 out.write(output)
             recovered = self.watch()
-            self.assertTrue(any(span[2] == ["local", str(self.peer)] for span in recovered.state["spans"]))
+            self.assertTrue(any(span[2:] == [["local", str(self.peer)]] for span in recovered.state["spans"]))
             recovered.batch(5)
             self.assertIn("producer tail before state commit", self.inbox()[-1]["text"])
 
