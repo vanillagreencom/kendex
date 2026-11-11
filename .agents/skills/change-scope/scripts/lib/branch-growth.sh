@@ -95,10 +95,10 @@ branch_growth_render_roots_from_env() {
   BRANCH_GROWTH_RENDER_ROOTS="${ORCH_SIZE_RENDER_ROOTS:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
 }
 # The render-mirror roots every branch measurement pairs against, resolved once
-# per process from ORCH_SIZE_RENDER_ROOTS. dev-return-write loads no project
-# configuration of its own, so the
-# measurement they share resolves it for them. CI callers set the roots
-# from their trusted base configuration before measuring.
+# per process from ORCH_SIZE_RENDER_ROOTS. `orch-runtime dev-return write`
+# hands the measurement no render roots, so the measurement resolves them from
+# the project's settings. CI callers set the roots from their trusted base
+# configuration before measuring.
 #
 # The load runs in a subshell. The same [env] table carries keys such as
 # ORCH_STATE_DIR that decide where these scripts read and write their state,
@@ -130,9 +130,9 @@ branch_growth_render_roots() {
   }
   BRANCH_GROWTH_RENDER_ROOTS="${resolved:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
 }
-# The legacy implement receipt still carries its measured churn. It no longer
-# authorizes a fix round. CI classification shares the production/test and
-# render measurement below.
+# The implement receipt carries its measured churn, which authorizes no fix
+# round. CI classification shares the production/test and render measurement
+# below.
 branch_baseline_lines() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
   branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1

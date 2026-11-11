@@ -409,7 +409,7 @@ run() {
 # Each spec word expands to the tool's whole message for that terminal path.
 
 # The map a completed replay appends to the worktree's own git dir for
-# orch/scripts/worktree-push to consume. Absent is the answer for every path
+# orch's `record-push` to consume. Absent is the answer for every path
 # that rewrote nothing, so every row pins it.
 restack_map() {
   local path=""
@@ -438,7 +438,7 @@ map_lines() {
 }
 
 # The map file's whole content: a '+'-joined list of hop shapes, each opening
-# with its own boundary line, which worktree-push applies in order.
+# with its own boundary line, which `record-push` applies in order.
 map_file_text() {
   local spec="$1"
   case "$spec" in

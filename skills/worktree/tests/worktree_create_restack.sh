@@ -8,7 +8,7 @@
 # own stderr, and the worktree's state afterwards: the engine, the branch,
 # the head, the commits ahead of origin/main, the index, every tracked file
 # with its first line, the restack record, the remote ref and the rebase map
-# the restack left in the worktree for orch/scripts/worktree-push.
+# the restack left in the worktree for orch's `record-push`.
 set -euo pipefail
 # The fixtures' origin is a local path that names no GitHub repository, so
 # the suite names the default branch.
@@ -451,7 +451,7 @@ restack_keys() {
 }
 
 # The map a completed restack appends to the worktree's own git dir for
-# `orch/scripts/worktree-push` to consume. Absent is the answer for every path
+# orch's `record-push` to consume. Absent is the answer for every path
 # that rewrote nothing, so every row pins it.
 restack_map() {
   local path=""
@@ -500,7 +500,7 @@ run() {
 # The map lines one restack reports, by shape. The same text appears twice: on
 # stderr under the restack's count record, and under that restack's own hop in
 # the pending map file the worktree's git dir carries for
-# orch/scripts/worktree-push. A shape's leading digit is how many pre-restack
+# orch's `record-push`. A shape's leading digit is how many pre-restack
 # commits the count record names.
 map_lines() {
   case "$1" in
@@ -525,7 +525,7 @@ map_lines() {
 
 # The map file's whole content: a '+'-joined list of hop shapes, each opening
 # with its own boundary line. Two hops is a worktree restacked twice before one
-# push, which worktree-push must apply in order rather than as one map.
+# push, which `record-push` must apply in order rather than as one map.
 map_file_text() {
   local spec="$1"
   case "$spec" in
