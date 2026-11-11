@@ -91,6 +91,7 @@ No message, memory file or history file (handoffs, progress logs, session record
 - When sign-in waits on the user's phone, use [communication.md:Phone sign-in](communication.md#message-types). For any sign-in code the user must enter, send it privately at once. Name where they must enter it and its expiry if the service provides one.
 - Send only the code intended for the user, never a reusable credential. Exclude it from the handoff and captures under [Secret transfer](#secret-transfer).
 - Wait for the service to confirm sign-in. Check the target session's account before using it.
+- For each account the user marks high-risk, keep one sign-in factor, such as a hardware key or the user's phone, where the agent cannot read or use it.
 
 ## Official records
 
