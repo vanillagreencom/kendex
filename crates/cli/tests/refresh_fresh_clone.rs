@@ -159,6 +159,197 @@ fn committed_consumer(home: &Path, package: &str) -> PathBuf {
     origin
 }
 
+/// A recorded copied skill supplies outgoing bytes after a local template
+/// drops a key. The settings text is the old seed with its assignment removed.
+#[allow(clippy::unwrap_used)]
+fn orphan_consumer(home: &Path, drops_key: bool, pending_pi: bool) -> PathBuf {
+    let project = declared_consumer(home, NO_DEPENDENCIES);
+    let manifest = project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    write(
+        &manifest,
+        &text.replace(
+            "harnesses = [\"claude\"]",
+            "harnesses = [\"claude\"]\nmethod = \"copy\"",
+        ),
+    );
+    let template = project.join("catalog/skills/deploy/kendex.settings.toml.example");
+    write(
+        &template,
+        "[env]\n# Old choice.\nOLD = \"\" # required\n\n# Live choice.\nLIVE = \"\" # required\n",
+    );
+    let installed = kendex(
+        home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    write(
+        &project.join("kendex.settings.toml"),
+        "[env]\n# Old choice.\n\n# Live choice.\nLIVE = \"mine\"\n\n# Consumer prose.\n\n# Old choice!\n\n",
+    );
+    if drops_key {
+        write(&template, "[env]\n# Live choice.\nLIVE = \"\" # required\n");
+    }
+    if pending_pi {
+        write(
+            &project.join("catalog/pi-extensions/pi-widgets/index.js"),
+            "export const version = 2;\n",
+        );
+    }
+    project
+}
+
+/// A global copied skill whose source then changes: an update with no set
+/// change, which the global scope writes without consent of its own. The
+/// project scope comes first in a run, so this write is the one a refusal
+/// raised only inside the project scope's own write would let through.
+/// Returns the installed copy and the global lock.
+#[allow(clippy::unwrap_used)]
+fn global_update_without_consent(home: &Path) -> (PathBuf, PathBuf) {
+    let env = kendex_core::env::Env::host_rooted(home);
+    let catalog = home.join("global-catalog");
+    let source = catalog.join("skills/ship/SKILL.md");
+    write(
+        &source,
+        "---\nname: ship\ndescription: ship it\n---\nShip it.\n",
+    );
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.cat]\n{}\n\n[skills.ship]\nsource = \"cat\"\n",
+            test_util::source_path(&catalog)
+        ),
+    );
+    let installed = kendex(
+        home,
+        home,
+        &["refresh", "--scope", "global", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let copy = home.join(".claude/skills/ship/SKILL.md");
+    assert!(copy.is_file(), "the fixture installs {}", copy.display());
+    write(
+        &source,
+        "---\nname: ship\ndescription: ship it\n---\nShip it twice.\n",
+    );
+    (copy, env.global_lock_file())
+}
+
+/// The project's copy of the deploy skill's settings template: the
+/// regeneration a template change writes, which no consent gates.
+fn copied_template(project: &Path) -> PathBuf {
+    project.join(".claude/skills/deploy/kendex.settings.toml.example")
+}
+
+/// Without a terminal or `--yes` nobody can take the removal offer, so the
+/// comment stays and the run writes what it would write with no orphan.
+/// Only a consent the run needs anyway, here a pending Pi package, refuses
+/// it, and that refusal holds the global update too. `--yes` then removes
+/// what is still proven: a block only the outgoing template proved loses
+/// that proof once the unasked run records the new template.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn orphan_settings_cleanup_without_a_terminal_keeps_the_comment() {
+    // (template drops the key, Pi package pending, unasked run refused,
+    // `--yes` afterwards removes the block)
+    for (drops_key, pending_pi, refused, removes) in [
+        (false, false, false, true),
+        (true, false, false, false),
+        (true, true, true, true),
+    ] {
+        let row = format!("drops_key={drops_key} pending_pi={pending_pi}");
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = orphan_consumer(&home, drops_key, pending_pi);
+        let (global_copy, global_lock) = global_update_without_consent(&home);
+        let settings = project.join("kendex.settings.toml");
+        let lock = project.join(".kendex-lock.json");
+        let template = project.join("catalog/skills/deploy/kendex.settings.toml.example");
+        let before = fs::read_to_string(&settings).unwrap();
+        let lock_before = fs::read(&lock).unwrap();
+        let copied_before = fs::read(copied_template(&project)).unwrap();
+        let global_copy_before = fs::read(&global_copy).unwrap();
+        let global_lock_before = fs::read(&global_lock).unwrap();
+        let verified_before = kendex(&home, &project, &["verify", "--scope", "project"]);
+        let unasked = kendex(&home, &project, &["refresh", "--leave"]);
+        assert_eq!(
+            !unasked.status.success(),
+            refused,
+            "{row}: {}",
+            said(&unasked)
+        );
+        assert_eq!(fs::read_to_string(&settings).unwrap(), before, "{row}");
+        if refused {
+            assert_eq!(fs::read(&lock).unwrap(), lock_before);
+            assert_eq!(fs::read(copied_template(&project)).unwrap(), copied_before);
+            assert_eq!(fs::read(&global_copy).unwrap(), global_copy_before);
+            assert_eq!(fs::read(&global_lock).unwrap(), global_lock_before);
+        } else {
+            assert_eq!(
+                fs::read(copied_template(&project)).unwrap(),
+                fs::read(&template).unwrap()
+            );
+            assert_ne!(fs::read(&global_copy).unwrap(), global_copy_before);
+        }
+        let accepted = kendex(&home, &project, &["refresh", "--yes", "--leave"]);
+        assert!(accepted.status.success(), "{row}: {}", said(&accepted));
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            if removes {
+                before.replacen("# Old choice.\n", "", 1)
+            } else {
+                before.clone()
+            },
+            "{row}"
+        );
+        assert_ne!(fs::read(&global_copy).unwrap(), global_copy_before);
+        if !drops_key {
+            let verified_after = kendex(&home, &project, &["verify", "--scope", "project"]);
+            assert_eq!(verified_before.status.code(), verified_after.status.code());
+            assert_eq!(verified_before.stdout, verified_after.stdout);
+            assert_eq!(verified_before.stderr, verified_after.stderr);
+        }
+    }
+}
+
+/// A refresh whose only question is the removal asks it alone: `n` keeps
+/// the comment and still writes the template change, `y` writes both.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn orphan_settings_cleanup_is_an_offer_the_person_can_decline() {
+    for (answer, removes) in [("n", false), ("y", true)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = orphan_consumer(&home, true, false);
+        let settings = project.join("kendex.settings.toml");
+        let template = project.join("catalog/skills/deploy/kendex.settings.toml.example");
+        let before = fs::read_to_string(&settings).unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+        command
+            .args(["refresh", "--scope", "project", "--leave"])
+            .current_dir(&project)
+            .env_clear()
+            .envs(test_util::fixture_env(&home))
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+        let output = pty::conversation(command, &[("[y]", answer)], pty::Stderr::Terminal);
+        assert!(output.status.success(), "{}", said(&output));
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            if removes {
+                before.replacen("# Old choice.\n", "", 1)
+            } else {
+                before
+            }
+        );
+        assert_eq!(
+            fs::read(copied_template(&project)).unwrap(),
+            fs::read(&template).unwrap()
+        );
+    }
+}
+
 /// The consumer cloned into a directory nothing named before, carrying
 /// no install record.
 #[allow(clippy::unwrap_used)]

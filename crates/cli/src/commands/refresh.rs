@@ -7,8 +7,9 @@ use super::advisory::Listing;
 use super::attention::{Attention, print_attention};
 use super::commit_offer::after_writing;
 use super::engine_common::{
-    Confirmation, PlanApplication, before_writing, confirm_before_writing, confirm_plan_and_apply,
-    print_synced, refresh_failures, require_yes_in_non_interactive, write_report,
+    Confirmation, PlanApplication, answerable, before_writing, confirm_before_writing,
+    confirm_plan_and_apply, print_synced, refresh_failures, require_yes_in_non_interactive,
+    write_report,
 };
 use super::ledger::{Folded, Wrote, say_ledger_with};
 use super::offers::Reached;
@@ -147,12 +148,29 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
     ));
 }
 
+/// The proven orphan settings comments this plan removes. A question the
+/// scope asks anyway answers them with everything else; alone they get
+/// their own ([`offer_removals`]).
+fn say_removed_comments(scope: &kendex_core::model::Scope, report: &EngineReport) {
+    for key in &report.removed_settings_comments {
+        ui::stderr(&ui::style().report_row(
+            ui::Status::Decision,
+            &[Span::Prose(&format!(
+                "remove orphan settings comment for {key}; {}",
+                consent_scope(scope)
+            ))],
+            "  - ",
+        ));
+    }
+}
+
 fn print_changes_needing_consent(
     scope: &kendex_core::model::Scope,
     report: &EngineReport,
     pending: &[Pending],
 ) {
     print_set_changes(scope, report);
+    say_removed_comments(scope, report);
     for pending in pending {
         let name = &pending.name;
         let change = match &pending.change {
@@ -339,6 +357,8 @@ struct PreparedScope {
 type Planned = Result<(EngineReport, Vec<Pending>), String>;
 
 impl PreparedScope {
+    /// Orphan comment removals are absent: a run nobody can answer never
+    /// plans them ([`prepare_scope`]), so they never refuse a run.
     fn needs_consent(&self) -> bool {
         match &self.planned {
             Ok((report, pending)) => {
@@ -371,21 +391,28 @@ fn sync_scope(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::remo
     }
 }
 
-fn prepare_scope(
-    env: &Env,
-    scope: kendex_core::model::Scope,
-    synced: kendex_core::remote::Synced,
-    catalog: Catalog,
-    takes: Takes,
-    reach: Reached,
-    targeted: &[kendex_core::model::Scope],
-) -> Result<PreparedScope, Box<dyn std::error::Error>> {
-    let options = PlanOptions {
+/// What every scope of this refresh plans with. Orphan settings comment
+/// removals are an offer: planned only where the run can be answered, so a
+/// scripted refresh without `--yes` keeps the comments and writes what it
+/// would write without them.
+fn refresh_options(catalog: Catalog, takes: Takes, yes: bool) -> PlanOptions {
+    PlanOptions {
+        remove_orphan_settings_comments: answerable(yes),
         sweep_unneeded: true,
         overwrite_edited: takes.discard_edits,
         prune_retired: takes.prune,
         ..catalog.plan_options()
-    };
+    }
+}
+
+fn prepare_scope(
+    env: &Env,
+    scope: kendex_core::model::Scope,
+    synced: kendex_core::remote::Synced,
+    options: PlanOptions,
+    reach: Reached,
+    targeted: &[kendex_core::model::Scope],
+) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let planned = plan_scope(env, &scope, &synced, &options, targeted)?;
     Ok(PreparedScope {
         scope,
@@ -462,11 +489,12 @@ fn prepare_scopes(
         }
     }
     let reach = Reached::of(target.path());
+    let planning = refresh_options(catalog, takes, yes);
     let prepared: Vec<_> = scopes
         .iter()
         .cloned()
         .zip(synced)
-        .map(|(scope, synced)| prepare_scope(env, scope, synced, catalog, takes, reach, &scopes))
+        .map(|(scope, synced)| prepare_scope(env, scope, synced, planning.clone(), reach, &scopes))
         .collect::<Result<_, Box<dyn std::error::Error>>>()?;
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
@@ -559,7 +587,20 @@ fn write_scope(
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     let (options, yes) = (context.options, context.yes);
     if pending.is_empty() {
-        let needs_consent = !report.set_changes.is_empty() && !start.covers(&report.set_changes);
+        let set_consent = |report: &EngineReport| {
+            !report.set_changes.is_empty() && !start.covers(&report.set_changes)
+        };
+        let report = if set_consent(&report) || report.removed_settings_comments.is_empty() {
+            report
+        } else {
+            match offer_removals(env, scope, report, context) {
+                Ok(report) => report,
+                Err((report, error)) => {
+                    return start.stopped_short(*report, None, Stop::Failed(error));
+                }
+            }
+        };
+        let needs_consent = set_consent(&report);
         if needs_consent && !report.plan.is_empty() {
             print_changes_needing_consent(scope, &report, pending);
         }
@@ -647,6 +688,45 @@ fn write_scope(
     };
     let count = start.count(Some(settled + applied));
     Ok(start.written(after, count, stop))
+}
+
+/// A plan whose only question is its orphan settings comment removals asks
+/// that question alone. A yes keeps the plan, whose other writes need no
+/// answer; a no plans the scope again without the removals, so declining
+/// keeps the comments and never the rest of the refresh. The error carries
+/// the plan it stopped at.
+fn offer_removals(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    report: EngineReport,
+    context: &Context,
+) -> Result<EngineReport, (Box<EngineReport>, Box<dyn std::error::Error>)> {
+    say_removed_comments(scope, &report);
+    let removals = report.removed_settings_comments.len();
+    let question = format!(
+        "remove {removals} orphan settings comment{}?",
+        if removals == 1 { "" } else { "s" }
+    );
+    match confirm_before_writing(&question, context.yes) {
+        Ok(Confirmation::Accepted) => return Ok(report),
+        Ok(Confirmation::Declined) => {}
+        Err(error) => return Err((Box::new(report), error)),
+    }
+    let options = PlanOptions {
+        remove_orphan_settings_comments: false,
+        ..context.options.clone()
+    };
+    let planned = {
+        let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
+        plan_apply(env, scope, &options)
+    };
+    match planned {
+        Ok(mut kept) => {
+            context.synced.suppress_busy_pending(&mut kept.notes);
+            Ok(kept)
+        }
+        Err(error) => Err((Box::new(report), error.into())),
+    }
 }
 
 /// What a scope's write starts from: a version 10 record this run
@@ -761,6 +841,7 @@ fn recover_scope(
     if !report.set_changes.is_empty() {
         print_set_changes(scope, report);
     }
+    say_removed_comments(scope, report);
     let changes = report.plan.ops.len();
     if confirm_before_writing(
         &format!(

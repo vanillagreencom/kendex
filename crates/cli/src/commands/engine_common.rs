@@ -409,10 +409,17 @@ pub(super) fn confirm_before_writing(
 /// This keeps a later scope's missing answer from arriving after an earlier
 /// scope has already written.
 pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
-    if yes || std::io::stdin().is_terminal() {
+    if answerable(yes) {
         return Ok(());
     }
     Err("no terminal to ask at — pass --yes to write without asking".into())
+}
+
+/// Whether a question asked before writing gets an answer: `--yes`, or a
+/// terminal to ask at. A write that is only offered, never required, is
+/// left out of a run where this is false rather than refusing the run.
+pub(super) fn answerable(yes: bool) -> bool {
+    yes || std::io::stdin().is_terminal()
 }
 
 /// A refresh failure: any per-item failure or a locked item missing from

@@ -288,9 +288,10 @@ fn plan_scope_with_lock_base(
         &mut written,
     )?;
 
-    let (mut scope_notes, planned_shims) = plan_scope_files(
+    let (mut scope_notes, planned_shims, removed_settings_comments) = plan_scope_files(
         env,
         scope,
+        lock,
         &manifest,
         &mut state,
         options,
@@ -323,9 +324,6 @@ fn plan_scope_with_lock_base(
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
     let trees = generated_paths::Unrendered::of(env, scope, &state, &item_pass, lock, &new_lock)?;
-    // Read off before the record moves into its write: a pass that
-    // writes no record still says which commit each revision resolved to.
-    let resolved_sources = resolved_revisions(&new_lock, &state);
     let installations = installations(env, scope, &manifest, &state)?;
     plan_lock_write(env, scope, declared, lock_base, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &planned_shims, &drift, &trees, &mut ops)?;
@@ -334,6 +332,7 @@ fn plan_scope_with_lock_base(
         ops,
         scope_notes,
         set_changes,
+        removed_settings_comments,
         repo_effects_leaving,
         sweepable,
         retired,
@@ -341,7 +340,7 @@ fn plan_scope_with_lock_base(
         safety,
         instruction_shims: planned_shims,
         item_pass,
-        resolved_sources,
+        resolved_sources: resolved_revisions(&new_lock, &state),
         generated,
         config,
         installations,
@@ -420,6 +419,7 @@ struct Planned {
     ops: Vec<PlannedOp>,
     scope_notes: Vec<String>,
     set_changes: Vec<SetChange>,
+    removed_settings_comments: Vec<String>,
     repo_effects_leaving: Vec<crate::repo_effects::DeclaredEffects>,
     sweepable: Vec<SetChange>,
     retired: removal::Retired,
@@ -453,6 +453,7 @@ fn report(
         ops,
         scope_notes,
         set_changes,
+        removed_settings_comments,
         repo_effects_leaving,
         sweepable,
         retired,
@@ -500,6 +501,7 @@ fn report(
         retired,
         withheld: state.withheld,
         set_changes,
+        removed_settings_comments,
         sweepable,
         kept,
         safety,
@@ -663,6 +665,7 @@ fn plan_removals(
 fn plan_scope_files(
     env: &Env,
     scope: &Scope,
+    lock: &Lock,
     manifest: &Manifest,
     state: &mut desired::DesiredState,
     options: &PlanOptions,
@@ -670,10 +673,11 @@ fn plan_scope_files(
     drift: &mut Vec<DriftRow>,
     ops: &mut Vec<PlannedOp>,
     config_edits: &mut config_edits::ConfigEditPlan,
-) -> Result<(Vec<String>, Vec<ShimStanding>)> {
+) -> Result<(Vec<String>, Vec<ShimStanding>, Vec<String>)> {
     // The order between the project files is not this caller's to choose,
     // so one entry point plans all three: `settings_write.rs` says why.
-    let (scope_notes, settings_drift) = plan_project_files(scope, state, options, ops)?;
+    let (scope_notes, settings_drift, removed) =
+        plan_project_files(env, scope, lock, state, options, ops)?;
     drift.extend(settings_drift);
     // The shims a project owes its instruction files, read off the
     // harness list the manifest declares: committed files, never lock
@@ -688,7 +692,7 @@ fn plan_scope_files(
         config_edits,
     )?;
     drift.extend(shim_drift);
-    Ok((scope_notes, instruction_shims))
+    Ok((scope_notes, instruction_shims, removed))
 }
 
 /// The report with the rows about content nothing manages added, refused
