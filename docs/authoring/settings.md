@@ -14,7 +14,7 @@ Seeding is a skill's alone: the same file under an agent, hook, command or MCP s
 
 Three operations add keys to a consumer's `kendex.settings.toml`:
 
-- An arrival writes the keys the template marks `# required`, once. Arrival is the consumer's `kendex.toml` gaining the declaration, read expanded: a bundle arrives its members, a skill arrives the dependencies it pulls in. Only `add` gains a declaration. Seeding on refresh writes nothing and keeps deleted keys absent. A declaration written by hand has spent the arrival; removing and re-adding the skill is the way back.
+- An arrival writes the keys the template marks `# required`, once. Arrival is the consumer's `kendex.toml` gaining the declaration, read expanded: a bundle arrives its members, a skill arrives the dependencies it pulls in. Only `add` gains a declaration. Seeding on refresh adds no keys and keeps deleted keys absent. A declaration written by hand has spent the arrival; removing and re-adding the skill is the way back.
 - A save from the app writes the key it names, marked or not, inserting the assignment when there is none.
 - `kendex add --setting KEY=VALUE` writes a key a package installed in the project declares, marked or not, in the same write as the arrival's seeds and under the declaration a save would use. It writes only where the file assigns the key nowhere: an assigned key keeps its value, and the plan names it where the two differ. A key no package there declares, and a value the loaders would refuse, stop the add before it writes.
 
@@ -25,10 +25,12 @@ Mark a key `# required` only when the consumer has to decide it and no default c
 - The marker is the template's own word, cut off before the assignment is written; it goes after the value and nowhere else. On a comment line of its own it marks nothing, and both misplacements are check findings. A marked key nobody has answered is reported in every plan and audit until they set it, so a template that gains a marked key after release reaches an existing consumer as a note, never a write.
 - Seeding never overwrites a key assigned anywhere in the consumer's file, inside `[env]` or not. Whether it is answered is the readers' narrower question: an assignment under another table, one spelled quoted or dotted, one written twice, or one holding a value the loaders refuse is reported as unanswered, naming the line that took the name.
 - Where several packages ship the same key with the same default, nothing is said. Where they disagree, every plan and audit carries one note naming each owner and default, and a pass that writes the key writes the first declaration in package-name order that the pass admits: on an arrival, the first arriving package that marks it `# required`; on a save, the first in package-name order.
-- Seeding does not revisit an existing block. Once a key and its comment land they are the consumer's, and a revised template does not follow them in; the comment you ship is the wording every consumer who takes the key keeps.
+- Seeding keeps existing comments and values. A revised template does not replace them.
 - An entry is written whole or not at all: a value the template never closes is refused by name and the plan says so, and a value spanning lines is never marked, never arrives, and refuses a save.
 
 The seeding rules are `crates/core/src/settings_seed.rs`.
+
+Refresh offers to remove an orphan comment block only when its complete bytes match a block the current template or a proven outgoing installed template could have seeded. A block immediately above any assignment stays. Consumer prose, a one-byte mismatch and historical text kendex cannot prove stay byte for byte. Refresh lists each removal before its existing confirmation; declining keeps the file, and `--yes` accepts. This adds no verification finding.
 
 ## The grammar
 

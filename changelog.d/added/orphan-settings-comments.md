@@ -1,0 +1,1 @@
+- `kendex refresh` offers to remove a settings comment block left with no key under it when its bytes are exactly a block a package template seeded, from the template now or the one installed before. It lists each removal before its usual confirmation, `--yes` accepts, and consumer-written comments and comments above a live key are never touched.

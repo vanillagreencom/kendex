@@ -147,12 +147,30 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
     ));
 }
 
+/// The proven orphan settings comments this plan removes, each a write the
+/// refresh's one consent answers.
+fn say_removed_comments(scope: &kendex_core::model::Scope, report: &EngineReport) {
+    for key in &report.removed_settings_comments {
+        ui::stderr(&ui::style().report_row(
+            ui::Status::Decision,
+            &[Span::Prose(&format!(
+                "remove orphan settings comment for {key}; {}",
+                consent_scope(scope)
+            ))],
+            "  - ",
+        ));
+    }
+}
+
 fn print_changes_needing_consent(
     scope: &kendex_core::model::Scope,
     report: &EngineReport,
     pending: &[Pending],
 ) {
-    print_set_changes(scope, report);
+    if !report.set_changes.is_empty() || !pending.is_empty() {
+        print_set_changes(scope, report);
+    }
+    say_removed_comments(scope, report);
     for pending in pending {
         let name = &pending.name;
         let change = match &pending.change {
@@ -342,7 +360,10 @@ impl PreparedScope {
     fn needs_consent(&self) -> bool {
         match &self.planned {
             Ok((report, pending)) => {
-                report.recovers.is_some() || !report.set_changes.is_empty() || !pending.is_empty()
+                report.recovers.is_some()
+                    || !report.set_changes.is_empty()
+                    || !report.removed_settings_comments.is_empty()
+                    || !pending.is_empty()
             }
             Err(_) => false,
         }
@@ -381,6 +402,7 @@ fn prepare_scope(
     targeted: &[kendex_core::model::Scope],
 ) -> Result<PreparedScope, Box<dyn std::error::Error>> {
     let options = PlanOptions {
+        remove_orphan_settings_comments: true,
         sweep_unneeded: true,
         overwrite_edited: takes.discard_edits,
         prune_retired: takes.prune,
@@ -559,7 +581,8 @@ fn write_scope(
 ) -> Result<ScopeWrite, Box<dyn std::error::Error>> {
     let (options, yes) = (context.options, context.yes);
     if pending.is_empty() {
-        let needs_consent = !report.set_changes.is_empty() && !start.covers(&report.set_changes);
+        let needs_consent = (!report.set_changes.is_empty() && !start.covers(&report.set_changes))
+            || !report.removed_settings_comments.is_empty();
         if needs_consent && !report.plan.is_empty() {
             print_changes_needing_consent(scope, &report, pending);
         }
@@ -761,6 +784,7 @@ fn recover_scope(
     if !report.set_changes.is_empty() {
         print_set_changes(scope, report);
     }
+    say_removed_comments(scope, report);
     let changes = report.plan.ops.len();
     if confirm_before_writing(
         &format!(
