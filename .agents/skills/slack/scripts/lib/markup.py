@@ -322,7 +322,8 @@ def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern,
     parts: List[Part] = []
     pos = 0
     reference_pattern, reference_url = references
-    strong = [(m.start(), m.end()) for m in chain(BOLD.finditer(text), HEADING.finditer(text))]
+    masked = _masked(text)
+    strong = [(m.start(), m.end()) for m in chain(BOLD.finditer(masked), HEADING.finditer(masked))]
     pattern = re.compile(reference_pattern.pattern + ("|" + tracker[0].pattern if tracker is not None else ""))
     for start, end in chain(((literal.start(), literal.end()) for literal in LITERAL.finditer(text)), [(len(text), len(text))]):
         for match in pattern.finditer(text, pos, start):
@@ -337,6 +338,29 @@ def _linked(text: str, tracker: Optional[Tracker], references: Tuple[re.Pattern,
         pos = end
     parts.append(text[pos:])
     return parts
+
+
+def _held(match: re.Match) -> bool:
+    """A literal region stays as written; an angle run that is not a Slack
+    token is text, its `<` and `>` escaped in mrkdwn."""
+    return match.group("zone_angle") is None or SLACK_TOKEN.fullmatch(match.group()) is not None
+
+
+def _masked(text: str) -> str:
+    """`text` with each literal region `_mrkdwn` holds aside as a run of
+    neutral characters of the same length, so a bold or heading test sees
+    the spans both routes format: a `**` inside code is not a bold marker.
+    A fence keeps its newlines, so the lines around it stay lines."""
+
+    def mask(match: re.Match) -> str:
+        literal = match.group()
+        if not _held(match):
+            return literal
+        if match.group("zone_fence") is not None:
+            return re.sub(r"[^\n]", "x", literal)
+        return "x" * len(literal)
+
+    return LITERAL.sub(mask, text)
 
 
 def _render(part: Part, mrkdwn: bool) -> str:
@@ -369,7 +393,7 @@ def _mrkdwn(parts: List[Part]) -> str:
 
     def zone(match: re.Match) -> str:
         literal = match.group()
-        if match.group("zone_angle") is not None and SLACK_TOKEN.fullmatch(literal) is None:
+        if not _held(match):
             return literal
         if match.group("zone_markdown") is not None:
             link = INLINE_LINK.fullmatch(literal)

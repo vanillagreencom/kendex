@@ -82,7 +82,7 @@ Write times in the person's time zone with am or pm. Do not use a `Z` stamp.
 - Use inline code for a command or path. Use a code block for output longer than one line. Keep paragraphs to a few sentences.
 - Put text the person must send in a code block. Name the recipient above it.
 - Report changed rules, guidance or directives after their commit is pushed. Name each changed file once as `repo/folder/file.md`, linked to `https://github.com/OWNER/REPO/blob/COMMIT/path#heading` at that commit.
-- Write a Slack file comment in standard Markdown, as for a message. The slack package converts it to Slack mrkdwn when it posts the file.
+- Write a Slack file comment in standard Markdown, as for a message. The slack package converts it to Slack mrkdwn when it posts the file. The exception is the report summary: [Summary template](reports.md#summary-template) and `oversee-report write` hold it to mrkdwn.
 
 ## Slack messages
 

@@ -95,8 +95,8 @@ post      one message to the bound channel, or --channel for another, its
           --mention prefixes every owner, unless the root's Jarvis session
           hold stands, which posts with no mention and prints mention-held
           on stderr; repeat --file to upload related files as one share with
-          the text as their comment instead, in Slack's mrkdwn and outside the
-          12,000-character cap;
+          the text as their comment instead, written in standard Markdown
+          and posted as Slack's mrkdwn, outside the 12,000-character cap;
           --thread replies only in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
           secret-value pattern

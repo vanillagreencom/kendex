@@ -419,6 +419,8 @@ bare URL|https://example.test/KEN-1|https://example.test/KEN-1
 bare www URL|www.example.test/KEN-1|www.example.test/KEN-1
 reference link|[KEN-1][item]|[KEN-1][item]
 reference definition|[KEN-1]: https://example.test/KEN-2|[KEN-1]: https://example.test/KEN-2
+bold markers inside code are not bold|Changed `skills/**/*.md` for KEN-1 and **done**@NL@**Scope:** `skills/**` and KEN-1 and **Next:** x|Changed `skills/**/*.md` for **[\[KEN-1\]](https://linear.app/workspace/issue/KEN-1)** and **done**@NL@**Scope:** `skills/**` and **[\[KEN-1\]](https://linear.app/workspace/issue/KEN-1)** and **Next:** x
+bold around code holding a marker|**a `x**` KEN-1 b**|**a `x**` [\[KEN-1\]](https://linear.app/workspace/issue/KEN-1) b**
 ROWS
 # Slack angle tokens contain pipes, so these shaped rows use a tab separator.
 while IFS=$'\t' read -r label input; do
@@ -458,6 +460,8 @@ code block|```@NL@- KEN-1 <x>@NL@```@NL@- after|```@NL@- KEN-1 &lt;x&gt;@NL@```@
 Slack tokens|<@U001> <!here> <https://example.test@BAR@label>|<@U001> <!here> <https://example.test@BAR@label>
 bare URL|https://example.test/?a=1&b=**2**|https://example.test/?a=1&b=**2**
 unread forms|![alt](https://example.test/i.png) [KEN-1][ref] 2**3|![alt](https://example.test/i.png) [KEN-1][ref] 2**3
+bold markers inside code are not bold|Changed `skills/**/*.md` for KEN-1 and **done**@NL@**Scope:** `skills/**` and KEN-1 and **Next:** x|Changed `skills/**/*.md` for *<https://linear.app/workspace/issue/KEN-1@BAR@[KEN-1]>* and *done*@NL@*Scope:* `skills/**` and *<https://linear.app/workspace/issue/KEN-1@BAR@[KEN-1]>* and *Next:* x
+bold around code holding a marker|**a `x**` KEN-1 b**|*a `x**` <https://linear.app/workspace/issue/KEN-1@BAR@[KEN-1]> b*
 empty input||
 ROWS
 LONG="$(python3 -c 'print("x " * 5980 + "KEN-1", end="")')"
