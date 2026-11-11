@@ -81,12 +81,16 @@ verdicts() {
 # before the default does, and the local command then passes false.
 # LANE VERDICTS is the action's; `-` where no declaration is read.
 write_row() { # NAME BASE PATHS LINES: commits the row's change on BASE
-  local path
+  local path prefix
   git -C "$repo" checkout -q -B row "$2"
   git -C "$repo" clean -qfd
   for path in $3; do
     mkdir -p "$repo/$(dirname "$path")"
-    awk -v lines="$4" 'BEGIN { for (i=1; i<=lines; i++) print "line " i }' >"$repo/$path"
+    # A manifest stays a TOML document its review-bot check parses.
+    prefix=""
+    [ "$path" != kendex.toml ] || prefix="# "
+    awk -v lines="$4" -v prefix="$prefix" 'BEGIN { for (i=1; i<=lines; i++) print prefix "line " i }' \
+      >"$repo/$path"
   done
   git -C "$repo" add -A
   git -C "$repo" commit -qm "$1"

@@ -122,6 +122,9 @@ assert_class() { # LABEL EXPECTED ARGS...
 # The orch package beside harness-ci, which the measured classes source. A
 # suite that never plants a package runs where it is absent.
 ORCH_PACKAGE="$(cd "$(dirname "$CHANGE_CLASS")/../.." && pwd)/orch"
+# The bot-instructions package beside harness-ci, whose check the manifest
+# admission runs and whose render a manifest fixture commits.
+BOT_INSTRUCTIONS_PACKAGE="$(cd "$(dirname "$CHANGE_CLASS")/../.." && pwd)/bot-instructions"
 
 # A package laid out as the real one, with the script under test swapped for
 # a planted copy.
