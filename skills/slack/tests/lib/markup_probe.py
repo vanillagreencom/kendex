@@ -6,14 +6,18 @@ from pathlib import Path
 import sys
 
 import markup
+from secret import pattern as secret_pattern
 
 root, mode = Path(sys.argv[1]), sys.argv[2]
 clock = [0.0]
 markup.TRACKERS = markup.TrackerMetadata(lambda: clock[0])
 notices = io.StringIO()
+extra = {}
 with contextlib.redirect_stdout(notices):
     if mode == "outbound":
         result = markup.outbound(root, sys.argv[3], file_comment=sys.argv[4] == "file")
+        # What the callers' secret check reads on the returned text.
+        extra["secret"] = secret_pattern().search(result[0].encode()) is not None
     elif mode == "lifetime":
         results = []
         reads = []
@@ -45,4 +49,4 @@ with contextlib.redirect_stdout(notices):
         result = [markup.outbound(Path(path), "KEN-1 #2 org/other#3")[0] for path in sys.argv[3:]]
     else:
         raise ValueError(mode)
-print(json.dumps({"result": result, "notices": notices.getvalue().splitlines()}))
+print(json.dumps({"result": result, "notices": notices.getvalue().splitlines(), **extra}))

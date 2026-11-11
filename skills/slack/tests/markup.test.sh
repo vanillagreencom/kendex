@@ -464,6 +464,29 @@ bold markers inside code are not bold|Changed `skills/**/*.md` for KEN-1 and **d
 bold around code holding a marker|**a `x**` KEN-1 b**|*a `x**` <https://linear.app/workspace/issue/KEN-1@BAR@[KEN-1]> b*
 empty input||
 ROWS
+# A text matching the secret pattern reaches the callers' check as written:
+# the heading rule would join API to the token and hide the match, and a
+# linked id inside it would split it.
+for mode in original control; do
+  if [ "$mode" = control ]; then
+    sk_mutant secret-conversion markup.py '    preserve = secret_pattern\(\)\.search\([^\n]+\) is not None' '    preserve = False'
+  fi
+  while IFS='|' read -r route kind input; do
+    sk_markup "$ROOT" outbound "$input" "$route"
+    GOT="$RC=$(jq -r '[.result[0], .result[1], (.secret | tostring)] | join(" ")' <<<"$OUT")"
+    WANT="0=$input $kind true"
+    if [ "$mode" = original ]; then
+      assert_eq "$GOT" "$WANT" "$route route returns a secret match as written"
+    elif [ "$route" = file ]; then
+      sk_assert_red "$GOT" "$WANT" "control: converting a secret match hides it from the $route check"
+    fi
+  done <<'ROWS'
+file|text|# API**xoxb-0123456789abcdefghij**
+file|text|xoxb-KEN-1234567890 KEN-1
+markdown|markdown_text|# API**xoxb-0123456789abcdefghij**
+ROWS
+done
+sk_bin_reset
 LONG="$(python3 -c 'print("x " * 5980 + "KEN-1", end="")')"
 sk_markup "$ROOT" outbound "$LONG" markdown
 assert_eq "$RC=$(jq -r --arg link '**[\[KEN-1\]](https://linear.app/workspace/issue/KEN-1)**' '.result[1] + "=" + (.result[0] | endswith($link) | tostring)' <<<"$OUT")" '0=markdown_text=true' 'expansion retains standard Markdown for relay continuations'

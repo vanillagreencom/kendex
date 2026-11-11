@@ -197,17 +197,22 @@ def outbound(root: Path, text: Union[str, Sequence[Union[str, Verbatim]]], file_
     `text` is one string, or strings and `Verbatim` blocks in order; a
     string is linked, a block never is. A file comment's standard Markdown
     is converted to mrkdwn; messages retain standard Markdown, including
-    after link expansion. `fallback` remains accepted for the explicit
+    after link expansion. A text matching the secret pattern returns as
+    written, unlinked and unconverted, so the caller's check refuses the
+    bytes that matched. `fallback` remains accepted for the explicit
     single-message post caller.
     """
     pieces = [text] if isinstance(text, str) else list(text)
-    # Expansion must not hide a match from the caller's refusal check.
-    preserve = secret_pattern().search("".join(_render(piece, mrkdwn=False) for piece in pieces).encode()) is not None
+    written = "".join(_render(piece, mrkdwn=False) for piece in pieces)
+    # Linking or conversion can join a character to a match and hide it.
+    preserve = secret_pattern().search(written.encode()) is not None
+    if preserve:
+        return written, "text" if file_comment else "markdown_text"
     tracker = TRACKERS.get(root)
     references = TRACKERS.references(root)
     parts: List[Part] = []
     for piece in pieces:
-        if isinstance(piece, Verbatim) or preserve:
+        if isinstance(piece, Verbatim):
             parts.append(piece)
         else:
             parts.extend(_linked(piece, tracker, references))
