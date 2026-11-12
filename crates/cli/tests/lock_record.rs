@@ -45,11 +45,18 @@
 //! row lands the record on `main` and opens no pull request; with the push
 //! left on `GH_TOKEN`, the landed row finds it under the lanes app's token;
 //! with the queue read taken as empty, the busy-queue row lands it too;
-//! with the `land-unavailable` line dropped, the unread-queue row finds
-//! none; and with `KENDEX_LAND_TOKEN` left in the environment, the landed
-//! row finds it on a gh call. The queue read's answers and the push's reading of a moved base
-//! and of a refusal are `refresh/lib/landing.sh`'s, proved once with their
-//! controls in `refresh/tests/refresh-consumer.test.sh`.
+//! and with `KENDEX_LAND_TOKEN` left in the environment, the landed row
+//! finds it on a gh call. The landing reporter's controls run in the suite,
+//! from `REPORTER_CONTROLS`, one per arm the script's reporter has, read
+//! from the script: with each keyed line dropped (`land-unavailable=token`,
+//! `land-unavailable=queue-read`, `land-skipped=queued`) its row says
+//! nothing; with the pass arm deleted the unconfigured row ends on
+//! `land-check`; and with the refusal arm deleted the unanswered
+//! precondition runs on to the rolling pull request. A reporter arm with no
+//! control reddens the suite. The queue read's answers and the push's
+//! reading of a moved base and of a refusal are `refresh/lib/landing.sh`'s,
+//! proved once with their controls in
+//! `refresh/tests/refresh-consumer.test.sh`.
 //!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
@@ -1057,132 +1064,293 @@ fn a_landed_record_closes_the_open_rolling_pull_request() {
     world.fresh_clone_verifies_clean();
 }
 
-/// A run with no landing token keeps the rolling pull request and pushes
-/// nothing to `main`, and so does a merge queue that holds an entry, whose
-/// running groups a push to `main` would rebuild, and one that could not be
-/// read. `main` stays where the merge left it. Each row names the one
-/// landing line the run says, or none where the workflow set no landing
-/// name: a run whose workflow set a name but holds no token, half the pair
-/// or a failed mint, says so.
-#[test]
-fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
-    let rows: &[(&str, StubEnv, Option<&str>)] = &[
-        ("", &[("GH_TOKEN", "lanes-token")], None),
-        (
-            "",
-            &[
-                ("GH_TOKEN", "lanes-token"),
-                ("KENDEX_LAND_CONFIGURED", "false"),
-            ],
-            None,
-        ),
-        (
-            "",
-            &[
-                ("GH_TOKEN", "lanes-token"),
-                ("KENDEX_LAND_CONFIGURED", "true"),
-            ],
-            Some("lock-record: land-unavailable=token"),
-        ),
-        (
-            "",
-            &[
-                ("GH_TOKEN", "lanes-token"),
-                ("KENDEX_LAND_TOKEN", "land-token"),
-                ("GH_QUEUED", "1"),
-            ],
-            Some("lock-record: land-skipped=queued"),
-        ),
-        (
-            "queue",
-            ADMITTED,
-            Some("lock-record: land-unavailable=queue-read"),
-        ),
-    ];
-    assert!(
-        landing_library().is_file(),
-        "{}",
-        landing_library().display()
-    );
-    for (gh_fail, env, said_land) in rows {
+/// One run the landing reporter answers: `GH_FAIL`, the `gh` stub's
+/// environment, the edits a copy of the script takes (none runs the script
+/// itself), and what the run must say: its exit code and its exact
+/// `lock-record: land` lines.
+struct LandingRow {
+    name: &'static str,
+    gh_fail: &'static str,
+    env: StubEnv,
+    edits: &'static [(&'static str, &'static str)],
+    code: i32,
+    said: &'static [&'static str],
+}
+
+/// Each landing precondition the run does not meet. A run whose workflow
+/// set no landing name says nothing. One whose workflow set a name but
+/// holds no token, half the pair or a failed mint, a busy merge queue,
+/// whose running groups a push to `main` would rebuild, and an unread one
+/// each say their cause and keep the rolling pull request. A precondition
+/// that answers nothing, the busy-queue check returning with no answer,
+/// ends the run on `land-check` before anything is pushed.
+const LANDING_ROWS: &[LandingRow] = &[
+    LandingRow {
+        name: "unconfigured",
+        gh_fail: "",
+        env: &[("GH_TOKEN", "lanes-token")],
+        edits: &[],
+        code: 0,
+        said: &[],
+    },
+    LandingRow {
+        name: "configured-false",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_CONFIGURED", "false"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &[],
+    },
+    LandingRow {
+        name: "half-pair",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_CONFIGURED", "true"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-unavailable=token"],
+    },
+    LandingRow {
+        name: "queue-busy",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", "1"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-skipped=queued"],
+    },
+    LandingRow {
+        name: "queue-unread",
+        gh_fail: "queue",
+        env: ADMITTED,
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-unavailable=queue-read"],
+    },
+    LandingRow {
+        name: "precondition-unanswered",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", "1"),
+        ],
+        edits: &[(
+            r#"if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi"#,
+            r#"if [[ "$queued" != 0 ]]; then return 0; fi"#,
+        )],
+        code: 1,
+        said: &["lock-record: land-check=unset"],
+    },
+];
+
+impl LandingRow {
+    /// The row's run on a fresh world after one merge, on a copy of the
+    /// script where the row or `arm` names an edit: the world, the head the
+    /// merge left and the run.
+    fn run(&self, arm: Option<(&str, &str)>) -> (World, String, Output) {
         let world = world();
         world.branch("a", "ship");
         assert!(world.queue_merge("a").status.success());
         let head = world.main_head();
-        let recorded = world.lock_record_with(gh_fail, env);
-        let output = said(&recorded);
-        assert_eq!(
-            recorded.status.code(),
-            Some(0),
-            "{gh_fail} {env:?}: {output}"
-        );
-        let land_lines: Vec<&str> = output
+        let edits: Vec<(&str, &str)> = self.edits.iter().copied().chain(arm).collect();
+        let run = if edits.is_empty() {
+            world.lock_record_with(self.gh_fail, self.env)
+        } else {
+            let copy = script_copy(&world, &edits);
+            let judged = world.main.display().to_string();
+            world.run_script(
+                &copy,
+                &["--repo", &judged, "--base", "main"],
+                self.gh_fail,
+                "",
+                self.env,
+            )
+        };
+        (world, head, run)
+    }
+
+    /// Whether the run said what the row names: its exit code and its
+    /// exact landing lines.
+    fn verdict(&self, run: &Output) -> Result<(), String> {
+        let output = said(run);
+        let lines: Vec<&str> = output
             .lines()
             .filter(|line| line.starts_with("lock-record: land"))
             .collect();
-        assert_eq!(
-            land_lines,
-            said_land.iter().copied().collect::<Vec<_>>(),
-            "{gh_fail} {env:?}: {output}"
-        );
-        assert_recorded_and_opened(&world, &output, 41);
-        assert_eq!(world.origin_main(), head, "{gh_fail} {env:?}: {output}");
-        let pushes = world.pushes();
-        assert!(
-            !pushes.lines().any(|line| line.contains(":refs/heads/main")),
-            "{gh_fail} {env:?}: {pushes}"
-        );
+        if run.status.code() == Some(self.code) && lines == self.said {
+            Ok(())
+        } else {
+            Err(format!(
+                "{}: exit {:?}, landing lines {lines:?}",
+                self.name,
+                run.status.code()
+            ))
+        }
     }
 }
 
-/// A landing precondition that answers nothing ends the run on
-/// `land-check` before anything is pushed, so no precondition keeps the
-/// rolling pull request unsaid: a copy of the script, beside the libraries
-/// it sources, whose busy-queue precondition returns with no answer.
-#[test]
+/// A copy of the script beside the libraries it sources, under the world's
+/// home, with each `(old, new)` replacement made where `old` matches once
+/// and the replacement changes the script.
 #[allow(clippy::unwrap_used)]
-fn a_landing_precondition_that_answers_nothing_ends_the_run() {
-    let world = world();
-    world.branch("a", "ship");
-    assert!(world.queue_merge("a").status.success());
-    let head = world.main_head();
-    let copy = world.home.join("unanswered");
+fn script_copy(world: &World, edits: &[(&str, &str)]) -> PathBuf {
+    let copy = world.home.join("script-copy");
     fs::create_dir_all(copy.join("tools")).unwrap();
     let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for dir in [".agents", "refresh"] {
         std::os::unix::fs::symlink(checkout.join(dir), copy.join(dir)).unwrap();
     }
+    let mut source = fs::read_to_string(script()).unwrap();
+    for (old, new) in edits {
+        assert_eq!(source.matches(old).count(), 1, "{old}");
+        let edited = source.replacen(old, new, 1);
+        assert_ne!(edited, source, "{old}");
+        source = edited;
+    }
+    let program = copy.join("tools/lock-record");
+    fs::write(&program, source).unwrap();
+    program
+}
+
+/// The script's landing reporter, the `case` after `land_check_run`: each
+/// arm's pattern and its text, from its pattern line to the next arm or the
+/// `esac`.
+#[allow(clippy::expect_used)]
+fn reporter_arms(source: &str) -> Vec<(String, String)> {
+    let start = "land_check_run\ncase \"$land_check\" in\n";
+    assert_eq!(
+        source.matches(start).count(),
+        1,
+        "the reporter did not parse"
+    );
+    let block = &source[source.find(start).expect("reporter") + start.len()..];
+    let block = &block[..=block.find("\nesac\n").expect("the reporter's esac")];
+    let mut arms: Vec<(String, String)> = Vec::new();
+    for line in block.split_inclusive('\n') {
+        let pattern = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+            .and_then(|rest| rest.split_once(')'))
+            .map(|(pattern, _)| pattern);
+        match (pattern, arms.last_mut()) {
+            (Some(pattern), _) => arms.push((pattern.to_owned(), line.to_owned())),
+            (None, Some((_, text))) => text.push_str(line),
+            (None, None) => panic!("a line before the reporter's first arm: {line}"),
+        }
+    }
+    arms
+}
+
+/// A reporter arm, the `LANDING_ROWS` row it answers, and the edit inside
+/// the arm, `None` deleting the arm whole.
+type ReporterControl = (
+    &'static str,
+    &'static str,
+    Option<(&'static str, &'static str)>,
+);
+
+/// One must-fail control per arm of the landing reporter. A keyed line
+/// dropped leaves its row saying nothing; the pass arm deleted sends a run
+/// that tries nothing to the refusal; the refusal deleted lets an
+/// unanswered precondition run on to the rolling pull request.
+const REPORTER_CONTROLS: &[ReporterControl] = &[
+    ("try | unconfigured", "unconfigured", None),
+    (
+        "unavailable:token",
+        "half-pair",
+        Some(("say land-unavailable token ", ": ")),
+    ),
+    (
+        "unavailable:queue-read",
+        "queue-unread",
+        Some(("say land-unavailable queue-read ", ": ")),
+    ),
+    (
+        "skipped:queued",
+        "queue-busy",
+        Some(("say land-skipped queued ", ": ")),
+    ),
+    ("*", "precondition-unanswered", None),
+];
+
+/// A landing precondition the run does not meet keeps `main` where the
+/// merge left it and says its one landing line, or none where the workflow
+/// set no landing name. Where it keeps the rolling pull request the run
+/// records the record there; an unanswered precondition pushes nothing.
+#[test]
+fn a_landing_precondition_the_run_does_not_meet_says_its_line() {
+    assert!(
+        landing_library().is_file(),
+        "{}",
+        landing_library().display()
+    );
+    for row in LANDING_ROWS {
+        let (world, head, run) = row.run(None);
+        let output = said(&run);
+        if let Err(said) = row.verdict(&run) {
+            panic!("{said}: {output}");
+        }
+        assert_eq!(world.origin_main(), head, "{}: {output}", row.name);
+        let pushes = world.pushes();
+        assert!(
+            !pushes.lines().any(|line| line.contains(":refs/heads/main")),
+            "{}: {pushes}",
+            row.name
+        );
+        if row.code == 0 {
+            assert_recorded_and_opened(&world, &output, 41);
+        } else {
+            assert!(
+                !pushes.lines().any(|line| line.contains("kendex/lock")),
+                "{}: {pushes}",
+                row.name
+            );
+        }
+    }
+}
+
+/// Each arm of the script's landing reporter has a control in
+/// `REPORTER_CONTROLS`, and each control turns the row its arm answers red,
+/// so a reporter arm cannot ship without one. The arms are read from the
+/// script.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn each_landing_reporter_arm_has_a_control_that_reddens_its_row() {
     let source = fs::read_to_string(script()).unwrap();
-    let guard = r#"if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi"#;
-    assert_eq!(source.matches(guard).count(), 1, "{guard}");
-    let unanswered = source.replace(guard, r#"if [[ "$queued" != 0 ]]; then return 0; fi"#);
-    fs::write(copy.join("tools/lock-record"), unanswered).unwrap();
-    let judged = world.main.display().to_string();
-    let recorded = world.run_script(
-        &copy.join("tools/lock-record"),
-        &["--repo", &judged, "--base", "main"],
-        "",
-        "",
-        &[
-            ("GH_TOKEN", "lanes-token"),
-            ("KENDEX_LAND_TOKEN", "land-token"),
-            ("GH_QUEUED", "1"),
-        ],
-    );
-    let output = said(&recorded);
-    assert_eq!(recorded.status.code(), Some(1), "{output}");
+    let arms = reporter_arms(&source);
+    let patterns: BTreeSet<&str> = arms.iter().map(|(pattern, _)| pattern.as_str()).collect();
     assert!(
-        output.contains("lock-record: land-check=unset\n"),
-        "{output}"
+        patterns.contains("*") && patterns.len() > 1,
+        "the reporter's arms did not parse: {patterns:?}"
     );
-    assert_eq!(world.origin_main(), head, "{output}");
-    let pushes = world.pushes();
-    assert!(
-        !pushes
-            .lines()
-            .any(|line| line.contains(":refs/heads/main") || line.contains("kendex/lock")),
-        "{pushes}"
-    );
+    let controlled: BTreeSet<&str> = REPORTER_CONTROLS.iter().map(|(arm, ..)| *arm).collect();
+    assert_eq!(patterns, controlled, "each reporter arm takes one control");
+    for (arm, name, edit) in REPORTER_CONTROLS {
+        let row = LANDING_ROWS.iter().find(|row| row.name == *name).unwrap();
+        let text = &arms.iter().find(|(pattern, _)| pattern == arm).unwrap().1;
+        let edited = match edit {
+            None => String::new(),
+            Some((old, new)) => {
+                assert_eq!(text.matches(old).count(), 1, "{arm}: {old}");
+                text.replacen(old, new, 1)
+            }
+        };
+        let (_world, _head, run) = row.run(Some((text, &edited)));
+        assert!(
+            row.verdict(&run).is_err(),
+            "control: the {arm} arm's edit left the {name} row green: {}",
+            said(&run)
+        );
+    }
 }
 
 /// A base that moved past the judged head lands nothing and pushes nothing:

@@ -1052,13 +1052,14 @@ cp "$TMP/arm-helper" "$arm_helper"
 # closes the open rolling pull request only while GitHub still holds it
 # open. SAID is the one refresh-land line the run prints, or none: every
 # precondition that keeps the pull request names itself, once a landing
-# name is set. Each run restores the remote's default branch, so the next
-# starts from it.
+# name is set. A precondition that answers nothing ends the run on
+# refresh-error=land-check, exit 1, with nothing pushed. Each run restores
+# the remote's default branch, so the next starts from it.
 land_matches() { # OUTCOME CLASS CLOSE SAID
   local main rolling
   main="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" || return 1
   rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
-  [ "$RC" -eq 0 ] || return 1
+  if [ "$1" = land-check ]; then [ "$RC" -eq 1 ] || return 1; else [ "$RC" -eq 0 ] || return 1; fi
   [ "$(grep '^refresh-land=' <<<"$OUT" || true)" = "${4:+refresh-land=$4}" ] || return 1
   case "$1" in
     landed)
@@ -1085,6 +1086,10 @@ land_matches() { # OUTCOME CLASS CLOSE SAID
         grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
         grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
         ! grep -q '^pr \|^api --method ' "$TMP/state/calls" ;;
+    land-check)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF 'refresh-error=land-check value=unset' <<<"$OUT" &&
+        ! grep -q '^git push\|^pr \|^api --method ' "$TMP/state/calls" ;;
     retained)
       [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
         grep -qxF "refresh-state=unchanged pr=1 class=render head=$land_rolling published=false" <<<"$OUT" &&
@@ -1159,15 +1164,101 @@ printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo
 commit "$repo"
 landing_lib="$repo/refresh/lib/landing.sh"
 cp "$landing_lib" "$TMP/land-lib"
-# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE|CONFIGURED|SAID
+# The source edits the landing rows and their controls make on a copy of
+# the runner or of the landing library it sources. `arms RUNNER` prints the
+# patterns of the runner's landing reporter, the case after
+# refresh_land_check; `edit RUNNER LIBRARY ARMS NAME...` makes each named
+# edit, an arm-* name taking its edit inside that arm from the ARMS table.
+# Every edit asserts it matches once before it replaces.
+cat >"$TMP/land-control.py" <<'LAND_CONTROL'
+from pathlib import Path
+import re
+import sys
+
+def reporter(text):
+    start = 'refresh_land_check\ncase "$land_check" in\n'
+    assert text.count(start) == 1, 'reporter'
+    block = text[text.index(start) + len(start):]
+    block = block[:block.index('\nesac\n') + 1]
+    arms = []
+    for line in block.splitlines(keepends=True):
+        arm = re.match(r'  (\S[^)]*)\)', line)
+        if arm:
+            arms.append([arm.group(1), line])
+        else:
+            assert arms, line
+            arms[-1][1] += line
+    return arms
+
+if sys.argv[1] == 'arms':
+    for pattern, _ in reporter(Path(sys.argv[2]).read_text()):
+        print(pattern)
+    sys.exit(0)
+runner, library = Path(sys.argv[2]).resolve(), Path(sys.argv[3]).resolve()
+arm_table = [line.split('~') for line in Path(sys.argv[4]).read_text().splitlines() if line]
+edits = {
+    'refusal-deferred': (runner, "  printf 'refresh-land=refused value=%s\\n' \"$KENDEX_LAND_STATUS\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
+    'close-merged': (runner, '    merged | closed) return 0 ;;', '    merged | closed) ;;'),
+    'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
+    'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
+    'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
+    'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
+    'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
+    'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
+    'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
+    'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
+    'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
+    'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
+}
+for name in sys.argv[5:]:
+    if name.startswith('arm-'):
+        _, arm, _, inside, replaced = next(entry for entry in arm_table if entry[0] == name)
+        text = next(text for pattern, text in reporter(runner.read_text()) if pattern == arm)
+        if inside:
+            assert text.count(inside) == 1, inside
+            target, old, new = runner, text, text.replace(inside, replaced)
+        else:
+            target, old, new = runner, text, ''
+    else:
+        target, old, new = edits[name]
+    s = target.read_text()
+    assert s.count(old) == 1, old
+    changed = s.replace(old, new)
+    assert changed != s
+    target.write_text(changed)
+LAND_CONTROL
+# NAME~ARM~ROW~INSIDE~REPLACED: one must-fail control per arm of the
+# runner's landing reporter, run on the landing row it answers. INSIDE is
+# the text replaced inside the arm; with none the arm is deleted whole. The
+# keyed line dropped leaves the row saying nothing; the pass arm deleted
+# sends a run that tries nothing to the refusal; the refusal deleted lets
+# an unanswered precondition run on to the pull request.
+cat >"$TMP/reporter-arms" <<'REPORTER_ARMS'
+arm-pass~try | unconfigured~no-token~~
+arm-said~unavailable:?* | skipped:?*~unread-queue~printf 'refresh-land=~: 'refresh-land=
+arm-refusal~*~precondition-unanswered~~
+REPORTER_ARMS
+# Every arm the runner's reporter has takes one entry, read from the
+# runner, so an arm cannot ship without a control.
+reporter_arms="$(python3 "$TMP/land-control.py" arms "$REFRESH_DIR/refresh-consumer.sh")" || reporter_arms=""
+controlled_arms="$(cut -d'~' -f2 "$TMP/reporter-arms")"
+if grep -qxF '*' <<<"$reporter_arms" &&
+    [ "$(sort <<<"$reporter_arms")" = "$(sort <<<"$controlled_arms")" ]; then
+  ok 'each landing reporter arm has a control'
+else bad 'landing reporter arm controls' "arms=[$reporter_arms] controlled=[$controlled_arms]"; fi
+arm_runs=0
+# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE|CONFIGURED|SAID|EDIT
 # PUSH is GitHub's answer to the landing push: taken, moved (the base moved)
 # or rejected (a ruleset refused it). CONTROL is a source edit on a copy of
 # the runner, or of the landing library it sources, that must turn the
-# row's assertion red. CONFIGURED is KENDEX_LAND_CONFIGURED, which the
-# shared workflow sets true where either landing name is set; the
-# half-pair row holds a name and no token. The third-party row's project
-# also subscribes to a catalog other than kendex's, and the sources-unread
-# row's engine fails its subscription list.
+# row's assertion red; the reporter arm controls above join the row they
+# name. EDIT is a source edit every run of the row takes: the
+# precondition-unanswered row's class check returns with no answer.
+# CONFIGURED is KENDEX_LAND_CONFIGURED, which the shared workflow sets true
+# where either landing name is set; the half-pair row holds a name and no
+# token. The third-party row's project also subscribes to a catalog other
+# than kendex's, and the sources-unread row's engine fails its subscription
+# list.
 for row in \
   'landed|render|true||landed|token-exported|0|land-token|close|true|' \
   'merged-since-start|render|true||landed|close-merged|0|land-token|merged|true|' \
@@ -1180,41 +1271,22 @@ for row in \
   'third-party|render|true||unasked|coverage-ignored|0|land-token||true|skipped value=sources-uncovered' \
   'sources-unread|render|true||unasked|sources-unread-uncovered|0|land-token||true|unavailable value=sources-read' \
   'queue-busy|render|true||pull|queue-ignored|2|land-token||true|skipped value=queued' \
-  'unread-queue|render|true||pull|reporter-silent|fail|land-token||true|unavailable value=queue-read' \
+  'unread-queue|render|true||pull||fail|land-token||true|unavailable value=queue-read' \
+  'precondition-unanswered|small|true||land-check||0|land-token||true||precondition-unsaid' \
   'retained|render|true||retained|skip-unchanged|0|land-token||true|'; do
-  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close LAND_CONFIGURED said <<<"$row"
+  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close LAND_CONFIGURED said edit <<<"$row"
   printf '%s\n' "$queue" >"$TMP/state/queue-entries"
-  for mutation in none $control; do
+  arm_controls="$(awk -F'~' -v row="$name" '$3 == row { print $1 }' "$TMP/reporter-arms")"
+  for mutation in none $control $arm_controls; do
     reset_default
     cp "$TMP/land-runner" "$runner"
     cp "$TMP/land-lib" "$landing_lib"
-    if [ "$mutation" != none ]; then
-      python3 - "$runner" "$landing_lib" "$mutation" <<'LAND_CONTROL'
-from pathlib import Path
-import sys
-runner, library = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
-target, old, new = {
-    'refusal-deferred': (runner, "  printf 'refresh-land=refused value=%s\\n' \"$KENDEX_LAND_STATUS\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
-    'close-merged': (runner, '    merged | closed) return 0 ;;', '    merged | closed) ;;'),
-    'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
-    'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
-    'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
-    'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
-    'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
-    'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
-    'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
-    'reporter-silent': (runner, "  unavailable:?* | skipped:?*) printf 'refresh-land=%s value=%s\\n' \"${land_check%%:*}\" \"${land_check#*:}\" ;;\n", '  unavailable:?* | skipped:?*) ;;\n'),
-    'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
-    'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
-    'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
-}[sys.argv[3]]
-p = target
-s = p.read_text()
-assert s.count(old) == 1, old
-changed = s.replace(old, new)
-assert changed != s
-p.write_text(changed)
-LAND_CONTROL
+    edits=()
+    [ -z "$edit" ] || edits+=("$edit")
+    [ "$mutation" = none ] || edits+=("$mutation")
+    case "$mutation" in arm-*) arm_runs=$((arm_runs + 1)) ;; esac
+    if [ "${#edits[@]}" -gt 0 ]; then
+      python3 "$TMP/land-control.py" edit "$runner" "$landing_lib" "$TMP/reporter-arms" "${edits[@]}"
     fi
     case "$name" in
       third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources" ;;
@@ -1262,6 +1334,8 @@ LAND_CONTROL
 done
 cp "$TMP/land-lib" "$landing_lib"
 rm -f -- "${TMP:?}/state/prepush-state.json"
+if [ "$arm_runs" -eq "$(grep -c . "$TMP/reporter-arms")" ]; then ok 'each landing reporter arm control ran on its row'
+else bad 'landing reporter arm controls ran' "ran=$arm_runs"; fi
 # The current route closes the open rolling pull request the same way: only
 # while GitHub still holds it open.
 for close in close merged; do
