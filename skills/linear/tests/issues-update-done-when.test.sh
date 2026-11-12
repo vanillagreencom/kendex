@@ -160,6 +160,7 @@ other-section|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## N
 bulk-other-section|bulk-update|Verifying|Closed|## Notes\n- [ ] unrelated\n## Done when\n- [x] first\n  Evidence: read|outside=[2]
 other-section-checked|update|Todo|Done|## Done when\n- [x] first\n  Evidence: read\n## Notes\n- [x] noted|pass
 post-merge-fields|update|Todo|Done|## Done when\n- [x] Post-merge: health\n  Evidence: read|fields=[{"box":1,"rule":"post-merge-fields"}]
+retired|update|Verifying|Done|## Done when\n- [x] first\n  Evidence: read\n- Waived: Post-merge: health; Where: service; Why after merge: live; Deadline: +24h\n  Reason: owner comment c1: dropped|pass
 bulk-checked|bulk-update|Todo|Closed|## Done when\n- [x] first\n  Evidence: read|pass
 bulk-absent|bulk-update|Todo|Done|No checklist.|pass
 started|update|Todo|Verifying|## Done when\n- [ ] first|pass
