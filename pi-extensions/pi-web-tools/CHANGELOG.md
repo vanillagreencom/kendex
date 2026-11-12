@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 4.2.2
+
+- The installed prompt selects tools only when active and their providers are configured. It identifies the Exa-only tools and the deep research setting required by `web_research`.
+
 ### 4.2.1
 
 - Gemini web search returns each batch query's answer and sources in its own section. It passes publication date filters as prompt hints, resolves source redirect links in parallel within 2.5 seconds, and inserts numbered citations from Gemini's grounding data. Rate limits and server errors retry once after one second. Thanks to zichsw for the report (#4940).
