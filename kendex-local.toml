@@ -76,6 +76,10 @@ When a kendex item's diff changes consumer-facing files under `pi-extensions/<di
 After merge, the item's lane runs `.pi/prompts/npm-deploy.md` § Publish, tag, refresh, verify steps 1-4 for that package only. Fetch main, use the item's merge commit as `<release>` and the fetched main head as `<head>`, tag `<unscoped-name>-v<version>` at `<release>`, and push that tag alone. Find and watch the `publish-npm` workflow_dispatch run. Retry the same tag only when the failure needs no new version, following step 4. Keep the item in Verifying until its Post-merge box passes. Run this action in the lane, never on the control VM. The orch verification pass reads the workflow run rather than `npm view`: `tools/publish-npm` exits 0 with `published=` or `served=` only after npm serves the version. Use this exact Post-merge box:
 
 - [ ] Post-merge: the publish-npm workflow_dispatch run titled publish-npm <tag> (not a dry_run dispatch) concluded success for this item's version or a later version of the same package; Where: gh api REST repos/vanillagreencom/kendex/actions/workflows/publish-npm.yml/runs, read by the orch verification pass; Why after merge: publish-npm publishes from main only, on a tag of the merged commit (D003); Trigger: merge; Deadline: +24h
+
+### Issue creation
+
+- Before a kendex issue create in `workflows/start-new.md` § 2 or `workflows/plan-issues.md` § 4, read the project-management skill's Project Instructions `### Subsystem parent` in `.agents/skills/project-management/SKILL.md`, and apply it to that create and the steps after it.
 '''
 project-management = '''
 ### Intake
@@ -155,6 +159,18 @@ Every kendex issue lives in one project below; the project-management skill's `r
   ]
 }
 ```
+
+### Subsystem parent
+
+Every kendex leaf that no other rule places is filed as a sub-issue of its subsystem parent. A subsystem parent is an open container in the leaf's own project with no parent of its own, whose title names its subsystem and its open work, and whose body names the subsystem whose work it holds. § Project map routes the project first; the parent never changes it.
+
+- Find the parent in the project's open-item read, `references/project-map.md` § Project kinds: each row with an empty `parent_id` whose title names a subsystem and its open work, in any wording, such as `<Subsystem>: open work` or `<Subsystem>: open work in kendex`. Read the body of each such row, and take the one whose subsystem holds the leaf's Location and whose body does not exclude the leaf. The body decides, not the title.
+- audit-issues sets the parent before § 5 presents a run, on every create that § 7.2 would otherwise file with no parent, except a bundle parent (`create_fields.is_bundle_parent`). In issue and single mode that is a row whose `hierarchy.action` is `none`, which becomes `make_child`. In project and team mode that is each `architecture_gaps[]` row, which takes the subsystem parent in its `project_placement.target_project`. § 5 shows the parent in the Create table's Parent column, and § 7.2 passes it as the create's `--parent`.
+- A Triage input with no parent takes the parent only when the run accepts the input to Backlog or Todo, as a `hierarchy` correction that § 7.1 applies. A row whose action closes the item (`skip` with a `target`, `cancel`, `combine`, `supersede`) takes no parent.
+- When the project holds no parent for that subsystem, the run first files one per `templates/parent-issue-template.md`, its `**Reached by**:` naming the run per Rule 7, and the leaf becomes its `#N` child. Intake exempts that parent; audit-issues § 6 authorizes it as a create. A Triage input whose parent is such a `#N` create takes its parent correction after § 7.2 creates that parent, in the same way § 7.2 attaches each child's parent right after the parent's create.
+- A create outside audit-issues, such as the orch skill's `workflows/start-new.md` § 2 and `workflows/plan-issues.md` § 4 and this skill's `workflows/research-issue.md` § 1.2, passes the same `--parent` when the project holds that parent. When it does not, the workflow creates no parent. It files the leaf with `--state "Triage"` and no parent and runs its other steps, with two exceptions. It makes no later state write that moves the leaf out of Triage, research-issue § 3's `Todo` included. It skips each step that hands the leaf to an agent or a session to work, start-new § 3 and research-issue § 4 included; research-issue § 2.1 consults domain agents only to prepare assets and still runs. Its report names the missing parent and the leaf held in Triage, in place of any line that says the leaf was handed off or names a command that starts it. Only the Triage gate in the last bullet moves the leaf out of Triage, once the leaf has its parent: the heartbeat files the parent through audit-issues § 6 approval and § 7.2 create, then applies it.
+- A leaf another rule places keeps that parent: a child of the run's rework parent (tpm-audit § 7.1), a hierarchy-contract child (tpm-audit § 7.0) and an in-PR bundle child. A container stays where it was filed, and a subsystem parent stays a root. This rule never makes a leaf a parent.
+- The orch skill's `references/heartbeat-audit.md` Triage execution accepts a kendex leaf to Backlog or Todo only once the leaf has its parent, which the primary applies as a hierarchy correction before acceptance. A leaf whose parent waits on a held create stays in Triage, and the progress report names the missing parent as its reason.
 '''
 
 [command-instructions]
