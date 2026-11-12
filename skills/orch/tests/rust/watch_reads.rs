@@ -1823,18 +1823,85 @@ fn the_duty_owns_its_row_kinds() {
 
 // --- the GitHub duty's readings and the split -----------------------------
 
-/// The main-push reads of the one repository answer an empty completed
-/// list for every workflow and event, so the budget workflow stands and
+/// The main-push reads of the one repository answer an empty list for
+/// every workflow and event (the push read's first page, the scheduled
+/// read's newest completed run), so the budget workflow stands and
 /// nothing is red.
 fn quiet_main(world: &mut World) {
     for workflow in ["skill-tests.yml", "ci.yml"] {
-        for event in ["push", "schedule"] {
+        for query in [
+            "event=push&per_page=100&page=1",
+            "event=schedule&status=completed&per_page=1",
+        ] {
             world.gh(
-                &format!("repos/owner/repo/actions/workflows/{workflow}/runs?branch=main&event={event}&status=completed&per_page=1"),
+                &format!("repos/owner/repo/actions/workflows/{workflow}/runs?branch=main&{query}"),
                 json!({"body": {"total_count": 0, "workflow_runs": []}}),
             );
         }
     }
+}
+
+/// The push read of `skill-tests.yml` on main: its first page with no
+/// mark, or every run created at or after `floor`.
+fn push_path(floor: Option<&str>) -> String {
+    let base = "repos/owner/repo/actions/workflows/skill-tests.yml/runs?branch=main&event=push";
+    match floor {
+        None => format!("{base}&per_page=100&page=1"),
+        Some(floor) => format!("{base}&created=%3E%3D{floor}&per_page=100&page=1"),
+    }
+}
+
+/// A push run on main in GitHub's documented shape; `conclusion` is null
+/// for a run not completed.
+fn push_run(id: u64, created_at: &str, status: &str, conclusion: Option<&str>) -> Value {
+    json!({"id": id, "run_attempt": 1, "created_at": created_at, "updated_at": created_at,
+        "status": status, "conclusion": conclusion, "event": "push", "head_branch": "main",
+        "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000",
+        "workflow_id": 1, "repository": {"id": 1296269, "full_name": "owner/repo"},
+        "head_repository": {"id": 1296269, "full_name": "owner/repo"}, "pull_requests": []})
+}
+
+/// A world whose main-push reads answer quiet but for `skill-tests.yml`'s
+/// push runs, which a row plants, and whose budget workflow has no run.
+fn push_world() -> World {
+    let mut world = World::new();
+    quiet_github(&mut world);
+    quiet_main(&mut world);
+    world.gh(
+        "repos/owner/repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=1",
+        json!({"body": {"total_count": 0, "workflow_runs": []}}),
+    );
+    world
+}
+
+/// Plants `runs` as one page at `path`.
+fn plant_runs(world: &mut World, path: &str, runs: Vec<Value>) {
+    world.gh(
+        path,
+        json!({"body": {"total_count": runs.len(), "workflow_runs": runs}}),
+    );
+}
+
+/// Plants run `id`'s one failed job, named `tests`, and its log.
+fn plant_red_jobs(world: &mut World, id: u64) {
+    let job = id * 10;
+    world.gh(
+        &format!("repos/owner/repo/actions/runs/{id}/jobs?per_page=100&page=1"),
+        json!({"body": {"total_count": 1, "jobs": [{"id": job, "run_id": id, "name": "tests",
+            "head_sha": "0000000000000000000000000000000000000000", "status": "completed",
+            "conclusion": "failure", "check_run_url": format!("https://api.github.com/repos/owner/repo/check-runs/{job}")}]}}),
+    );
+    world.gh(
+        &format!("repos/owner/repo/actions/jobs/{job}/logs"),
+        json!({"text": format!("2026-10-18T00:00:00.0000000Z FAILED: suite-{id}\n")}),
+    );
+}
+
+/// The `main-push-failing` line a red push run of `skill-tests.yml` prints.
+fn red_line(id: u64) -> String {
+    format!(
+        "EVENT main-push-failing owner/repo workflow=skill-tests.yml event=push run={id} jobs=[\"tests\"] cause=FAILED: suite-{id}"
+    )
 }
 
 /// The alert token file the fleet renews: mode 600, one word.
@@ -2683,6 +2750,249 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
             "{event_name} {branch}: no evidence read"
         );
     }
+}
+
+/// Each pass reports every push run on main that finished red since the
+/// last pass, once, oldest first: a red run behind a green one, and a run
+/// that was unfinished at the last pass and finished red behind a newer
+/// green one, whose creation time the mark kept as the next search's
+/// floor. The first pass, with no mark, judges only the standing run. A
+/// failed read refuses the pass and moves no mark.
+#[test]
+fn every_red_push_run_since_the_last_pass_is_reported_once() {
+    let (t1, t2, t3, t4) = (
+        "2026-10-18T01:00:00Z",
+        "2026-10-18T02:00:00Z",
+        "2026-10-18T03:00:00Z",
+        "2026-10-18T04:00:00Z",
+    );
+    let mut world = push_world();
+    plant_runs(
+        &mut world,
+        &push_path(None),
+        vec![
+            push_run(502, t2, "completed", Some("success")),
+            push_run(501, t1, "in_progress", None),
+            push_run(500, "2026-10-18T00:00:00Z", "completed", Some("success")),
+            push_run(499, "2026-10-17T23:00:00Z", "completed", Some("failure")),
+        ],
+    );
+    let clock = FakeClock::new();
+    let mut body = github::body(world.github_context(
+        world.settings(&[]),
+        None,
+        &["owner/repo"],
+        Shared::default(),
+    ));
+    let mut baseline = Baseline::default();
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(
+        rendered(&first),
+        Vec::<String>::new(),
+        "with no mark only the standing run is judged"
+    );
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(r#"{"floor":"2026-10-18T01:00:00Z","judged":[[502,1]],"red":null}"#),
+        "the unfinished run holds the floor"
+    );
+    plant_runs(
+        &mut world,
+        &push_path(Some(t1)),
+        vec![
+            push_run(504, t4, "completed", Some("success")),
+            push_run(503, t3, "completed", Some("failure")),
+            push_run(502, t2, "completed", Some("success")),
+            push_run(501, t1, "completed", Some("failure")),
+        ],
+    );
+    plant_red_jobs(&mut world, 501);
+    plant_red_jobs(&mut world, 503);
+    let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2000).unwrap();
+    assert_eq!(rendered(&second), vec![red_line(501), red_line(503)]);
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(r#"{"floor":"2026-10-18T04:00:00Z","judged":[[504,1]],"red":null}"#),
+        "the newest green run stands"
+    );
+    let jobs_reads = |w: &World| {
+        w.gh_calls()
+            .iter()
+            .filter(|c| c.contains("/jobs"))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        jobs_reads(&world),
+        [
+            "api repos/owner/repo/actions/runs/501/jobs?per_page=100&page=1",
+            "api repos/owner/repo/actions/jobs/5010/logs",
+            "api repos/owner/repo/actions/runs/503/jobs?per_page=100&page=1",
+            "api repos/owner/repo/actions/jobs/5030/logs",
+        ],
+        "a green run's jobs are never read"
+    );
+    world.gh(
+        &push_path(Some(t4)),
+        json!({"exit": 1, "stderr": "gh: Server Error (HTTP 502)"}),
+    );
+    let before = baseline.clone();
+    let err = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 3000).unwrap_err();
+    assert_eq!(err.key(), "github-read-failed", "{err}");
+    assert_eq!(baseline, before, "a failed read moves no mark");
+    let t5 = "2026-10-18T05:00:00Z";
+    plant_runs(
+        &mut world,
+        &push_path(Some(t4)),
+        vec![
+            push_run(505, t5, "completed", Some("failure")),
+            push_run(504, t4, "completed", Some("success")),
+        ],
+    );
+    plant_red_jobs(&mut world, 505);
+    let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 4000).unwrap();
+    assert_eq!(rendered(&third), vec![red_line(505)]);
+    let red = r#"{"floor":"2026-10-18T05:00:00Z","judged":[[505,1]],"red":{"run":505,"attempt":1,"jobs":["tests"]}}"#;
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(red)
+    );
+    plant_runs(
+        &mut world,
+        &push_path(Some(t5)),
+        vec![push_run(505, t5, "completed", Some("failure"))],
+    );
+    let fourth = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 5000).unwrap();
+    assert_eq!(
+        rendered(&fourth),
+        Vec::<String>::new(),
+        "a reported run is not reported again"
+    );
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(red)
+    );
+    assert_eq!(jobs_reads(&world).len(), 6, "{:?}", jobs_reads(&world));
+}
+
+/// A cancelled run decides nothing when the watch picks the run that
+/// stands: on the first pass the red run behind a cancelled newest one is
+/// reported and stands red; a later pass whose only run is cancelled keeps
+/// it; a red run behind a cancelled one since the last pass is reported.
+#[test]
+fn a_cancelled_push_run_is_skipped_when_the_standing_run_is_picked() {
+    let (t1, t2, t3, t4) = (
+        "2026-10-18T01:00:00Z",
+        "2026-10-18T02:00:00Z",
+        "2026-10-18T03:00:00Z",
+        "2026-10-18T04:00:00Z",
+    );
+    let mut world = push_world();
+    plant_runs(
+        &mut world,
+        &push_path(None),
+        vec![
+            push_run(302, t2, "completed", Some("cancelled")),
+            push_run(301, t1, "completed", Some("failure")),
+        ],
+    );
+    plant_red_jobs(&mut world, 301);
+    let clock = FakeClock::new();
+    let shared = Shared::default();
+    let mut body = github::body(world.github_context(
+        world.settings(&[]),
+        None,
+        &["owner/repo"],
+        shared.clone(),
+    ));
+    let mut baseline = Baseline::default();
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(rendered(&first), vec![red_line(301)]);
+    let red = r#"{"floor":"2026-10-18T02:00:00Z","judged":[[302,1]],"red":{"run":301,"attempt":1,"jobs":["tests"]}}"#;
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(red)
+    );
+    let standing = |shared: &Shared| {
+        shared
+            .lock()
+            .unwrap()
+            .github
+            .as_ref()
+            .map(|g| g.main_failing.clone())
+    };
+    let tests = BTreeMap::from([(
+        "owner/repo:skill-tests.yml".to_owned(),
+        r#"["tests"]"#.to_owned(),
+    )]);
+    assert_eq!(standing(&shared), Some(tests.clone()));
+    plant_runs(
+        &mut world,
+        &push_path(Some(t2)),
+        vec![push_run(302, t2, "completed", Some("cancelled"))],
+    );
+    let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2000).unwrap();
+    assert_eq!(rendered(&second), Vec::<String>::new());
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(red),
+        "a cancelled run leaves the red run standing"
+    );
+    assert_eq!(standing(&shared), Some(tests));
+    plant_runs(
+        &mut world,
+        &push_path(Some(t2)),
+        vec![
+            push_run(304, t4, "completed", Some("cancelled")),
+            push_run(303, t3, "completed", Some("failure")),
+            push_run(302, t2, "completed", Some("cancelled")),
+        ],
+    );
+    plant_red_jobs(&mut world, 303);
+    let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 3000).unwrap();
+    assert_eq!(rendered(&third), vec![red_line(303)]);
+    assert_eq!(
+        baseline.get("main-push-failing", "owner/repo:skill-tests.yml"),
+        Some(
+            r#"{"floor":"2026-10-18T04:00:00Z","judged":[[304,1]],"red":{"run":303,"attempt":1,"jobs":["tests"]}}"#
+        )
+    );
+}
+
+/// A marked search that reaches GitHub's bound on a filtered run search
+/// may leave runs unread: it refuses, never reads as the whole set.
+#[test]
+fn a_push_search_at_githubs_bound_is_refused() {
+    let floor = "2026-10-18T00:00:00Z";
+    let mut world = push_world();
+    plant_runs(
+        &mut world,
+        &push_path(None),
+        vec![push_run(1, floor, "completed", Some("success"))],
+    );
+    let base = "repos/owner/repo/actions/workflows/skill-tests.yml/runs?branch=main&event=push&created=%3E%3D2026-10-18T00:00:00Z";
+    for page in 0..10_u64 {
+        let runs: Vec<Value> = (0..100)
+            .map(|i| push_run(1 + page * 100 + i, floor, "completed", Some("success")))
+            .collect();
+        world.gh(
+            &format!("{base}&per_page=100&page={}", page + 1),
+            json!({"body": {"total_count": 1000, "workflow_runs": runs}}),
+        );
+    }
+    let clock = FakeClock::new();
+    let mut body = github::body(world.github_context(
+        world.settings(&[]),
+        None,
+        &["owner/repo"],
+        Shared::default(),
+    ));
+    let mut baseline = Baseline::default();
+    pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    let before = baseline.clone();
+    let err = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2000).unwrap_err();
+    assert_eq!(err.key(), "github-capped", "{err}");
+    assert_eq!(baseline, before);
 }
 
 /// The GitHub duty's refusal leaves the tracker's pass standing, each

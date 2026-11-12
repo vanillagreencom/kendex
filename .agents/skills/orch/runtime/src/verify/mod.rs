@@ -94,6 +94,12 @@ pub(crate) const PER_PAGE: usize = 100;
 /// not the documented total and is refused.
 pub(crate) const MAX_PAGES: usize = 100;
 
+/// GitHub's bound on a filtered run search (a `branch`, `event`, `created`
+/// or `head_sha` filter; docs.github.com, actions/workflow-runs): such a
+/// search answers at most this many runs, so a set this large is not
+/// proven whole.
+pub(crate) const ACTIONS_SEARCH_CAP: usize = 1000;
+
 // --- the reply ------------------------------------------------------------
 
 /// How the read set ended.

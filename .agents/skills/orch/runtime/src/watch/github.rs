@@ -44,7 +44,9 @@ use crate::state::{self, FleetState, Lane, LaneStatus};
 use crate::verify::wire::{
     Issue, Job, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
 };
-use crate::verify::{self, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun};
+use crate::verify::{
+    self, ACTIONS_SEARCH_CAP, Answer, Failed, Gh, MAX_PAGES, PER_PAGE, Page, Unrun,
+};
 use crate::watch::{Baseline, Body, Change, Event, Produced, Tick};
 
 use super::owner_alert::{self, Word};
@@ -69,6 +71,7 @@ const REFRESH_WORKFLOW: &str = "kendex-refresh.yml";
 pub const MERGED_ROW: &str = "merged";
 pub const PARKED_UNTIL_ROW: &str = "parked-until";
 pub const REFRESH_ROW: &str = "refresh-failing";
+/// The push read's mark of its last pass (`PushMark`), red or clear.
 pub const MAIN_PUSH_ROW: &str = "main-push-failing";
 pub const MAIN_SCHEDULE_ROW: &str = "main-schedule-failing";
 pub const MAIN_ABSENT_ROW: &str = "main-workflow-absent";
@@ -1355,22 +1358,27 @@ struct RunKey {
     attempt: u64,
 }
 
+/// A run's `created_at`, held to GitHub's second-granular UTC form, whose
+/// text orders runs as their times do and bounds a push read's search.
+fn created_at<'r>(run: &'r WorkflowRun, read: &str) -> Result<&'r str> {
+    let valid = run.created_at.len() == 20 && clock::epoch_secs(&run.created_at).is_some();
+    if !valid {
+        return Err(refused(
+            "github-response-invalid",
+            &[
+                ("read", read),
+                ("field", "created_at"),
+                ("value", &run.created_at),
+            ],
+        ));
+    }
+    Ok(&run.created_at)
+}
+
 impl RunKey {
     fn of(run: &WorkflowRun) -> Result<RunKey> {
-        let valid = run.created_at.len() == 20
-            && agent_runtime::clock::epoch_secs(&run.created_at).is_some();
-        if !valid {
-            return Err(refused(
-                "github-response-invalid",
-                &[
-                    ("read", "refresh"),
-                    ("field", "created_at"),
-                    ("value", &run.created_at),
-                ],
-            ));
-        }
         Ok(RunKey {
-            created_at: run.created_at.clone(),
+            created_at: created_at(run, "refresh")?.to_owned(),
             id: run.id,
             attempt: run.run_attempt.present().copied().unwrap_or(1),
         })
@@ -1752,12 +1760,12 @@ fn main_push_failures(logs: &[String]) -> (String, Option<Vec<String>>) {
     )
 }
 
-/// The main-branch incident:
-/// per repository, per workflow, per event the last completed run on
-/// main; a failing conclusion reads the run's failed jobs and their logs,
-/// the row holds `[jobs, failures]` and a line prints when the jobs or
-/// the known failures change; an absent workflow, proved by the workflow
-/// list, clears its rows and, where declared, prints
+/// The main-branch incident, per repository and workflow: the push runs
+/// on main as `judge_push` reads them, and the last completed scheduled
+/// run, whose failing conclusion reads the run's failed jobs and their
+/// logs, the row holding `[jobs, failures]` and a line printing when the
+/// jobs or the known failures change; an absent workflow, proved by the
+/// workflow list, clears its rows and, where declared, prints
 /// `main-workflow-absent` once per cause. The repositories whose budget
 /// workflow read absent are handed back, so the budget scan skips them.
 fn main_push(
@@ -1814,17 +1822,32 @@ fn main_push(
         for workflow in &workflows {
             let row_key = format!("{repo}:{workflow}");
             let is_declared = declared.contains(&row_key);
+            let mark = match baseline.get(MAIN_PUSH_ROW, &row_key) {
+                None => None,
+                Some(value) => Some(serde_json::from_str::<PushMark>(value).map_err(|_| {
+                    refused(
+                        "github-row-invalid",
+                        &[("row", MAIN_PUSH_ROW), ("value", value)],
+                    )
+                })?),
+            };
             for event in ["push", "schedule"] {
                 let row = if event == "push" {
                     MAIN_PUSH_ROW
                 } else {
                     MAIN_SCHEDULE_ROW
                 };
-                let path = format!(
-                    "repos/{repo}/actions/workflows/{workflow}/runs?branch=main&event={event}&status=completed&per_page=1"
+                let runs_path = format!(
+                    "repos/{repo}/actions/workflows/{workflow}/runs?branch=main&event={event}"
                 );
-                let page: Option<RunsPage> = gh.object("main-push", &path)?;
-                let Some(page) = page else {
+                let (path, runs) = if event == "push" {
+                    push_runs(gh, &runs_path, mark.as_ref())?
+                } else {
+                    let path = format!("{runs_path}&status=completed&per_page=1");
+                    let page: Option<RunsPage> = gh.object("main-push", &path)?;
+                    (path, page.map(|p| p.workflow_runs))
+                };
+                let Some(runs) = runs else {
                     if workflow_absent(gh, repo, workflow)? {
                         if workflow == BUDGET_WORKFLOW {
                             budget_absent.insert(repo.clone());
@@ -1849,7 +1872,19 @@ fn main_push(
                         identity: row_key.clone(),
                     });
                 }
-                let Some(run) = page.workflow_runs.first() else {
+                if event == "push" {
+                    judge_push(
+                        gh,
+                        repo,
+                        workflow,
+                        &runs,
+                        mark.as_ref(),
+                        produced,
+                        inventory,
+                    )?;
+                    continue;
+                }
+                let Some(run) = runs.first() else {
                     continue;
                 };
                 let Some(conclusion) = conclusion(run) else {
@@ -1915,6 +1950,177 @@ fn main_push(
         }
     }
     Ok(budget_absent)
+}
+
+/// The push read's mark of its last pass: `floor`, the creation time its
+/// next search starts at (the oldest run that pass found unfinished, else
+/// the newest run it read), so a run that finishes after a newer one is
+/// still read; `judged`, the runs created at or after the floor that pass
+/// had judged, by id and attempt, so each is reported once; `red`, the run
+/// standing red with its failed jobs, `None` while main stands clear.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PushMark {
+    floor: String,
+    judged: Vec<(u64, u64)>,
+    red: Option<RedRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RedRun {
+    run: u64,
+    attempt: u64,
+    jobs: Vec<String>,
+}
+
+/// The push runs on main a pass judges, every status, with the path read:
+/// under a mark every run created at or after its floor (`created=>=`,
+/// GitHub's search date syntax; docs.github.com, actions/workflow-runs),
+/// every page read and its total checked, a set at GitHub's search bound
+/// refused (`github-capped`); with no mark the newest page alone, since
+/// nothing was read before it. `None` where GitHub answers 404.
+fn push_runs(
+    gh: &Gh,
+    runs_path: &str,
+    mark: Option<&PushMark>,
+) -> Result<(String, Option<Vec<WorkflowRun>>)> {
+    let Some(mark) = mark else {
+        let path = verify::paged(runs_path, 1);
+        let page: Option<RunsPage> = gh.object("main-push", &path)?;
+        return Ok((path, page.map(|p| p.workflow_runs)));
+    };
+    let path = format!("{runs_path}&created=%3E%3D{}", mark.floor);
+    let runs = gh.collection::<RunsPage>("main-push", &path)?;
+    if runs.as_ref().is_some_and(|r| r.len() >= ACTIONS_SEARCH_CAP) {
+        return Err(refused(
+            "github-capped",
+            &[("read", "main-push"), ("path", &path)],
+        ));
+    }
+    Ok((path, runs))
+}
+
+/// The push incident: each completed run the mark has not judged, oldest
+/// first, prints `main-push-failing` once where it ended red, so a later
+/// green run hides no red one (with no mark only the standing run is
+/// judged); the standing is the newest completed run not cancelled (a
+/// cancelled run decides nothing), red with its failed jobs or clear, and
+/// a read with no such run keeps the mark's; the row then holds the next
+/// mark. A read with no run and no mark writes none.
+fn judge_push(
+    gh: &Gh,
+    repo: &str,
+    workflow: &str,
+    runs: &[WorkflowRun],
+    mark: Option<&PushMark>,
+    produced: &mut Produced,
+    inventory: &mut Inventory,
+) -> Result<()> {
+    let row_key = format!("{repo}:{workflow}");
+    let failing = failing_conclusions("push");
+    let attempt = |run: &WorkflowRun| run.run_attempt.present().copied().unwrap_or(1);
+    let mut done: Vec<(&WorkflowRun, &'static str)> = Vec::new();
+    let mut unfinished: Option<&str> = None;
+    let mut newest: Option<&str> = None;
+    for run in runs {
+        let created = created_at(run, "main-push")?;
+        newest = newest.max(Some(created));
+        if run.status != Nullable::Present(RunStatus::Completed) {
+            unfinished = Some(unfinished.map_or(created, |u| u.min(created)));
+            continue;
+        }
+        let Some(conclusion) = conclusion(run) else {
+            return Err(refused(
+                "github-response-invalid",
+                &[
+                    ("read", "main-push"),
+                    ("field", "conclusion"),
+                    ("value", &run.id.to_string()),
+                ],
+            ));
+        };
+        done.push((run, conclusion));
+    }
+    done.sort_by(|(a, _), (b, _)| (&a.created_at, a.id).cmp(&(&b.created_at, b.id)));
+    let standing = done.iter().rev().find(|(_, c)| *c != "cancelled");
+    let judged: BTreeSet<(u64, u64)> = mark
+        .map(|m| m.judged.iter().copied().collect())
+        .unwrap_or_default();
+    let reported: Vec<&WorkflowRun> = match mark {
+        Some(_) => done
+            .iter()
+            .filter(|(run, c)| failing.contains(c) && !judged.contains(&(run.id, attempt(run))))
+            .map(|(run, _)| *run)
+            .collect(),
+        None => standing
+            .filter(|(_, c)| failing.contains(c))
+            .map(|(run, _)| *run)
+            .into_iter()
+            .collect(),
+    };
+    let mut jobs_of: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+    for run in reported {
+        let (jobs, logs) = failed_job_logs(gh, repo, run.id, failing)?;
+        let (cause, _) = main_push_failures(&logs);
+        produced.events.push(Event::MainPushFailing {
+            repo: repo.to_owned(),
+            workflow: workflow.to_owned(),
+            event: "push".to_owned(),
+            run: run.id.to_string(),
+            jobs: serde_json::to_string(&jobs).unwrap_or_default(),
+            cause,
+        });
+        jobs_of.insert(run.id, jobs);
+    }
+    let red = match standing {
+        None => mark.and_then(|m| m.red.clone()),
+        Some((run, c)) if failing.contains(c) => {
+            let known = mark
+                .and_then(|m| m.red.as_ref())
+                .filter(|red| (red.run, red.attempt) == (run.id, attempt(run)));
+            let jobs = match (jobs_of.remove(&run.id), known) {
+                (Some(jobs), _) => jobs,
+                (None, Some(red)) => red.jobs.clone(),
+                (None, None) => failed_job_logs(gh, repo, run.id, failing)?.0,
+            };
+            Some(RedRun {
+                run: run.id,
+                attempt: attempt(run),
+                jobs,
+            })
+        }
+        Some(_) => None,
+    };
+    let floor = match (unfinished.or(newest), mark) {
+        (Some(floor), _) => floor.to_owned(),
+        (None, Some(mark)) => mark.floor.clone(),
+        (None, None) => return Ok(()),
+    };
+    let judged: BTreeSet<(u64, u64)> = done
+        .iter()
+        .filter(|(run, _)| run.created_at >= floor)
+        .map(|(run, _)| (run.id, attempt(run)))
+        .collect();
+    if let Some(red) = &red {
+        inventory.main_failing.insert(
+            row_key.clone(),
+            serde_json::to_string(&red.jobs).unwrap_or_default(),
+        );
+    }
+    let next = PushMark {
+        floor,
+        judged: judged.into_iter().collect(),
+        red,
+    };
+    if mark != Some(&next) {
+        produced.changes.push(Change::Set {
+            kind: MAIN_PUSH_ROW.to_owned(),
+            identity: row_key,
+            value: serde_json::to_string(&next).unwrap_or_default(),
+        });
+    }
+    Ok(())
 }
 
 // --- the budget scan ----------------------------------------------------------------------

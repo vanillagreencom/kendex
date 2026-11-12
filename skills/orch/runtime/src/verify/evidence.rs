@@ -75,11 +75,7 @@ use super::wire::{
     WorkflowsParameters, run_in_url,
 };
 use super::wire::{Review, RunStatus, TimelineEvent};
-use super::{Cause, Endpoint, Gh, Read, Reader, Unreadable, segment};
-
-/// GitHub's bound on a filtered run search: a `head_sha` search answers at
-/// most this many runs, so a set this large is not proven whole.
-pub(super) const ACTIONS_SEARCH_CAP: usize = 1000;
+use super::{ACTIONS_SEARCH_CAP, Cause, Endpoint, Gh, Read, Reader, Unreadable, segment};
 
 /// The check-runs endpoint covers a ref's most recent check suites up to
 /// this count; a ref with this many suites is not proven whole.
