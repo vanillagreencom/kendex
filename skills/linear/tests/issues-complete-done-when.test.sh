@@ -52,11 +52,22 @@ case "$query" in
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  identifier=CC-720 state="${CURRENT_STATE:-In Review}" type="${CURRENT_TYPE:-started}"
-  if [ "$(jq -r '.variables.id' <<<"$payload")" = "${REPLACEMENT_ID:-}" ]; then
-    identifier="$REPLACEMENT_ID" state=replacement type="${REPLACEMENT_TYPE:?}" description="$(jq -Rs . "${REPLACEMENT_FILE:?}")"
+  # Any other id resolves to the source, as Linear resolves a moved issue's
+  # historical identifier. A superseded item reads canceled, or not at all
+  # under SUPERSEDED_READ_FAILS.
+  read_id="$(jq -r '.variables.id' <<<"$payload")"
+  uuid=issue-uuid identifier=CC-720 state="${CURRENT_STATE:-In Review}" type="${CURRENT_TYPE:-started}" archived=null trashed=null
+  if [ "$read_id" = "${REPLACEMENT_ID:-}" ]; then
+    uuid=replacement-uuid identifier="$REPLACEMENT_ID" state=replacement type="${REPLACEMENT_TYPE:?}" description="$(jq -Rs . "${REPLACEMENT_FILE:?}")"
+    archived="${REPLACEMENT_ARCHIVED_AT:-null}" trashed="${REPLACEMENT_TRASHED:-null}"
+  elif [ "$read_id" = "${SUPERSEDED_ID:-}" ]; then
+    if [ -n "${SUPERSEDED_READ_FAILS:-}" ]; then
+      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200'
+      exit 0
+    fi
+    uuid=superseded-uuid identifier="$SUPERSEDED_ID" state=Canceled type=canceled
   fi
-  jq -cj --arg identifier "$identifier" --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "$state" --arg type "$type" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:$identifier,title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
+  jq -cj --arg uuid "$uuid" --argjson archived "$archived" --argjson trashed "$trashed" --arg identifier "$identifier" --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "$state" --arg type "$type" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:$uuid,identifier:$identifier,title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:$archived,trashed:$trashed,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
@@ -429,13 +440,20 @@ waive-no-reason|{"2":"waived"}|{"3":"unrelated"}|done-when-retirement
 supersede-no-id|{"3":"superseded"}|{"3":"The owner sees the update card"}|done-when-retirement
 ROWS
 # complete_issue owns the selections and the transfer read-back.
-# Columns: name | options | evidence-file lines | replacement state type | expected state, or the refusal.
-while IFS='|' read -r name options lines type expected; do
+# Columns: name | options | evidence-file lines | replacement CC-730's state
+# type, or archived or trashed | expected state, or the refusal.
+while IFS='|' read -r name options lines held expected; do
   printf '%b' "${lines//@own/$own_box}" >"$TMP_ROOT/retire-evidence.txt"
   log="$TMP_ROOT/retire-$name.jsonl"
+  type="$held" archived=null trashed=null
+  case "$held" in
+    archived) type=unstarted archived='"2026-10-02T00:00:00Z"' ;;
+    trashed) type=unstarted trashed=true ;;
+  esac
   rc=0
   # shellcheck disable=SC2086  # the options column holds separate words
   REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$replacement" REPLACEMENT_TYPE="$type" \
+    REPLACEMENT_ARCHIVED_AT="$archived" REPLACEMENT_TRASHED="$trashed" \
     run_complete "$retire" "$log" CC-720 --post-merge-at "$merged" $options --evidence-file "$TMP_ROOT/retire-evidence.txt" \
     >"$TMP_ROOT/retire.out" 2>"$TMP_ROOT/retire.err" || rc=$?
   if [[ "$expected" == state-* ]]; then
@@ -454,7 +472,10 @@ waive-met|--done-when-waived 2 --done-when-met 3|2: owner comment c1: dropped\n3
 supersede|--done-when-superseded 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The owner sees the update card|unstarted|state-done
 supersede-missing|--done-when-superseded 3|3: CC-730 The owner sees a different card|unstarted|.error == "done-when-transfer-unread" and .box == 3 and .replacement == "CC-730"
 supersede-canceled|--done-when-superseded 3|3: CC-730 The owner sees the update card|canceled|.error == "done-when-transfer-unread"
+supersede-archived|--done-when-superseded 3|3: CC-730 The owner sees the update card|archived|.error == "done-when-transfer-unread"
+supersede-trashed|--done-when-superseded 3|3: CC-730 The owner sees the update card|trashed|.error == "done-when-transfer-unread"
 supersede-self|--done-when-superseded 3|3: CC-720 @own|unstarted|.error == "done-when-transfer-unread"
+supersede-self-historical|--done-when-superseded 3|3: CC-650 @own|unstarted|.error == "done-when-transfer-unread"
 overlap|--done-when-waived 2 --done-when-met 2|2: dropped|unstarted|.error == "done-when-disposition-overlap"
 overlap-all|--done-when-superseded 3 --done-when-met all|3: CC-730 The owner sees the update card|unstarted|.error == "done-when-disposition-overlap"
 ROWS
@@ -464,3 +485,43 @@ record_tail="- Waived: Post-merge: p95 create latency <= 300 ms; Where: job; Why
 - Superseded: $own_box
   Replacement: CC-730 The owner sees the update card"
 assert_eq "a retired box keeps its criterion, reason and replacement" "${record: -${#record_tail}}" "$record_tail"
+
+# A Done update that wrote its retirements and then failed a supersession
+# returns a retry. Against the written description that retry finishes: each
+# retired box keeps its number, so the box after it is still box 4, and the
+# retirements it names again change nothing.
+printf '%s\n' "$(cat "$retire")" \
+  "- [ ] Post-merge: The owner opens the changelog; Where: Jarvis, the owner's delegate; Why after merge: a person's screen; Deadline: +24h" \
+  '' '**Supersedes**:' '' '- CC-740 (at-completion): Replaced scope' >"$TMP_ROOT/retry.md"
+printf '%s\n' '2: owner comment c1: dropped' '3: CC-730 The owner sees the update card' '4: Jarvis read the changelog' >"$TMP_ROOT/retry-evidence.txt"
+log="$TMP_ROOT/retry-first.jsonl"
+rc=0
+REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$replacement" REPLACEMENT_TYPE=unstarted SUPERSEDED_ID=CC-740 SUPERSEDED_READ_FAILS=1 \
+  run_complete "$TMP_ROOT/retry.md" "$log" CC-720 --post-merge-at "$merged" --done-when-waived 2 --done-when-superseded 3 \
+  --done-when-met 4 --evidence-file "$TMP_ROOT/retry-evidence.txt" >"$TMP_ROOT/retry.out" 2>"$TMP_ROOT/retry.err" || rc=$?
+assert_ne "retry source reports its failed supersession" "$rc" 0
+assert_jq "retry source wrote Done" "$(updates "$log")" '.variables.input.stateId == "state-done"'
+diagnostic="$(jq -Rsc '[split("\n")[] | fromjson? | select(.error == "supersession-incomplete")] | last' "$TMP_ROOT/retry.err")"
+updates "$log" | jq -j '.variables.input.description' >"$TMP_ROOT/retry-written.md"
+retry_options=()
+while IFS= read -r option; do retry_options+=("$option"); done < <(jq -r '.retry.options[]' <<<"$diagnostic")
+log="$TMP_ROOT/retry-second.jsonl"
+rc=0
+REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$replacement" REPLACEMENT_TYPE=unstarted SUPERSEDED_ID=CC-740 CURRENT_STATE=Done CURRENT_TYPE=completed \
+  run_complete "$TMP_ROOT/retry-written.md" "$log" "$(jq -r '.retry.issue' <<<"$diagnostic")" "${retry_options[@]}" \
+  >"$TMP_ROOT/retry.out" 2>"$TMP_ROOT/retry.err" || rc=$?
+assert_eq "the returned retry finishes" "$rc" 0
+assert "the retry reads the superseded item" jq -se 'any(.[]; (.query | contains("issue(id:")) and .variables.id == "CC-740")' "$log"
+assert "the retry keeps the written checklist" jq -se --rawfile written "$TMP_ROOT/retry-written.md" \
+  '[.[] | select(.query | contains("issueUpdate"))] | length == 1 and .[0].variables.input.stateId == "state-done"
+   and .[0].variables.input.description == $written' "$log"
+
+# A retired box is a slot no other selection reaches. Columns: name | met | retire | evidence.
+while IFS='|' read -r name met retired evidence; do
+  assert_jq "retired slot $name refuses" "$(done_when_parse "$(cat "$TMP_ROOT/retry-written.md")" "$met" "$merged" "$evidence" "$retired")" \
+    '.errors == [{box: 2, rule: "done-when-retirement"}] and .completion_state == null'
+done <<'ROWS'
+met|[2]|{}|{"2":"Jarvis read it"}
+other-kind|[]|{"2":"superseded"}|{"2":"CC-730 The owner sees the update card"}
+other-reason|[]|{"2":"waived"}|{"2":"owner comment c2: another reason"}
+ROWS
