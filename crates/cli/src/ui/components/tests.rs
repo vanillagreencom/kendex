@@ -395,7 +395,7 @@ fn a_hostile_value_is_escaped_by_every_component() {
 /// wrap hang under the text they continue.
 #[test]
 fn a_rich_line_wraps_inside_its_width() {
-    let long = "unmanaged copy of skill 'commit-guards' at /home/me/dev/app/.claude/skills/commit-guards differs from the package in 2 files";
+    let long = "unmanaged copy of skill 'commit-guards' at ~/app/skills/commit-guards differs from the package in 2 files";
     let style = rich(40);
     let drawn = [
         style.header("check", long),

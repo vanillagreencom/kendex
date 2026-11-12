@@ -1117,6 +1117,42 @@ mod tests {
         }
     }
 
+    /// A second copy's paths are what a person copies to make the move the
+    /// warning asks for, so rich output narrower than each path still
+    /// draws every one whole on a line.
+    #[test]
+    fn a_second_copy_keeps_its_paths_whole_at_any_width() {
+        let root = PathBuf::from("/home/a/.pi/agent");
+        let extensions = root.join("extensions-left-by-an-earlier-installer");
+        let copy = pi_ext::ShadowPackage {
+            name: "pi-widgets".into(),
+            managed: root.join("packages/pi-widgets-managed-by-kendex"),
+            managed_version: Some("2.0.0".into()),
+            shadow: extensions.join("pi-widgets-old-copy"),
+            shadow_version: None,
+            extensions,
+        };
+        let paths =
+            [&copy.managed, &copy.shadow, &copy.extensions].map(|path| path.display().to_string());
+        let shadowed = ScopePlan {
+            shadows: pi_ext::ShadowScan {
+                found: vec![copy],
+                errors: Vec::new(),
+            },
+            ..plan(Vec::new(), Vec::new())
+        };
+        let lines: Vec<String> = drawn(&rich(30), &shadowed)
+            .iter()
+            .map(|line| console::strip_ansi_codes(line).into_owned())
+            .collect();
+        for path in paths {
+            assert!(
+                lines.iter().any(|line| line.contains(&path)),
+                "{path} is broken across {lines:#?}"
+            );
+        }
+    }
+
     /// Each package as it lands, then the line the run closes on: what
     /// landed whatever failed beside it, the clean line where nothing
     /// needed installing, and nothing where nothing landed and the error
