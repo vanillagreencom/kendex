@@ -402,15 +402,21 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
     use kendex_core::author::import::{CandidateGroup, inventory};
     use kendex_core::engine::fork;
     use kendex_core::model::{HarnessId, ItemKind};
-    for (harness, method, beside) in [
-        (HarnessId::Codex, "copy", false),
-        (HarnessId::Codex, "copy", true),
-        (HarnessId::Claude, "symlink", true),
+    for (harness, method, beside, crlf) in [
+        (HarnessId::Codex, "copy", false, false),
+        (HarnessId::Codex, "copy", true, false),
+        (HarnessId::Claude, "symlink", true, false),
+        (HarnessId::Codex, "copy", false, true),
     ] {
         let f = fixture();
         let catalog = f.project.join("vendor/catalog");
         let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n[guide](guide.md)\n";
-        put(&catalog.join("skills/ship/SKILL.md"), authored);
+        let authored = if crlf {
+            authored.replace('\n', "\r\n")
+        } else {
+            authored.to_owned()
+        };
+        put(&catalog.join("skills/ship/SKILL.md"), &authored);
         put(&catalog.join("skills/ship/guide.md"), "Original guide.\n");
         put(
             &catalog.join("skills/other/SKILL.md"),
@@ -418,6 +424,10 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         );
         put(&catalog.join("memory/x.md"), "Memory.\n");
         put(&f.project.join("docs/guide.md"), "Guide.\n");
+        if crlf {
+            test_util::git(&f.project, &["init", "-q"]);
+            put(&f.project.join(".gitattributes"), "*.md text eol=crlf\n");
+        }
         put(
             &f.project.join("kendex.toml"),
             "schema = 7\n[sources.cat]\npath = 'vendor/catalog'\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n[skills.ship]\nsource = 'cat'\n[skills.other]\nsource = 'cat'\n[skill-instructions]\nship = '[direct](../../../docs/guide.md) {{shared-text:guide}}'\n[shared-text]\nguide = '[shared](../../../docs/guide.md)'\n",
@@ -439,6 +449,9 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         }
         let installed = f.project.join(".agents/skills/ship/SKILL.md");
         let text = fs::read_to_string(&installed).unwrap();
+        if crlf {
+            assert!(text.contains("\r\n"));
+        }
         assert!(text.contains("[direct](../../../docs/guide.md) [shared](../../../docs/guide.md)"));
         let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
         let ship = candidates.iter().find(|c| c.name == "ship").unwrap();
