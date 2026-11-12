@@ -26,7 +26,8 @@ Use the shared message types in [orch § Routing](../../orch/references/communic
 
 The home's `JARVIS_TECHNICAL` and `JARVIS_STYLE` settings select communication's Technical and Style [presentation choices](../../communication/references/messages.md#reader-modes). The [settings example](../kendex.settings.toml.example) lists their values and defaults. kendex's [settings precedence](https://github.com/vanillagreencom/kendex/blob/main/docs/authoring/settings.md#where-a-value-comes-from) decides which layer a value comes from.
 
-- Read the effective values with `.agents/skills/jarvis/scripts/lib/jarvis-env.sh config .` in the Jarvis home; another reader, such as VGS, passes the home's path in place of `.`. It prints them as JSON beside the other Jarvis settings. Read them at session start and after a change, and apply them to every message to the user.
+- Read the effective values with `.agents/skills/jarvis/scripts/lib/jarvis-env.sh config .` in the Jarvis home; another reader, such as VGS, passes the home's path in place of `.`. It prints them as JSON beside the watch settings. Read them at session start and after a change, and apply them to every message to the user.
 - A change to either choice writes the key under `[env]` in the home's `kendex.settings.toml`. Jarvis and VGS write the same key there.
+- On a satellite, whose `JARVIS_MAIN_HOST` that command reports as set, Jarvis and VGS write the key to the home's private env file instead, `.env.local` by default. A satellite's home is never committed, and the private env file outranks `kendex.settings.toml`.
 - After a write, read the value back with the same command. A different value means a higher settings layer holds the key. Report that layer to the user, and do not write there.
 - A presentation choice never writes `ORCH_USER_MODE`, and it changes no merge, issue-creation, approval or report-timing setting.

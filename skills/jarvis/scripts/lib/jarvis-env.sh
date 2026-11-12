@@ -18,10 +18,10 @@ jarvis_load() {
   export JARVIS_WAKE_SETTLE_SECS="${JARVIS_WAKE_SETTLE_SECS:-15}"
   # Presentation choices; their values are defined in
   # ../../../communication/references/messages.md § Reader modes.
-  # An unset or unlisted value takes the default instead of
-  # refusing: watch.py, forward.py and owner_note.py call config with no
-  # failure branch, and an unlisted value must not reach Jarvis or VGS for
-  # each to interpret.
+  # An unset or unlisted value takes the default instead of refusing: a
+  # refusal would fail every config read, so a presentation typo would stop
+  # watch.py, forward.py and owner_note.py, and an unlisted value must not
+  # reach Jarvis or VGS for each to interpret.
   case "${JARVIS_TECHNICAL:-}" in off | on) ;; *) JARVIS_TECHNICAL=off ;; esac
   case "${JARVIS_STYLE:-}" in friendly | concise | fun) ;; *) JARVIS_STYLE=concise ;; esac
   export JARVIS_TECHNICAL JARVIS_STYLE
