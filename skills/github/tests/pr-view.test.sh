@@ -252,12 +252,12 @@ the plain answer|-|json|0|pr=42|0|auth,$VIEW
 # The selected token survives the router's keyring fallback in each row: the
 # keyring fails too (auth:fail, status:fail), or a bot token keeps its
 # identity. A value the router probed and refused reaches pr-view with no
-# selection, so the exec'd preflight cannot name where it came from.
+# selection, so the preflight names the variable gh read.
 run_table "the auth preflight's record of the source tried and why it failed" "\
 a refused GH_TOKEN is a rejected credential|env:GH_TOKEN=ghs_VALIDBOT123 auth:fail|json|3|status=auth_error source=GH_TOKEN failure=rejected_credential detail=HTTP 401: Bad credentials|0|user,auth,user
 a GH_BOT_TOKEN answered 403 is a permission refusal|env:GH_BOT_TOKEN=ghs_VALIDBOT123 api-user:403|json|3|status=auth_error source=GH_BOT_TOKEN failure=permission_refusal detail=gh: Must have admin rights to Repository. (HTTP 403)|0|user,user
 a GITHUB_TOKEN answered 502 is a server failure|env:GITHUB_TOKEN=ghs_VALIDBOT123 api-user:502 status:fail|json|3|status=auth_error source=GITHUB_TOKEN failure=server_failure detail=gh: Server Error (HTTP 502)|0|user,auth,user
-a value the router refused reaches pr-view as an unknown source|env:GH_TOKEN=placeholder-value auth:fail|json|3|status=auth_error source=unknown failure=rejected_credential detail=HTTP 401: Bad credentials|0|user,user,auth,user
+a value the router refused reaches pr-view as the GH_TOKEN gh read|env:GH_TOKEN=placeholder-value auth:fail|json|3|status=auth_error source=GH_TOKEN failure=rejected_credential detail=HTTP 401: Bad credentials|0|user,user,auth,user
 "
 
 run_table "the argv handed to gh" "\

@@ -85,10 +85,12 @@ Errors:
   KENDEX_GITHUB_*_TIMEOUT setting whose value is not a number of seconds to
   one decimal place; nothing ran. Raw gh/op detail is preserved in stderr and
   the JSON detail field. An auth_error or auth_timeout from the auth preflight
-  also carries auth_source, the credential tried (GH_TOKEN, GITHUB_TOKEN,
-  GH_BOT_TOKEN, keyring or unknown), and auth_failure, its category
-  (rejected_credential, permission_refusal, server_failure, timeout or
-  unknown).
+  also carries auth_source, the credential tried, and auth_failure, its
+  category (rejected_credential, permission_refusal, server_failure, timeout
+  or unknown). auth_source is the token the router selected (GH_TOKEN,
+  GITHUB_TOKEN or GH_BOT_TOKEN), else the variable gh read (GH_TOKEN, then
+  GITHUB_TOKEN), else keyring; it is unknown when the preflight left no
+  record.
 
 Examples:
   github.sh pr-view              # View PR for current branch

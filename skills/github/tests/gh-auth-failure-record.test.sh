@@ -10,8 +10,7 @@
 #   env   NAME=VALUE words set before the call, `-` for none; STUB_USER,
 #         STUB_INSTALL and STUB_STATUS pick gh's answer to `api user`,
 #         `api installation/repositories` and `auth status`
-#   call  check (kendex_github_token_auth_status), select
-#         (kendex_github_select_auth_token_source default) or capture
+#   call  check (kendex_github_token_auth_status) or capture
 #         (kendex_github_auth_status_capture)
 #   want  `rc=<status> source=<s> failure=<f> printed=<text>`, `-` for an
 #         unset field or nothing printed
@@ -79,7 +78,6 @@ run_row() { # ENV CALL
     status=0
     case "$call" in
       check) kendex_github_token_auth_status || status=$? ;;
-      select) kendex_github_select_auth_token_source default selected || status=$? ;;
       capture) kendex_github_auth_status_capture 10 "$TMP_ROOT/capture.out" "$TMP_ROOT/capture.err" || status=$? ;;
       *) echo "UNKNOWN-CALL: $call" >&2; exit 2 ;;
     esac
@@ -95,8 +93,8 @@ an integration refusal the installation endpoint accepts is a pass with no recor
 the installation endpoint's own refusal is the record|GH_TOKEN=tok-app KENDEX_GITHUB_SELECTED_TOKEN_SOURCE=GH_TOKEN STUB_USER=integration STUB_INSTALL=401|check|rc=1 source=GH_TOKEN failure=rejected_credential printed=-
 the installation endpoint outliving its bound is a timeout|GH_TOKEN=tok-app KENDEX_GITHUB_SELECTED_TOKEN_SOURCE=GH_TOKEN STUB_USER=integration STUB_INSTALL=sleep KENDEX_GITHUB_AUTH_TIMEOUT=0.2|check|rc=124 source=GH_TOKEN failure=timeout printed=-
 a refusal carrying no HTTP status is unknown|GH_TOKEN=tok-user KENDEX_GITHUB_SELECTED_TOKEN_SOURCE=GH_TOKEN STUB_USER=no-status|check|rc=1 source=GH_TOKEN failure=unknown printed=-
-a token no selection names is an unknown source|GH_TOKEN=tok-user STUB_USER=401|check|rc=1 source=unknown failure=rejected_credential printed=-
-a selection probe names the variable it probes over an inherited selection|GH_BOT_TOKEN=tok-bot KENDEX_GITHUB_SELECTED_TOKEN_SOURCE=GH_TOKEN STUB_USER=401|select|rc=1 source=GH_BOT_TOKEN failure=rejected_credential printed=-
+with no selection, GH_TOKEN is the source over GITHUB_TOKEN, as gh reads it|GH_TOKEN=tok-user GITHUB_TOKEN=tok-other STUB_USER=401|check|rc=1 source=GH_TOKEN failure=rejected_credential printed=-
+with no selection and no GH_TOKEN, GITHUB_TOKEN is the source|GITHUB_TOKEN=tok-user STUB_USER=401|check|rc=1 source=GITHUB_TOKEN failure=rejected_credential printed=-
 the keyring's own failure names the keyring|STUB_STATUS=fail|capture|rc=1 source=keyring failure=unknown printed=-
 "
 

@@ -3,9 +3,7 @@
 #
 # Source this file; do not execute it directly.
 
-# SOURCE names the variable TOKEN came from, for the failure record a probe
-# leaves; a caller that cannot name it leaves it `unknown`.
-kendex_github_is_resolved_token() { # TOKEN [SOURCE]
+kendex_github_is_resolved_token() {
   local token="${1:-}"
   [[ -n "$token" && "$token" != op://* ]] || return 1
   if [[ "$token" =~ ^gh[pours]_ ]] || [[ "$token" =~ ^github_pat_ ]]; then
@@ -17,7 +15,7 @@ kendex_github_is_resolved_token() { # TOKEN [SOURCE]
   # kept for this shell alone, so a second name holding it asks nothing either.
   # The prefix lasts for the call, and gh prefers GH_TOKEN.
   [[ "${_KENDEX_GITHUB_REFUSED_TOKEN:-}" != "$token" ]] || return 1
-  if GH_TOKEN="$token" _KENDEX_GITHUB_PROBE_SOURCE="${2:-unknown}" kendex_github_token_auth_status; then
+  if GH_TOKEN="$token" kendex_github_token_auth_status; then
     return 0
   fi
   _KENDEX_GITHUB_REFUSED_TOKEN="$token"
@@ -47,12 +45,14 @@ kendex_github_has_env_token() {
 # included, is asked again.
 #
 # A failed check leaves its record (_kendex_github_record_auth_failure). The
-# source is the name a selection probe passes, else the router's exported
-# selection, else `unknown`: once the router copies a selection into GH_TOKEN,
-# that name no longer says where the value came from.
+# source is the router's exported selection, since once the router copies a
+# selection into GH_TOKEN that name no longer says where the value came from.
+# With no selection, it is the variable the check read: GH_TOKEN, which gh
+# prefers, else GITHUB_TOKEN.
 _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
   local auth_timeout="$1" stdout_file="$2" stderr_file="$3" status=0 detail=""
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" source=GITHUB_TOKEN
+  [[ -z "${GH_TOKEN:-}" ]] || source=GH_TOKEN
   if [[ -n "$token" && "$token" == "${KENDEX_GITHUB_VALIDATED_TOKEN:-}" ]]; then
     return 0
   fi
@@ -62,7 +62,7 @@ _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
     kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || status=$?
   fi
   if [[ "$status" -ne 0 ]]; then
-    _kendex_github_record_auth_failure "${_KENDEX_GITHUB_PROBE_SOURCE:-${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-unknown}}" "$status" "$stderr_file"
+    _kendex_github_record_auth_failure "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-$source}" "$status" "$stderr_file"
     return "$status"
   fi
   export KENDEX_GITHUB_VALIDATED_TOKEN="$token"
@@ -70,7 +70,7 @@ _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
 
 # The record of the last failed credential check in this shell, for the
 # person who repairs the credential: KENDEX_GITHUB_AUTH_SOURCE is the source
-# tried (GH_TOKEN, GITHUB_TOKEN, GH_BOT_TOKEN, keyring or unknown) and
+# tried (GH_TOKEN, GITHUB_TOKEN, GH_BOT_TOKEN or keyring) and
 # KENDEX_GITHUB_AUTH_FAILURE its category (rejected_credential,
 # permission_refusal, server_failure, timeout or unknown). Neither holds the
 # token or gh's output. The category reads gh's `(HTTP NNN)` stderr suffix
@@ -274,7 +274,7 @@ kendex_github_select_auth_token_source() { # MODE OUT_VAR
 
   for _select_var in "${_select_order[@]}"; do
     _select_token="${!_select_var:-}"
-    if kendex_github_is_resolved_token "$_select_token" "$_select_var"; then
+    if kendex_github_is_resolved_token "$_select_token"; then
       printf -v "$_select_out" '%s' "$_select_var"
       return 0
     fi
@@ -312,7 +312,7 @@ kendex_github_apply_selected_auth_token() {
     token="$resolved"
   fi
 
-  if kendex_github_is_resolved_token "$token" "$selected_var"; then
+  if kendex_github_is_resolved_token "$token"; then
     export GH_TOKEN="$token"
     unset GITHUB_TOKEN
     export KENDEX_GITHUB_SELECTED_TOKEN_SOURCE="$selected_var"
