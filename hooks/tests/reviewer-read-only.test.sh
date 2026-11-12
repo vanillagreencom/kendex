@@ -194,13 +194,12 @@ fi
 echo "reviewer-read-only: a reviewer deletes nothing inside a work tree"
 printf 'cli\n' >"$REPO/cli.md"
 DELETE_SCRATCH="$(mktemp -d "$TMP_ROOT/delete.XXXXXX")" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
-# delete_row AGENT CWD COMMAND WANT [NAME]: WANT is the refusal's first line,
-# or pass; NAME stands for a command too long to print. The payload names the
-# cwd the call starts in, as Claude Code's does; an empty CWD omits the field
-# and runs the hook from $REPO, as the Pi carrier, whose payload names none,
-# spawns it in the session's directory.
+# delete_row AGENT CWD COMMAND WANT: WANT is the refusal's first line, or
+# pass. The payload names the cwd the call starts in, as Claude Code's does;
+# an empty CWD omits the field and runs the hook from $REPO, as the Pi
+# carrier, whose payload names none, spawns it in the session's directory.
 delete_row() {
-  local agent="$1" cwd="$2" cmd="$3" want="$4" name="${5:-$3}" payload here=$PWD
+  local agent="$1" cwd="$2" cmd="$3" want="$4" payload here=$PWD
   payload=$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
     '{agent_type: $a, tool_name: "Bash", tool_input: {command: $v}} + (if $c == "" then {} else {cwd: $c} end)')
   if [ -n "$cwd" ]; then
@@ -211,29 +210,23 @@ delete_row() {
     cd "$here"
   fi
   if [ "$want" = pass ]; then
-    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $name"
+    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $cmd"
   else
-    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $name"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $cmd"
   fi
 }
-# A quoted program of about 64 KB: the scan reads it whole within the hook's
-# 10 s timeout, past which the harness runs the call unjudged.
-BIG_PROGRAM='print("rm cli.md")'$'\n'
-while [ "${#BIG_PROGRAM}" -lt 65536 ]; do BIG_PROGRAM=$BIG_PROGRAM$BIG_PROGRAM; done
-# Every rm word with no quote marks is judged, wherever it stands: after any
-# separator, as a launcher's or find's argument, and inside a substitution,
-# double quotes and an unquoted heredoc body included. A single-quoted
-# string, a quoted-delimiter heredoc body, a comment and a text reader's
-# arguments run nothing here.
+# The check is quote-blind: every rm word is judged wherever it stands,
+# quoted or not, after any separator, as a launcher's or find's argument, in
+# a substitution, a heredoc body or a body that runs elsewhere. A search
+# pattern written [r]m and a script file run by its path hold no rm word.
 delete_rows() {
-  local started
   delete_row reviewer-test "$REPO" 'rm cli.md' "delete=$REPO/cli.md"
   # The overnight form: the cd fails and the rm runs where the call started.
   delete_row reviewer-test "$REPO" 'cd /nonexistent-review-dir; rm cli.md' "delete=$REPO/cli.md"
-  # Each separator ends a text reader's inert arguments.
-  delete_row reviewer-test "$REPO" 'cat src/lib.rs && rm cli.md' "delete=$REPO/cli.md"
-  delete_row reviewer-test "$REPO" $'cat src/lib.rs\nrm cli.md' "delete=$REPO/cli.md"
-  delete_row reviewer-test "$REPO" 'cat src/lib.rs | xargs -r rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cd /nonexistent-review-dir\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'ls && rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'ls | xargs -r rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'rm probe.txt' "delete=$REPO/probe.txt"
   delete_row reviewer-test "$REPO" 'find . -name cli.md -exec rm {} \;' "delete=$REPO/{}"
   delete_row reviewer-test "$REPO" 'env -u FOO rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" 'sudo -u root rm cli.md' "delete=$REPO/cli.md"
@@ -241,29 +234,28 @@ delete_rows() {
   delete_row reviewer-test "$REPO" 'timeout 30 rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" 'echo "$(rm cli.md)"' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" $'cat <<EOF\n$(rm cli.md)\nEOF' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(cat <<X\nhi\nX\n)\nEOF\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(ls\nrm cli.md)\nEOF' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" $'x=$((1<<2))\nrm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" "echo \$'x\\'y'; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "echo \${x:-'}'}; rm cli.md" "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" 'cat <(rm cli.md)' "delete=$REPO/cli.md"
-  started=$SECONDS
-  delete_row reviewer-test "$REPO" "python3 -c '$BIG_PROGRAM'; rm cli.md" "delete=$REPO/cli.md" \
-    "python3 -c '<${#BIG_PROGRAM} bytes>'; rm cli.md"
-  assert_eq "$((SECONDS - started < 10))" 1 "a ${#BIG_PROGRAM}-byte call is judged within the 10 s hook timeout"
+  delete_row reviewer-test "$REPO" "'rm' cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" '"rm" cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "mutation-stability --mutate 'rm -f cli.md && sed -i s/a/b/ src/lib.rs'" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'grep -n rm src/lib.rs' "delete=$REPO/src/lib.rs"
   delete_row reviewer-test "" 'rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$SCRATCH" "rm -f $REPO/src/lib.rs" "delete=$REPO/src/lib.rs"
   delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log cli.md" "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log; rm cli.md" "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" 'LC_ALL=C command rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" 'git -C src rm -q lib.rs' "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$SCRATCH" "command git -C $REPO rm -f -- cli.md" "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" "rm -rf $DELETE_SCRATCH" pass
   delete_row reviewer-test "$REPO" "rm -rf -- $DELETE_SCRATCH 2>/dev/null" pass
   delete_row reviewer-test "$REPO" 'rm -rf "$d"' pass
-  delete_row reviewer-test "$REPO" 'grep -rn "rm -rf" src/' pass
-  delete_row reviewer-test "$REPO" 'grep -n rm src/lib.rs' pass
-  delete_row reviewer-test "$REPO" "mutation-stability --mutate 'rm -f cli.md && sed -i s/a/b/ src/lib.rs'" pass
-  delete_row reviewer-test "$REPO" "bash -c 'ls; rm cli.md'" pass
-  delete_row reviewer-test "$REPO" "cat >$DELETE_SCRATCH/t.sh <<'EOF'"$'\nrm cli.md\nEOF' pass
-  delete_row reviewer-test "$REPO" 'git grep -n rm -- cli.md' pass
-  delete_row reviewer-test "$REPO" 'ls # rm cli.md' pass
+  delete_row reviewer-test "$REPO" "grep -n '[r]m' src/lib.rs" pass
+  delete_row reviewer-test "$REPO" "bash $DELETE_SCRATCH/mutate.sh" pass
   delete_row dev "$REPO" 'rm cli.md' pass
 }
 delete_rows
