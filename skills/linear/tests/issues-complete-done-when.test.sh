@@ -441,9 +441,16 @@ supersede-no-id|{"3":"superseded"}|{"3":"The owner sees the update card"}|done-w
 ROWS
 # complete_issue owns the selections and the transfer read-back.
 # Columns: name | options | evidence-file lines | replacement CC-730's state
-# type, or archived or trashed | expected state, or the refusal.
-while IFS='|' read -r name options lines held expected; do
-  printf '%b' "${lines//@own/$own_box}" >"$TMP_ROOT/retire-evidence.txt"
+# type, or archived or trashed | what CC-730's Done when holds: the criterion
+# as a box, as a post-merge reading, or another criterion | expected state, or
+# the refusal.
+while IFS='|' read -r name options lines held holds expected; do
+  printf '%b' "$lines" >"$TMP_ROOT/retire-evidence.txt"
+  case "$holds" in
+    box) cp "$replacement" "$TMP_ROOT/replacement-row.md" ;;
+    post-merge) printf '%s\n' '## Done when' "- [ ] $own_box" >"$TMP_ROOT/replacement-row.md" ;;
+    other) printf '%s\n' '## Done when' '- [ ] The owner sees a different card' >"$TMP_ROOT/replacement-row.md" ;;
+  esac
   log="$TMP_ROOT/retire-$name.jsonl"
   type="$held" archived=null trashed=null
   case "$held" in
@@ -452,7 +459,7 @@ while IFS='|' read -r name options lines held expected; do
   esac
   rc=0
   # shellcheck disable=SC2086  # the options column holds separate words
-  REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$replacement" REPLACEMENT_TYPE="$type" \
+  REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$TMP_ROOT/replacement-row.md" REPLACEMENT_TYPE="$type" \
     REPLACEMENT_ARCHIVED_AT="$archived" REPLACEMENT_TRASHED="$trashed" \
     run_complete "$retire" "$log" CC-720 --post-merge-at "$merged" $options --evidence-file "$TMP_ROOT/retire-evidence.txt" \
     >"$TMP_ROOT/retire.out" 2>"$TMP_ROOT/retire.err" || rc=$?
@@ -467,17 +474,19 @@ while IFS='|' read -r name options lines held expected; do
     assert_not "retire $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
   fi
 done <<'ROWS'
-waive-one|--done-when-waived 2|2: owner comment c1: the job reader was retired|unstarted|state-verifying
-waive-met|--done-when-waived 2 --done-when-met 3|2: owner comment c1: dropped\n3: Jarvis read the card|unstarted|state-done
-supersede|--done-when-superseded 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The owner sees the update card|unstarted|state-done
-supersede-missing|--done-when-superseded 3|3: CC-730 The owner sees a different card|unstarted|.error == "done-when-transfer-unread" and .box == 3 and .replacement == "CC-730"
-supersede-canceled|--done-when-superseded 3|3: CC-730 The owner sees the update card|canceled|.error == "done-when-transfer-unread"
-supersede-archived|--done-when-superseded 3|3: CC-730 The owner sees the update card|archived|.error == "done-when-transfer-unread"
-supersede-trashed|--done-when-superseded 3|3: CC-730 The owner sees the update card|trashed|.error == "done-when-transfer-unread"
-supersede-self|--done-when-superseded 3|3: CC-720 @own|unstarted|.error == "done-when-transfer-unread"
-supersede-self-historical|--done-when-superseded 3|3: CC-650 @own|unstarted|.error == "done-when-transfer-unread"
-overlap|--done-when-waived 2 --done-when-met 2|2: dropped|unstarted|.error == "done-when-disposition-overlap"
-overlap-all|--done-when-superseded 3 --done-when-met all|3: CC-730 The owner sees the update card|unstarted|.error == "done-when-disposition-overlap"
+waive-one|--done-when-waived 2|2: owner comment c1: the job reader was retired|unstarted|box|state-verifying
+waive-met|--done-when-waived 2 --done-when-met 3|2: owner comment c1: dropped\n3: Jarvis read the card|unstarted|box|state-done
+supersede|--done-when-superseded 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The owner sees the update card|unstarted|box|state-done
+supersede-post-merge|--done-when-superseded 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The owner sees the update card|unstarted|post-merge|state-done
+supersede-missing|--done-when-superseded 3|3: CC-730 The owner sees the update card|unstarted|other|.error == "done-when-transfer-unread" and .box == 3 and .replacement == "CC-730"
+supersede-other-box|--done-when-superseded 2 --done-when-waived 3|2: CC-730 The owner sees the update card\n3: owner comment c1: dropped|unstarted|box|.error == "done-when-transfer-unread" and .box == 2
+supersede-canceled|--done-when-superseded 3|3: CC-730 The owner sees the update card|canceled|box|.error == "done-when-transfer-unread"
+supersede-archived|--done-when-superseded 3|3: CC-730 The owner sees the update card|archived|box|.error == "done-when-transfer-unread"
+supersede-trashed|--done-when-superseded 3|3: CC-730 The owner sees the update card|trashed|box|.error == "done-when-transfer-unread"
+supersede-self|--done-when-superseded 3|3: CC-720 The owner sees the update card|unstarted|box|.error == "done-when-transfer-unread"
+supersede-self-historical|--done-when-superseded 3|3: CC-650 The owner sees the update card|unstarted|box|.error == "done-when-transfer-unread"
+overlap|--done-when-waived 2 --done-when-met 2|2: dropped|unstarted|box|.error == "done-when-disposition-overlap"
+overlap-all|--done-when-superseded 3 --done-when-met all|3: CC-730 The owner sees the update card|unstarted|box|.error == "done-when-disposition-overlap"
 ROWS
 record="$(updates "$TMP_ROOT/retire-supersede.jsonl" | jq -r '.variables.input.description')"
 record_tail="- Waived: Post-merge: p95 create latency <= 300 ms; Where: job; Why after merge: live use; Deadline: +24h

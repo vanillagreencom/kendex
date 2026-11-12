@@ -330,11 +330,14 @@ Complete Options:
                          other box is met or retired.
   --done-when-superseded <N[,N...]>
                          Retire open post-merge boxes another item now holds.
-                         Each box's evidence-file line is "N: ID CRITERION";
-                         the replacement must be another item, live (not
+                         Each box's evidence-file line is "N: ID CRITERION",
+                         CRITERION being the box's own reading, the text
+                         after "Post-merge: " up to "; Where:". The
+                         replacement must be another item, live (not
                          canceled, duplicate, archived or trashed), and hold
-                         CRITERION as a box under its Done when, or the call
-                         refuses with done-when-transfer-unread. The box
+                         CRITERION under its Done when as a box or as a
+                         post-merge box's reading, or the call refuses with
+                         done-when-transfer-unread. The box
                          keeps its text as "- Superseded: ..." with a
                          "Replacement:" line.
                          One box takes one of --done-when-met, -waived and
@@ -3727,13 +3730,15 @@ complete_issue() {
     fi
     # A superseded criterion stays an obligation until its replacement holds it
     # as a Done-when box: read the transfer back before retiring the box here.
+    # The transferred criterion is the retired box's own reading, so a wrong
+    # box number cannot retire one obligation on another's transfer.
     # Linear resolves a moved issue's historical identifier, so only the stable
     # id tells the source from its replacement. An archived or trashed item is
     # one no one works, whatever its state.
     local transfers transfer transfer_id transfer_result transfer_description transfer_checklist source_uuid
     source_uuid=$(jq -er '.issue.id | strings' <<<"$issue_result") || return 1
     transfers=$(jq -c '.boxes[] | select(.retired.kind == "superseded")
-        | {box: .number, replacement: .retired.replacement, criterion: .retired.criterion}' <<<"$tick") || return 1
+        | {box: .number, replacement: .retired.replacement, criterion: .retired.criterion, source: .reading}' <<<"$tick") || return 1
     while IFS= read -r transfer; do
         [ -n "$transfer" ] || continue
         transfer_id=$(jq -r '.replacement' <<<"$transfer") || return 1
@@ -3744,10 +3749,11 @@ complete_issue() {
             transfer_description=$(jq -r '.issue.description // ""' <<<"$transfer_result") || return 1
             transfer_checklist=$(done_when_parse "$transfer_description" '[]') || return 1
         fi
-        if ! jq -e --argjson transfer "$transfer" 'any(.boxes[]; .text == $transfer.criterion)' <<<"$transfer_checklist" >/dev/null; then
+        if ! jq -e --argjson transfer "$transfer" '$transfer.criterion == $transfer.source
+            and any(.boxes[]; .text == $transfer.criterion or .reading == $transfer.criterion)' <<<"$transfer_checklist" >/dev/null; then
             jq -cn --arg issue "$issue_id" --argjson transfer "$transfer" \
                 '{error: "done-when-transfer-unread", issue: $issue, box: $transfer.box, replacement: $transfer.replacement,
-                  fix: "Name a live replacement item whose Done when holds the transferred criterion as a box. Issue state unchanged."}' >&2
+                  fix: "Name the reading of this box as the criterion, and a live replacement item whose Done when holds it as a box. Issue state unchanged."}' >&2
             return 1
         fi
     done <<<"$transfers"
