@@ -1119,7 +1119,8 @@ mod tests {
 
     /// A second copy's paths are what a person copies to make the move the
     /// warning asks for, so rich output narrower than each path still
-    /// draws every one whole on a line.
+    /// draws every one whole on a line of its own. The shadow path holds
+    /// the extensions path, so only a line equal to a path proves it whole.
     #[test]
     fn a_second_copy_keeps_its_paths_whole_at_any_width() {
         let root = PathBuf::from("/home/a/.pi/agent");
@@ -1147,7 +1148,9 @@ mod tests {
             .collect();
         for path in paths {
             assert!(
-                lines.iter().any(|line| line.contains(&path)),
+                lines
+                    .iter()
+                    .any(|line| line.trim_start_matches("err|").trim() == path),
                 "{path} is broken across {lines:#?}"
             );
         }

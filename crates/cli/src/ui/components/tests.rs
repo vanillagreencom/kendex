@@ -581,7 +581,12 @@ fn a_table_never_breaks_a_word_or_a_copied_run() {
             .prose(" @ v2"),
         Cell::from("[2 package(s)]".to_owned()),
     ]];
-    let cases: [(&str, Vec<String>, Vec<String>); 5] = [
+    let file = "examples/styling/snapshots/catppuccin_macchiato-tiny-skia.sha256";
+    let files = vec![
+        vec![file.to_owned(), "1234 bytes".to_owned()],
+        vec!["SKILL.md".to_owned(), "88 bytes".to_owned()],
+    ];
+    let cases: [(&str, Vec<String>, Vec<String>); 6] = [
         (
             "narrower than the width",
             rich(80).table(&["name", "holds", "folder"], &rows),
@@ -639,6 +644,18 @@ fn a_table_never_breaks_a_word_or_a_copied_run() {
                 "  /home/dev/My Projects/acme-web  tools  /home/dev/My Projects/acme-web/marketplaces/tools  [2"
                     .to_owned(),
                 format!("{}@ v2{}package(s)]", " ".repeat(41), " ".repeat(47)),
+            ],
+        ),
+        (
+            "a path in prose wider than its fair share",
+            rich(50).table(&["path", "size"], &files),
+            vec![
+                format!("  <1;90>path</>{}  <1;90>size</>", " ".repeat(file.len() - 4)),
+                format!("  <90>{}</>", "─".repeat(file.len() + 2 + 5)),
+                format!("  {file}  1234"),
+                format!("{}bytes", " ".repeat(2 + file.len() + 2)),
+                format!("  SKILL.md{}  88", " ".repeat(file.len() - 8)),
+                format!("{}bytes", " ".repeat(2 + file.len() + 2)),
             ],
         ),
         (

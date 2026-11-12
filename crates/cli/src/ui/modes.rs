@@ -468,6 +468,11 @@ mod tests {
     /// of its own where no line can. Any other word still breaks by cells.
     #[test]
     fn a_path_in_prose_is_never_broken() {
+        let native = format!(
+            "C:{s}Users{s}a{s}.pi{s}agent{s}extensions{s}pi-widgets",
+            s = std::path::MAIN_SEPARATOR
+        );
+        let at_native = format!("at {native} here");
         let rows: [(&str, &str, usize, usize, &[&str]); 5] = [
             (
                 "wider than any line",
@@ -479,13 +484,6 @@ mod tests {
                     "/home/a/.pi/agent/extensions/pi-widgets",
                     "(no version)",
                 ],
-            ),
-            (
-                "too wide for the rest of the first line",
-                "move it out of /tmp/ext now",
-                18,
-                12,
-                &["move it out of", "/tmp/ext now"],
             ),
             (
                 "wider than the first line's room alone",
@@ -500,6 +498,13 @@ mod tests {
                 8,
                 8,
                 &["at", "~a-long-home-name", "here"],
+            ),
+            (
+                "with the platform's own separator",
+                &at_native,
+                12,
+                12,
+                &["at", &native, "here"],
             ),
             (
                 "an ordinary word",
