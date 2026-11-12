@@ -16,6 +16,15 @@ jarvis_load() {
   export JARVIS_MAIN_HOST="${JARVIS_MAIN_HOST:-}"
   export JARVIS_LOG_DIR="${JARVIS_LOG_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/jarvis}"
   export JARVIS_WAKE_SETTLE_SECS="${JARVIS_WAKE_SETTLE_SECS:-15}"
+  # Presentation choices; their values are defined in
+  # ../../../communication/references/messages.md § Reader modes.
+  # An unset or unlisted value takes the default instead of refusing: a
+  # refusal would fail every config read, so a presentation typo would stop
+  # watch.py, forward.py and owner_note.py, and an unlisted value must not
+  # reach Jarvis or VGS for each to interpret.
+  case "${JARVIS_TECHNICAL:-}" in off | on) ;; *) JARVIS_TECHNICAL=off ;; esac
+  case "${JARVIS_STYLE:-}" in friendly | concise | fun) ;; *) JARVIS_STYLE=concise ;; esac
+  export JARVIS_TECHNICAL JARVIS_STYLE
 }
 
 jarvis_live() {
@@ -58,8 +67,11 @@ jarvis_live() {
 
 case "${1:-}" in
   config)
+    # The effective settings as JSON. Readers: watch.py and its forward.py and
+    # owner_note.py callers, Jarvis presentation, and VGS, which reads and
+    # writes the same presentation choices.
     jarvis_load "$2"
-    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS")}))'
+    python3 -c 'import json,os; print(json.dumps({k:os.environ.get(k,"") for k in ("JARVIS_CONTROL_HOST","JARVIS_CONTROL_USER","JARVIS_REMOTE_HOSTS","JARVIS_MAIN_HOST","JARVIS_LOG_DIR","JARVIS_WAKE_SETTLE_SECS","JARVIS_TECHNICAL","JARVIS_STYLE")}))'
     ;;
   common-root)
     [[ -r "$MAILBOX_LIB/common-root.sh" ]] || { echo 'jarvis: dependency=mailbox-missing' >&2; exit 1; }
