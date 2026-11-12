@@ -19,7 +19,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ## Label Contract
 
-`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. A proposal-backed create also requires `create_fields.source`, which must agree with `review_born`. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10 or [proposal-sweep](../workflows/proposal-sweep.md) § 2.
+`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach`, `create_fields.supersession` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. A proposal-backed create also requires `create_fields.source`, which must agree with `review_born`. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10 or [proposal-sweep](../workflows/proposal-sweep.md) § 2.
 
 ## PROJECT Mode
 
@@ -122,6 +122,7 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
         "description": "Issue body summary",
         "recommendation": "* Requirements bullets",
         "reach": "the user action, run, check, or shipped producer that arrives at the defect — the producer the item's impact names, or the run that produced a structural entry",
+        "supersession": "superseded [ISSUE_ID]; re-scoped [ISSUE_ID]: transferred scope, or none found; searched: [TERMS]",
         "review_born": false,
         "symptom": "review_born at priority 2 only — the run, user, or red check that already showed it",
         "regressed_by": [123],
@@ -142,6 +143,8 @@ Mode `single` uses this same shape with `"mode": "single"` and one `issues[]` ro
 ```
 
 `supersedes[].when` is `now`, `partial`, or `at-completion`, with execution owned by [audit-issues § 7.2](../workflows/audit-issues.md#72-execute-approved-creations-and-cancellations). An entry without `when` retains the existing full-supersession behavior (`now`). A partial entry's `reason` names the scope transferred and the remainder to retain.
+
+`create_fields.supersession` is the filing's supersession record, written from the comparison that admitted it ([tpm-audit](../workflows/tpm-audit.md) § 6.1 and § 14). It holds one entry per open item the filing supersedes, duplicates or re-scopes: the action, then the identifier, as `superseded [ISSUE_ID]`, `duplicate [ISSUE_ID]` or `re-scoped [ISSUE_ID]`, entries separated by `;`, each optionally followed by a short note without `;`. With no such item it is `none found; searched: [TERMS]`, naming the terms that comparison searched. audit-issues § 7.2 writes it as the body's `**Supersession**:` line, and `issues create` refuses a body without one.
 
 `proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its authorized tracker comment, preserved author, original `Source:` value, and merged source PR or landed source commit. `source` must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
 

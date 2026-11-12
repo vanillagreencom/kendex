@@ -210,11 +210,12 @@ blocking_level_violation_message() {
 # held on this tracker; a `Tracked: #<n>` filed with `gh issue create` never
 # reaches here and is unguarded. Unless LINEAR_REQUIRE_REACH
 # (kendex.settings.toml [env]) is set empty, a create refuses, before any API
-# call, a description with no `Reached by:` line — an unsubstituted
-# placeholder and a null token counting as absent. Whether the line names a
-# real producer is the author's judgement, not this guard's. Unset is on, the
-# value the settings template ships.
-# The bar itself is project-management SKILL.md, § Disposition.
+# call, a description with no `Reached by:` line or no `Supersession:`
+# record — an unsubstituted placeholder and a null token counting as absent.
+# Whether the line names a real producer is the author's judgement, not this
+# guard's. Unset is on, the value the settings template ships.
+# The reach bar is project-management SKILL.md, § Disposition; the
+# supersession form is project-management audit-output.md, § ISSUE Mode.
 
 # The rule the refusal quotes, so message and rule cannot drift apart.
 REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). An unsubstituted placeholder or a null token is no value at all.'
@@ -267,7 +268,56 @@ require_issue_reach() {
 		return 1
 	fi
 
+	local supersession
+	supersession=$(issue_marked_value "$description" '[Ss]upersession')
+	if ! issue_supersession_valid "$supersession"; then
+		jq -cn --arg rule "$SUPERSESSION_RULE" --arg value "$supersession" \
+			'{error: ((if $value == "" then "Refusing to create an issue with no \"Supersession:\" line. " else "Refusing to create an issue whose \"Supersession:\" line is no supersession record: \"" + $value + "\". " end) + $rule + " Write the line under Filing record, as project-management issue-description-template.md does, and retry.")}' >&2
+		return 1
+	fi
+
 	return 0
+}
+
+# The supersession half of the filing bar: the record the comparison that
+# admitted the filing wrote (project-management tpm-audit § 6 and § 14),
+# checked for presence and shape only. Whether the search was adequate is
+# the comparison's judgement, not this guard's.
+SUPERSESSION_RULE='A filing records the search that admitted it: each matched open item as "superseded", "duplicate" or "re-scoped" with its identifier, entries separated by ";", or "none found; searched: <terms>".'
+
+# Both forms are read lowercased. An entry's identifier is a Linear issue
+# identifier; text after it is the author's note on the action.
+SUPERSESSION_NONE='^none[[:space:]]+found[^[:alnum:]]*searched[[:space:]]*:?[[:space:]]*(.*)$'
+SUPERSESSION_ENTRY='^(superseded|duplicate|re-scoped)[[:space:]]+[a-z][a-z0-9]*-[0-9]+([^[:alnum:]-]|$)'
+
+# issue_supersession_valid VALUE — 0 when VALUE, as issue_marked_value
+# returns it, is a "none found" record naming its searched terms or one or
+# more action entries; 1 otherwise, an empty VALUE included. Searched terms
+# that are a placeholder or a null token name no search.
+issue_supersession_valid() {
+	local lower entry terms seen=false
+	local -a entries=()
+	if ! lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]') || [ -z "$lower" ]; then
+		return 1
+	fi
+
+	if [[ "$lower" =~ $SUPERSESSION_NONE ]]; then
+		terms="${BASH_REMATCH[1]}"
+		terms="${terms%"${terms##*[![:space:]]}"}"
+		[ -n "$terms" ] || return 1
+		[[ ! "$terms" =~ $REACH_ABSENT_TOKENS ]] || return 1
+		[[ ! "$terms" =~ ^\[[a-z_]+\]$ ]] || return 1
+		return 0
+	fi
+
+	IFS=';' read -ra entries <<<"$lower"
+	for entry in ${entries[@]+"${entries[@]}"}; do
+		entry="${entry#"${entry%%[![:space:]]*}"}"
+		[ -n "$entry" ] || continue
+		[[ "$entry" =~ $SUPERSESSION_ENTRY ]] || return 1
+		seen=true
+	done
+	[ "$seen" = true ]
 }
 
 # require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON

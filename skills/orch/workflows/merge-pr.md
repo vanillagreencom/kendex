@@ -191,6 +191,8 @@ Active children pause the merge and ask the user per orphan — was the work lan
 
 Read `.title`, `.project.id` and the label names, and split the names, joined by commas, by the taxonomy the create refuses against with `linear.sh labels declared "[NAMES]"`: `.kept`, joined the same way, is `[PARENT_LABELS]`, and `.dropped`, printed in this step's output, is `[DROPPED_LABELS]` (`none` when empty). A non-zero exit **aborts the merge**. Take `[BUNDLE_PRIORITY]` as the highest priority across `[SAFE_IDS]` (Linear: `1`=Urgent…`4`=Low, lower wins; default `3`). Build `[BUNDLE_DESC]` per `.agents/skills/project-management/templates/parent-issue-template.md`, with a `## Sub-Issues` list and a `## Context` line naming the detachment. Its `**Reached by**` line is this rebundle run: `this merge-pr rebundle, detaching pending children from [ISSUE] before merge`. A rebundle parent is structural, so the create passes no `--review-born`.
 
+Its `**Supersession**` line records `re-scoped [ISSUE]`, per parent-issue-template Rule 7.
+
 Write `[BUNDLE_DESC]` with the harness file-write tool to `tmp/rebundle-description-[ISSUE].md` and bind that path as `[BODY_FILE]`.
 
 ```bash

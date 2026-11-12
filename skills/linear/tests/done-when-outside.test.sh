@@ -66,7 +66,8 @@ authored() {
     '> **Why this matters:** An unread check accepts a change with no proof.' '' \
     '## Done when' '' '- [ ] branch outcome' ''
   printf '%b\n' "$1"
-  printf '%s\n' '' '**Reached by**: an item filed with its post-merge check under its own heading'
+  printf '%s\n' '' '**Reached by**: an item filed with its post-merge check under its own heading' \
+    '' '**Supersession**: none found; searched: post-merge check heading'
 }
 
 # The grammar table calls the shared write check; the entry-point rows below

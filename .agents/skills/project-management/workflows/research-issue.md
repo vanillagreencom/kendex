@@ -9,6 +9,7 @@ Create a research issue, prepare its assets, and delegate execution to the resea
 | `topic`, `questions`, `domains`, `project`, `type` | Caller | Yes |
 | `blocked_issue` | Caller — the issue this research unblocks | No (spikes have none) |
 | `prior_research` | Caller — findings extracted inline | No |
+| `prior_work` | Caller — already-read comparison rows, actual search terms, scope evidence and proposed dispositions from discovery | Yes |
 | `consultation_agent_name` | Caller — an agent that already holds the context | No |
 | `researcher_agent_name` | Caller — an existing researcher session | No |
 | `auto_execute` | Caller, default true | No |
@@ -31,24 +32,24 @@ Resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and this inventory p
 
 Build `VALIDATED_LABELS = [agent:researcher, RESEARCH_WORKFLOW_LABEL, DOMAINS...]` from issue labels only and validate it per [labels.md](../references/labels.md) § Validation; any failure there halts before mutation. A label the tracker lacks follows § Creating Labels in the same file.
 
-### 1.2 Create
+### 1.2 Resolve Prior Work and Create
 
-Write the description to a file, then:
+Use `prior_work` from discovery without another search or inventory read. Resolve the filing through the existing [audit-issues.md](audit-issues.md) authorization and execution owner:
 
-```bash
-.agents/skills/linear/scripts/linear.sh issues create \
-  --title "Research: [TOPIC]" \
-  --project "[PROJECT]" \
-  --labels "[VALIDATED_LABELS]" \
-  --state "Backlog" \
-  --priority 2 \
-  --estimate 1 \
-  --description-file [BODY_FILE]
-```
+| Comparison outcome | Filing route |
+|---|---|
+| Existing research covers the question | Return its identifier and available findings as covering work. Create no replacement and stop before § 2. |
+| New research replaces or transfers an open item's scope | Carry the confirmed `supersedes[]` entries, reasons and `when` into the analyzed create row. audit-issues §§ 6–7.2 owns authorization, reciprocal records and execution. |
+| No open item needs a disposition | The create row records `none found; searched: [TERMS]` using the actual discovery terms. A separate related match remains related, without an action claim. |
+| Creation or a disposition is withheld, or execution fails | Return the audit writer's held/not-applied result and any applied outcomes. Continue to assets only when its authorized filing and dispositions succeeded. |
 
-`--state "Backlog"` is mandatory, never the team-default Triage.
+Build one issue-mode [audit-output.md](../schemas/audit-output.md) row with `action: "create"`, `identifier: null`, the research title, recommended project and `create_fields`: full validated labels, priority 2, estimate 1, `review_born: false`, the ask/run/decision as `reach`, and the topic and questions as description and recommendation. Its `supersession` follows that schema from the carried comparison and proposed `supersedes[]`; it is not evidence that those actions already ran. Fill Story and Why this matters following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules. Use the research-specific content below in the body that audit-issues § 7.2 writes.
 
-`[REACH]` is the ask, run, or decision that raised the question. Fill Story and Why this matters from the topic and caller's questions, following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
+Set its `index` to 1 and wrap it as `{"mode": "issue", "source": "research-issue", "issues": [row]}`. Write this analyzed input to `tmp/audit-research-[SLUG].json` and run `⤵ workflows/audit-issues.md --analyzed tmp/audit-research-[SLUG].json § 5-9 → § 1.3`. Do not carry a roadmap approval flag. A denied creation or withheld disposition follows that owner's held/not-applied outcome; never substitute a no-match record for a refused action, create directly, or prepare/delegate assets for a held filing.
+
+### 1.3 Continue After Filing
+
+Continue only with the identifier of a successfully created issue and confirmed authorized outcomes from audit-issues. A failed or incomplete disposition stops here with that owner's diagnostic and applied outcomes preserved. The audit writer supplies `[SUPERSESSION]` from its execution result; `[REACH]` is the ask, run, or decision that raised the question.
 
 ```markdown
 > **Story:** [Who needs this research.] [What they cannot decide today.] [What the findings let them decide, and its consequence.]
@@ -58,6 +59,8 @@ Write the description to a file, then:
 ## Filing record
 
 **Reached by**: [REACH]
+
+**Supersession**: [SUPERSESSION]
 
 ## Summary
 [1-2 sentences on TOPIC]
@@ -73,7 +76,7 @@ Execution and output sections are appended in § 3.
 
 `[TYPE_SECTION]`: omitted for Targeted; `## Affected Domains` with each domain and its reason for Pervasive; `## Creates Roadmap` with scope and phases for Strategic.
 
-Capture the returned identifier as `[RESEARCH_ISSUE_ID]`. **Skip if** no `blocked_issue` — otherwise record the dependency as a relation, never as description text:
+Keep the audit writer's created identifier as `[RESEARCH_ISSUE_ID]`. **Skip if** no `blocked_issue` — otherwise record the dependency as a relation, never as description text:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues add-relation [RESEARCH_ISSUE_ID] --blocks [BLOCKED_ISSUE_ID]

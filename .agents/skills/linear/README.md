@@ -36,7 +36,7 @@ Set non-secret keys in committed `kendex.settings.toml` under `[env]`; the key l
 | `LINEAR_TEAM` | Team target for creates and writes that do not address an issue, and the one team whose issues `linear.sh` creates or changes; [SKILL.md § Team Target](SKILL.md#team-target) |
 | `LINEAR_TEAM_PREFIX` | Issue identifier prefix used in examples |
 | `LINEAR_AGENT_LABELS` | Agent-routing labels an `issues create` must carry one of; under a declared label taxonomy, the agent labels it declares |
-| `LINEAR_REQUIRE_REACH` | Require the issue opening and reach/symptom fields; on when unset, off when empty. [SKILL.md § Issue Creation Routing](SKILL.md#issue-creation-routing) owns the requirements. |
+| `LINEAR_REQUIRE_REACH` | Require the issue opening and the reach, supersession and symptom fields; on when unset, off when empty. [SKILL.md § Issue Creation Routing](SKILL.md#issue-creation-routing) owns the requirements. |
 | `LINEAR_FORMAT` | Default read format: `safe`, `table`, `ids`, `raw` |
 | `LINEAR_RETRY_BASE_DELAY` | Seconds before the first retry of a rate-limited call, or of a query or attachment download answered 5xx or not at all, doubling after |
 | `LINEAR_JOURNAL_DIR` | Explicit absolute directory for a bounded observation session; unset or empty keeps collection off. See [request journal](references/request-journal.md). |

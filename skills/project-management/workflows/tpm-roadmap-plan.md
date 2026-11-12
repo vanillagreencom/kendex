@@ -91,7 +91,7 @@ Then place the roadmap: use an existing planned or backlog project when its scop
 .agents/skills/linear/scripts/linear.sh projects list-dependencies [PROJECT_ID]
 ```
 
-Store in `project_placement`.
+Store in `project_placement`. Retain each proposal's comparison result and actual title, target and component terms for its `organized_issues[].supersession` record, as [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues defines. Use the rows and searches already read in § 1.5; write no tracker disposition here.
 
 ---
 
@@ -121,7 +121,7 @@ Record uncovered components in `architecture_gaps[]`: `include` when the gap blo
 
 5. **Priority.** L0 on the critical path, or L0/L1 enabling 2+ issues → P1; L1/L2 → P2; L3 → P3; L4 → P4. An issue blocking a P1 becomes P1; apply transitively until stable. `critical_path: true` when an issue blocks 2+ others.
 
-Store in `organized_issues[]` sorted by `position`, each with `priority`, full `labels[]`, and `agent_label` for bundle parents.
+Store in `organized_issues[]` sorted by `position`, each with `priority`, full `labels[]`, and `agent_label` for bundle parents. Include the comparison record on generated bundle parents and architecture-gap entries too: compare their scope and actual title/component terms against the same already-read rows before finalizing their action; make no new search or inventory read.
 
 ---
 
@@ -129,7 +129,7 @@ Store in `organized_issues[]` sorted by `position`, each with `priority`, full `
 
 For each organized issue, use its § 1.5 closed search results to find Done-state work covering the same scope. Match on title similarity plus description overlap, verify against the code that the implementation exists, and mark the proposal `obsolete` only at ≥90% confidence with evidence `{completed_by[], files_verified[]}`. Keep each finding within that issue's returned evidence and record any truncation. The completed issue takes no disposition.
 
-Assign the action: obsolete → `cancel`; exact duplicate → `skip`; partial overlap recommending expansion → `expand`; replaces an existing issue → `supersede`; fails the creation bar → `skip` with the failing test named; otherwise `create`. Store `action`, `target` (the existing issue for `expand`/`supersede`, else null), and `reason`.
+Assign the action: obsolete → `cancel`; exact duplicate → `skip`; partial overlap recommending expansion → `expand`; replaces an existing issue → `supersede`; fails the creation bar → `skip` with the failing test named; otherwise `create`. Store `action`, `target` (the existing issue for `expand`/`supersede` or an exact-duplicate `skip`, else null), `reason`, and the matching `supersession` record per [roadmap-plan-output.md](../schemas/roadmap-plan-output.md) § organized_issues. The returned JSON retains this record on every entry so a later session needs no inferred search provenance.
 
 ---
 

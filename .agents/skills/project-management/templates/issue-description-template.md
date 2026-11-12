@@ -24,6 +24,8 @@
 
 **Symptom**: [SYMPTOM]
 
+**Supersession**: [SUPERSESSION]
+
 **Code-quality evaluation**: [EVALUATION_LINE]
 
 **Expected delta**: [N] lines
@@ -55,6 +57,7 @@
 | `[REACH]` | `create_fields.reach`, else the caller — the user action, run, check, or shipped producer that arrives at the defect; an owner-directed item names the ask | **Required on every issue** — the rule and what it refuses are [SKILL.md](../SKILL.md) § Disposition; `linear.sh issues create` enforces it |
 | `[N]` in **Expected delta** | Caller: estimated production lines for the planned change | `item-tier` reads it with the launch estimate and Location paths to choose a tier. Drop the line when no estimate is useful. It places no limit on the committed diff |
 | `[REGRESSED_BY]` | `create_fields.regressed_by`, else the caller: the pull request that caused the defect, as `#N`, several comma-separated | Only when that pull request is known; drop the line otherwise. A review-born item that names its source PR in `[ORIGIN_CONTEXT]` leaves it empty. `oversee-report`'s Escapes count reads this line and no other `#N` |
+| `[SUPERSESSION]` | `create_fields.supersession`, else the caller's own comparison of the item with the open issues before the create | **Required on every issue**: each matched open item with the action taken on it and its identifier, or `none found; searched: [TERMS]`, in the form [audit-output.md](../schemas/audit-output.md) § ISSUE Mode gives; `linear.sh issues create` refuses a body without one |
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[EVALUATION_LINE]` | The filed finding's code-quality evaluation line, as the finding carries it | Only when the finding carries one; drop the line otherwise. Its form is code-quality's `SKILL.md` § Finding Evaluation |
 | `[OWNER]` | Caller: the person or request that authorizes the work | Omit when absent |
@@ -68,7 +71,7 @@
 
 ## Rules
 
-1. Drop any header line with no value. `**Reached by**` is not one of them: fill it, or do not create the issue — an item with nothing to name is a decline.
+1. Drop any header line with no value except `**Reached by**` and `**Supersession**`. Fill `**Reached by**`, or do not create the issue — an item with nothing to name is a decline. Always fill `**Supersession**`, using `none found; searched: [TERMS]` when nothing matched.
 2. Write the body to a file with the harness file-write tool and pass `--description-file` (Linear) or `--body-file` (GitHub). Never an inline string, heredoc, or command substitution. The same flags work on update.
 3. Before creating, check the governing decision with `.agents/skills/decider/scripts/decisions search "[KEYWORDS]"` and reference it in Filing record. A description must not contradict an active decision.
 4. Every create passes the validated final `labels[]` from the label preflight.

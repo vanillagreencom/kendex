@@ -5,7 +5,8 @@
 # only an issue to exist — so creation is the one chokepoint that can hold the
 # filing bar. Unless LINEAR_REQUIRE_REACH is set empty in kendex.settings.toml
 # [env], `issues create` refuses, before any API call, a description with no
-# `Reached by:` line and a review-born `--priority 2` body with no `Symptom:`.
+# `Reached by:` line, one with no `Supersession:` record of the search that
+# admitted it, and a review-born `--priority 2` body with no `Symptom:`.
 
 set -euo pipefail
 
@@ -59,6 +60,7 @@ assert_refused_before_api() {
 guard() { printf '[env]\nLINEAR_TEAM = "Configured"\n%b' "$1" >"$PROJECT/kendex.settings.toml"; }
 
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
+SUPERSESSION_LINE='**Supersession**: none found; searched: refresh, linked worktree'
 SYMPTOM_LINE='**Symptom**: the refresh printed "skipped" and left the render stale'
 # Reach-isolation fixtures pass the opening guard under the same setting.
 OUTCOME=$'> **Story:** Refresh keeps the render current in a linked worktree.\n\n> **Why this matters:** Installed skills stay current after refresh.'
@@ -72,55 +74,83 @@ assert_contains "the refusal names the missing line" "$ERR" "Reached by"
 assert_contains "the refusal says an unnamed item is a decline" "$ERR" "decline"
 
 run_linear issues create --title "Opening without reach" \
-  --description "$(printf '%s\n\n## Filing record\n' "$OUTCOME")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a create with an opening but no reach"
 
 # A value that says "nothing here" is no value, and each half has its own
 # alternative: `[REACH]` is the placeholder this repo's templates ship (bold
 # leaves its `**` on it); TBD is the other, and so is the symptom read below.
 run_linear issues create --title "Template copied" \
-  --description "$(printf '%s\n\n## Filing record\n\n**Reached by: [REACH]**\n' "$OUTCOME")"
+  --description "$(printf '%s\n\n## Filing record\n\n**Reached by: [REACH]**\n\n%s\n' "$OUTCOME" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a whole-line bold [REACH] placeholder body"
 
 run_linear issues create --title "Null token" \
-  --description "$(printf '%s\n\n## Filing record\n\nReached by: TBD\n' "$OUTCOME")"
+  --description "$(printf '%s\n\n## Filing record\n\nReached by: TBD\n\n%s\n' "$OUTCOME" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a TBD reach"
 
 run_linear issues create --title "Refresh skips a worktree" \
-  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n\n%s\n' "$OUTCOME" "$REACH_LINE" "$SUPERSESSION_LINE")"
 assert_created "a create whose body names the run that reaches it"
 
 printf '%s\n' "$OUTCOME" \
   '' '## Done when' '' '- [ ] Refresh updates the installed skill.' \
   '' '## Requirements' '' '- Update the installed skill during refresh.' \
-  '' '## Filing record' '' "$REACH_LINE" \
+  '' '## Filing record' '' "$REACH_LINE" '' "$SUPERSESSION_LINE" \
   '' '## Context' '' '**Location**: skill rendering' >"$TMP_ROOT/body.md"
 run_linear issues create --title "Refresh updates the skill" --description-file "$TMP_ROOT/body.md"
 assert_created "a create with its reach under Filing record after the outcome"
 
-printf '%s\n\n## Filing record\n\n- Reached by: `tools/guard` on a fresh clone\n' "$OUTCOME" >"$TMP_ROOT/body.md"
+printf '%s\n\n## Filing record\n\n- Reached by: `tools/guard` on a fresh clone\n- Supersession: superseded KEN-12\n' "$OUTCOME" >"$TMP_ROOT/body.md"
 run_linear issues create --title "Guard body" --description-file "$TMP_ROOT/body.md"
 assert_created "a create whose reach is a list item arriving by --description-file"
 
 echo "=== guard on: a review-born priority 2 needs a reported symptom ==="
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a review-born priority-2 create with no Symptom line"
 assert_contains "the refusal names the missing line" "$ERR" "Symptom"
 assert_contains "the refusal routes the item to priority 3" "$ERR" "priority 3"
 
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n## Filing record\n\n%s\nSymptom: none\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\nSymptom: none\n' "$OUTCOME" "$REACH_LINE" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a review-born priority-2 create whose Symptom is a null token"
 
 run_linear issues create --title "High priority" --priority 2 --review-born \
-  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SYMPTOM_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SUPERSESSION_LINE" "$SYMPTOM_LINE")"
 assert_created "a review-born priority-2 create carrying a reported symptom"
 
 # Priority 2 minted structurally reports none by construction; refusing it would abort a merge on an orphan child.
 run_linear issues create --title "Structural priority" --priority 2 \
-  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n%s\n' "$OUTCOME" "$REACH_LINE" "$SUPERSESSION_LINE")"
 assert_created "a structural priority-2 create with no Symptom line"
+
+echo "=== guard on: a body records the supersession search that admitted it ==="
+# One row per record shape: "created" or "refused", then the Supersession
+# line's value, or "-" for a body with no line. Every body names its reach.
+while IFS='|' read -r expected value; do
+  record=""
+  [ "$value" = "-" ] || record="**Supersession**: $value"
+  run_linear issues create --title "Supersession $value" \
+    --description "$(printf '%s\n\n## Filing record\n\n%s\n\n%s\n' "$OUTCOME" "$REACH_LINE" "$record")"
+  case "$expected" in
+    created) assert_created "a create whose record is [$value]" ;;
+    refused) assert_refused_before_api "a create whose record is [$value]" ;;
+  esac
+done <<'ROWS'
+refused|-
+refused|[SUPERSESSION]
+refused|none
+refused|none found
+refused|none found; searched:
+refused|none found; searched: TBD
+refused|none found; searched: [TERMS]
+refused|superseded
+refused|merged KEN-3
+refused|superseded KEN-12; kept KEN-13
+created|none found; searched: refresh, linked worktree
+created|superseded KEN-12 at completion
+created|re-scoped KEN-12: moved the render half; duplicate KEN-13
+ROWS
 
 echo "=== no key is on, an empty key is off, and help never trips ==="
 guard ''
@@ -128,8 +158,12 @@ run_linear issues create --title "Default repo"
 assert_refused_before_api "a bare create with no LINEAR_REQUIRE_REACH key"
 
 run_linear issues create --title "Default opening without reach" \
-  --description "$(printf '%s\n\n## Filing record\n' "$OUTCOME")"
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$SUPERSESSION_LINE")"
 assert_refused_before_api "a missing-reach create with no LINEAR_REQUIRE_REACH key"
+
+run_linear issues create --title "Default reach without supersession" \
+  --description "$(printf '%s\n\n## Filing record\n\n%s\n' "$OUTCOME" "$REACH_LINE")"
+assert_refused_before_api "a missing-supersession create with no LINEAR_REQUIRE_REACH key"
 
 guard 'LINEAR_REQUIRE_REACH = ""\n'
 run_linear issues create --title "Unguarded repo"
