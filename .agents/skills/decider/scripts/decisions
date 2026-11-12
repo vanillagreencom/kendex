@@ -75,7 +75,10 @@ Options:
   --limit N            Max search results (default: 5)
 
 Output (JSON):
-  search:  [{id, decision, path}] (keyword mode adds score)
+  search:  [{id, decision, status, rationale, path}] (keyword mode adds
+           score); status and rationale are the INDEX cells verbatim. A
+           Removed row has no document: its rationale names where the
+           reason lives
   list:    [{id, decision, path}]
   get:     {id, decision, status, date, path}
   check:   nothing on stdout; each finding is an error= record on
@@ -611,7 +614,7 @@ search_decisions() {
     fi
     echo "$all" | jq --arg issue "$issue" '[
       .[] | select(.research | test($issue + "(?![0-9])"; "i")) |
-      {id, decision, path}
+      {id, decision, status, rationale, path}
     ]'
     return 0
   fi
@@ -629,7 +632,7 @@ search_decisions() {
         (.rationale | test($q; "i")) or
         (.id | test($q; "i")) or
         (($bodies[.path] // []) | length > 0)
-      ) | {id, decision, path}
+      ) | {id, decision, status, rationale, path}
     ] | .[:$limit]'
     return 0
   fi
@@ -660,7 +663,7 @@ search_decisions() {
           (if ($rat | test($t)) then 1 else 0 end) +
           (if ($body_terms | index($t) != null) then 0.5 else 0 end)
         ] | add) as $score |
-        {id: $row.id, decision: $row.decision, path: $row.path, score: $score}
+        {id: $row.id, decision: $row.decision, status: $row.status, rationale: $row.rationale, path: $row.path, score: $score}
       else empty end
     ] | sort_by(-.score) | .[:$limit]
   '
