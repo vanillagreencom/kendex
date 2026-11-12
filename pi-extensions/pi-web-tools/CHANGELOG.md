@@ -4,7 +4,7 @@
 
 ### 4.2.2
 
-- The installed prompt selects tools only when active and their providers are configured. It identifies the Exa-only tools and the deep research setting required by `web_research`.
+- The installed prompt selects only active tools. It requires Exa configuration for `code_search`, `web_answer`, `web_find_similar` and `web_research`, and the deep research setting for `web_research`.
 
 ### 4.2.1
 

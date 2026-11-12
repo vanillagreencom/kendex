@@ -1,6 +1,6 @@
 ## pi-web-tools — web and code retrieval
 
-Tool selection (choose only active tools with their providers configured, then pick the cheapest option that answers the question). `code_search`, `web_answer`, `web_find_similar` and `web_research` require Exa; `web_research` also requires `exaDeepResearchEnabled`:
+Tool selection (choose only active tools, then pick the cheapest option that answers the question). Select `code_search`, `web_answer`, `web_find_similar` and `web_research` only when Exa is configured; `web_research` also requires `exaDeepResearchEnabled`:
 
 - `code_search` — code patterns, library APIs, developer documentation. Token-efficient via Exa Code; the default for "how do I use X library / what's the API for Y".
 - `web_search` — general web queries; the default for "find me…" when not code-specific.
