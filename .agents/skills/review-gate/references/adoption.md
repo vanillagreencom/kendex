@@ -51,7 +51,7 @@ After trusted removal, the shipped `templates/kendex-refresh.yml` requests updat
 
 ### Landing a proved render
 
-Read when a refresh run reports `refresh-state=landed`, `refresh-land=refused` or `refresh-land=unavailable`, before storing the landing pair, and before changing a ruleset for the landing app. [SKILL.md § Scripts](../SKILL.md#scripts) states when a run tries the landing push and what each outcome reports.
+Read when a refresh run reports `refresh-state=landed`, a `refresh-land=` line or `refresh-error=land-check`, before storing the landing pair, and before changing a ruleset for the landing app. [SKILL.md § Scripts](../SKILL.md#scripts) states when a run tries the landing push and what each outcome reports.
 
 The landing app is one GitHub App that serves this push alone. In the vanillagreen organization it is `vanillagreen-kendex-land`, app id 5726115. The organization owns it. It holds Contents read and write and Metadata read, and no other permission. It is installed on the consumer repositories. Never make the lanes app, or any other app that opens, arms or merges pull requests, the landing app: its ruleset bypass would then cover the pull requests that app handles.
 
@@ -64,6 +64,21 @@ The landed commit is an ordinary push to the default branch. A consumer workflow
 GitHub's rulesets judge the landing push, and the run reads no ruleset first. A ruleset that refuses the push leaves the update on the rolling pull request. GitHub's [required workflows rule](https://docs.github.com/en/enterprise-cloud@latest/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#targeting-specific-branches-with-your-ruleset-workflow) states: "Applying this rule will block direct pushes because the ruleset workflows run as part of the pull request and merge queue experience." The push therefore passes only where the landing app can bypass that rule too. The standard admits one ruleset shape for the app, which the `standard-bypass-actors` row in [§ Repo-side wiring](#repo-side-wiring) judges. That shape is a target: the organization owner sets it with their own credential, after the release that ships this route. In the target, one organization ruleset holds `pull_request` and `workflows`, with the landing app as its only bypass actor in mode `always`. The organization ruleset that holds `deletion` and `non_fast_forward` lists no bypass actor. The repository's merge-queue and required-checks rulesets list the landing app. Until the owner sets that shape, each ruleset that holds `pull_request`, `workflows`, the merge queue or the required checks and lists no bypass for the landing app refuses the landing push, and the update keeps the rolling pull request. This package changes no ruleset.
 
 The landing token holds no Workflows permission, which GitHub requires of an app that edits a file under `.github/workflows` ([GitHub App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)). GitHub therefore refuses a landing push whose commit changes the adopted caller `.github/workflows/kendex-refresh.yml`. That update keeps the rolling pull request and its review.
+
+A run that committed a new head and kept the pull request route prints one landing line ahead of that route's record. The shared workflow passes the script the boolean `KENDEX_LAND_CONFIGURED`: true where the run received either name of the pair, and never a secret value. A run that received neither name prints no landing line. The run checks the token, the class, the sources and the merge queue in that order, and the line names the first check the run does not meet.
+
+| Line | Cause |
+| --- | --- |
+| `refresh-land=unavailable value=token` | The run received one name of the pair alone, or the `Mint the landing token` step failed. That step's log holds the mint error. |
+| `refresh-land=skipped value=class` | The classifier answered a class other than `render`. |
+| `refresh-land=skipped value=sources-uncovered` | A selected project does not have the source coverage above. |
+| `refresh-land=unavailable value=sources-read` | The run could not read a project's source evidence: the engine's subscription list or a project manifest. Stderr holds what kendex printed, then `refresh-sources=unread value=PROJECT`, then the cause. |
+| `refresh-land=unavailable value=queue-read` | The read of the default branch's merge queue failed. |
+| `refresh-land=skipped value=queued` | The merge queue holds an entry. A push to that branch makes GitHub rebuild each running merge group. |
+| `refresh-land=refused value=STATUS` | The push failed for a cause other than a moved default branch. `STATUS` is git's exit status, and stderr holds git's record of the push. The ruleset and workflow-file paragraphs above name the refusals this route expects. |
+| `refresh-error=land-check value=ANSWER` | The landing check gave an answer that the script does not report. The run prints it to stderr, exits 1 and publishes no head. |
+
+The source reader also sets the `sources` step output of a `refresh-state=current` run to `covered`, `uncovered` or `unread`, with the same stderr lines on `unread`. The shared workflow saves the current record only on `covered`.
 
 ### Caller adoption contract
 
