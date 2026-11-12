@@ -1306,8 +1306,6 @@ jobs:
             if [ "$x" = jarvis ] && [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
               unclaimed=()
               for t in "${suites[@]}"; do
-                # The package's run-all.sh runs its suites; it is none.
-                [ "${t##*/}" != run-all.sh ] || continue
                 grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")
               done
               [ "${#unclaimed[@]}" -gt 0 ] || continue

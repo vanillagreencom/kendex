@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from fixtures.harness import native_launcher, shorten_account_settle
+from fixtures.harness import native_launcher
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -72,7 +72,6 @@ def main():
         skills = Path(allocation).resolve() / "skills"
         for package in ("jarvis", "orch", "mailbox", "github"):
             shutil.copytree(ROOT / "skills" / package / "scripts", skills / package / "scripts")
-        shorten_account_settle(skills)
         shutil.copytree(ROOT / "skills/jarvis/tests", skills / "jarvis/tests", ignore=shutil.ignore_patterns("__pycache__"))
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}

@@ -83,13 +83,17 @@ def shorten_account_settle(skills):
     # one settle apart (orch lane-launch.sh lane_account_check), a second by
     # default. A fixture pane carries its account from its exec. The documented
     # suite override, ORCH_LANE_SETTLE_MS, cannot reach the backend: session.py
-    # passes no ORCH_ variable to it. So the suite's own copy of the scripts
-    # takes the short pause; the reads and their comparison stay production.
+    # environment() hands it only its allowlist and, for Start and resume, the
+    # policy names it reads from the user manager, and ORCH_LANE_SETTLE_MS is
+    # in neither. So the suite's own copy of the scripts takes the short pause;
+    # the reads and their comparison stay production.
     library = Path(skills) / "orch/scripts/lib/lane-launch.sh"
     assert not library.is_symlink(), library
     source = library.read_text()
     default, short = "\nLANE_SETTLE_MS_DEFAULT=1000\n", "\nLANE_SETTLE_MS_DEFAULT=50\n"
-    # A case that runs a child suite hands it its own, already shortened, copy.
+    # task_test.py's test_failed_succession_prints_evidence_before_cleanup and
+    # test_browser_profile_control hand their child run their own, already
+    # shortened, copy.
     if source.count(short) == 1:
         return
     assert source.count(default) == 1, "lane-launch.sh no longer sets LANE_SETTLE_MS_DEFAULT=1000"
