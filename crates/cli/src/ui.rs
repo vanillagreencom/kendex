@@ -343,11 +343,26 @@ fn drawn(tone: Tone, line: &str) {
 /// the plain rendering is the same head and two-space steps, and a rich
 /// one sets the outcome off from the report above it.
 pub fn ledger(head: &str, steps: &[Step]) {
+    closing(None, head, steps);
+}
+
+/// [`ledger`] for a run in one place, a scope's root or `global`. Plain
+/// is the one `place: outcome` line; rich puts the place whole on its own
+/// line under the outcome, as a path is drawn, so a long root never
+/// breaks inside a segment.
+pub fn ledger_at(place: &str, outcome: &str, steps: &[Step]) {
+    closing(Some(place), outcome, steps);
+}
+
+fn closing(place: Option<&str>, outcome: &str, steps: &[Step]) {
     if mode() == Mode::Plain {
-        stderr(&ledger_lines(&style(), head, steps));
+        stderr(&ledger_lines(&style(), place, outcome, steps));
         return;
     }
-    let head = escaped(head);
+    let head = escaped(&match place {
+        Some(place) => format!("{place}: {outcome}"),
+        None => outcome.to_owned(),
+    });
     let steps: Vec<String> = steps.iter().map(|step| escaped(step.text())).collect();
     blocks::open(Tone::Done, &head, true, &steps);
 }
@@ -371,13 +386,21 @@ impl Step {
 
 /// The closing line as components: a decision among the steps makes the
 /// outcome one, a hint alone leaves it done.
-fn ledger_lines(style: &Style, head: &str, steps: &[Step]) -> Vec<String> {
+fn ledger_lines(style: &Style, place: Option<&str>, outcome: &str, steps: &[Step]) -> Vec<String> {
     let decided = steps.iter().any(|step| matches!(step, Step::Decision(_)));
     let status = match decided {
         true => Status::Decision,
         false => Status::Done,
     };
-    let mut lines = style.summary(status, head);
+    let mut lines = match (place, style.look) {
+        (None, _) => style.summary(status, outcome),
+        (Some(place), modes::Look::Plain) => style.summary(status, &format!("{place}: {outcome}")),
+        (Some(place), modes::Look::Rich { .. }) => {
+            let mut lines = style.summary(status, outcome);
+            lines.extend(style.detail(None, &[Span::Command(place)]));
+            lines
+        }
+    };
     for step in steps {
         let status = match step {
             Step::Decision(_) => Status::Decision,
@@ -586,9 +609,60 @@ mod tests {
         ];
         for (case, steps, want) in rows {
             assert_eq!(
-                tagged(&ledger_lines(&rich(100), "done", &steps)),
+                tagged(&ledger_lines(&rich(100), None, "done", &steps)),
                 want,
                 "{case}"
+            );
+        }
+    }
+
+    /// A closing line in one place: plain is the one `place: outcome` line
+    /// scripts read, and rich draws the place whole on its own line under
+    /// the outcome, a root wider than the line and one with a space
+    /// included, so no segment of it breaks.
+    #[test]
+    fn a_closing_line_keeps_its_place_whole() {
+        use testing::{plain, rich, tagged};
+        let long = "/home/a/dev/a-folder-whose-name-alone-takes-up-most-of-a-line/app";
+        let spaced = "/home/a/My Projects/a-folder-past-the-width/app";
+        let rows: [(&str, &[&str], &[&str]); 3] = [
+            (
+                "global",
+                &["global: removed 2 changes"],
+                &["", "<32>✓</> <1>removed 2 changes</>", "    <90>global</>"],
+            ),
+            (
+                long,
+                &[
+                    "/home/a/dev/a-folder-whose-name-alone-takes-up-most-of-a-line/app: removed 2 changes",
+                ],
+                &[
+                    "",
+                    "<32>✓</> <1>removed 2 changes</>",
+                    "    <90>/home/a/dev/a-folder-whose-name-alone-takes-up-most-of-a-line/app</>",
+                ],
+            ),
+            (
+                spaced,
+                &["/home/a/My Projects/a-folder-past-the-width/app: removed 2 changes"],
+                &[
+                    "",
+                    "<32>✓</> <1>removed 2 changes</>",
+                    "    <90>/home/a/My Projects/a-folder-past-the-width/app</>",
+                ],
+            ),
+        ];
+        for (place, want_plain, want_rich) in rows {
+            let outcome = "removed 2 changes";
+            assert_eq!(
+                ledger_lines(&plain(), Some(place), outcome, &[]),
+                want_plain,
+                "{place}"
+            );
+            assert_eq!(
+                tagged(&ledger_lines(&rich(40), Some(place), outcome, &[])),
+                want_rich,
+                "{place}"
             );
         }
     }

@@ -9,7 +9,10 @@ mod fixture_url;
 use fixture_url::file_url;
 
 use crate::test_util::no_record_on_this_runner;
+use crate::ui::testing::{plain, rich, tagged};
 
+/// The release notes link sits under the version an update installed, on
+/// both channels: the tag the notes live under is the channel's own.
 #[test]
 fn an_installed_release_links_its_notes_below_the_version() {
     let rows = [
@@ -23,15 +26,66 @@ fn an_installed_release_links_its_notes_below_the_version() {
     for (channel, version, tag) in rows {
         let body = format!(r#"{{"schema":1,"version":"{version}","assets":{{}}}}"#);
         let feed = ReleaseFeed::parse(body.as_bytes()).unwrap();
-        let expected = format!(
-            "updated to {version}\nwhat changed: https://github.com/vanillagreencom/kendex/releases/tag/{tag}"
+        let notes = format!("https://github.com/vanillagreencom/kendex/releases/tag/{tag}");
+        assert_eq!(
+            installed_lines(&plain(), &feed, channel).unwrap(),
+            [
+                format!("updated to {version}"),
+                format!("what changed: {notes}")
+            ]
         );
-        let check = |message: &str| assert_eq!(message, expected);
-        check(&installed_message(&feed, channel).unwrap());
+        assert_eq!(
+            tagged(&installed_lines(&rich(200), &feed, channel).unwrap()),
+            [
+                String::new(),
+                format!("<32>✓</> <1>updated to {version}</>"),
+                format!("  <link {notes}><36>what changed: {notes}</></link>"),
+            ]
+        );
+    }
+}
 
-        // A copy without the notes must fail the same assertion.
-        let without_notes = |feed: &ReleaseFeed| format!("updated to {}", feed.version);
-        assert!(std::panic::catch_unwind(|| check(&without_notes(&feed))).is_err());
+/// What a run draws for each way `kendex update` ends without a refusal,
+/// plain and rich: the lines a script reads keep their words, and rich
+/// marks each with what it needs from the person. A command another
+/// program manages is a notice with its command whole; a run with nothing
+/// to install is done; a release this target has no download for is a
+/// notice. A refusal is the error the run ends on, drawn by the caller.
+#[test]
+fn each_outcome_keeps_its_words_and_marks_its_status() {
+    type Draw = fn(&Style) -> Vec<String>;
+    let style_rows: [(&str, Draw, &[&str], &[&str]); 3] = [
+        (
+            "managed",
+            |style| managed_lines(style, "Homebrew", "brew upgrade kendex"),
+            &[
+                "this install came from Homebrew; update it with:",
+                "  brew upgrade kendex",
+            ],
+            &[
+                "  <36>•</> this install came from Homebrew; update it with:",
+                "    <90>brew upgrade kendex</>",
+            ],
+        ),
+        (
+            "current",
+            |style| style.summary(Status::Done, "already up to date (5.1.0)"),
+            &["already up to date (5.1.0)"],
+            &["", "<32>✓</> <1>already up to date (5.1.0)</>"],
+        ),
+        (
+            "inside the app",
+            |style| style.summary(Status::Notice, INSIDE_THE_APP),
+            &[INSIDE_THE_APP],
+            &[
+                "",
+                "<36>•</> <1>this command is part of the kendex desktop app and updates with it; open kendex and press Update now</>",
+            ],
+        ),
+    ];
+    for (case, draw, want_plain, want_rich) in style_rows {
+        assert_eq!(draw(&plain()), want_plain, "{case}");
+        assert_eq!(tagged(&draw(&rich(200))), want_rich, "{case}");
     }
 }
 
@@ -59,6 +113,7 @@ fn a_main_update_uses_the_app_image_from_its_feed_snapshot() {
 
     let half = app_half(
         &env,
+        &plain(),
         &feed,
         UpdateChannel::Main,
         version,

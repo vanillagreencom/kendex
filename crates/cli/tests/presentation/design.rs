@@ -117,7 +117,8 @@ fn moved_upstream() -> (Fixture, String) {
 }
 
 /// Every converted verb, rich against plain: `NO_COLOR` and `TERM=dumb`
-/// print what a pipe gets, the rich run stays within 80 cells, and each
+/// print what a pipe gets, the rich run stays within 80 cells but for a
+/// path drawn alone (see [`bounded`]), and each
 /// verb's report reaches past its header to the row `marker` names, so
 /// the comparison is over a report and not over the header alone.
 fn sweep(at: &Fixture, verbs: &[(&[&str], &str)]) {
@@ -143,7 +144,7 @@ fn sweep(at: &Fixture, verbs: &[(&[&str], &str)]) {
             rich.1.lines().skip(1).any(|line| line.contains(marker)),
             "the report drew no row past the header: {args:?} {rich:?}"
         );
-        for line in rich.1.lines() {
+        for line in rich.1.lines().filter(|line| bounded(line)) {
             assert!(
                 crate::width::visible_width(line) <= 80,
                 "{args:?}: {line:?}"
@@ -259,7 +260,8 @@ fn the_spinner_line_is_cleared_before_the_header() {
 /// not counted, while the same report in a pipe has lines wider than that —
 /// so the width was reached and wrapped, not merely never met. A remedy's
 /// command is drawn whole, since a command split at a space reads as a
-/// shorter one, so its line is the one a narrow terminal wraps itself.
+/// shorter one, so its line is the one a narrow terminal wraps itself, and
+/// so is a path drawn alone (see [`bounded`]).
 #[test]
 fn an_80_column_terminal_gets_no_line_past_80() {
     let at = fixture();
@@ -270,10 +272,31 @@ fn an_80_column_terminal_gets_no_line_past_80() {
         "no plain line reaches 80, so nothing had to wrap: {piped}"
     );
     for text in [&report, &verdict] {
-        for line in text.lines().filter(|line| !is_command(line)) {
+        for line in text
+            .lines()
+            .filter(|line| bounded(line) && !is_command(line))
+        {
             assert!(cells(line) <= 80, "{} cells: {line:?}\n{text}", cells(line));
         }
     }
+}
+
+/// Whether the 80-cell bound holds `line`: one with a space after its
+/// indent and its row's mark. A path is drawn whole, so one wider than the
+/// room is a line of its own, past 80 cells under a fixture root as long as
+/// a macOS temporary folder; its header line still holds the space.
+fn bounded(line: &str) -> bool {
+    let text = stripped(line);
+    let text = text.trim();
+    let words = match text.split_once(' ') {
+        Some((mark, rest))
+            if mark.chars().count() == 1 && !mark.chars().all(char::is_alphanumeric) =>
+        {
+            rest.trim_start()
+        }
+        _ => text,
+    };
+    words.contains(' ')
 }
 
 /// A row's command line: `fix:` or `see:` once its indent and colour are
@@ -410,7 +433,10 @@ fn writing_reports_honor_plain_overrides_and_wrap_at_80_columns() {
             "fixture never reaches width"
         );
         for line in rich.1.lines().filter(|line| {
-            !is_command(line) && !line.contains("kendex adopt") && !line.contains("kendex apply")
+            bounded(line)
+                && !is_command(line)
+                && !line.contains("kendex adopt")
+                && !line.contains("kendex apply")
         }) {
             assert!(
                 cells(line) <= 80,
@@ -448,5 +474,145 @@ fn unmanaged_paths_with_spaces_stay_on_one_output_line() {
             text.lines().any(|line| line.contains(&path)),
             "{mode}: unmanaged path split: {text}"
         );
+    }
+}
+
+/// The writing verbs converted from the frame, `remove` and `update-pi`:
+/// no frame character in a pipe or on a terminal, `NO_COLOR` and
+/// `TERM=dumb` print what a pipe gets on both streams, a rich run at 80
+/// columns draws its rows marked and within 80 cells, a path wider than
+/// that drawn whole on a line of its own, and every rendering exits the
+/// same. The project sits deep enough under the fixture home that its
+/// paths pass 80 cells on any runner, so the pipe has lines rich must
+/// wrap. Each run writes, so each starts from the fixture rebuilt at the
+/// same paths, which keeps a line from one run comparable with the next.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home
+        .join("dev/a-folder-whose-name-alone-takes-up-most-of-a-line/and-a-project-under-it/app");
+    let pi = |project: &Path| {
+        let catalog = project.join("pi-catalog");
+        let source = catalog.join("pi-extensions/pi-widgets");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("package.json"),
+            r#"{"name":"pi-widgets","version":"2.0.0","pi":{"extensions":["index.js"]}}"#,
+        )
+        .unwrap();
+        fs::write(source.join("index.js"), "export const version = 2;\n").unwrap();
+        let manifest = project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            manifest,
+            format!(
+                "{declared}\n[sources.pis]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"pis\"\n",
+                source_path(&catalog)
+            ),
+        )
+        .unwrap();
+    };
+    // (arguments, a row the rich run draws marked, once its colour is off,
+    // and whether the run closes on the ledger at the project)
+    let verbs: [(&[&str], &str, bool); 3] = [
+        (
+            &[
+                "remove",
+                "commit-guards",
+                "--no-sweep",
+                "--scope",
+                "project",
+            ],
+            "  ✓ Save kendex.toml",
+            true,
+        ),
+        (
+            &["update-pi", "--check", "--scope", "project"],
+            "  ! pi-widgets",
+            false,
+        ),
+        (
+            &["update-pi", "--scope", "project", "--leave"],
+            "  ✓ installed pi-widgets → 2.0.0",
+            false,
+        ),
+    ];
+    for (args, marked, closes_at_project) in verbs {
+        let run = |ui: &str, extra: &[(&str, &str)]| {
+            fs::remove_dir_all(&home).unwrap();
+            fs::create_dir_all(&home).unwrap();
+            blocked_project_at(&home, &project);
+            pi(&project);
+            let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+            command
+                .args(args)
+                .current_dir(&project)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("KENDEX_BACKGROUND_REFRESH", "off")
+                .env("KENDEX_UI", ui)
+                .env("LANG", "C.UTF-8")
+                .env("COLUMNS", "80")
+                .env("PATH", std::env::var("PATH").unwrap_or_default());
+            command.envs(extra.iter().copied());
+            let output = command.output().unwrap();
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                said(&output),
+            )
+        };
+        let piped = run("auto", &[]);
+        assert!(!piped.2.is_empty(), "{args:?}: nothing said");
+        let piped_both = format!("{}{}", piped.1, piped.2);
+        assert!(
+            piped_both.lines().any(|line| cells(line) > 80),
+            "{args:?}: fixture never reaches width: {piped:?}"
+        );
+        let in_pipe: Vec<char> = FRAMING
+            .into_iter()
+            .filter(|symbol| piped_both.contains(*symbol))
+            .collect();
+        assert!(in_pipe.is_empty(), "{args:?} put {in_pipe:?} in a pipe");
+        for extra in [[("NO_COLOR", "1")], [("TERM", "dumb")]] {
+            assert_eq!(run("pretty", &extra), piped, "{args:?}: {extra:?}");
+        }
+        let rich = run("pretty", &[]);
+        assert_eq!(rich.0, piped.0, "{args:?}: presentation changed the exit");
+        let drawn = format!("{}{}", rich.1, rich.2);
+        // A converted verb draws no frame; tables use the separator alone.
+        let framed: Vec<char> = FRAMING
+            .into_iter()
+            .filter(|symbol| *symbol != '─' && drawn.contains(*symbol))
+            .collect();
+        assert!(framed.is_empty(), "{args:?} drew {framed:?}: {rich:?}");
+        assert!(
+            drawn.contains('\u{1b}'),
+            "{args:?}: no rich rendering: {rich:?}"
+        );
+        assert!(
+            drawn.lines().map(stripped).any(|line| line == marked),
+            "{args:?}: no marked row {marked:?}: {rich:?}"
+        );
+        // The closing line's place is the project root, past 80 cells,
+        // whole on a line of its own.
+        let root = project.canonicalize().unwrap();
+        let root = kendex_core::paths::slashed(&root);
+        assert_eq!(
+            drawn.lines().map(stripped).any(|line| line.trim() == root),
+            closes_at_project,
+            "{args:?}: {rich:?}"
+        );
+        // A path wider than the line is the one thing drawn past it, whole
+        // and alone after its indent.
+        for line in drawn.lines().filter(|line| bounded(line)) {
+            assert!(
+                cells(line) <= 80,
+                "{args:?}: {} cells: {line:?}",
+                cells(line)
+            );
+        }
     }
 }

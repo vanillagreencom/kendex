@@ -8,8 +8,9 @@ use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
 use kendex_core::{manifest, pi_ext, settings};
 
-use super::{CliResult, out, resolve_scopes_at, say};
+use super::{CliResult, resolve_scopes_at};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Span, Style};
 
 /// What update-pi found for one declared or installed package.
 enum Status {
@@ -96,20 +97,24 @@ pub fn run(
         .transpose()?;
     let mut plans = plan_scopes(env, &settings, &scopes)?;
 
+    let style = ui::style();
     if plans.is_empty() {
-        say("no place checked installs for Pi");
+        ui::stderr(&style.summary(ui::Status::Done, "no place checked installs for Pi"));
         return Ok(());
     }
     pi_ext::ShadowScan::fold(plans.iter_mut().map(|plan| &mut plan.shadows));
     for plan in &plans {
-        print_plan(plan);
+        print(plan_lines(&style, plan));
     }
 
     if check {
         let pending = plans.iter().flat_map(|p| &p.rows).filter(updatable).count();
         if pending > 0 {
-            say(&format!(
-                "{pending} package(s) can be updated — run without --check to update them"
+            ui::stderr(&style.summary(
+                ui::Status::Decision,
+                &format!(
+                    "{pending} package(s) can be updated — run without --check to update them"
+                ),
             ));
         }
         if plans.iter().any(|plan| !plan.notes.is_empty()) {
@@ -125,7 +130,7 @@ pub fn run(
         // said beside the failure it did not cause.
         for scope in wrote {
             if let Err(refused) = super::project::register_target(env, &registering, scope) {
-                super::fail_refusal("warning: ", refused.as_ref());
+                ui::stderr(&style.refusal("warning: ", refused.as_ref()));
             }
         }
         return Err(error);
@@ -595,46 +600,112 @@ fn semver(version: &str) -> Vec<u64> {
     parts
 }
 
-fn print_plan(plan: &ScopePlan) {
-    say(&format!("{} ({})", plan.label, plan.root.display()));
-    if plan.rows.is_empty() {
-        say("  no pi packages installed");
-    }
-    for row in &plan.rows {
-        out(&format!(
-            "  {:<34} {:<22} {}",
-            row.name,
-            versions(row),
-            describe(row)
-        ));
-    }
-    for (name, reason) in &plan.notes {
-        say(&format!(
-            "  ! not-evaluated={name} scope={} : {reason}",
-            plan.label
-        ));
-    }
-    for error in &plan.shadows.errors {
-        say(&format!("  ! could not check for a second copy — {error}"));
-    }
-    for shadow in &plan.shadows.found {
-        let lines = shadow.lines(kendex_core::names::shown);
-        say(&lines.key);
-        say(&format!("  {}", lines.managed));
-        say(&format!("  {}", lines.shadow));
-        say(&format!("  {}", lines.remedy));
+/// Which stream a drawn block goes to: the package rows are the verb's
+/// answer and go to stdout, everything said about them to stderr.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stream {
+    Out,
+    Err,
+}
+
+fn print(drawn: Vec<(Stream, Vec<String>)>) {
+    for (stream, lines) in drawn {
+        match stream {
+            Stream::Out => ui::stdout(&lines),
+            Stream::Err => ui::stderr(&lines),
+        }
     }
 }
 
-fn versions(row: &Row) -> String {
-    let installed = row.version.as_deref().unwrap_or("-");
+/// One scope's plan: its place, a row per package, then what could not be
+/// read and the second copies Pi would load beside a managed one.
+fn plan_lines(style: &Style, plan: &ScopePlan) -> Vec<(Stream, Vec<String>)> {
+    let mut drawn = vec![(
+        Stream::Err,
+        style.report_heading(
+            match plan.scope {
+                Scope::Global => "global",
+                Scope::Project { .. } => "project",
+            },
+            &plan.label,
+            &plan.root.display().to_string(),
+            plan.rows.len(),
+            ui::Status::Notice,
+        ),
+    )];
+    if plan.rows.is_empty() {
+        drawn.push((
+            Stream::Err,
+            style.report_detail(&[Span::Prose("no pi packages installed")], "  "),
+        ));
+    }
+    drawn.push((
+        Stream::Out,
+        plan.rows
+            .iter()
+            .flat_map(|row| {
+                style.report_package(
+                    row_status(row),
+                    &row.name,
+                    row.version.as_deref(),
+                    target(row),
+                    &describe(row),
+                )
+            })
+            .collect(),
+    ));
+    let mut said = Vec::new();
+    for (name, reason) in &plan.notes {
+        said.extend(style.report_keyed(
+            ui::Status::Failed,
+            &format!("not-evaluated={name} scope={} : {reason}", plan.label),
+            "  ! ",
+            &format!("{name}: kendex could not check it"),
+            reason,
+        ));
+    }
+    for error in &plan.shadows.errors {
+        said.extend(style.report_row(
+            ui::Status::Failed,
+            &[Span::Prose(&format!(
+                "could not check for a second copy — {error}"
+            ))],
+            "  ! ",
+        ));
+    }
+    for shadow in &plan.shadows.found {
+        let lines = shadow.lines(kendex_core::names::shown);
+        said.extend(style.report_row(ui::Status::Decision, &[Span::Prose(&lines.key)], ""));
+        for line in [&lines.managed, &lines.shadow, &lines.remedy] {
+            said.extend(style.report_detail(&[Span::Prose(line)], "  "));
+        }
+    }
+    drawn.push((Stream::Err, said));
+    drawn
+}
+
+/// What a package's row needs from the person, decided by its status: a
+/// package blocked from installing is a failure, one this verb installs is
+/// a change waiting on the run, and one Pi or nothing here supplies is a
+/// notice.
+fn row_status(row: &Row) -> ui::Status {
+    use kendex_core::decision::Need;
+    match &row.status {
+        Status::Current => ui::Status::Done,
+        Status::Stale { .. } | Status::Missing { .. } => ui::Status::of(Need::Decision),
+        Status::Blocked { .. } => ui::Status::of(Need::Blocked),
+        Status::Unsourced | Status::Npm { .. } => ui::Status::of(Need::Notice),
+    }
+}
+
+/// The version an npm package can move to, where it differs from the one
+/// installed; kendex settles every other package itself.
+fn target(row: &Row) -> Option<&str> {
     match &row.status {
         Status::Npm {
             latest: Some(latest),
-        } if latest != installed => {
-            format!("{installed} -> {latest}")
-        }
-        _ => installed.to_owned(),
+        } if row.version.as_deref() != Some(latest.as_str()) => Some(latest),
+        _ => None,
     }
 }
 
@@ -660,8 +731,13 @@ fn describe(row: &Row) -> String {
 
 /// Install what each plan marks, and say how the run ended. `wrote` gains
 /// every scope a package landed in, whatever the run returns: a failure
-/// after a landed install still leaves that install on disk.
+/// after a landed install still leaves that install on disk. A scope whose
+/// pass stops, on its install record or its lock, is one failure of the
+/// run: what landed before the stop is counted, and the scopes after it
+/// still update, so the closing line and the commit offer cover every
+/// package on disk.
 fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> CliResult {
+    let style = ui::style();
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
@@ -687,7 +763,6 @@ fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> 
         if !installed.landed.is_empty() {
             wrote.push(&plan.scope);
         }
-        pass?;
         updated += installed.landed.len();
         failures.extend(
             installed
@@ -695,20 +770,41 @@ fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> 
                 .into_iter()
                 .map(|name| format!("{name} ({})", plan.label)),
         );
-        kendex_core::drift::snapshot::record(env, &plan.scope)?;
+        if let Err(error) = pass {
+            failures.push(format!("{}: {error}", plan.label));
+            continue;
+        }
+        // The snapshot is what the next session-start check reads instead
+        // of redoing this pass; one that will not derive is a warning, as
+        // refresh says it, since the packages it describes are on disk.
+        if let Err(error) = kendex_core::drift::snapshot::record(env, &plan.scope) {
+            ui::report::warning(&format!("snapshot not derived ({error})"));
+        }
     }
     // Every replaced copy went to the trash with its dependency tree;
     // the pass runs once every scope is written, before the closing line.
     super::engine_common::tidy_trash(env);
-    offer_to_commit(env, plans)?;
-    if failures.is_empty() {
-        say(&match updated {
-            0 => "all pi packages up to date".to_owned(),
-            count => format!("updated {count} package(s)"),
-        });
-        return Ok(());
+    // An offer that fails is one more failure of the run, said with the
+    // others rather than in their place. A cancel at the offer still lets
+    // the run say what it installed, and ends the run as a cancel only
+    // where nothing else failed.
+    failures.extend(offer_to_commit(env, plans));
+    ui::stderr(&closing_lines(&style, updated, failures.is_empty()));
+    match failures.is_empty() {
+        true => Ok(()),
+        false => Err(format!("update failed for: {}", failures.join(", ")).into()),
     }
-    Err(format!("update failed for: {}", failures.join(", ")).into())
+}
+
+/// The line a run that installed closes on: what landed, whatever failed
+/// beside it, which the error after it names. A run that installed nothing
+/// and failed closes on that error alone.
+fn closing_lines(style: &Style, updated: usize, clean: bool) -> Vec<String> {
+    match (updated, clean) {
+        (0, true) => style.summary(ui::Status::Done, "all pi packages up to date"),
+        (0, false) => Vec::new(),
+        (count, _) => style.summary(ui::Status::Done, &format!("updated {count} package(s)")),
+    }
 }
 
 /// What one scope's install pass did: the packages that landed, and the
@@ -739,6 +835,7 @@ fn install_rows(
     let readings =
         kendex_core::engine::held_declarations(env, &plan.scope, &declared, &lock, options)?;
     let manifest = &readings.manifest;
+    let style = ui::style();
     for row in &plan.rows {
         let (source_dir, verb) = match &row.status {
             Status::Stale { source_dir } => (source_dir, "updated"),
@@ -753,21 +850,28 @@ fn install_rows(
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
                 installed.landed.push(row.name.clone());
-                out(&format!(
-                    "  {verb} {} -> {}",
-                    row.name,
-                    outcome.version.as_deref().unwrap_or("?")
-                ));
+                ui::stdout(
+                    &style
+                        .report_landed(&format!("{verb} {}", row.name), outcome.version.as_deref()),
+                );
                 for bin in &outcome.unbuilt_bins {
-                    say(&format!(
-                        "  ! {}: declared bin '{bin}' is missing; the package publisher must ship this file. Its command was not linked",
-                        row.name
+                    ui::stderr(&style.report_row(
+                        ui::Status::Decision,
+                        &[Span::Prose(&format!(
+                            "{}: declared bin '{bin}' is missing; the package publisher must ship this file. Its command was not linked",
+                            row.name
+                        ))],
+                        "  ! ",
                     ));
                 }
                 record_pi_installs(env, plan, &readings, Some(&row.name))?;
             }
             Err(error) => {
-                say(&format!("  failed {}: {}", row.name, error));
+                ui::stderr(&style.report_row(
+                    ui::Status::Failed,
+                    &[Span::Prose(&format!("failed {}: {error}", row.name))],
+                    "  ",
+                ));
                 installed.failed.push(row.name.clone());
             }
         }
@@ -787,7 +891,11 @@ fn install_rows(
 /// project, which only a plan names — so one is derived here for that
 /// alone. A scope whose plan will not derive gets no offer: the writes
 /// above still stand, and nothing about them is claimed.
-fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
+///
+/// Each project whose offer fails is one failure, named by its scope, and
+/// the next project is still offered, as `refresh` offers each scope.
+fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> Vec<String> {
+    let mut failures = Vec::new();
     for plan in plans {
         if !matches!(plan.scope, Scope::Project { .. }) {
             continue;
@@ -799,14 +907,16 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
         ) else {
             continue;
         };
-        super::commit_offer::after_writing(
+        if let Err(error) = super::commit_offer::after_writing(
             env,
             &plan.scope,
             &report.generated,
             &kendex_core::commit_offer::Before::Untaken,
-        )?;
+        ) {
+            failures.push(format!("{}: {error}", plan.label));
+        }
     }
-    Ok(())
+    failures
 }
 
 fn record_pi_installs(
@@ -840,8 +950,13 @@ fn record_pi_installs(
     if lock != before {
         kendex_core::lock::save(&path, &lock)?;
     }
+    let style = ui::style();
     for row in drift {
-        say(&format!("  ! {}: {}", row.name, row.detail));
+        ui::stderr(&style.report_row(
+            ui::Status::Decision,
+            &[Span::Prose(&format!("{}: {}", row.name, row.detail))],
+            "  ! ",
+        ));
     }
     Ok(())
 }
@@ -849,6 +964,248 @@ fn record_pi_installs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::testing::{plain, rich, tagged};
+
+    fn row(name: &str, version: Option<&str>, status: Status) -> Row {
+        Row {
+            name: name.to_owned(),
+            version: version.map(str::to_owned),
+            status,
+        }
+    }
+
+    fn drawn(style: &Style, plan: &ScopePlan) -> Vec<String> {
+        plan_lines(style, plan)
+            .into_iter()
+            .flat_map(|(stream, lines)| {
+                lines.into_iter().map(move |line| {
+                    format!(
+                        "{}{line}",
+                        match stream {
+                            Stream::Out => "out|",
+                            Stream::Err => "err|",
+                        }
+                    )
+                })
+            })
+            .collect()
+    }
+
+    fn plan(rows: Vec<Row>, notes: Vec<(String, String)>) -> ScopePlan {
+        ScopePlan {
+            scope: Scope::Global,
+            label: "user".into(),
+            root: PathBuf::from("/home/a/.pi/agent"),
+            rows,
+            notes,
+            shadows: pi_ext::ShadowScan::default(),
+        }
+    }
+
+    /// A scope's plan in both renderings, a row per status the verb reads
+    /// and a package it could not evaluate. Plain keeps the columns on
+    /// stdout, their `-` for no version, and the scope and the
+    /// `not-evaluated=` key on stderr; rich marks each row with what it
+    /// needs: done, an install this run makes, a package blocked from
+    /// installing, and a notice for what kendex leaves alone. Rich leaves a
+    /// missing version off and says the unevaluated package in words.
+    #[test]
+    fn a_plan_draws_each_status_with_what_it_needs() {
+        let source_dir = PathBuf::from("/catalog/pi-extensions/pi-widgets");
+        let full = plan(
+            vec![
+                row("pi-current", Some("1.0.0"), Status::Current),
+                row(
+                    "pi-stale",
+                    Some("1.0.0"),
+                    Status::Stale {
+                        source_dir: source_dir.clone(),
+                    },
+                ),
+                row("pi-missing", None, Status::Missing { source_dir }),
+                row(
+                    "pi-twice",
+                    Some("1.0.0"),
+                    Status::Blocked {
+                        reason: "blocked: pi-twice would register twice".into(),
+                    },
+                ),
+                row("pi-left", Some("0.1.0"), Status::Unsourced),
+                row(
+                    "pi-npm",
+                    Some("1.0.0"),
+                    Status::Npm {
+                        latest: Some("2.0.0".into()),
+                    },
+                ),
+            ],
+            vec![("pi-broken".into(), "source cat is not readable".into())],
+        );
+        // A project's label is its root and its place the root's `.pi`:
+        // plain says both on the one line scripts read, and rich puts the
+        // place on its own line, so neither path runs past the width.
+        let root = PathBuf::from("/home/a/dev/a-project-whose-folder-name-is-long");
+        let project = ScopePlan {
+            scope: Scope::Project { root: root.clone() },
+            label: root.display().to_string(),
+            root: root.join(".pi"),
+            ..plan(Vec::new(), Vec::new())
+        };
+        // The join takes the platform's separator, which the drawn place
+        // keeps.
+        let place = project.root.display();
+        let project_plain = format!("err|{} ({place})", root.display());
+        let project_rich = format!("err|    <90>{place}</>");
+        let rows: [(&ScopePlan, &[&str], &[&str]); 3] = [
+            (
+                &full,
+                &[
+                    "err|user (/home/a/.pi/agent)",
+                    "out|  pi-current                         1.0.0                  up to date",
+                    "out|  pi-stale                           1.0.0                  stale (package or install record differs)",
+                    "out|  pi-missing                         -                      not installed yet",
+                    "out|  pi-twice                           1.0.0                  blocked: pi-twice would register twice",
+                    "out|  pi-left                            0.1.0                  nothing this place lists supplies it",
+                    "out|  pi-npm                             1.0.0 -> 2.0.0         npm, update available",
+                    "err|  ! not-evaluated=pi-broken scope=user : source cat is not readable",
+                ],
+                &[
+                    "err|",
+                    "err|<1;36>global</>  <90>6</>",
+                    "err|    <90>/home/a/.pi/agent</>",
+                    "out|  <32>✓</> pi-current 1.0.0",
+                    "out|    <90>up to date</>",
+                    "out|  <33>!</> pi-stale 1.0.0",
+                    "out|    <90>stale (package or install record differs)</>",
+                    "out|  <33>!</> pi-missing",
+                    "out|    <90>not installed yet</>",
+                    "out|  <31>✗</> pi-twice 1.0.0",
+                    "out|    <90>blocked: pi-twice would register twice</>",
+                    "out|  <36>•</> pi-left 0.1.0",
+                    "out|    <90>nothing this place lists supplies it</>",
+                    "out|  <36>•</> pi-npm 1.0.0 → 2.0.0",
+                    "out|    <90>npm, update available</>",
+                    "err|  <31>✗</> pi-broken: kendex could not check it",
+                    "err|    <90>source cat is not readable</>",
+                ],
+            ),
+            (
+                &plan(Vec::new(), Vec::new()),
+                &[
+                    "err|user (/home/a/.pi/agent)",
+                    "err|  no pi packages installed",
+                ],
+                &[
+                    "err|",
+                    "err|<1;36>global</>  <90>0</>",
+                    "err|    <90>/home/a/.pi/agent</>",
+                    "err|    <90>no pi packages installed</>",
+                ],
+            ),
+            (
+                &project,
+                &[&project_plain, "err|  no pi packages installed"],
+                &[
+                    "err|",
+                    "err|<1;36>project</>  <90>0</>",
+                    &project_rich,
+                    "err|    <90>no pi packages installed</>",
+                ],
+            ),
+        ];
+        for (plan, want_plain, want_rich) in rows {
+            assert_eq!(drawn(&plain(), plan), want_plain);
+            assert_eq!(tagged(&drawn(&rich(80), plan)), want_rich);
+        }
+    }
+
+    /// A second copy's paths are what a person copies to make the move the
+    /// warning asks for, so rich output narrower than each path still
+    /// draws every one whole on a line of its own. The shadow path holds
+    /// the extensions path, so only a line equal to a path proves it whole.
+    #[test]
+    fn a_second_copy_keeps_its_paths_whole_at_any_width() {
+        let root = PathBuf::from("/home/a/.pi/agent");
+        let extensions = root.join("extensions-left-by-an-earlier-installer");
+        let copy = pi_ext::ShadowPackage {
+            name: "pi-widgets".into(),
+            managed: root.join("packages/pi-widgets-managed-by-kendex"),
+            managed_version: Some("2.0.0".into()),
+            shadow: extensions.join("pi-widgets-old-copy"),
+            shadow_version: None,
+            extensions,
+        };
+        let paths =
+            [&copy.managed, &copy.shadow, &copy.extensions].map(|path| path.display().to_string());
+        let shadowed = ScopePlan {
+            shadows: pi_ext::ShadowScan {
+                found: vec![copy],
+                errors: Vec::new(),
+            },
+            ..plan(Vec::new(), Vec::new())
+        };
+        let lines: Vec<String> = drawn(&rich(30), &shadowed)
+            .iter()
+            .map(|line| console::strip_ansi_codes(line).into_owned())
+            .collect();
+        for path in paths {
+            assert!(
+                lines
+                    .iter()
+                    .any(|line| line.trim_start_matches("err|").trim() == path),
+                "{path} is broken across {lines:#?}"
+            );
+        }
+    }
+
+    /// Each package as it lands, then the line the run closes on: what
+    /// landed whatever failed beside it, the clean line where nothing
+    /// needed installing, and nothing where nothing landed and the error
+    /// the run ends on says why.
+    #[test]
+    fn landed_packages_and_the_closing_line_count_what_was_installed() {
+        let rows: [(usize, bool, &[&str], &[&str]); 4] = [
+            (
+                0,
+                true,
+                &["all pi packages up to date"],
+                &["", "<32>✓</> <1>all pi packages up to date</>"],
+            ),
+            (0, false, &[], &[]),
+            (
+                2,
+                true,
+                &["updated 2 package(s)"],
+                &["", "<32>✓</> <1>updated 2 package(s)</>"],
+            ),
+            (
+                2,
+                false,
+                &["updated 2 package(s)"],
+                &["", "<32>✓</> <1>updated 2 package(s)</>"],
+            ),
+        ];
+        for (updated, clean, want_plain, want_rich) in rows {
+            assert_eq!(closing_lines(&plain(), updated, clean), want_plain);
+            assert_eq!(tagged(&closing_lines(&rich(80), updated, clean)), want_rich);
+        }
+        let landed = |style: &Style| {
+            let mut lines = style.report_landed("updated pi-stale", Some("2.0.0"));
+            lines.extend(style.report_landed("installed pi-missing", None));
+            lines
+        };
+        assert_eq!(
+            landed(&plain()),
+            ["  updated pi-stale -> 2.0.0", "  installed pi-missing -> ?"]
+        );
+        assert_eq!(
+            tagged(&landed(&rich(80))),
+            [
+                "  <32>✓</> updated pi-stale → 2.0.0",
+                "  <32>✓</> installed pi-missing",
+            ]
+        );
+    }
 
     #[test]
     #[allow(clippy::unwrap_used)]

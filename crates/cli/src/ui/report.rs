@@ -4,6 +4,7 @@
 
 use super::components::{Escaped, TableCell};
 use super::modes::Look;
+use super::symbols::Symbol;
 use super::{Span, Status, Style, Target, escaped};
 use kendex_core::apply::{DescriptionPart, PlannedOp};
 
@@ -19,15 +20,7 @@ pub enum PlainColumns {
 impl Style {
     /// A plan operation: prose can wrap, but its landed path stays whole.
     pub fn plan_row(&self, op: &PlannedOp) -> Vec<String> {
-        let parts = op.description_parts();
-        let spans: Vec<_> = parts
-            .iter()
-            .map(|part| match part {
-                DescriptionPart::Text(text) => Span::Prose(text),
-                DescriptionPart::Path(path) => Span::Command(path),
-            })
-            .collect();
-        self.report_row(Status::Notice, &spans, "  - ")
+        self.report_op(Status::Notice, op, "  - ")
     }
 
     /// A report row with its existing plain prefix.
@@ -177,6 +170,137 @@ impl Style {
         }
     }
 
+    /// A group held at a place. Plain is `label (place)` at column 0, the
+    /// line a script reads as opening the block. Rich is a `section` under
+    /// a short `title` with the place whole on its own line under it, since
+    /// a label and a place that are both paths do not fit one line.
+    pub fn report_heading(
+        &self,
+        title: &str,
+        label: &str,
+        place: &str,
+        count: usize,
+        status: Status,
+    ) -> Vec<String> {
+        match self.look {
+            Look::Plain => vec![escaped(&format!("{label} ({place})"))],
+            Look::Rich { .. } => {
+                let mut lines = self.section(title, count, status);
+                lines.extend(self.detail(None, &[Span::Command(place)]));
+                lines
+            }
+        }
+    }
+
+    /// A package, the version it is at and what is true of it. Plain is
+    /// the fixed columns `update-pi` has always printed under its scope:
+    /// `-` for no installed version and `installed -> target` where it can
+    /// move. Rich, a row naming the package and its versions with the
+    /// state under it, the move drawn with the change arrow and a version
+    /// there is none of left off.
+    pub fn report_package(
+        &self,
+        status: Status,
+        name: &str,
+        installed: Option<&str>,
+        target: Option<&str>,
+        state: &str,
+    ) -> Vec<String> {
+        match self.look {
+            Look::Plain => {
+                let installed = installed.unwrap_or("-");
+                let version = match target {
+                    Some(target) => format!("{installed} -> {target}"),
+                    None => installed.to_owned(),
+                };
+                vec![escaped(&format!("  {name:<34} {version:<22} {state}"))]
+            }
+            Look::Rich { .. } => {
+                let arrow = self.arrow();
+                let mut spans = vec![Span::Prose(name)];
+                spans.extend(moved(&arrow, installed, target));
+                let mut lines = self.row(status, &spans, None);
+                lines.extend(self.detail(None, &[Span::Prose(state)]));
+                lines
+            }
+        }
+    }
+
+    /// A package that landed, and the version it reported. Plain is the
+    /// `  <what> -> <version>` line `update-pi` has always printed, `?`
+    /// where the package reported none; rich, a done row with the version
+    /// after the change arrow, and no version where there is none.
+    pub fn report_landed(&self, what: &str, version: Option<&str>) -> Vec<String> {
+        match self.look {
+            Look::Plain => vec![escaped(&format!("  {what} -> {}", version.unwrap_or("?")))],
+            Look::Rich { .. } => {
+                let arrow = self.arrow();
+                let mut spans = vec![Span::Prose(what)];
+                spans.extend(moved(&arrow, None, version));
+                self.row(Status::Done, &spans, None)
+            }
+        }
+    }
+
+    /// A row that names a move from one version to another, both whole and
+    /// the change arrow between them, in the same words in both renderings:
+    /// `→`, or `->` where the locale has no UTF-8.
+    pub fn report_move(
+        &self,
+        status: Status,
+        what: &str,
+        from: &str,
+        to: &str,
+        prefix: &'static str,
+    ) -> Vec<String> {
+        let arrow = self.arrow();
+        let mut spans = vec![Span::Prose(what)];
+        spans.extend(moved(&arrow, Some(from), Some(to)));
+        self.report_row(status, &spans, prefix)
+    }
+
+    /// One fact in two grammars: plain, the keyed line a script reads
+    /// behind its prefix; rich, a row worded for a person with the reason
+    /// muted under it.
+    pub fn report_keyed(
+        &self,
+        status: Status,
+        key: &str,
+        prefix: &'static str,
+        what: &str,
+        why: &str,
+    ) -> Vec<String> {
+        match self.look {
+            Look::Plain => vec![format!("{prefix}{}", escaped(key))],
+            Look::Rich { .. } => {
+                let mut lines = self.row(status, &[Span::Prose(what)], None);
+                lines.extend(self.detail(None, &[Span::Prose(why)]));
+                lines
+            }
+        }
+    }
+
+    /// The change arrow with a space on each side, in the run's glyphs.
+    fn arrow(&self) -> String {
+        format!(" {} ", Symbol::Change.glyph(self.glyphs))
+    }
+
+    /// A plan operation under the mark of what became of it, such as a
+    /// write that landed: its prose as prose and its landed path as a
+    /// command span, so the path stays whole, behind the plain prefix
+    /// scripts read.
+    pub fn report_op(&self, status: Status, op: &PlannedOp, prefix: &'static str) -> Vec<String> {
+        let parts = op.description_parts();
+        let spans: Vec<_> = parts
+            .iter()
+            .map(|part| match part {
+                DescriptionPart::Text(text) => Span::Prose(text),
+                DescriptionPart::Path(path) => Span::Command(path),
+            })
+            .collect();
+        self.report_row(status, &spans, prefix)
+    }
+
     /// A line the reader can open rich; plain, its text alone.
     pub fn report_link(&self, text: &str, target: Target<'_>) -> Vec<String> {
         match self.look {
@@ -239,6 +363,20 @@ impl Style {
             }
         }
     }
+}
+
+/// The versions of a move as spans after the thing that moves: each
+/// version a command, so neither breaks, the arrow between them, and
+/// nothing for a version there is none of.
+fn moved<'a>(arrow: &'a str, from: Option<&'a str>, to: Option<&'a str>) -> Vec<Span<'a>> {
+    let mut spans = Vec::new();
+    if let Some(from) = from {
+        spans.extend([Span::Prose(" "), Span::Command(from)]);
+    }
+    if let Some(to) = to {
+        spans.extend([Span::Prose(arrow), Span::Command(to)]);
+    }
+    spans
 }
 
 /// Shared reports belong to a legacy frame while one is open. Their
@@ -501,6 +639,92 @@ mod tests {
                 "    <31>✗</> edited on disk",
             ]
         );
+    }
+
+    /// A version move in each rendering and glyph set: plain keeps the
+    /// fixed `->`, `-` and `?` scripts read for a package; rich draws the
+    /// change arrow, `->` where the locale has no UTF-8, and leaves off a
+    /// version there is none of. A row that names a move in the same words
+    /// in both renderings takes the run's arrow plain too.
+    #[test]
+    fn a_version_move_draws_the_arrow_of_the_runs_glyphs() {
+        use crate::ui::testing::ascii;
+        let draw = |style: &Style| {
+            let mut lines = style.report_package(
+                Status::Notice,
+                "pi-npm",
+                Some("1.0.0"),
+                Some("2.0.0"),
+                "npm",
+            );
+            lines.extend(style.report_package(
+                Status::Notice,
+                "pi-fresh",
+                None,
+                Some("2.0.0"),
+                "npm",
+            ));
+            lines.extend(style.report_package(Status::Decision, "pi-new", None, None, "new"));
+            lines.extend(style.report_landed("installed pi-new", None));
+            lines.extend(style.report_landed("updated pi-npm", Some("2.0.0")));
+            lines.extend(style.report_move(Status::Notice, "updating", "1.0.0", "2.0.0", ""));
+            lines
+        };
+        let rows: [(Style, &[&str]); 4] = [
+            (
+                plain(),
+                &[
+                    "  pi-npm                             1.0.0 -> 2.0.0         npm",
+                    "  pi-fresh                           - -> 2.0.0             npm",
+                    "  pi-new                             -                      new",
+                    "  installed pi-new -> ?",
+                    "  updated pi-npm -> 2.0.0",
+                    "updating 1.0.0 → 2.0.0",
+                ],
+            ),
+            (
+                ascii(plain()),
+                &[
+                    "  pi-npm                             1.0.0 -> 2.0.0         npm",
+                    "  pi-fresh                           - -> 2.0.0             npm",
+                    "  pi-new                             -                      new",
+                    "  installed pi-new -> ?",
+                    "  updated pi-npm -> 2.0.0",
+                    "updating 1.0.0 -> 2.0.0",
+                ],
+            ),
+            (
+                rich(80),
+                &[
+                    "  <36>•</> pi-npm 1.0.0 → 2.0.0",
+                    "    <90>npm</>",
+                    "  <36>•</> pi-fresh → 2.0.0",
+                    "    <90>npm</>",
+                    "  <33>!</> pi-new",
+                    "    <90>new</>",
+                    "  <32>✓</> installed pi-new",
+                    "  <32>✓</> updated pi-npm → 2.0.0",
+                    "  <36>•</> updating 1.0.0 → 2.0.0",
+                ],
+            ),
+            (
+                ascii(rich(80)),
+                &[
+                    "  <36>*</> pi-npm 1.0.0 -> 2.0.0",
+                    "    <90>npm</>",
+                    "  <36>*</> pi-fresh -> 2.0.0",
+                    "    <90>npm</>",
+                    "  <33>!</> pi-new",
+                    "    <90>new</>",
+                    "  <32>v</> installed pi-new",
+                    "  <32>v</> updated pi-npm -> 2.0.0",
+                    "  <36>*</> updating 1.0.0 -> 2.0.0",
+                ],
+            ),
+        ];
+        for (style, want) in rows {
+            assert_eq!(tagged(&draw(&style)), want);
+        }
     }
 
     #[test]
