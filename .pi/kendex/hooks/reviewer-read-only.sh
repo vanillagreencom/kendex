@@ -5,7 +5,7 @@
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
 # description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Its delete model stops a cooperating reviewer deleting work-tree files with ordinary `rm` or `git rm` commands as Bash reads them after line joining. A relative operand is judged against the call's starting directory (payload `cwd`, or the hook's working directory on Pi); `git -C` moves it for that Git command only. Expansions (variables, command substitution, `eval`, here-docs) and other deleting programs are outside this model and remain the reviewer's read-only role and tools' responsibility. The scan is quote-blind and can also refuse quoted text. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
 # summary: Stops a cooperating reviewer's edits, commits, pushes, Git commands that discard work, and ordinary `rm` or `git rm` deletes in a work tree; lets it write its review report.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete model covers a cooperating reviewer's ordinary `rm` and `git rm` commands after Bash line joining. It does not model expansions (variables, command substitution, `eval`, here-docs) or other deleting programs; the reviewer's read-only role and tools own those. The quote-blind scan first removes backslash-newline pairs, then drops quote marks and backslashes, then turns semicolons, ampersands and pipes into line boundaries. It judges every remaining `rm` word, `/bin/rm` too, so quoted strings and bodies can also cause refusals. Operands are the words after the match up to a control operator, a parenthesis, a backtick, a redirection or a newline. A relative operand uses the call's starting directory regardless of preceding `cd`, since that `cd` can fail; `git -C` moves the base for that Git command only. An operand holding a `$` or backtick expansion names nothing before the shell runs and is not judged. A search pattern written `[r]m` and a script file run by its path are not read as an rm. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. A delete refusal names the clearing routes: write a search pattern as `[r]m`, put a body that runs elsewhere in a script file under a `mktemp -d` of its own and run that file, delete scratch in that `mktemp -d`, and leave a probe it made in a work tree named in its report. Every refusal opens with `reviewer-read-only: <key>=<value>`; command diagnostics follow that key.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete model covers a cooperating reviewer's ordinary `rm` and `git rm` commands after Bash line joining. It does not model expansions (variables, command substitution, `eval`, here-docs) or other deleting programs; the reviewer's read-only role and tools own those. The quote-blind scan first removes backslash-newline pairs, then drops quote marks and backslashes, then turns command separators into line boundaries, preserving the ampersand in a redirection such as `2>&1` or `&>`. It judges every remaining `rm` word, `/bin/rm` too, so quoted strings and bodies can also cause refusals. Each segment splits on whitespace. After `rm` or `git rm`, options and redirection operator/target words are skipped; every remaining word is judged as an operand, including words after redirections. A redirection target attached to its operator is skipped with that word; a separate target is the next word. Semicolons, command ampersands, pipes, parentheses, backticks and newlines end the segment. A relative operand uses the call's starting directory regardless of preceding `cd`, since that `cd` can fail; `git -C` moves the base for that Git command only. An operand holding a `$` or backtick expansion names nothing before the shell runs and is not judged. A search pattern written `[r]m` and a script file run by its path are not read as an rm. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. A delete refusal names the clearing routes: write a search pattern as `[r]m`, put a body that runs elsewhere in a script file under a `mktemp -d` of its own and run that file, delete scratch in that `mktemp -d`, and leave a probe it made in a work tree named in its report. Every refusal opens with `reviewer-read-only: <key>=<value>`; command diagnostics follow that key.
 # timeout: 10
 # harnesses: [claude, pi, opencode, cursor]
 # ---
@@ -63,9 +63,6 @@ refuse() { # KEY VALUE [CAUSE]
       delete=*)
         echo "a reviewer deletes nothing inside a work tree; $2 is in one, and a delete there can take its author's uncommitted work. This check reads every rm in the command, quoted or not. Write a search pattern as [r]m. Put a body that runs elsewhere, such as a mutation-stability --mutate body or a bash -c script, in a script file under a mktemp -d of your own and run that file. A control file goes under that mktemp -d too and is deleted there, named by its absolute path. A probe you made in a work tree stays: leave it and name it in your report."
         ;;
-      grep=unreadable)
-        echo "grep could not read the command text, so its deletes could not be judged:"
-        ;;
       git=unreadable)
         echo "git could not say whether $TARGET is inside a work tree, so the call could not be judged:"
         printf '%s\n' "$ANSWER"
@@ -113,44 +110,43 @@ in_work_tree() { # PATH -> 0 inside, 1 outside
 # Shell separators then become line boundaries once, so neither Git-option
 # branch can carry a directory into a later command.
 judge_deletes() {
-  local pattern bare calls call words word state base ended
-  pattern='(^|[^[:alnum:]_.-])(git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]*)*[[:space:]]+)?rm([[:space:]]+[^[:space:]&;|()<>`]+)*[<>]?'
+  local bare call words word state base ended redirect_target redirection
+  redirection='^(&|[0-9]*)(<>|>>|>\||>|<)(&?)(.*)$'
   # jq drops the quote marks: a Bash 3.2 pattern substitution over the
-  # command takes time that grows with its length squared.
+  # command takes time that grows with its length squared. A redirection's
+  # ampersand belongs to its word; every other ampersand ends the command.
   bare=$(printf '%s' "$INPUT" | jq -er '.tool_input.command
     | split("\\\n") | join("")
-    | explode | map(select(. != 34 and . != 39 and . != 92))
-    | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode' 2>/dev/null) ||
+    | explode | map(select(. != 34 and . != 39 and . != 92)) | implode
+    | gsub("[;|()`]|(?<![<>])&(?!>)"; "\n")' 2>/dev/null) ||
     refuse payload invalid-json
-  calls=$(printf '%s\n' "$bare" | grep -oE -- "$pattern" 2>&1) || [ $? -eq 1 ] || refuse grep unreadable "$calls"
   while IFS= read -r call; do
     [ -n "$call" ] || continue
-    # The byte before the call word is the boundary the pattern matched.
-    case $call in
-      [gr]*) ;;
-      *) call=${call:1} ;;
-    esac
-    # A redirection ends the operands; its file descriptor number is not one.
-    case $call in
-      *[\<\>])
-        call=${call%?}
-        if [[ $call =~ ^(.*[[:space:]])[0-9]+$ ]]; then call=${BASH_REMATCH[1]}; fi
-        ;;
-    esac
-    # read splits on whitespace and expands no glob.
+    # read splits on whitespace and expands no glob. Redirections remove
+    # their own operator and target, never the operands that follow them.
     read -r -a words <<<"$call"
-    state=call base=$CWD ended=""
+    state=search base=$CWD ended="" redirect_target=""
     for word in ${words[@]+"${words[@]}"}; do
+      if [ -n "$redirect_target" ]; then redirect_target=""; continue; fi
+      if [[ $word =~ $redirection ]]; then
+        [ -n "${BASH_REMATCH[4]}" ] || redirect_target=1
+        continue
+      fi
       case $state in
-        call)
-          case $word in git) state=git ;; *) state=rm ;; esac
+        search)
+          case $word in
+            git | */git) state=git; base=$CWD ;;
+            rm | */rm) state=rm ;;
+          esac
           continue
           ;;
         git)
           case $word in
             -C) state=dir ;;
             -c | --git-dir | --work-tree | --namespace | --exec-path) state=value ;;
+            -*) ;;
             rm) state=rm ;;
+            *) state=search; base=$CWD ;;
           esac
           continue
           ;;
@@ -167,7 +163,7 @@ judge_deletes() {
       esac
       judge_operand
     done
-  done <<<"$calls"
+  done <<<"$bare"
 }
 
 # Refuses an rm operand inside a work tree. A relative operand lies under the
