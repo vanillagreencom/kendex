@@ -1,1 +1,0 @@
-- `verify` accepts `--project-path PATH` to check an unregistered checkout, using the same project target as `apply` and leaving the projects list unchanged. Its note on a package not yet in the install record, and its prune or remove advice, name that checkout. Its `remedy:` data and `update-pi` details name only the scope, so run those from inside the checkout.

@@ -1,1 +1,0 @@
-- Catalog checks cite a root skill as `SKILL.md:<line>` without a leading slash, while nested skill citations retain their catalog path.

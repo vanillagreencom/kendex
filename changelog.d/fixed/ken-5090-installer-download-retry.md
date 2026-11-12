@@ -1,1 +1,0 @@
-- `install.sh` tries a release download again when GitHub answers 408, 429, 500, 502, 503 or 504, up to eight tries 10 s apart, whatever exit code curl reports, so a short GitHub release-download error no longer fails an install. Each retry prints `download-retry=<status>`; a 404 or a refused connection still fails at once.

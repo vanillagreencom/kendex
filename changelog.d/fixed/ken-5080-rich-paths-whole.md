@@ -1,1 +1,0 @@
-- On a color terminal, `kendex refresh` titles the list of changes it wrote with their count instead of drawing the title as one more finished change, and keeps each written location on one line, a location with a space in it included. The line at the top of a run keeps a long project folder on one line under the command name instead of breaking it inside a folder name.
