@@ -60,6 +60,6 @@ For a signed local bundle, follow [DEVELOPMENT.md § Packaging](../../../DEVELOP
 
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: required; an unset key fails the release. The public half lives in `crates/app/tauri.conf.json` and `crates/core/src/update_feed.rs`, held equal by `crates/app/tests/tauri_config.rs`; a mismatched private key signs the whole release under a key nothing trusts.
 - The seven `APPLE_*` secrets: all set, the mac lanes sign and notarize; none set, they build unsigned; a partial set fails the lane.
-- Windows code signing is not configured.
+- Windows code signing is not configured; add a certificate before distributing outside GitHub Releases.
 
 Pi packages on npm are the [npm-deploy](../npm-deploy/SKILL.md) skill.

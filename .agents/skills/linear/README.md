@@ -52,6 +52,8 @@ Client-pair token storage: [references/authentication.md § Client-pair token st
 
 Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The app's Customize tab writes it to the private env file, never to `kendex.settings.toml`. Matching ignores case and uses the whole address. Empty or absent assigns nobody.
 
+A worktree whose `WORKTREE_SYMLINKS` lists `.env.local` links that file to its main checkout, so a value set there reaches the sessions a person runs in such a worktree. The orch skill launches every lane, local or hosted, with `KENDEX_USER_EMAIL` exported empty, which wins over the linked file, so a lane assigns nobody.
+
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
 
 ## Licence
