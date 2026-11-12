@@ -2,7 +2,8 @@
 //! mirror (TTL from [`super::stamps`]), then re-derive the drift snapshot
 //! so the next session reads verdicts, not guesses, and finish the plan
 //! over declarations sitting on unrecorded files where the check's budget
-//! cut it short ([`super::copies`]). Runs with no stdio and is never
+//! cut it short ([`super::copies`]), and drop the snapshots and memos of
+//! project scopes whose directory is gone. Runs with no stdio and is never
 //! waited on; everything it learns lands in stamps, snapshots and memos.
 
 use std::time::Duration;
@@ -121,5 +122,6 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
             ));
         }
     }
+    notes.extend(super::snapshot::prune_gone_projects(env));
     notes
 }

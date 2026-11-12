@@ -38,7 +38,10 @@ use crate::model::Scope;
 
 /// Bumped when the shape changes; an older or newer file reads as absent,
 /// which costs one plan.
-pub const MEMO_SCHEMA: u32 = 5;
+pub const MEMO_SCHEMA: u32 = 6;
+
+/// What every memo's file name ends with, after its scope's digest.
+pub(crate) const MEMO_SUFFIX: &str = "-copies.json";
 
 /// The memoized verdicts of one scope. Retired by every record write
 /// (`apply::execute`), since what a plan proved it proved against the
@@ -47,6 +50,9 @@ pub const MEMO_SCHEMA: u32 = 5;
 #[serde(rename_all = "kebab-case")]
 pub struct Memo {
     pub schema: u32,
+    /// The scope's label: whose memo this is, so the background refresh
+    /// can drop the memo of a project whose folder is gone.
+    pub scope: String,
     /// What the last plan proved and can record on its own, occupied or
     /// not: bound to each file's hash at the write, so an entry here that
     /// moved or vanished since refuses the record and costs one plan.
@@ -146,7 +152,7 @@ pub enum Settled {
 pub fn memo_path(env: &Env, scope: &Scope) -> PathBuf {
     let label = scope.canonical().label();
     let digest = &crate::hash::hash_bytes(label.as_bytes())[..16];
-    env.drift_dir().join(format!("{digest}-copies.json"))
+    env.drift_dir().join(format!("{digest}{MEMO_SUFFIX}"))
 }
 
 /// The memo, or `None` where there is none this build reads: a missing,
@@ -287,9 +293,10 @@ fn memoized(memo: Option<Memo>, keys: &Keys) -> Option<UnmanagedCopies> {
     })
 }
 
-fn memo_of(keys: &Keys, copies: &UnmanagedCopies) -> Memo {
+fn memo_of(scope: &Scope, keys: &Keys, copies: &UnmanagedCopies) -> Memo {
     Memo {
         schema: MEMO_SCHEMA,
+        scope: scope.canonical().label(),
         proven: copies.proven.clone(),
         registrations: copies.registrations.clone(),
         entries: keys
@@ -331,7 +338,7 @@ pub fn derive(env: &Env, scope: &Scope) -> Result<()> {
         return Ok(());
     }
     let copies = crate::engine::compare_unmanaged_copies(env, scope, &manifest, &lock, &occupied)?;
-    store(env, scope, &memo_of(&keys, &copies))
+    store(env, scope, &memo_of(scope, &keys, &copies))
 }
 
 /// An absent record reads as empty: the state this module reports on most
@@ -504,7 +511,7 @@ fn resolve(
             if fresh {
                 // A memo that will not write costs the next check one
                 // plan; the verdicts in hand are still this check's.
-                let _ = store(env, scope, &memo_of(&keys, &copies));
+                let _ = store(env, scope, &memo_of(scope, &keys, &copies));
             }
             (keys, copies)
         }
@@ -558,7 +565,7 @@ fn resolve(
                 registrations: Default::default(),
                 completion: copies.completion,
             };
-            let _ = store(env, scope, &memo_of(&keys, &settled));
+            let _ = store(env, scope, &memo_of(scope, &keys, &settled));
             (Claim::Recorded, None)
         }
         Ok(claim) => (claim, None),
