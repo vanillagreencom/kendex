@@ -109,6 +109,10 @@ run_refresh() { # CONTENT VERIFY CLASS
   if [ -n "${CATALOG_REV-v1.7.0}" ]; then
     catalog_env=("KENDEX_CATALOG_REV=${CATALOG_REV-v1.7.0}")
   fi
+  # LAND_TOKEN, where a row sets it, is the landing app's token.
+  if [ -n "${LAND_TOKEN:-}" ]; then
+    catalog_env+=("KENDEX_LAND_TOKEN=$LAND_TOKEN")
+  fi
   rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/refreshed" \
     "$TMP/state/head-reads" "$TMP/state/shown-head" "$TMP/state/arm-attempted" \
     "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json" \

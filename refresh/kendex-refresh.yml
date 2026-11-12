@@ -4,7 +4,9 @@
 # Adoption refuses the fixed names in repository or organization Actions secrets:
 # outside values could fill a name absent from the protected environment.
 # The shared job chooses a complete KENDEX pair, then falls back to FLEET.
-# The FLEET pair also supplies upstream issue reporting. The shared job runs
+# The FLEET pair also supplies upstream issue reporting. The optional
+# KENDEX_LAND pair is the landing app, which lands a proved render on the
+# default branch with no pull request. The shared job runs
 # the refresh from the kendex release the major tag names.
 # Opening a pull request needs that repository's app token.
 # Auto-merge depends on the published head becoming visible in GitHub.
@@ -72,3 +74,5 @@ jobs:
       KENDEX_APP_PRIVATE_KEY: ${{ secrets.KENDEX_APP_PRIVATE_KEY }}
       FLEET_GH_APP_ID: ${{ secrets.FLEET_GH_APP_ID }}
       FLEET_GH_APP_PRIVATE_KEY: ${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}
+      KENDEX_LAND_APP_ID: ${{ secrets.KENDEX_LAND_APP_ID }}
+      KENDEX_LAND_APP_PRIVATE_KEY: ${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}

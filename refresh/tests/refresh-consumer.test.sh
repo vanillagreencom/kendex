@@ -117,6 +117,7 @@ set -euo pipefail
 # its fixture paths so that the repository read reaches the API fixture.
 export TEST_STATE="@STATE@" GH_SHIM_FIXTURES="@FIXTURES@" TEST_GH_SHIM="@GH_SHIM@"
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
+printf '%s|%s\n' "${GH_TOKEN-}" "$*" >>"$TEST_STATE/tokens"
 query=""
 for arg in "$@"; do
   case "$arg" in
@@ -134,7 +135,7 @@ shown_head() {
 }
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
-  'api repos/acme/test/rules/branches/main')
+  'api repos/acme/test/rules/branches/main' | 'api repos/acme/test/rules/branches/main?per_page=100')
     if [ -f "$TEST_STATE/branch-rules" ]; then
       [ "$(cat "$TEST_STATE/branch-rules")" != fail ] || exit 87
       cat "$TEST_STATE/branch-rules"
@@ -144,11 +145,23 @@ case "$*" in
       [ "$(cat "$TEST_STATE/branch-protected")" != fail ] || exit 87
       cat "$TEST_STATE/branch-protected"
     else printf 'false\n'; fi ;;
+  'api repos/acme/test/rulesets/'*' --jq .current_user_can_bypass')
+    answer="$TEST_STATE/ruleset-bypass-${2##*/}"
+    if [ -f "$answer" ]; then
+      [ "$(cat "$answer")" != fail ] || exit 87
+      cat "$answer"
+    else printf 'never\n'; fi ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
+  'api graphql '*'mergeQueue(branch: $branch)'*)
+    # The landing check's queue read, answered as its --jq filter prints it.
+    if [ -f "$TEST_STATE/queue-entries" ]; then
+      [ "$(cat "$TEST_STATE/queue-entries")" != fail ] || exit 87
+      cat "$TEST_STATE/queue-entries"
+    else printf '0\n'; fi ;;
   'api graphql '*)
     # A read before any refusal is the run-start read, which precedes the
     # refresh.
@@ -359,6 +372,26 @@ if [ -f "$TEST_STATE/classifier-proof" ] &&
 fi
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
+if [ "${1:-}" = push ] && [[ " $* " == *':refs/heads/main '* ]]; then
+  printf 'git push main token=%s\n' "${GH_TOKEN-}" >>"$TEST_STATE/calls"
+  [ -f "$TEST_STATE/land-mode" ] || exec "$TEST_REAL_GIT" "$@"
+  # git's own refusal of a push behind the remote, then GitHub's refusal of
+  # a push a ruleset holds.
+  case "$(cat "$TEST_STATE/land-mode")" in
+    moved)
+      printf '%s\n' 'To https://github.com/acme/test' \
+        ' ! [rejected]        HEAD -> main (fetch first)' \
+        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
+      exit 1 ;;
+    rejected)
+      printf '%s\n' 'remote: error: GH013: Repository rule violations found for refs/heads/main.        ' \
+        'To https://github.com/acme/test' \
+        ' ! [remote rejected] HEAD -> main (push declined due to repository rule violations)' \
+        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
+      exit 1 ;;
+    *) exit 2 ;;
+  esac
+fi
 if [ "${1:-}" = push ]; then
   printf 'git push\n' >>"$TEST_STATE/calls"
   case "${TEST_PUSH_MODE:-normal}" in
@@ -992,6 +1025,191 @@ rm -f -- "$TMP/state/branch-rules" "$TMP/state/branch-protected"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 cp "$TMP/arm-helper" "$arm_helper"
+# A render this run committed lands on the default branch from the run
+# itself, with no pull request and with the landing token alone, where each
+# ruleset on that branch answers always for that token and its merge queue
+# holds no entry. Every other answer, class, queue and refusal keeps the pull
+# request route, and a default branch that moved defers to the next run. A
+# retained head never lands, and a landed run closes the open rolling pull
+# request only while GitHub still holds it open. Each run restores the
+# remote's default branch, so the next starts from it.
+land_matches() { # OUTCOME CLASS CLOSE
+  local main rolling
+  main="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" || return 1
+  rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
+  [ "$RC" -eq 0 ] || return 1
+  case "$1" in
+    landed)
+      [ "$main" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$main^")" = "$land_base" ] &&
+        [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=landed pr=none class=render head=$main" <<<"$OUT" &&
+        ! grep -q '^pr merge \|^api --method ' "$TMP/state/calls" &&
+        grep -qxF "Landed \`$main\` on \`main\` with no pull request." "$TMP/state/summary" &&
+        grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
+        [ "$(grep -c '^git push main ' "$TMP/state/calls")" -eq 1 ] &&
+        grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
+        # The bypass reads carry the landing token alone, and the queue read
+        # the repository token.
+        grep -q '^land-token|api repos/acme/test/rules/branches/main?' "$TMP/state/tokens" &&
+        grep -q '^land-token|api repos/acme/test/rulesets/' "$TMP/state/tokens" &&
+        ! grep -v '^land-token|' "$TMP/state/tokens" | grep -q 'rules/branches/main?\|/rulesets/' &&
+        grep -q '^test-token|api graphql .*mergeQueue' "$TMP/state/tokens" || return 1
+      case "$3" in
+        close) grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" ;;
+        *) ! grep -q '^pr close ' "$TMP/state/calls" ;;
+      esac ;;
+    base-moved)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
+        grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
+        ! grep -q '^pr \|^api --method ' "$TMP/state/calls" ;;
+    retained)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=unchanged pr=1 class=render head=$land_rolling published=false" <<<"$OUT" &&
+        ! grep -q '^git push\|^pr \(merge\|close\) \|^api --method ' "$TMP/state/calls" ;;
+    pull | refused | unasked)
+      [ "$main" = "$land_base" ] && [ "$rolling" != "$land_rolling" ] &&
+        grep -qxF "refresh-state=pushed pr=1 class=$2" <<<"$OUT" &&
+        grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
+      case "$1" in
+        refused) grep -qxF 'refresh-land=refused value=1' <<<"$OUT" ;;
+        unasked) ! grep -q 'rules/branches/main?\|/rulesets/\|mergeQueue\|^git push main ' "$TMP/state/calls" ;;
+        pull) ! grep -q '^git push main ' "$TMP/state/calls" ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+cp "$TMP/arm-runner" "$TMP/land-runner"
+# NAME|BYPASS_11|BYPASS_12|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE
+# CONTROL is a source edit on a copy of the runner that must turn the row's
+# assertion red.
+for row in \
+  'every-ruleset|always|always|render|true||landed||0|land-token|close' \
+  'merged-since-start|always|always|render|true||landed|close-merged|0|land-token|merged' \
+  'no-token|always|always|render|true||unasked|token-unchecked|0||' \
+  'one-never|always|never|render|true||pull|ignore-answer|0|land-token|' \
+  'pull-requests-only|pull_requests_only|always|render|true||pull||0|land-token|' \
+  'unread-ruleset|always|fail|render|true||pull||0|land-token|' \
+  'small-class|always|always|small|true||unasked||0|land-token|' \
+  'unmeasured|always|always|standard|false||unasked||0|land-token|' \
+  'base-moved|always|always|render|true|moved|base-moved||0|land-token|' \
+  'push-refused|always|always|render|true|rejected|refused||0|land-token|' \
+  'queue-busy|always|always|render|true||pull|queue-ignored|2|land-token|' \
+  'unread-queue|always|always|render|true||pull||fail|land-token|' \
+  'retained|always|always|render|true||retained|skip-unchanged|0|land-token|'; do
+  IFS='|' read -r name first second class MEASURED land expected control queue LAND_TOKEN close <<<"$row"
+  printf '[{"type":"pull_request","ruleset_id":11},{"type":"merge_queue","ruleset_id":12},{"type":"deletion","ruleset_id":11}]\n' >"$TMP/state/branch-rules"
+  printf '%s\n' "$first" >"$TMP/state/ruleset-bypass-11"
+  printf '%s\n' "$second" >"$TMP/state/ruleset-bypass-12"
+  printf '%s\n' "$queue" >"$TMP/state/queue-entries"
+  for mutation in none $control; do
+    reset_default
+    cp "$TMP/land-runner" "$runner"
+    if [ "$mutation" != none ]; then
+      python3 - "$runner" "$mutation" <<'LAND_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old, new = {
+    'ignore-answer': ('    [ "$answer" = always ] || return 1', '    : # [ "$answer" = always ] || return 1'),
+    'close-merged': ('    merged | closed) return 0 ;;', '    merged | closed) ;;'),
+    'token-unchecked': ('[ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ]', 'KENDEX_LAND_TOKEN="${KENDEX_LAND_TOKEN:-}"; [ "$class" = render ]'),
+    'queue-ignored': ('  [ "$queued" = 0 ]\n}', '  : # [ "$queued" = 0 ]\n}'),
+    'skip-unchanged': ('if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
+}[sys.argv[2]]
+assert s.count(old) == 1, old
+changed = s.replace(old, new)
+assert changed != s
+p.write_text(changed)
+LAND_CONTROL
+    fi
+    commit "$repo"
+    git -C "$repo" push -q origin main
+    land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+    rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/prepush-state.json"
+    [ -z "$land" ] || printf '%s\n' "$land" >"$TMP/state/land-mode"
+    printf '1\n' >"$TMP/state/pr"
+    content="land-$name-$mutation"
+    if [ "$name" = retained ]; then
+      # The rolling head a run published on this base while a ruleset held
+      # the landing app, kept open as after a failed merge group. The run
+      # under test renders the same tree.
+      printf 'never\n' >"$TMP/state/ruleset-bypass-11"
+      run_refresh "$content" pass "$class"
+      printf '%s\n' "$first" >"$TMP/state/ruleset-bypass-11"
+      [ "$RC" -eq 0 ] || bad "$name rolling head setup" "$OUT"
+      reset_default
+    fi
+    land_rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    if [ "$close" = merged ]; then
+      # GitHub merged the rolling pull request after the run-start read.
+      jq '.data.repository.pullRequest.state = "MERGED"' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json"
+    fi
+    : >"$TMP/state/calls"
+    : >"$TMP/state/tokens"
+    run_refresh "$content" pass "$class"
+    if [ "$mutation" = none ]; then
+      if land_matches "$expected" "$class" "$close"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
+    elif ! land_matches "$expected" "$class" "$close"; then
+      ok "control: $mutation turns the $name landing assertion red"
+    else bad "$name $mutation landing control" "$OUT"; fi
+    git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+  done
+done
+rm -f -- "${TMP:?}/state/prepush-state.json"
+# The current route closes the open rolling pull request the same way: only
+# while GitHub still holds it open.
+for close in close merged; do
+  reset_default
+  cp "$TMP/land-runner" "$runner"
+  commit "$repo"
+  git -C "$repo" push -q origin main
+  printf '1\n' >"$TMP/state/pr"
+  if [ "$close" = merged ]; then
+    jq '.data.repository.pullRequest.state = "MERGED"' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json"
+  fi
+  : >"$TMP/state/calls"
+  run_refresh "$(git -C "$repo" show HEAD:rendered.txt)" pass render
+  closed=false
+  ! grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" || closed=true
+  if [ "$RC" -eq 0 ] && grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+      { { [ "$close" = close ] && [ "$closed" = true ]; } || { [ "$close" = merged ] && [ "$closed" = false ]; }; }; then
+    ok "current route close=$close"
+  else bad "current route close=$close" "$OUT"; fi
+  rm -f -- "${TMP:?}/state/prepush-state.json"
+done
+# A revert on kendex main reaches the consumer as one more render, which
+# lands by the same route: a render back to the bytes the landed one
+# replaced lands on top of it.
+reset_default
+cp "$TMP/land-runner" "$runner"
+printf '[{"type":"pull_request","ruleset_id":11}]\n' >"$TMP/state/branch-rules"
+printf 'always\n' >"$TMP/state/ruleset-bypass-11"
+printf '0\n' >"$TMP/state/queue-entries"
+LAND_TOKEN=land-token
+MEASURED=true
+commit "$repo"
+git -C "$repo" push -q origin main
+land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+revert_before="$(git --git-dir="$TMP/remote" show "$land_base:rendered.txt")"
+: >"$TMP/state/pr"
+run_refresh land-forward pass render
+forward="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+reset_default
+run_refresh "$revert_before" pass render
+reverted="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+if [ "$RC" -eq 0 ] && [ "$forward" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$forward^")" = "$land_base" ] &&
+    [ "$(git --git-dir="$TMP/remote" rev-parse "$reverted^")" = "$forward" ] &&
+    grep -qxF "refresh-state=landed pr=none class=render head=$reverted" <<<"$OUT" &&
+    [ "$(git --git-dir="$TMP/remote" show "$reverted:rendered.txt")" = "$revert_before" ]; then
+  ok 'a render reverted on kendex main lands by the same route'
+else bad 'reverted render landing' "$OUT"; fi
+git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+unset MEASURED LAND_TOKEN
+rm -f -- "${TMP:?}/state/branch-rules" "${TMP:?}/state/land-mode" "${TMP:?}/state/ruleset-bypass-11" "${TMP:?}/state/ruleset-bypass-12" "${TMP:?}/state/queue-entries"
+reset_default
+cp "$TMP/arm-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
 run_refresh stale pass render

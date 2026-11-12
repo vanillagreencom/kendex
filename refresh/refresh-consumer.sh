@@ -3,13 +3,21 @@
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
 # checkout and never executes the remote rolling branch. After GitHub shows the
 # published head, it merges directly where the base has no rules or protection,
-# or requests auto-merge. SKILL.md defines the arm outcomes.
+# or requests auto-merge. SKILL.md defines the arm outcomes. A render this
+# run committed takes neither route where GitHub answers that the landing
+# token, KENDEX_LAND_TOKEN, may always bypass every ruleset on the default
+# branch and that branch's merge queue holds no entry: the run pushes its
+# one commit to that branch with that token, and no pull request, merge
+# group or approval follows.
 # Output records: refresh-state=current pr=none class=none, or
+# refresh-state=landed pr=none class=render head=REVISION, or
 # refresh-state=pushed|merged pr=NUMBER class=CLASS, or
 # refresh-state=unchanged pr=NUMBER|none class=CLASS head=REVISION published=false, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
-# refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
-# whose render did not run also gets
+# refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved. A
+# landing push GitHub refused also prints refresh-land=refused value=STATUS
+# ahead of the pull request route's record. A consumer whose render did not
+# run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,6 +99,17 @@ refresh_lifecycle() {
     printf 'refresh-error=push-state value=output\n' >&2
     exit 1
   fi
+}
+# Closes the open rolling pull request a newer state supersedes. GitHub can
+# merge or close it after the read at run start, and gh refuses to close a
+# merged pull request, so its state is read again first.
+refresh_close_superseded() {
+  [ -n "$pr" ] || return 0
+  refresh_lifecycle
+  case "$reason" in
+    merged | closed) return 0 ;;
+  esac
+  gh pr close "$pr" --repo "$GH_REPO"
 }
 # The queue can already own the pull request. An arm alone can stay in place
 # until this run proves it has a replacement head to publish.
@@ -472,9 +491,7 @@ if [ "$publication_status" -gt 1 ]; then
 fi
 if [ "$publication_status" -eq 0 ]; then
   report_settings
-  if [ -n "$pr" ]; then
-    gh pr close "$pr" --repo "$GH_REPO"
-  fi
+  refresh_close_superseded
   printf 'refresh-state=current pr=none class=none\n'
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     printf 'state=current\n' >>"$GITHUB_OUTPUT"
@@ -570,6 +587,59 @@ if [ "$state" = unchanged ]; then
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
+fi
+# Only a commit this run made lands on the default branch: the retained head
+# above may be one a failed merge group left, and this run proved only its
+# own commit, on the base it fetched. KENDEX_LAND_TOKEN is the landing app's
+# token, which only the protected environment mints. The bypass reads and
+# the push use it alone, since GitHub answers current_user_can_bypass for
+# the credential that asks. Each ruleset on the branch must answer always.
+# No token, a class other than render, an unread rule, a rule with no
+# ruleset, a branch with no ruleset, any other answer and a merge queue that
+# holds an entry or could not be read keep the pull request route: a push to
+# a branch whose queue holds an entry makes GitHub rebuild every running
+# group. GitHub still judges the push itself.
+refresh_may_land() {
+  local rules ids id answer queued
+  [ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ] || return 1
+  rules="$(GH_TOKEN="$KENDEX_LAND_TOKEN" gh api "repos/$GH_REPO/rules/branches/$default?per_page=100")" || return 1
+  ids="$(jq -r 'if type != "array" then error("rules") else
+    [.[] | .ruleset_id | if type == "number" then . else error("ruleset") end] | unique | .[] end' <<<"$rules")" || return 1
+  [ -n "$ids" ] || return 1
+  while IFS= read -r id; do
+    answer="$(GH_TOKEN="$KENDEX_LAND_TOKEN" gh api "repos/$GH_REPO/rulesets/$id" --jq .current_user_can_bypass)" || return 1
+    [ "$answer" = always ] || return 1
+  done <<<"$ids"
+  queued="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" -f branch="$default" \
+    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
+    --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1
+  [ "$queued" = 0 ]
+}
+if refresh_may_land; then
+  land_status=0
+  GH_TOKEN="$KENDEX_LAND_TOKEN" git push origin "$head:refs/heads/$default" 2>"$TMP/land-stderr" || land_status=$?
+  cat -- "$TMP/land-stderr" >&2
+  if [ "$land_status" -eq 0 ]; then
+    refresh_close_superseded
+    printf 'refresh-state=landed pr=none class=%s head=%s\n' "$class" "$head"
+    {
+      printf 'Landed `%s` on `%s` with no pull request.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n' \
+        "$head" "$default" "$version_report" "$class" "$class_line"
+      [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report"
+      [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+      [ -z "$retired_items" ] || printf '\nRetired items:\n```text\n%s```\n' "$retired_items"
+    } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+    exit 0
+  fi
+  # git prints "[rejected]" where the default branch moved after this run's
+  # fetch (git-push(1) OUTPUT), and the next run renders on the new base.
+  # GitHub's own refusal prints "[remote rejected]" and keeps the pull
+  # request route.
+  if grep -qF ' ! [rejected]' "$TMP/land-stderr"; then
+    printf 'refresh-state=deferred reason=base-moved\n'
+    exit 0
+  fi
+  printf 'refresh-land=refused value=%s\n' "$land_status"
 fi
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"
