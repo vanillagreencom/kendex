@@ -1545,6 +1545,11 @@ fn model_reset(
 /// server's start, or on no start at all, and its harness, home and native
 /// session are this session's or unrecorded.
 fn heal_overseer(doc: &mut Document, heal: &Heal) -> Result<Value> {
+    // A controller runs one of the four harnesses: any other word is refused
+    // by its name and never written.
+    if !heal.harness.is_empty() {
+        agent_runtime::harness::Harness::named(&heal.harness)?;
+    }
     let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").to_owned();
     let Some(Value::Object(record)) = doc.get_mut("overseer") else {
         return Err(refused("overseer-native-unbound", &[("pane", &heal.pane)]));

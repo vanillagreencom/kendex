@@ -2316,6 +2316,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             binding_floor,
             env,
         } => {
+            let named = agent_runtime::harness::Harness::named(&harness)?;
             let path = target_path(&target, &settings);
             let host = ops::Host::kernel();
             let request = ops::accounts::PickRequest {
@@ -2339,12 +2340,10 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 // table) and the directory, on stdout at exit 0; any other
                 // answer is its keyed line on stderr at the answer's exit.
                 if let ops::accounts::PickAnswer::Lane(judged) = &answer {
-                    let harness = agent_runtime::harness::Harness::parse(&request.harness)
-                        .map(|h| h.account_var(request.model.as_deref()))
-                        .unwrap_or("CLAUDE_CONFIG_DIR");
                     let _ = writeln!(
                         std::io::stdout().lock(),
-                        "{harness}={}",
+                        "{}={}",
+                        named.account_var(request.model.as_deref()),
                         judged.row.config_dir
                     );
                 } else {
@@ -2436,9 +2435,12 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
         AccountsOp::Billed {
             harness,
             native_model,
-        } => Ok(serde_json::json!({
-            "billed": ops::accounts::pick_harness(&harness, &native_model),
-        })),
+        } => {
+            agent_runtime::harness::Harness::named(&harness)?;
+            Ok(serde_json::json!({
+                "billed": ops::accounts::pick_harness(&harness, &native_model),
+            }))
+        }
     }
 }
 

@@ -637,12 +637,23 @@ fn check_cause(r: &RequestTransfer, current: &Overseer) -> Result<()> {
     }
 }
 
+/// A controller runs one of the four harnesses: a pending naming any other
+/// is refused by its name before any intent, so no record names a harness
+/// nothing launches.
+fn pending_harness(pending: &Pending) -> Result<()> {
+    if let Some(word) = &pending.harness {
+        agent_runtime::harness::Harness::named(word)?;
+    }
+    Ok(())
+}
+
 pub(super) fn request_transfer(
     path: &Path,
     doc: &mut Document,
     r: &RequestTransfer,
     env: &Env,
 ) -> Result<TransferRequested> {
+    pending_harness(&r.successor)?;
     let current = overseer(path, doc)?;
     let generation = current.generation.unwrap_or(0);
     let target = overseer_target(generation);
@@ -715,6 +726,7 @@ pub(super) fn start_controller(
     r: &StartController,
     env: &Env,
 ) -> Result<ControllerStarted> {
+    pending_harness(&r.controller)?;
     let current: Option<Overseer> = state::field(path, doc, "overseer")?;
     let generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let target = overseer_target(generation);

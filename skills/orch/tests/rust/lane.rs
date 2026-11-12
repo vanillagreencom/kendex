@@ -979,6 +979,150 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
     }
 }
 
+/// orch starts, records and watches lanes and controllers on the four
+/// harnesses alone. Through the executable, every verb that takes a
+/// caller's harness word refuses OpenCode's `harness-unknown` naming it and
+/// the four, and writes nothing: a lane's and a controller's launch, a
+/// succession, a controller record's heal, the account verbs and the marks;
+/// a preference entry naming it is refused naming the entry, the harness
+/// and the four.
+#[test]
+fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writes_nothing() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let mut doc = fleet.fleet();
+    doc["overseer"] = json!({"server": "11", "pane": "%1", "server_start": null});
+    std::fs::write(fleet.fleet_path(), doc.to_string()).unwrap();
+    let before = fleet.fleet();
+    let mut launch_lane = launch("KEN-A", fleet.state_dir());
+    launch_lane["harness"] = json!("opencode");
+    let opencode = json!({"harness": "opencode"});
+    let requests = [
+        ("launch-lane", launch_lane),
+        (
+            "start-controller",
+            json!({"op": "start-controller", "controller": opencode}),
+        ),
+        (
+            "request-transfer",
+            json!({"op": "request-transfer", "cause": "dead", "expected": {}, "successor": opencode}),
+        ),
+    ];
+    let mut cases: Vec<(&str, Vec<String>)> = requests
+        .iter()
+        .map(|(name, request)| {
+            let path = fleet.state_dir().join(format!("{name}.json"));
+            std::fs::write(&path, request.to_string()).unwrap();
+            let args =
+                ["op", "--fleet", "--request", &path.display().to_string()].map(str::to_owned);
+            (*name, args.to_vec())
+        })
+        .collect();
+    let verbs: [(&str, &[&str]); 6] = [
+        (
+            "state heal",
+            &[
+                "state",
+                "heal",
+                "--fleet",
+                "--server",
+                "11",
+                "--pane",
+                "%1",
+                "--start",
+                "5",
+                "--harness",
+                "opencode",
+                "--session",
+                "s1",
+            ],
+        ),
+        (
+            "accounts billed",
+            &[
+                "accounts",
+                "billed",
+                "--harness",
+                "opencode",
+                "--native-model",
+                "m",
+            ],
+        ),
+        (
+            "accounts pick",
+            &[
+                "accounts",
+                "pick",
+                "--fleet",
+                "--harness",
+                "opencode",
+                "--native-model",
+                "m",
+            ],
+        ),
+        (
+            "accounts walk source",
+            &[
+                "accounts",
+                "walk",
+                "--fleet",
+                "--source-harness",
+                "opencode",
+            ],
+        ),
+        (
+            "accounts walk caller",
+            &[
+                "accounts",
+                "walk",
+                "--fleet",
+                "--caller-harness",
+                "opencode",
+            ],
+        ),
+        ("marks", &["marks", "--fleet", "--harness", "opencode"]),
+    ];
+    cases.extend(
+        verbs
+            .iter()
+            .map(|(name, args)| (*name, args.iter().map(|a| (*a).to_owned()).collect())),
+    );
+    for (name, args) in &cases {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = fleet.run(&args);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", stderr(&out));
+        let answer = reply(&out);
+        assert_eq!(
+            answer["refusal"]["key"], "harness-unknown",
+            "{name}: {answer}"
+        );
+        assert_eq!(
+            answer["refusal"]["fields"],
+            json!([
+                ["harness", "opencode"],
+                ["supported", "claude,codex,copilot,pi"]
+            ]),
+            "{name}"
+        );
+        assert_eq!(fleet.fleet(), before, "{name}: a refusal writes nothing");
+    }
+    let mut preferring = Fleet::new(4);
+    preferring.init_fleet();
+    preferring
+        .env
+        .push(("ORCH_LANE_PREFERENCE".into(), "opencode:m:high".into()));
+    let answer = reply(&preferring.run(&["accounts", "walk", "--fleet"]));
+    assert_eq!(answer["refusal"]["key"], "preference-invalid", "{answer}");
+    assert_eq!(
+        answer["refusal"]["fields"],
+        json!([
+            ["entry", "opencode:m:high"],
+            ["harness", "opencode"],
+            ["supported", "claude,codex,copilot,pi"]
+        ])
+    );
+}
+
 /// A launch on a named account that names no model runs the harness's
 /// default model, which spends an account window the judge never read.
 /// Through the real `launch-lane`: a launch naming an account and no model,

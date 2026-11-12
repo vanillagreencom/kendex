@@ -52,6 +52,19 @@ impl Harness {
         }
     }
 
+    /// `word` as a harness, or `harness-unknown` naming the word and the
+    /// four this runtime launches: a caller's word for any other harness is
+    /// refused by its own name, never read as one of these.
+    pub fn named(word: &str) -> Result<Harness> {
+        Harness::parse(word).ok_or_else(|| {
+            let supported = Harness::ALL.map(Harness::name).join(",");
+            Error::refused(
+                "harness-unknown",
+                &[("harness", word), ("supported", &supported)],
+            )
+        })
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             Harness::Claude => "claude",
@@ -597,6 +610,36 @@ mod tests {
             assert_eq!(h.session_id_words("5c3b"), None, "{h}");
             assert!(!h.fixes_session_id(), "{h}");
         }
+    }
+
+    /// A word for a harness outside the four, OpenCode's among them, is
+    /// refused naming the word and the four, by the one parse and by a
+    /// record's read alike, and is never taken for one of the four.
+    #[test]
+    fn a_harness_outside_the_four_is_refused_by_its_own_name() {
+        for h in Harness::ALL {
+            assert_eq!(Harness::named(h.name()).unwrap(), h);
+        }
+        let Err(Error::Refused { key, fields }) = Harness::named("opencode") else {
+            panic!("opencode parsed as a harness");
+        };
+        assert_eq!(key, "harness-unknown");
+        assert_eq!(
+            fields,
+            [
+                ("harness".to_owned(), "opencode".to_owned()),
+                ("supported".to_owned(), "claude,codex,copilot,pi".to_owned()),
+            ]
+        );
+        let read = serde_json::from_str::<Harness>("\"opencode\"")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            read.contains(
+                "unknown variant `opencode`, expected one of `claude`, `codex`, `copilot`, `pi`"
+            ),
+            "{read}"
+        );
     }
 
     /// The account routing table: every harness but Pi routes its account

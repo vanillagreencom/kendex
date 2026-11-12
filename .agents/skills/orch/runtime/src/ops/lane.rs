@@ -862,8 +862,8 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
 /// runs the harness's default, whose window the account's judge never read,
 /// and one naming no effort its default level. Refused before any intent,
 /// the model first; the spellings are the words the harness's line takes.
-fn choice_named(r: &LaunchLane) -> Result<()> {
-    let (Some(account), Some(harness)) = (&r.account, Harness::parse(&r.harness)) else {
+fn choice_named(r: &LaunchLane, harness: Harness) -> Result<()> {
+    let Some(account) = &r.account else {
         return Ok(());
     };
     let named = |word: &Option<String>| word.as_deref().is_some_and(|w| !w.is_empty());
@@ -921,6 +921,9 @@ pub(super) fn launch_lane(
             surface: surface.to_owned(),
         });
     }
+    // A lane runs one of the four harnesses: any other is refused by its
+    // name before any intent, so no record names a harness nothing launches.
+    let harness = Harness::named(&r.harness)?;
     // A permission word no launch line of the harness carries faithfully
     // is refused before any intent, never widened to the posture's own.
     if r.permission_meaning().is_err() {
@@ -932,7 +935,7 @@ pub(super) fn launch_lane(
             ],
         )));
     }
-    choice_named(r)?;
+    choice_named(r, harness)?;
     let cloud = kind == CLOUD_KIND;
     // The cap the request's kind is bounded by: a cloud session the cloud
     // cap, every other lane the lane cap, judged here before the transition

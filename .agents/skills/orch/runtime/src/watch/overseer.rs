@@ -2534,15 +2534,7 @@ pub fn marks_verb(
     account: Option<&str>,
     now: u64,
 ) -> crate::error::Result<Value> {
-    let harness = match harness {
-        Some(word) => Some(Harness::parse(word).ok_or_else(|| {
-            crate::error::Error::from(agent_runtime::Error::refused(
-                "harness-unknown",
-                &[("harness", word)],
-            ))
-        })?),
-        None => None,
-    };
+    let harness = harness.map(Harness::named).transpose()?;
     let record = crate::state::load(path)?
         .map(|snapshot| {
             <crate::state::FleetState as crate::state::Record>::view(path, &snapshot.doc)

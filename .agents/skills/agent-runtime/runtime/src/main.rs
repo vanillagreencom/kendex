@@ -694,10 +694,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         })),
         Verb::Probe { harness: name } => {
             let targets: Vec<Harness> = match name {
-                Some(n) => vec![
-                    Harness::parse(&n)
-                        .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &n)]))?,
-                ],
+                Some(n) => vec![Harness::named(&n)?],
                 None => Harness::ALL.to_vec(),
             };
             let mut rows = Vec::new();
@@ -938,8 +935,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let (session, judged) = match (record_path, harness) {
                 (Some(path), None) => recorded_session(&path)?,
                 (None, Some(name)) => {
-                    let harness = Harness::parse(&name)
-                        .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
+                    let harness = Harness::named(&name)?;
                     let (Some(socket), Some(server_pid), Some(pane), Some(cwd)) =
                         (socket, server_pid, pane, cwd)
                     else {
@@ -1074,8 +1070,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             harness: name,
             process: reading,
         } => {
-            let h = Harness::parse(&name)
-                .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
+            let h = Harness::named(&name)?;
             let text =
                 std::fs::read_to_string(&screen).map_err(|e| Error::io("read", &screen, e))?;
             let reading = match reading.as_str() {
@@ -1099,8 +1094,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             cwd,
             id,
         } => {
-            let h = Harness::parse(&name)
-                .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
+            let h = Harness::named(&name)?;
             Ok(match session::fixed_id_file(h, &home, &cwd, &id) {
                 Reading::Live(file) => serde_json::json!({"reading": "live", "file": file}),
                 Reading::Gone => serde_json::json!({"reading": "gone"}),

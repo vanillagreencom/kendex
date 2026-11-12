@@ -644,12 +644,33 @@ pub fn walk(
     now: u64,
 ) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
+    // The session the walk is asked for and its predecessor each run one of
+    // the four harnesses; any other is refused by its name, never walked as
+    // a session of no posture or no entry.
+    let source = req.source.as_ref().map(|s| s.harness.as_str());
+    let caller = req.caller.as_ref().map(|c| c.harness.as_str());
+    for word in source.into_iter().chain(caller) {
+        Harness::named(word)?;
+    }
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
         Scope::Lane => settings.lane_preference.clone().unwrap_or_default(),
         Scope::Overseer => settings.overseer_preference.clone(),
     });
-    let preference = Preference::parse(&text, req.scope)
-        .map_err(|entry| refused("preference-invalid", &[("entry", &entry)]))?;
+    // An entry whose harness is none of the four names that harness and the
+    // four beside the entry, so the reader is not left guessing which of its
+    // fields the grammar refused.
+    let preference = Preference::parse(&text, req.scope).map_err(|entry| {
+        let head = entry.split([':', '@']).next().unwrap_or_default();
+        let mut fields = vec![("entry".to_owned(), entry.clone())];
+        if let Err(agent_runtime::Error::Refused { fields: named, .. }) = Harness::named(head) {
+            fields.extend(named);
+        }
+        let fields: Vec<(&str, &str)> = fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        refused("preference-invalid", &fields)
+    })?;
     let named = req
         .lane
         .as_deref()
