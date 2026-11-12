@@ -950,7 +950,7 @@ if [ "$HOST" -eq 1 ] || [ -n "$STATE_DIR" ]; then
   . "$ORCH_SCRIPTS/lib/lane-host-read.sh"
 fi
 if [ "$VERB" = compact ]; then
-  lm_require_orch orch-env lib/state-archive.sh
+  lm_require_orch orch-env orch-runtime
 fi
 [ -z "$ATTACH" ] || lm_require_orch orch-env
 
@@ -2096,22 +2096,24 @@ lm_seconds() { # OPTION VALUE
 # Cursor, outbound, inbound: inbox takes the same cursor-before-mail order.
 # Both mailbox locks span the exchange classification and the rewrite.
 lm_compact_locked() {
-  local counts root total
+  local counts root total archive
   lm_cursor_read
   lm_store plan "$BOX" "$WORK_DIR" "$COMPACT_CUTOFF" "$SEEN" "$MAILBOX_TIME_JQ$MAILBOX_CLASS_JQ"
   counts="$(cat -- "$WORK_DIR/counts.json")" || refuse file-unreadable "$BOX"
   total="$(jq '.["to-lane"] + .["to-overseer"]' <<<"$counts")" || refuse file-unreadable "$BOX"
   if [ "$total" -gt 0 ]; then
-    # shellcheck source=../../orch/scripts/lib/state-archive.sh
-    . "$ORCH_SCRIPTS/lib/state-archive.sh"
     root="$OWN_ROOT"
     [ -n "$root" ] || root="$ROOT"
-    SCRIPT_DIR="$ORCH_SCRIPTS" archive_write "$root" "$BOX" "compact-$ITEM-$COMPACT_NOW" "" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" ||
-      refuse archive-failed "$ARCHIVE_DIR" "$ARCHIVE_ERR"
-    REFUSE_EXTRA="kept=$ARCHIVE"
+    # The runtime judges the archive root against this mailbox and the state
+    # directory, then files the dropped rows; a refusal keeps every row.
+    archive="$("$ORCH_SCRIPTS/orch-runtime" archive write --project "$root" --removal-root "$BOX" \
+      --stem "compact-$ITEM-$COMPACT_NOW" "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" \
+      2>"$WORK_DIR/archive.err" | jq -er '.result.archive | strings' 2>/dev/null)" ||
+      refuse archive-failed "$BOX" "$(cat -- "$WORK_DIR/archive.err")"
+    REFUSE_EXTRA="kept=$archive"
     lm_store rewrite "$BOX" "$WORK_DIR"
     REFUSE_EXTRA=""
-    lm_message archived "$ARCHIVE" >&2
+    lm_message archived "$archive" >&2
   fi
   jq -r --arg item "$ITEM" '"compacted item=\($item) to-lane=\(.["to-lane"]) to-overseer=\(.["to-overseer"])"' <<<"$counts"
 }

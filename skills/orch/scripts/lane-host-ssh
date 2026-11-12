@@ -878,17 +878,17 @@ printf '%s\\n' "$member" > "$manifest/lane-host-state"
 tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return
-    # The local writer owns this setting's default and settings precedence.
+    # The local runtime owns this setting's default, its settings precedence
+    # and the refusal of a root a removal would take; its entry is Bash.
     bash = shutil.which("bash")
     if bash is None:
         raise FileNotFoundError(2, "Bash is required to read archive settings", "bash")
-    root = subprocess.run([bash, "-c",
-                           'set -euo pipefail\nSCRIPT_DIR=$1\n. "$SCRIPT_DIR/lib/state-archive.sh"\narchive_root "$PWD" "$2/$3"',
-                           "lane-host-ssh", str(Path(__file__).resolve().parent),
-                           row["repo"].rsplit("/", 1)[-1], item], stdout=subprocess.PIPE)
+    suffix = row["repo"].rsplit("/", 1)[-1] + "/" + item
+    root = subprocess.run([bash, str(Path(__file__).resolve().parent / "orch-runtime"),
+                           "archive", "root", "--suffix", suffix], stdout=subprocess.PIPE)
     if root.returncode != 0:
         raise SystemExit(root.returncode if root.returncode > 0 else 1)
-    directory = Path(root.stdout.decode().rstrip("\n")) / row["repo"].rsplit("/", 1)[-1] / item
+    directory = Path(json.loads(root.stdout)["result"]["root"]) / suffix
     try:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:

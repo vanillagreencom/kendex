@@ -247,6 +247,11 @@ exec git "$@"
             self.copy_tree(PACKAGE.parent / "mailbox/scripts", path.parent.parent.parent / "mailbox/scripts", dirs_exist_ok=True)
             for name in ("orch-env", "workflow-state", "git-context"):
                 self.copy_file(PACKAGE / "scripts" / name, path.parent / name)
+            # The archive root is the runtime's answer: this entry runs the
+            # binary setup built for these sources.
+            entry = path.parent / "orch-runtime"
+            entry.write_text(f'#!/bin/sh\nexec {shlex.quote(str(self.runtime_binary()))} "$@"\n')
+            entry.chmod(0o755)
 
     def call(self, *args, data=b"", **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=data, capture_output=True)
@@ -727,6 +732,9 @@ signal.sigwait({signal.SIGTERM})
         self.assertEqual(state.get("handoff", {}).get("cause"), "model-switched")
         self.assertEqual(state["handoff"]["model"], "claude-fable-5-1")
         self.assert_native_model_check(state)
+        # Marked started before the stop, so a switch acquired again is the
+        # same recovery, never a second one.
+        self.assertIs(state["model_checks"]["native-session"].get("recovery_started"), True)
 
     def assert_native_model_check(self, state):
         check = state["model_checks"]["native-session"]
@@ -3472,7 +3480,7 @@ fi'''))
 
     def test_control_close_ignoring_the_archive_root_fails_its_contract(self):
         original = self.script.read_text()
-        rule = 'directory = Path(root.stdout.decode().rstrip("\\n"))'
+        rule = 'directory = Path(json.loads(root.stdout)["result"]["root"])'
         self.assertEqual(original.count(rule), 1)
         self.script.write_text(original.replace(rule, 'directory = Path(os.environ["FLEET_DIR"]) / "archive"'))
         with self.assertRaises(AssertionError):
@@ -3514,7 +3522,7 @@ fi'''))
         original = self.script.read_text()
         rule = '        raise SystemExit(root.returncode if root.returncode > 0 else 1)'
         self.assertEqual(original.count(rule), 1)
-        fallback = str(self.root / "control-archive").encode()
+        fallback = json.dumps({"result": {"root": str(self.root / "control-archive")}}).encode()
         self.script.write_text(original.replace(rule, f'        root.stdout = {fallback!r}'))
         with self.assertRaises(AssertionError):
             self.archive_root_read_refusal()

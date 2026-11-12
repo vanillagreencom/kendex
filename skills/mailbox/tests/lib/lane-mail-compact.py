@@ -25,6 +25,9 @@ class Compaction(unittest.TestCase):
         self.env = {"PATH": os.environ["PATH"], "HOME": str(self.home), "LC_ALL": "C",
                     "ORCH_RECORD_RETENTION_DAYS": "5", "SLACK_THREAD_DAYS": "5",
                     "FLEET_DIR": str(self.home / "fleet")}
+        # The archive is the orch runtime's, found in the cache its setup built.
+        if "AGENT_RUNTIME_CACHE" in os.environ:
+            self.env["AGENT_RUNTIME_CACHE"] = os.environ["AGENT_RUNTIME_CACHE"]
         self.bin = self.home / "bin"
         self.bin.mkdir()
         date = shutil.which("date", path=self.env["PATH"])
@@ -139,6 +142,9 @@ class Compaction(unittest.TestCase):
         shutil.copytree(SCRIPTS, scripts)
         orch = scripts.parent.parent / "orch/scripts"
         shutil.copytree(ROOT / "skills/orch/scripts", orch)
+        # The copied runtime entry resolves its binary from these sources.
+        (orch.parent / "runtime").symlink_to(ROOT / "skills/orch/runtime")
+        (orch.parent.parent / "agent-runtime").symlink_to(ROOT / "skills/agent-runtime")
         path = (scripts if (SCRIPTS / relative).is_file() else orch) / relative
         content = path.read_text()
         self.assertEqual(content.count(old), 1, f"mutation target: {old}")
@@ -158,9 +164,14 @@ class Compaction(unittest.TestCase):
                              "numbers = [] + list(range(")
         with self.assertRaises(AssertionError):
             self.stable_values(mutant)
-        mutant = self.mutant("archive-pointer", "lane-mail", '    lm_message archived "$ARCHIVE" >&2',
-                             '    : archived "$ARCHIVE"')
+        mutant = self.mutant("archive-pointer", "lane-mail", '    lm_message archived "$archive" >&2',
+                             '    : archived "$archive"')
         with self.assertRaises(AssertionError):
+            self.stable_values(mutant)
+        mutant = self.mutant("archive-paths", "lane-mail",
+                             ' "$WORK_DIR/to-lane.jsonl" "$WORK_DIR/to-overseer.jsonl" \\\n',
+                             ' "$WORK_DIR/to-lane.jsonl" \\\n')
+        with self.assertRaisesRegex(AssertionError, "expired"):
             self.stable_values(mutant)
 
     def tracker_confirmation(self, scripts):
@@ -534,14 +545,9 @@ printf '%s\\n' '{"id":"writer","kind":"directive"}' | mailbox_append_locked "$2"
         self.assertFalse((box / "to-lane.jsonl.numbering").exists())
         archive_dir = self.home / "fleet/archive" / repo.name / "oversee"
         self.assertEqual(list(archive_dir.iterdir()), [])
-        mutant = self.mutant("no-cleanup", "lib/state-archive.sh",
-                             'rm -rf -- "${stage:?}" || exit 1',
-                             ': -- "${stage:?}"')
-        self.assertEqual(self.run_cli(repo, "compact", scripts=mutant, check=False).returncode, 2)
-        self.assertTrue(any(archive_dir.iterdir()))
         mutant = self.mutant("no-archive", "lane-mail",
-                             'refuse archive-failed "$ARCHIVE_DIR" "$ARCHIVE_ERR"',
-                             ': archive-failed "$ARCHIVE_DIR" "$ARCHIVE_ERR"')
+                             '      refuse archive-failed "$BOX" "$(cat -- "$WORK_DIR/archive.err")"',
+                             '      : archive-failed "$BOX" "$(cat -- "$WORK_DIR/archive.err")"')
         self.assertEqual(self.run_cli(repo, "compact", scripts=mutant, check=False).returncode, 0)
         self.assertNotEqual((box / "to-lane.jsonl").read_bytes(), before)
 

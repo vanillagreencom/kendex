@@ -115,16 +115,16 @@ if command -v timeout >/dev/null 2>&1; then SCAN_AVAILABLE=1; fi
 scan_key() { # KEY
   if [ "$SCAN_AVAILABLE" -eq 1 ]; then printf '%s\n' "$1"; else printf '%s\n' "${1/agent-reserve=/agent-unobserved=}"; fi
 }
-handoffs_named() { grep -cE '^  \{"op":"record-handoff",| state set --fleet /handoff ' "$ERR_FILE" || true; }
+handoffs_named() { grep -cE '^  \{"op":"record-handoff",| op --fleet --request-json ' "$ERR_FILE" || true; }
 # The record handoff_instruction prints: a lane's `record-handoff` request
-# line, or the shell word the overseer's `state set --fleet /handoff` takes,
+# line, or the shell word the overseer's `op --fleet --request-json` takes,
 # decoded without running the emitted command; then its context.
 handoff_context() {
   local line record=''
   while IFS= read -r line; do
     case "$line" in
       '  {"op":"record-handoff",'*) jq -c '.context' <<<"${line#  }"; return ;;
-      *' state set --fleet /handoff '*) record=${line#* /handoff }; break ;;
+      *' op --fleet --request-json '*) record=${line#* --request-json }; break ;;
     esac
   done < "$ERR_FILE"
   "$BASH" -c 'eval "set -- $1"; printf "%s\n" "$1"' _ "$record" | jq -c '.context'

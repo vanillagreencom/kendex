@@ -6456,6 +6456,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     );
     assert_eq!(check["launched"], "fable", "{check}");
     assert_eq!(check["observed"], "claude-sonnet-5-5", "{check}");
+    assert_eq!(check["recovery_started"], true, "{check}");
     assert_eq!(
         stderr(&out).lines().next().unwrap_or_default(),
         MODEL_SWITCHED,

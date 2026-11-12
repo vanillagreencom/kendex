@@ -303,23 +303,39 @@ HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
 # The record the refusal tells the session to write: a lane's request, the
 # one line it prints indented under that instruction, as the runtime's `op`
-# parses it; the overseer's shell word, the one argument `state set --fleet
-# /handoff` takes. LITERAL and REPLACEMENT make the session's own edit first:
-# each LITERAL as printed becomes REPLACEMENT, the way a placeholder is filled.
+# parses it; the overseer's shell word, the one request `op --fleet
+# --request-json` takes. LITERAL and REPLACEMENT make the session's own edit
+# first: each LITERAL as printed becomes REPLACEMENT, the way a placeholder is
+# filled. The operation's own words are left out: the overseer's printed
+# command is run through the runtime by run_printed_overseer_record.
 template_record() { # [LITERAL REPLACEMENT]
   local line record='' kind=''
   while IFS= read -r line; do
     case "$line" in
       '  {"op":"record-handoff",'*) record=${line#  }; kind=request; break ;;
-      *' state set --fleet /handoff '*) record=${line#* /handoff }; kind=word; break ;;
+      *' op --fleet --request-json '*) record=${line#* --request-json }; kind=word; break ;;
     esac
   done < "$ERR_FILE"
   [ "$#" -eq 0 ] || record=${record//"$1"/"$2"}
   case "$kind" in
     request) jq -ec 'objects | del(.op)' <<<"$record" ;;
-    word) "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record" ;;
+    word) "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record" |
+      jq -ec 'objects | del(.op, .entry)' ;;
     *) return 1 ;;
   esac
+}
+# The overseer's record command as the refusal prints it, LITERAL filled with
+# REPLACEMENT, run from the lane: its answer is the command's own.
+run_printed_overseer_record() { # LITERAL REPLACEMENT
+  local line command=''
+  while IFS= read -r line; do
+    case "$line" in
+      *' op --fleet --request-json '*) command=${line#  }; break ;;
+    esac
+  done < "$ERR_FILE"
+  [ -n "$command" ] || return 1
+  command=${command//"$1"/"$2"}
+  (cd "$LANE" && "$BASH" -c 'eval "set -- $1"; "$@"' _ "$command" >/dev/null 2>&1)
 }
 # The lane's request line exactly as the refusal prints it.
 printed_request() {
@@ -930,6 +946,17 @@ while IFS='|' read -r PI_PROVIDER PI_DIR PI_POOL PI_RC PI_FIRST; do
   stop_pi "$PI_PROVIDER" 1000 $(account_env "$PI_DIR") "ORCH_LANE_COPILOT_POOL=${PI_POOL:+$PI_ROOT=$PI_POOL}"
   expect "$PI_RC" "$PI_FIRST" "a Pi lane on $PI_PROVIDER with ${PI_POOL:-the seat $PI_DIR}: $PI_FIRST"
 done <<<"$PI_ACCOUNT_ROWS"
+# The account directory the table's rows are judged on is the runtime's
+# billing answer for the Pi harness. The control asks it for another
+# harness's: a github-copilot model is then judged on the Claude seat, not on
+# the Copilot pool its provider bills.
+mutant pi-billed-harness -e 's/accounts billed --harness pi --native-model/accounts billed --harness claude --native-model/'
+install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_pi github-copilot 1000 $(account_env .neutralclaude) "ORCH_LANE_COPILOT_POOL=$PI_ROOT=97/100"
+assert_eq "$([ "RC=$RC first=$(first_line)" = "RC=2 first=lane-mail-check: headroom=3 bucket=monthly mark=3" ] && echo pool || echo elsewhere)" \
+  elsewhere "control: the billing rule asked for another harness judges a Copilot model off its pool"
+install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 # A provider nothing measures is answered by the rule alone, and a turn end
 # whose transcript names no model has read no provider, so the account is left
 # unjudged for want of a reading: `lanes` is never asked in either. Both run on
@@ -1863,7 +1890,7 @@ overseer_route() { # MARK
   printf '%s%s' "$(grep -cE -- "/orch-runtime successor --fleet --cwd [^ ]+ --predecessor %[0-9]+ --mark $1$" "$ERR_FILE")" \
     "$(grep -cF -- "/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]" "$ERR_FILE")"
 }
-overseer_record_named() { grep -cF -- " state set --fleet /handoff " "$ERR_FILE"; }
+overseer_record_named() { grep -cF -- " op --fleet --request-json " "$ERR_FILE"; }
 
 # The cap refuses even on a window whose percentage leaves room.
 context_rule_row() { # ROLE NAME [HOOK]
@@ -1932,6 +1959,27 @@ assert_eq "$(template_record | jq -cS .)" \
   "with the pane key beside it, for a harness that names no session" "$ERR_FILE"
 assert_eq "$(template_record '[OVERSEER_HANDOFF_PATH]' '/fleet/over seer.md' | jq -r .handoff_file)" '/fleet/over seer.md' \
   "and a path the overseer writes over its placeholder in the printed word stays one argument"
+# The overseer runs the printed command as printed, its placeholder filled:
+# the runtime writes the record, and that record ends this session's refusal.
+# The control prints the same command with an entry the ledger has no arm
+# for: the runtime refuses it, so the session is held at its mark.
+assert_eq "$(run_printed_overseer_record '[OVERSEER_HANDOFF_PATH]' '/fleet/over seer.md' && echo written || echo refused)" \
+  written "the printed record command, run as printed, is written by the runtime"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=-" \
+  "and the record it wrote ends this overseer's turn past its mark"
+record_overseer_handoff other-session
+mutant overseer-record-entry -e 's/"op":"record-overseer-ledger","entry":"handoff",/"op":"record-overseer-ledger","entry":"hand-off",/'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+run_printed_overseer_record '[OVERSEER_HANDOFF_PATH]' '/fleet/over seer.md' || :
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC first=$(first_line)" "RC=2 first=lane-mail-check: context=612000" \
+  "control: a printed record the runtime refuses leaves the overseer held at its mark"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # The account mark is the judge's own, on the judge's own setting: this hook
 # reads neither, so the figure and the mark it names come off that one line.

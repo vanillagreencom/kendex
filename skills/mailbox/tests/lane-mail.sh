@@ -1723,7 +1723,9 @@ before="$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")"
 printf '1790870400\n' > "$STUB_CLOCK"
 ORCH_STATE_DIR="$TMP_ROOT/retention-state" ORCH_ARCHIVE_ROOT="$TMP_ROOT/retention-state/archives" \
   ORCH_RECORD_RETENTION_DAYS=5 SLACK_THREAD_DAYS=5 clock_lm compact --item KEN-1 --root "$LANE"
-assert_eq "$RC" 2 'compaction refuses an archive inside the configured state folder'
+assert_eq "$RC $ERR overlap=$(grep -c '^orch-runtime: archive-root-overlap ' "$TMP_ROOT/err" || :)" \
+  "2 lane-mail: archive-failed=$LANE/tmp/lane-mail/KEN-1 overlap=1" \
+  'compaction refuses an archive inside the configured state folder, with the runtime'\''s refusal as its cause'
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "$before" \
   'a refused compaction archive keeps the expired message bytes'
 
