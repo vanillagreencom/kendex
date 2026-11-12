@@ -49,7 +49,41 @@ printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/$bi
 chmod 755 "$CARGO_TARGET_DIR/release/$bin"
 CARGO
 chmod 755 "$TMP_ROOT/bin/cargo"
+
+# chmod as BSD reads its arguments, first on PATH for every row, so a Linux
+# run fails the placement a macOS one fails: getopt(3) stops at the first
+# non-option, which is the mode, and a `--` after it is a file operand. BSD
+# reports it, still changes the real operands and exits 1; so does the shim.
+REAL_CHMOD="$(command -v chmod)"
+cat >"$TMP_ROOT/bin/chmod" <<SHIM
+#!/bin/sh
+n=\$#; i=0; phase=opts; bad=0
+while [ "\$i" -lt "\$n" ]; do
+  arg=\$1; shift; i=\$((i + 1))
+  case "\$phase" in
+    opts) case "\$arg" in
+      --) phase=mode; continue ;;
+      -[RfhvHLP]*) set -- "\$@" "\$arg"; continue ;;
+      *) phase=files; set -- "\$@" "\$arg"; continue ;;
+    esac ;;
+    mode) phase=files; set -- "\$@" "\$arg"; continue ;;
+    files) if [ "\$arg" = "--" ]; then bad=1; echo "chmod: --: No such file or directory" >&2; continue; fi; set -- "\$@" "\$arg" ;;
+  esac
+done
+"$REAL_CHMOD" "\$@"; rc=\$?
+[ "\$bad" -eq 0 ] || exit 1
+exit "\$rc"
+SHIM
+"$REAL_CHMOD" 755 "$TMP_ROOT/bin/chmod"
 export PATH="$TMP_ROOT/bin:$PATH"
+: >"$TMP_ROOT/probe-after"
+: >"$TMP_ROOT/probe-before"
+RC=0
+chmod 755 -- "$TMP_ROOT/probe-after" 2>/dev/null || RC=$?
+assert_eq "$RC" 1 'premise: the chmod shim fails a -- after the mode, as BSD chmod does'
+RC=0
+chmod -- 755 "$TMP_ROOT/probe-before" || RC=$?
+assert_eq "$RC" 0 'premise: the chmod shim passes a -- before the mode to the real chmod'
 export FAKE_CARGO_LOG="$TMP_ROOT/cargo.log"
 : >"$FAKE_CARGO_LOG"
 
@@ -71,6 +105,8 @@ key_of() { # OUT — the key the success line names
 CACHE="$TMP_ROOT/cache"
 
 # --- first setup builds once and places the keyed binary ------------------
+# Under the chmod shim above: a placement whose chmod puts `--` after the
+# mode fails here with place-failed.
 run "$CACHE" "$SETUP"
 assert_eq "$RC" 0 'first setup exits 0' "$TMP_ROOT/err"
 KEY="$(key_of "$OUT")"

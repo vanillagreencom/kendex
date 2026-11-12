@@ -1545,10 +1545,12 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
 
 # --- 4f. The package runtimes on each leg whose suites run them ------------
 # orch-runtime's wrapper refuses `setup-required` where no build matches the
-# checkout, and the orch package's scripts, the hook, lane-mail-session.sh and
-# second-opinion's room-check.test.sh run it, so a Linux leg owning one of
-# those suites builds both runtimes first, read from that
-# step's real `if:`. The runtimes' own Rust targets run in one step, the
+# checkout, and the orch package's scripts, the hook, the mailbox's
+# lane-mail.sh, lane-mail-compact.sh and lane-mail-session.sh,
+# second-opinion's room-check.test.sh and Jarvis's presence.test.sh (the
+# hook's world) and its forward, owner-unanswered and watch-loop suites
+# (`lane-mail compact`) run it, so a leg owning one of those suites on either
+# runner builds both runtimes first, read from that step's real `if:`. The runtimes' own Rust targets run in one step, the
 # orch-rest Linux leg's, wherever the changes job's `runtimes` line is not
 # false.
 step_if() { # WORKFLOW STEP ; that step's `if:` text, its `${{ }}` stripped
@@ -1561,32 +1563,48 @@ step_if() { # WORKFLOW STEP ; that step's `if:` text, its `${{ }}` stripped
     /^      - / { found = ($0 == name) }' "$1"
 }
 RUNTIME_STEP="the package runtimes, built"
-unbuilt_runtime_legs() { # WORKFLOW ; each shard owning a suite that runs orch-runtime and builds no runtime
+unbuilt_runtime_legs() { # WORKFLOW OS SUITES ; `OS shard` for each shard of SUITES whose leg on OS builds no runtime
   local cond shard
   cond="$(step_if "$1" "$RUNTIME_STEP")"
   [[ -n "$cond" ]] || { printf 'no-build-condition\n'; return 0; }
-  for shard in $(cut -f1 "$TMP/runtime-suites" | sort -u); do
-    [[ "$(gh_eval value "$(jq -cn --arg shard "$shard" '{matrix: {shard: $shard}, runner: {os: "Linux"}}')" "$cond")" == true ]] ||
-      printf '%s\n' "$shard"
+  for shard in $(cut -f1 "$3" | sort -u); do
+    [[ "$(gh_eval value "$(jq -cn --arg shard "$shard" --arg os "$2" '{matrix: {shard: $shard}, runner: {os: $os}}')" "$cond")" == true ]] ||
+      printf '%s %s\n' "$2" "$shard"
   done
 }
+runtime_suites() { # OWNERS OUT ; the `shard<tab>path` rows of OWNERS whose suite runs orch-runtime
+  local shard path
+  : > "$2"
+  while IFS=$'\t' read -r shard path; do
+    case "$path" in
+      skills/orch/tests/* | hooks/tests/* | skills/second-opinion/tests/room-check.test.sh | \
+      skills/mailbox/tests/lane-mail-session.sh | skills/mailbox/tests/lane-mail.sh | skills/mailbox/tests/lane-mail-compact.sh | \
+      skills/jarvis/tests/presence.test.sh | skills/jarvis/tests/forward.test.sh | \
+      skills/jarvis/tests/owner-unanswered.test.sh | skills/jarvis/tests/watch-loop.test.sh)
+        printf '%s\t%s\n' "$shard" "$path" >> "$2" ;;
+    esac
+  done < "$1"
+}
 suite_owners "$WORKFLOW" files > "$TMP/runtime-owners"
-: > "$TMP/runtime-suites"
-while IFS=$'\t' read -r shard path; do
-  case "$path" in
-    skills/orch/tests/* | hooks/tests/* | skills/mailbox/tests/lane-mail-session.sh | skills/second-opinion/tests/room-check.test.sh)
-      printf '%s\t%s\n' "$shard" "$path" >> "$TMP/runtime-suites" ;;
-  esac
-done < "$TMP/runtime-owners"
-check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, mailbox and rest" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail mailbox orch-dev orch-oversee orch-rest orch-state rest)" \
+suite_owners "$WORKFLOW" files 3 > "$TMP/runtime-owners-macos"
+runtime_suites "$TMP/runtime-owners" "$TMP/runtime-suites"
+runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos"
+check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, jarvis, mailbox and rest" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail jarvis mailbox orch-dev orch-oversee orch-rest orch-state rest)" \
   "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
+check "the macOS legs owning a suite that runs orch-runtime are three orch legs, both hook legs and rest" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail orch-oversee orch-rest orch-state rest)" \
+  "$(cut -f1 "$TMP/runtime-suites-macos" | sort -u)"
 check "every leg owning a suite that runs orch-runtime builds the package runtimes first" "" \
-  "$(unbuilt_runtime_legs "$WORKFLOW")"
+  "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-suites"; unbuilt_runtime_legs "$WORKFLOW" macOS "$TMP/runtime-suites-macos")"
 plant "$WORKFLOW" " || matrix.shard == 'guards-hooks-tail'" "" \
   "$TMP/runtime-unbuilt.yml" "skill-suites-shard/$RUNTIME_STEP"
-check "must-fail: a build step dropping guards-hooks-tail names the leg whose hook suites would refuse" guards-hooks-tail \
-  "$(unbuilt_runtime_legs "$TMP/runtime-unbuilt.yml")"
+check "must-fail: a build step dropping guards-hooks-tail names the leg whose hook suites would refuse" "Linux guards-hooks-tail" \
+  "$(unbuilt_runtime_legs "$TMP/runtime-unbuilt.yml" Linux "$TMP/runtime-suites")"
+plant "$WORKFLOW" " || matrix.shard == 'rest' || matrix.shard == 'jarvis'" " || (matrix.shard == 'rest' && runner.os == 'Linux') || matrix.shard == 'jarvis'" \
+  "$TMP/runtime-rest-linux.yml" "skill-suites-shard/$RUNTIME_STEP"
+check "must-fail: a build step keeping rest to Linux names the macOS leg whose presence suite would refuse" "macOS rest" \
+  "$(unbuilt_runtime_legs "$TMP/runtime-rest-linux.yml" macOS "$TMP/runtime-suites-macos")"
 TARGETS_STEP="the package runtimes' Rust targets"
 targets_runs() { # WORKFLOW SHARD OS RUNTIMES ; whether the targets step runs on that leg
   gh_eval value "$(jq -cn --arg shard "$2" --arg os "$3" --arg runtimes "$4" \

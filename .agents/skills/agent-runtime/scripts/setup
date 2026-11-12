@@ -90,7 +90,9 @@ built="$cache/build/$name/$key/release/$name"
 tmp="$cache/bin/.$name-$key.$$"
 trap 'rm -f -- "$tmp"' EXIT
 ( set -o noclobber && cat -- "$built" >"$tmp" ) || refuse place-failed "path=$tmp"
-chmod 755 -- "$tmp" || refuse place-failed "path=$tmp"
+# The `--` comes before the mode: BSD chmod takes its first operand as the
+# mode, so a `--` after it is a file operand nobody has.
+chmod -- 755 "$tmp" || refuse place-failed "path=$tmp"
 mv -f -- "$tmp" "$binary" || refuse place-failed "path=$binary"
 trap - EXIT
 printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"

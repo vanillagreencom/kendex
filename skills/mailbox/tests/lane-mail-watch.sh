@@ -145,7 +145,10 @@ term_row() { # BIN [STEP] — TERMED records process exit and liveness withdrawa
     chmod +x "$TMP_ROOT/term-$TERM_RUN.bin/$command"
   done
   bin_path="$TMP_ROOT/term-$TERM_RUN.bin:$bin_path"
-  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" "$interval" "$phase" "$step" <<'PY_TERM'
+  # The program is a file, not a here-document inside the substitution: Bash
+  # 3.2 reads a substitution's body for quotes without knowing a
+  # here-document, so an apostrophe in the program is a parse error there.
+  cat >"$TMP_ROOT/term-row.py" <<'PY_TERM'
 import os
 from pathlib import Path
 import shutil
@@ -237,7 +240,7 @@ with open(stdout, "wb") as out, open(stderr, "wb") as err:
         finally:
             child.wait(timeout=5)
 PY_TERM
-)"
+  TERMED="$(python3 "$TMP_ROOT/term-row.py" "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" "$interval" "$phase" "$step")"
   TERM_MUTEX="${TERMED##*:}"
   TERMED="${TERMED%:*}"
 }
