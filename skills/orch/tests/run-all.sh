@@ -39,11 +39,14 @@
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
 # runs that tree's suites this way. The ALONE list below names this
-# directory's suites; with --battery, the suites each `--alone NAME` after it
-# names are the ones that run alone.
+# directory's suites, and holds them wherever this directory is a battery;
+# with --battery, the suites each `--alone NAME` after it names run alone too.
 #
 # Each argument is a substring of a suite's base name, or, written `=name`,
-# the whole of one. A bare one selects, one written `!name` rejects, and a
+# the whole of one; `=TREE:name` is that one in the battery whose tree is
+# TREE, its parent directory relative to its repository root, such as
+# `skills/jarvis`, so one pool call can name a base name two trees share.
+# A bare one selects, one written `!name` rejects, and a
 # file runs when it matches a selector — or none was given — and matches no
 # rejector. Two runs whose arguments are
 # a set and that set negated therefore partition the battery: every suite
@@ -205,11 +208,11 @@ ALONE=(
   oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
 
+# Whole paths, so a --battery run holds these wherever this directory is one
+# of its batteries, and a same-named suite in another battery is not held.
+for ((i=0; i<${#ALONE[@]}; i++)); do ALONE[i]="$TEST_DIR/${ALONE[i]}.sh"; done
 TEST_DIRS=("$TEST_DIR")
 if [ "${1-}" = --battery ]; then
-  # Another battery's wrapper names its own, so a suite there sharing a name
-  # with one above is not held back.
-  ALONE=()
   TEST_DIRS=()
   while [ "${1-}" = --battery ]; do
     TEST_DIR="$(cd "$2" && pwd)" || exit 1
@@ -220,8 +223,6 @@ if [ "${1-}" = --battery ]; then
       shift 2
     done
   done
-else
-  for ((i=0; i<${#ALONE[@]}; i++)); do ALONE[i]="$TEST_DIR/${ALONE[i]}.sh"; done
 fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
@@ -436,9 +437,23 @@ matches() { # BASE FILTER
     esac
   fi
   case "$2" in
+    =*:*) battery_tree && [ "${2%%:*}" = "=$BATTERY_TREE" ] && matches "$1" "=${2#*:}" ;;
     =*) [ "$1" = "${2#=}" ] ;;
     *) case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac ;;
   esac
+}
+
+# BATTERY_TREE: TEST_DIR's parent relative to the root of the repository
+# holding it, read once per battery. git refuses that read in a checkout
+# another user owns; a qualified filter it cannot place would drop its suite
+# without a word, so the run stops there.
+BATTERY_TREE_OF=""
+battery_tree() {
+  [ "$BATTERY_TREE_OF" != "$TEST_DIR" ] || return 0
+  BATTERY_TREE="$(cd -- "$TEST_DIR/.." && root="$(git rev-parse --show-toplevel)" &&
+    here="$(pwd -P)" && printf '%s' "${here#"$root"/}")" ||
+    { echo "run-all.sh: battery-tree=unread battery=$TEST_DIR" >&2; exit 1; }
+  BATTERY_TREE_OF=$TEST_DIR
 }
 
 # Bash 3.2 under `set -u` errors on "${arr[@]}" when arr is empty, so each

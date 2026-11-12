@@ -15,10 +15,10 @@ for tree in attr bare; do
   printf '[env]\n# ATTR_KEY = "a"\n' > "$R/skills/$tree/kendex.settings.toml.example"
   cp "$R/skills/$tree/kendex.settings.toml.example" "$R/.agents/skills/$tree/kendex.settings.toml.example"
 done
-printf 'grep -q ATTR "$PWD/skills/attr/kendex.settings.toml.example"\nprintf "linted\\n" >> "$SUITE_LOG"\n' > "$R/skills/attr/tests/linted.sh"
+printf 'grep -q ATTR "$PWD/skills/attr/kendex.settings.toml.example"\nprintf "linted\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/attr/tests/linted.sh"
 for name in one two; do
-  printf 'printf "attr-%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/attr/tests/$name.sh"
-  printf 'printf "bare-%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/bare/tests/$name.sh"
+  printf 'printf "attr-%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" > "$R/skills/attr/tests/$name.sh"
+  printf 'printf "bare-%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" > "$R/skills/bare/tests/$name.sh"
 done
 printf 'row\n' > "$R/skills/attr/tests/data/rows.txt"
 # skills/pyimp: Python modules under tests/fixtures/, as skills/jarvis keeps
@@ -30,7 +30,7 @@ printf 'from fixtures.harness import VALUE\n' > "$R/skills/pyimp/tests/from_test
 printf 'import json, fixtures.other\n' > "$R/skills/pyimp/tests/import_test.py"
 printf 'VALUE = 2\n' > "$R/skills/pyimp/tests/plain_test.py"
 for name in from import plain; do
-  printf 'python3 -B "$PWD/skills/pyimp/tests/%s_test.py"\nprintf "%s\\n" >> "$SUITE_LOG"\n' "$name" "$name" \
+  printf 'python3 -B "$PWD/skills/pyimp/tests/%s_test.py"\nprintf "%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" "$name" \
     > "$R/skills/pyimp/tests/$name-wrapper.sh"
 done
 git -C "$R" config gc.auto 0

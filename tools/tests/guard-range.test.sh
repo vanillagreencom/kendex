@@ -145,7 +145,7 @@ echo "=== a range touching only a skill runs that skill's suite and no cargo com
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_range "$BASE"
-[ "$RC" -eq 0 ] && [ -z "$LOG" ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"=== skills/quiet/tests/quiet.test.sh"* ]] \
+[ "$RC" -eq 0 ] && [ -z "$LOG" ] && [ -n "$(suite_report skills/demo/tests/demo.test.sh)" ] && [ -z "$(suite_report skills/quiet/tests/quiet.test.sh)" ] \
   && [ "$(sed -n '$p' <<<"$OUT")" = 'validate: lanes=guard-scans selection=all' ] \
   && ok "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" \
   || bad "the touched skill's suite runs, the untouched one does not, and cargo and npm are never called" "rc=$RC log=$LOG out=$OUT"
@@ -277,7 +277,7 @@ RC=0
 : >"$CALLS"
 OUT="$(cd "$R" && env DEV_VALIDATE_CLASS=render DEV_VALIDATE_DOCS_ONLY=false DEV_VALIDATE_PATHS="$TMP/class-paths" \
   PATH="$R/fake-bin:$PATH" CALL_LOG="$CALLS" "$GUARD" --range "$BASE" 2>&1 </dev/null)" || RC=$?
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] \
+[ "$RC" -eq 0 ] && [ -n "$(suite_report skills/demo/tests/demo.test.sh)" ] \
   && ok "a range handed a render class still runs the touched skill's suite" \
   || bad "a range handed a render class still runs the touched skill's suite" "rc=$RC out=$OUT"
 back_to_base
@@ -542,8 +542,8 @@ suite_naming probed 'runs lib/probe.py'
 suite_naming wrap 'runs ../scripts/driven'
 suite_naming longer 'runs ../scripts/orphan-twin'
 printf '#!/usr/bin/env bash\n# names ../scripts/lib/pid.sh\necho "pass: 1   fail: 0"\n' >"$M/tests/cited.sh"
-# A skill with no runner: each suite runs by its own file, a .test suffix
-# included, and a node suite beside the shell ones.
+# A skill whose suites carry a .test suffix, and a node suite beside the
+# shell ones, which runs by its own file.
 P="$R/skills/plain"
 mkdir -p "$P/scripts" "$P/tests" "$P/references"
 printf '# Note\n' >"$P/references/note.md"
@@ -553,7 +553,7 @@ printf '#!/usr/bin/env bash\ncat "$(dirname "$0")/../references/lone.md"\n' >"$P
 printf '#!/usr/bin/env bash\n# cat ../references/note.md\necho a\n' >"$P/scripts/alpha.sh"
 printf '#!/usr/bin/env bash\necho b\n' >"$P/scripts/beta.sh"
 : >"$P/scripts/empty.sh"
-for s in alpha beta; do printf '#!/usr/bin/env bash\necho ok\n' >"$P/tests/$s.test.sh"; done
+for s in alpha beta; do printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$P/tests/$s.test.sh"; done
 printf 'echo "see note.md"\n' >>"$P/tests/beta.test.sh"
 printf '%s\n' "import test from 'node:test';" "test('gamma', () => {});" >"$P/tests/gamma.test.mjs"
 # hooks/ beside the world's demo hook and its suite, which run by file: alpha
@@ -565,7 +565,7 @@ for h in alpha beta lone; do printf '#!/usr/bin/env bash\necho %s\n' "$h" >"$H/$
 printf '# Hooks\n' >"$H/README.md"
 printf 'HOOK="$HOOKS_DIR/alpha.sh"\n' >"$H/tests/lib/world.sh"
 hook_suite() { # NAME LINE — a passing hook suite that runs LINE first
-  printf '#!/usr/bin/env bash\n%s\necho ok\n' "$2" >"$H/tests/$1.test.sh"
+  printf '#!/usr/bin/env bash\n%s\necho "pass: 1   fail: 0"\n' "$2" >"$H/tests/$1.test.sh"
 }
 hook_suite alpha ': ../alpha.sh'
 hook_suite alpha-copilot ':'
@@ -634,16 +634,15 @@ MAPPED_ALL="$(printf '%s\n' "${mapped_suites[@]}" | sort | tr '\n' ' ' | sed 's/
 SKILL_READERS="catalogscan rootglob skillmd walker"
 # A range across two trees: the hooks suites alpha's change maps to beside
 # the mapped skill's for runner, one sorted list as started() prints it.
-TWO_TREES="$(printf '%s\n' alpha-copilot.test.sh alpha.test.sh via-world.test.sh drives runner | sort | tr '\n' ' ' | sed 's/ $//')"
-PLAIN_CATALOG="alpha.test.sh beta.test.sh catalogscan gamma.test.mjs"
-HOOKS_ALL="alpha-copilot.test.sh alpha.test.sh beta.test.sh demo.test.sh via-world.test.sh"
+TWO_TREES="$(printf '%s\n' alpha-copilot.test alpha.test via-world.test drives runner | sort | tr '\n' ' ' | sed 's/ $//')"
+PLAIN_CATALOG="alpha.test beta.test catalogscan gamma.test.mjs"
+HOOKS_ALL="alpha-copilot.test alpha.test beta.test demo.test via-world.test"
 note_for() { printf 'guard-note: suites=all reason=%s path=%s' "$1" "$2"; }
 mapped_note() { printf 'guard-note: suites=%s reason=mapped tree=%s' "$1" "$2"; }
-# The suites that started: the runner's start lines, and the file headers the
-# guard prints for a tree with no runner, or for the mapped skill once its
-# runner is deleted.
+# The suites that started: the runner's start lines, their tree prefix
+# dropped, and the file header the guard prints for a .test.mjs suite.
 started() {
-  printf '%s\n' "$OUT" | sed -n 's/^start suite=//p; s#^=== skills/plain/tests/##p; s#^=== hooks/tests/##p; s#^=== skills/doc-readers/tests/\(.*\)\.sh$#\1#p; /run-all\.sh/!s#^=== skills/mapped/tests/\(.*\)\.sh$#\1#p' | sort | tr '\n' ' ' | sed 's/ $//'
+  printf '%s\n' "$OUT" | sed -n 's/^start suite=\(.*--\)\{0,1\}//p; s#^=== .*/tests/\([^/ ]*\.test\.mjs\)$#\1#p' | sort | tr '\n' ' ' | sed 's/ $//'
 }
 back_to_mapped() {
   git -C "$R" reset -q --hard "$mapped_base"
@@ -690,16 +689,16 @@ MAP_ROWS=(
   "a reference with only local comment and prose citations runs its catalog reader|append|skills/plain/references/note.md|catalogscan|$(mapped_note 0/3 skills/plain)"
   "two changed paths run the suites of both|append|skills/mapped/scripts/tool skills/mapped/tests/other.sh|other tool tool_extra|$(mapped_note 3/$MAPPED_N skills/mapped)"
   "a mapped and an unmapped path run the whole set|append|skills/mapped/scripts/tool skills/mapped/scripts/orphan|$MAPPED_ALL|$(note_for unmapped skills/mapped/scripts/orphan)"
-  "with no runner a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test.sh|$(mapped_note 1/3 skills/plain)"
-  "with no runner a changed suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test.sh|$(mapped_note 1/3 skills/plain)"
-  "a changed hook runs its namesake suites and the suite whose helper names it|append|hooks/alpha.sh|alpha-copilot.test.sh alpha.test.sh via-world.test.sh|$(mapped_note 3/5 hooks)"
-  "a changed render of a hook runs that hook's suite|append|.codex/hooks/demo.sh|demo.test.sh|$(mapped_note 1/5 hooks)"
-  "a changed hooks helper runs the suite sourcing it|append|hooks/tests/lib/world.sh|via-world.test.sh|$(mapped_note 1/5 hooks)"
+  "a changed script runs its .test suite alone|append|skills/plain/scripts/alpha.sh|alpha.test|$(mapped_note 1/3 skills/plain)"
+  "a changed .test suite runs itself alone|append|skills/plain/tests/beta.test.sh|beta.test|$(mapped_note 1/3 skills/plain)"
+  "a changed hook runs its namesake suites and the suite whose helper names it|append|hooks/alpha.sh|alpha-copilot.test alpha.test via-world.test|$(mapped_note 3/5 hooks)"
+  "a changed render of a hook runs that hook's suite|append|.codex/hooks/demo.sh|demo.test|$(mapped_note 1/5 hooks)"
+  "a changed hooks helper runs the suite sourcing it|append|hooks/tests/lib/world.sh|via-world.test|$(mapped_note 1/5 hooks)"
   "quoted find operands and an assigned workflow directory select their readers without API or brief readers|append|skills/doc-readers/workflows/flow.md|assigned-dir catalogscan quoted-find|$(mapped_note 2/9 skills/doc-readers)"
   "a quoted reference directory in an array selects its reader beside find without a printed for details brief|append|skills/doc-readers/references/guide.md|array-dir catalogscan quoted-find|$(mapped_note 2/9 skills/doc-readers)"
   "assigned schema paths used by sed select script and lib readers without briefs or unread assignments|append|skills/doc-readers/schemas/review-finding-prompt.md|assigned-lib assigned-script catalogscan quoted-find|$(mapped_note 3/9 skills/doc-readers)"
   "a changed hook no suite reaches runs the whole hooks set and says so|append|hooks/lone.sh|$HOOKS_ALL|$(note_for unmapped hooks/lone.sh)"
-  "a hooks doc runs its reader alone|append|hooks/README.md|beta.test.sh|$(mapped_note 1/5 hooks)"
+  "a hooks doc runs its reader alone|append|hooks/README.md|beta.test|$(mapped_note 1/5 hooks)"
   "a hooks doc no file reads runs nothing|append|hooks/unused.md||$(mapped_note 0/5 hooks)"
   "a hooks file of no role runs the whole hooks set|append|hooks/settings.example|$HOOKS_ALL|$(note_for unmapped hooks/settings.example)"
 )
@@ -829,7 +828,7 @@ DOC_CATALOG="$(printf '%s\n' $DOC_ALL catalogscan | sort | tr '\n' ' ' | sed 's/
 SCHEMA_PATH=skills/doc-readers/schemas/review-finding-prompt.md
 READ_ROWS=(
   "repeated document queries|$SCHEMA_PATH skills/doc-readers/workflows/flow.md|assigned-dir assigned-lib assigned-script catalogscan quoted-find"
-  "another tree before the document|hooks/README.md $SCHEMA_PATH|assigned-lib assigned-script beta.test.sh catalogscan quoted-find"
+  "another tree before the document|hooks/README.md $SCHEMA_PATH|assigned-lib assigned-script beta.test catalogscan quoted-find"
 )
 for row in "${READ_ROWS[@]}"; do
   IFS='|' read -r label paths want <<<"$row"

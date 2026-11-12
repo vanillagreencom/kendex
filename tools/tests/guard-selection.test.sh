@@ -11,9 +11,9 @@ TIMING_PATH="$PATH"
 if [ "${1:-all}" != timing ]; then
 SUITE_LOG="$TMP/suites"
 mkdir -p "$R/tools/tests"
-printf '#!/usr/bin/env bash\nprintf "demo\\n" >> "$SUITE_LOG"\n' > "$R/skills/demo/tests/demo.test.sh"
+printf '#!/usr/bin/env bash\nprintf "demo\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/demo/tests/demo.test.sh"
 printf '#!/usr/bin/env bash\nprintf "unrelated\\n" >> "$SUITE_LOG"\nexit 1\n' > "$R/skills/demo/tests/unrelated.test.sh"
-printf '#!/usr/bin/env bash\nprintf "tool\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/demo-tool.test.sh"
+printf '#!/usr/bin/env bash\nprintf "tool\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/demo-tool.test.sh"
 printf '#!/usr/bin/env bash\nprintf "other-tool\\n" >> "$SUITE_LOG"\nexit 1\n' > "$R/tools/tests/other.test.sh"
 printf 'unmapped\n' > "$R/tools/unmapped"
 git -C "$R" config gc.auto 0
@@ -73,14 +73,14 @@ mkdir -p "$R/.github/workflows" "$R/skills/input/tests/lib"
 printf 'workflow\n' > "$R/.github/workflows/skill-tests.yml"
 printf 'unrelated\n' > "$R/.github/workflows/other.yml"
 printf 'helper\n' > "$R/skills/input/tests/lib/evaluator.py"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$R/skills/input/tests/ignored.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' > "$R/skills/input/tests/ignored.sh"
 cat > "$R/tools/tests/ci-aggregate.test.sh" <<'SH'
 #!/usr/bin/env bash
 # Inputs: skills/input/tests/lib/*
 workflow=.github/workflows/skill-tests.yml
 printf 'aggregate\n' >> "$SUITE_LOG"
 grep -Fxq broken "$workflow" && exit 1
-exit 0
+echo "pass: 1   fail: 0"
 SH
 git -C "$R" add -A
 entry_points_executable
@@ -118,11 +118,13 @@ cat > "$R/skills/walkers/tests/walker.test.sh" <<'SH'
 SKILL_DIR="$PWD/skills/walkers"
 find "$SKILL_DIR" -name '*.md' >/dev/null
 printf 'walker\n' >> "$SUITE_LOG"
+echo "pass: 1   fail: 0"
 SH
 cat > "$R/skills/walkers/tests/catalog.test.sh" <<'SH'
 #!/usr/bin/env bash
 find "$PWD/skills" -name '*.md' >/dev/null
 printf 'catalog\n' >> "$SUITE_LOG"
+echo "pass: 1   fail: 0"
 SH
 printf ':\n' > "$R/skills/orch/scripts/lib/shared.sh"
 printf ':\n' > "$R/skills/orch/scripts/lib/private.sh"
@@ -132,16 +134,19 @@ cat > "$R/skills/orch/tests/libraries.test.sh" <<'SH'
 source "$PWD/skills/orch/scripts/lib/shared.sh"
 source "$PWD/skills/orch/scripts/lib/private.sh"
 printf 'orch\n' >> "$SUITE_LOG"
+echo "pass: 1   fail: 0"
 SH
 cat > "$R/hooks/tests/shared.test.sh" <<'SH'
 #!/usr/bin/env bash
 source "$PWD/hooks/tests/lib/shared-world.sh"
 printf 'hooks\n' >> "$SUITE_LOG"
+echo "pass: 1   fail: 0"
 SH
 cat > "$R/refresh/tests/shared.test.sh" <<'SH'
 #!/usr/bin/env bash
 source "$PWD/skills/orch/scripts/lib/shared.sh"
 printf 'refresh\n' >> "$SUITE_LOG"
+echo "pass: 1   fail: 0"
 SH
 printf '#!/usr/bin/env bash\nprintf "unrelated-refresh\\n" >> "$SUITE_LOG"\nexit 1\n' > "$R/refresh/tests/unrelated.test.sh"
 git -C "$R" add -A
@@ -344,7 +349,7 @@ OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DE
   && ok 'the real runtime selector reaches the copied fixture cargo boundary' \
   || bad 'the real runtime selector reaches the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
 for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-switch.test.sh refresh/tests/refresh-consumer.test.sh; do
-  [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
+  [ "$RC" -eq 0 ] && [ -n "$(suite_report "$suite")" ] \
     && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
 done
 

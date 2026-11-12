@@ -495,15 +495,16 @@ git -C "$R" commit -q -m "chore: a skill whose suite fails"
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_guard
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] && [[ "$OUT" != *"=== skills/quiet/tests/quiet.test.sh"* ]] \
+[ "$RC" -eq 0 ] && [ -n "$(suite_report skills/demo/tests/demo.test.sh)" ] && [ -z "$(suite_report skills/quiet/tests/quiet.test.sh)" ] \
   && ok "a touched skill's suite runs in full validation and an untouched skill's does not" \
   || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
 printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
 run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \
+[ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/orch/tests/run-all.sh"* ]] &&
+  [[ "$(suite_report skills/quiet/tests/quiet.test.sh)" == *" fail=1" ]] \
   && ok "a touched skill's failing suite reds full validation, naming the skill" \
   || bad "a touched skill's failing suite reds full validation, naming the skill" "rc=$RC out=$OUT"
-if mutant_guard '/say suite "\$t"/d'; then
+if mutant_guard 's|say suite skills/orch/tests/run-all.sh|:|'; then
   OUT=""
   RC=0
   OUT="$(cd "$R" && "$MUTANT_TOOLS/guard" --full 2>&1)" || RC=$?
@@ -533,7 +534,7 @@ git -C "$R" update-ref refs/remotes/origin/main HEAD
 git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
 git -C "$R" commit -q -m "chore: move the quiet script into hooks"
 run_guard
-[ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \
+[ "$RC" != 0 ] && [[ "$(suite_report skills/quiet/tests/quiet.test.sh)" == *" fail=1" ]] \
   && ok "a committed move out of a skill runs the suite of the tree it left" \
   || bad "a committed move out of a skill runs the suite of the tree it left" "rc=$RC out=$OUT"
 
@@ -570,10 +571,10 @@ FULL_GUARD=1
 narrow_head="$(git -C "$R" rev-parse HEAD)"
 mkdir -p "$R/skills/narrow/scripts" "$R/skills/narrow/tests"
 printf '#!/usr/bin/env bash\necho alpha\n' >"$R/skills/narrow/scripts/alpha.sh"
-printf '#!/usr/bin/env bash\necho alpha-ran\n' >"$R/skills/narrow/tests/alpha.test.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$R/skills/narrow/tests/alpha.test.sh"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/skills/narrow/tests/beta.test.sh"
 printf '#!/usr/bin/env bash\necho narrow\n' >"$R/hooks/narrow.sh"
-printf '#!/usr/bin/env bash\necho narrow-ran\n' >"$R/hooks/tests/narrow.test.sh"
+printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' >"$R/hooks/tests/narrow.test.sh"
 printf '#!/usr/bin/env bash\nexit 1\n' >"$R/hooks/tests/unreached.test.sh"
 git -C "$R" add skills/narrow hooks
 entry_points_executable
@@ -583,8 +584,8 @@ printf 'echo more\n' >>"$R/hooks/narrow.sh"
 narrow_row_holds() { # [SELECTION] — the row's verdict over OUT and RC
   [ "$RC" -eq 0 ] &&
     [ "$(sed -n '$p' <<<"$OUT")" = "validate: lanes=guard-scans selection=${1:-subset}" ] &&
-    [[ "$OUT" == *"=== skills/narrow/tests/alpha.test.sh"* ]] &&
-    [[ "$OUT" == *"=== hooks/tests/narrow.test.sh"* ]] &&
+    [ -n "$(suite_report skills/narrow/tests/alpha.test.sh)" ] &&
+    [ -n "$(suite_report hooks/tests/narrow.test.sh)" ] &&
     [[ "$OUT" == *"guard-note: suites=1/2 reason=mapped tree=skills/narrow"* ]] &&
     [[ "$OUT" == *"guard-note: suites=1/3 reason=mapped tree=hooks"* ]] &&
     [[ "$OUT" != *"beta.test.sh"* ]] && [[ "$OUT" != *"unreached.test.sh"* ]]
@@ -606,12 +607,12 @@ echo "=== refresh changes run the release-tree suites ==="
 FULL_GUARD=1
 mkdir -p "$R/refresh/tests"
 printf '#!/usr/bin/env bash\necho refresh-runner\n' >"$R/refresh/refresh-consumer.sh"
-printf '#!/usr/bin/env bash\necho refresh-suite-ran\n' >"$R/refresh/tests/refresh-consumer.test.sh"
+printf '#!/usr/bin/env bash\necho refresh-suite-ran\necho "pass: 1   fail: 0"\n' >"$R/refresh/tests/refresh-consumer.test.sh"
 git -C "$R" add refresh
 git -C "$R" commit -q -m "chore: release refresh fixture"
 printf 'echo changed\n' >>"$R/refresh/refresh-consumer.sh"
 run_guard
-[ "$RC" -eq 0 ] && [[ "$OUT" == *"=== refresh/tests/refresh-consumer.test.sh"* ]] &&
+[ "$RC" -eq 0 ] && [ -n "$(suite_report refresh/tests/refresh-consumer.test.sh)" ] &&
   [[ "$OUT" == *"refresh-suite-ran"* ]] \
   && ok "a changed release script runs its refresh suite" \
   || bad "release refresh suite selection" "rc=$RC out=$OUT"
@@ -1314,7 +1315,7 @@ lanes_ran() {
   local seen="" lane
   for lane in suites parse lint apple windows test ui; do
     case "$lane" in
-      suites) [[ "$OUT" == *"=== skills/demo/tests/demo.test.sh"* ]] ;;
+      suites) [ -n "$(suite_report skills/demo/tests/demo.test.sh)" ] ;;
       parse) [[ "$OUT" == *"stub: bash32-parse"* ]] ;;
       lint)
         grep -qFx "clippy --workspace --quiet -- -D clippy::too_many_lines" "$CARGO_CALL_LOG" &&
@@ -1401,7 +1402,8 @@ inherited_row() { # — sets OUT and RC
   git -C "$R" reset -q --hard "$lanes_head"
   git -C "$R" clean -qfd
   printf '%s\n' '#!/usr/bin/env bash' \
-    'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' >"$R/skills/demo/tests/demo.test.sh"
+    'echo "inner=${DEV_VALIDATE_CLASS-unset}:${DEV_VALIDATE_DOCS_ONLY-unset}:${DEV_VALIDATE_PATHS-unset}"' \
+    'echo "pass: 1   fail: 0"' >"$R/skills/demo/tests/demo.test.sh"
   printf 'skills/demo/tests/demo.test.sh\n' >"$PATHS_FILE"
   OUT=""
   RC=0
