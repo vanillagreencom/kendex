@@ -188,8 +188,11 @@ step() {
       git -C "$MAIN" branch -D "${1#second:}" >/dev/null
       ;;
     no-origin) git -C "$MAIN" remote remove origin ;;
-    # A local branch beside main.
-    local:*) git -C "$MAIN" branch "${1#local:}" main ;;
+    # A local branch beside main with a commit of its own.
+    local:*) own_branch "${1#local:}" ;;
+    # A local branch at main's head, holding nothing main lacks.
+    stale:*) git -C "$MAIN" branch "${1#stale:}" main ;;
+    drop-local:*) git -C "$MAIN" branch -D "${1#drop-local:}" >/dev/null ;;
     # A local branch pushed to origin and kept.
     publish:*) git -C "$MAIN" push -q origin "${1#publish:}" ;;
     # The topic branch checked out in the main checkout itself.
@@ -233,6 +236,22 @@ STUB
       chmod +x "$ROOT/bin/git"
       ROW_ENV+=(GIT_REAL="$REAL_GIT")
       ;;
+    # A git whose every `merge-base` fails: an ancestry that cannot be read.
+    fail-ancestry)
+      cat >"$ROOT/bin/git" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "$@"; do
+  if [[ "$arg" == "merge-base" ]]; then
+    printf 'simulated merge-base failure\n' >&2
+    exit 128
+  fi
+done
+exec "${GIT_REAL:?}" "$@"
+STUB
+      chmod +x "$ROOT/bin/git"
+      ROW_ENV+=(GIT_REAL="$REAL_GIT")
+      ;;
     bad-origin) git -C "$MAIN" remote set-url origin "$ROOT/missing-origin.git" ;;
     bot) ROW_ENV+=(BOT_NAME=robot BOT_EMAIL=robot@example.test) ;;
     *)
@@ -242,8 +261,13 @@ STUB
   esac
 }
 
+# A commit main lacks, made without touching the main checkout's tree.
+own_branch() {
+  git -C "$MAIN" branch "$1" "$(git -C "$MAIN" commit-tree -p main -m "work on $1" 'main^{tree}')"
+}
+
 remote_only() {
-  git -C "$MAIN" branch "$1" main
+  own_branch "$1"
   git -C "$MAIN" push -q origin "$1"
   git -C "$MAIN" branch -D "$1" >/dev/null
 }
@@ -313,7 +337,7 @@ state() {
 alias_text() {
   message_records |
   { if [[ "${1:-}" == usage ]]; then sed '/^Usage: /q'; else cat; fi; } |
-    sed -e "s|$WT|<topic>|g" -e "s|$TREES_DIR/other|<other>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
+    sed -e "s|${PRE:-<no-pre>}|<pre>|g" -e "s|$WT|<topic>|g" -e "s|$TREES_DIR/other|<other>|g" -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" \
       -e 's/;/\\;/g' | paste -s -d ';' -
 }
 
@@ -360,6 +384,7 @@ err_text() {
     no-origin) printf 'worktree-origin-required: origin' ;;
     remote-fail) printf 'worktree-ownership-query-failed: origin' ;;
     unknown-option) printf 'worktree-create-option-unknown: --bogus' ;;
+    in-base:*) spec="${1#in-base:}"; printf 'worktree-branch-in-base: branch=topic source=%s tip=<pre>' "${spec/both/local+origin}" ;;
     default-branch) printf 'worktree-branch-default: main' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -372,7 +397,11 @@ a published, locked, PR-backed worktree refuses implicit reuse with every signal
 an open PR still owns the branch after its checkout is dropped|wt push open-pr dropped|create topic|75|-|dup:topic:pr|main=main@end/clean cfg=true trees= branches=- dirty=-
 --pr checks the PR head out for inspection|wt push open-pr dropped pr-json|create topic --pr 42|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 dirty, unpublished local work is ownership on its own|wt local-work|create topic|75|-|implicit:topic:dirty,noup|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=?? dirty.txt
-a remote branch is ownership with no PR and no checkout|remote:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+a remote branch one commit ahead of main is ownership with no PR and no checkout|remote:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+an origin branch main already contains is no claim: the issue branch starts from main|stale:topic publish:topic drop-local:topic advance|create topic|0|topic|in-base:origin|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a local and origin branch main already contains is no claim: the local branch moves to main|stale:topic publish:topic advance|create topic|0|topic|in-base:both|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a contained local branch still yields to origin work main lacks|stale:topic publish:topic advance remote-advance:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=topic dirty=-
+an ancestry that cannot be read keeps a contained branch a claim|stale:topic publish:topic drop-local:topic advance fail-ancestry|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unreachable secondary remote is skipped with a warning and the claim proceeds|flaky-remote|create topic|0|topic|skipped-remote:flaky+skipped-remote:flaky|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
 a branch on a reachable secondary remote is ownership, naming that remote|flaky-remote second:topic|create topic|75|-|skipped-remote:flaky+dup:topic:second|main=main@end/clean cfg=- trees= branches=- dirty=-
 no origin remote at all refuses before any write|no-origin|create topic|1|-|no-origin|main=main@end/clean cfg=- trees= branches=- dirty=-
@@ -399,7 +428,7 @@ the topic branch checked out in the main checkout blocks the id without offering
 --transfer refuses a branch other than the main checkout branch|main-checkout|create topic --transfer other|1|-|transfer-mismatch|main=topic@end/clean cfg=- trees= branches=topic dirty=-
 a local branch literally named origin/<default> keeps its ownership checks|local:origin/main|create topic origin/main|75|-|dup:origin/main:local|main=main@end/clean cfg=- trees= branches=origin/main dirty=-
 a non-default --base with a live worktree refuses with that worktree|wt push|create other --base topic|75|-|implicit:other:clean,up|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
-a non-default --base of an unclaimed remote branch checks that branch out|remote:feature|create other --base feature|0|other|-|main=main@end/clean cfg=true trees=other:reg@feature@end branches=feature dirty=-
+a non-default --base of an unclaimed remote branch checks that branch out|remote:feature|create other --base feature|0|other|-|main=main@end/clean cfg=true trees=other:reg@feature@other branches=feature dirty=-
 a non-default --base fast-forwards a stale local inspection branch with its full source|local:feature publish:feature remote-advance:feature|create topic --base feature|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@feature@other branches=feature dirty=-
 '
 
@@ -469,7 +498,7 @@ assert_eq "$(run "create topic --base topic")" "rc=0 out=<topic> err= main=main@
   "the push route from the not-on-origin advice ends in a worktree on the branch"
 build follow-transfer local:topic
 git -C "$MAIN" switch -q topic
-assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-" \
+assert_eq "$(run "create topic --transfer topic")" "rc=0 out=<topic> err= main=main@end/clean cfg=true trees=topic:reg@topic@other branches=topic dirty=-" \
   "the main-checkout route from the not-on-origin advice ends in a worktree on the branch"
 
 # A checkout-free create is a new tree, not a destructive conversion of
