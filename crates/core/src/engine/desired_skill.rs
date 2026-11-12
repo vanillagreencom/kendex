@@ -5,7 +5,7 @@ use crate::hash::{hash_files, in_place_installation_hash};
 use crate::lock::{EmittedArtifact, entry_key};
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::render::skill::{SKILL_FILE, SkillText, bounded_description, render_skill};
+use crate::render::skill::{SKILL_FILE, SkillText, bounded_description};
 
 use super::desired::{
     Artifact, Desired, DesiredState, IN_PLACE_DISABLED, ItemCtx, effective_method, in_place_source,
@@ -433,32 +433,16 @@ fn render_variant(
     group: &SurfaceGroup,
     enabled: bool,
 ) -> Result<Variant> {
-    let (mut rendered, read_as) = render_skill(ctx.sealed, ctx.item_path, ctx.manifest, ctx.name)?;
+    let (mut rendered, read_as) =
+        crate::render::skill::with_instructions(ctx.sealed, ctx.item_path, None)?;
     // The planning manifest already normalizes managed instructions. Keep
     // the authored tree with only that block for a destination at the source;
     // Description limits and whole-tree label normalization belong to copies.
-    let source_files = rendered.files().to_vec();
-    let files = rendered
-        .into_files()
-        .into_iter()
-        .map(|(path, bytes)| {
-            let bytes = match std::str::from_utf8(&bytes) {
-                Ok(text) => {
-                    let text = state
-                        .agent_names
-                        .labels(text, &format!("{}: {}", ctx.name, path.display()));
-                    if path == std::path::Path::new(SKILL_FILE) {
-                        bounded_description(&text).into_bytes()
-                    } else {
-                        text.into_bytes()
-                    }
-                }
-                Err(_) => bytes,
-            };
-            (path, bytes)
-        })
-        .collect();
-    let files = rebase_for_surface(ctx, state, group, files);
+    let instructions = crate::render::skill::skill_instructions(ctx.manifest, ctx.name);
+    let source_files = crate::render::skill::with_skill_text(rendered.files().to_vec(), |text| {
+        crate::render::skill::inject_instructions(text, instructions.as_deref())
+    });
+    let files = rebase_for_surface(ctx, state, group, rendered.into_files());
     rendered = crate::render::skill::Rendered::new(files);
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
@@ -538,39 +522,64 @@ fn rebase_for_surface(
     group: &SurfaceGroup,
     files: Files,
 ) -> Files {
-    let local = matches!(
-        ctx.decl.source.as_str(),
-        crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
-    ) || ctx
-        .manifest
-        .sources
-        .get(&ctx.decl.source)
-        .is_some_and(|source| source.path.is_some());
-    if let Scope::Project { root } = ctx.scope
-        && local
-        && ctx.sealed.root().starts_with(root)
-    {
-        let (files, warnings) = crate::render::skill::rebase_links(
-            files,
-            ctx.item_path,
-            ctx.sealed,
-            &group.native,
-            root,
-        );
-        state
-            .warnings
-            .extend(warnings.into_iter().map(|warning| super::ItemWarning {
-                kind: ItemKind::Skill,
-                name: ctx.name.to_owned(),
-                harness: None,
-                message: warning.message,
-                remediation: warning.remediation,
-                detail: None,
-            }));
-        files
-    } else {
-        files
-    }
+    let files = {
+        let local = matches!(
+            ctx.decl.source.as_str(),
+            crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
+        ) || ctx
+            .manifest
+            .sources
+            .get(&ctx.decl.source)
+            .is_some_and(|source| source.path.is_some());
+        if let Scope::Project { root } = ctx.scope
+            && local
+            && ctx.sealed.root().starts_with(root)
+        {
+            let (files, warnings) = crate::render::skill::rebase_links(
+                files,
+                ctx.item_path,
+                ctx.sealed,
+                &group.native,
+                root,
+                effective_method(ctx.decl, ctx.manifest) != Method::Copy,
+            );
+            state
+                .warnings
+                .extend(warnings.into_iter().map(|warning| super::ItemWarning {
+                    kind: ItemKind::Skill,
+                    name: ctx.name.to_owned(),
+                    harness: None,
+                    message: warning.message,
+                    remediation: warning.remediation,
+                    detail: None,
+                }));
+            files
+        } else {
+            files
+        }
+    };
+    let instructions = crate::render::skill::skill_instructions(ctx.manifest, ctx.name);
+    crate::render::skill::with_skill_text(files, |text| {
+        crate::render::skill::inject_instructions(text, instructions.as_deref())
+    })
+    .into_iter()
+    .map(|(path, bytes)| {
+        let bytes = match std::str::from_utf8(&bytes) {
+            Ok(text) => {
+                let text = state
+                    .agent_names
+                    .labels(text, &format!("{}: {}", ctx.name, path.display()));
+                if path == std::path::Path::new(SKILL_FILE) {
+                    bounded_description(&text).into_bytes()
+                } else {
+                    text.into_bytes()
+                }
+            }
+            Err(_) => bytes,
+        };
+        (path, bytes)
+    })
+    .collect()
 }
 
 /// Nothing installs for this group, and every member is told why.

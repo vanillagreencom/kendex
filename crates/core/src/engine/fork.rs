@@ -283,11 +283,12 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             let on_disk = skill_text(&files);
             let files = crate::render::skill::authored_form(files, &published.text)
                 .map_err(|cause| unrestored(cause.to_string()))?;
+            let files = captured_skill_links(of, edited, files);
             let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
                 unreachable!("authored_form refuses a tree with no SKILL.md text")
             };
             Captured {
-                rendering: skill_round_trip(of, &captured, on_disk),
+                rendering: skill_round_trip(of, edited, &captured, on_disk),
                 files: Capture::Tree(files),
                 carry: None,
                 read_at: published.commit,
@@ -306,6 +307,47 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
             }
         }
     })
+}
+
+/// Capture external targets in the local source's coordinates, including
+/// sibling installations which need not have a sibling in the local catalog.
+fn captured_skill_links(
+    of: &ForkOf,
+    edited: &std::path::Path,
+    files: crate::render::skill::Files,
+) -> crate::render::skill::Files {
+    let Scope::Project { root } = of.scope else {
+        return files;
+    };
+    let destination = local_item(of.env, of.scope, ItemKind::Skill, of.installed_as);
+    files
+        .into_iter()
+        .map(|(rel, bytes)| {
+            let bytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+                let text = if crate::render::skill::carries_name(&rel) {
+                    crate::render::skill::strip_block(text)
+                } else {
+                    text.to_owned()
+                };
+                crate::render::agent::rebase_skill(
+                    &text,
+                    crate::render::agent::BodyPaths {
+                        source: &edited.join(&rel),
+                        source_root: root,
+                        rendered: &destination.join(&rel),
+                        install_root: root,
+                    },
+                    false,
+                    |target| target.starts_with(edited),
+                )
+                .0
+                .into_bytes()
+            } else {
+                bytes
+            };
+            (rel, bytes)
+        })
+        .collect()
 }
 
 fn capture_rendering(
@@ -581,11 +623,33 @@ fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
 /// frontmatter to the installed key set, which the capture put the
 /// publisher's other keys back around. What the round trip asks is
 /// whether the captured source renders to the bytes on disk.
-fn skill_round_trip(of: &ForkOf, captured: &str, on_disk: String) -> (String, String) {
+fn skill_round_trip(
+    of: &ForkOf,
+    edited: &std::path::Path,
+    captured: &str,
+    on_disk: String,
+) -> (String, String) {
+    let captured = if let Scope::Project { root } = of.scope {
+        let source = local_item(of.env, of.scope, ItemKind::Skill, of.installed_as);
+        crate::render::agent::rebase_skill(
+            captured,
+            crate::render::agent::BodyPaths {
+                source: &source.join(crate::render::skill::SKILL_FILE),
+                source_root: root,
+                rendered: &edited.join(crate::render::skill::SKILL_FILE),
+                install_root: root,
+            },
+            false,
+            |target| target.starts_with(&source),
+        )
+        .0
+    } else {
+        captured.to_owned()
+    };
     let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
     (
         crate::render::skill::installed_keys(&crate::render::skill::inject_instructions(
-            captured,
+            &captured,
             instructions.as_deref(),
         )),
         on_disk,

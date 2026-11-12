@@ -15,21 +15,23 @@ pub struct BodyPaths<'a> {
 /// Map catalog-relative targets into the consumer tree. Fork capture uses the
 /// same operation with the file and root pairs reversed.
 pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWarning>) {
-    rebase_links(text, paths, false, |_| false)
+    rebase_links(text, paths, false, false, |_| false)
 }
 
 pub(crate) fn rebase_skill(
     text: &str,
     paths: BodyPaths<'_>,
+    retain_alias: bool,
     keep: impl Fn(&Path) -> bool,
 ) -> (String, Vec<RenderWarning>) {
-    rebase_links(text, paths, true, keep)
+    rebase_links(text, paths, true, retain_alias, keep)
 }
 
 fn rebase_links(
     text: &str,
     paths: BodyPaths<'_>,
     preserve_spelling: bool,
+    retain_alias: bool,
     keep: impl Fn(&Path) -> bool,
 ) -> (String, Vec<RenderWarning>) {
     let mut links = relative_links(text);
@@ -44,9 +46,9 @@ fn rebase_links(
         if resolved.as_ref().is_some_and(|target| keep(target)) {
             continue;
         }
-        // An installed skill can be an alias of its source. Resolve the
-        // original spelling through that alias before choosing a new one.
-        if preserve_spelling
+        // Only an alias retained by the plan can establish physical identity;
+        // a copy replaces the current alias with a real destination tree.
+        if retain_alias
             && resolved
                 .as_ref()
                 .is_some_and(|target| target.starts_with(paths.source_root))
