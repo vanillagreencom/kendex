@@ -112,9 +112,10 @@ COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Me
 
 # Select command-safety's native Git history fence. Off preserves ordinary
 # reads. no-lazy-fetch requires literal global --no-lazy-fetch before reached
-# history/diff subcommands, metadata and worktree diffs included. Supporting
-# Git reads local objects or fails without implicit fetching; older Git can
-# reject the option. This changes no clone/promisor or fetch configuration.
+# history/diff subcommands, metadata and worktree diffs included. Git 2.45.1
+# or later, the floor kendex's command-safety reference derives, reads local
+# objects or fails without implicit fetching; older Git can fetch or reject
+# the option. This changes no clone/promisor or fetch configuration.
 # Unreadable settings/support warn and leave this advisory check unavailable.
 # values: off | no-lazy-fetch
 COMMAND_SAFETY_HISTORY_POLICY = "off"

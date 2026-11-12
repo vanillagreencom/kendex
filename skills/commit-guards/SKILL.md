@@ -61,7 +61,7 @@ For installer maintenance or ref/scope collection mechanics, read [DEVELOPMENT.m
 
 Before resolving a setting, writing a settings file, exclusions or a baseline, or enabling release collation, read [hooks and settings](references/hooks-and-settings.md#settings-resolution). That reference owns settings resolution, grammar and exclusion/baseline formats. Use [kendex.settings.toml.example](kendex.settings.toml.example) for project declarations and the matching [CHECKS.md](CHECKS.md) section for check-specific semantics. Each check's script owns its defaults.
 
-The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with a Git build that supports the global `--no-lazy-fetch` option.
+The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with Git 2.45.1 or later, the floor kendex's command-safety reference derives under Git history policy.
 
 ## Generated-file exclusions
 

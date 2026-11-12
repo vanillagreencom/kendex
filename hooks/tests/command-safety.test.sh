@@ -1611,6 +1611,16 @@ PY
 }
 history_rows() {
   local selected_rows=("$@") selected_seen=() label policy pattern shape command_json expected key reason payload command status output
+  local other="$scratch/other" foreign="$scratch/foreign" run_hook home
+  # A second project whose settings turn the policy off, and a project that
+  # is in no worktree with the hook and its loader in a non-Claude layout.
+  if [ ! -d "$other" ]; then
+    git init -q "$other"
+    printf '[env]\nCOMMAND_SAFETY_HISTORY_POLICY = "off"\n' >"$other/kendex.settings.toml"
+    mkdir -p "$foreign/.codex/hooks" "$foreign/.agents/skills/commit-guards/scripts"
+    cp "$hook" "$foreign/.codex/hooks/command-safety.sh"
+    cp -R "$ROOT/skills/commit-guards/scripts/lib" "$foreign/.agents/skills/commit-guards/scripts/lib"
+  fi
   while IFS='|' read -r label policy pattern shape command_json expected key reason; do
     row_selected "$label" || continue
     printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "%s"\n' "$pattern" >"$repo/kendex.settings.toml"
@@ -1619,22 +1629,26 @@ history_rows() {
       malformed) printf 'OTHER = false\n' >>"$repo/kendex.settings.toml" ;;
       *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
     esac
-    command=$(jq -nc --arg repo "$repo" "$command_json") || exit 1
+    command=$(jq -nc --arg repo "$repo" --arg other "$other" "$command_json") || exit 1
+    run_hook=$hook; home=${HOME:-}
     case "$shape" in
-      # A directory in no worktree; a row names the project as \($repo).
-      outside) mkdir -p "$scratch/outside"; payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch/outside" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      # A directory in no worktree; a row names the project as \($repo). HOME
+      # is the scratch root, so ~/project is the project and HOME holds no loader.
+      outside | outside-absent-support)
+        mkdir -p "$scratch/outside"; home=$scratch
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch/outside" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      outside-foreign)
+        home=$scratch; run_hook="$foreign/.codex/hooks/command-safety.sh"
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
       copilot-object) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
       copilot-string) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:({command:$command}|tojson)}') ;;
       *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
     esac
-    if [ "$shape" = absent-support ]; then
-      mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/history-lib"
-    fi
+    case "$shape" in *absent-support) mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/history-lib" ;; esac
     status=0
-    output=$("$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
-    if [ "$shape" = absent-support ]; then
-      mv "$scratch/history-lib" "$repo/.agents/skills/commit-guards/scripts/lib"
-    fi
+    output=$(env "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share" "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" \
+      "$BASH" "$run_hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
+    case "$shape" in *absent-support) mv "$scratch/history-lib" "$repo/.agents/skills/commit-guards/scripts/lib" ;; esac
     if [ "$status" -eq "$expected" ]; then
       printf 'PASS history: %s\n' "$label"; passed=$((passed + 1))
     else
@@ -1798,6 +1812,17 @@ outside-chain|no-lazy-fetch|^$|outside|"git -C .. -C project log -p"|2|refused=h
 outside-later-target|no-lazy-fetch|^$|outside|"git -C .. log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-launcher|no-lazy-fetch|^$|outside|"timeout 5 git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-fenced|no-lazy-fetch|^$|outside|"git -C \($repo) --no-lazy-fetch log -p --all"|0|silent|-
+outside-env-chdir|no-lazy-fetch|^$|outside|"env -C .. git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-env-chdir-equals|no-lazy-fetch|^$|outside|"env --chdir=.. timeout 5 git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-tilde|no-lazy-fetch|^$|outside|"git -C ~/project log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-after-cd|no-lazy-fetch|^$|outside|"cd / && git -C ../project log -p"|0|silent|-
+outside-split-escape|no-lazy-fetch|^$|outside|"env -S 'git -C \($repo) --no-lazy-fetch log $X'"|2|refused=history-policy|unresolved-git-argv
+outside-mixed-projects|no-lazy-fetch|^$|outside|"git -C \($other) log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-foreign-hook|no-lazy-fetch|^$|outside-foreign|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-unreadable|malformed|^$|outside|"git -C \($repo) log -p"|0|silent|-
+outside-absent-support|no-lazy-fetch|^$|outside-absent-support|"git -C \($repo) log -p"|0|silent|-
+launcher-data|no-lazy-fetch|^$|shell|"grep -rn 'git' -- ."|0|silent|-
+launcher-known-option|no-lazy-fetch|^$|shell|"timeout 5 git --attr-source HEAD log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-off|off|^$|outside|"git -C \($repo) log -p --all"|0|silent|-
 outside-pattern|off|blocked|outside|"git -C \($repo) log blocked"|0|silent|-
 fetch|no-lazy-fetch|^$|shell|"git fetch --all"|0|silent|-
