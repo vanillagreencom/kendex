@@ -12,7 +12,15 @@ import tempfile
 import time
 import uuid
 
-from session import BASH, CALL_SECONDS, Refusal, Session
+from session import BASH, CALL_SECONDS, CONTROLLER_WINDOW, Refusal, Session
+
+
+def tmux_literal(text):
+    """TEXT as one tmux argument that keeps its spelling."""
+    # tmux(1) expands formats in -c and -n values and parses a trailing
+    # semicolon in argv as a command separator.
+    text = text.replace("#", "##")
+    return text[:-1] + r"\;" if text.endswith(";") else text
 
 
 def native(line, receipt):
@@ -63,6 +71,9 @@ class Task(Session):
         return record
 
     def launch(self, args):
+        # The window list tells the live session from a helper by this name.
+        if args.name.casefold() == CONTROLLER_WINDOW:
+            raise Refusal("name-reserved", "fix=launch the task under another --name")
         parent = Session(self.home)
         with parent.locked():
             controller = parent.read()
@@ -78,10 +89,6 @@ class Task(Session):
                 raise Refusal("cwd-unavailable", "resolve cwd " + repr(args.cwd) + ": " + str(error)) from error
             if args.cwd == "" or not Path(cwd).is_dir() or not os.access(cwd, os.X_OK):
                 raise Refusal("cwd-unavailable", cwd)
-            # tmux(1) expands -c formats and parses trailing semicolons in argv.
-            tmux_cwd = cwd.replace("#", "##")
-            if tmux_cwd.endswith(";"):
-                tmux_cwd = tmux_cwd[:-1] + r"\;"
             # Results outlive scratch cleanup; the caller selects their home.
             scratch_root = Path(self.home) / "tmp/scratch"
             scratch_root.mkdir(parents=True, exist_ok=True)
@@ -143,8 +150,8 @@ class Task(Session):
                     # macOS can refuse with ENXIO. A wait that fails or is
                     # killed runs no launch.
                     channel = "jarvis-task-" + record["id"]
-                    created = self.tmux("new-window", "-d", "-t", "=jarvis", "-n", args.name,
-                                        "-c", tmux_cwd, "-P", "-F", "#{window_id}\t#{pane_id}",
+                    created = self.tmux("new-window", "-d", "-t", "=jarvis:", "-n", tmux_literal(args.name),
+                                        "-c", tmux_literal(cwd), "-P", "-F", "#{window_id}\t#{pane_id}",
                                         BASH, "--noprofile", "--norc", "-c",
                                         "tmux wait-for " + channel + " && exec " + shlex.join(launch),
                                         socket=terminal["server"])
@@ -221,8 +228,22 @@ class Task(Session):
     def close_window(self, record, *, allow_unmarked=False):
         terminal = record["terminal"]
         allow_unmarked = allow_unmarked or not terminal.get("marked", True)
+        front = self.in_front(record)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
+        # A closed current window leaves tmux to pick the next one, which can
+        # be another task's: the live controller's window takes the front.
+        # Focus is presentation, so an unread controller record closes the
+        # task all the same and selects nothing.
+        if not front:
+            return
+        try:
+            controller = Session(self.home).read()
+        except Refusal:
+            return
+        live = (controller or {}).get("terminal")
+        if live and live["server"] == terminal["server"] and controller["server_pid"] == record["server_pid"]:
+            self.tmux("select-window", "-t", live["window"], socket=terminal["server"], check=False)
 
     def stop_browser(self, record):
         # The harness starts the task's browser in its own session or service

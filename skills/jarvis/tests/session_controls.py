@@ -58,6 +58,12 @@ CONTROLS = (
      'if False:\n            raise Refusal("no-controller")', "test_attach_refuses_without_a_controller"),
     ("brief replacement", SESSION, 'record["private_brief"] = private',
      'record["private_brief"] = record.get("private_brief")', "test_update_brief"),
+    # Without the select, a hand-over leaves tmux's pick in front: a task's window.
+    ("live window front", SESSION, 'self.tmux("select-window", "-t", window, check=False)', 'pass',
+     "test_live_window_stays_in_front_through_handover"),
+    # Without the front check, a hand-over moves an owner reading a task.
+    ("front only", SESSION, 'if self.in_front(record.get("predecessor")):', 'if True:',
+     "test_live_window_stays_in_front_through_handover"),
 )
 
 
