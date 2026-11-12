@@ -9,8 +9,16 @@ use super::{UNAME, posix_shell, repo_root, write_stub};
 use crate::installer_message::value;
 use crate::test_util::{self, SUDO_STUB, install_stub, rooted};
 
-/// A value in GitHub's token alphabet and no real token's form.
-const TOKEN: &str = "kendexfixturetoken0123456789";
+/// Synthetic 390-character installation-token form; never a credential.
+const TOKEN: &str = concat!(
+    "ghs_",
+    "fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.",
+    "fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.",
+    "fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.",
+    "fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.",
+    "fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.fixture0123456789_-.",
+    "abcdef"
+);
 const MAIN_BUILD: &str = "main-build-42-1-0123456789abcdef0123456789abcdef01234567";
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const RELEASES: &str = "https://github.com/vanillagreencom/kendex/releases";
@@ -360,6 +368,8 @@ fn a_token_goes_to_github_alone() {
     for (args, expected) in token_rows() {
         let run = run(&install_sh(), &args, Some(TOKEN), None);
         assert!(run.output.status.success(), "{args:?}: {}", run.report());
+        assert!(!run.stdout().contains(TOKEN));
+        assert!(!run.stderr().contains(TOKEN));
         let observed: Vec<(bool, String, Option<&str>)> = run
             .requests
             .iter()
@@ -387,6 +397,24 @@ fn a_token_goes_to_github_alone() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn curl_config_metacharacters_and_control_bytes_are_refused() {
+    // NUL cannot cross the process environment boundary.
+    for byte in (1..=31).chain([127, b'"', b'\\']) {
+        let token = format!("fixture{}suffix", char::from(byte));
+        let run = run(&install_sh(), &[], Some(&token), None);
+        assert_eq!(run.output.status.code(), Some(2), "byte={byte}");
+        assert_eq!(
+            value(&run.output.stderr, "github-token-invalid"),
+            Some("KENDEX_GITHUB_TOKEN"),
+            "byte={byte}"
+        );
+        assert!(run.requests.is_empty(), "byte={byte}");
+        assert!(!run.stdout().contains(&token), "byte={byte}");
+        assert!(!run.stderr().contains(&token), "byte={byte}");
     }
 }
 
@@ -552,6 +580,8 @@ fn a_failing_install_never_prints_the_token() {
 
 /// Which check a copy of `install.sh` with one rule taken out turns red.
 enum Breaks {
+    /// The installation-token form is rejected before any request.
+    InstallationForm,
     /// The token row: not one request carries the token.
     Carried,
     /// The leak row: the token reaches stderr.
@@ -568,6 +598,11 @@ enum Breaks {
 fn each_token_rule_breaks_its_own_check() {
     let source = std::fs::read_to_string(install_sh()).unwrap();
     for (from, to, breaks) in [
+        (
+            "*[\\\"\\\\[:cntrl:]]*)",
+            "*[![:alnum:]_]*)",
+            Breaks::InstallationForm,
+        ),
         (
             "github_token=\"${KENDEX_GITHUB_TOKEN:-}\"\n",
             "github_token=\"\"\n",
@@ -589,6 +624,11 @@ fn each_token_rule_breaks_its_own_check() {
         let script = rooted(&dir).join("install-mutant.sh");
         std::fs::write(&script, source.replace(from, to)).unwrap();
         match breaks {
+            Breaks::InstallationForm => {
+                let run = run(&script, &[], Some(TOKEN), None);
+                assert_eq!(run.output.status.code(), Some(2));
+                assert!(run.requests.is_empty());
+            }
             Breaks::Carried => {
                 let run = run(&script, &[], Some(TOKEN), None);
                 assert!(

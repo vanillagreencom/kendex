@@ -64,12 +64,10 @@ done
 # script starts except curl, which reads it from standard input.
 github_token="${KENDEX_GITHUB_TOKEN:-}"
 unset KENDEX_GITHUB_TOKEN
-# The token is written into a curl config line, where a quote or a newline
-# would end the header and begin an option of its own. GitHub's tokens are
-# letters, digits and underscores.
+# Quotes, escapes and control bytes can change the curl config header.
 case "$github_token" in
-  *[![:alnum:]_]*)
-    message github-token-invalid KENDEX_GITHUB_TOKEN "A GitHub token holds only letters, digits and underscores." >&2
+  *[\"\\[:cntrl:]]*)
+    message github-token-invalid KENDEX_GITHUB_TOKEN "A GitHub token cannot contain quotes, backslashes or control bytes." >&2
     exit 2 ;;
 esac
 
