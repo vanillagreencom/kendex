@@ -10,7 +10,7 @@ use super::pin::{kind_choices, parse_kind};
 use super::{CliResult, payload, resolve_scopes};
 use crate::scope::ScopeFilter;
 use crate::ui::report::PlainColumns;
-use crate::ui::{self, Span, Status, Style, Target};
+use crate::ui::{self, Cell, Span, Status, Style, Target};
 
 #[derive(Args)]
 pub struct ShowArgs {
@@ -74,7 +74,12 @@ fn file_list(style: &Style, files: &[detail::PackageFile]) -> Vec<String> {
         &["path", "size"],
         &files
             .iter()
-            .map(|file| vec![file.path.clone(), format!("{} bytes", file.size)])
+            .map(|file| {
+                vec![
+                    Cell::default().copy(file.path.clone()),
+                    format!("{} bytes", file.size).into(),
+                ]
+            })
             .collect::<Vec<_>>(),
         PlainColumns::Joined,
     )
