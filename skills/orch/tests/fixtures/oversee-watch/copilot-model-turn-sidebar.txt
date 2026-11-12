@@ -1,0 +1,43 @@
+  ←   +                                         │ [Current]  Sessions   Issues   Pull requests   Gists
+ Sorted: Recent                                 │
+                                                │╭───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+  ●  Summarize README.md Content                ││                                                                                                           │
+     ⎇ main                                 ││  ╭─╮╭─╮                             │  Getting started                                                    │
+                                                ││  ╰─╯╰─╯  Copilot v1.0.109 uses AI.  │  Use the tabs above to explore your sessions and pull requests      │
+  ○  Summarize Documentation Files              ││  █ ▘▝ █  Check for mistakes.        │  /model — Switch models across providers, or use Copilot Fusion     │
+     ⎇ main · 1m ago                        ││   ▔▔▔▔                              │                                                                     │
+                                                ││                                                                                                           │
+  ○  Summarize Documentation Files              │╰───────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+     ⎇ main · 12m ago                       │
+                                                │ ! Connected Connectors could not be loaded; existing local and self-hosted MCP servers remain available.
+                                                │
+                                                │
+                                                │ ❯ Read README.md and summarize it in three sentences. Change no file and run no command.               04:15
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │
+                                                │ ~/project [⎇ main] Session: 0 AIC used · YOLO
+                                                │───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                │❯
+                                                │───────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                                │ Plan · Allow All · ◉ Working ctrl+c interrupt                                       GPT-6.1 Sol · High · (9%)
