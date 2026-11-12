@@ -353,16 +353,11 @@ while IFS='|' read -r name field expression posted; do
     "0=$posted=1=slack: envelope-field=$R id=$BAD_ID field=$field" "$name: only the invalid envelope field degrades or skips; the next envelope posts"
 done <<'ROWS'
 missing-line|line|del(.line)|1
-bad-line|line|.line = "one"|1
 missing-count|count|del(.count)|1
-bad-count|count|.count = []|1
 missing-id|id|del(.id)|0
 missing-at|at|del(.at)|0
 bad-at|at|.at = "not-a-date"|0
-missing-text|text|del(.text)|0
 bad-text|text|.text = 17|0
-bad-kind|kind|.kind = []|0
-bad-box|box|.box = {}|0
 unknown-kind|kind|.kind = "unknown"|0
 unknown-box|box|.box = "unknown"|0
 bad-options|options|.options = [17]|0

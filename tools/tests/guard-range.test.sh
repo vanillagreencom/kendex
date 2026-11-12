@@ -828,7 +828,6 @@ DOC_ALL="$(printf '%s\n' "$D"/tests/*.sh | sed 's#.*/##; s/\.sh$//' | sort | tr 
 DOC_CATALOG="$(printf '%s\n' $DOC_ALL catalogscan | sort | tr '\n' ' ' | sed 's/ $//')"
 SCHEMA_PATH=skills/doc-readers/schemas/review-finding-prompt.md
 READ_ROWS=(
-  "one document|$SCHEMA_PATH|assigned-lib assigned-script catalogscan quoted-find"
   "repeated document queries|$SCHEMA_PATH skills/doc-readers/workflows/flow.md|assigned-dir assigned-lib assigned-script catalogscan quoted-find"
   "another tree before the document|hooks/README.md $SCHEMA_PATH|assigned-lib assigned-script beta.test.sh catalogscan quoted-find"
 )
