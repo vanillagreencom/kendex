@@ -52,7 +52,11 @@ case "$query" in
   printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
   ;;
 *"issue(id:"*)
-  jq -cj --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "${CURRENT_STATE:-In Review}" --arg type "${CURRENT_TYPE:-started}" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:"CC-720",title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
+  identifier=CC-720 state="${CURRENT_STATE:-In Review}" type="${CURRENT_TYPE:-started}"
+  if [ "$(jq -r '.variables.id' <<<"$payload")" = "${REPLACEMENT_ID:-}" ]; then
+    identifier="$REPLACEMENT_ID" state=replacement type="${REPLACEMENT_TYPE:?}" description="$(jq -Rs . "${REPLACEMENT_FILE:?}")"
+  fi
+  jq -cj --arg identifier "$identifier" --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "$state" --arg type "$type" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:"issue-uuid",identifier:$identifier,title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
   printf '___HTTP_CODE___200'
   ;;
 *"issueUpdate(id:"*)
@@ -377,3 +381,86 @@ rc=0
 run_complete "$verification" "$log" CC-720 --post-merge-at invalid >"$TMP_ROOT/stamp.out" 2>"$TMP_ROOT/stamp.err" || rc=$?
 assert_ne "invalid merge timestamp refuses" "$rc" 0
 assert_not "invalid merge timestamp refuses before any request" test -s "$log"
+
+# A numeric reading names its figure, comparator, number and unit; any other
+# reading is an outcome check. Filing and completion read one parser verdict;
+# the refusal table above proves the command refuses a parser error before
+# any write. Columns: name | reading | the parser rule, or valid.
+while IFS='|' read -r name reading rule; do
+  printf '%s\n' '> **Story:** The owner checks a released change. The branch proof is complete. After release, live use decides acceptance.' '' '> **Why this matters:** Live readings keep incomplete acceptance visible.' '' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: $reading; Where: Jarvis, the owner's delegate; Why after merge: live use; Deadline: +24h" >"$TMP_ROOT/reading.md"
+  filed=0
+  require_issue_header_shape "$(cat "$TMP_ROOT/reading.md")" 2>"$TMP_ROOT/filing.err" || filed=$?
+  parsed="$(done_when_parse "$(cat "$TMP_ROOT/reading.md")" '[]' "$merged")"
+  if [[ "$rule" == valid ]]; then
+    assert_eq "reading $name files" "$filed" 0
+    assert_jq "reading $name keeps Verifying" "$parsed" '.errors == [] and .completion_state == "Verifying"'
+  else
+    assert_eq "reading $name refuses at filing" "$filed" 1
+    assert_jq "reading $name names the filing rule" "$(cat "$TMP_ROOT/filing.err")" ".rule == \"$rule\" and .box == 2"
+    assert_jq "reading $name refuses at completion" "$parsed" ".errors == [{box: 2, rule: \"$rule\"}] and .completion_state == null"
+  fi
+done <<'ROWS'
+outcome|The owner sees the update card on the first launch after install|valid
+numeric|p95 create latency <= 300 ms across 20 creates|valid
+numeric-percent|failed refreshes < 1% of refreshes|valid
+no-unit|failed refreshes = 0|post-merge-numeric
+no-figure|>= 3 releases|post-merge-numeric
+ROWS
+parsed="$(done_when_parse "## Done when"$'\n'"- [ ] Post-merge: p95 create latency <= 300 ms across 20 creates; Where: job; Why after merge: live use; Deadline: +24h" '[]')"
+assert_jq "a numeric reading keeps its figure, comparator, number and unit" "$parsed" \
+  '.boxes[0].numeric == {figure: "p95 create latency", comparator: "<=", value: 300, unit: "ms"}'
+
+# A waived or superseded box is retired, never ticked: it keeps its text
+# without a checkbox and holds no state. A met box beside it still needs its
+# evidence, and a ticked box cannot retire.
+replacement="$TMP_ROOT/replacement.md"
+printf '%s\n' '## Done when' '- [ ] The owner sees the update card' >"$replacement"
+retire="$TMP_ROOT/retire.md"
+own_box="Post-merge: The owner sees the update card; Where: Jarvis, the owner's delegate; Why after merge: a person's screen; Deadline: +24h"
+printf '%s\n' '## Done when' '- [x] branch proof' '  Evidence: branch read' \
+  "- [ ] Post-merge: p95 create latency <= 300 ms; Where: job; Why after merge: live use; Deadline: +24h" "- [ ] $own_box" >"$retire"
+# The parser owns each retirement's shape. Columns: name | retire | evidence | rule.
+while IFS='|' read -r name retired evidence rule; do
+  assert_jq "retire $name refuses" "$(done_when_parse "$(cat "$retire")" '[]' "$merged" "$evidence" "$retired")" \
+    ".errors == [{box: $(jq -r 'keys[0]' <<<"$retired"), rule: \"$rule\"}] and .completion_state == null"
+done <<'ROWS'
+waive-checked|{"1":"waived"}|{"1":"owner comment c1: dropped"}|done-when-retirement
+waive-no-reason|{"2":"waived"}|{"3":"unrelated"}|done-when-retirement
+supersede-no-id|{"3":"superseded"}|{"3":"The owner sees the update card"}|done-when-retirement
+ROWS
+# complete_issue owns the selections and the transfer read-back.
+# Columns: name | options | evidence-file lines | replacement state type | expected state, or the refusal.
+while IFS='|' read -r name options lines type expected; do
+  printf '%b' "${lines//@own/$own_box}" >"$TMP_ROOT/retire-evidence.txt"
+  log="$TMP_ROOT/retire-$name.jsonl"
+  rc=0
+  # shellcheck disable=SC2086  # the options column holds separate words
+  REPLACEMENT_ID=CC-730 REPLACEMENT_FILE="$replacement" REPLACEMENT_TYPE="$type" \
+    run_complete "$retire" "$log" CC-720 --post-merge-at "$merged" $options --evidence-file "$TMP_ROOT/retire-evidence.txt" \
+    >"$TMP_ROOT/retire.out" 2>"$TMP_ROOT/retire.err" || rc=$?
+  if [[ "$expected" == state-* ]]; then
+    assert_eq "retire $name completes" "$rc" 0
+    assert_jq "retire $name sets its state" "$(updates "$log")" ".variables.input.stateId == \"$expected\""
+    assert_jq "retire $name keeps the waived box unticked" "$(updates "$log")" \
+      '.variables.input.description | contains("- Waived: Post-merge: p95") and (test("\\[x\\] Post-merge: p95") | not)'
+  else
+    assert_ne "retire $name refuses" "$rc" 0
+    assert_jq "retire $name names its refusal" "$(cat "$TMP_ROOT/retire.err")" "$expected"
+    assert_not "retire $name writes nothing" jq -se 'any(.[]; .query | contains("issueUpdate"))' "$log"
+  fi
+done <<'ROWS'
+waive-one|--done-when-waived 2|2: owner comment c1: the job reader was retired|unstarted|state-verifying
+waive-met|--done-when-waived 2 --done-when-met 3|2: owner comment c1: dropped\n3: Jarvis read the card|unstarted|state-done
+supersede|--done-when-superseded 3 --done-when-waived 2|2: owner comment c1: dropped\n3: CC-730 The owner sees the update card|unstarted|state-done
+supersede-missing|--done-when-superseded 3|3: CC-730 The owner sees a different card|unstarted|.error == "done-when-transfer-unread" and .box == 3 and .replacement == "CC-730"
+supersede-canceled|--done-when-superseded 3|3: CC-730 The owner sees the update card|canceled|.error == "done-when-transfer-unread"
+supersede-self|--done-when-superseded 3|3: CC-720 @own|unstarted|.error == "done-when-transfer-unread"
+overlap|--done-when-waived 2 --done-when-met 2|2: dropped|unstarted|.error == "done-when-disposition-overlap"
+overlap-all|--done-when-superseded 3 --done-when-met all|3: CC-730 The owner sees the update card|unstarted|.error == "done-when-disposition-overlap"
+ROWS
+record="$(updates "$TMP_ROOT/retire-supersede.jsonl" | jq -r '.variables.input.description')"
+record_tail="- Waived: Post-merge: p95 create latency <= 300 ms; Where: job; Why after merge: live use; Deadline: +24h
+  Reason: owner comment c1: dropped
+- Superseded: $own_box
+  Replacement: CC-730 The owner sees the update card"
+assert_eq "a retired box keeps its criterion, reason and replacement" "${record: -${#record_tail}}" "$record_tail"
