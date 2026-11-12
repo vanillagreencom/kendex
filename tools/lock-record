@@ -59,7 +59,7 @@
 # pull request.
 # A base that moved past the judged head ends the run with nothing landed:
 # the push that moved it starts a run of its own. The landing push is the
-# route docs/decisions/D029-owner-merges-ci-input-repair.md records.
+# route docs/decisions/D033-landing-app-proved-commit.md records.
 # Otherwise nothing here pushes to the default branch: the rolling pull
 # request takes the record through the merge queue
 # (docs/decisions/D007-lock-record-on-main.md). The rule a branch follows
