@@ -665,8 +665,9 @@ mutate_file "$OUTSIDE_PREFIX_SCRIPTS/lib/kendex-env.sh" \
   ' _kendex_seen=" " _kendex_lineno=0 lineno=0'
 PREFIX_OPEN_SCRIPTS="$(mutant_scripts prefix-open lib/kendex-env.sh)" || exit 1
 mutate_file "$PREFIX_OPEN_SCRIPTS/lib/kendex-env.sh" \
-  '  [[ "$2" != _kendex_* ]] && return 0' \
-  '  return 0'
+  'kendex_key_usable() { # FILE KEY LINE — 0 = safe assignment destination; 1 + ::error otherwise' \
+  'kendex_key_usable() { # FILE KEY LINE — 0 = safe assignment destination; 1 + ::error otherwise
+  return 0'
 S12_MARK="$TMP_ROOT/loader-variable-ran"
 S12_ROWS='a settings key named like a loader counter|settings|lineno = '\''BASH_VERSINFO[$(touch MARK)]'\''\nS12_AFTER = "1"|loaded ran=no|outside-prefix|loaded ran=yes
 a settings key in the reserved prefix|settings|_kendex_lineno = '\''BASH_VERSINFO[$(touch MARK)]'\''\nS12_AFTER = "1"|reserved kendex.settings.toml _kendex_lineno ran=no|prefix-open|loaded ran=yes
@@ -715,6 +716,97 @@ while IFS='|' read -r s12_label s12_file s12_body s12_want s12_control s12_contr
   assert_eq "$(s12_load "$s12_control_lib" "$s12_project-control" "$s12_file" "$s12_body")" "$s12_control_want" \
     "control: the $s12_control loader gives $s12_label its old meaning"
 done <<<"$S12_ROWS"
+
+# Scenario 13: destination attributes cannot give literal settings values
+# arithmetic or indirect assignment semantics. The control removes only
+# the attribute check, retaining the same parser and entry points.
+ATTRIBUTES_OPEN_SCRIPTS="$(mutant_scripts attributes-open lib/kendex-env.sh)" || exit 1
+mutate_file "$ATTRIBUTES_OPEN_SCRIPTS/lib/kendex-env.sh" \
+  '    if [[ "$_kendex_attributes" == *[iaAn]* ]]; then' \
+  '    if false; then'
+S13_MARK="$TMP_ROOT/attribute-value-ran"
+# Probe an optional declare attribute through data: older Bash versions
+# parse the same command and refuse the unsupported option in the probe.
+s13_reference_attribute=-n
+S13_ROWS='private|RANDOM|builtin|refused|ran=yes
+private|OPTIND|builtin|refused|ran=yes
+settings|RANDOM|builtin|refused|ran=yes
+settings|OPTIND|builtin|refused|ran=yes
+standalone|OPTIND|builtin|refused|ran=yes
+private|S13_INTEGER|integer|refused|ran=yes
+settings|S13_INTEGER|integer|refused|ran=yes
+private|S13_ARRAY|array|refused|ran=no
+settings|S13_ARRAY|array|refused|ran=no
+private|S13_REFERENCE|reference|refused|ran=no
+settings|S13_REFERENCE|reference|refused|ran=no
+private|S13_SCALAR|scalar|loaded|ran=no
+settings|S13_SCALAR|scalar|loaded|ran=no
+private|S13_INTEGER|parent|loaded|ran=no
+settings|S13_INTEGER|parent|loaded|ran=no'
+s13_load() { # LIB PROJECT FILE KEY ATTRIBUTES
+  (
+    unset -v KENDEX_ENV_FILE
+    rm -f -- "${S13_MARK:?}"
+    mkdir "$2"
+    case "$5" in
+      integer) declare -i S13_INTEGER=0 ;;
+      array) declare -a S13_ARRAY=(original) ;;
+      reference) declare "$s13_reference_attribute" S13_REFERENCE=S13_TARGET; S13_TARGET=original ;;
+      scalar) S13_SCALAR=original ;;
+      parent) declare -ix S13_INTEGER=23 ;;
+    esac
+    payload='BASH_VERSINFO[$(touch MARK)]'
+    payload="${payload//MARK/$S13_MARK}"
+    file="$2/.env.local" line=1
+    if [[ "$3" == settings ]]; then
+      file="$2/kendex.settings.toml" line=2
+      printf '[env]\n%s = '\''%s'\''\n' "$4" "$payload" > "$file"
+    else
+      printf '%s='\''%s'\''\n' "$4" "$payload" > "$file"
+    fi
+    source "$1"
+    rc=0
+    if [[ "$3" == standalone ]]; then
+      kendex_source_env_file "$file" >"$2.out" 2>"$2.err" || rc=$?
+    else
+      kendex_load_project_env "$2" >"$2.out" 2>"$2.err" || rc=$?
+    fi
+    ran=no
+    [[ ! -e "$S13_MARK" ]] || ran=yes
+    if [[ "$rc" -ne 0 ]]; then
+      first=""
+      IFS= read -r first < "$2.err" || :
+      printf '%s ran=%s\n' "$first" "$ran"
+    else
+      case "$5" in
+        scalar) [[ "$S13_SCALAR" == "$payload" ]] || exit 1 ;;
+        reference) [[ "$S13_TARGET" == "$payload" ]] || exit 1 ;;
+        array) [[ "${S13_ARRAY[0]}" == "$payload" ]] || exit 1 ;;
+        parent) [[ "$S13_INTEGER" == 23 ]] || exit 1 ;;
+      esac
+      printf 'loaded ran=%s\n' "$ran"
+    fi
+  )
+}
+s13_row=0
+while IFS='|' read -r s13_file s13_key s13_attributes s13_result s13_control; do
+  if [[ "$s13_attributes" == reference ]] &&
+     ! (declare "$s13_reference_attribute" S13_REFERENCE=S13_TARGET) 2>/dev/null; then
+    continue # Bash 3.2 has no name-reference attribute.
+  fi
+  s13_row=$((s13_row + 1))
+  s13_project="$TMP_ROOT/proj13-$s13_row"
+  s13_want='loaded ran=no'
+  if [[ "$s13_result" == refused ]]; then
+    s13_where=.env.local s13_line=1
+    [[ "$s13_file" != settings ]] || { s13_where=kendex.settings.toml; s13_line=2; }
+    s13_want="kendex-env: destination-attributes file=$s13_project/$s13_where lineno=$s13_line key=$s13_key ran=no"
+  fi
+  assert_eq "$(s13_load "$LIB" "$s13_project" "$s13_file" "$s13_key" "$s13_attributes")" "$s13_want" \
+    "scenario 13: $s13_file $s13_key $s13_attributes"
+  assert_eq "$(s13_load "$ATTRIBUTES_OPEN_SCRIPTS/lib/kendex-env.sh" "$s13_project-control" "$s13_file" "$s13_key" "$s13_attributes")" "loaded $s13_control" \
+    "control: $s13_file $s13_key $s13_attributes retains assignment semantics"
+done <<<"$S13_ROWS"
 
 echo
 # Prefix probes and physical path checks retain the loader's output and cwd.

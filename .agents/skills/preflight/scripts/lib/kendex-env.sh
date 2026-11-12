@@ -105,6 +105,10 @@ kendex_env_message() { # KEY ARG...
       printf 'kendex-env: reserved-key file=%s key=%s\n' "$1" "$2"
       printf '%s\n' "::error::$1: $2 starts with _kendex_, the prefix this loader keeps for its own variables; rename the key"
       ;;
+    destination-attributes)
+      printf 'kendex-env: destination-attributes file=%s lineno=%s key=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "::error::$1:$2: $3 has integer, array or name-reference attributes that can evaluate or redirect a settings assignment; use an ordinary scalar variable"
+      ;;
     value-syntax)
       printf 'kendex-env: value-syntax file=%s key=%s\n' "$1" "$2"
       printf '%s\n' "::error::$1: unsupported syntax for $2 (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)"
@@ -116,10 +120,24 @@ kendex_parent_env_has() {
   [[ "${_kendex_parent_env_name_set-}" == *" $1 "* ]]
 }
 
-kendex_key_usable() { # FILE KEY — 0 = KEY is outside the loader's prefix; 1 + ::error otherwise
-  [[ "$2" != _kendex_* ]] && return 0
-  kendex_env_message reserved-key "$1" "$2" >&2
-  return 1
+kendex_key_usable() { # FILE KEY LINE — 0 = safe assignment destination; 1 + ::error otherwise
+  if [[ "$2" == _kendex_* ]]; then
+    kendex_env_message reserved-key "$1" "$2" >&2
+    return 1
+  fi
+  kendex_parent_env_has "$2" && return 0
+  # printf -v retains destination attributes. Integers and array subscripts
+  # evaluate text, and references redirect it, even after literal decoding.
+  local _kendex_attributes
+  if _kendex_attributes=$(declare -p "$2" 2>/dev/null); then
+    _kendex_attributes="${_kendex_attributes#declare -}"
+    _kendex_attributes="${_kendex_attributes%% *}"
+    if [[ "$_kendex_attributes" == *[iaAn]* ]]; then
+      kendex_env_message destination-attributes "$1" "$3" "$2" >&2
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
@@ -219,7 +237,7 @@ kendex_load_settings_file() {
     [[ "$_kendex_section" == "env" && "$_kendex_line" == *=* ]] || continue
     kendex_trim _kendex_key "${_kendex_line%%=*}"
     [[ "$_kendex_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
-    kendex_key_usable "$_kendex_file" "$_kendex_key" || return 1
+    kendex_key_usable "$_kendex_file" "$_kendex_key" "$_kendex_lineno" || return 1
     # Which duplicate wins would be an accident of read order, so a re-assigned
     # key is a configuration error — the same ambiguity guard the settings.sh
     # resolver family applies. Checked before the parent-env skip: a malformed
@@ -312,7 +330,7 @@ kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::err
       kendex_env_message private-env-line "$1" "$_kendex_env_lineno" >&2
       return 1
     fi
-    kendex_key_usable "$1" "$_kendex_env_key" || return 1
+    kendex_key_usable "$1" "$_kendex_env_key" "$_kendex_env_lineno" || return 1
     kendex_parent_env_has "$_kendex_env_key" ||
       _kendex_private_values+=("$_kendex_env_key" "$_kendex_env_value" "$_kendex_env_form")
   done < "$1"
