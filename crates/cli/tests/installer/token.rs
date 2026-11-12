@@ -85,7 +85,9 @@ fn feed() -> String {
 /// the arguments with `-o` cut to the file name. `auth` is `yes` when curl
 /// read the token's header from the config on standard input. With
 /// `FAKE_CURL_FAIL` set every call fails with that HTTP status, as curl
-/// `-f` does: exit 22, the status where `-w` asks for it.
+/// `-f` does: exit 22, the status where `-w` asks for it. With
+/// `FAKE_CURL_FLAKY` set to a status and an exit code, the first request
+/// for the x86_64 Linux command fails that way and every later one answers.
 const CURL: &str = r#"#!/usr/bin/env bash
 config="" out="" url="" write="" accept="-" args=()
 while [ $# -gt 0 ]; do
@@ -108,6 +110,16 @@ if [ -n "${FAKE_CURL_FAIL:-}" ]; then
   exit 22
 fi
 api=https://api.github.com/repos/vanillagreencom/kendex/releases
+if [ -n "${FAKE_CURL_FLAKY:-}" ] && [ ! -e "__FAKE__/flaked" ]; then
+  case "$url" in
+    */releases/download/*/kendex-x86_64-unknown-linux-gnu|"$api/assets/102")
+      : > "__FAKE__/flaked"
+      read -r status code <<<"$FAKE_CURL_FLAKY"
+      [ -z "$write" ] || printf '%s' "$status"
+      echo "curl: ($code) The requested URL returned error: $status" >&2
+      exit "$code" ;;
+  esac
+fi
 case "$url" in
   https://github.com/vanillagreencom/kendex/releases/latest)
     printf '%s' https://github.com/vanillagreencom/kendex/releases/tag/v9.9.9; exit 0 ;;
@@ -138,6 +150,8 @@ struct Run {
     home: PathBuf,
     output: Output,
     requests: Vec<Request>,
+    /// Each wait `sleep` was asked for, in order.
+    sleeps: Vec<String>,
     _tmp: tempfile::TempDir,
 }
 
@@ -173,8 +187,20 @@ impl Run {
 
 /// `script` run as Linux x86_64 with `args`, the token in the environment
 /// when `token` is given, and every request failing with `fail` when given.
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 fn run(script: &Path, args: &[&str], token: Option<&str>, fail: Option<u16>) -> Run {
+    run_flaky(script, args, token, fail, None)
+}
+
+/// The same run, with `FAKE_CURL_FLAKY` set to `flaky` when given. `sleep`
+/// returns at once and logs each wait to `fake/sleeps`.
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn run_flaky(
+    script: &Path,
+    args: &[&str],
+    token: Option<&str>,
+    fail: Option<u16>,
+    flaky: Option<&str>,
+) -> Run {
     let tmp = tempfile::tempdir().expect("tempdir");
     let home = rooted(&tmp);
     let fake = home.join("fake");
@@ -191,6 +217,14 @@ fn run(script: &Path, args: &[&str], token: Option<&str>, fail: Option<u16>) -> 
         &CURL
             .replace("__FAKE__", &fake.display().to_string())
             .replace("__TOKEN__", TOKEN),
+    );
+    write_stub(
+        &stubs,
+        "sleep",
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"{}\"\n",
+            fake.join("sleeps").display()
+        ),
     );
     write_stub(&stubs, "uname", UNAME);
     write_stub(&stubs, "sudo", SUDO_STUB);
@@ -212,12 +246,16 @@ fn run(script: &Path, args: &[&str], token: Option<&str>, fail: Option<u16>) -> 
         .envs(test_util::fixture_env(&home))
         .env("XDG_DATA_HOME", home.join("share"))
         .env_remove("KENDEX_GITHUB_TOKEN")
-        .env_remove("FAKE_CURL_FAIL");
+        .env_remove("FAKE_CURL_FAIL")
+        .env_remove("FAKE_CURL_FLAKY");
     if let Some(token) = token {
         command.env("KENDEX_GITHUB_TOKEN", token);
     }
     if let Some(status) = fail {
         command.env("FAKE_CURL_FAIL", status.to_string());
+    }
+    if let Some(flaky) = flaky {
+        command.env("FAKE_CURL_FLAKY", flaky);
     }
     let output = command.output().expect("install.sh runs");
     let requests = std::fs::read_to_string(fake.join("requests"))
@@ -235,10 +273,16 @@ fn run(script: &Path, args: &[&str], token: Option<&str>, fail: Option<u16>) -> 
             }
         })
         .collect();
+    let sleeps = std::fs::read_to_string(fake.join("sleeps"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
     Run {
         home,
         output,
         requests,
+        sleeps,
         _tmp: tmp,
     }
 }
@@ -349,11 +393,12 @@ fn a_token_goes_to_github_alone() {
 /// Without a token the installer sends what it sent before the option
 /// existed, argument for argument, and says the same: each row's requests
 /// and messages were read off a run of the installer before
-/// `KENDEX_GITHUB_TOKEN`. An empty value is no token.
+/// `KENDEX_GITHUB_TOKEN`, and a release download since asks for the HTTP
+/// status its retry reads. An empty value is no token.
 #[test]
 fn without_a_token_the_installer_sends_what_it_always_has() {
     let download = |tag: &str, file: &str, name: &str| {
-        format!("-fSL --proto =https -o {file} {RELEASES}/download/{tag}/{name}")
+        format!("-fSL --proto =https -w %{{http_code}} -o {file} {RELEASES}/download/{tag}/{name}")
     };
     let icon_requests = |reference| {
         ["32x32", "128x128", "256x256", "512x512"]
@@ -571,4 +616,82 @@ fn each_token_rule_breaks_its_own_check() {
             }
         }
     }
+}
+
+/// A release download that GitHub answers with a temporary error is tried
+/// again, whatever exit code curl gives it: 56 is how a macOS runner's curl
+/// reported the 504 in merge-group run 42469437922, which curl's own
+/// `--retry` passes over. Any other error stops at once. Each row: the
+/// token, the first command request's status and curl exit code, and
+/// whether the install then succeeds.
+#[test]
+fn a_temporary_download_error_is_tried_again_and_no_other_is() {
+    let anonymous = format!("{RELEASES}/download/v9.9.9/kendex-x86_64-unknown-linux-gnu");
+    let carried = format!("{API}/assets/102");
+    for (token, flaky, installs) in [
+        (None, "504 56", true),
+        (None, "503 22", true),
+        (Some(TOKEN), "504 22", true),
+        (None, "404 22", false),
+        (Some(TOKEN), "404 22", false),
+    ] {
+        let run = run_flaky(&install_sh(), &[], token, None, Some(flaky));
+        let row = format!("token={} {flaky}", token.is_some());
+        let command = if token.is_some() {
+            &carried
+        } else {
+            &anonymous
+        };
+        let tries = run
+            .requests
+            .iter()
+            .filter(|request| &request.url == command)
+            .count();
+        if installs {
+            assert!(run.output.status.success(), "{row}: {}", run.report());
+            assert_eq!(tries, 2, "{row}: {}", run.report());
+            assert_eq!(run.sleeps.len(), 1, "{row}: {}", run.report());
+            assert_eq!(
+                value(&run.output.stderr, "download-retry"),
+                flaky.split(' ').next(),
+                "{row}: {}",
+                run.report()
+            );
+        } else {
+            assert_eq!(run.output.status.code(), Some(1), "{row}: {}", run.report());
+            assert_eq!(tries, 1, "{row}: {}", run.report());
+            assert_eq!(run.sleeps, Vec::<String>::new(), "{row}: {}", run.report());
+            assert_eq!(
+                value(&run.output.stderr, "command-download-failed"),
+                Some("22"),
+                "{row}: {}",
+                run.report()
+            );
+        }
+    }
+}
+
+/// The control for the rows above: an installer that tries each download
+/// once, as it did before the retry, fails the row a 504 should survive.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn one_try_fails_the_retry_row() {
+    let source = std::fs::read_to_string(install_sh()).unwrap();
+    let from = "download_attempts=8\n";
+    assert_eq!(
+        source.matches(from).count(),
+        1,
+        "install.sh holds {from:?} once"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let script = rooted(&dir).join("install-mutant.sh");
+    std::fs::write(&script, source.replace(from, "download_attempts=1\n")).unwrap();
+    let run = run_flaky(&script, &[], None, None, Some("504 56"));
+    assert_eq!(run.output.status.code(), Some(1), "{}", run.report());
+    assert_eq!(
+        value(&run.output.stderr, "command-download-failed"),
+        Some("56"),
+        "{}",
+        run.report()
+    );
 }
