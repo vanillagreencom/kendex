@@ -274,7 +274,11 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
 /// connects out), and a `loginctl` answering that the user manager does not
 /// linger, so a detached job's launcher takes its `setsid` route and no row
 /// starts a unit on the operator's user manager; a row that wants the unit
-/// route plants its own manager fakes ahead of this directory. Each tool is
+/// route plants its own manager fakes ahead of this directory. The programs
+/// an account's usage, token or keyring read and a lane host's read run,
+/// `curl`, `codex`, `secret-tool` and `ssh`, refuse as `gh` does, so a row
+/// whose world plants no answer for them (the usage fixture as `curl`)
+/// reaches no endpoint, keyring or host of the operator's. Each tool is
 /// written once per process through [`publish`] (the rows of one test
 /// binary start together on a cold temporary root).
 fn isolated_bin() -> PathBuf {
@@ -286,6 +290,22 @@ fn isolated_bin() -> PathBuf {
             (
                 "gh",
                 "#!/bin/sh\nprintf 'gh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            ),
+            (
+                "curl",
+                "#!/bin/sh\nprintf 'curl: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            ),
+            (
+                "codex",
+                "#!/bin/sh\nprintf 'codex: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            ),
+            (
+                "secret-tool",
+                "#!/bin/sh\nprintf 'secret-tool: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            ),
+            (
+                "ssh",
+                "#!/bin/sh\nprintf 'ssh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
             ),
             ("loginctl", "#!/bin/sh\necho no\n"),
         ] {

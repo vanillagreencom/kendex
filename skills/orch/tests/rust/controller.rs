@@ -4324,7 +4324,7 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
         .stdout(std::process::Stdio::null())
         .stderr(std::fs::File::create(&err).unwrap());
     runner.apply_env(&mut watch);
-    let mut watch = watch.spawn().expect("watch run");
+    let mut watch = Owned(watch.spawn().expect("watch run"));
     let transfers = |runner: &Runner| -> Vec<Value> {
         runner.fleet()["intents"]
             .as_array()
@@ -4350,7 +4350,7 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
     let asked = transfers(&runner);
     let said = std::fs::read_to_string(&err).unwrap_or_default();
     stop_live_watch(&runner, &state);
-    let _ = watch.wait();
+    let _ = watch.0.wait();
     assert_eq!(reported.as_deref(), Some("reported"), "{said}");
     assert_eq!(
         asked.len(),
@@ -4582,14 +4582,14 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
         .stdout(std::process::Stdio::null())
         .stderr(std::fs::File::create(work.join("watch.err")).unwrap());
     runner.apply_env(&mut watch);
-    let mut watch = watch.spawn().expect("watch run");
+    let mut watch = Owned(watch.spawn().expect("watch run"));
     let deadline = Instant::now() + SETTLE;
     while mark(&runner) != "sent" && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     let marked = mark(&runner);
     stop_live_watch(&runner, &state);
-    let _ = watch.wait();
+    let _ = watch.0.wait();
     let log = runner.run(&["watch", "log", "--fleet"]);
     assert_eq!(
         marked,
@@ -4650,7 +4650,7 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     runner.apply_env(&mut watch);
-    let mut watch = watch.spawn().expect("watch run");
+    let mut watch = Owned(watch.spawn().expect("watch run"));
     let transfers = |runner: &Runner| -> Vec<Value> {
         runner.fleet()["intents"]
             .as_array()
@@ -4693,13 +4693,13 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     }
     let closed = settled();
     stop_live_watch(&runner, &state);
-    let _ = watch.wait();
+    let _ = watch.0.wait();
     for pid in sleepers(&runner) {
         end_sleeper(pid);
     }
     assert_eq!(
         held,
-        (json!("unconfirmed"), Some(u64::from(watch.id()))),
+        (json!("unconfirmed"), Some(u64::from(watch.pid()))),
         "{first}"
     );
     assert!(closed, "{}", json!(transfers(&runner)));
@@ -5178,8 +5178,9 @@ fn the_reconcile_reads_a_launcher_record_three_valued() {
 /// The world a start's fleet watch launches into, in the runner's state
 /// directory `dir`: `bin`, for the op's `PATH`, holds the cutover fakes as
 /// the user manager (`systemd-run` runs a unit's argv under setsid and
-/// records its pid under `bin/units/<unit>`) and the `gh` fixture that
-/// answers the credential ladder; beside it the runtime wrapper the watch
+/// records its pid under `bin/units/<unit>`), the `gh` fixture that
+/// answers the credential ladder and the usage fixture as `curl`, its
+/// answers under `usage-fixtures`; beside it the runtime wrapper the watch
 /// words name (the test binary, as the shipped wrapper execs the keyed
 /// binary), the report judge fixture, and the github skill under the
 /// project's install layout, whose ladder `watch run` runs before it
@@ -5196,6 +5197,19 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
         );
     }
     std::os::unix::fs::symlink(fixtures().join("gh-auth-fixture/gh"), bin.join("gh")).unwrap();
+    // The account the state directory holds (`init_fleet`'s credential) has
+    // room for the watch's whole life: a controller the watch reads live has
+    // its account marks judged on every pass.
+    std::os::unix::fs::symlink(fixtures().join("usage-curl/curl"), bin.join("curl")).unwrap();
+    let usage = dir.join("usage-fixtures");
+    std::fs::create_dir_all(&usage).unwrap();
+    std::fs::write(
+        usage.join("planted.usage.json"),
+        json!({"five_hour": {"utilization": 5, "resets_at": "2027-01-01T00:00:00Z"},
+            "seven_day": {"utilization": 20, "resets_at": "2027-01-01T00:00:00Z"}})
+        .to_string(),
+    )
+    .unwrap();
     github_skill_under(dir);
     let report = dir.join("oversee-report");
     std::os::unix::fs::symlink(
@@ -5218,8 +5232,32 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
             report.display().to_string(),
         ),
         ("ORCH_STATE_DIR".to_owned(), dir.display().to_string()),
+        ("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()),
     ];
     (bin, env)
+}
+
+/// A test child whose world plants no answer for a provider's program runs
+/// the constructor's refusal, never the operator's program: a watch whose
+/// controller reads live judges its account on every pass, and a world
+/// with a credential and no usage answer otherwise sends that read through
+/// the operator's `curl` to the real endpoint. `--version` reaches nothing
+/// either way.
+#[test]
+fn a_test_child_with_no_planted_answer_runs_the_refusing_provider_programs() {
+    for name in ["curl", "codex", "secret-tool", "ssh", "gh"] {
+        let out = program(name).arg("--version").output().expect(name);
+        let said = stderr(&out);
+        assert_eq!(
+            (out.status.code(), said.as_str()),
+            (
+                Some(4),
+                format!("{name}: no fixture on PATH answers: --version\n").as_str()
+            ),
+            "{name} answered: {}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
 }
 
 /// The github skill linked under `root`'s install layout,
@@ -5555,14 +5593,15 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// skills the scripts source are linked beside `orch`. The listing the
 /// launcher's pick reads through the runtime's judge lists `account` on
 /// `harness` as the one measured account, with room: its credential under
-/// the account and its usage from the usage fixture as `curl` in `bin`,
-/// named to the launch through `env`. The walk's `kendex tier-model`
-/// finds the `kendex-launch` fixture in `bin`, the watch world's directory
-/// first on the rows' `PATH`, never the operator's install. The runtime
-/// sources are linked beside `scripts` and agent-runtime's planted cargo is
-/// `cargo` in `bin`, into a cache of the world's own, so a successor whose
-/// directory holds this install builds it as a real one does. Returns the
-/// scripts directory the launch runs from.
+/// the account and its usage from the usage fixture `watch_world` plants
+/// as `curl` in `bin`, named to the launch through `env`. The walk's
+/// `kendex tier-model` finds the `kendex-launch` fixture in `bin`, the
+/// watch world's directory first on the rows' `PATH`, never the operator's
+/// install. The runtime sources are linked beside `scripts` and
+/// agent-runtime's planted cargo is `cargo` in `bin`, into a cache of the
+/// world's own, so a successor whose directory holds this install builds
+/// it as a real one does. Returns the scripts directory the launch runs
+/// from.
 fn launcher_checkout(
     runner: &Runner,
     bin: &Path,
@@ -5622,9 +5661,7 @@ fn launcher_checkout(
         .to_string(),
     )
     .unwrap();
-    symlink(fixtures().join("usage-curl/curl"), bin.join("curl")).unwrap();
     let usage = dir.join("usage-fixtures");
-    std::fs::create_dir_all(&usage).unwrap();
     let (credential, body) = if harness == "codex" {
         (
             json!({"tokens": {"access_token": "token-fixture", "account_id": "acct-fixture"}}),
@@ -5648,7 +5685,6 @@ fn launcher_checkout(
     std::fs::write(account.join(file), credential.to_string()).unwrap();
     std::fs::write(usage.join("token-fixture.usage.json"), body.to_string()).unwrap();
     env.push(("ORCH_LANE_DIRS".to_owned(), account.display().to_string()));
-    env.push(("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()));
     env.push((
         "OVERSEE_WATCH_STATE_DIR".to_owned(),
         dir.join("watch-state").display().to_string(),
@@ -9654,7 +9690,8 @@ fn pi_root_marked(root: &Path) {
 
 /// The real `watch run` on the runner's fleet state, its interval one
 /// second, until its overseer duty's transfer settles; the watch stopped
-/// and the settled intent returned.
+/// and the settled intent returned. The watch is held [`Owned`], so a row
+/// that fails before the stop kills it before its world is removed.
 fn watched_transfer(runner: &Runner) -> Value {
     let work = runner.state_dir();
     let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
@@ -9667,7 +9704,7 @@ fn watched_transfer(runner: &Runner) -> Value {
         .stdout(std::process::Stdio::null())
         .stderr(std::fs::File::create(work.join("watch.err")).unwrap());
     runner.apply_env(&mut watch);
-    let mut watch = watch.spawn().expect("watch run");
+    let mut watch = Owned(watch.spawn().expect("watch run"));
     let deadline = Instant::now() + SETTLE;
     while runner.fleet()["intents"].as_array().is_none_or(|intents| {
         !intents.iter().any(|i| {
@@ -9678,8 +9715,6 @@ fn watched_transfer(runner: &Runner) -> Value {
     }) {
         if Instant::now() >= deadline {
             let log = runner.run(&["watch", "log", "--fleet"]);
-            let _ = watch.kill();
-            let _ = watch.wait();
             panic!(
                 "the watch asked no transfer: {} {}",
                 String::from_utf8_lossy(&log.stdout),
@@ -9690,7 +9725,7 @@ fn watched_transfer(runner: &Runner) -> Value {
     }
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     stop_live_watch(runner, &state);
-    let _ = watch.wait();
+    let _ = watch.0.wait();
     intent
 }
 
