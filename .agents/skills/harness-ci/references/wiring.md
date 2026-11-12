@@ -404,6 +404,8 @@ A non-product guard job skips on `render` only when the render proof covers what
 
 Keep the classifier and required aggregate unconditional on both `pull_request` and `merge_group`. The classifier's passing render proof is the required evidence for a render-only refresh. A class-only Shape 4 consumer skips product jobs on that class. A composite-action consumer follows the per-lane rule above. A failed or unavailable proof grants no render waiver and keeps the product checks active. A branch name, author or label cannot replace this proof.
 
+A render that the refresh run lands on the default branch, under the review-gate skill's references/adoption.md § Landing a proved render, opens no pull request and enters no merge group, so no consumer `pull_request` or `merge_group` run judges it, and the `push` run on the default branch is the first consumer run that reads it.
+
 Every repository under the organization standard reports one aggregate context named `CI` on both `pull_request` and `merge_group`, green only when every job the repository runs is green. review-gate's `validate-standard.sh` checks both legs as its `standard-ci-context` row. Which contexts the repository's required-checks ruleset requires is the review-gate skill's references/adoption.md § Repo-side wiring. One of two routes gives the repository the `CI` context:
 
 - **The template.** Copy [the CI template](#the-ci-template) and move the repository's lanes into it.
