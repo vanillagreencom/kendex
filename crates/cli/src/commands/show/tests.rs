@@ -93,7 +93,7 @@ fn inspection_show_snapshots() {
 }
 
 #[test]
-fn inspection_show_wraps_links_and_keeps_a_spaceless_file_path_whole() {
+fn inspection_show_wraps_links_and_keeps_a_file_path_whole() {
     let long = "path-part-".repeat(15);
     let meta = detail::PackageMeta {
         source: long.clone(),
@@ -122,10 +122,11 @@ fn inspection_show_wraps_links_and_keeps_a_spaceless_file_path_whole() {
             .iter()
             .any(|line| visible_width(line) > 80)
     );
-    // A file path with no space, wider than the line, stays whole on one
-    // line, and the table runs past the width.
+    // A file path wider than the line stays whole on one line, a space in
+    // it included, and the table runs past the width.
+    let path = format!("{long}/team notes.md");
     let files = [detail::PackageFile {
-        path: long.clone(),
+        path: path.clone(),
         size: 42,
         is_readme: false,
     }];
@@ -134,10 +135,10 @@ fn inspection_show_wraps_links_and_keeps_a_spaceless_file_path_whole() {
         [
             String::new(),
             "<1;36>files</>  <90>1</>".to_owned(),
-            format!("  <1;90>path</>{}<1;90>size</>", " ".repeat(148)),
-            format!("  <90>{}</>", "─".repeat(157)),
-            format!("  {long}  42"),
-            format!("{}bytes", " ".repeat(154)),
+            format!("  <1;90>path</>{}<1;90>size</>", " ".repeat(162)),
+            format!("  <90>{}</>", "─".repeat(171)),
+            format!("  {path}  42"),
+            format!("{}bytes", " ".repeat(168)),
         ]
     );
 }

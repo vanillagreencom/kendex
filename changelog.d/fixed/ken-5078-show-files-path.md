@@ -1,0 +1,1 @@
+- On a terminal, `kendex show --files` keeps each file path on one line, including a path that holds a space, so you can copy it. Before, a long path with a space broke across two lines. Piped output does not change.
