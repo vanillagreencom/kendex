@@ -94,6 +94,16 @@ Every kendex issue lives in one project below; the project-management skill's `r
   ]
 }
 ```
+
+### Subsystem parent
+
+Every kendex leaf is filed as a sub-issue of its subsystem parent: an open container in the leaf's own project, with no parent of its own, titled `<Subsystem>: open work`, whose body names the subsystem whose work it holds. § Project map routes the project first; the parent never changes it.
+
+- Before audit-issues § 5 presents a run, it sets the subsystem parent as the `hierarchy` of each create that is not a bundle parent (`create_fields.is_bundle_parent`) and of each Triage input with no parent, wherever the row reads `hierarchy.action: none`. § 7.2 passes it as the create's `--parent`, and § 7.1 applies it to the Triage item. A create outside audit-issues passes the same `--parent`.
+- Find the parent in the project's open-item read, `references/project-map.md` § Project kinds: a row with an empty `parent_id` whose title ends `: open work`. Where the project holds more than one, as Skills & Agents Library does, read their bodies and take the one whose subsystem holds the leaf's Location.
+- When the project holds no parent for that subsystem, the run first files one per `templates/parent-issue-template.md`, its `**Reached by**:` naming the run per Rule 7, and the leaf becomes its `#N` child. Intake exempts that parent; audit-issues § 6 authorizes it as a create.
+- A leaf another rule places keeps that parent: a child of the run's rework parent (tpm-audit § 7.1), a hierarchy-contract child (tpm-audit § 7.0) and an in-PR bundle child. A container stays where it was filed, and a subsystem parent stays a root. This rule never makes a leaf a parent.
+- The orch skill's `references/heartbeat-audit.md` Triage execution accepts a kendex leaf to Backlog or Todo only once the leaf has its parent, which the primary applies as a hierarchy correction before acceptance. A leaf whose parent waits on a held create stays in Triage, and the progress report names the missing parent as its reason.
 <!-- kendex:project-instructions:end -->
 
 # Project Management
