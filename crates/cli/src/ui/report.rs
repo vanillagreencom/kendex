@@ -19,15 +19,7 @@ pub enum PlainColumns {
 impl Style {
     /// A plan operation: prose can wrap, but its landed path stays whole.
     pub fn plan_row(&self, op: &PlannedOp) -> Vec<String> {
-        let parts = op.description_parts();
-        let spans: Vec<_> = parts
-            .iter()
-            .map(|part| match part {
-                DescriptionPart::Text(text) => Span::Prose(text),
-                DescriptionPart::Path(path) => Span::Command(path),
-            })
-            .collect();
-        self.report_row(Status::Notice, &spans, "  - ")
+        self.report_op(Status::Notice, op, "  - ")
     }
 
     /// A report row with its existing plain prefix.
@@ -225,8 +217,9 @@ impl Style {
     }
 
     /// A plan operation under the mark of what became of it, such as a
-    /// write that landed: `plan_row`'s spans, so its landed path stays
-    /// whole, behind the plain prefix scripts read.
+    /// write that landed: its prose as prose and its landed path as a
+    /// command span, so the path stays whole, behind the plain prefix
+    /// scripts read.
     pub fn report_op(&self, status: Status, op: &PlannedOp, prefix: &'static str) -> Vec<String> {
         let parts = op.description_parts();
         let spans: Vec<_> = parts
