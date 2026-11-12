@@ -1632,6 +1632,36 @@ worktree_checkout_mode() {
   esac
 }
 
+# A rebase leaves untracked files to Git's own refusal; the replay refused
+# them before it detaches, and keeps that contract.
+require_clean_restack() {
+  local wt="$1" key=restack-dirty untracked=no verdict=""
+  if [[ "$REPLAY" == true ]]; then key=replay-dirty; untracked=normal; fi
+  verdict="$(
+    GIT_OPTIONAL_LOCKS=0 git -C "$wt" status --porcelain -z --untracked-files="$untracked" 2>/dev/null |
+      {
+        result=clean
+        while IFS= read -r -d '' entry; do
+          # The tool's own link at a tracked file entry whose assume-unchanged
+          # bit failed is a typechange; unshadow's restore replaces it.
+          if [[ "${entry:0:3}" == ' T ' ]] && is_managed_symlink_path "$wt" "${entry:3}"; then continue; fi
+          result=dirty
+        done
+        printf '%s' "$result"
+      }
+    exit "${PIPESTATUS[0]}"
+  )" || {
+    worktree_message reuse-status-failed "$wt" "Error: could not read the worktree before restacking." >&2
+    return 1
+  }
+  if [[ "$verdict" != clean ]]; then
+    worktree_message "$key" "$wt" "Error: uncommitted work must be kept before restacking." >&2
+    return 1
+  fi
+  # A failed legacy repair can leave real files hidden by assume-unchanged.
+  unshadow_tracked_symlink_paths "$wt" check
+}
+
 materialize_worktree_claim() {
   local wt="$1" mode path
   mode="$(worktree_checkout_mode "$wt")" || return 1
@@ -2413,10 +2443,12 @@ release_own_session_lease() {
 
 # `--reuse`/`--restack` re-enter an existing worktree, which is the
 # second-implementer gap for the session-lifetime case. A foreign lease
-# is refused by name; our own is refreshed so a long reuse cycle cannot age past
-# the TTL and be swept while it is still working.
+# is refused by name, with no write. REUSE_LEASE_OWNER names our own lease,
+# which refresh_reuse_session_lease refreshes so a long reuse cycle cannot age
+# past the TTL and be swept while it is still working.
 reuse_respects_session_lease() {
   local wt="$1" issue_owner="${2:-}" env_owner owner="" candidate rc=0
+  REUSE_LEASE_OWNER=""
   session_guard_available || return 0
   env_owner="$(session_guard_owner)"
   if [[ "$env_owner" == "$issue_owner" ]]; then
@@ -2451,7 +2483,15 @@ reuse_respects_session_lease() {
     echo "Coordinate with the owning session instead of reusing its worktree." >&2
     return 1
   fi
-  if ! "$SESSION_GUARD" refresh "$wt" --owner "$owner" >/dev/null; then
+  REUSE_LEASE_OWNER="$owner"
+  return 0
+}
+
+# The refresh is the reuse's first mutation, so it follows every admission.
+refresh_reuse_session_lease() {
+  local wt="$1"
+  [[ -n "$REUSE_LEASE_OWNER" ]] || return 0
+  if ! "$SESSION_GUARD" refresh "$wt" --owner "$REUSE_LEASE_OWNER" >/dev/null; then
     worktree_message lease-refresh-failed "$wt" "Error: could not refresh the session guard lease on $wt." >&2
     return 1
   fi
@@ -3111,15 +3151,23 @@ case "${1:-}" in
         || exit "$ACTIVE_WORK_EXIT"
 
       REUSE_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+      if [[ "$REUSE_CHECKOUT_MODE" != claim && ( "$RESTACK" == true || "$REPLAY" == true ) ]]; then
+        require_clean_restack "$WT_PATH" || exit 1
+      fi
+      refresh_reuse_session_lease "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+
       if [[ "$REUSE_CHECKOUT_MODE" == claim ]]; then
         discover_ownership_remote_heads || exit 1
         acquire_issue_claim_lock "$ISSUE" || exit 1
         require_registered_project_worktree "$WT_PATH" "materialize it" || exit 1
         fetch_origin || exit 1
         materialize_worktree_claim "$WT_PATH" || exit 1
+        if [[ "$RESTACK" == true || "$REPLAY" == true ]]; then
+          require_clean_restack "$WT_PATH" || exit 1
+        fi
       fi
       REUSE_STATUS=""
-      REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
+      REUSE_STATUS="$(GIT_OPTIONAL_LOCKS=0 git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
         if [[ "$REUSE_CHECKOUT_MODE" == claim || -n "${WORKTREE_SETUP_CMD:-}" ]]; then
           setup_app_worktree "$WT_PATH" true true || exit 1
@@ -3198,15 +3246,8 @@ case "${1:-}" in
         else
           REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
           if [[ "$REPLAY" == true ]]; then
-            # The rebase engine lets git itself refuse a dirty tree; the
-            # replay must refuse before detaching. Merge commits cannot be
-            # represented by an ordered cherry-pick, so they are refused up
-            # front rather than mid-replay. No mutation before either check.
-            if [[ -n "$(git -C "$WT_PATH" status --porcelain 2>/dev/null || true)" ]]; then
-              worktree_message replay-dirty "$WT_PATH" "Error: $WT_PATH has uncommitted changes; refusing to replay over them." >&2
-              echo "Commit or discard them, then retry." >&2
-              exit 1
-            fi
+            # An ordered cherry-pick cannot represent merge commits. Refuse
+            # before the replay detaches rather than stopping mid-sequence.
             if [[ "$(git -C "$WT_PATH" rev-list --merges --count "$REUSE_BASE_OID..HEAD" 2>/dev/null || echo 1)" -ne 0 ]]; then
               worktree_message replay-merges "$WT_PATH" "Error: The replay range origin/$DEFAULT_BRANCH..$CURRENT_BRANCH in $WT_PATH contains merge commits, which an ordered cherry-pick replay cannot represent." >&2
               echo "Use the rebase engine ($0 create $ISSUE --reuse) or reconcile the merge manually." >&2
@@ -3216,7 +3257,7 @@ case "${1:-}" in
           # Configured symlinks that shadow tracked files make git refuse to
           # detach HEAD, so the rebase below cannot even start.
           # Undo the shadowing first; every terminal path re-applies setup.
-          if ! unshadow_tracked_symlink_paths "$WT_PATH"; then
+          if ! unshadow_tracked_symlink_paths "$WT_PATH" restore; then
             restore_unshadowed_worktree_setup "$WT_PATH"
             exit 1
           fi

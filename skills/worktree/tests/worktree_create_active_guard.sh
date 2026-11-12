@@ -548,12 +548,14 @@ claim_landing_row() { # NAME OPTIONS WORK
       local_head="$(git -C "$WT" rev-parse HEAD)"
       if [[ "$work" == restack ]]; then step advance; fi
       ;;
-    dirty)
+    dirty | dirty-advance)
       printf 'user base\n' > "$WT/base.txt"
       printf 'staged\n' > "$WT/staged.txt"
       git -C "$WT" add staged.txt
       printf 'unstaged\n' >> "$WT/staged.txt"
       printf 'untracked\n' > "$WT/untracked.txt"
+      local_head="$(git -C "$WT" rev-parse HEAD)"
+      if [[ "$work" == dirty-advance ]]; then step advance; fi
       ;;
     staged-delete) git -C "$WT" rm -q --cached base.txt ;;
     checkout-delete)
@@ -568,6 +570,7 @@ claim_landing_row() { # NAME OPTIONS WORK
     local) LANDING_RESULT+=" head=$([[ "$(git -C "$WT" rev-parse HEAD)" == "$local_head" ]] && echo local || echo changed) source=$(cat "$WT/base.txt" 2>/dev/null || true) local=$(cat "$WT/local.txt")" ;;
     restack) LANDING_RESULT+=" base=$(git -C "$WT" merge-base --is-ancestor origin/main HEAD && echo contained || echo stale) source=$(cat "$WT/base.txt" 2>/dev/null || true) local=$(cat "$WT/local.txt") advanced=$(cat "$WT/main-advance.txt" 2>/dev/null || true)" ;;
     dirty) LANDING_RESULT+=" base=$(cat "$WT/base.txt") staged=$(git -C "$WT" show :staged.txt) working=$(paste -sd, "$WT/staged.txt") untracked=$(cat "$WT/untracked.txt")" ;;
+    dirty-advance) LANDING_RESULT+=" err=$(alias_text <"$ROOT/err") head=$([[ "$(git -C "$WT" rev-parse HEAD)" == "$local_head" ]] && echo kept || echo changed) base=$(cat "$WT/base.txt") staged=$(git -C "$WT" show :staged.txt) working=$(paste -sd, "$WT/staged.txt") untracked=$(cat "$WT/untracked.txt")" ;;
     staged-delete) LANDING_RESULT+=" source=$([[ -e "$WT/base.txt" ]] && echo yes || echo no) deletion=$(git -C "$WT" diff --cached --name-status)" ;;
     checkout-delete) LANDING_RESULT+=" source=$([[ -e "$WT/base.txt" ]] && echo yes || echo no) deletion=$(git -C "$WT" diff --name-status)" ;;
   esac
@@ -586,6 +589,34 @@ for row in \
   assert_eq "$LANDING_RESULT" "rc=0 mode=checkout setup=yes $(printf '%b' "$expected")" \
     "$name materializes and provisions the claim while preserving user work"
 done
+
+# The admission after materialization is a claim's only dirty-tree refusal
+# before a restack or replay rewrites the branch.
+for row in \
+  'dirty-restack|--restack|worktree-restack-dirty' \
+  'dirty-replay|--restack --replay|worktree-replay-dirty'; do
+  IFS='|' read -r name options refusal <<< "$row"
+  claim_landing_row "$name" "$options" dirty-advance
+  assert_eq "$LANDING_RESULT" "rc=1 mode=checkout setup=no err=$refusal: <topic> head=kept base=user base staged=staged working=staged,unstaged untracked=untracked" \
+    "$name refuses a dirty materialized claim and keeps its head and user work"
+done
+
+mkdir -p "$TMP_ROOT/claim-admission-mutant"
+cp -R "$(dirname "$WORKTREE_ORIGINAL")" "$TMP_ROOT/claim-admission-mutant/scripts"
+python3 - "$TMP_ROOT/claim-admission-mutant/scripts/worktree" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+old = '\n          require_clean_restack "$WT_PATH" || exit 1\n'
+text = path.read_text()
+assert text.count(old) == 1
+path.write_text(text.replace(old, '\n          : # claim admission disabled\n'))
+PY
+WORKTREE_SCRIPT="$TMP_ROOT/claim-admission-mutant/scripts/worktree"
+claim_landing_row admission-control '--restack --replay' dirty-advance
+assert_eq "${LANDING_RESULT%% *} ${LANDING_RESULT#* err=* head=}" "rc=0 changed base=user base staged=staged working=staged,unstaged untracked=untracked" \
+  "control: without the claim admission a dirty replay rewrites the branch"
+WORKTREE_SCRIPT="$WORKTREE_ORIGINAL"
 
 python3 - "$TMP_ROOT/checkout-mutant/scripts/worktree" <<'PY'
 from pathlib import Path
