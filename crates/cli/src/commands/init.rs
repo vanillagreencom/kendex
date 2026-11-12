@@ -9,7 +9,10 @@ use crate::ui::{self, Span, Status, Style};
 /// with '/' or a leading '-', → error).
 pub fn run(name: Option<String>, kind: Option<String>) -> CliResult {
     let style = ui::style();
-    ui::stderr(&style.header("init", name.as_deref().unwrap_or("new package")));
+    ui::stderr(&style.header(
+        "init",
+        &[Span::Prose(name.as_deref().unwrap_or("new package"))],
+    ));
     let Some(name) = name else {
         ui::stderr(&style.note(&[
             Span::Prose("usage: "),

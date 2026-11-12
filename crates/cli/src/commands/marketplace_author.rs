@@ -37,7 +37,7 @@ pub fn new(
         None => std::env::current_dir()?.join(name),
     };
     let style = ui::style();
-    ui::stderr(&style.header("marketplace new", name));
+    ui::stderr(&style.header("marketplace new", &[Span::Prose(name)]));
     let row = author::create(
         env,
         &CreateRequest {
@@ -61,7 +61,10 @@ pub fn new(
 
 pub fn use_existing(env: &Env, dir: &std::path::Path) -> CliResult {
     let style = ui::style();
-    ui::stderr(&style.header("marketplace use", &dir.display().to_string()));
+    ui::stderr(&style.header(
+        "marketplace use",
+        &[Span::Command(&dir.display().to_string())],
+    ));
     let row = author::use_existing(env, dir)?;
     let mut lines = folder_line(
         &style,
@@ -87,7 +90,7 @@ fn folder_line(style: &Style, lead: &str, dir: &std::path::Path, tail: &str) -> 
 pub fn mine(env: &Env, json: bool) -> CliResult {
     let style = ui::style();
     if !json {
-        ui::stderr(&style.header("marketplace mine", "your marketplaces"));
+        ui::stderr(&style.header("marketplace mine", &[Span::Prose("your marketplaces")]));
     }
     let mut rows = Vec::new();
     for path in author::list(env)? {
@@ -161,7 +164,10 @@ pub struct ImportArgs {
 pub fn import(env: &Env, args: ImportArgs) -> CliResult {
     let style = ui::style();
     if !args.json {
-        ui::stderr(&style.header("marketplace import", &args.target.display().to_string()));
+        ui::stderr(&style.header(
+            "marketplace import",
+            &[Span::Command(&args.target.display().to_string())],
+        ));
     }
     let filter = ScopeFilter::resolve(args.from_scope.as_deref(), false, ScopeFilter::All)?;
     let scopes = resolve_scopes(env, filter)?;
@@ -402,7 +408,7 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
     let fetch = CurlFetch;
     let style = ui::style();
     if status {
-        ui::stderr(&style.header("marketplace submit", "--status"));
+        ui::stderr(&style.header("marketplace submit", &[Span::Prose("--status")]));
         let rows = {
             let _asking = ui::spinner("reading your submissions");
             submit::submissions(&fetch, &KeyringStore)?
@@ -414,7 +420,10 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
         Some(dir) => dir,
         None => std::env::current_dir()?,
     };
-    ui::stderr(&style.header("marketplace submit", &dir.display().to_string()));
+    ui::stderr(&style.header(
+        "marketplace submit",
+        &[Span::Command(&dir.display().to_string())],
+    ));
     let preflight = {
         let _checking = ui::spinner("checking the marketplace");
         author::submit_preflight(&dir, &fetch)?

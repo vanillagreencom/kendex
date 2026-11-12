@@ -161,7 +161,7 @@ fn run_unsubscribe(
 ) -> CliResult {
     use kendex_core::engine::detach;
     let style = ui::style();
-    ui::stderr(&style.header("marketplace unsubscribe", name));
+    ui::stderr(&style.header("marketplace unsubscribe", &[Span::Prose(name)]));
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
 
@@ -243,7 +243,10 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
     let count = rows.len();
     ui::stderr(&style.header(
         "marketplace list",
-        &format!("{count} subscription{}", if count == 1 { "" } else { "s" }),
+        &[Span::Prose(&format!(
+            "{count} subscription{}",
+            if count == 1 { "" } else { "s" }
+        ))],
     ));
     let cells: Vec<Vec<Cell>> = rows.into_iter().map(subscription_cells).collect();
     ui::stdout(&subscriptions(&style, &cells));
@@ -289,7 +292,7 @@ fn run_subscribe(
     scope: Option<String>,
 ) -> CliResult {
     let style = ui::style();
-    ui::stderr(&style.header("marketplace subscribe", reference));
+    ui::stderr(&style.header("marketplace subscribe", &[Span::Prose(reference)]));
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
     let subscribed = {
@@ -389,7 +392,10 @@ pub fn run(env: &Env, command: MarketplaceCommand) -> CliResult {
                 None => std::env::current_dir()?,
             };
             let style = ui::style();
-            ui::stderr(&style.header("marketplace check", &dir.display().to_string()));
+            ui::stderr(&style.header(
+                "marketplace check",
+                &[Span::Command(&dir.display().to_string())],
+            ));
             super::check_catalog::run(&dir, true, false)?;
         }
         MarketplaceCommand::New {

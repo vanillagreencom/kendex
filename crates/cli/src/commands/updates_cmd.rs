@@ -127,7 +127,7 @@ fn run_with(
     }
     let report = evaluate(env, &scope)?;
     let style = ui::style();
-    ui::stderr(&style.header("updates", &scope.label()));
+    super::header("updates", std::slice::from_ref(&scope));
     ui::stderr(&screen(&style, &report, verbose));
     // The deep work just ran; write it down so the next session-start check
     // reads verdicts instead of guesses.

@@ -133,19 +133,10 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
     }
 }
 
-/// The scopes a listing or a refresh covers, as its header names them.
-fn scope_labels(scopes: &[Scope]) -> String {
-    scopes
-        .iter()
-        .map(Scope::label)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
 /// Checks each scope's marketplaces for updates, then derives the snapshot
 /// the next session check reads.
 fn refresh(env: &Env, style: &Style, scopes: Vec<Scope>, in_use: bool) -> CliResult {
-    ui::stderr(&style.header("source refresh", &scope_labels(&scopes)));
+    super::header("source refresh", &scopes);
     for scope in scopes {
         // An absent manifest reads as its seed, as everywhere else: a
         // personal scope that never wrote one still subscribes to the
@@ -179,7 +170,7 @@ fn refresh(env: &Env, style: &Style, scopes: Vec<Scope>, in_use: bool) -> CliRes
 /// Every scope's marketplaces in one table. A scope that cannot be read
 /// ends the listing after the rows read before it are drawn.
 fn list(env: &Env, style: &Style, scopes: &[Scope]) -> CliResult {
-    ui::stderr(&style.header("source list", &scope_labels(scopes)));
+    super::header("source list", scopes);
     let mut rows = Vec::new();
     let mut unread = None;
     for scope in scopes {
@@ -248,7 +239,7 @@ fn write_changes(
             enabled: false,
         } => ("source disable", name),
     };
-    ui::stderr(&style.header(verb, name));
+    ui::stderr(&style.header(verb, &[Span::Prose(name)]));
     let prepared: Vec<_> = scopes
         .iter()
         .map(|scope| source_ops::prepare_source_change(env, scope, change))

@@ -171,9 +171,11 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 /// path (see [`names_a_path`]), starts a new line where it does not fit on
 /// the current one and is never broken: one wider than a whole line is
 /// that line, and the terminal wraps it, so a person can still copy it.
-/// Where only a later line holds one that would start the first, the first
-/// line is left empty, so the caller draws its lead alone there. Verbatim
-/// text keeps every space and breaks by cells alone.
+/// Where one would start a first line with less room than the rest, a
+/// header's beside its title, and does not fit there, the first line is
+/// left empty, so the caller draws its lead alone there and the piece
+/// starts the next line, the widest line there is. Verbatim text keeps
+/// every space and breaks by cells alone.
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
@@ -215,8 +217,9 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
             let width = cells(piece);
             let gap = usize::from(used > 0 && spaced);
             // The first line can have less room than the rest: a header's
-            // title takes part of it.
-            let later = whole && lines.is_empty() && used == 0 && width > room && width <= rest;
+            // title takes part of it, and a piece drawn there past the edge
+            // would sit on the title's line rather than one of its own.
+            let later = whole && lines.is_empty() && used == 0 && width > room && room < rest;
             if later || (used > 0 && used + gap + width > room) {
                 lines.push(std::mem::take(&mut line));
                 used = 0;
@@ -470,8 +473,9 @@ mod tests {
 
     /// A prose word that names a path is placed as a command is: whole on
     /// the next line where the rest of this one cannot hold it, after an
-    /// empty first line where only a later line can, and a line of its own
-    /// where no line can. Any other word still breaks by cells.
+    /// empty first line where that line has less room than the rest, and a
+    /// line of its own where no line can hold it. Any other word still
+    /// breaks by cells.
     #[test]
     fn a_path_in_prose_is_never_broken() {
         let native = format!(
@@ -503,7 +507,7 @@ mod tests {
                 "/home/a/b/c/d now",
                 4,
                 8,
-                &["/home/a/b/c/d", "now"],
+                &["", "/home/a/b/c/d", "now"],
             ),
             (
                 "from the home directory",

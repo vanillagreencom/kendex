@@ -161,9 +161,11 @@ impl Style {
         symbol.glyph(self.glyphs)
     }
 
-    /// The verb and what it acts on. Chrome: plain draws nothing,
-    /// since whoever reads a pipe already knows what they ran.
-    pub fn header(&self, verb: &str, target: &str) -> Vec<String> {
+    /// The verb and what it acts on. A place in the target, a command
+    /// span, stays whole: beside the title where it fits, else on a line
+    /// of its own under it. Chrome: plain draws nothing, since whoever
+    /// reads a pipe already knows what they ran.
+    pub fn header(&self, verb: &str, target: &[Span<'_>]) -> Vec<String> {
         let Look::Rich { palette, width } = self.look else {
             return Vec::new();
         };
@@ -174,7 +176,7 @@ impl Style {
             &lead,
             cells(&title) + 2,
             2,
-            &[Span::Prose(&escaped(target))],
+            &Escaped::from(target).spans(),
             |chunk| paint(palette, Token::Muted, chunk),
         )
     }

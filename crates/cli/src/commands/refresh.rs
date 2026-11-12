@@ -296,14 +296,22 @@ fn say_done(done: &[Effect], verbose: bool) -> bool {
         true => done.len(),
         false => done.len().min(DONE_SHOWN),
     };
-    let style = ui::style();
-    let mut lines = style.report_row(ui::Status::Done, &[Span::Prose("changes:")], "");
+    ui::stderr(&done_lines(&ui::style(), done, shown));
+    shown == done.len()
+}
+
+/// The first `shown` of a scope's changes under a `changes` section that
+/// counts them all: each written op with its landed path whole, as
+/// `remove` draws it, and each landed package in its own words.
+fn done_lines(style: &ui::Style, done: &[Effect], shown: usize) -> Vec<String> {
+    let mut lines = style.section("changes", done.len(), ui::Status::Done);
     for effect in &done[..shown] {
-        let said = match effect {
-            Effect::Pi(settle) => pi_done(settle),
-            Effect::Op(planned) => planned.line(),
-        };
-        lines.extend(style.report_row(ui::Status::Done, &[Span::Prose(&said)], "  - "));
+        lines.extend(match effect {
+            Effect::Pi(settle) => {
+                style.report_row(ui::Status::Done, &[Span::Prose(&pi_done(settle))], "  - ")
+            }
+            Effect::Op(planned) => style.report_op(ui::Status::Done, planned, "  - "),
+        });
     }
     if done.len() > shown {
         lines.extend(style.report_row(
@@ -312,8 +320,7 @@ fn say_done(done: &[Effect], verbose: bool) -> bool {
             "  - ",
         ));
     }
-    ui::stderr(&lines);
-    shown == done.len()
+    lines
 }
 
 /// Whether two lists name the same changes in the same order: a package
@@ -1408,3 +1415,6 @@ fn refresh_result(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

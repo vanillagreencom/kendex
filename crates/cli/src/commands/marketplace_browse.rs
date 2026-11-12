@@ -6,7 +6,7 @@ use kendex_core::source_ops;
 
 use super::{CliResult, answer, resolve_scopes};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Cell, Style};
+use crate::ui::{self, Cell, Span, Style};
 
 type BrowseRow = (
     kendex_core::model::Scope,
@@ -66,7 +66,9 @@ pub fn run_browse(
     let style = ui::style();
     ui::stderr(&style.header(
         "marketplace browse",
-        marketplace.as_deref().unwrap_or("every subscription"),
+        &[Span::Prose(
+            marketplace.as_deref().unwrap_or("every subscription"),
+        )],
     ));
     let cells: Vec<Vec<Cell>> = rows.into_iter().map(package_cells).collect();
     ui::stdout(&listing(&style, &cells));
