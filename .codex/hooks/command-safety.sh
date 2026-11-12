@@ -19,12 +19,10 @@ set -euo pipefail
 # in Git v2.45.1, whose promisor-remote.c fetch_objects honours it. The
 # global options below are handle_options in git.c at v2.45.1 and master:
 # Git refuses any other one, and takes -C only detached.
-# Each refused read is one record of its reason and its -C chain, after any
-# env -C directory. Outside a worktree that chain alone names the project
-# whose policy judges the read.
-history_git_argv() { # START head|launched
-  local cursor=$1 value fenced="" reason="" state=relative words bares dirs
-  words=(${env_dirs[@]+"${env_dirs[@]}"}); bares=(${env_bare[@]+"${env_bare[@]}"}); dirs=()
+# Each refused read is one record of its reason and its -C chain. Outside a
+# worktree that chain alone names the project whose policy judges the read.
+history_git_argv() { # START
+  local cursor=$1 value fenced="" reason="" state=relative words=() tildes=() dirs=()
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
     [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
@@ -33,13 +31,11 @@ history_git_argv() { # START head|launched
       -C | -c | --git-dir | --work-tree | --namespace | --config-env | --shallow-file | --attr-source)
         cursor=$((cursor + 1))
         [ "${arg_kinds[$cursor]:-}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
-        if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; bares[${#bares[@]}]=${arg_unquoted[$cursor]}; fi ;;
+        if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]}; fi ;;
       -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=* | --attr-source=*) ;;
       -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --no-literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
       --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path | --list-cmds=*) break ;;
-      # After a launcher, a git word followed by an option Git refuses is
-      # that program's data, as in grep -rn git -- ., not a Git read.
-      -*) [ "$2" = launched ] || { reason=unresolved-git-argv; state=unknown; }; break ;;
+      -*) reason=unresolved-git-argv; state=unknown; break ;;
       *)
         case "$value" in
           log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
@@ -52,12 +48,13 @@ history_git_argv() { # START head|launched
   # An env -S escape, expansion or comment has no decoder here.
   [ -n "$reason" ] || [ -z "${split_undecoded:-}" ] || reason=unresolved-git-argv
   [ -n "$reason" ] || return 0
-  # The shell expands an unquoted leading ~ or ~/ and a glob or brace word
-  # before Git sees it; any other expanding form leaves the chain unknown.
+  # The shell expands ~ or ~/ against HOME when the tokenizer found that
+  # prefix unquoted, and a glob or brace word, before Git sees it; any other
+  # expanding or tilde form leaves the chain unknown.
   for ((cursor=0; cursor<${#words[@]}; cursor++)); do
     value=${words[$cursor]}
     case "$value" in
-      '~' | '~/'*) if [ -n "${bares[$cursor]}" ] && [ -n "${HOME:-}" ]; then value=$HOME${value#\~}; else state=unknown; fi ;;
+      '~' | '~/'*) if [ -n "${tildes[$cursor]}" ] && [ -n "${HOME:-}" ]; then value=$HOME${value#\~}; else state=unknown; fi ;;
       '~'*) state=unknown ;;
     esac
     case "$value" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'*) state=unknown ;; esac
@@ -80,19 +77,17 @@ history_record() { # REASON STATE [DIR...]
 # can run any later literal git word as its command, so the first one is
 # judged as a Git head. A shell, eval or source receiver's later words are
 # its source, forwarded heads or positional data, judged where it runs them.
-# Fails when no git word was judged.
 history_launched_git() {
   local receiver receiver_pattern receiver_option receiver_named cursor
-  [ "${program:-}" != opaque ] || return 1
+  [ "${program:-}" != opaque ] || return 0
   environment_receiver "${program:-}"
-  [ "$receiver" != shell ] || return 1
+  [ "$receiver" != shell ] || return 0
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
     if [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]##*/}" = git ]; then
-      history_git_argv $((cursor + 1)) launched
+      history_git_argv $((cursor + 1))
       return 0
     fi
   done
-  return 1
 }
 
 # The reported private file is checked as text, without opening it or
@@ -116,7 +111,7 @@ environment_private_path() {
 # The one producer judges a stage head and every forwarded operand alike.
 environment_producer() { # command kind
     # Other is unresolved. An existing arm's proof must establish clean.
-    mode=other; env_dirs=(); env_bare=()
+    mode=other
     # Only these literal forwarding forms are part of the input contract.
     # Unsupported executable-string arguments get conservative detection.
     while [ "$program" != opaque ] && [ "$pos" -lt "${#args[@]}" ]; do
@@ -161,10 +156,9 @@ environment_producer() { # command kind
                 # A non-literal operand such as "$@" can expand to no word,
                 # and env then takes the next word as that operand.
                 [ "${arg_kinds[$((pos + 1))]:-}" = literal ] || { mode=dump-unknown; return; }
-                case "$value" in -C | --chdir) env_dirs[${#env_dirs[@]}]=${args[$((pos + 1))]}; env_bare[${#env_bare[@]}]=${arg_unquoted[$((pos + 1))]} ;; esac
+                case "$value" in -C | --chdir) history_dir_changed=1 ;; esac
                 pos=$((pos + 2)) ;;
-              # The shell expands no ~ after this =, so the word is not bare.
-              --chdir=*) env_dirs[${#env_dirs[@]}]=${value#--chdir=}; env_bare[${#env_bare[@]}]=""; pos=$((pos + 1)) ;;
+              --chdir=*) history_dir_changed=1; pos=$((pos + 1)) ;;
               --unset=*) pos=$((pos + 1)) ;;
               --help | --version) pos=${#args[@]}; program=""; break ;;
               --) options_ended=1; pos=$((pos + 1)); continue ;;
@@ -185,12 +179,11 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
+    if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
     # A directory change moves any relative -C chain the hook resolves from
-    # the payload directory: cd anywhere, a loop can run it first, and env -C
-    # before a program that is not the judged git, such as a shell.
-    if [ "${program:-}" = git ]; then history_git_argv "$pos" head
-    elif ! history_launched_git; then [ "${#env_dirs[@]}" -eq 0 ] || history_dir_changed=1
-    fi
+    # the payload directory, wherever it stands, since a loop can run it
+    # first. So do env -C and --chdir above: env's own option rules, such as
+    # the last -C winning, are not modelled here.
     case "${program:-}" in cd | pushd | popd) history_dir_changed=1 ;; esac
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
@@ -326,7 +319,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
     case "$state" in
       name) state=body; continue ;;
       body | loop | conditional)
-        if [ "${arg_kinds[$cursor]}" = literal ] && [ -n "${arg_unquoted[$cursor]}" ]; then
+        if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
           case "$value:$state" in '{:body' | do:loop) state=head ;; esac
         fi
         continue ;;
@@ -335,7 +328,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
         state=head ;;
     esac
     if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then continue; fi
-    if [ "${arg_kinds[$cursor]}" = literal ] && [ -n "${arg_unquoted[$cursor]}" ]; then
+    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
       case "$value" in
         if | then | elif | else | while | until | do | '{' | '!')
           syntax_head=1; continue ;;
@@ -704,8 +697,18 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
   return 1
 }
 
+# A word's quoting, which the tokenizer stores per word: 1 when no byte is
+# quoted, escaped or expanded, ~ when only bytes after its leading ~/ are,
+# and empty otherwise. Bash expands a tilde prefix, the bytes up to the first
+# unquoted /, when none of them is quoted, so a 1 or ~ word starting ~/ is
+# expanded. Called where a quote, escape or expansion first touches the word.
+word_quoted() {
+  [ -z "$bare" ] || [[ $word != '~/'* ]] || tilde='~'
+  bare=""
+}
+
 environment_dump() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
@@ -717,9 +720,9 @@ environment_dump() { # command kind; arguments are already decoded data
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() stage_fallback=() executable_texts=() executable_stages=()
   local private_inputs=() executable_kinds=() literal_kinds=() escaped_input
-  # Per source: env -C directories of the current stage, and split text
-  # with an escape, expansion or comment this hook does not decode.
-  local env_dirs=() env_bare=() split_undecoded=""
+  # Per source: split text with an escape, expansion or comment this hook
+  # does not decode.
+  local split_undecoded=""
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() executable_contexts=()
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
@@ -800,7 +803,7 @@ environment_dump() { # command kind; arguments are already decoded data
       if [ "$c" = '\' ]; then
         if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
         i=$((i + 1))
-        [ "$next" = $'\n' ] || { bare=""; quoted=1; }
+        [ "$next" = $'\n' ] || { word_quoted; quoted=1; }
         if [ "$quote" = '"' ]; then
           case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word=$word$c ;; esac
         fi
@@ -810,8 +813,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -832,7 +835,7 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       case "$c" in
-        "'" | '"') quote=$c; active=1; bare=""; quoted=1; continue ;;
+        "'" | '"') quote=$c; active=1; word_quoted; quoted=1; continue ;;
         '$')
           case "$next" in
             "'" | '"')
@@ -843,7 +846,7 @@ environment_dump() { # command kind; arguments are already decoded data
               i=$((i + 1)) ;;
             *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
           esac
-          active=1; bare=""; continue ;;
+          active=1; word_quoted; continue ;;
         '#')
           if [ -z "$active" ]; then
             if [[ ${text:$i} =~ $comment_span_re ]]; then
@@ -871,10 +874,10 @@ environment_dump() { # command kind; arguments are already decoded data
             active=""
           fi
           if [ -n "$active" ]; then
-            unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
             needs_target=""
           fi
-          word=""; active=""; kind=literal; bare=1; quoted=""
+          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
@@ -930,7 +933,7 @@ environment_dump() { # command kind; arguments are already decoded data
     # Undecoded split text can also hide the git word itself.
     [ -z "$split_undecoded" ] || history_record unresolved-git-argv unknown
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   for ((j=0; j<${#appended_args[@]}; j++)); do
     tokens[${#tokens[@]}]=${appended_args[$j]}
@@ -1114,7 +1117,7 @@ environment_dump() { # command kind; arguments are already decoded data
            [ "${#stage_args[@]}" -eq 3 ] && [ "$candidate" -eq 2 ] && [ "${#starts[@]}" -eq 1 ] &&
            [ "$start" -eq 0 ] && [ "$end" -eq 3 ] && [ "${stage_kinds[1]}" = literal ] &&
            [ "$program_pos" = 0 ] && [ "${stage_kinds[$candidate]}" = literal ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ -z "$input_redirect$output" ]; then continue; fi
+           [ "${stage_unquoted[$candidate]}" != 1 ] && [ -z "$input_redirect$output" ]; then continue; fi
         # Waiter launchers execute forwarded argv, so each operand is judged
         # as a possible head by the one producer, beside its own operands.
         limit=${#stage_args[@]}
@@ -1133,7 +1136,7 @@ environment_dump() { # command kind; arguments are already decoded data
         # a design question for this forwarded-form rule, not a case patch
         # (Jarvis ruling, KEN-4728).
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ "$producer_end" -le 1 ]; then
+           [ "${stage_unquoted[$candidate]}" != 1 ] && [ "$producer_end" -le 1 ]; then
           code=${#executable_texts[@]}
           executable_texts[code]=${stage_args[$candidate]}; executable_stages[code]=$stage
           executable_kinds[code]=${stage_kinds[$candidate]}; executable_contexts[code]=forwarded
@@ -1430,22 +1433,21 @@ while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
   [ -n "$at" ] || at=/
   levels=$((levels + 1))
 done
+# Past that walk, the loader is the first scope the payload names,
+# its root or a history root, that holds the hook, whose missing loader is
+# a broken install wherever the payload stands. A hook in none of them uses
+# HOME's installed dependency, so a project's loader is sourced only when
+# the hook is installed in that project. Outside a worktree, a missing HOME
+# loader leaves the read not judged: the payload names no scope of the hook.
+lib_in_scope=""
 if [ -z "$lib" ]; then
-  # Choose the shared scope once. A global hook can use HOME's installed
-  # dependency, but sources a project the payload selects only when the hook
-  # is installed in it. A history root only chooses the policy, never this.
-  case "$hook_dir" in
-    "$root"/*) lib="$root/.agents/skills/commit-guards/scripts/lib" ;;
-    *) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}" ;;
-  esac
-  for scope in ${history_roots[@]+"${history_roots[@]}"}; do
-    case "$hook_dir" in "$scope"/*) lib="$scope/.agents/skills/commit-guards/scripts/lib"; break ;; esac
+  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
+  for scope in "$root" ${history_roots[@]+"${history_roots[@]}"}; do
+    case "$hook_dir" in "$scope"/*) lib="$scope/.agents/skills/commit-guards/scripts/lib"; lib_in_scope=1; break ;; esac
   done
 fi
 if ! [ -f "$lib/common.sh" ] || ! [ -f "$lib/settings.sh" ]; then
-  # Outside a worktree the hook can sit in no scope the payload names, so a
-  # loader it cannot find there leaves the read not judged, not a broken install.
-  [ -z "$outside" ] || exit 0
+  [ -z "$outside" ] || [ -n "$lib_in_scope" ] || exit 0
   refuse settings no-loader
 fi
 GG_CHECK=command-safety
@@ -1489,9 +1491,9 @@ default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)
 history_judge() { # REASON: judged against the current directory's settings
   history_reason=$1
   if ! history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)"; then
-    # Outside a worktree a -C target's unreadable settings name no policy,
-    # so its read is not judged; inside one they warn.
-    [ -z "$outside" ] || return 0
+    # A -C target's unreadable settings warn once every other target has
+    # been judged, so a later refusal is not lost to this warning.
+    [ -z "$outside" ] || { history_unread=$history_policy; return 0; }
     refuse settings unreadable "$history_policy"
   fi
   case "$history_policy" in
@@ -1504,10 +1506,12 @@ history_judge() { # REASON: judged against the current directory's settings
   esac
 }
 if [ "${#history_roots[@]}" -gt 0 ]; then
+  history_unread=""
   for ((target=0; target<${#history_roots[@]}; target++)); do
     cd -- "${history_roots[$target]}" || refuse cwd "${history_roots[$target]}"
     history_judge "${history_root_reasons[$target]}"
   done
+  [ -z "$history_unread" ] || refuse settings unreadable "$history_unread"
   exit 0
 fi
 history_judge "${history_reasons[0]:-}"
