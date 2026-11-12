@@ -26,6 +26,7 @@ use super::{Run, Target, fleet_tmux_session, lane_for_intent, pane_harness, refu
 use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
+use crate::policy::{Stage, Stages};
 use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Lane, LaneMembers, SANDBOX, STANDING};
 use crate::watch::hosted::{self, Launch, PaneKind};
@@ -43,6 +44,13 @@ use agent_runtime::intent::{OpenedPane, Phase};
 /// The words that close a cloud session's description, after the brief:
 /// the branch it cloned and how it publishes.
 const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
+/// The cloud session words' git-hooks sentence where the repository's
+/// committed policy runs the `git-hooks` stage. A missing installer is
+/// reported, never read as the policy's answer.
+const CLOUD_HOOKS_RUN: &str = "This repository's policy runs its git hooks: arm the commit hooks with .agents/skills/commit-guards/scripts/install-git-hooks before your first commit. If that installer is missing, say so in one line under ## Lane status in the pull request body and commit anyway.";
+/// The same sentence where the policy leaves the stage out.
+const CLOUD_HOOKS_SKIP: &str =
+    "This repository's policy runs no git hooks: arm none and run no hook installer.";
 /// The words every local and hosted lane brief closes on, the text the
 /// watch's relaunch brief closes on: an unattended lane asks the overseer
 /// through its mailbox, never in a chat nobody reads.
@@ -87,12 +95,18 @@ fn lane_brief(brief: &str, mode: LaneOutput) -> String {
 }
 
 /// A cloud session's description: the brief, then the cloud session words
-/// for the branch it cloned in place of the unattended words, then the
-/// sentence stating `mode`.
-fn cloud_prompt(brief: &str, branch: &str, mode: LaneOutput) -> String {
+/// for the branch it cloned and the git hooks the repository's `stages`
+/// run, in place of the unattended words, then the sentence stating `mode`.
+fn cloud_prompt(brief: &str, branch: &str, stages: &Stages, mode: LaneOutput) -> String {
+    let hooks = if stages.runs(Stage::GitHooks) {
+        CLOUD_HOOKS_RUN
+    } else {
+        CLOUD_HOOKS_SKIP
+    };
     let words = CLOUD_SESSION_TEXT
         .trim_end_matches('\n')
-        .replace("{branch}", branch);
+        .replace("{branch}", branch)
+        .replace("{hooks}", hooks);
     closed_by(&format!("{brief}\n\n{words}"), mode_sentence(mode))
 }
 /// The POSIX shell step a hosted Pi lane on the Copilot pool runs before
@@ -1200,6 +1214,10 @@ fn cloud_launch(
             );
         }
     }
+    let stages = match Stages::read(&claim_root) {
+        Ok(stages) => stages,
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
+    };
     let origin = match crate::repo::origin(
         &crate::repo::resolver(&run.settings.roots.project),
         &claim_root,
@@ -1244,7 +1262,7 @@ fn cloud_launch(
     let Ok(branch) = git_line(&wt, "branch", &["symbolic-ref", "--short", "HEAD"]) else {
         return failed(operation, "cloud-branch-unread");
     };
-    let prompt = cloud_prompt(&brief, &branch, mode);
+    let prompt = cloud_prompt(&brief, &branch, &stages, mode);
     operation.record_phase(Phase::Preparing {
         step: WORKTREE_PUSH.to_owned(),
         at: wt.display().to_string(),
@@ -2051,13 +2069,16 @@ mod tests {
     /// mode.
     #[test]
     fn a_cloud_description_closes_on_its_branch_words_then_its_output_mode() {
-        let words = CLOUD_SESSION_TEXT.replace("{branch}", "ken-1");
+        let words = CLOUD_SESSION_TEXT
+            .replace("{branch}", "ken-1")
+            .replace("{hooks}", CLOUD_HOOKS_RUN);
+        let stages = Stages::of(&Default::default()).unwrap();
         for (mode, sentence) in [
             (LaneOutput::Quiet, QUIET_TEXT),
             (LaneOutput::Normal, NORMAL_TEXT),
         ] {
             assert_eq!(
-                cloud_prompt("Review KEN-1.", "ken-1", mode),
+                cloud_prompt("Review KEN-1.", "ken-1", &stages, mode),
                 format!(
                     "Review KEN-1.\n\n{}\n{}",
                     words.trim_end(),

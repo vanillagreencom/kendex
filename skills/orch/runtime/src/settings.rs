@@ -280,6 +280,7 @@ const READ_KEYS: &[&str] = &[
     DEV_VALIDATE_TIMEOUT_SECS_KEY,
     VALIDATE_MEMORY_MAX_KEY,
     DELIVERY_KEY,
+    crate::policy::STAGES_KEY,
     ROUND_PRUNE_KEY,
     QA_KEYS[0],
     QA_KEYS[1],

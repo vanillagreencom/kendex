@@ -5015,3 +5015,159 @@ fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
         let _ = start.join();
     });
 }
+
+impl World {
+    /// A main checkout beside the worktree holding `files`, each a path and
+    /// its text.
+    fn base_checkout(&self, files: &[(&str, &str)]) -> PathBuf {
+        let base = self.root.join("base");
+        fs::create_dir_all(base.join(".kendex")).unwrap();
+        for (name, text) in files {
+            fs::write(base.join(name), text).unwrap();
+        }
+        base
+    }
+
+    fn policy(&self, base: &Path, stage: Option<&str>, extra: &[(&str, &str)]) -> Output {
+        let base = base.display().to_string();
+        let mut args = vec!["validate", "policy", "--base-checkout", base.as_str()];
+        if let Some(stage) = stage {
+            args.extend(["--stage", stage]);
+        }
+        self.run(&args, extra)
+    }
+}
+
+const STAGE_WORDS: [&str; 6] = [
+    "external-review",
+    "local-review",
+    "preflight",
+    "doc-limits",
+    "git-hooks",
+    "focused-proof",
+];
+
+/// Which optional stage runs is the main checkout's committed choice alone:
+/// unset runs every stage, a list runs the stages it names, an empty value
+/// none; the private env file outranks the committed files, and neither the
+/// caller's own `ORCH_STAGES` nor the worktree's settings file reaches the
+/// answer, so a branch never switches off its own stages. No tool is
+/// installed in the base checkout, and a chosen stage still answers `run`.
+#[test]
+fn the_stage_policy_is_the_base_checkouts_committed_choice() {
+    type Files<'a> = &'a [(&'a str, &'a str)];
+    let cases: [(&str, Files, &[&str], bool); 5] = [
+        ("unset", &[], &STAGE_WORDS, false),
+        (
+            "listed",
+            &[(
+                "kendex.settings.toml",
+                "[env]\nORCH_STAGES = \"preflight git-hooks\"\n",
+            )],
+            &["preflight", "git-hooks"],
+            true,
+        ),
+        (
+            "empty",
+            &[("kendex.settings.toml", "[env]\nORCH_STAGES = \"\"\n")],
+            &[],
+            true,
+        ),
+        (
+            "local settings over committed",
+            &[
+                (
+                    "kendex.settings.toml",
+                    "[env]\nORCH_STAGES = \"preflight\"\n",
+                ),
+                (
+                    ".kendex/settings.toml",
+                    "[env]\nORCH_STAGES = \"doc-limits\"\n",
+                ),
+            ],
+            &["doc-limits"],
+            true,
+        ),
+        (
+            "private file over both",
+            &[
+                (
+                    "kendex.settings.toml",
+                    "[env]\nORCH_STAGES = \"preflight\"\n",
+                ),
+                (
+                    ".kendex/settings.toml",
+                    "[env]\nORCH_STAGES = \"doc-limits\"\n",
+                ),
+                (
+                    ".env.local",
+                    "ORCH_STAGES=\"external-review local-review\"\n",
+                ),
+            ],
+            &["external-review", "local-review"],
+            true,
+        ),
+    ];
+    for (case, files, running, set) in cases {
+        let w = World::new();
+        fs::write(
+            w.worktree.join("kendex.settings.toml"),
+            "[env]\nORCH_STAGES = \"focused-proof\"\n",
+        )
+        .unwrap();
+        let base = w.base_checkout(files);
+        let caller = [("ORCH_STAGES", "local-review")];
+        let all = ok(&w.policy(&base, None, &caller));
+        let want: serde_json::Map<String, Value> = STAGE_WORDS
+            .iter()
+            .map(|word| {
+                let answer = if running.contains(word) {
+                    "run"
+                } else {
+                    "skip"
+                };
+                ((*word).to_owned(), json!(answer))
+            })
+            .collect();
+        assert_eq!(all["stages"], Value::Object(want), "{case}");
+        assert_eq!(all["set"], json!(set), "{case}");
+        for word in STAGE_WORDS {
+            let one = ok(&w.policy(&base, Some(word), &caller));
+            assert_eq!(one["stage"], json!(word), "{case}");
+            assert_eq!(one["answer"], all["stages"][word], "{case} {word}");
+        }
+    }
+}
+
+/// A stage policy outside its form refuses by name and answers no stage: a
+/// word outside the six by the key and the value as written, so a
+/// misspelt stage is never silently skipped; a base checkout that is not a
+/// directory by its field, since its absent files would read as the
+/// default; a `--stage` word outside the six at the command line.
+#[test]
+fn a_stage_policy_outside_its_form_refuses_by_name() {
+    let w = World::new();
+    let base = w.base_checkout(&[(
+        "kendex.settings.toml",
+        "[env]\nORCH_STAGES = \"preflight gti-hooks\"\n",
+    )]);
+    let out = w.policy(&base, Some("preflight"), &[]);
+    assert_eq!(refusal(&out), "setting-invalid");
+    assert_eq!(
+        reply(&out)["refusal"]["fields"],
+        json!([["key", "ORCH_STAGES"], ["value", "preflight gti-hooks"]])
+    );
+    let absent = w.root.join("absent");
+    let out = w.policy(&absent, None, &[]);
+    assert_eq!(refusal(&out), "field-invalid");
+    assert_eq!(
+        reply(&out)["refusal"]["fields"],
+        json!([
+            ["field", "base_checkout"],
+            ["value", absent.display().to_string()]
+        ])
+    );
+    let out = w.policy(&base, Some("benchmark"), &[]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(out.stdout.is_empty());
+}

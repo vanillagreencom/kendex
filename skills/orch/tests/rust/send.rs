@@ -1436,6 +1436,47 @@ fn a_cloud_launch_from_a_checkout_whose_origin_is_off_github_makes_no_worktree()
     );
 }
 
+/// A cloud session arms git hooks only where the claim root's committed
+/// policy runs the `git-hooks` stage, read before anything is made: unset
+/// names the installer in the description, a policy without the stage
+/// names none, whatever is installed, and a policy outside its form fails
+/// the launch by its key before a worktree or a session exists.
+#[test]
+fn a_cloud_launch_arms_git_hooks_only_where_the_claim_roots_policy_runs_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let settings = world.root.join("kendex.settings.toml");
+    for (item, policy, arms) in [
+        ("CC-20", None, true),
+        ("CC-21", Some("preflight doc-limits"), false),
+    ] {
+        if let Some(policy) = policy {
+            std::fs::write(&settings, format!("[env]\nORCH_STAGES = \"{policy}\"\n")).unwrap();
+        }
+        let log = dir.path().join(format!("claude-{item}.log"));
+        let report = effect_report(&world.launch(item, &[("CLAUDE_CLOUD_LOG", log.as_path())]));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{item} {report}");
+        let cli = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(
+            cli.contains("install-git-hooks"),
+            arms,
+            "{item}: the description arms hooks only under the policy: {cli}"
+        );
+    }
+    std::fs::write(&settings, "[env]\nORCH_STAGES = \"git-hook\"\n").unwrap();
+    let log = dir.path().join("claude-CC-22.log");
+    let report = effect_report(&world.launch("CC-22", &[("CLAUDE_CLOUD_LOG", log.as_path())]));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["cause"], "setting-invalid", "{report}");
+    assert_eq!(observation["key"], "ORCH_STAGES", "{report}");
+    assert!(!log.exists(), "no session was asked for");
+    let calls = std::fs::read_to_string(&world.worktree_log).unwrap();
+    assert!(!calls.contains("CC-22"), "no worktree was made: {calls}");
+}
+
 #[test]
 fn a_cloud_create_whose_asking_process_ends_is_held_and_never_asked_again() {
     let dir = tempfile::tempdir().unwrap();

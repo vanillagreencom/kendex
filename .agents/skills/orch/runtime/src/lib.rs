@@ -28,6 +28,7 @@ pub mod error;
 pub mod mailbox;
 pub mod marker;
 pub mod ops;
+pub mod policy;
 pub mod proof;
 pub mod protocol;
 pub mod repo;

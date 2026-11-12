@@ -486,6 +486,14 @@ enum ValidateOp {
         #[arg(long)]
         base: Option<String>,
     },
+    /// Read which optional stages the main checkout's committed policy
+    /// runs, without probing any tool.
+    Policy {
+        #[arg(long)]
+        base_checkout: PathBuf,
+        #[arg(long, value_parser = parse_stage)]
+        stage: Option<orch_runtime::policy::Stage>,
+    },
     /// Resolve the mode from the project's declaration, classify the
     /// worktree, judge reuse over the item's proof rows, record the proof
     /// and the job on the round's admitted run, write the run directory
@@ -545,6 +553,10 @@ enum ValidateOp {
         #[arg(long)]
         run_dir: String,
     },
+}
+
+fn parse_stage(word: &str) -> std::result::Result<orch_runtime::policy::Stage, String> {
+    orch_runtime::policy::Stage::parse(word).ok_or_else(|| format!("{word}: not an optional stage"))
 }
 
 /// The mode word a `--mode` carries.
@@ -1976,6 +1988,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 orch_runtime::validate::entry::mode(&settings, &worktree, base, &Env::system()?)?;
             serde_json::json!({"mode": mode})
         }
+        Verb::Validate {
+            op:
+                ValidateOp::Policy {
+                    base_checkout,
+                    stage,
+                },
+        } => orch_runtime::policy::reply(&base_checkout, stage)?,
         Verb::Validate {
             op:
                 ValidateOp::Start {

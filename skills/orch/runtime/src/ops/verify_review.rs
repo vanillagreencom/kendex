@@ -18,7 +18,6 @@
 //! verdicts, as `verify-pr` answers them.
 use agent_runtime::intent::Notice;
 use agent_runtime::record::{self, Document, Locking};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
@@ -33,6 +32,7 @@ use agent_runtime::journal::Env;
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Noticed};
 use crate::marker;
+use crate::policy::policy;
 use crate::settings::{self, ReviewSettings, Settings};
 use crate::state;
 use crate::verify::review::{self, Acted, CopilotReviews, GateMode, View, Work};
@@ -1697,26 +1697,6 @@ fn regression_blocker(path: &Path, doc: &Document) -> Result<Option<String>> {
         }
     }
     Ok(None)
-}
-
-/// The consumer's committed review policy from the base checkout's files,
-/// `kendex.settings.toml`, then `.kendex/settings.toml`, then its private
-/// env file, the later outranking the earlier; no process variable reaches
-/// it, since the policy is the consumer's, never the caller's.
-fn policy(base: &Path) -> Result<BTreeMap<String, String>> {
-    let mut values = BTreeMap::new();
-    for name in agent_runtime::settings::SETTINGS_FILES {
-        for (key, value) in agent_runtime::settings::settings_file(&base.join(name))? {
-            values.insert(key, value);
-        }
-    }
-    let private = agent_runtime::settings::private_env_file(
-        &base.join(agent_runtime::settings::DEFAULT_ENV_FILE),
-        None,
-        &settings::KEYS,
-    )?;
-    values.extend(private.values);
-    Ok(values)
 }
 
 #[cfg(test)]
