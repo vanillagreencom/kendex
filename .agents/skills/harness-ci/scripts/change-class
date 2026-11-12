@@ -14,11 +14,12 @@
 # workflow that passes none.
 # The base commit's HARNESS_CI_UNREAD_PATHS, blank-separated globs read from
 # its settings tables alone, never the environment, names paths no lane
-# reads: a changed path it matches, outside the docs set and not declared
-# text, that no lane claims turns no lane on. Every verdict where it is set
-# prints its globs on one `unread-paths:` line after the per-push and
-# light-ci lines, which lib/change-class.sh reads; unset or blank prints
-# none.
+# reads: a changed path it matches, outside the docs set, not declared text
+# and not on the shipped queue list, that no lane claims turns no lane on.
+# Every verdict prints its globs on one `unread-paths:` line, bare where it
+# is unset or blank, after all this script relays from tools that read the
+# head, so the change-class action's lane producer, lib/change-class.sh,
+# reads the last such line as this script's own.
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
@@ -557,7 +558,7 @@ harness_err="$work/harness-stderr"
 # An admitted manifest's narrow answers are its own small, the one class
 # the light-ci line marks for the lanes.
 answer() { # CLASS FIELDS [measured]
-  local queue_line per_push_line rule light_line="" unread_line=""
+  local queue_line per_push_line rule light_line="" unread_line
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
     rule="${2%% *}"
     settings_note "cause=class-$1 rule=${rule#cause=}"
@@ -577,9 +578,11 @@ answer() { # CLASS FIELDS [measured]
   per_push_mode
   queue_line="queue-only: queue_only=$QUEUE_ONLY inputs=$QUEUE_INPUTS $QUEUE_CAUSE"
   per_push_line="per-push: state=$PER_PUSH"
-  # per_push_mode read the base's settings; the lane producer reads this record.
+  # per_push_mode read the base's settings; the action's lane producer reads
+  # this record.
   set_globs "${HARNESS_CI_UNREAD_PATHS:-}"
-  [ "${#GLOB_LIST[@]}" -eq 0 ] || unread_line="unread-paths: ${GLOB_LIST[*]}"
+  unread_line="unread-paths:"
+  [ "${#GLOB_LIST[@]}" -eq 0 ] || unread_line="$unread_line ${GLOB_LIST[*]}"
   if [ -n "$output" ] && [ "$output" != /dev/null ]; then
     local lane_docs
     lane_docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
@@ -589,10 +592,10 @@ answer() { # CLASS FIELDS [measured]
     [ -f "$work/declared" ] || die "cause=declared-paths-unreadable" \
       "the docs reader did not complete declaration discovery"
     # harness-only owns the resolved endpoints; render move checks read them.
-    # The records below are the ones the action's log carries.
+    # The records below are the ones the action's log carries, save the
+    # unread-paths line: this route publishes no lane verdict it could change.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"
-      [ -z "$light_line" ] || printf '%s\n' "$light_line"
-      [ -z "$unread_line" ] || printf '%s\n' "$unread_line"; } >"$work/class-log"
+      [ -z "$light_line" ] || printf '%s\n' "$light_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
       "$QUEUE_ONLY" "$work" "$lanes_from" "$queue_default" "$QUEUE_INPUTS" >&2
   fi
@@ -606,7 +609,7 @@ answer() { # CLASS FIELDS [measured]
   fi
   printf '%s\n%s\n' "$queue_line" "$per_push_line" >&2
   [ -z "$light_line" ] || printf '%s\n' "$light_line" >&2
-  [ -z "$unread_line" ] || printf '%s\n' "$unread_line" >&2
+  printf '%s\n' "$unread_line" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0

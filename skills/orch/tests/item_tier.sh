@@ -365,18 +365,6 @@ else
   pass "delta floor regression turns red without the floor"
 fi
 unset TIER_BIN
-# Must-fail control for the hook body row: the list's one-segment glob needs
-# extglob, and a copy without it reads a hook body as off the list.
-mkdir -p "$TMP_ROOT/no-extglob"
-cp -R "$LAYOUT/." "$TMP_ROOT/no-extglob/"
-sed '/^shopt -s extglob$/d' "$ORCH_DIR/scripts/item-tier" >"$TMP_ROOT/no-extglob/orch/scripts/item-tier"
-assert_eq "$(grep -c '^shopt -s extglob$' "$ORCH_DIR/scripts/item-tier") $(grep -c '^shopt -s extglob$' "$TMP_ROOT/no-extglob/orch/scripts/item-tier" || true)" \
-  "1 0" "the extglob control drops the one shopt"
-TIER_BIN="$TMP_ROOT/no-extglob/orch/scripts/item-tier"
-assert_eq "$(run_tier - --production 1 --path hooks/block-bare-cd.sh)" \
-  "tier=micro brief=micro cause=estimate-within-micro rc=0" "an item-tier without extglob misses a hook body"
-unset TIER_BIN
-
 # Must-fail control for instruction rows: disable the class assigned by the
 # shared rule. A SKILL.md Location then keeps the estimate's class.
 mkdir -p "$TMP_ROOT/no-floor"

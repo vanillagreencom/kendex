@@ -56,3 +56,5 @@ The `change-class` suite's last section installs and refreshes a real consumer w
 `tests/lib/workflow.sh` reads a workflow's job conditions, needs, names and triggers, plants a defect in a copy, and runs `tests/lib/gh-eval.py`, which evaluates the conditions, through `gh_eval`, which turns a refusal into an answer no row expects; kendex's `tools/tests/ci-aggregate.test.sh` reads its own `skill-tests.yml` with the same two files.
 
 `tools/bash32-lint` checks the shipped script for Bash 4+ syntax, because consumer runners include macOS system Bash 3.2.
+
+`HARNESS_CI_DOCS_PATHS` and `HARNESS_CI_UNREAD_PATHS` are base-only keys too: `change-class` drops them from its environment and reads them from the `[env]` tables of the commit `--base` names alone.
