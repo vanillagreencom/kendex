@@ -22,10 +22,6 @@ use agent_runtime::reading::Reading;
 use agent_runtime::trust;
 use serde_json::{Value, json};
 
-use super::operation::{
-    self, Binding, EffectOutcome, Foreground, Observed, OpenRefusal, Operation, Polled,
-    ProcessRead, Published, Recovered, Server, SessionFloor, Wire, Word, opening_observation,
-};
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session,
     lane_for_intent, pane_harness, pending_observation, read_brief, refused, up,
@@ -36,6 +32,10 @@ use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::settings::{LaneOutput, Settings};
 use crate::state::{self, Lane, LaneMembers};
 use crate::watch::hosted::{self, Launch, PaneKind};
+use agent_runtime::effects::{
+    Binding, EffectOutcome, Foreground, Observed, OpenRefusal, Operation, Polled, ProcessRead,
+    Published, Recovered, Server, SessionFloor, Wire, Word, opening_observation,
+};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::{OpenedPane, Phase};
 
@@ -199,7 +199,7 @@ fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>)
         r,
         handoff,
         destination.as_ref().map(|kept| kept.home.as_path()),
-        &operation::session_owner,
+        &agent_runtime::effects::session_owner,
     );
     Ok(match route {
         Route::Resume { session_id, .. } => Route::Resume {
@@ -571,7 +571,7 @@ fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
     named
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
-        .or_else(|| operation::default_home(harness))
+        .or_else(|| agent_runtime::effects::default_home(harness))
 }
 
 /// The home a launch of `harness` billing `account` on `model` names before
@@ -652,7 +652,9 @@ pub(super) fn launch_home(
         named = kept.filter(|kept| kept.named).map(|kept| kept.home.clone());
         cleared = named.is_none();
     }
-    let sessions = named.clone().or_else(|| operation::default_home(harness));
+    let sessions = named
+        .clone()
+        .or_else(|| agent_runtime::effects::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
     build_runtimes(cwd)?;
     Ok(LaunchHome {
@@ -997,7 +999,7 @@ fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet
     let (server, session) = operation.fleet_server(doc_session.as_deref())?;
     let served = match (Harness::parse(&r.harness), &r.account) {
         (Some(harness @ (Harness::Codex | Harness::Claude)), None) => {
-            operation::server_home(&server, &session, harness)?
+            agent_runtime::effects::server_home(&server, &session, harness)?
         }
         (Some(Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi) | None, _) => None,
     };
@@ -1123,7 +1125,7 @@ fn hosted_launch(
     let doc_session = fleet_tmux_session(run.engine.path)?;
     let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
         Ok(found) => found,
-        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
     let cwd = PathBuf::from(&r.mail_root);
     if let Err(e) = check_directory("cwd-missing", &cwd) {
@@ -1568,7 +1570,11 @@ fn cloud_launch(
     );
     Ok(outcome.with_wire(Wire {
         session_id: Some(session),
-        mail_root: Some(wt.display().to_string()),
+        members: crate::ops::LaneOutcome {
+            mail_root: Some(wt.display().to_string()),
+            ..crate::ops::LaneOutcome::default()
+        }
+        .members(),
         ..Wire::default()
     }))
 }
@@ -1840,7 +1846,7 @@ fn launch_outcome(
                         None => {
                             let home = home
                                 .map(Path::to_path_buf)
-                                .or_else(|| operation::default_home(harness));
+                                .or_else(|| agent_runtime::effects::default_home(harness));
                             match home {
                                 None => {
                                     observation["note"] = json!("home-unresolved");
@@ -1884,7 +1890,7 @@ fn launch_outcome(
             // lane record and the whole set is consumed. A handle still
             // standing holds the launch at this phase.
             let wire_identity = identity.identity().clone();
-            match operation.publish(Published::Lane, opened, &identity, observation.clone())? {
+            match operation.publish(Published::Target, opened, &identity, observation.clone())? {
                 Ok(outcome) => outcome.with_wire(Wire {
                     launch: Some(LaunchIdentity {
                         pane: Some(opened.pane.clone()),
@@ -1895,10 +1901,13 @@ fn launch_outcome(
                     }),
                     session_id,
                     window: Some(format!("{tmux_session}:{item}")),
-                    tmux_session: Some(tmux_session.to_owned()),
-                    mail_root,
                     home: opened.home.clone(),
-                    home_implicit: opened.home_implicit,
+                    members: crate::ops::LaneOutcome {
+                        tmux_session: Some(tmux_session.to_owned()),
+                        mail_root,
+                        home_implicit: opened.home_implicit,
+                    }
+                    .members(),
                     ..Wire::default()
                 }),
                 Err(operation) => {
@@ -2334,13 +2343,13 @@ mod tests {
         let a = dir.path().join("a");
         let b = dir.path().join("b");
         let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
-        let file = operation::fixed_file(Harness::Claude, &a, &cwd, id).unwrap();
+        let file = agent_runtime::effects::fixed_file(Harness::Claude, &a, &cwd, id).unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, "{}\n").unwrap();
         let lane = bound_lane(&a.display().to_string(), Some(&cwd));
         let same = request(&a.display().to_string(), &cwd);
         let other = request(&b.display().to_string(), &cwd);
-        let owner = &operation::session_owner;
+        let owner = &agent_runtime::effects::session_owner;
         assert!(matches!(
             route_of(&lane, &same, None, Some(&a), owner),
             Route::Resume { session_id, .. } if session_id == id

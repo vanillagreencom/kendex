@@ -61,11 +61,11 @@ use super::events::{Event, OverseerCase};
 use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
 use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
-use crate::effects::overseer_socket;
 use crate::ops::accounts;
 use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
 use agent_runtime::accounts::walk::{self, WalkRequest};
 use agent_runtime::accounts::{PickAnswer, PickRequest};
+use agent_runtime::effects::overseer_socket;
 use agent_runtime::settings::Succession;
 
 use crate::settings::{Settings, WatchSettings};
@@ -1091,13 +1091,13 @@ fn relaunch_through_runtime(
         &r.session,
     ];
     argv.extend(r.args.iter().map(String::as_str));
-    let launched = crate::effects::launch_recorded(
+    let launched = agent_runtime::effects::job::launch_recorded(
         &name,
         &now.to_string(),
         &record,
         &argv,
         None,
-        crate::effects::Bounds::default(),
+        agent_runtime::effects::job::Bounds::default(),
         clock,
     );
     relaunch_started(launched.answer())
@@ -1106,8 +1106,8 @@ fn relaunch_through_runtime(
 /// A launch that may have started is read as started: the marker written
 /// before it owns its outcome, said from the relaunch's status or as stuck
 /// past the prepare bound. A refused launch ran nothing.
-fn relaunch_started(launch: crate::effects::Launch) -> Result<(), String> {
-    use crate::effects::Launch;
+fn relaunch_started(launch: agent_runtime::effects::job::Launch) -> Result<(), String> {
+    use agent_runtime::effects::job::Launch;
     match launch {
         Launch::Started { .. } | Launch::Unanswered { .. } => Ok(()),
         Launch::Refused { cause } => Err(cause),
@@ -2314,14 +2314,14 @@ pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchP
 }
 
 /// The launch a relaunch's chain asked, the one whose status was
-/// [`crate::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-lane`
+/// [`crate::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-session`
 /// intent, since the chain's status is its launch's and no other launch of
 /// the item runs while the marker stands.
 fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a agent_runtime::intent::Intent> {
     fleet
         .intents
         .iter()
-        .filter(|i| i.op == agent_runtime::intent::EffectOp::LaunchLane && i.target == item)
+        .filter(|i| i.op == agent_runtime::intent::EffectOp::LaunchSession && i.target == item)
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
 }
 
@@ -2867,7 +2867,7 @@ mod tests {
     /// route's refusal with the launcher's cause.
     #[test]
     fn a_relaunch_that_may_have_started_is_started_and_one_that_started_nothing_is_refused() {
-        use crate::effects::Launch;
+        use agent_runtime::effects::job::Launch;
         let started = Launch::Started {
             runner: "setsid".to_owned(),
             unit: None,

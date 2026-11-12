@@ -15,8 +15,6 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::effects;
-use crate::effects::Launch;
 use crate::error::{Error, Result};
 use crate::ops::validate::{
     RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
@@ -27,6 +25,7 @@ use crate::state::{
     self, ItemState, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob, ValidateMode,
 };
 use crate::verify::Gh;
+use agent_runtime::effects::job::Launch;
 use agent_runtime::journal::Env;
 
 /// The poll interval a start records when the caller names none.
@@ -1705,7 +1704,7 @@ fn ask_launcher(
     run_dir: &Path,
     item: &str,
     round: &str,
-    bounds: effects::Bounds,
+    bounds: agent_runtime::effects::job::Bounds,
 ) -> Launch {
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -1739,7 +1738,7 @@ fn ask_launcher(
     // characters (`systemd.unit(5)`): the run directory's own name keys it,
     // never its path.
     let key = run_dir.file_name().unwrap_or_default().to_string_lossy();
-    let answer = effects::launch_recorded(
+    let answer = agent_runtime::effects::job::launch_recorded(
         &name,
         &key,
         &run_dir.join("runner"),
@@ -1896,7 +1895,7 @@ pub fn start(
                     &run_dir_path,
                     &item,
                     &round,
-                    effects::Bounds {
+                    agent_runtime::effects::job::Bounds {
                         runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
                         memory,
                     },

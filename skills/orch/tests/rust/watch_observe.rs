@@ -35,7 +35,6 @@ use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::settings::{Roots, Succession};
 use jiff::tz::TimeZone;
-use orch_runtime::effects;
 use orch_runtime::ops::wall::{self, RecordWallPauses};
 use orch_runtime::ops::{self, DeathCause, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
@@ -110,8 +109,10 @@ impl TestReaders {
         start: Option<u64>,
         pane: &str,
     ) -> Reading<PaneState> {
-        let sockets =
-            effects::fleet_sockets(recorded.map(Path::to_path_buf), Some(self.socket.clone()));
+        let sockets = agent_runtime::effects::fleet_sockets(
+            recorded.map(Path::to_path_buf),
+            Some(self.socket.clone()),
+        );
         lanes::pane_at(&sockets, server, start, pane)
     }
 
@@ -1457,7 +1458,7 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     std::fs::create_dir_all(&receipts).unwrap();
     let receipted = server.open_window("opening", dir.path(), "bash --norc --noprofile");
     std::fs::write(
-        receipts.join("launch-lane:KEN-8:1-1.pane"),
+        receipts.join("launch-session:KEN-8:1-1.pane"),
         format!("{receipted} 4242\n"),
     )
     .unwrap();
@@ -5138,7 +5139,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
             .as_array()
             .unwrap()
             .iter()
-            .find(|i| i["op"] == "launch-lane")
+            .find(|i| i["op"] == "launch-session")
             .and_then(|i| i["phase"]["pane"].as_str())
             .expect("the open launch names its window")
             .to_owned();

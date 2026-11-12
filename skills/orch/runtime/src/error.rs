@@ -3,7 +3,6 @@
 //! and the diagnostic line opens with `key()`. A field value never carries
 //! a serializer's or parser's own message: that text is the human line.
 
-use agent_runtime::intent::Owner;
 use std::path::PathBuf;
 
 use crate::state::{Kind, LaneStatus};
@@ -79,8 +78,6 @@ pub enum Error {
     /// kept as history and is not the current round's.
     #[error("round {round_id} was superseded")]
     RoundSuperseded { round_id: String },
-    #[error("{path}: the fleet state records no overseer")]
-    OverseerMissing { path: PathBuf },
     /// The overseer record differs from the one the requester saw in the
     /// named fields; the succession compare-and-swap refuses to act on a
     /// record another writer moved.
@@ -94,17 +91,6 @@ pub enum Error {
     /// start keeps a record only where it names that pane on that server.
     #[error("intent {intent}: the transfer confirmation names no {field}")]
     LaunchMissing { intent: String, field: &'static str },
-    /// A launcher-side write found the intent under another owner: the store
-    /// yielded the write to that claimant and the handle acts on nothing;
-    /// its caller hands the claimant's state back
-    /// through its own route.
-    #[error("intent {id} yielded to its claimant {}:{}", owner.pid, owner.start)]
-    Yielded { id: String, owner: Owner },
-    /// An intent's recorded obligation set carries a row without a role.
-    /// The set alone selects the harness, the pane and the wake by role, so
-    /// no handle opens on it; the record is closed by hand.
-    #[error("intent {id}: an obligation is recorded without a role")]
-    RoleMissing { id: String },
     /// The word is none a verification record carries (`pass`, `fail`,
     /// `none`). `pending` is a wait that ended without a result,
     /// no verdict about the head, so it is refused rather than recorded.
@@ -182,38 +168,11 @@ pub enum Error {
         cause: &'static str,
         field: &'static str,
     },
-    /// A controller is live where a start or an adoption would make a
-    /// second one.
-    #[error("{path}: the recorded controller (pid {pid}) is live")]
-    OverseerLive { path: PathBuf, pid: u64 },
-    /// The recorded controller cannot be resolved: its
-    /// server start is unrecorded, its record names no server and pane, or
-    /// its server is gone or replaced. Nothing proves it terminal, so
-    /// nothing replaces it; the remedy is adoption from its pane.
-    #[error("{path}: the recorded controller is unproven: {cause}")]
-    PredecessorUnproven { path: PathBuf, cause: String },
     /// A model-recovery transfer whose binding no longer holds against the
     /// record: the recovery predicate (`ops::controller`'s `recovery_bound`)
     /// read false, and nothing is written.
     #[error("{path}: the recovery request is not bound to the record: {cause}")]
     RecoveryUnbound { path: PathBuf, cause: &'static str },
-    /// Whether the recorded controller is live could not be read.
-    #[error("{path}: the recorded controller could not be read: {cause}")]
-    OverseerUnreadable { path: PathBuf, cause: String },
-    /// The pane an adoption names does not hold the harness in its
-    /// foreground, so there is no identity to adopt.
-    #[error(
-        "pane {pane} does not hold the harness: {reading}; open the harness in that pane, or run the request from the pane that holds it"
-    )]
-    PaneNotHarness { pane: String, reading: String },
-    /// The detached job that runs a transfer or a stop could not be started;
-    /// the request is recorded `failed` and the controller keeps control.
-    #[error("intent {intent}: the detached job could not be launched: {cause}")]
-    JobLaunchFailed { intent: String, cause: String },
-    /// The job launched but never took the intent's owner lease within the
-    /// bound; the request is recorded `failed`.
-    #[error("intent {intent}: the detached job never claimed the intent")]
-    JobUnclaimed { intent: String },
     /// A refusal that came after the request's intent was persisted: the
     /// intent stands for the reconcile to settle, so a caller reads the
     /// request as unconfirmed, never as refused. The key and fields are the
@@ -563,12 +522,9 @@ impl Error {
             Error::RoundUnknown { .. } => "round-unknown",
             Error::RunUnknown { .. } => "run-unknown",
             Error::RoundSuperseded { .. } => "round-superseded",
-            Error::OverseerMissing { .. } => "overseer-missing",
             Error::OverseerChanged { .. } => "overseer-changed",
             Error::PendingMissing { .. } => "pending-missing",
             Error::LaunchMissing { .. } => "launch-missing",
-            Error::Yielded { .. } => "intent-yielded",
-            Error::RoleMissing { .. } => "role-missing",
             Error::VerdictInvalid { .. } => "verdict-invalid",
             Error::LaneChannel { .. } => "lane-channel",
             Error::DirectiveSendOwed { .. } => "directive-send-owed",
@@ -586,13 +542,7 @@ impl Error {
             Error::SuccessorAccountSpent { .. } => "successor-account-spent",
             Error::HandoffSessionMismatch { .. } => "handoff-session-mismatch",
             Error::TransferFieldMissing { .. } => "transfer-field-missing",
-            Error::OverseerLive { .. } => "overseer-live",
-            Error::PredecessorUnproven { .. } => "predecessor-unproven",
             Error::RecoveryUnbound { .. } => "recovery-unbound",
-            Error::OverseerUnreadable { .. } => "overseer-unreadable",
-            Error::PaneNotHarness { .. } => "pane-not-harness",
-            Error::JobLaunchFailed { .. } => "job-launch-failed",
-            Error::JobUnclaimed { .. } => "job-unclaimed",
             Error::Persisted { error, .. } => error.key(),
             Error::CapReached { .. } => "cap-reached",
             Error::CapUnreadable { .. } => "cap-unreadable",
@@ -642,9 +592,9 @@ impl Error {
         match self {
             Error::Artifact { cause, .. } => vec![pair("cause", cause.clone())],
             Error::Runtime(e) => agent_runtime::protocol::Refusal::from(e).fields,
-            Error::Request { path, .. }
-            | Error::OverseerMissing { path }
-            | Error::PendingMissing { path } => vec![pair("path", path.display().to_string())],
+            Error::Request { path, .. } | Error::PendingMissing { path } => {
+                vec![pair("path", path.display().to_string())]
+            }
             Error::OpKind {
                 op,
                 path,
@@ -681,12 +631,6 @@ impl Error {
                 pair("path", path.display().to_string()),
                 pair("fields", fields.join(",")),
             ],
-            Error::Yielded { id, owner } => vec![
-                pair("intent_id", id.clone()),
-                pair("owner_pid", owner.pid.to_string()),
-                pair("owner_start", owner.start.clone()),
-            ],
-            Error::RoleMissing { id } => vec![pair("intent_id", id.clone())],
             Error::VerdictInvalid { verdict } => vec![pair("verdict", verdict.clone())],
             Error::OpNotTransition { op } => {
                 vec![pair("op", (*op).to_owned())]
@@ -746,25 +690,10 @@ impl Error {
                 pair("cause", (*cause).to_owned()),
                 pair("field", (*field).to_owned()),
             ],
-            Error::OverseerLive { path, pid } => vec![
-                pair("path", path.display().to_string()),
-                pair("pid", pid.to_string()),
-            ],
-            Error::OverseerUnreadable { path, cause }
-            | Error::PredecessorUnproven { path, cause } => vec![
-                pair("path", path.display().to_string()),
-                pair("cause", cause.clone()),
-            ],
             Error::RecoveryUnbound { path, cause } => vec![
                 pair("path", path.display().to_string()),
                 pair("cause", (*cause).to_owned()),
             ],
-            Error::PaneNotHarness { pane, reading } => {
-                vec![pair("pane", pane.clone()), pair("reading", reading.clone())]
-            }
-            Error::JobLaunchFailed { intent, .. } | Error::JobUnclaimed { intent } => {
-                vec![pair("intent_id", intent.clone())]
-            }
             Error::Persisted { intent, error } => {
                 let mut fields = error.fields();
                 fields.push(pair("persisted_intent", intent.clone()));
@@ -973,6 +902,22 @@ impl From<serde_json::Error> for Error {
             path: PathBuf::from("<value>"),
             source,
         })
+    }
+}
+
+/// An orch refusal crossing back through the engine, which holds no orch
+/// type: agent-runtime's own error as it is, any other as agent-runtime's
+/// refusal under the same key and fields, so the line it prints keeps its
+/// key and fields.
+impl From<Error> for agent_runtime::Error {
+    fn from(error: Error) -> Self {
+        match error {
+            Error::Runtime(inner) => inner,
+            other => agent_runtime::Error::Refused {
+                key: other.key(),
+                fields: other.fields(),
+            },
+        }
     }
 }
 

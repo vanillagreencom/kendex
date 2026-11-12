@@ -10,7 +10,7 @@
 //! whose recorded identity no longer matches records `unconfirmed`, never a
 //! second effect.
 //!
-//! Every effect runs through one [`operation::Operation`] handle per intent:
+//! Every effect runs through one [`agent_runtime::effects::Operation`] handle per intent:
 //! the handle owns the intent's recorded obligation set and
 //! every primitive that acts on the host, writes the record before each
 //! action and before each wait, and is consumed by
@@ -60,23 +60,10 @@ mod coverage;
 )]
 mod lane_operation;
 mod launch;
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the operation handle is the one owner of every effect primitive and of the clock's waits"
-)]
-mod operation;
 mod stop;
 mod transfer;
 
 pub use close::{Closed, Word as CloseWord, close_lane};
-pub(crate) use operation::Recorded;
-pub(crate) use operation::job::{
-    Bounds, group_reading, launch_recorded, own_cgroup_dir, pgid_reading, read_handle,
-    recorded_live, stop_group,
-};
-pub use operation::job::{JobStarted, Launch, NoticeUnmarked, launch_command, stop_recorded};
-pub(crate) use operation::{JobHandle, SidecarRead};
-pub use operation::{Observed, fleet_sockets, overseer_socket, server_at};
 
 use std::path::Path;
 use std::time::Duration;
@@ -101,16 +88,21 @@ use agent_runtime::intent::Intent;
 use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 
-use operation::{
+use agent_runtime::effects::{
     Claimant, Companion, EffectOutcome, Identity, ProcessReading, State, Target, job,
-    overseer_target_of, read_intent, read_overseer, refused,
+    overseer_target_of, read_intent, read_overseer,
 };
+
+/// The refusal `key` with its fields, as orch's error.
+fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    Error::from(agent_runtime::Error::refused(key, fields))
+}
 
 /// What one effect run or reconcile acts with: the engine's run, which
 /// every generic act reaches through the operation handle, and orch's
 /// settings, which the lane and launch acts read.
 struct Run<'a> {
-    engine: operation::Run<'a>,
+    engine: agent_runtime::effects::Run<'a>,
     settings: &'a Settings,
 }
 
@@ -132,11 +124,11 @@ impl<'a> Run<'a> {
     /// intent's is the lane operation's, a controller intent's the engine's.
     fn apply_outcome(&self, outcome: EffectOutcome) -> Result<Applied> {
         let written = match outcome.op() {
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
+            EffectOp::LaunchSession | EffectOp::CloseResources => {
                 lane_operation::apply_outcome(self, outcome)
             }
             EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-                operation::apply_outcome(&self.engine, outcome)
+                agent_runtime::effects::apply_outcome(&self.engine, outcome).map_err(Error::from)
             }
         }?;
         ops::outcome_applied(written)
@@ -153,8 +145,8 @@ fn engine_run<'a>(
     env: &'a Env,
     locking: Locking,
     clock: &'a dyn Clock,
-) -> operation::Run<'a> {
-    operation::Run {
+) -> agent_runtime::effects::Run<'a> {
+    agent_runtime::effects::Run {
         path,
         settings: &settings.engine,
         state_dir: settings.state_dir.clone(),
@@ -164,7 +156,7 @@ fn engine_run<'a>(
         env,
         locking,
         clock,
-        outcome_arm: ops::outcome_arm,
+        outcome_arm: ops::engine_outcome_arm,
     }
 }
 
@@ -177,7 +169,7 @@ fn engine_run<'a>(
 #[serde(untagged)]
 pub enum Effected {
     Recorded(Applied),
-    Started(JobStarted),
+    Started(job::JobStarted),
 }
 
 /// Whether `request` names a live effect: one this module runs or hands to
@@ -237,12 +229,12 @@ pub fn send_owed_notices(
     env: &Env,
     locking: Locking,
     clock: &dyn Clock,
-) -> Result<Vec<NoticeUnmarked>> {
+) -> Result<Vec<job::NoticeUnmarked>> {
     if !has_live_effect(request) {
         return Ok(Vec::new());
     }
     let run = Run::new(path, settings, env, locking, clock);
-    job::send_owed_notices(&run.engine)
+    job::send_owed_notices(&run.engine).map_err(Error::from)
 }
 
 /// Send once more the notices whose send got no answer, the watch
@@ -253,9 +245,9 @@ pub fn send_unanswered_notices(
     env: &Env,
     locking: Locking,
     clock: &dyn Clock,
-) -> Result<Vec<NoticeUnmarked>> {
+) -> Result<Vec<job::NoticeUnmarked>> {
     let run = Run::new(path, settings, env, locking, clock);
-    job::send_unanswered_notices(&run.engine)
+    job::send_unanswered_notices(&run.engine).map_err(Error::from)
 }
 
 /// What a reconcile answers: the committed outcome of every open intent it
@@ -267,7 +259,7 @@ pub struct ReconcileRun {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub refused: Vec<IntentRefused>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub notices_unmarked: Vec<NoticeUnmarked>,
+    pub notices_unmarked: Vec<job::NoticeUnmarked>,
     // The directive sends settled from their kept receipts, and the owed
     // ones no kept receipt could settle.
     #[serde(flatten)]
@@ -374,7 +366,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     Request::StopController(_) => {
                         let current = read_intent(run.engine.path, &intent.id)?;
                         return job::start(&run.engine, &current, request, job::Start::Repeat)
-                            .map(Effected::Started);
+                            .map(Effected::Started)
+                            .map_err(Error::from);
                     }
                     Request::LaunchLane(_)
                     | Request::RequestTransfer(_)
@@ -437,7 +430,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         // nothing and stays here.
         Request::RequestTransfer(_) | Request::StopController(_) => {
             return job::start(&run.engine, &intent, request, job::Start::First)
-                .map(Effected::Started);
+                .map(Effected::Started)
+                .map_err(Error::from);
         }
         Request::StartController(r) => transfer::start_effect(run, &intent.id, r),
         Request::AdoptSession(_)
@@ -617,7 +611,9 @@ pub fn adopt_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Applied> {
-    operation::adopt_controller(path, r, &settings.engine, locking).map(ops::adoption_applied)
+    Ok(ops::adoption_applied(
+        agent_runtime::effects::adopt_controller(path, r, &settings.engine, locking)?,
+    ))
 }
 
 /// Register the controller a person opened by hand in the caller's own
@@ -629,7 +625,7 @@ pub fn register_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Value> {
-    let (mut reply, harness) = operation::register_controller(
+    let (mut reply, harness) = agent_runtime::effects::register_controller(
         path,
         account,
         &settings.engine,
@@ -990,7 +986,8 @@ pub fn reconcile(
     // its receipt kept beside the state; it is stamped here, never sent
     // again.
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
-    let controller = match operation::heal_controller(path, &settings.engine, locking) {
+    let controller = match agent_runtime::effects::heal_controller(path, &settings.engine, locking)
+    {
         Ok(None) => None,
         Ok(Some(adopted)) => Some(ControllerHeal::Healed(adopted)),
         Err(e) => Some(ControllerHeal::Refused {
@@ -1040,7 +1037,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     // a terminal close or a transfer and reconciles on the one runner thread
     // that ran the effect, has no effect of its own in flight beside it.
     let own = intent.owner.is_some() && intent.owner == run.engine.env.owner;
-    match operation::owner(&intent) {
+    match agent_runtime::effects::owner(&intent) {
         Reading::Live(_) if own => {}
         Reading::Live(_) => {
             return deferred(
@@ -1069,10 +1066,8 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
         Reading::Gone => {}
     }
     let outcome = match intent.op {
-        agent_runtime::intent::EffectOp::LaunchLane => launch::reconcile_launch(run, &intent)?,
-        agent_runtime::intent::EffectOp::CloseOwnedResources => {
-            stop::reconcile_close(run, &intent)?
-        }
+        agent_runtime::intent::EffectOp::LaunchSession => launch::reconcile_launch(run, &intent)?,
+        agent_runtime::intent::EffectOp::CloseResources => stop::reconcile_close(run, &intent)?,
         agent_runtime::intent::EffectOp::RequestTransfer
         | agent_runtime::intent::EffectOp::StartController => {
             transfer::reconcile_transfer(run, &intent)?
@@ -1180,7 +1175,7 @@ fn launch_intent_of(path: &Path, item: &str) -> Result<Option<Intent>> {
     let launches: Vec<Intent> = fleet(path)?
         .intents
         .into_iter()
-        .filter(|i| i.op == EffectOp::LaunchLane && i.target == item)
+        .filter(|i| i.op == EffectOp::LaunchSession && i.target == item)
         .collect();
     Ok(launches
         .iter()

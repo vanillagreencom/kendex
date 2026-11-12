@@ -986,7 +986,7 @@ pub(super) fn launch_lane(
     } else {
         occupancy::occupancy(&lanes, &intents, replacing, env.now_secs, host, cap)
     };
-    if let Some(intent) = journal::open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
+    if let Some(intent) = journal::open_intent(&intents, EffectOp::LaunchSession, &r.item)? {
         let index = position.ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
@@ -1210,7 +1210,7 @@ pub(super) fn launch_lane(
             index
         }
     };
-    let mut intent = new_intent(EffectOp::LaunchLane, &r.item, env)?;
+    let mut intent = new_intent(EffectOp::LaunchSession, &r.item, env)?;
     LaneMembers {
         lane_since: Some(at),
         selection: Some(r.selection(position.is_some())),
@@ -1395,7 +1395,7 @@ pub(super) fn close_owned_resources(
             item: r.item.clone(),
         });
     }
-    match open_intent(&intents(path, doc)?, EffectOp::CloseOwnedResources, &r.item)? {
+    match open_intent(&intents(path, doc)?, EffectOp::CloseResources, &r.item)? {
         Standing::Clear => {}
         Standing::Same(intent) => {
             return Ok(CloseRequested {
@@ -1415,7 +1415,7 @@ pub(super) fn close_owned_resources(
         None => lane,
     };
     let ground = close_ground(&lane, r, host)?;
-    let mut intent = new_intent(EffectOp::CloseOwnedResources, &r.item, env)?;
+    let mut intent = new_intent(EffectOp::CloseResources, &r.item, env)?;
     LaneMembers {
         lane_since: lane.session_since.clone(),
         close: Some(ground),
@@ -1687,7 +1687,7 @@ pub(super) fn intent_lane(
     let moved = match keys.or(recorded.as_ref()) {
         Some(keys) => lane_moved(lane, keys),
         None => lane.session_since != since,
-    } || (intent.op == EffectOp::LaunchLane && lane.status == LaneStatus::Done);
+    } || (intent.op == EffectOp::LaunchSession && lane.status == LaneStatus::Done);
     if moved {
         return Ok(IntentTarget::Moved {
             observed: Some(lane.status),
@@ -1767,6 +1767,45 @@ pub(super) fn record_phase(
     Ok(PhaseRecorded { intent })
 }
 
+/// The lane's own members of a launch's `record-outcome` request, carried
+/// in the request's `members`, which the engine and the journal never read:
+/// the one view the launch writes them through and the arm reads them
+/// through.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct LaneOutcome {
+    /// The tmux session a confirmed launch opened in; the fleet records the
+    /// first as `tmux.session`, as the first launch does.
+    #[serde(default)]
+    pub tmux_session: Option<String>,
+    /// The root a confirmed lane's files are read under, where its host
+    /// named one: a hosted lane's worktree on its host, a cloud lane's
+    /// worktree the launch made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail_root: Option<String>,
+    /// The launch named no home, written as the lane's `home_implicit`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
+}
+
+impl LaneOutcome {
+    /// The members as the request carries them; one that is not the shape
+    /// the arm reads refuses `request-invalid`.
+    fn of(path: &Path, r: &RecordOutcome) -> Result<LaneOutcome> {
+        serde_json::from_value(Value::Object(r.members.clone())).map_err(|e| Error::Request {
+            path: path.to_path_buf(),
+            cause: e.to_string(),
+        })
+    }
+
+    /// The members the launch writes into its outcome's request.
+    pub fn members(&self) -> Map<String, Value> {
+        match serde_json::to_value(self) {
+            Ok(Value::Object(members)) => members,
+            Ok(_) | Err(_) => unreachable!("a struct of strings and a flag is a JSON object"),
+        }
+    }
+}
+
 /// The launch arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` runs the lane with the identity and
 /// session the effect read, `failed` stops it, `unconfirmed` keeps the pane
@@ -1781,9 +1820,10 @@ pub(super) fn record_launch_outcome(
     recorded: &mut TargetMoved,
 ) -> Result<()> {
     let selection = LaneMembers::of(path, intent)?.selection;
+    let members = LaneOutcome::of(path, r)?;
     match r.outcome {
         Outcome::Confirmed => {
-            if let Some(session) = &r.tmux_session {
+            if let Some(session) = &members.tmux_session {
                 record_tmux_session(path, doc, session)?;
             }
             let lane = lane_doc_mut(path, doc, index)?;
@@ -1805,7 +1845,7 @@ pub(super) fn record_launch_outcome(
             }
             // The root a hosted or cloud lane's files are read under is
             // known only once its host answered.
-            if let Some(mail_root) = &r.mail_root {
+            if let Some(mail_root) = &members.mail_root {
                 record::set(lane, "mail_root", mail_root.as_str());
             }
             record::set(lane, "status", LaneStatus::Running.word());
@@ -1816,7 +1856,7 @@ pub(super) fn record_launch_outcome(
             // relaunch reads the bound session from, and whether it named it.
             if let Some(home) = &r.home {
                 record::set(lane, "home", home.as_str());
-                if r.home_implicit {
+                if members.home_implicit {
                     record::set(lane, "home_implicit", true);
                 } else {
                     record::delete(lane, "home_implicit");
@@ -2197,7 +2237,10 @@ mod tests {
             panic!("{:?}", l.effect)
         };
         // The id is the op, the target and the call's own stamp.
-        assert_eq!(intent.id, "launch-lane:KEN-4468:1769700000123456789-4242");
+        assert_eq!(
+            intent.id,
+            "launch-session:KEN-4468:1769700000123456789-4242"
+        );
         assert_eq!(intent.outcome, Outcome::NotStarted);
         assert_eq!(
             LaneMembers::of(&path, intent)
@@ -3105,7 +3148,11 @@ mod tests {
                 unreachable!("outcome builds a record-outcome request")
             };
             confirmed.home = Some("/h/.claude".into());
-            confirmed.home_implicit = implicit;
+            confirmed.members = LaneOutcome {
+                home_implicit: implicit,
+                ..LaneOutcome::default()
+            }
+            .members();
             run(&path, &Request::RecordOutcome(confirmed)).unwrap();
             let view = lane(&path, "KEN-4437");
             assert_eq!(view.home.as_deref(), Some("/h/.claude"));
@@ -3414,7 +3461,7 @@ mod tests {
         let Effect::Persisted { intent } = &c.effect else {
             panic!()
         };
-        assert_eq!(intent.op, EffectOp::CloseOwnedResources);
+        assert_eq!(intent.op, EffectOp::CloseResources);
         assert_eq!(
             LaneMembers::of(&path, intent)
                 .unwrap()

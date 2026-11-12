@@ -28,7 +28,6 @@ use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::operation::{self, Bootstrap, EffectOutcome, Identity, Operation, Signalled, Word};
 use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Refusal};
@@ -38,6 +37,7 @@ use crate::ops::{
 };
 use crate::settings::Settings;
 use crate::state::{Lane, LaneMembers};
+use agent_runtime::effects::{Bootstrap, EffectOutcome, Identity, Operation, Signalled, Word};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::Owner;
 use agent_runtime::intent::{EffectOp, PrincipalKeys, Role};
@@ -226,7 +226,7 @@ mod lane_obligations {
 /// through [`LaneOperation::open_close`].
 pub(super) fn open<'a>(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a>> {
     let bootstrap = match intent.op {
-        EffectOp::LaunchLane => Bootstrap::Phase {
+        EffectOp::LaunchSession => Bootstrap::Phase {
             principal: Role::Harness,
             harness: LaneMembers::of(run.engine.path, intent)?
                 .selection
@@ -238,12 +238,13 @@ pub(super) fn open<'a>(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a
             };
             bootstrap
         }
-        EffectOp::CloseOwnedResources => {
+        EffectOp::CloseResources => {
             let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
-            return Operation::open(&run.engine, intent, close_bootstrap(&lane));
+            return Operation::open(&run.engine, intent, close_bootstrap(&lane))
+                .map_err(Error::from);
         }
     };
-    Operation::open(&run.engine, intent, bootstrap)
+    Operation::open(&run.engine, intent, bootstrap).map_err(Error::from)
 }
 
 /// A close's start in the engine's set: the lane's launch record under the
@@ -346,10 +347,10 @@ impl<'a> LaneOperation<'a> {
                 Ok(())
             }
             Progress::Unchanged => Ok(()),
-            Progress::Yielded { owner } => Err(Error::Yielded {
+            Progress::Yielded { owner } => Err(Error::Runtime(agent_runtime::Error::Yielded {
                 id: self.engine.intent_id().to_owned(),
                 owner: owner.clone(),
-            }),
+            })),
         }
     }
 
@@ -429,7 +430,9 @@ impl<'a> LaneOperation<'a> {
         if let Some(id) = &wake {
             self.engine.acquire_auxiliary(id.clone())?;
         }
-        self.engine.stop_standing_processes(owns, wake.as_ref())
+        self.engine
+            .stop_standing_processes(owns, wake.as_ref())
+            .map_err(Error::from)
     }
 
     /// Acquire the lane's current wake as the engine's auxiliary process,
@@ -440,7 +443,7 @@ impl<'a> LaneOperation<'a> {
             return Ok(None);
         };
         self.engine.acquire_auxiliary(id.clone())?;
-        self.engine.read_process_end(&id).map(Some)
+        Ok(Some(self.engine.read_process_end(&id)?))
     }
 
     /// [`pending_ask`] through this run's mailbox CLI.
@@ -687,16 +690,20 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
         since: LaneMembers::of(run.engine.path, &intent)?.lane_since,
         keys: outcome.principal_keys().to_vec(),
     };
-    operation::apply_outcome_with(&run.engine, outcome, |wire| {
-        wire.principal_keys = Some(keys);
-        if let Some(observation) = wire.observation.as_mut() {
-            for key in ["remaining", "untouched"] {
-                if let Some(Value::Array(held)) = observation.get_mut(key) {
-                    held.extend(rows.iter().cloned());
+    Ok(agent_runtime::effects::apply_outcome_with(
+        &run.engine,
+        outcome,
+        |wire| {
+            wire.principal_keys = Some(keys);
+            if let Some(observation) = wire.observation.as_mut() {
+                for key in ["remaining", "untouched"] {
+                    if let Some(Value::Array(held)) = observation.get_mut(key) {
+                        held.extend(rows.iter().cloned());
+                    }
                 }
             }
-        }
-    })
+        },
+    )?)
 }
 
 /// One standing lane obligation as a reconcile's `remaining` carries it.
@@ -778,4 +785,121 @@ pub(super) fn pending_ask(cli: &Path, lane: &Lane) -> std::result::Result<Option
         .iter()
         .find(|e| e.kind() == "ask")
         .map(|e| e.id().to_owned()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_runtime::intent::{LaunchIdentity, Obligation};
+
+    fn identity(pid: u32) -> Identity {
+        Identity {
+            pid,
+            start: format!("ticks:{pid}"),
+        }
+    }
+
+    fn launch(
+        pane: Option<&str>,
+        server: Option<u64>,
+        pid: Option<u64>,
+        start: Option<&str>,
+    ) -> LaunchIdentity {
+        LaunchIdentity {
+            pane: pane.map(str::to_owned),
+            server,
+            server_start: None,
+            pid,
+            start: start.map(str::to_owned),
+        }
+    }
+
+    /// The set records a role per obligation, so a lane's launch record that
+    /// names the recorded wake does not make the wake the principal harness.
+    /// The harness is selected from the set by role, and a launch naming any
+    /// other key is a moved lane under the one judgement the store applies
+    /// too.
+    #[test]
+    fn a_launch_naming_the_recorded_wake_does_not_make_the_wake_the_harness() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = agent_runtime::settings::Roots {
+            project: dir.path().into(),
+            common: dir.path().into(),
+        };
+        let settings = crate::settings::load(
+            &roots,
+            &[],
+            &crate::settings::Flags {
+                state_dir: Some(dir.path().into()),
+                private_env: false,
+            },
+        )
+        .unwrap();
+        let env = agent_runtime::journal::Env {
+            now_secs: 1_769_700_000,
+            now_nanos: 1_769_700_000_000_000_000,
+            nonce: 77,
+            owner: None,
+        };
+        let path = dir.path().join(agent_runtime::record::FLEET_FILE_NAME);
+        let intent: Intent = serde_json::from_value(json!({
+            "id": "close-resources:KEN-1:1-1", "op": "close-resources",
+            "target": "KEN-1", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started"
+        }))
+        .unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        fleet["intents"] = json!([intent]);
+        std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
+        let run = super::super::engine_run(
+            &path,
+            &settings,
+            &env,
+            Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
+        );
+        let harness = identity(11);
+        let wake = identity(12);
+        let set = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: Some(&launch(Some("%7"), Some(4242), Some(11), Some("ticks:11"))),
+                harness: None,
+                auxiliary: Some(wake.clone()),
+            },
+        )
+        .unwrap();
+        assert_eq!(set.harness_identity(), Some(harness.clone()));
+        let keys = PrincipalKeys {
+            since: Some("2026-01-29T15:20:00Z".to_owned()),
+            keys: set.principal_keys(),
+        };
+        assert_eq!(
+            keys.keys,
+            vec![
+                Obligation::Pane {
+                    pane: "%7".to_owned(),
+                    server: 4242,
+                    server_start: None
+                },
+                Obligation::Process(harness),
+            ],
+            "the keys are the harness role's alone, never the wake"
+        );
+        let mut lane: Lane =
+            serde_json::from_value(json!({"item": "KEN-1", "status": "running"})).unwrap();
+        lane.session_since = Some("2026-01-29T15:20:00Z".to_owned());
+        lane.launch = Some(launch(Some("%7"), Some(4242), Some(12), Some("ticks:12")));
+        assert!(
+            crate::ops::lane_moved(&lane, &keys),
+            "a launch naming the wake under the same stamp is a moved lane"
+        );
+        lane.launch = Some(launch(Some("%7"), Some(4242), Some(11), Some("ticks:11")));
+        assert!(!crate::ops::lane_moved(&lane, &keys));
+        lane.session_since = Some("2026-01-29T16:00:00Z".to_owned());
+        assert!(
+            crate::ops::lane_moved(&lane, &keys),
+            "another stamp alone moves it"
+        );
+    }
 }

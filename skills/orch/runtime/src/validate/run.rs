@@ -148,7 +148,7 @@ pub fn execute(
     let cap = (runner.get("runner").is_some_and(|r| r == "systemd")
         && line.split(' ').any(|word| word.starts_with("memory-max=")))
     .then(|| {
-        crate::effects::own_cgroup_dir()
+        agent_runtime::effects::job::own_cgroup_dir()
             .ok_or("cgroup-unread")
             .and_then(Cap::of)
     });
@@ -447,7 +447,7 @@ pub(crate) fn command_reading(
                 .ok()
                 .and_then(|p| p.trim().parse().ok());
             return Ok(Some(match pid {
-                Some(pid) => crate::effects::pgid_reading(pid),
+                Some(pid) => agent_runtime::effects::job::pgid_reading(pid),
                 None => agent_runtime::reading::Reading::Unreadable {
                     cause: "execution-unanswered",
                 },
@@ -457,11 +457,13 @@ pub(crate) fn command_reading(
     };
     let record: CommandRecord = serde_json::from_slice(&bytes)?;
     Ok(Some(match record.start {
-        Some(start) => crate::effects::group_reading(&agent_runtime::process::Identity {
-            pid: record.pid,
-            start,
-        }),
-        None => crate::effects::pgid_reading(record.pid),
+        Some(start) => {
+            agent_runtime::effects::job::group_reading(&agent_runtime::process::Identity {
+                pid: record.pid,
+                start,
+            })
+        }
+        None => agent_runtime::effects::job::pgid_reading(record.pid),
     }))
 }
 
@@ -1037,7 +1039,7 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
             let start = record.start.ok_or_else(|| {
                 super::files::unreadable("stop-unreadable", "command identity was not recorded")
             })?;
-            stopped = crate::effects::stop_group(&agent_runtime::process::Identity {
+            stopped = agent_runtime::effects::job::stop_group(&agent_runtime::process::Identity {
                 pid: record.pid,
                 start,
             })?;
@@ -1076,7 +1078,7 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
                 super::files::BarePid::Live(pid) => {
                     let ended = match agent_runtime::process::identity(pid) {
                         agent_runtime::reading::Reading::Live(identity) => {
-                            crate::effects::stop_group(&identity)?
+                            agent_runtime::effects::job::stop_group(&identity)?
                         }
                         agent_runtime::reading::Reading::Gone => false,
                         agent_runtime::reading::Reading::Unreadable { cause } => {
@@ -1125,7 +1127,7 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
     {
         return Ok(stopped.then_some("attached"));
     }
-    let runner = crate::effects::stop_recorded(&run_dir.join("runner"))?;
+    let runner = agent_runtime::effects::job::stop_recorded(&run_dir.join("runner"))?;
     Ok(runner.or(stopped.then_some("setsid")))
 }
 

@@ -1803,7 +1803,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     // A close bound to the session it closed, `lane_since` the lane's
     // `session_since` when the close was written, as the runtime writes it.
     let close = |item: &str, by: &str, at: &str, since: &str| {
-        json!({"id": format!("close-owned-resources:{item}:1-1"), "op": "close-owned-resources",
+        json!({"id": format!("close-resources:{item}:1-1"), "op": "close-resources",
                "target": item, "created_at": at, "completed_at": at, "outcome": "confirmed", "lane_since": since,
                "obligations": {"standing": [], "signalled": true, "revision": 2,
                                "discharged": [{"obligation": {"kind": "worktree", "path": wt(item).display().to_string()},
@@ -2199,10 +2199,10 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
     let dir = world.path();
     let intents = dir.join("intents");
     let brief = intents.join("start-controller.20260101T000000Z.7.brief");
-    let mut held = lane_intent("launch-lane", "KEN-1", "not-started", None);
+    let mut held = lane_intent("launch-session", "KEN-1", "not-started", None);
     held["phase"] = json!({"phase": "opening", "server": 1, "server_start": 1, "socket": "/none",
                            "since_ms": 0, "brief": brief.display().to_string()});
-    let mut closed = lane_intent("close-owned-resources", "KEN-2", "confirmed", None);
+    let mut closed = lane_intent("close-resources", "KEN-2", "confirmed", None);
     closed["completed_at"] = json!(old);
     world.write_fleet(&json!({
         "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
@@ -2210,11 +2210,11 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
         "intents": [held, closed]
     }));
     let stands = [
-        intents.join("launch-lane:KEN-1:1-1.pane"),
-        intents.join("launch-lane:KEN-1:1-1.request"),
+        intents.join("launch-session:KEN-1:1-1.pane"),
+        intents.join("launch-session:KEN-1:1-1.request"),
         brief.clone(),
-        intents.join("close-owned-resources:KEN-2:1-1.notice"),
-        intents.join("close-owned-resources:KEN-2:1-1.pane.tmp"),
+        intents.join("close-resources:KEN-2:1-1.notice"),
+        intents.join("close-resources:KEN-2:1-1.pane.tmp"),
         intents.join("stray.pane"),
         intents.join("fresh.pane"),
         dir.join("handoffs").join("OVERSEER-HANDOFF.md"),
@@ -2222,9 +2222,9 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
         dir.join("tmp").join("progress-reports").join("notes.md"),
     ];
     let leaves = [
-        intents.join("close-owned-resources:KEN-2:1-1.pane"),
-        intents.join("close-owned-resources:KEN-2:1-1.request"),
-        intents.join("close-owned-resources:KEN-2:1-1.job"),
+        intents.join("close-resources:KEN-2:1-1.pane"),
+        intents.join("close-resources:KEN-2:1-1.request"),
+        intents.join("close-resources:KEN-2:1-1.job"),
         dir.join("tmp")
             .join("progress-reports")
             .join("01-01-00-00.md"),
@@ -2286,17 +2286,17 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
 fn retention_keeps_a_receipt_written_after_its_intent_closed() {
     let world = World::new();
     let wall = FakeClock::new().wall_secs();
-    let mut closed = lane_intent("launch-lane", "KEN-3", "failed", None);
+    let mut closed = lane_intent("launch-session", "KEN-3", "failed", None);
     closed["completed_at"] = json!(clock::iso_utc(wall - 10 * 86_400));
     world.write_fleet(&json!({
         "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
         "lanes": [], "intents": [closed]
     }));
     let intents = world.path().join("intents");
-    let request = intents.join("launch-lane:KEN-3:1-1.request");
+    let request = intents.join("launch-session:KEN-3:1-1.request");
     touch(&request);
     set_modified(&request, wall - 10 * 86_400);
-    let receipt = intents.join("launch-lane:KEN-3:1-1.pane");
+    let receipt = intents.join("launch-session:KEN-3:1-1.pane");
     touch(&receipt);
     set_modified(&receipt, wall - 60);
     let pruned = world.pass(wall).unwrap();

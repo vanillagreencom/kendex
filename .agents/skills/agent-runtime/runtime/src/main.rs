@@ -686,6 +686,10 @@ fn deliver(
     }
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the session command's own launch and exact stop of the one session its record names"
+)]
 fn run(cli: Cli) -> Result<serde_json::Value> {
     match cli.verb {
         Verb::Version => Ok(serde_json::json!({

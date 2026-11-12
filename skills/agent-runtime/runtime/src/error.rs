@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use crate::intent::Owner;
 use crate::protocol::Outcome;
 
 /// Why a field of a record is not the shape its reader reads. The word
@@ -141,6 +142,46 @@ pub enum Error {
         subject: String,
         cause: String,
     },
+    #[error("{path}: the fleet state records no overseer")]
+    OverseerMissing { path: PathBuf },
+    /// A launcher-side write found the intent under another owner: the store
+    /// yielded the write to that claimant and the handle acts on nothing;
+    /// its caller hands the claimant's state back
+    /// through its own route.
+    #[error("intent {id} yielded to its claimant {}:{}", owner.pid, owner.start)]
+    Yielded { id: String, owner: Owner },
+    /// An intent's recorded obligation set carries a row without a role.
+    /// The set alone selects the harness, the pane and the wake by role, so
+    /// no handle opens on it; the record is closed by hand.
+    #[error("intent {id}: an obligation is recorded without a role")]
+    RoleMissing { id: String },
+    /// A controller is live where a start or an adoption would make a
+    /// second one.
+    #[error("{path}: the recorded controller (pid {pid}) is live")]
+    OverseerLive { path: PathBuf, pid: u64 },
+    /// The recorded controller cannot be resolved: its
+    /// server start is unrecorded, its record names no server and pane, or
+    /// its server is gone or replaced. Nothing proves it terminal, so
+    /// nothing replaces it; the remedy is adoption from its pane.
+    #[error("{path}: the recorded controller is unproven: {cause}")]
+    PredecessorUnproven { path: PathBuf, cause: String },
+    /// Whether the recorded controller is live could not be read.
+    #[error("{path}: the recorded controller could not be read: {cause}")]
+    OverseerUnreadable { path: PathBuf, cause: String },
+    /// The pane an adoption names does not hold the harness in its
+    /// foreground, so there is no identity to adopt.
+    #[error(
+        "pane {pane} does not hold the harness: {reading}; open the harness in that pane, or run the request from the pane that holds it"
+    )]
+    PaneNotHarness { pane: String, reading: String },
+    /// The detached job that runs a transfer or a stop could not be started;
+    /// the request is recorded `failed` and the controller keeps control.
+    #[error("intent {intent}: the detached job could not be launched: {cause}")]
+    JobLaunchFailed { intent: String, cause: String },
+    /// The job launched but never took the intent's owner lease within the
+    /// bound; the request is recorded `failed`.
+    #[error("intent {intent}: the detached job never claimed the intent")]
+    JobUnclaimed { intent: String },
     /// A request refused before any effect. `key` is the stable diagnostic
     /// key and `fields` the values it acted on.
     #[error("refused {key}: {fields:?}")]
@@ -190,6 +231,15 @@ impl Error {
             Error::External { .. } => "external-failed",
             Error::NotStarted { .. } => "not-started",
             Error::Unsupported { .. } => "unsupported",
+            Error::OverseerMissing { .. } => "overseer-missing",
+            Error::Yielded { .. } => "intent-yielded",
+            Error::RoleMissing { .. } => "role-missing",
+            Error::OverseerLive { .. } => "overseer-live",
+            Error::PredecessorUnproven { .. } => "predecessor-unproven",
+            Error::OverseerUnreadable { .. } => "overseer-unreadable",
+            Error::PaneNotHarness { .. } => "pane-not-harness",
+            Error::JobLaunchFailed { .. } => "job-launch-failed",
+            Error::JobUnclaimed { .. } => "job-unclaimed",
             Error::Refused { key, .. } => key,
         }
     }

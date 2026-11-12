@@ -20,14 +20,14 @@ use agent_runtime::harness::Harness;
 use serde_json::{Value, json};
 
 use super::lane_operation::{LaneOperation, WorktreeRelease};
-use super::operation::{
-    EffectOutcome, Foreground, Identity, Observed, ProcessRead, ProcessReading, Reading, State,
-    Stop, Word,
-};
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
 use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
 use crate::watch::hosted::{Asked, HostClosed};
+use agent_runtime::effects::{
+    EffectOutcome, Foreground, Identity, Observed, ProcessRead, ProcessReading, Reading, State,
+    Stop, Word,
+};
 use agent_runtime::intent::Intent;
 
 /// `stale` is what the reconcile of the same request already read stale,
@@ -120,7 +120,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     // signal. Best effort: the stop below handles a pane that did not exit.
     if close.harness() == Some(Harness::Copilot)
         && let Some(Observed::Present(pane)) =
-            operation.engine().observe_lane_pane(close.overseer)?
+            operation.engine().observe_target_pane(close.overseer)?
     {
         operation.engine().copilot_exit(&pane)?;
     }
@@ -261,7 +261,7 @@ impl Close<'_> {
             let Some(target) = &self.target else {
                 return Ok(Err(("harness-unknown", json!({}))));
             };
-            let pane = match operation.engine().observe_lane_pane(self.overseer)? {
+            let pane = match operation.engine().observe_target_pane(self.overseer)? {
                 Some(Observed::Present(pane)) => pane,
                 Some(Observed::Gone { cause } | Observed::Unobservable { cause }) => {
                     return Ok(Err(("idle-unproved", json!({"pane": cause}))));
@@ -380,7 +380,7 @@ impl Close<'_> {
                 }
             }
         }
-        let window = operation.engine().close_lane_window(self.overseer)?;
+        let window = operation.engine().close_target_window(self.overseer)?;
         observation["window"] = json!(window.word());
         // The run's diagnostic of the release; the set's discharge word and
         // the lane's `kept` and `kept_mail` are the reading.
@@ -416,7 +416,7 @@ impl Close<'_> {
             }
             Ok(())
         };
-        let pane = match operation.engine().observe_lane_pane(self.overseer)? {
+        let pane = match operation.engine().observe_target_pane(self.overseer)? {
             // No addressable pane stands: the wake and validation runs are
             // what remains to end.
             None => {
@@ -673,7 +673,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     // pane gone or none stands is what the close judges beside the recorded
     // process's end, a pane present or unobservable settles nothing here.
     let pane = |operation: &mut LaneOperation, observation: &mut Value| -> Result<bool> {
-        let (word, cause, judged) = match operation.engine().observe_lane_pane(overseer)? {
+        let (word, cause, judged) = match operation.engine().observe_target_pane(overseer)? {
             None => ("unrecorded", None, true),
             Some(Observed::Gone { cause }) => ("gone", Some(cause), true),
             Some(Observed::Present(_)) => ("present", None, false),

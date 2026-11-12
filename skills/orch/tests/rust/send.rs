@@ -1234,7 +1234,7 @@ impl CloudWorld {
                 intents
                     .iter()
                     .rev()
-                    .find(|i| i["target"] == item && i["op"] == "launch-lane")
+                    .find(|i| i["target"] == item && i["op"] == "launch-session")
             })
             .cloned()
             .unwrap_or(Value::Null)

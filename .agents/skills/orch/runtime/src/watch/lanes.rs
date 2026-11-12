@@ -66,7 +66,6 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
-use crate::effects;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
@@ -110,7 +109,7 @@ pub type ForegroundRead<'a> = &'a dyn Fn(u32, Option<Harness>, Option<&Identity>
 /// record names, else the ambient one, with the server's pid.
 pub type WindowsRead<'a> = &'a dyn Fn(Option<&Path>, &str) -> Reading<(u64, Vec<WindowRow>)>;
 
-/// The pane `pane` on the server [`effects::server_at`] finds among
+/// The pane `pane` on the server [`agent_runtime::effects::server_at`] finds among
 /// `sockets` by the recorded pid and start. A server proven gone, its pid
 /// dead or reused, is the pane gone with it; one that cannot be told from
 /// gone leaves the pane unreadable with the cause.
@@ -120,10 +119,10 @@ pub fn pane_at(
     server_start: Option<u64>,
     pane: &str,
 ) -> Reading<PaneState> {
-    match effects::server_at(sockets, server, server_start) {
-        effects::Observed::Present(live) => tmux::pane_state(&live, pane),
-        effects::Observed::Gone { cause: _ } => Reading::Gone,
-        effects::Observed::Unobservable { cause } => Reading::Unreadable { cause },
+    match agent_runtime::effects::server_at(sockets, server, server_start) {
+        agent_runtime::effects::Observed::Present(live) => tmux::pane_state(&live, pane),
+        agent_runtime::effects::Observed::Gone { cause: _ } => Reading::Gone,
+        agent_runtime::effects::Observed::Unobservable { cause } => Reading::Unreadable { cause },
     }
 }
 
@@ -202,7 +201,7 @@ impl Readers<'static> {
             server_start: Option<u64>,
             pane: &str,
         ) -> Reading<PaneState> {
-            let sockets = effects::fleet_sockets(
+            let sockets = agent_runtime::effects::fleet_sockets(
                 recorded.map(Path::to_path_buf),
                 tmux::ambient_socket().ok(),
             );
@@ -798,7 +797,10 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
         Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
     let readers = Readers::kernel();
-    let socket = fleet.overseer.as_ref().and_then(effects::overseer_socket);
+    let socket = fleet
+        .overseer
+        .as_ref()
+        .and_then(agent_runtime::effects::overseer_socket);
     let observed = read_lane(lane, &readers, socket.as_deref(), host, None);
     let mut said = Produced::default();
     let (counters, stage) = lane_counts(
@@ -1006,7 +1008,7 @@ pub fn observe(pass: &Pass) -> Produced {
         .fleet
         .overseer
         .as_ref()
-        .and_then(effects::overseer_socket);
+        .and_then(agent_runtime::effects::overseer_socket);
     let observed: Vec<Observed> = lanes
         .iter()
         .map(|(lane, caps)| {
@@ -2191,7 +2193,7 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
         .fleet
         .overseer
         .as_ref()
-        .and_then(effects::overseer_socket);
+        .and_then(agent_runtime::effects::overseer_socket);
     let (server, windows) = match (pass.readers.windows)(socket.as_deref(), session) {
         Reading::Live(listing) => listing,
         Reading::Gone | Reading::Unreadable { .. } => return,

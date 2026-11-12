@@ -490,7 +490,7 @@ pub(crate) fn runner_reading(run: &RunFile) -> Reading<u32> {
             Reading::Unreadable { cause } => Reading::Unreadable { cause },
         };
     }
-    match crate::effects::recorded_live(&run.dir.join("runner")) {
+    match agent_runtime::effects::job::recorded_live(&run.dir.join("runner")) {
         Reading::Live(()) => Reading::Live(0),
         Reading::Gone => Reading::Gone,
         Reading::Unreadable { cause } => Reading::Unreadable { cause },

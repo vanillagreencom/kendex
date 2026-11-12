@@ -133,6 +133,28 @@ impl From<&Error> for Refusal {
                 pair("operation", (*operation).to_owned()),
                 pair("subject", subject.clone()),
             ],
+            Error::OverseerMissing { path } => vec![pair("path", path.display().to_string())],
+            Error::Yielded { id, owner } => vec![
+                pair("intent_id", id.clone()),
+                pair("owner_pid", owner.pid.to_string()),
+                pair("owner_start", owner.start.clone()),
+            ],
+            Error::RoleMissing { id } => vec![pair("intent_id", id.clone())],
+            Error::OverseerLive { path, pid } => vec![
+                pair("path", path.display().to_string()),
+                pair("pid", pid.to_string()),
+            ],
+            Error::OverseerUnreadable { path, cause }
+            | Error::PredecessorUnproven { path, cause } => vec![
+                pair("path", path.display().to_string()),
+                pair("cause", cause.clone()),
+            ],
+            Error::PaneNotHarness { pane, reading } => {
+                vec![pair("pane", pane.clone()), pair("reading", reading.clone())]
+            }
+            Error::JobLaunchFailed { intent, .. } | Error::JobUnclaimed { intent } => {
+                vec![pair("intent_id", intent.clone())]
+            }
         };
         Refusal {
             key: error.key().to_owned(),

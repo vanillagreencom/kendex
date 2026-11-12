@@ -442,24 +442,24 @@ fn entry(
                 let exe = exe.display().to_string();
                 let rd = run_dir.display().to_string();
                 let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
-                let launch = crate::effects::launch_recorded(
+                let launch = agent_runtime::effects::job::launch_recorded(
                     "validate",
                     &id,
                     &run_dir.join("runner"),
                     &argv,
                     Some(&run_dir.join("job.err")),
-                    crate::effects::Bounds {
+                    agent_runtime::effects::job::Bounds {
                         runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
                         memory,
                     },
                     &SystemClock,
                 );
                 match launch.answer() {
-                    crate::effects::Launch::Started { .. } => {}
-                    crate::effects::Launch::Refused { cause } => {
+                    agent_runtime::effects::job::Launch::Started { .. } => {}
+                    agent_runtime::effects::job::Launch::Refused { cause } => {
                         return Err(files::unreadable("launch-failed", cause));
                     }
-                    crate::effects::Launch::Unanswered { cause } => {
+                    agent_runtime::effects::job::Launch::Unanswered { cause } => {
                         return Err(files::unreadable(
                             "launch-unanswered",
                             format!("run-dir={} {cause}", run_dir.display()),

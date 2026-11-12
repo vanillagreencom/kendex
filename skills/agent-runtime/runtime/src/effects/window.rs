@@ -7,19 +7,19 @@
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux;
-use agent_runtime::launch::LaunchCommand;
-use agent_runtime::observe::{ProcessReading, State};
-use agent_runtime::process::{self, Identity};
-use agent_runtime::reading::Reading;
+use crate::harness::Harness;
+use crate::host::tmux;
+use crate::launch::LaunchCommand;
+use crate::observe::{ProcessReading, State};
+use crate::process::{self, Identity};
+use crate::reading::Reading;
 use serde_json::{Value, json};
 
 use super::host::{Foreground, Observed, Recorded, SessionFloor, unanswering};
 use super::obligations::{Discharge, Obligations, PaneEnd, PaneRef, ReceiptEnd};
 use super::{Close, Operation, POLL, Pane, Server, receipt};
 use crate::error::Result;
-use agent_runtime::intent::{Obligation, Opening, Phase, Role};
+use crate::intent::{Obligation, Opening, Phase, Role};
 
 /// Why a window did not open with its line typed. `Refused` is a host refusal before the
 /// launcher was asked, nothing of the effect's standing; `Unanswered` is a
@@ -29,9 +29,9 @@ use agent_runtime::intent::{Obligation, Opening, Phase, Role};
 /// could not be typed, its one pane closed again by exact id and that close
 /// discharged by its own answer, so the caller judges what stands.
 pub enum OpenRefusal {
-    Refused(agent_runtime::Error),
-    Unanswered { refusal: agent_runtime::Error },
-    LineUnsent { refusal: agent_runtime::Error },
+    Refused(crate::Error),
+    Unanswered { refusal: crate::Error },
+    LineUnsent { refusal: crate::Error },
 }
 
 /// What a poll of a pane settled on.
@@ -184,7 +184,7 @@ impl Operation<'_> {
         brief: Option<&Path>,
         home: Option<&Path>,
         home_implicit: bool,
-    ) -> std::result::Result<Opening, agent_runtime::Error> {
+    ) -> std::result::Result<Opening, crate::Error> {
         let (session_id, baseline) = match floor {
             SessionFloor::Fixed(id) => (Some(id.clone()), Vec::new()),
             SessionFloor::Baseline(ids) => (None, ids.clone()),
@@ -215,10 +215,7 @@ impl Operation<'_> {
     /// beside its receipt, for the delivery after the window opens and for a
     /// reconcile that delivers it later; a repeat of the intent writes the
     /// same file again.
-    pub fn hold_brief(
-        &self,
-        text: &str,
-    ) -> std::result::Result<std::path::PathBuf, agent_runtime::Error> {
+    pub fn hold_brief(&self, text: &str) -> std::result::Result<std::path::PathBuf, crate::Error> {
         let path = self
             .run
             .state_dir
@@ -230,7 +227,7 @@ impl Operation<'_> {
             }
             std::fs::write(path, format!("{text}\n"))
         };
-        write(&path).map_err(|e| agent_runtime::Error::io("write-brief", &path, e))?;
+        write(&path).map_err(|e| crate::Error::io("write-brief", &path, e))?;
         Ok(path)
     }
 

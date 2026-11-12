@@ -37,7 +37,7 @@ use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 
-use super::{Effected, lane_operation, operation};
+use super::{Effected, lane_operation};
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -167,7 +167,10 @@ fn read_lane(path: &Path, item: &str) -> Result<(Lane, Option<PathBuf>)> {
         [] => Err(refused("lane-missing", &[("item", item)])),
         [lane] => Ok((
             (*lane).clone(),
-            fleet.overseer.as_ref().and_then(super::overseer_socket),
+            fleet
+                .overseer
+                .as_ref()
+                .and_then(agent_runtime::effects::overseer_socket),
         )),
         many => Err(refused(
             "lane-duplicate",
@@ -914,7 +917,7 @@ impl Close<'_> {
             | LaneState::Working
             | LaneState::Idle { .. } => None,
         };
-        if let Some(answer) = operation::poll_until(
+        if let Some(answer) = agent_runtime::effects::poll_until(
             self.clock,
             self.settings.close_grace.get()?,
             EXIT_POLL,

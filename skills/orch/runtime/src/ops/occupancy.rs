@@ -24,7 +24,7 @@
 //! | `launch` gone or none, `wake.{pid,start}` reads `Live` | 1 | `wake` |
 //! | `wake` identity `Unreadable` | 1 | `unknown`, the reader's cause |
 //! | `reservation {reason, until}` with `until` after the op clock | 1 | `reservation`, the reason; at or after `until` nothing; an `until` that is no stamp protects as `unknown`, `reservation-until-invalid` |
-//! | `preparing` with an open `launch-lane` intent on it | 1 | `preparing` |
+//! | `preparing` with an open `launch-session` intent on it | 1 | `preparing` |
 //! | no identity recorded at all and status `running` or `preparing` | 1 | `unknown`, `identity-unrecorded` |
 //! | identities gone (a pid live under another start among them), or no identity on `stopped`, `parked` or `done` | none | released by derivation; disk, worktree, mailbox, `pending_pr`, `parked`, `launch`, `recovery`, counters untouched |
 //!
@@ -344,7 +344,7 @@ pub(super) fn launch_lock_base(path: &Path) -> PathBuf {
 pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
     intents
         .iter()
-        .any(|i| i.open() && i.op == EffectOp::LaunchLane && i.target == item)
+        .any(|i| i.open() && i.op == EffectOp::LaunchSession && i.target == item)
 }
 
 /// The slot one cloud session's record charges, or none: a standing

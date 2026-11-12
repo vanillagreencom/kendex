@@ -123,7 +123,7 @@ fn confirmed_closes<'a>(
 ) -> impl Iterator<Item = &'a Value> {
     let since = field(lane, "session_since");
     intents.iter().filter(move |i| {
-        field(i, "op") == Some("close-owned-resources")
+        field(i, "op") == Some(agent_runtime::intent::EffectOp::CloseResources.word())
             && field(i, "target") == Some(item)
             && field(i, "outcome") == Some("confirmed")
             && field(i, "lane_since") == since

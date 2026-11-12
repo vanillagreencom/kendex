@@ -9,7 +9,7 @@
 //! record or by its pane gone on the proven recorded server, never by
 //! absence on a server that is not proven. The explicit stop
 //! retires the controller exactly by identity. A transfer's and a stop's
-//! effect run in the detached job of `operation::job`; the controller cells
+//! effect run in the detached job of `agent_runtime::effects::job`; the controller cells
 //! of the reconcile matrix complete any of them from the recorded phase. The
 //! predecessor's recorded handles join the intent's set at the start of its
 //! retirement, before the first signal, and every terminal outcome after
@@ -26,11 +26,6 @@ use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
-use super::operation::{
-    self, Binding, Companion, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane,
-    Polled, ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop,
-    TurnConfirm, WindowClose, Wire, Word, opening_observation,
-};
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
     overseer_target_of, pending_observation, read_brief, read_intent, read_overseer, refused, up,
@@ -39,6 +34,11 @@ use super::{
 use crate::error::{Error, Result};
 use crate::ops::{RequestTransfer, StartController, overseer_target};
 use crate::settings::Settings;
+use agent_runtime::effects::{
+    Binding, Companion, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
+    ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop, TurnConfirm,
+    WindowClose, Wire, Word, opening_observation,
+};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::{BoundSession, EffectOp, OpenedPane, Phase};
 
@@ -56,7 +56,7 @@ impl Mode {
         match op {
             EffectOp::RequestTransfer => Mode::Transfer,
             EffectOp::StartController => Mode::Start,
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources | EffectOp::StopController => {
+            EffectOp::LaunchSession | EffectOp::CloseResources | EffectOp::StopController => {
                 unreachable!("a succession reconcile is dispatched for a transfer or a start")
             }
         }
@@ -219,7 +219,7 @@ fn successor_exited(
     }
     operation.read_receipt()?;
     operation.read_standing_processes()?;
-    if let Some(prior) = operation::predecessor_identity(retired.overseer) {
+    if let Some(prior) = agent_runtime::effects::predecessor_identity(retired.overseer) {
         operation.read_process(&prior)?;
     }
     operation.close_overseer_window(retired.overseer)?;
@@ -393,7 +393,7 @@ impl Successor {
         let home = recorded
             .or(pending.account.as_deref())
             .map(PathBuf::from)
-            .or_else(|| operation::default_home(harness));
+            .or_else(|| agent_runtime::effects::default_home(harness));
         let homes = LaunchHome {
             sessions: home.clone(),
             named: home,
@@ -523,18 +523,23 @@ impl Successor {
             // A harness that fixes the id names the file before it exists;
             // one that does not names it only once the resumed session's
             // own file is found by that id, read three-valued.
-            if let Some(file) = operation::fixed_file(self.harness, &self.home, &self.cwd, id) {
+            if let Some(file) =
+                agent_runtime::effects::fixed_file(self.harness, &self.home, &self.cwd, id)
+            {
                 return Ok(bound(file));
             }
             return Ok(
-                match operation::fixed_id_file(self.harness, &self.home, &self.cwd, id) {
+                match agent_runtime::effects::fixed_id_file(self.harness, &self.home, &self.cwd, id)
+                {
                     Reading::Live(file) => bound(file),
                     Reading::Gone => Binding::Absent,
                     Reading::Unreadable { cause } => Binding::Unreadable { cause },
                 },
             );
         }
-        operation.appeared_session(self.harness, &self.home, &self.cwd, opened)
+        operation
+            .appeared_session(self.harness, &self.home, &self.cwd, opened)
+            .map_err(Error::from)
     }
 
     /// The variable that carries the account this launch bills, and the
@@ -555,7 +560,7 @@ impl Successor {
     /// against the one its launch named.
     fn read_back(&self, pid: u32) -> AccountRead {
         let (var, named) = self.named_account();
-        match operation::process_var(pid, var) {
+        match agent_runtime::effects::process_var(pid, var) {
             Ok(found) if found == named => AccountRead::Named,
             Ok(found) => AccountRead::Other { named, found },
             Err(cause) => AccountRead::Unread { cause },
@@ -608,39 +613,41 @@ fn resolve_predecessor(
     mode: Mode,
     live: bool,
 ) -> Result<std::result::Result<Predecessor, (&'static str, Option<&'static str>)>> {
-    Ok(match (mode, operation::predecessor_identity(overseer)) {
-        (Mode::Transfer, Some(identity)) if live => match operation.read_process(&identity)? {
-            ProcessRead::Gone => Err(("predecessor-not-live", None)),
-            ProcessRead::Live | ProcessRead::Stale { .. } | ProcessRead::Unreadable { .. } => {
-                Ok(Predecessor::Identity(identity))
-            }
-        },
-        (Mode::Transfer, Some(identity)) => Ok(Predecessor::Identity(identity)),
-        (Mode::Start, Some(identity)) => match operation.read_process(&identity)? {
-            ProcessRead::Live => Err(("overseer-live", None)),
-            ProcessRead::Gone | ProcessRead::Stale { .. } => Ok(Predecessor::Absent {
-                by: "identity-gone",
-            }),
-            ProcessRead::Unreadable { cause } => Err(("overseer-unreadable", Some(cause))),
-        },
-        (mode, None) => match operation.terminal_proof(overseer)? {
-            Proof::Proven { .. } if live => Err(("predecessor-not-live", None)),
-            Proof::Proven { by } => Ok(Predecessor::Absent { by }),
-            Proof::Standing { .. } => Err(match mode {
-                Mode::Transfer => ("predecessor-identity-missing", None),
-                Mode::Start => ("overseer-live", None),
-            }),
-            Proof::Empty => match mode {
-                Mode::Transfer => Err(("predecessor-unproven", Some("record-empty"))),
-                Mode::Start => Ok(Predecessor::Absent { by: "record-empty" }),
+    Ok(
+        match (mode, agent_runtime::effects::predecessor_identity(overseer)) {
+            (Mode::Transfer, Some(identity)) if live => match operation.read_process(&identity)? {
+                ProcessRead::Gone => Err(("predecessor-not-live", None)),
+                ProcessRead::Live | ProcessRead::Stale { .. } | ProcessRead::Unreadable { .. } => {
+                    Ok(Predecessor::Identity(identity))
+                }
             },
-            Proof::Unproven { cause } => Err(("predecessor-unproven", Some(cause))),
-            Proof::Unreadable { cause } => Err(match mode {
-                Mode::Transfer => ("predecessor-unreadable", Some(cause)),
-                Mode::Start => ("overseer-unreadable", Some(cause)),
-            }),
+            (Mode::Transfer, Some(identity)) => Ok(Predecessor::Identity(identity)),
+            (Mode::Start, Some(identity)) => match operation.read_process(&identity)? {
+                ProcessRead::Live => Err(("overseer-live", None)),
+                ProcessRead::Gone | ProcessRead::Stale { .. } => Ok(Predecessor::Absent {
+                    by: "identity-gone",
+                }),
+                ProcessRead::Unreadable { cause } => Err(("overseer-unreadable", Some(cause))),
+            },
+            (mode, None) => match operation.terminal_proof(overseer)? {
+                Proof::Proven { .. } if live => Err(("predecessor-not-live", None)),
+                Proof::Proven { by } => Ok(Predecessor::Absent { by }),
+                Proof::Standing { .. } => Err(match mode {
+                    Mode::Transfer => ("predecessor-identity-missing", None),
+                    Mode::Start => ("overseer-live", None),
+                }),
+                Proof::Empty => match mode {
+                    Mode::Transfer => Err(("predecessor-unproven", Some("record-empty"))),
+                    Mode::Start => Ok(Predecessor::Absent { by: "record-empty" }),
+                },
+                Proof::Unproven { cause } => Err(("predecessor-unproven", Some(cause))),
+                Proof::Unreadable { cause } => Err(match mode {
+                    Mode::Transfer => ("predecessor-unreadable", Some(cause)),
+                    Mode::Start => ("overseer-unreadable", Some(cause)),
+                }),
+            },
         },
-    })
+    )
 }
 
 /// The runner waiting for its readiness before anything is retired, and
@@ -733,33 +740,35 @@ fn read_retirement(
         Mode::Transfer => "identity",
         Mode::Start => "identity-gone",
     };
-    Ok(match operation::predecessor_identity(overseer) {
-        Some(identity) => match operation.read_process(&identity)? {
-            ProcessRead::Live => Retirement::Standing,
-            ProcessRead::Gone => Retirement::Retired { by },
-            ProcessRead::Stale { .. } => {
-                let readings = operation.count_stale(&identity, observation)?;
-                if readings >= 2 {
-                    Retirement::Retired { by }
-                } else {
-                    Retirement::Stale { readings }
+    Ok(
+        match agent_runtime::effects::predecessor_identity(overseer) {
+            Some(identity) => match operation.read_process(&identity)? {
+                ProcessRead::Live => Retirement::Standing,
+                ProcessRead::Gone => Retirement::Retired { by },
+                ProcessRead::Stale { .. } => {
+                    let readings = operation.count_stale(&identity, observation)?;
+                    if readings >= 2 {
+                        Retirement::Retired { by }
+                    } else {
+                        Retirement::Stale { readings }
+                    }
                 }
-            }
-            ProcessRead::Unreadable { cause } => Retirement::Unreadable { cause },
-        },
-        None => match operation.terminal_proof(overseer)? {
-            Proof::Proven { by } => Retirement::Retired { by },
-            Proof::Standing { .. } => Retirement::Standing,
-            Proof::Empty => match mode {
-                Mode::Transfer => Retirement::Unproven {
-                    cause: "record-empty",
-                },
-                Mode::Start => Retirement::Retired { by: "record-empty" },
+                ProcessRead::Unreadable { cause } => Retirement::Unreadable { cause },
             },
-            Proof::Unproven { cause } => Retirement::Unproven { cause },
-            Proof::Unreadable { cause } => Retirement::Unreadable { cause },
+            None => match operation.terminal_proof(overseer)? {
+                Proof::Proven { by } => Retirement::Retired { by },
+                Proof::Standing { .. } => Retirement::Standing,
+                Proof::Empty => match mode {
+                    Mode::Transfer => Retirement::Unproven {
+                        cause: "record-empty",
+                    },
+                    Mode::Start => Retirement::Retired { by: "record-empty" },
+                },
+                Proof::Unproven { cause } => Retirement::Unproven { cause },
+                Proof::Unreadable { cause } => Retirement::Unreadable { cause },
+            },
         },
-    })
+    )
 }
 
 /// The predecessor as retired, carried to the publication: what retired it, the record whose handles the publication settles,
@@ -817,13 +826,13 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // environment that cannot be read refuses, never a guess.
     let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
         Ok(resolved) => resolved,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+        Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
     };
     let served = match pending.harness.as_deref().and_then(Harness::parse) {
         Some(harness @ (Harness::Claude | Harness::Codex)) if pending.account.is_none() => {
-            match operation::server_home(&server, &session, harness) {
+            match agent_runtime::effects::server_home(&server, &session, harness) {
                 Ok(served) => served,
-                Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+                Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
             }
         }
         Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
@@ -848,7 +857,12 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // home never held fails here, nothing opened.
     let floor = match &successor.resume {
         Some(id) => {
-            match operation::fixed_id_file(successor.harness, &successor.home, &successor.cwd, id) {
+            match agent_runtime::effects::fixed_id_file(
+                successor.harness,
+                &successor.home,
+                &successor.cwd,
+                id,
+            ) {
                 Reading::Live(_) => SessionFloor::Fixed(id.clone()),
                 Reading::Gone => {
                     return Ok(failed_before_retirement_refused(
@@ -866,7 +880,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         }
         None => match operation.session_floor(successor.harness, &successor.home, &successor.cwd) {
             Ok(floor) => floor,
-            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
         },
     };
     // The brief is held, not spelled into the launch: the waiting runner
@@ -1189,7 +1203,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
             "identity"
         }
         Predecessor::Absent { by } => {
-            if let Some(prior) = operation::predecessor_identity(&overseer)
+            if let Some(prior) = agent_runtime::effects::predecessor_identity(&overseer)
                 && let ProcessRead::Stale { .. } = operation.read_process(&prior)?
             {
                 // The recorded pid holds another process: one reading that
@@ -1526,14 +1540,15 @@ fn deliver_brief(
                 lines: text.lines().count() as u64,
             },
         )?,
-        Err(_) => {
-            operation::Delivery::Unsent(agent_runtime::Error::refused("pane-not-standing", &[]))
-        }
+        Err(_) => agent_runtime::effects::Delivery::Unsent(agent_runtime::Error::refused(
+            "pane-not-standing",
+            &[],
+        )),
     };
     let stopped = match delivered {
-        operation::Delivery::Pasted => None,
-        operation::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
-        operation::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
+        agent_runtime::effects::Delivery::Pasted => None,
+        agent_runtime::effects::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
+        agent_runtime::effects::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
     };
     if let Some((note, cause)) = stopped {
         return Ok(Err(undelivered(
@@ -1622,7 +1637,7 @@ fn publish(
     // retirement added are discharged first: its identity by this run's
     // read, its window by the close made in this run or now. The runner's
     // pane and identity then pass to the record the publication writes.
-    if let Some(recorded) = operation::predecessor_identity(retired.overseer) {
+    if let Some(recorded) = agent_runtime::effects::predecessor_identity(retired.overseer) {
         operation.read_process(&recorded)?;
     }
     let window = match retired.window {
@@ -1794,7 +1809,7 @@ pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<Effec
     let overseer = read_overseer(run.engine.path)?;
     let target = overseer_target_of(&run.settings.engine.harness_binaries, &overseer)?;
     operation.begin_retirement(&overseer)?;
-    match operation::predecessor_identity(&overseer) {
+    match agent_runtime::effects::predecessor_identity(&overseer) {
         Some(identity) => {
             let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
             let Some(token) = operation.standing_process(&identity) else {
@@ -1896,7 +1911,7 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
         operation.begin_retirement(&overseer)?;
     }
     let observation = json!({"reconcile": "stop-controller"});
-    match operation::predecessor_identity(&overseer) {
+    match agent_runtime::effects::predecessor_identity(&overseer) {
         Some(identity) => match operation.read_process(&identity)? {
             ProcessRead::Gone => controller_retired(
                 operation,
@@ -2198,7 +2213,7 @@ fn judge_resolved(
                 let predecessor_target =
                     overseer_target_of(&run.settings.engine.harness_binaries, overseer)?;
                 let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
-                let token = operation::predecessor_identity(overseer)
+                let token = agent_runtime::effects::predecessor_identity(overseer)
                     .and_then(|id| operation.standing_process(&id));
                 let stopped = match token {
                     Some(token) => matches!(
@@ -2265,7 +2280,7 @@ fn judge_resolved(
     // before the handles were acquired at retirement acquires them now.
     if !operation.retirement_begun(overseer) {
         operation.begin_retirement(overseer)?;
-        if let Some(prior) = operation::predecessor_identity(overseer) {
+        if let Some(prior) = agent_runtime::effects::predecessor_identity(overseer) {
             operation.read_process(&prior)?;
         }
     }
@@ -2301,7 +2316,7 @@ fn judge_resolved(
                 }
             };
             operation.read_receipt()?;
-            if let Some(prior) = operation::predecessor_identity(overseer) {
+            if let Some(prior) = agent_runtime::effects::predecessor_identity(overseer) {
                 operation.read_process(&prior)?;
             }
             operation.close_overseer_window(overseer)?;

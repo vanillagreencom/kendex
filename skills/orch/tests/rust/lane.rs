@@ -599,8 +599,8 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
     let lanes = doc["lanes"].as_array_mut().unwrap();
     lanes[1]["status"] = json!("preparing");
     doc["intents"] = json!([{
-        "id": "launch-lane:KEN-B:1-1",
-        "op": "launch-lane",
+        "id": "launch-session:KEN-B:1-1",
+        "op": "launch-session",
         "target": "KEN-B",
         "created_at": "2026-01-29T15:00:00Z",
         "owner": {"pid": 1, "start": "ticks:0"},

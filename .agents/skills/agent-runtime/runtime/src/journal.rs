@@ -50,10 +50,10 @@ impl Env {
 }
 
 /// Record how an effect ended. On `confirmed` the intent's transition
-/// completes: a launched lane runs, a closed lane is done, a succession
-/// publishes the pending successor. A confirmed transfer's `launch` is the
-/// successor's: its pane on its server is required, since the published
-/// record is that session's own.
+/// completes: the target the arm moves takes what the effect published, and
+/// a succession publishes the pending successor. A confirmed transfer's
+/// `launch` is the successor's: its pane on its server is required, since
+/// the published record is that session's own.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordOutcome {
     pub intent_id: String,
@@ -74,32 +74,23 @@ pub struct RecordOutcome {
     /// that server by name.
     #[serde(default)]
     pub server_socket: Option<String>,
-    /// The record's `window`: `<session>:<title>` on a lane, the tmux window
-    /// id on the overseer.
+    /// The window the launch opened, as the target's record names it.
     #[serde(default)]
     pub window: Option<String>,
-    /// The tmux session a confirmed lane launch opened in; the fleet records
-    /// the first as `tmux.session`, as the first launch does.
-    #[serde(default)]
-    pub tmux_session: Option<String>,
-    /// The home a confirmed successor or local lane runs its sessions under,
-    /// as its launch prepared it: written over the pending's, or as the
-    /// lane's `home`.
+    /// The home a confirmed launch runs its sessions under, as the launch
+    /// prepared it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
-    /// That launch named no home, written as the lane's `home_implicit`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub home_implicit: bool,
     /// The fleet watch a confirmed start launched or found claimed, written as
     /// the record's `overseer.watch`; a succession carries none and keeps the
     /// field as it stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<WatchJob>,
-    /// The root a confirmed lane's files are read under, where its host
-    /// named one: a hosted lane's worktree on its host, a cloud lane's
-    /// worktree the launch made.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mail_root: Option<String>,
+    /// The members of the request the opener's own arm reads beside these,
+    /// kept as the request names them: the engine and the journal read none
+    /// of them.
+    #[serde(flatten)]
+    pub members: Map<String, Value>,
     /// What the effect observed, kept on the intent for a reconciliation.
     #[serde(default)]
     pub observation: Option<Value>,
@@ -109,10 +100,10 @@ pub struct RecordOutcome {
     /// answers the claimant's state. `None` records always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub while_owner: Option<Owner>,
-    /// The keys a terminal carries for its target's record: the lane arms
-    /// move the lane only while its launch names nothing but these and its
+    /// The keys a terminal carries for its target's record: the arm moves
+    /// the target only while its launch names nothing but these and its
     /// stamp is the intent's; otherwise the intent closes `intent-stale` and
-    /// the lane is left as found. An outcome without them is judged by the
+    /// the target is left as found. An outcome without them is judged by the
     /// intent's own recorded set, else by its stamp alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub principal_keys: Option<PrincipalKeys>,
@@ -260,7 +251,7 @@ pub fn commit<T, E: From<Error>>(
 
 /// The fleet journal a library write acts on: any other file refuses
 /// `op-kind` naming `op`.
-pub fn journal_kind(path: &Path, op: &'static str) -> Result<()> {
+pub(crate) fn journal_kind(path: &Path, op: &'static str) -> Result<()> {
     if path.file_name().and_then(|n| n.to_str()) != Some(FLEET_FILE_NAME) {
         return Err(Error::refused(
             "op-kind",
@@ -280,7 +271,7 @@ pub fn journal_kind(path: &Path, op: &'static str) -> Result<()> {
 /// read and conditional on its owner. A write made under an owner is read
 /// again while the store refuses `record-changed`, so a claim that landed
 /// in the gap is answered with the claimant's state.
-pub fn write_progress(
+pub(crate) fn write_progress(
     path: &Path,
     r: &RecordProgress,
     locking: Locking,
@@ -297,7 +288,7 @@ pub fn write_progress(
 /// The journal's claim of an intent's owner lease for the caller, read
 /// again while the store refuses `record-changed`: the first store can meet
 /// the launcher's own write that lands the instant the job starts.
-pub fn write_claim(
+pub(crate) fn write_claim(
     path: &Path,
     r: &ClaimIntent,
     env: &Env,
@@ -314,7 +305,7 @@ pub fn write_claim(
 /// effect ended, and `arm` moving the target record in the same locked
 /// transition. A write made under an owner is read again while the store
 /// refuses `record-changed`.
-pub fn write_outcome<E: From<Error>>(
+pub(crate) fn write_outcome<E: From<Error>>(
     path: &Path,
     r: &RecordOutcome,
     env: &Env,
@@ -491,7 +482,8 @@ pub fn record_outcome<E: From<Error>>(
     // outcome that owes it: a fleet-log row under the job's kind and item, and
     // the notice `owed` on the intent, so the send that follows has a record
     // to continue from and a repeated outcome owes nothing again. A start held
-    // on its watch takes the same; a lane's intent takes no row.
+    // on its watch takes the same; an operation whose opener names its target
+    // takes no row.
     if let Some(notice) = &r.notice
         && intent.notice.is_none()
         && matches!(

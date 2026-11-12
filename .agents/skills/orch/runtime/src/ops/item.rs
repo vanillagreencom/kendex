@@ -18,12 +18,12 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::effects::{self, JobHandle, SidecarRead};
 use crate::error::{Error, Result};
 use crate::state::{
     self, Authorization, AuthorizedBy, ItemState, Record, Stage, StageKind, StageOutcome,
     SummaryComment, ValidateJob,
 };
+use agent_runtime::effects::{JobHandle, SidecarRead};
 use agent_runtime::journal::Env;
 
 /// The round kinds `begin-round` mints. A CI round keys its cleanup entries
@@ -1016,7 +1016,7 @@ fn read_job(job: &ValidateJob) -> RunRead {
         ),
         // The launcher was asked and the start never wrote its answer: the
         // record it writes before the fork is the job's own statement.
-        None => match effects::read_handle(Path::new(&job.record)) {
+        None => match agent_runtime::effects::job::read_handle(Path::new(&job.record)) {
             SidecarRead::Absent => {
                 return RunRead::Gone {
                     outcome: StageOutcome::Lost,
@@ -1042,7 +1042,7 @@ fn read_job(job: &ValidateJob) -> RunRead {
                 Some(identity.start),
             ),
             SidecarRead::Present(JobHandle::Pgid(pgid)) => {
-                return match effects::pgid_reading(pgid) {
+                return match agent_runtime::effects::job::pgid_reading(pgid) {
                     Reading::Live(()) => RunRead::Live { pid: pgid },
                     Reading::Gone => RunRead::Gone {
                         outcome: StageOutcome::Lost,
@@ -1101,14 +1101,18 @@ fn read_job(job: &ValidateJob) -> RunRead {
                 None => RunRead::Unreadable(format!("unit {unit}: state {text:?}")),
             }
         }
-        (_, _, Some(pid), Some(start)) => match effects::group_reading(&Identity { pid, start }) {
-            Reading::Live(()) => RunRead::Live { pid },
-            Reading::Gone => RunRead::Gone {
-                outcome: StageOutcome::Lost,
-                cause: RunCause::ProcessGone,
-            },
-            Reading::Unreadable { cause } => RunRead::Unreadable(format!("job pid {pid}: {cause}")),
-        },
+        (_, _, Some(pid), Some(start)) => {
+            match agent_runtime::effects::job::group_reading(&Identity { pid, start }) {
+                Reading::Live(()) => RunRead::Live { pid },
+                Reading::Gone => RunRead::Gone {
+                    outcome: StageOutcome::Lost,
+                    cause: RunCause::ProcessGone,
+                },
+                Reading::Unreadable { cause } => {
+                    RunRead::Unreadable(format!("job pid {pid}: {cause}"))
+                }
+            }
+        }
         (runner, _, _, _) => RunRead::Unreadable(format!("job runner {runner:?}: no identity")),
     }
 }

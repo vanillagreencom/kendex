@@ -268,7 +268,7 @@ fn a_repeated_close_runs_the_stop_its_reconcile_reads_pending() {
         json!({"pane": "%99", "server": server.pid, "pid": owned.pid(), "start": owned.start()}),
     )]);
     fleet["intents"] = json!([lane_intent(
-        "close-owned-resources",
+        "close-resources",
         "KEN-41",
         "not-started",
         None
@@ -311,7 +311,7 @@ fn reconcile_completes_a_launch_from_its_recorded_pane() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane("KEN-42", "preparing", &runner, Value::Null)]);
     fleet["intents"] = json!([lane_intent(
-        "launch-lane",
+        "launch-session",
         "KEN-42",
         "not-started",
         Some(phase("window-opened", &server, &pane, since, None)),
@@ -364,7 +364,7 @@ fn two_launch_processes_mint_distinct_intent_ids() {
     let first = effect_report(&runner.op_fleet(&launch_request("KEN-1", runner.state_dir())));
     assert_eq!(first["intent"]["outcome"], "confirmed");
     let first_id = first["intent"]["id"].as_str().unwrap().to_owned();
-    assert!(first_id.starts_with("launch-lane:KEN-1:"), "{first_id}");
+    assert!(first_id.starts_with("launch-session:KEN-1:"), "{first_id}");
     effect_report(&runner.op_fleet(&terminal_close("KEN-1")));
     let second = effect_report(&runner.op_fleet(&launch_request("KEN-1", runner.state_dir())));
     let second_id = second["intent"]["id"].as_str().unwrap().to_owned();
@@ -433,7 +433,7 @@ fn reconcile_close_on_a_start_mismatch_records_unconfirmed() {
         json!({"pane": "%99", "server": server.pid, "pid": owned.pid(), "start": "ticks:1"}),
     )]);
     fleet["intents"] = json!([lane_intent(
-        "close-owned-resources",
+        "close-resources",
         "KEN-20",
         "unconfirmed",
         None
@@ -465,7 +465,7 @@ fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
         json!({"pane": "%99", "server": server.pid, "pid": GONE_PID, "start": "ticks:1"}),
     )]);
     fleet["intents"] = json!([lane_intent(
-        "close-owned-resources",
+        "close-resources",
         "KEN-21",
         "unconfirmed",
         None
@@ -643,7 +643,7 @@ fn a_contender_reconciling_a_live_owners_intent_reports_owner_live() {
     // The owner persists its intent at `opening`, then the shim holds it at
     // new-window: no window exists yet, so a reconcile without the owner
     // check would read `nothing-opened` and fail the intent.
-    wait_for_phase(&runner, "launch-lane:KEN-1", "opening");
+    wait_for_phase(&runner, "launch-session:KEN-1", "opening");
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(report["intent"]["observation"]["note"], "owner-live");
@@ -689,7 +689,7 @@ fn an_unrecorded_unreceipted_window_is_never_adopted_at_the_opening_phase() {
     server.await_composer(&pane);
     let fleet = lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(opening_phase(&server, since, None)),
@@ -730,7 +730,7 @@ fn a_crash_inside_new_window_leaves_a_stray_that_is_never_adopted() {
     runner.init_fleet();
     let request = launch_request("KEN-1", runner.state_dir());
     let mut owner = runner.spawn_op_fleet(&request, &[], runner.state_dir());
-    wait_for_phase(&runner, "launch-lane:KEN-1", "opening");
+    wait_for_phase(&runner, "launch-session:KEN-1", "opening");
     // The window exists once the server lists two panes; the hook then holds
     // the runtime's `new-window` until the channel is signalled.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -815,12 +815,7 @@ fn a_close_over_a_reused_pid_confirms_on_the_second_independent_reading() {
         &runner,
         json!({"pane": null, "server": null, "pid": owned.pid(), "start": "ticks:1"}),
     )]);
-    fleet["intents"] = json!([lane_intent(
-        "close-owned-resources",
-        "KEN-R",
-        "not-started",
-        None
-    )]);
+    fleet["intents"] = json!([lane_intent("close-resources", "KEN-R", "not-started", None)]);
     runner.write_fleet(&fleet);
     let first = runner.reconcile_one();
     assert_eq!(first["intent"]["outcome"], "unconfirmed", "{first}");
@@ -953,7 +948,7 @@ fn the_reconcile_matrix_is_total() {
             observed: "nothing opened",
             expect: "failed",
             plant: |runner, _| Planted {
-                fleet: lane_fleet(runner, "launch-lane", "preparing", Value::Null, None),
+                fleet: lane_fleet(runner, "launch-session", "preparing", Value::Null, None),
                 owned: vec![],
             },
             check: |runner, _, _| assert_eq!(runner.fleet()["lanes"][0]["status"], "stopped"),
@@ -967,7 +962,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, server| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(phase("window-opened", server, "%77", now_ms(), None)),
@@ -986,7 +981,7 @@ fn the_reconcile_matrix_is_total() {
                 let process = Owned::sleep();
                 let fleet = lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(phase(
@@ -1016,7 +1011,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, _| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(phase(
@@ -1051,7 +1046,7 @@ fn the_reconcile_matrix_is_total() {
                 server.await_composer(&pane);
                 let mut fleet = lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(phase("window-opened", server, &pane, since, None)),
@@ -1087,7 +1082,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(phase("window-opened", server, &pane, since, None)),
@@ -1115,7 +1110,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(phase("window-opened", server, &pane, since, None)),
@@ -1172,7 +1167,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(phase("window-opened", server, &pane, since, None)),
@@ -1200,7 +1195,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, server| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "close-owned-resources",
+                    "close-resources",
                     "running",
                     json!({"pane": "%77", "server": server.pid, "pid": null, "start": null}),
                     None,
@@ -1225,7 +1220,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "close-owned-resources",
+                        "close-resources",
                         "running",
                         json!({"pane": pane, "server": server.pid, "pid": null, "start": null}),
                         None,
@@ -1245,13 +1240,7 @@ fn the_reconcile_matrix_is_total() {
             observed: "pane unrecorded",
             expect: "unconfirmed",
             plant: |runner, _| Planted {
-                fleet: lane_fleet(
-                    runner,
-                    "close-owned-resources",
-                    "running",
-                    Value::Null,
-                    None,
-                ),
+                fleet: lane_fleet(runner, "close-resources", "running", Value::Null, None),
                 owned: vec![],
             },
             check: no_check,
@@ -1265,7 +1254,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, server| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "close-owned-resources",
+                    "close-resources",
                     "running",
                     json!({"pane": "%77", "server": server.pid, "pid": GONE_PID, "start": "ticks:1"}),
                     None,
@@ -1284,7 +1273,7 @@ fn the_reconcile_matrix_is_total() {
                 let owned = Owned::sleep();
                 let fleet = lane_fleet(
                     runner,
-                    "close-owned-resources",
+                    "close-resources",
                     "running",
                     json!({"pane": "%77", "server": server.pid, "pid": owned.pid(), "start": owned.start()}),
                     None,
@@ -1309,7 +1298,7 @@ fn the_reconcile_matrix_is_total() {
                 let owned = Owned::sleep();
                 let fleet = lane_fleet(
                     runner,
-                    "close-owned-resources",
+                    "close-resources",
                     "running",
                     json!({"pane": "%77", "server": server.pid, "pid": owned.pid(), "start": "ticks:1"}),
                     None,
@@ -1999,7 +1988,7 @@ fn the_reconcile_matrix_is_total() {
                 let owner = Owned::sleep();
                 let mut fleet = lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(phase("window-opened", server, "%77", now_ms(), None)),
@@ -2032,7 +2021,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, server| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(opening_phase(server, now_ms(), None)),
@@ -2065,14 +2054,14 @@ fn the_reconcile_matrix_is_total() {
                 server.await_composer(&pane);
                 plant_receipt(
                     runner,
-                    "launch-lane:KEN-M:1-1",
+                    "launch-session:KEN-M:1-1",
                     &pane,
                     server.pane_pid(&pane),
                 );
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(opening_phase(server, since, None)),
@@ -2117,7 +2106,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(opening_phase(server, now_ms(), Some(&pane))),
@@ -2160,7 +2149,7 @@ fn the_reconcile_matrix_is_total() {
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(opening_phase(server, now_ms() - 5_000, Some(&pane))),
@@ -2212,7 +2201,7 @@ fn the_reconcile_matrix_is_total() {
             plant: |runner, server| Planted {
                 fleet: lane_fleet(
                     runner,
-                    "launch-lane",
+                    "launch-session",
                     "preparing",
                     Value::Null,
                     Some(opening_phase(server, now_ms(), Some("%77"))),
@@ -2244,11 +2233,11 @@ fn the_reconcile_matrix_is_total() {
                     runner.state_dir(),
                 );
                 server.await_composer(&pane);
-                plant_receipt_text(runner, "launch-lane:KEN-M:1-1", "{\"intent\":");
+                plant_receipt_text(runner, "launch-session:KEN-M:1-1", "{\"intent\":");
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(opening_phase(server, now_ms(), None)),
@@ -2442,14 +2431,14 @@ fn a_receipt_naming_a_dead_harness_fails_without_adopting_the_pane() {
                 );
                 server.await_composer(&pane);
                 let sibling = server.split(&pane);
-                plant_receipt(runner, "launch-lane:KEN-M:1-1", &pane, GONE_PID as u32);
+                plant_receipt(runner, "launch-session:KEN-M:1-1", &pane, GONE_PID as u32);
                 // A fresh server numbers the session's pane %0, the stub's
                 // %1 and the sibling %2.
                 assert_eq!((pane.as_str(), sibling.as_str()), ("%1", "%2"));
                 Planted {
                     fleet: lane_fleet(
                         runner,
-                        "launch-lane",
+                        "launch-session",
                         "preparing",
                         Value::Null,
                         Some(opening_phase(server, since, None)),
@@ -2545,10 +2534,10 @@ fn a_dead_receipts_pane_close_the_host_refuses_holds_the_launch_until_it_answers
         runner.state_dir(),
     );
     server.await_composer(&pane);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, GONE_PID as u32);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, GONE_PID as u32);
     runner.write_fleet(&lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(opening_phase(&server, since, None)),
@@ -2612,10 +2601,10 @@ fn a_tmux_failure_between_reads_holds_an_adopted_launch_unconfirmed_never_pane_g
     );
     server.await_composer(&pane);
     let pid = server.pane_pid(&pane);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, pid);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, pid);
     runner.write_fleet(&lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(opening_phase(&server, since, None)),
@@ -2686,7 +2675,7 @@ fn a_process_surviving_its_panes_close_keeps_the_launch_open_with_its_identity_s
             name: "opening with the receipt naming the pid",
             phase: |server, pane, runner| {
                 let pid = server.pane_pid(pane);
-                plant_receipt(runner, "launch-lane:KEN-M:1-1", pane, pid);
+                plant_receipt(runner, "launch-session:KEN-M:1-1", pane, pid);
                 opening_phase(server, now_ms(), Some(pane))
             },
             word: ("note", "pane-gone"),
@@ -2721,7 +2710,7 @@ fn a_process_surviving_its_panes_close_keeps_the_launch_open_with_its_identity_s
         let phase = (cell.phase)(&server, &pane, &runner);
         runner.write_fleet(&lane_fleet(
             &runner,
-            "launch-lane",
+            "launch-session",
             "preparing",
             Value::Null,
             Some(phase),
@@ -2940,7 +2929,7 @@ fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake
         &runner,
         json!({"pane": null, "server": null, "pid": GONE_PID, "start": "ticks:1"}),
     )]);
-    let mut owed = lane_intent("close-owned-resources", "KEN-V", "unconfirmed", None);
+    let mut owed = lane_intent("close-resources", "KEN-V", "unconfirmed", None);
     owed["observation"] = json!({"identity": "stopped", "validate": "stop-failed"});
     owed["close"] = json!({"ground": "terminal", "verdict": "completed", "source": "test"});
     fleet["intents"] = json!([owed]);
@@ -2973,7 +2962,7 @@ fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake
     );
     rec["wake"] = json!({"pid": wake.pid(), "start": wake.start()});
     fleet["lanes"] = json!([rec]);
-    let mut open = lane_intent("close-owned-resources", "KEN-K", "unconfirmed", None);
+    let mut open = lane_intent("close-resources", "KEN-K", "unconfirmed", None);
     open["close"] = json!({"ground": "terminal", "verdict": "completed", "source": "test"});
     fleet["intents"] = json!([open]);
     runner.write_fleet(&fleet);
@@ -2997,12 +2986,7 @@ fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake
     );
     rec["wake"] = json!({"pid": null, "start": null});
     fleet["lanes"] = json!([rec]);
-    fleet["intents"] = json!([lane_intent(
-        "close-owned-resources",
-        "KEN-N",
-        "unconfirmed",
-        None
-    )]);
+    fleet["intents"] = json!([lane_intent("close-resources", "KEN-N", "unconfirmed", None)]);
     runner.write_fleet(&fleet);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
@@ -3077,12 +3061,12 @@ fn a_server_gone_at_opening_reads_the_receipt_before_any_discharge() {
     runner.verify = Some(1);
     runner.init_fleet();
     let (pane, pid) = survivor(&server, &runner);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, pid);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, pid);
     let mut phase = opening_phase(&server, now_ms(), Some(&pane));
     phase["asked"] = json!(true);
     runner.write_fleet(&lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(phase),
@@ -3117,7 +3101,7 @@ fn a_server_gone_at_opening_reads_the_receipt_before_any_discharge() {
         "the receipt is discharged by its read, not by the server's end: {intent}"
     );
     assert!(
-        receipt_path(&runner, "launch-lane:KEN-M:1-1").exists(),
+        receipt_path(&runner, "launch-session:KEN-M:1-1").exists(),
         "the open intent keeps its receipt"
     );
     assert_eq!(runner.fleet()["lanes"][0]["status"], "preparing");
@@ -3136,11 +3120,11 @@ fn a_window_opened_record_before_its_identity_reads_the_written_receipt() {
     runner.verify = Some(1);
     runner.init_fleet();
     let (pane, pid) = survivor(&server, &runner);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, pid);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, pid);
     let phase = phase("window-opened", &server, &pane, now_ms(), None);
     let mut fleet = lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(phase),
@@ -3217,7 +3201,7 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
         ],
         &fixtures().join("tmux-hold"),
     );
-    wait_for_phase(&runner, "launch-lane:", "window-opened");
+    wait_for_phase(&runner, "launch-session:", "window-opened");
     // The launch is at its first wait: the shim holds its first capture.
     let deadline = Instant::now() + Duration::from_secs(10);
     while !mark.exists() {
@@ -3311,12 +3295,12 @@ fn an_adoption_keeps_the_recorded_pane_standing_under_its_own_key() {
     );
     server.await_composer(&pane);
     let pid = server.pane_pid(&pane);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, pid);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, pid);
     let mut phase = opening_phase(&server, now_ms(), Some(&pane));
     phase["asked"] = json!(true);
     let mut fleet = lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(phase),
@@ -3372,12 +3356,12 @@ fn a_dead_receipts_refused_close_holds_when_the_opening_recorded_its_pane() {
         runner.state_dir(),
     );
     server.await_composer(&pane);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, GONE_PID as u32);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, GONE_PID as u32);
     let mut phase = opening_phase(&server, now_ms(), Some(&pane));
     phase["asked"] = json!(true);
     let mut fleet = lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(phase),
@@ -3515,10 +3499,10 @@ fn a_receipted_survivor_read_gone_on_a_later_reconcile_settles_the_launch() {
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
     let (pane, pid) = survivor(&server, &runner);
-    plant_receipt(&runner, "launch-lane:KEN-M:1-1", &pane, pid);
+    plant_receipt(&runner, "launch-session:KEN-M:1-1", &pane, pid);
     let mut fleet = lane_fleet(
         &runner,
-        "launch-lane",
+        "launch-session",
         "preparing",
         Value::Null,
         Some(phase("window-opened", &server, &pane, now_ms(), None)),
@@ -3675,7 +3659,7 @@ fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
     // The close intent's set already recorded the first wake (its bootstrap at
     // a first run), and nothing else; the close itself never ran.
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-W:1-1", "op": "close-owned-resources", "target": "KEN-W", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-W:1-1", "op": "close-resources", "target": "KEN-W", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
@@ -3710,7 +3694,7 @@ fn a_replacement_foreground_whose_pane_is_gone_is_read_by_its_own_key() {
     // The close recorded the replacement foreground it read in the pane; the
     // pane is gone since and the lane names no launch identity.
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-F:1-1", "op": "close-owned-resources", "target": "KEN-F", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-F:1-1", "op": "close-resources", "target": "KEN-F", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "stop": "pane-foreground"},
         "obligations": {"standing": [
@@ -3774,7 +3758,7 @@ fn a_moved_lane_close_settles_by_its_recorded_set() {
         row["session_since"] = json!(session_since);
         fleet["lanes"] = json!([row]);
         fleet["intents"] = json!([{
-            "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+            "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
             "lane_since": "2026-01-29T15:20:00Z",
             "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
             "obligations": {"standing": [
@@ -3830,7 +3814,7 @@ fn held_close_with_an_owed_notice(runner: &Runner, harness: &Owned) {
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([
         {
-            "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M",
+            "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
             "lane_since": "2026-01-29T15:20:00Z",
             "observation": {"identity": "live", "timeout_pid": harness.pid()},
@@ -3865,7 +3849,7 @@ fn a_reconcile_reports_a_refused_intent_and_reconciles_the_rest() {
     held_close_with_an_owed_notice(&runner, &harness);
     let mut fleet = runner.fleet();
     let gone = json!({
-        "id": "close-owned-resources:KEN-GONE:1-1", "op": "close-owned-resources",
+        "id": "close-resources:KEN-GONE:1-1", "op": "close-resources",
         "target": "KEN-GONE", "created_at": "2026-01-29T15:20:00Z",
         "outcome": "unconfirmed", "lane_since": "2026-01-29T15:20:00Z",
         "obligations": {"standing": [], "discharged": [], "signalled": false, "revision": 1}
@@ -3887,13 +3871,13 @@ fn a_reconcile_reports_a_refused_intent_and_reconciles_the_rest() {
         .cloned()
         .unwrap_or_default();
     assert_eq!(refused.len(), 1, "{answer}");
-    assert_eq!(refused[0]["intent"], "close-owned-resources:KEN-GONE:1-1");
+    assert_eq!(refused[0]["intent"], "close-resources:KEN-GONE:1-1");
     assert_eq!(refused[0]["refusal"], "lane-missing", "{answer}");
     let reconciled = answer["result"]["reconciled"].as_array().unwrap();
     assert_eq!(reconciled.len(), 1, "the other intent reconciled: {answer}");
     assert_eq!(
         reconciled[0]["report"]["intent"]["id"],
-        "close-owned-resources:KEN-M:1-1"
+        "close-resources:KEN-M:1-1"
     );
     let after = runner.fleet();
     assert_eq!(
@@ -3926,7 +3910,7 @@ fn a_moved_lane_close_before_any_signal_refuses_with_no_effect() {
     row["session_since"] = json!("2026-01-29T16:00:00Z");
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started",
         "lane_since": "2026-01-29T15:20:00Z",
         "obligations": {"standing": [], "discharged": [], "signalled": false},
     }]);
@@ -3970,7 +3954,7 @@ fn a_moved_lanes_old_live_wake_is_stopped_by_its_own_set_on_the_retry() {
     row["session_since"] = json!("2026-01-29T16:00:00Z");
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
@@ -4035,7 +4019,7 @@ fn a_moved_close_owing_its_validation_releases_it_lane_moved() {
     row["session_since"] = json!("2026-01-29T16:00:00Z");
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "validate": "stop-failed", "cause": "runner-refused"},
         "obligations": {"standing": [], "discharged": [], "signalled": true},
@@ -4082,7 +4066,7 @@ fn a_moved_close_stops_its_own_recorded_harness_by_token_on_the_repeat() {
     row["session_since"] = json!("2026-01-29T16:00:00Z");
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "unreadable", "pid": old_harness.pid(), "cause": "ps-failed"},
         "obligations": {"standing": [
@@ -4171,7 +4155,7 @@ fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
             held["harness"] = json!(kind);
         }
         fleet["intents"] = json!([{
-            "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+            "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
             "lane_since": "2026-01-29T15:20:00Z",
             "observation": {"identity": "unreadable", "pid": root_pid, "cause": "ps-failed"},
             "obligations": {"standing": [held],
@@ -4219,13 +4203,7 @@ fn one_repeated_close_request_counts_one_stale_reading() {
     let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
     let held = Owned::sleep();
-    let mut fleet = lane_fleet(
-        &runner,
-        "close-owned-resources",
-        "running",
-        Value::Null,
-        None,
-    );
+    let mut fleet = lane_fleet(&runner, "close-resources", "running", Value::Null, None);
     fleet["intents"][0]["outcome"] = json!("unconfirmed");
     fleet["intents"][0]["obligations"] = json!({
         "standing": [{"kind": "process", "pid": held.pid(), "start": "ticks:0", "role": "harness"}],
@@ -4269,7 +4247,7 @@ fn a_recorded_wake_the_lane_no_longer_names_at_all_is_still_stopped() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane("KEN-M", "running", &runner, Value::Null)]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
@@ -4299,7 +4277,7 @@ fn a_stale_secondary_identity_settles_on_the_second_independent_reading() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane("KEN-M", "running", &runner, Value::Null)]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-M:1-1", "op": "close-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "stop": "pane-foreground"},
         "obligations": {"standing": [
@@ -5794,7 +5772,7 @@ fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
     row["mail_root"] = json!(wt.display().to_string());
     fleet["lanes"] = json!([row]);
     fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-MW:1-1", "op": "close-owned-resources", "target": "KEN-MW", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+        "id": "close-resources:KEN-MW:1-1", "op": "close-resources", "target": "KEN-MW", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "worktree": "unreadable", "cause": "worktree-unreadable:permission denied"},
         "obligations": {"standing": [], "discharged": [], "signalled": true},
@@ -7617,7 +7595,7 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     let mut opened = phase("window-opened", &server, &pane, since, None);
     opened["home"] = json!(root.display().to_string());
     fleet["intents"] = json!([lane_intent(
-        "launch-lane",
+        "launch-session",
         "KEN-PIR",
         "not-started",
         Some(opened),

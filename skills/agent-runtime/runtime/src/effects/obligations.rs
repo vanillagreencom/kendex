@@ -15,19 +15,19 @@
 //! standing. [`EffectOutcome`] is what every effect returns; `apply_outcome`
 //! is the one place it becomes the wire record.
 
-use agent_runtime::controller::{Overseer, WatchJob};
-use agent_runtime::intent::{LaunchIdentity, Owner};
+use crate::controller::{Overseer, WatchJob};
+use crate::intent::{LaunchIdentity, Owner};
 use std::path::Path;
 
-use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux::{Close, Pane};
-use agent_runtime::process::{Identity, Stop};
-use agent_runtime::reading::Reading;
-use serde_json::{Value, json};
+use crate::harness::Harness;
+use crate::host::tmux::{Close, Pane};
+use crate::process::{Identity, Stop};
+use crate::reading::Reading;
+use serde_json::{Map, Value, json};
 
 use crate::error::{Error, Result};
-use agent_runtime::intent::Intent;
-use agent_runtime::intent::{EffectOp, Obligation, ObligationRecord, OpenedPane, Phase, Role};
+use crate::intent::Intent;
+use crate::intent::{EffectOp, Obligation, ObligationRecord, OpenedPane, Phase, Role};
 
 use super::{pid_value, predecessor_identity};
 
@@ -257,7 +257,7 @@ impl Obligations {
             record: ObligationRecord {
                 standing: standing
                     .into_iter()
-                    .map(|obligation| agent_runtime::intent::Held {
+                    .map(|obligation| crate::intent::Held {
                         obligation,
                         role: Some(role),
                         harness: harness.filter(|_| role == Role::Harness),
@@ -379,7 +379,7 @@ impl Obligations {
         harness: Option<Harness>,
     ) -> Obligations {
         Obligations::of(
-            agent_runtime::intent::launch_obligations(launch),
+            crate::intent::launch_obligations(launch),
             Role::Harness,
             harness,
         )
@@ -415,7 +415,7 @@ impl Obligations {
     /// or already discharged is not added again.
     pub(super) fn add(&mut self, obligation: Obligation, role: Role, harness: Option<Harness>) {
         if !self.record.holds(&obligation) {
-            self.record.standing.push(agent_runtime::intent::Held {
+            self.record.standing.push(crate::intent::Held {
                 obligation,
                 role: Some(role),
                 harness: harness.filter(|_| role == Role::Harness),
@@ -490,7 +490,7 @@ impl Obligations {
             record: record.display().to_string(),
         };
         if !self.record.stands(&sidecar) {
-            self.record.standing.push(agent_runtime::intent::Held {
+            self.record.standing.push(crate::intent::Held {
                 obligation: sidecar,
                 role: Some(Role::Job),
                 harness: None,
@@ -925,10 +925,11 @@ pub enum Word {
 }
 
 /// What a confirmed launch or succession published: the pane and identity
-/// on the wire are the lane's record, or the controller's, from here.
+/// on the wire are the record of the target the opener names, or the
+/// controller's, from here.
 #[derive(Debug)]
 pub enum Published {
-    Lane,
+    Target,
     Successor,
 }
 
@@ -961,25 +962,22 @@ pub struct Wire {
     pub server_start: Option<u64>,
     pub server_socket: Option<String>,
     pub window: Option<String>,
-    pub tmux_session: Option<String>,
-    /// The home a confirmed controller or local lane runs its sessions
-    /// under, as its launch prepared it.
+    /// The home a confirmed launch runs its sessions under, as its launch
+    /// prepared it.
     pub home: Option<String>,
-    /// That launch named no home, the lane's `home_implicit`.
-    pub home_implicit: bool,
     /// The fleet watch a confirmed start launched or found claimed.
     pub watch: Option<WatchJob>,
-    /// The root a confirmed lane's files are read under, where its host
-    /// named one the request could not know.
-    pub mail_root: Option<String>,
+    /// The opener's own members of the outcome, carried to its arm as
+    /// written: the engine reads none of them.
+    pub members: Map<String, Value>,
 }
 
 /// An effect's result: the one type `apply_outcome` records. `record` is the
 /// obligation set as the effect left it, written with the outcome;
 /// `while_owner` is the owner the writes are made
 /// under, where the writer may have lost the intent to a claimant;
-/// `principal_keys` are the keys a terminal carries to the store's
-/// moved-lane judgement.
+/// `principal_keys` are the keys a terminal carries to the arm's judgement
+/// of a moved target.
 pub struct EffectOutcome {
     pub(super) intent_id: String,
     /// The intent's operation, which decides what announcement the outcome
@@ -1539,7 +1537,7 @@ mod tests {
 
     fn opening(asked: bool, pane: Option<&str>) -> Phase {
         Phase::Opening {
-            opening: agent_runtime::intent::Opening {
+            opening: crate::intent::Opening {
                 server: 4242,
                 server_start: 1,
                 server_process_start: None,
@@ -1803,11 +1801,11 @@ mod tests {
         assert!(set.unsignalled().is_none());
         let intent = Intent {
             id: "i".to_owned(),
-            op: agent_runtime::intent::EffectOp::CloseOwnedResources,
+            op: crate::intent::EffectOp::CloseResources,
             target: "KEN-1".to_owned(),
             created_at: String::new(),
             owner: None,
-            outcome: agent_runtime::protocol::Outcome::NotStarted,
+            outcome: crate::protocol::Outcome::NotStarted,
             completed_at: None,
             original_pending: None,
             cause: None,
@@ -1828,7 +1826,7 @@ mod tests {
         assert!(recorded.unsignalled().is_none());
         let held = EffectOutcome::refused_or_held(
             "i",
-            EffectOp::CloseOwnedResources,
+            EffectOp::CloseResources,
             recorded,
             "ask-unanswered",
             json!({}),
@@ -1848,7 +1846,7 @@ mod tests {
             signalled.spend();
             let held = EffectOutcome::refused_or_held(
                 "i",
-                EffectOp::CloseOwnedResources,
+                EffectOp::CloseResources,
                 signalled.clone(),
                 cause,
                 json!({"ask": "a1"}),
@@ -1864,7 +1862,7 @@ mod tests {
             assert_eq!(held.observation["ask"], "a1");
             let refused = EffectOutcome::refused_or_held(
                 "i",
-                EffectOp::CloseOwnedResources,
+                EffectOp::CloseResources,
                 pane_and_process(),
                 cause,
                 json!({}),
@@ -1887,14 +1885,13 @@ mod tests {
             identity: identity(31),
             end: ProcessEnd::Read(Reading::Gone),
         });
-        let outcome =
-            EffectOutcome::unconfirmed("i", EffectOp::CloseOwnedResources, settled, json!({}));
+        let outcome = EffectOutcome::unconfirmed("i", EffectOp::CloseResources, settled, json!({}));
         assert!(matches!(outcome.terminal, Terminal::Unconfirmed { .. }));
         assert_eq!(outcome.record.discharged.len(), 2);
         let token = pane_and_process().unsignalled().expect("nothing signalled");
         let refused = EffectOutcome::refused(
             "i",
-            EffectOp::CloseOwnedResources,
+            EffectOp::CloseResources,
             token,
             pane_and_process(),
             "ask-unanswered",
@@ -1913,59 +1910,12 @@ mod tests {
         }
         let judged = EffectOutcome::judged(
             "i",
-            EffectOp::CloseOwnedResources,
+            EffectOp::CloseResources,
             pane_and_process(),
             Word::Confirmed,
             json!({}),
         );
         assert!(matches!(judged.terminal, Terminal::Unconfirmed { .. }));
         assert_eq!(judged.observation.get("cause"), None);
-    }
-    /// The set records a role per obligation, so a lane's launch record that
-    /// names the recorded wake does not make the wake the principal harness.
-    /// The harness is selected from the set by role, and a launch naming any
-    /// other key is a moved lane under the one judgement the store applies
-    /// too.
-    #[test]
-    fn a_launch_naming_the_recorded_wake_does_not_make_the_wake_the_harness() {
-        let harness = identity(11);
-        let wake = identity(12);
-        let mut set = Obligations::of_launch(
-            Some(&launch(Some("%7"), Some(4242), Some(11), Some("ticks:11"))),
-            None,
-        );
-        set.add(Obligation::Process(wake.clone()), Role::Auxiliary, None);
-        assert_eq!(set.harness_identity(), Some(harness.clone()));
-        let keys = agent_runtime::intent::PrincipalKeys {
-            since: Some("2026-01-29T15:20:00Z".to_owned()),
-            keys: set.record().principal_keys(Role::Harness),
-        };
-        assert_eq!(
-            keys.keys,
-            vec![
-                Obligation::Pane {
-                    pane: "%7".to_owned(),
-                    server: 4242,
-                    server_start: None
-                },
-                Obligation::Process(harness),
-            ],
-            "the keys are the harness role's alone, never the wake"
-        );
-        let mut lane: crate::state::Lane =
-            serde_json::from_value(json!({"item": "KEN-1", "status": "running"})).unwrap();
-        lane.session_since = Some("2026-01-29T15:20:00Z".to_owned());
-        lane.launch = Some(launch(Some("%7"), Some(4242), Some(12), Some("ticks:12")));
-        assert!(
-            crate::ops::lane_moved(&lane, &keys),
-            "a launch naming the wake under the same stamp is a moved lane"
-        );
-        lane.launch = Some(launch(Some("%7"), Some(4242), Some(11), Some("ticks:11")));
-        assert!(!crate::ops::lane_moved(&lane, &keys));
-        lane.session_since = Some("2026-01-29T16:00:00Z".to_owned());
-        assert!(
-            crate::ops::lane_moved(&lane, &keys),
-            "another stamp alone moves it"
-        );
     }
 }

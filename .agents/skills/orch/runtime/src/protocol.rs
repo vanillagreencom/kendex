@@ -94,11 +94,11 @@ mod tests {
             ),
             (
                 Error::Runtime(agent_runtime::Error::IntentOpen {
-                    intent: "close-owned-resources:KEN-1:1769700000123456789-4242".into(),
-                    op: EffectOp::CloseOwnedResources.word(),
+                    intent: "close-resources:KEN-1:1769700000123456789-4242".into(),
+                    op: EffectOp::CloseResources.word(),
                     target: "KEN-1".into(),
                 }),
-                "orch-runtime: intent-open intent=close-owned-resources:KEN-1:1769700000123456789-4242 op=close-owned-resources target=KEN-1",
+                "orch-runtime: intent-open intent=close-resources:KEN-1:1769700000123456789-4242 op=close-resources target=KEN-1",
             ),
             (
                 Error::Runtime(agent_runtime::Error::RevisionMismatch {
@@ -109,9 +109,9 @@ mod tests {
                 "orch-runtime: revision-mismatch expected=1 found=2",
             ),
             (
-                Error::OverseerMissing {
+                Error::Runtime(agent_runtime::Error::OverseerMissing {
                     path: "/s.json".into(),
-                },
+                }),
                 "orch-runtime: overseer-missing path=/s.json",
             ),
         ];

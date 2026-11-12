@@ -117,13 +117,18 @@ pub enum Reconciled {
     IntentStale,
 }
 
-/// The operations that start an external effect.
+/// The operations that start an external effect, each named for the act the
+/// engine performs, never for who asked for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EffectOp {
-    LaunchLane,
+    /// A launch that opens a pane and binds its session, on the target the
+    /// opener names.
+    LaunchSession,
     RequestTransfer,
-    CloseOwnedResources,
+    /// A close of the resources the operation owns, on the target the
+    /// opener names.
+    CloseResources,
     /// A controller's first launch, or its launch after an explicit `off`:
     /// a succession with no predecessor to retire.
     StartController,
@@ -136,9 +141,9 @@ impl EffectOp {
     /// The operation's word, the `op` of a request.
     pub fn word(self) -> &'static str {
         match self {
-            EffectOp::LaunchLane => "launch-lane",
+            EffectOp::LaunchSession => "launch-session",
             EffectOp::RequestTransfer => "request-transfer",
-            EffectOp::CloseOwnedResources => "close-owned-resources",
+            EffectOp::CloseResources => "close-resources",
             EffectOp::StartController => "start-controller",
             EffectOp::StopController => "stop-controller",
         }
@@ -151,7 +156,7 @@ impl EffectOp {
             EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
                 true
             }
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => false,
+            EffectOp::LaunchSession | EffectOp::CloseResources => false,
         }
     }
 }

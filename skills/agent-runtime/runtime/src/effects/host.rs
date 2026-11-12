@@ -4,32 +4,31 @@
 //! acting method takes a [`Standing`] token, writes `signalled` before it
 //! acts and discharges the token's key by its own answer.
 
-use agent_runtime::controller::Overseer;
-use agent_runtime::record::Locking;
-use agent_runtime::settings::EngineSettings;
+use crate::controller::Overseer;
+use crate::record::Locking;
+use crate::settings::EngineSettings;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux;
-use agent_runtime::launch::Permission;
-use agent_runtime::observe::{self, ProcessReading, State};
-use agent_runtime::process::{self, Identity, Stop};
-use agent_runtime::reading::Reading;
-use agent_runtime::session;
+use crate::harness::Harness;
+use crate::host::tmux;
+use crate::launch::Permission;
+use crate::observe::{self, ProcessReading, State};
+use crate::process::{self, Identity, Stop};
+use crate::reading::Reading;
+use crate::session;
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
 use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
-    predecessor_identity, refused,
+    predecessor_identity,
 };
+use crate::accounts::usage::Credential;
+use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use crate::error::{Error, Result};
-use crate::ops::{self};
-use agent_runtime::accounts::usage::Credential;
-use agent_runtime::controller::{AdoptController, AdoptionRead, ControllerAdopted};
-use agent_runtime::intent::Intent;
-use agent_runtime::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
+use crate::intent::Intent;
+use crate::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
 
 /// What a recorded pane reads as on its own server: present as `P` (the
 /// pane, or the standing token for it), gone with the cause (the pane by
@@ -90,7 +89,7 @@ impl Stopped {
 /// Evidence this module's own reader produced, handed on as a token: an
 /// identity this handle read and wrote into the set before returning it,
 /// what [`Operation::record_identity`] and [`Operation::publish`] take; or
-/// the adoption's pane read, what [`crate::ops::apply_adoption`] takes.
+/// the adoption's pane read, what the adoption's one store write takes.
 /// Constructible here alone, so a transition that takes one takes no
 /// caller-supplied evidence.
 pub struct Recorded<T> {
@@ -344,7 +343,7 @@ pub fn overseer_socket(overseer: &Overseer) -> Option<PathBuf> {
 
 /// The socket the controller record names, else the ambient one, which an
 /// unread uid refuses.
-fn controller_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
+fn controller_socket(overseer: &Overseer) -> crate::Result<PathBuf> {
     overseer_socket(overseer).map_or_else(tmux::ambient_socket, Ok)
 }
 
@@ -470,7 +469,7 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
 /// `check` read on the one clock until it answers or `bound` passes,
 /// `poll` between reads: `None` at the bound.
 pub fn poll_until<T>(
-    clock: &dyn agent_runtime::clock::Clock,
+    clock: &dyn crate::clock::Clock,
     bound: Duration,
     poll: Duration,
     mut check: impl FnMut() -> Option<T>,
@@ -503,12 +502,7 @@ impl Operation<'_> {
             .as_deref()
             .or(doc_session)
             .map(str::to_owned)
-            .ok_or_else(|| {
-                Error::from(agent_runtime::Error::refused(
-                    "tmux-session-unresolved",
-                    &[],
-                ))
-            })
+            .ok_or_else(|| Error::refused("tmux-session-unresolved", &[]))
     }
 
     /// The tmux server a fleet window opens on and the session it opens in:
@@ -520,14 +514,13 @@ impl Operation<'_> {
         let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
         if !tmux::session_present(&server, &session)? {
-            return Err(agent_runtime::Error::refused(
+            return Err(crate::Error::refused(
                 "tmux-session-missing",
                 &[
                     ("session", &session),
                     ("socket", &socket.display().to_string()),
                 ],
-            )
-            .into());
+            ));
         }
         Ok((server, session))
     }
@@ -538,14 +531,14 @@ impl Operation<'_> {
     pub fn server_process_start(
         &self,
         server: &Server,
-    ) -> std::result::Result<String, agent_runtime::Error> {
+    ) -> std::result::Result<String, crate::Error> {
         match process::identity(server.pid) {
             Reading::Live(identity) => Ok(identity.start),
-            Reading::Gone => Err(agent_runtime::Error::refused(
+            Reading::Gone => Err(crate::Error::refused(
                 "server-gone",
                 &[("pid", &server.pid.to_string())],
             )),
-            Reading::Unreadable { cause } => Err(agent_runtime::Error::refused(
+            Reading::Unreadable { cause } => Err(crate::Error::refused(
                 "server-process-unreadable",
                 &[("pid", &server.pid.to_string()), ("cause", cause)],
             )),
@@ -619,7 +612,7 @@ impl Operation<'_> {
             .wall()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        agent_runtime::clock::iso_utc(now + after.as_secs())
+        crate::clock::iso_utc(now + after.as_secs())
     }
 
     /// The sign-in a successor's launch on `account` starts with, read
@@ -663,7 +656,7 @@ impl Operation<'_> {
             };
         }
         let dir = account.display().to_string();
-        match agent_runtime::accounts::usage::credential(harness.name(), &dir) {
+        match crate::accounts::usage::credential(harness.name(), &dir) {
             Credential::Missing(_) => SignIn::Missing {
                 cause: "no-credential",
             },
@@ -679,7 +672,7 @@ impl Operation<'_> {
                     .wall()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
-                if agent_runtime::accounts::usage::expired(refresh_expires_ms, now) {
+                if crate::accounts::usage::expired(refresh_expires_ms, now) {
                     SignIn::Missing {
                         cause: "login-expired",
                     }
@@ -727,14 +720,14 @@ impl Operation<'_> {
     fn check_process_token(
         &self,
         token: &Standing<Identity>,
-    ) -> std::result::Result<(), agent_runtime::Error> {
+    ) -> std::result::Result<(), crate::Error> {
         if self
             .obligations
             .stands(&Obligation::Process(token.key().clone()))
         {
             return Ok(());
         }
-        Err(agent_runtime::Error::refused(
+        Err(crate::Error::refused(
             "token-stale",
             &[
                 ("intent", &self.intent_id),
@@ -746,14 +739,11 @@ impl Operation<'_> {
 
     /// Refuse `token-stale` where the pane token's key no longer stands in
     /// this handle's set.
-    fn check_pane_token(
-        &self,
-        token: &Standing<Pane>,
-    ) -> std::result::Result<(), agent_runtime::Error> {
+    fn check_pane_token(&self, token: &Standing<Pane>) -> std::result::Result<(), crate::Error> {
         if self.key_of(token.key()).is_some() {
             return Ok(());
         }
-        Err(agent_runtime::Error::refused(
+        Err(crate::Error::refused(
             "token-stale",
             &[
                 ("intent", &self.intent_id),
@@ -773,18 +763,15 @@ impl Operation<'_> {
             }
         };
         match &self.phase {
-            Some(agent_runtime::intent::Phase::Opening { opening }) => {
-                push(PathBuf::from(&opening.socket))
-            }
+            Some(crate::intent::Phase::Opening { opening }) => push(PathBuf::from(&opening.socket)),
             Some(
-                agent_runtime::intent::Phase::WindowOpened { opened }
-                | agent_runtime::intent::Phase::Delivering { opened, .. }
-                | agent_runtime::intent::Phase::Delivered { opened, .. }
-                | agent_runtime::intent::Phase::IdentityRead { opened, .. },
+                crate::intent::Phase::WindowOpened { opened }
+                | crate::intent::Phase::Delivering { opened, .. }
+                | crate::intent::Phase::Delivered { opened, .. }
+                | crate::intent::Phase::IdentityRead { opened, .. },
             ) => push(PathBuf::from(&opened.socket)),
             Some(
-                agent_runtime::intent::Phase::CloudCreate { .. }
-                | agent_runtime::intent::Phase::Preparing { .. },
+                crate::intent::Phase::CloudCreate { .. } | crate::intent::Phase::Preparing { .. },
             )
             | None => {}
         }
@@ -945,7 +932,7 @@ impl Operation<'_> {
     /// records before the ambient one: `None` where the set holds none;
     /// present as its token; gone, discharged by that read; or unobservable,
     /// standing.
-    pub fn observe_lane_pane(
+    pub fn observe_target_pane(
         &mut self,
         overseer: Option<&Overseer>,
     ) -> Result<Option<Observed<Standing<Pane>>>> {
@@ -1104,21 +1091,18 @@ impl Operation<'_> {
     /// session, and the retirement closes the dead pane's window. Only a
     /// pane nothing of the effect polls again is kept, since the polls read
     /// a kept pane as unreadable, never gone.
-    pub fn keep_pane(
-        &self,
-        pane: &Standing<Pane>,
-    ) -> std::result::Result<(), agent_runtime::Error> {
+    pub fn keep_pane(&self, pane: &Standing<Pane>) -> std::result::Result<(), crate::Error> {
         self.check_pane_token(pane)?;
         tmux::keep_on_exit(pane.key())
     }
 
     /// Close the window of the set's standing pane on the server
-    /// [`Self::observe_lane_pane`] reads it on: one
+    /// [`Self::observe_target_pane`] reads it on: one
     /// present is killed by its token; one gone stands no more; none standing
     /// is no window to close; one the host did not answer for stands with
     /// that cause.
-    pub fn close_lane_window(&mut self, overseer: Option<&Overseer>) -> Result<WindowClose> {
-        Ok(match self.observe_lane_pane(overseer)? {
+    pub fn close_target_window(&mut self, overseer: Option<&Overseer>) -> Result<WindowClose> {
+        Ok(match self.observe_target_pane(overseer)? {
             None => WindowClose::Unrecorded,
             Some(Observed::Gone { cause }) => WindowClose::Gone { cause },
             Some(Observed::Present(pane)) => WindowClose::Window(self.close_window(pane)?),
@@ -1405,11 +1389,9 @@ impl Operation<'_> {
         match session::lead_ids(harness, home, cwd) {
             Reading::Live(ids) => Ok(SessionFloor::Baseline(ids)),
             Reading::Gone => Ok(SessionFloor::Baseline(Vec::new())),
-            Reading::Unreadable { cause } => Err(agent_runtime::Error::refused(
-                "baseline-unreadable",
-                &[("cause", cause)],
-            )
-            .into()),
+            Reading::Unreadable { cause } => {
+                Err(Error::refused("baseline-unreadable", &[("cause", cause)]))
+            }
         }
     }
 
@@ -1485,8 +1467,8 @@ impl Operation<'_> {
 /// pane, or asked with no answer, the text possibly in the pane.
 pub enum Delivery {
     Pasted,
-    Unsent(agent_runtime::Error),
-    Unanswered(agent_runtime::Error),
+    Unsent(crate::Error),
+    Unanswered(crate::Error),
 }
 
 /// Read the pane an adoption names and record the controller in it: the
@@ -1508,7 +1490,7 @@ pub fn adopt_controller(
     let overseer = fleet_view(path)?.overseer;
     let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
-        return Err(refused("pane-invalid", &[("pane", &r.pane)]));
+        return Err(Error::refused("pane-invalid", &[("pane", &r.pane)]));
     }
     let socket = match &r.socket {
         Some(socket) => socket.clone(),
@@ -1520,7 +1502,7 @@ pub fn adopt_controller(
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => identity,
         ProcessReading::Unread { cause } => {
-            return Err(refused(
+            return Err(Error::refused(
                 "pane-unreadable",
                 &[("pane", &r.pane), ("cause", cause)],
             ));
@@ -1581,7 +1563,7 @@ pub fn adopt_controller(
             same,
         },
     };
-    ops::apply_adoption(path, r, &read, locking)
+    super::adoption::apply_adoption(path, r, &read, locking)
 }
 
 /// Whether the record names `pane` on the server `pid` at `start`, or at
@@ -1671,8 +1653,8 @@ pub fn heal_controller(
 fn pane_read(server: &tmux::Server, pane: &str) -> Result<tmux::PaneFields> {
     match tmux::pane_fields(server, pane) {
         Reading::Live(fields) => Ok(fields),
-        Reading::Gone => Err(refused("pane-gone", &[("pane", pane)])),
-        Reading::Unreadable { cause } => Err(refused(
+        Reading::Gone => Err(Error::refused("pane-gone", &[("pane", pane)])),
+        Reading::Unreadable { cause } => Err(Error::refused(
             "pane-unreadable",
             &[("pane", pane), ("cause", cause)],
         )),
@@ -1697,7 +1679,7 @@ struct StartRow {
 }
 
 /// The last `SessionStart` row of `file` that names a harness and a
-/// directory, over the last [`agent_runtime::rows::SPAN`] such rows: `Gone`
+/// directory, over the last [`crate::rows::SPAN`] such rows: `Gone`
 /// where the file is absent or holds none, `Unreadable` where it cannot be
 /// read. A line that is no object is skipped, as a killed writer's fragment.
 fn start_row(file: &Path) -> Reading<StartRow> {
@@ -1714,7 +1696,7 @@ fn start_row(file: &Path) -> Reading<StartRow> {
         .lines()
         .filter(|line| line.contains("\"event\":\"SessionStart\""))
         .collect();
-    let from = starts.len().saturating_sub(agent_runtime::rows::SPAN);
+    let from = starts.len().saturating_sub(crate::rows::SPAN);
     let Some(row) = starts[from..].iter().rev().find_map(|line| {
         serde_json::from_str::<Value>(line)
             .ok()
@@ -1777,7 +1759,7 @@ fn harness_in_pane(
     let target = Target::new(&settings.harness_binaries, harness)?;
     match observe::foreground(pane_pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => Ok(Ok(identity)),
-        ProcessReading::Unread { cause } => Err(refused(
+        ProcessReading::Unread { cause } => Err(Error::refused(
             "pane-unreadable",
             &[("pane", pane), ("cause", cause)],
         )),
@@ -1801,7 +1783,7 @@ fn account_of_home(harness: Harness, home: Option<String>) -> Option<String> {
         .map(PathBuf::from)
         .or_else(|| session::default_home(harness))?;
     let account = match harness {
-        Harness::Codex => agent_runtime::trust::account_of(&home).to_path_buf(),
+        Harness::Codex => crate::trust::account_of(&home).to_path_buf(),
         Harness::Claude | Harness::Copilot | Harness::Pi => home,
     };
     Some(account.display().to_string())
@@ -1911,10 +1893,10 @@ pub fn register_controller(
     root: &Path,
     locking: Locking,
 ) -> Result<(Value, Harness)> {
-    let pane =
-        caller_var("TMUX_PANE").ok_or_else(|| refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
+    let pane = caller_var("TMUX_PANE")
+        .ok_or_else(|| Error::refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
     if !is_pane_id(&pane) {
-        return Err(refused("pane-invalid", &[("pane", &pane)]));
+        return Err(Error::refused("pane-invalid", &[("pane", &pane)]));
     }
     let socket = tmux::ambient_socket()?;
     let server = tmux::server(&socket)?;
@@ -1948,7 +1930,7 @@ pub fn register_controller(
             let (harness, identity) = foreground_harness(settings, &pane, fields.pid)?;
             let cwd = std::fs::read_link(format!("/proc/{}/cwd", identity.pid))
                 .or_else(|_| std::env::current_dir())
-                .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", Path::new("."), e)))?;
+                .map_err(|e| Error::io("cwd", Path::new("."), e))?;
             (harness, identity, None, None, cwd.display().to_string())
         }
     };

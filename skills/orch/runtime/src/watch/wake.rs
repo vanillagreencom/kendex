@@ -43,13 +43,13 @@ use serde_json::Value;
 
 use super::owner_alert::{self, Word};
 use super::{Body, Event, Produced, Runner, Tick, context};
-use crate::effects::overseer_socket;
 use crate::error::{Error, Result, WatchError};
 pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus, Record};
+use agent_runtime::effects::overseer_socket;
 
 /// The baseline row kind the mail duty signals unread mail with.
 pub const UNREAD_KIND: &str = "unread";

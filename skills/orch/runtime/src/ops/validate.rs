@@ -22,11 +22,11 @@ use serde_json::json;
 
 use super::item::{self, AcceptResult, Attempt, RecordValidationAdmission};
 use super::proof;
-use crate::effects::Launch;
 use crate::error::{Error, Result};
 use crate::state::{
     ItemState, Proof, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob, ValidateMode,
 };
+use agent_runtime::effects::job::Launch;
 use agent_runtime::journal::Env;
 
 /// The validation run's steps, tagged by `step`.

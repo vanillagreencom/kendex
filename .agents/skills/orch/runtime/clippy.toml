@@ -4,9 +4,9 @@
 # path readers that collapse an unreadable path into a word, and the
 # store's own entry points are disallowed methods in this crate, so `cargo
 # clippy --all-targets -- -D warnings` refuses an ordinary call of one
-# outside `effects::operation` (the one owner of the primitives),
-# `effects::lane_operation` (orch's one opener of the engine's handle and the
-# owner of a close's lane acts) and the functions, trait-impl methods and test modules that carry a reviewed
+# outside `effects::lane_operation` (orch's one opener of agent-runtime's
+# engine handle and the owner of a close's lane acts) and the functions,
+# trait-impl methods and test modules that carry a reviewed
 # `#[allow(clippy::disallowed_methods, reason = "..")]`; each allowance
 # carries its reason at its attribute, and those attributes are the
 # inventory. The list
@@ -64,15 +64,8 @@ disallowed-methods = [
     { path = "agent_runtime::session::fixed_file", reason = "a session file is named only through the operation handle" },
     { path = "agent_runtime::session::default_home", reason = "a harness home is resolved only through the operation handle" },
     { path = "agent_runtime::session::fresh_session_id", reason = "a session id is minted only through the operation handle" },
-    # the job launcher, its record and files, and the owner notice
-    { path = "orch_runtime::effects::operation::job::read_handle", reason = "the launcher's record is read only by the operation handle" },
-    { path = "orch_runtime::effects::operation::job::unit_end", reason = "a unit is read only by the operation handle" },
-    { path = "orch_runtime::effects::operation::job::group_end", reason = "a job group is read only by the operation handle" },
-    { path = "orch_runtime::effects::operation::job::write_request", reason = "the job's request file is written only by the operation handle" },
-    { path = "orch_runtime::effects::operation::job::remove_files", reason = "the job's files are removed only by the recording boundary" },
-    { path = "orch_runtime::effects::operation::job::send_owner_notice", reason = "the owner notice is sent only by the recording boundary, from the recorded owed notice" },
-    { path = "orch_runtime::effects::operation::job::mark_notice", reason = "an owed notice's mark is written only by the recording boundary" },
-    { path = "orch_runtime::effects::operation::job::pgid_end", reason = "a job group is read only by the operation handle" },
+    # the job launcher's record
+    { path = "agent_runtime::effects::job::read_handle", reason = "the launcher's record is read only by the operation handle" },
     # records and the store: every write goes through the operation module's
     # entries or the state verbs' `store::run_write`, every read of a state
     # file through the store's reader
@@ -87,15 +80,17 @@ disallowed-methods = [
     { path = "agent_runtime::record::Guard::with", reason = "a record's lock is held only by the state module's store" },
     { path = "agent_runtime::record::Guard::with_wait", reason = "a record's lock is held only by the state module's store" },
     { path = "agent_runtime::record::Wait::start", reason = "the lock wait's clock is read only by the state module's store" },
-    { path = "orch_runtime::state::load", reason = "a state file is read only by the transitions' one read, the operation module's one read, the inspection, the verification and a watch duty's one snapshot per pass, each site carrying its reason" },
-    { path = "agent_runtime::record::store", reason = "the state file is written only through the journal's `commit`, `ops::apply_adoption` and the state verbs' `store::run_write`" },
+    { path = "orch_runtime::state::load", reason = "a state file is read only by the transitions' one read, the inspection, the verification and a watch duty's one snapshot per pass, each site carrying its reason" },
+    { path = "agent_runtime::record::store", reason = "the state file is written only through the journal's `commit` and the state verbs' `store::run_write`" },
     { path = "agent_runtime::journal::commit", reason = "a request's transition is committed only by `ops::apply`'s one store write" },
+    { path = "agent_runtime::journal::claim_intent", reason = "an intent's claim is applied only by the dispatcher's `fleet_transition`, inside `ops::apply`'s one store write" },
+    { path = "agent_runtime::journal::record_progress", reason = "an intent's progress is applied only by the dispatcher's `fleet_transition`, inside `ops::apply`'s one store write" },
+    { path = "agent_runtime::journal::record_outcome", reason = "an intent's outcome is applied only by the dispatcher's `fleet_transition`, inside `ops::apply`'s one store write" },
     { path = "orch_runtime::state::init", reason = "a state file is created only by the `state init` command" },
     { path = "orch_runtime::state::inspect", reason = "a state file is inspected only by the `state inspect` command" },
     { path = "orch_runtime::ops::apply", reason = "the store is reached only by the operation handle's writes, the recording boundary and the command" },
     { path = "orch_runtime::ops::apply_on", reason = "the store is reached only by the lane operation's one close over a superseded launch and the command" },
-    { path = "orch_runtime::effects::operation::Operation::open", reason = "the engine's handle is opened only by the lane operation, which names the start of its set" },
-    { path = "orch_runtime::ops::apply_adoption", reason = "the adoption's store write takes the pane read only the operation module mints" },
+    { path = "agent_runtime::effects::Operation::open", reason = "the engine's handle is opened only by the lane operation, which names the start of its set" },
     { path = "orch_runtime::ops::occupancy::Host::kernel", reason = "the kernel's readers are handed to a transition only by the command's store entry and the lane operation" },
     { path = "agent_runtime::record::locked", reason = "a record's locks are taken only by the store, the lane admission and the removal of item records (`archive::records_locked`)" },
     { path = "orch_runtime::verify::run", reason = "GitHub is read and the verdict recorded only by the `verify-head` command" },

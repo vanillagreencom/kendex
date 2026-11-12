@@ -18,7 +18,7 @@
 use std::fs;
 use std::path::Path;
 
-use agent_runtime::launch::{LaunchCommand, shell_quote};
+use crate::launch::{LaunchCommand, shell_quote};
 use serde::Deserialize;
 
 use crate::error::Result;
@@ -64,14 +64,13 @@ pub(super) fn read(path: &Path, intent_id: &str) -> Result<Reading> {
         Ok(bytes) => bytes,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Reading::Absent),
         Err(e) => {
-            return Err(agent_runtime::Error::refused(
+            return Err(crate::Error::refused(
                 "receipt-unreadable",
                 &[
                     ("path", &path.display().to_string()),
                     ("cause", &e.to_string()),
                 ],
-            )
-            .into());
+            ));
         }
     };
     let Ok(wire) = serde_json::from_slice::<Wire>(&bytes) else {
@@ -114,10 +113,10 @@ fn is_pane_id(id: &str) -> bool {
 
 /// Make the receipt's directory so the pane can write into it. A refusal
 /// here is a host refusal the effect records as its failed outcome.
-pub(super) fn arm(path: &Path) -> std::result::Result<(), agent_runtime::Error> {
+pub(super) fn arm(path: &Path) -> std::result::Result<(), crate::Error> {
     let dir = path.parent().expect("a receipt path has a directory");
     fs::create_dir_all(dir).map_err(|e| {
-        agent_runtime::Error::refused(
+        crate::Error::refused(
             "receipt-dir",
             &[
                 ("path", &dir.display().to_string()),
@@ -161,10 +160,10 @@ mod tests {
 
     use super::*;
 
-    const ID: &str = "launch-lane:KEN-1:1769600000123456789-1837";
+    const ID: &str = "launch-session:KEN-1:1769600000123456789-1837";
 
     fn write(dir: &Path, text: &str) -> std::path::PathBuf {
-        let path = agent_runtime::record::receipt_path(dir, ID);
+        let path = crate::record::receipt_path(dir, ID);
         arm(&path).unwrap();
         fs::write(&path, text).unwrap();
         path
@@ -217,7 +216,7 @@ mod tests {
                 },
             ),
             (
-                r#"{"intent":"launch-lane:KEN-2:1-1","pane":"%7","pid":4242,"written_at":"t"}"#,
+                r#"{"intent":"launch-session:KEN-2:1-1","pane":"%7","pid":4242,"written_at":"t"}"#,
                 Reading::Invalid {
                     cause: "intent-mismatch",
                 },
@@ -267,7 +266,7 @@ mod tests {
     #[test]
     fn the_launch_line_writes_the_receipt_then_execs_the_harness_under_the_same_pid() {
         let dir = tempfile::tempdir().unwrap();
-        let path = agent_runtime::record::receipt_path(dir.path(), ID);
+        let path = crate::record::receipt_path(dir.path(), ID);
         arm(&path).unwrap();
         let command = LaunchCommand {
             program: "true".to_owned(),

@@ -34,21 +34,21 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::host;
-use agent_runtime::process::{self, Identity};
-use agent_runtime::protocol::Outcome;
+use crate::host;
+use crate::process::{self, Identity};
+use crate::protocol::Outcome;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Bootstrap, Operation, POLL, Reading, Run, Word, fleet_view, read_intent};
+use crate::controller::WatchJob;
 use crate::error::{Error, Result};
-use agent_runtime::controller::WatchJob;
-use agent_runtime::intent::Intent;
-use agent_runtime::intent::{EffectOp, Obligation, Role};
-use agent_runtime::intent::{Notice, Owner};
-use agent_runtime::journal::{ClaimIntent, RecordProgress};
-use agent_runtime::record;
+use crate::intent::Intent;
+use crate::intent::{EffectOp, Obligation, Role};
+use crate::intent::{Notice, Owner};
+use crate::journal::{ClaimIntent, RecordProgress};
+use crate::record;
 
 /// What the caller of a transfer or a stop gets back at once: the effect
 /// runs in a detached job that took the intent's owner lease, so retiring
@@ -204,9 +204,7 @@ impl Op {
         match op {
             EffectOp::RequestTransfer => Some(Op::Transfer),
             EffectOp::StopController => Some(Op::Stop),
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources | EffectOp::StartController => {
-                None
-            }
+            EffectOp::LaunchSession | EffectOp::CloseResources | EffectOp::StartController => None,
         }
     }
 
@@ -333,7 +331,7 @@ impl Launched {
 }
 
 pub(super) struct Launcher<'a> {
-    clock: &'a dyn agent_runtime::clock::Clock,
+    clock: &'a dyn crate::clock::Clock,
 }
 
 impl Launcher<'_> {
@@ -485,7 +483,7 @@ impl Launcher<'_> {
                 }
                 None => "signal".to_owned(),
             },
-            Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+            Err(e @ crate::Error::NotStarted { .. }) => {
                 return Err(format!("unit-launch-failed detail={e}"));
             }
             Err(e) => e.to_string(),
@@ -791,7 +789,7 @@ pub fn launch_recorded(
     argv: &[&str],
     stderr: Option<&Path>,
     bounds: Bounds,
-    clock: &dyn agent_runtime::clock::Clock,
+    clock: &dyn crate::clock::Clock,
 ) -> Launched {
     let launcher = Launcher { clock };
     let runner = match probe_manager() {
@@ -822,7 +820,7 @@ pub fn launch_command(name: &str, record: &Path, argv: &[&str], stderr: Option<&
         argv,
         stderr,
         Bounds::default(),
-        &agent_runtime::clock::SystemClock,
+        &crate::clock::SystemClock,
     )
     .answer()
 }
@@ -842,12 +840,8 @@ fn cgroup_dir(cgroup: &str) -> std::path::PathBuf {
     reason = "the recorded group is stopped by each member's observed start identity"
 )]
 pub fn stop_group(identity: &Identity) -> Result<bool> {
-    let rows = process::table().map_err(|e| {
-        Error::Runtime(agent_runtime::Error::refused(
-            "stop-unreadable",
-            &[("cause", e.cause)],
-        ))
-    })?;
+    let rows =
+        process::table().map_err(|e| Error::refused("stop-unreadable", &[("cause", e.cause)]))?;
     if matches!(process::still_runs(identity), Reading::Gone)
         && (rows.iter().any(|r| r.pid == identity.pid)
             || !rows.iter().any(|r| r.pgrp == identity.pid))
@@ -860,10 +854,7 @@ pub fn stop_group(identity: &Identity) -> Result<bool> {
             Reading::Live(id) => members.push(id),
             Reading::Gone => {}
             Reading::Unreadable { cause } => {
-                return Err(Error::Runtime(agent_runtime::Error::refused(
-                    "stop-unreadable",
-                    &[("cause", cause)],
-                )));
+                return Err(Error::refused("stop-unreadable", &[("cause", cause)]));
             }
         }
     }
@@ -872,10 +863,10 @@ pub fn stop_group(identity: &Identity) -> Result<bool> {
         process::Stop::Stopped { .. } => Ok(true),
         other @ (process::Stop::IdentityStale
         | process::Stop::Timeout { .. }
-        | process::Stop::Unreadable { .. }) => Err(Error::Runtime(agent_runtime::Error::refused(
+        | process::Stop::Unreadable { .. }) => Err(Error::refused(
             "stop-unconfirmed",
             &[("reading", &format!("{other:?}"))],
-        ))),
+        )),
     }
 }
 
@@ -916,10 +907,7 @@ pub fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
             ) {
                 Ok(None)
             } else {
-                Err(Error::Runtime(agent_runtime::Error::refused(
-                    "stop-failed",
-                    &[("unit", &unit)],
-                )))
+                Err(Error::refused("stop-failed", &[("unit", &unit)]))
             }
         }
         SidecarRead::Present(JobHandle::Group(identity)) => {
@@ -931,10 +919,10 @@ pub fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
         }
         SidecarRead::Failed { .. } | SidecarRead::Absent => Ok(None),
         SidecarRead::Present(JobHandle::Pgid(_)) | SidecarRead::Unreadable { .. } => {
-            Err(Error::Runtime(agent_runtime::Error::refused(
+            Err(Error::refused(
                 "stop-unreadable",
                 &[("record", &record.display().to_string())],
-            )))
+            ))
         }
     }
 }
@@ -957,13 +945,10 @@ pub fn start(
     let Some(op) = Op::of_intent(intent.op) else {
         unreachable!("only a transfer or a stop is handed to the job")
     };
-    let handed_from =
-        intent
-            .owner
-            .clone()
-            .ok_or(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
-                op: op.word(),
-            }))?;
+    let handed_from = intent
+        .owner
+        .clone()
+        .ok_or(Error::OwnerUnreadable { op: op.word() })?;
     // The launcher owns the intent until the job claims it: the handle
     // writes under that owner, so every write yields once the job's claim
     // moved it, a job that claimed keeps its own set, and the handle stops
@@ -1002,8 +987,8 @@ fn launch_job(
     start: Start,
 ) -> Result<JobStarted> {
     let id = intent.id.as_str();
-    let request_path = agent_runtime::record::job_request_path(&run.state_dir, id);
-    let record_path = agent_runtime::record::job_record_path(&run.state_dir, id);
+    let request_path = crate::record::job_request_path(&run.state_dir, id);
+    let record_path = crate::record::job_record_path(&run.state_dir, id);
     if start == Start::Repeat {
         operation.write()?;
         remove_files(&run.state_dir, id);
@@ -2023,7 +2008,7 @@ pub(super) fn remove_files(state_dir: &Path, intent_id: &str) {
 /// or its effect began under its first owner) ends the job before it opens
 /// anything.
 pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
-    agent_runtime::journal::write_claim(
+    crate::journal::write_claim(
         run.path,
         &ClaimIntent {
             intent_id: intent_id.to_owned(),
@@ -2032,7 +2017,6 @@ pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
         run.locking,
     )
     .map(drop)
-    .map_err(Error::from)
 }
 
 /// The announcement a failed or unconfirmed outcome of a job's operation
@@ -2062,7 +2046,7 @@ pub(super) fn owed_notice(
                 return None;
             }
         }
-        EffectOp::LaunchLane | EffectOp::CloseOwnedResources => return None,
+        EffectOp::LaunchSession | EffectOp::CloseResources => return None,
     }
     match outcome {
         Outcome::Failed | Outcome::Unconfirmed => {}
@@ -2091,7 +2075,7 @@ pub(super) fn owed_notice(
         key,
         text,
         to: None,
-        owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
+        owner: crate::intent::NOTICE_OWED.to_owned(),
     })
 }
 
@@ -2118,7 +2102,7 @@ fn mark_notice(
     mark: String,
     while_owner: Option<Owner>,
 ) -> Result<()> {
-    agent_runtime::journal::write_progress(
+    crate::journal::write_progress(
         run.path,
         &RecordProgress {
             intent_id: intent.id.clone(),
@@ -2188,7 +2172,7 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
             continue;
         };
         let mut mark = send_owner_notice(run, &intent.id, &notice.text);
-        if last && mark.starts_with(agent_runtime::intent::NOTICE_UNANSWERED) {
+        if last && mark.starts_with(crate::intent::NOTICE_UNANSWERED) {
             mark = format!("unsent:{mark}");
         }
         if let Err(e) = mark_notice(run, &intent, notice, mark.clone(), None) {
@@ -2259,8 +2243,8 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
         NOTICE_BOUND,
     ) {
         Ok(output) => output,
-        Err(e @ agent_runtime::Error::NotStarted { .. }) => return format!("unsent:{VERB}: {e}"),
-        Err(e) => return format!("{}{VERB}: {e}", agent_runtime::intent::NOTICE_UNANSWERED),
+        Err(e @ crate::Error::NotStarted { .. }) => return format!("unsent:{VERB}: {e}"),
+        Err(e) => return format!("{}{VERB}: {e}", crate::intent::NOTICE_UNANSWERED),
     };
     let stderr = host::stderr_text(&output);
     let keyed = stderr.lines().find_map(|l| l.strip_prefix(NOTICE_KEYED));
@@ -2275,7 +2259,7 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
     let mark = if status.is_some() && keyed.is_some() {
         "unsent:"
     } else {
-        agent_runtime::intent::NOTICE_UNANSWERED
+        crate::intent::NOTICE_UNANSWERED
     };
     let status = status.map_or_else(|| "signal".to_owned(), |code| code.to_string());
     let detail = keyed.map_or_else(|| stderr.trim().to_owned(), str::to_owned);
@@ -2285,7 +2269,6 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::{self, Request};
 
     /// The slice a unit is started in and the caps it copies, from the
     /// cgroup file the kernel writes and the cgroup's limit files: a pane
@@ -2470,20 +2453,8 @@ mod tests {
     #[test]
     fn an_unwound_failed_group_is_read_by_pgid_until_it_empties() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        let env = agent_runtime::journal::Env {
+        let settings = super::super::testing::settings(dir.path());
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2536,15 +2507,16 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
-            &agent_runtime::clock::SystemClock,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
         );
         let group = Obligation::JobGroup(leader_identity.clone());
         // The leader lives: the record names the group, which stands.
@@ -2679,7 +2651,7 @@ mod tests {
     /// A clock whose waits pass no real time: each sleep moves it on.
     struct Stepping(std::sync::Mutex<std::time::Instant>);
 
-    impl agent_runtime::clock::Clock for Stepping {
+    impl crate::clock::Clock for Stepping {
         fn now(&self) -> std::time::Instant {
             *self.0.lock().unwrap()
         }
@@ -2700,20 +2672,8 @@ mod tests {
     #[test]
     fn a_child_its_launch_cannot_end_is_never_waited_for_and_holds_the_job_until_it_ends() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        let env = agent_runtime::journal::Env {
+        let settings = super::super::testing::settings(dir.path());
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2730,15 +2690,16 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let clock = Stepping(std::sync::Mutex::new(std::time::Instant::now()));
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
+            dir.path(),
+            dir.path().join("lane-mail"),
             &clock,
         );
         let mut operation =
@@ -2819,20 +2780,8 @@ mod tests {
     #[test]
     fn an_unwound_failed_record_with_the_group_key_alone_is_read_by_pgid_until_it_empties() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        let env = agent_runtime::journal::Env {
+        let settings = super::super::testing::settings(dir.path());
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2881,15 +2830,16 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
-            &agent_runtime::clock::SystemClock,
+            dir.path(),
+            dir.path().join("lane-mail"),
+            &crate::clock::SystemClock,
         );
         let group = Obligation::JobPgid { pgid };
         // The record names the group by its key; the member runs: standing.
@@ -2935,6 +2885,12 @@ mod tests {
         );
     }
 
+    /// The fleet record's log rows as written.
+    fn fleet_log(path: &Path) -> Vec<Value> {
+        let fleet: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        fleet["fleet_log"].as_array().cloned().unwrap_or_default()
+    }
+
     /// A failed outcome committed through the store
     /// alone, the state a crash between the outcome's write and the send
     /// leaves, records its notice `owed` with its fleet-log row and sends
@@ -2944,34 +2900,21 @@ mod tests {
     #[test]
     fn an_outcome_committed_without_its_send_owes_a_notice_the_next_outcome_sends_once() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let mut settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
+        let settings = super::super::testing::settings(dir.path());
         let calls = dir.path().join("mail-calls");
         let mail = dir.path().join("lane-mail");
-        crate::write_executable(
+        super::super::testing::write_executable(
             &mail,
             format!(
                 "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\n",
                 calls.display()
             ),
         );
-        settings.lane_mail_cli = mail;
         let owner = Owner {
             pid: 77,
             start: "ticks:77".into(),
         };
-        let env = agent_runtime::journal::Env {
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2985,16 +2928,17 @@ mod tests {
             "obligations": {"standing": [], "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let rows_before = fleet["fleet_log"].as_array().map_or(0, Vec::len);
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
-            &agent_runtime::clock::SystemClock,
+            dir.path(),
+            mail.clone(),
+            &crate::clock::SystemClock,
         );
         let sent_calls = || {
             std::fs::read_to_string(&calls)
@@ -3013,14 +2957,15 @@ mod tests {
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         let request = outcome(operation).wire();
-        let committed = ops::apply(
+        let committed = crate::journal::write_outcome(
             &path,
-            &Request::RecordOutcome(Box::new(request)),
+            &request,
             &env,
             record::Locking::FLOCK,
+            run.outcome_arm,
         )
         .unwrap();
-        assert!(matches!(committed.report, ops::Report::RecordOutcome(ref r) if r.recorded_now));
+        assert!(committed.recorded_now);
         let current = read_intent(&path, &intent.id).unwrap();
         assert!(!current.open());
         let owed = current
@@ -3029,7 +2974,7 @@ mod tests {
             .expect("the outcome's write records the notice");
         assert!(owed.owed(), "{owed:?}");
         assert_eq!(owed.key, "job-launch-failed");
-        let log = crate::effects::fleet(&path).unwrap().fleet_log;
+        let log = fleet_log(&path);
         assert_eq!(log.len(), rows_before + 1, "the row lands with the outcome");
         assert_eq!(log.last().unwrap()["text"], owed.text);
         assert_eq!(sent_calls(), 0, "nothing was sent before the crash");
@@ -3048,10 +2993,7 @@ mod tests {
                 ..owed
             }
         );
-        assert_eq!(
-            crate::effects::fleet(&path).unwrap().fleet_log.len(),
-            rows_before + 1
-        );
+        assert_eq!(fleet_log(&path).len(), rows_before + 1);
         // A third outcome, and a reconcile's walk: nothing more.
         let again =
             Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
@@ -3069,20 +3011,7 @@ mod tests {
     #[test]
     fn a_claimed_repeat_keeps_the_claimants_files() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let mut settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        settings.lane_mail_cli = std::path::PathBuf::from("/bin/false");
+        let settings = super::super::testing::settings(dir.path());
         let owner = Owner {
             pid: 77,
             start: "ticks:77".into(),
@@ -3091,7 +3020,7 @@ mod tests {
             pid: 88,
             start: "ticks:88".into(),
         };
-        let env = agent_runtime::journal::Env {
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -3106,33 +3035,34 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
-            &agent_runtime::clock::SystemClock,
+            dir.path(),
+            std::path::PathBuf::from("/bin/false"),
+            &crate::clock::SystemClock,
         );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the reconcile's last read.
-        ops::apply(
+        crate::journal::write_claim(
             &path,
-            &Request::ClaimIntent(ClaimIntent {
+            &ClaimIntent {
                 intent_id: intent.id.clone(),
-            }),
-            &agent_runtime::journal::Env {
+            },
+            &crate::journal::Env {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },
             record::Locking::FLOCK,
         )
         .unwrap();
-        let request_path = record::job_request_path(&settings.state_dir, &intent.id);
-        let record_path = record::job_record_path(&settings.state_dir, &intent.id);
+        let request_path = record::job_request_path(dir.path(), &intent.id);
+        let record_path = record::job_record_path(dir.path(), &intent.id);
         std::fs::create_dir_all(request_path.parent().unwrap()).unwrap();
         std::fs::write(&request_path, "claimant-request").unwrap();
         std::fs::write(&record_path, "claimant-record").unwrap();
@@ -3141,7 +3071,7 @@ mod tests {
             &run,
             operation,
             &intent,
-            &Request::StopController(crate::ops::StopController {}),
+            &json!({"op": "stop-controller"}),
             Op::Stop,
             &owner,
             Start::Repeat,
@@ -3175,26 +3105,13 @@ mod tests {
     #[test]
     fn a_claimed_deadline_announces_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().into(),
-            common: dir.path().into(),
-        };
-        let mut settings = crate::settings::load(
-            &roots,
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().into()),
-                private_env: false,
-            },
-        )
-        .unwrap();
+        let settings = super::super::testing::settings(dir.path());
         let called = dir.path().join("mail-called");
         let mail = dir.path().join("lane-mail");
-        crate::write_executable(
+        super::super::testing::write_executable(
             &mail,
             format!("#!/bin/bash\nprintf 'called' > '{}'\n", called.display()),
         );
-        settings.lane_mail_cli = mail;
         let owner = Owner {
             pid: 77,
             start: "ticks:77".into(),
@@ -3203,7 +3120,7 @@ mod tests {
             pid: 88,
             start: "ticks:88".into(),
         };
-        let env = agent_runtime::journal::Env {
+        let env = crate::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -3218,25 +3135,26 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(super::super::testing::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = crate::effects::engine_run(
+        let run = super::super::testing::run(
             &path,
             &settings,
             &env,
-            agent_runtime::record::Locking::FLOCK,
-            &agent_runtime::clock::SystemClock,
+            dir.path(),
+            mail.clone(),
+            &crate::clock::SystemClock,
         );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the launcher's final loop read.
-        ops::apply(
+        crate::journal::write_claim(
             &path,
-            &Request::ClaimIntent(ClaimIntent {
+            &ClaimIntent {
                 intent_id: intent.id.clone(),
-            }),
-            &agent_runtime::journal::Env {
+            },
+            &crate::journal::Env {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },

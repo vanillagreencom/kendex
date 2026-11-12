@@ -1710,11 +1710,16 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             argv,
         } => {
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-            let launch = effects::launch_command(&name, &record, &argv, stderr.as_deref());
+            let launch = agent_runtime::effects::job::launch_command(
+                &name,
+                &record,
+                &argv,
+                stderr.as_deref(),
+            );
             let status = match &launch {
-                effects::Launch::Started { .. } => 0,
-                effects::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
-                effects::Launch::Refused { cause } => {
+                agent_runtime::effects::job::Launch::Started { .. } => 0,
+                agent_runtime::effects::job::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
+                agent_runtime::effects::job::Launch::Refused { cause } => {
                     return Err(agent_runtime::Error::refused(
                         "job-launch-failed",
                         &[("cause", cause)],
@@ -1727,7 +1732,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             replied(value, status)?
         }
         Verb::StopJob { record } => {
-            serde_json::json!({"stopped": effects::stop_recorded(&record)?})
+            serde_json::json!({"stopped": agent_runtime::effects::job::stop_recorded(&record)?})
         }
         Verb::ReconcileItems {
             stale_hours,

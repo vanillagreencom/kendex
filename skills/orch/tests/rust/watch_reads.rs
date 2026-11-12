@@ -1129,9 +1129,7 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     assert_eq!(status(&fleet, "KEN-2"), "stopped");
     assert_eq!(status(&fleet, "KEN-4"), "stopped");
     let closes = fleet["intents"].as_array().map_or(0, |i| {
-        i.iter()
-            .filter(|x| x["op"] == "close-owned-resources")
-            .count()
+        i.iter().filter(|x| x["op"] == "close-resources").count()
     });
     assert_eq!(closes, 2, "one request per ended item: {fleet}");
     assert_eq!(baseline.get(tracker::TERMINAL_CLOSE_ROW, "KEN-1"), None);
@@ -1148,9 +1146,7 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     assert_eq!(rendered(&second), Vec::<String>::new());
     let fleet = world.fleet();
     let closes = fleet["intents"].as_array().map_or(0, |i| {
-        i.iter()
-            .filter(|x| x["op"] == "close-owned-resources")
-            .count()
+        i.iter().filter(|x| x["op"] == "close-resources").count()
     });
     assert_eq!(closes, 2, "no second request");
     assert_eq!(
@@ -1548,7 +1544,7 @@ fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|i| i["op"] == "close-owned-resources")
+        .find(|i| i["op"] == "close-resources")
         .cloned()
         .unwrap();
     assert_eq!(close["outcome"], "failed", "{close}");
@@ -1594,7 +1590,7 @@ fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
             .as_array()
             .unwrap()
             .iter()
-            .find(|i| i["op"] == "close-owned-resources")
+            .find(|i| i["op"] == "close-resources")
             .cloned()
             .unwrap_or(Value::Null)
     };

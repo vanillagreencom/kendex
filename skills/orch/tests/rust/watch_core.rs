@@ -934,10 +934,10 @@ fn every_event_renders_to_its_recorded_bytes() {
         ),
         (
             Event::ReconcileRefused {
-                intent: s("close-owned-resources:KEN-GONE:1-1"),
+                intent: s("close-resources:KEN-GONE:1-1"),
                 refusal: s("lane-missing"),
             },
-            "EVENT reconcile-refused intent=close-owned-resources:KEN-GONE:1-1 refusal=lane-missing",
+            "EVENT reconcile-refused intent=close-resources:KEN-GONE:1-1 refusal=lane-missing",
         ),
         (
             Event::NoticeUnmarked {
@@ -1940,7 +1940,7 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
         .unwrap();
     let state = state_dir.join(FLEET_FILE_NAME);
     let gone = json!({
-        "id": "close-owned-resources:KEN-GONE:1-1", "op": "close-owned-resources",
+        "id": "close-resources:KEN-GONE:1-1", "op": "close-resources",
         "target": "KEN-GONE", "created_at": "2026-01-29T15:20:00Z",
         "outcome": "unconfirmed", "lane_since": "2026-01-29T15:20:00Z",
         "obligations": {"standing": [], "discharged": [], "signalled": false, "revision": 1}
@@ -1973,7 +1973,7 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     assert_eq!(
         logged,
         vec![
-            "EVENT reconcile-refused intent=close-owned-resources:KEN-GONE:1-1 refusal=lane-missing"
+            "EVENT reconcile-refused intent=close-resources:KEN-GONE:1-1 refusal=lane-missing"
                 .to_owned(),
             format!(
                 "EVENT report-due reason=minutes since={}",
@@ -1988,7 +1988,7 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     );
     let baseline = watch::Baseline::load(&paths.baseline).unwrap();
     assert_eq!(
-        baseline.get("reconcile-refused", "close-owned-resources:KEN-GONE:1-1"),
+        baseline.get("reconcile-refused", "close-resources:KEN-GONE:1-1"),
         Some("lane-missing"),
         "the row that quiets the next pass"
     );

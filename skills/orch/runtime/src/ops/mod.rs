@@ -63,7 +63,6 @@ pub mod wall;
 
 pub use accept::{SummaryPost, accept};
 pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
-pub(crate) use controller::apply_adoption;
 pub use controller::{
     ControllerStarted, DeathCause, OverseerExpected, RequestTransfer, StartController,
     StopController, StopRequested, TransferRequested, admit, judge_effect_settings,
@@ -87,8 +86,8 @@ pub use lane::{
     identity_fills, lane_moved,
 };
 pub use lane::{
-    LaneDischarged, LaneObligation, LaneObligationRecord, RecordLaneProgress, WORKTREE_KEPT,
-    WORKTREE_MAIL_KEPT,
+    LaneDischarged, LaneObligation, LaneObligationRecord, LaneOutcome, RecordLaneProgress,
+    WORKTREE_KEPT, WORKTREE_MAIL_KEPT,
 };
 pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
@@ -618,6 +617,10 @@ pub fn item_transition(
 /// The fleet transitions on the document. `host` is what a transition that
 /// judges live processes reads beside the record; one asked for without it
 /// refuses `op-not-transition`, since it reads before it writes.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the dispatcher's one application of the journal's claim, progress and outcome transitions"
+)]
 pub fn fleet_transition(
     path: &Path,
     doc: &mut Document,
@@ -752,8 +755,8 @@ enum Standing {
 /// journal's one-open-intent rule.
 fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standing> {
     let first = intents.iter().find(|i| i.target == target && i.open());
-    if op == EffectOp::CloseOwnedResources
-        && let Some(launch) = first.filter(|i| i.op == EffectOp::LaunchLane)
+    if op == EffectOp::CloseResources
+        && let Some(launch) = first.filter(|i| i.op == EffectOp::LaunchSession)
     {
         return Ok(Standing::Supersedable(launch.clone()));
     }
@@ -832,6 +835,21 @@ fn null_held(doc: &mut Document, key: &str) {
 /// lane arms are `lane`'s, judged against the lane's stamp and launch keys;
 /// the succession arms `controller`'s, judged against the controller
 /// record's generation.
+/// orch's arm as the engine's run carries it: the engine's error holds no
+/// orch type, so an orch refusal crosses as agent-runtime's refusal with the
+/// same key and fields.
+pub fn engine_outcome_arm(
+    path: &Path,
+    doc: &mut Document,
+    intent: &mut Intent,
+    r: &RecordOutcome,
+    at: &str,
+    terminal: bool,
+    target: &mut Map<String, Value>,
+) -> agent_runtime::Result<Option<Reconciled>> {
+    outcome_arm(path, doc, intent, r, at, terminal, target).map_err(agent_runtime::Error::from)
+}
+
 pub fn outcome_arm(
     path: &Path,
     doc: &mut Document,
@@ -844,10 +862,10 @@ pub fn outcome_arm(
     let mut moved = TargetMoved::default();
     let recorded = &mut moved;
     let stale = match intent.op {
-        EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
+        EffectOp::LaunchSession | EffectOp::CloseResources => {
             match lane::intent_lane(path, doc, intent, r.principal_keys.as_ref())? {
                 IntentTarget::Current { index } => {
-                    if intent.op == EffectOp::LaunchLane {
+                    if intent.op == EffectOp::LaunchSession {
                         lane::record_launch_outcome(path, doc, intent, r, at, index, recorded)?;
                     } else {
                         lane::record_close_outcome(path, doc, intent, r, at, index, recorded)?;
@@ -1146,8 +1164,8 @@ mod tests {
         };
         let before = fs::read_to_string(&path).unwrap();
         for (request, op) in [
-            (launch("KEN-4468"), "launch-lane"),
-            (close("KEN-4468"), "close-owned-resources"),
+            (launch("KEN-4468"), "launch-session"),
+            (close("KEN-4468"), "close-resources"),
             (transfer(expected()), "request-transfer"),
         ] {
             let err = apply_on(&path, &request, &unowned, LOCK, &host()).unwrap_err();
@@ -1274,7 +1292,7 @@ mod tests {
                         panic!("{applied:?}")
                     };
                     assert!(
-                        matches!(&c.effect, Effect::Supersedes { intent } if intent.op == EffectOp::LaunchLane)
+                        matches!(&c.effect, Effect::Supersedes { intent } if intent.op == EffectOp::LaunchSession)
                     );
                     Ok(())
                 },
@@ -1392,7 +1410,7 @@ mod tests {
                     let close = fleet(p)
                         .intents
                         .into_iter()
-                        .find(|i| i.op == EffectOp::CloseOwnedResources)
+                        .find(|i| i.op == EffectOp::CloseResources)
                         .unwrap();
                     assert!(!close.open());
                     assert_eq!(
@@ -1550,11 +1568,9 @@ mod tests {
                     server_start: None,
                     server_socket: None,
                     window: None,
-                    tmux_session: None,
                     home: None,
-                    home_implicit: false,
                     watch: None,
-                    mail_root: None,
+                    members: serde_json::Map::new(),
                     observation: None,
                     while_owner: None,
                     principal_keys: None,

@@ -1,0 +1,42 @@
+# The effect boundary at the compiler, agent-runtime's half: the acting
+# primitives the engine's handle owns, its job launcher's record and files,
+# the owner notice and the store's write are disallowed methods in this
+# crate, so `cargo clippy --all-targets -- -D warnings` refuses an ordinary
+# call of one outside `effects` (the engine, the one owner of every primitive
+# it acts with) and the modules, functions and test modules that carry a
+# reviewed `#[allow(clippy::disallowed_methods, reason = "..")]`; each
+# allowance carries its reason at its attribute, and those attributes are
+# the inventory. The list guards against a developer's accidental call past
+# the operation handle, from the record types, the journal's transitions or
+# the account reading; code deliberately written to defeat it is a
+# code-review matter. A caller crate holds the same primitives to its own
+# opener in its own `clippy.toml`.
+disallowed-methods = [
+    # tmux: a window, a pane, a server
+    { path = "agent_runtime::host::tmux::kill_pane", reason = "a pane is closed only through the operation handle's token or the session command's own stop" },
+    { path = "agent_runtime::host::tmux::kill_window", reason = "a window is closed only through the operation handle's token or the session command's own stop" },
+    { path = "agent_runtime::host::tmux::kill_server", reason = "no effect ends a tmux server" },
+    { path = "agent_runtime::host::tmux::keep_on_exit", reason = "a pane is kept past its process only through the operation handle's token" },
+    { path = "agent_runtime::host::tmux::new_window", reason = "a window is opened only through the operation handle, its acquisition written first, or the session command's own launch" },
+    { path = "agent_runtime::host::tmux::send_line", reason = "a pane is typed into only through the operation handle's token or the session command's own delivery" },
+    { path = "agent_runtime::host::tmux::send_key", reason = "a key is sent only through the operation handle's token or the session command's own delivery" },
+    # processes
+    { path = "agent_runtime::process::stop_tree", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
+    { path = "agent_runtime::process::stop_identities", reason = "a process is signalled only through the operation handle's token, `signalled` written first, or the session command's exact stop" },
+    # the detached start and the harness's trust record
+    { path = "agent_runtime::host::start_detached", reason = "a detached job is started only by the operation handle, its record written first" },
+    { path = "agent_runtime::trust::prepare", reason = "a harness's trust record is written only before the window it serves opens" },
+    # the job launcher, its record and files, and the owner notice
+    { path = "agent_runtime::effects::job::read_handle", reason = "the launcher's record is read only by the operation handle" },
+    { path = "agent_runtime::effects::job::unit_end", reason = "a unit is read only by the operation handle" },
+    { path = "agent_runtime::effects::job::group_end", reason = "a job group is read only by the operation handle" },
+    { path = "agent_runtime::effects::job::pgid_end", reason = "a job group is read only by the operation handle" },
+    { path = "agent_runtime::effects::job::write_request", reason = "the job's request file is written only by the operation handle" },
+    { path = "agent_runtime::effects::job::remove_files", reason = "the job's files are removed only by the recording boundary" },
+    { path = "agent_runtime::effects::job::send_owner_notice", reason = "the owner notice is sent only by the recording boundary, from the recorded owed notice" },
+    { path = "agent_runtime::effects::job::mark_notice", reason = "an owed notice's mark is written only by the recording boundary" },
+    # the store: a record is written only through the journal's `commit`, the
+    # adoption's one write and the record module's own writers
+    { path = "agent_runtime::record::store", reason = "the fleet record is written only through the journal's `commit` and the adoption's one write" },
+    { path = "agent_runtime::journal::commit", reason = "a journal transition is committed only by the journal's own writes or a caller's one store write" },
+]
