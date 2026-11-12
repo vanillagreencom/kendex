@@ -197,11 +197,7 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                 continue;
             }
         };
-        let pieces: Vec<&str> = match whole {
-            true => vec![text],
-            false => text.split(' ').collect(),
-        };
-        for (at, piece) in pieces.into_iter().enumerate() {
+        for (at, piece) in pieces(span).into_iter().enumerate() {
             spaced |= at > 0;
             if piece.is_empty() {
                 continue;
@@ -227,6 +223,25 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
         lines.push(line);
     }
     lines
+}
+
+/// The pieces of `span` that [`wrap`] keeps on one line wherever the room
+/// holds them: a prose word, a whole command, a verbatim character.
+fn pieces<'a>(span: &Span<'a>) -> Vec<&'a str> {
+    match *span {
+        Span::Prose(text) => text.split(' ').collect(),
+        Span::Command(text) => vec![text],
+        Span::Verbatim(text) => text
+            .char_indices()
+            .map(|(at, c)| &text[at..at + c.len_utf8()])
+            .collect(),
+    }
+}
+
+/// The cells of the widest piece [`wrap`] never breaks within `spans`: a
+/// room this wide draws every word and every command whole.
+pub(super) fn unbroken(spans: &[Span<'_>]) -> usize {
+    spans.iter().flat_map(pieces).map(cells).max().unwrap_or(0)
 }
 
 /// `text` onto `line` a character at a time, ending the line where the

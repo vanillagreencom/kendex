@@ -139,13 +139,27 @@ fn import_candidate_snapshots() {
     for cell in ["0123456789ab", "unusable", "it has no frontmatter"] {
         assert!(drawn.contains(cell), "{cell}: {drawn}");
     }
-    // A place longer than its column could be at 80 cells stays whole on
-    // one line.
+    // A place that leaves the other columns less room than their words
+    // need: every word, the name and the place stay whole, and the row runs
+    // past the width.
     let place = format!("/home/dev/{}review", "marketplaces/".repeat(4));
     let mut far = candidates[0].clone();
-    far.origins[0].locations = vec![place.clone()];
-    let drawn = candidate_lines(&rich(80), &[far]);
-    assert!(drawn.iter().any(|line| line.contains(&place)), "{drawn:#?}");
+    far.origins[0].locations = vec![place];
+    assert_eq!(
+        tagged(&candidate_lines(&rich(80), &[far])),
+        [
+            "",
+            "<1;36>candidates</>  <90>2</>",
+            "  <1;90>kind</>   <1;90>name</>    <1;90>origin</>       <1;90>hash</>          <1;90>places</>",
+            "  <90>──────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  skill  review  [from        0123456789ab  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/review",
+            "                 marketplace",
+            "                 'cat'",
+            "                 (MIT)]",
+            "  skill  review  [found on    unusable      /c/review — it has no frontmatter",
+            "                 disk]",
+        ]
+    );
 }
 
 #[test]

@@ -338,8 +338,8 @@ fn candidate_lines(style: &Style, candidates: &[author::ImportCandidate]) -> Vec
             // merely a format a catalog cannot store. The word says only
             // that it cannot be taken; `problem` says why.
             let hash = match origin.hash.is_empty() {
-                true => Cell::from("unusable".to_owned()),
-                false => Cell::default().copy(&origin.hash[..12]),
+                true => "unusable".to_owned(),
+                false => origin.hash[..12].to_owned(),
             };
             let mut places = Cell::default();
             for (at, location) in origin.locations.iter().enumerate() {
@@ -355,7 +355,7 @@ fn candidate_lines(style: &Style, candidates: &[author::ImportCandidate]) -> Vec
                 candidate.kind.name().to_owned().into(),
                 candidate.name.clone().into(),
                 format!("[{group}]").into(),
-                hash,
+                hash.into(),
                 places,
             ]);
         }
@@ -486,7 +486,7 @@ fn submissions(
     style: &Style,
     rows: &[kendex_core::registry::submit::SubmissionRow],
 ) -> Vec<String> {
-    let cells: Vec<Vec<Cell>> = rows
+    let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
             let reason = row
@@ -494,10 +494,7 @@ fn submissions(
                 .as_ref()
                 .map(|reason| format!(" — {reason}"))
                 .unwrap_or_default();
-            vec![
-                Cell::default().copy(row.repo.clone()),
-                format!("{}{reason}", row.status).into(),
-            ]
+            vec![row.repo.clone(), format!("{}{reason}", row.status)]
         })
         .collect();
     style.report_table(

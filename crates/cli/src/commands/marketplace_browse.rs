@@ -6,7 +6,7 @@ use kendex_core::source_ops;
 
 use super::{CliResult, answer, resolve_scopes};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Style};
+use crate::ui::{self, Cell, Style};
 
 type BrowseRow = (
     kendex_core::model::Scope,
@@ -68,30 +68,32 @@ pub fn run_browse(
         "marketplace browse",
         marketplace.as_deref().unwrap_or("every subscription"),
     ));
-    let cells: Vec<Vec<String>> = rows.into_iter().map(package_cells).collect();
+    let cells: Vec<Vec<Cell>> = rows.into_iter().map(package_cells).collect();
     ui::stdout(&listing(&style, &cells));
     Ok(())
 }
 
 /// One package's cells. The summary carries its own dash, so a plain row
 /// stays the line scripts read.
-fn package_cells((scope, marketplace, package): BrowseRow) -> Vec<String> {
+fn package_cells((scope, marketplace, package): BrowseRow) -> Vec<Cell> {
     vec![
-        scope.label(),
-        format!("{marketplace}::{}", package.name),
+        Cell::default().copy(scope.label()),
+        format!("{marketplace}::{}", package.name).into(),
         format!(
             "({}) [{}]",
             package.kind.name(),
             install_state(&package.state)
-        ),
+        )
+        .into(),
         package
             .summary
             .map(|text| format!("— {text}"))
-            .unwrap_or_default(),
+            .unwrap_or_default()
+            .into(),
     ]
 }
 
-fn listing(style: &Style, cells: &[Vec<String>]) -> Vec<String> {
+fn listing(style: &Style, cells: &[Vec<Cell>]) -> Vec<String> {
     style.report_table(
         "packages",
         &["scope", "package", "kind", "summary"],

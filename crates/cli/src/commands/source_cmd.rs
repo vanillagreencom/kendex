@@ -211,7 +211,7 @@ fn listed_row(scope: &Scope, row: &source_ops::SourceRow) -> Vec<Cell> {
         false => "  (switched off)",
     };
     vec![
-        scope.label().into(),
+        Cell::default().copy(scope.label()),
         row.name.clone().into(),
         Cell::default()
             .copy(row.reference.clone())

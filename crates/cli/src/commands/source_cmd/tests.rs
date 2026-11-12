@@ -45,17 +45,26 @@ fn source_list_snapshots() {
             "  global  tools  acme/tools @abc1234   [2 package(s)]",
         ]
     );
-    // A local marketplace's folder, longer than its column could be at 80
-    // cells, stays whole on one line.
-    let folder = format!("/home/dev/{}/tools", "marketplaces/".repeat(4));
+    // A project's local marketplace whose folder leaves the other columns
+    // less room than their words need: the project root, the name, the
+    // folder and every word stay whole, and the row runs past the width.
+    let project = Scope::Project {
+        root: PathBuf::from("/home/dev/My Projects/acme-web"),
+    };
     let local = source_ops::SourceRow {
-        reference: folder.clone(),
+        reference: format!("/home/dev/{}tools", "marketplaces/".repeat(4)),
         is_remote: false,
         ..row("tools", Some("abc1234"), true, 2)
     };
-    let drawn = listing(&rich(80), &[listed_row(&Scope::Global, &local)]);
-    assert!(
-        drawn.iter().any(|line| line.contains(&folder)),
-        "{drawn:#?}"
+    assert_eq!(
+        tagged(&listing(&rich(80), &[listed_row(&project, &local)])),
+        [
+            "",
+            "<1;36>marketplaces</>  <90>1</>",
+            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                 <1;90>packages</>",
+            "  <90>───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  /home/dev/My Projects/acme-web  tools  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/tools  [2",
+            "                                         @abc1234                                                             package(s)]",
+        ]
     );
 }

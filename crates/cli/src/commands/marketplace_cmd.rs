@@ -265,7 +265,7 @@ fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<Cell> {
     };
     let state = if row.enabled { "" } else { "  (switched off)" };
     vec![
-        row.scope.label().into(),
+        Cell::default().copy(row.scope.label()),
         row.name.into(),
         Cell::default().copy(what).prose(rev),
         format!("[{counted}]{state}").into(),

@@ -23,7 +23,10 @@ fn a_change_stacks_exactly_where_its_one_line_form_overflows() {
 #[test]
 fn inspection_components_wrap_content_within_80_cells() {
     let long = "界".repeat(90);
-    let columns = vec![vec![long.clone(), "switched off".into()]];
+    let columns = vec![vec![
+        vec!["界".repeat(9); 10].join(" "),
+        "switched off".into(),
+    ]];
     let cases = [
         (
             "table",
@@ -538,12 +541,12 @@ fn pinned(style: &Style, want: &[(&str, &[&str])]) {
     }
 }
 
-/// A copied run in a cell — a path, a reference — is drawn whole: its
-/// column narrows no further than it, the prose beside it wraps instead,
-/// and one wider than the whole line runs past the width. Plain joins the
-/// runs as written.
+/// No column narrows below its header's or a cell's widest word, nor its
+/// widest copied run — a path, which can hold a space: the prose beside
+/// them breaks between words instead, and a table whose floors pass the
+/// width runs past it. Plain joins the runs as written.
 #[test]
-fn a_table_draws_a_copied_run_whole() {
+fn a_table_never_breaks_a_word_or_a_copied_run() {
     let folder = "/home/dev/projects/marketplaces/acme/team-skills-1";
     let long = format!("/{}", "x".repeat(99));
     let mixed = || {
@@ -565,7 +568,20 @@ fn a_table_draws_a_copied_run_whole() {
             mixed(),
         ],
     ];
-    let cases: [(&str, Vec<String>, Vec<String>); 3] = [
+    let squeezed = vec![vec![
+        Cell::from("demo-pretty".to_owned()),
+        Cell::from("3 package(s), 1 bundle(s), 0 problem(s)".to_owned()),
+        Cell::default().copy(format!("/home/dev/{}/demo-pretty", "x".repeat(44))),
+    ]];
+    let project = vec![vec![
+        Cell::default().copy("/home/dev/My Projects/acme-web"),
+        Cell::from("tools".to_owned()),
+        Cell::default()
+            .copy("/home/dev/My Projects/acme-web/marketplaces/tools")
+            .prose(" @ v2"),
+        Cell::from("[2 package(s)]".to_owned()),
+    ]];
+    let cases: [(&str, Vec<String>, Vec<String>); 5] = [
         (
             "narrower than the width",
             rich(80).table(&["name", "holds", "folder"], &rows),
@@ -590,6 +606,39 @@ fn a_table_draws_a_copied_run_whole() {
                 "  <1;90>folder</>".to_owned(),
                 format!("  <90>{}</>", "─".repeat(100)),
                 format!("  {long}"),
+            ],
+        ),
+        (
+            "floors pass the width",
+            rich(80).table(&["name", "holds", "folder"], &squeezed),
+            [
+                "  <1;90>name</>         <1;90>holds</>        <1;90>folder</>".to_owned(),
+                format!("  <90>{}</>", "─".repeat(92)),
+                format!(
+                    "  demo-pretty  3            /home/dev/{}/demo-pretty",
+                    "x".repeat(44)
+                ),
+            ]
+            .into_iter()
+            .chain(
+                ["package(s),", "1", "bundle(s),", "0", "problem(s)"]
+                    .map(|word| format!("{}{word}", " ".repeat(15))),
+            )
+            .collect(),
+        ),
+        (
+            "a project root in the scope column",
+            rich(80).table(&["scope", "name", "from", "packages"], &project),
+            vec![
+                format!(
+                    "  <1;90>scope</>{}<1;90>name</>   <1;90>from</>{}<1;90>packages</>",
+                    " ".repeat(27),
+                    " ".repeat(47)
+                ),
+                format!("  <90>{}</>", "─".repeat(101)),
+                "  /home/dev/My Projects/acme-web  tools  /home/dev/My Projects/acme-web/marketplaces/tools  [2"
+                    .to_owned(),
+                format!("{}@ v2{}package(s)]", " ".repeat(41), " ".repeat(47)),
             ],
         ),
         (

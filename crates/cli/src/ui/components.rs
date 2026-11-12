@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use super::escaped;
-use super::modes::{Look, Span, Style, cells, wrap};
+use super::modes::{Look, Span, Style, cells, unbroken, wrap};
 use super::symbols::{Glyphs, Symbol};
 use super::tokens::{Token, paint, strong};
 
@@ -80,9 +80,10 @@ pub struct Value<'a> {
     pub remark: Option<&'a str>,
 }
 
-/// One [`Style::table`] cell that holds what a reader copies — a path, a
-/// reference — drawn whole, as a row draws a [`Span::Command`], with the
-/// prose around it broken between words. A `String` cell is prose alone.
+/// One [`Style::table`] cell that holds what a reader copies and can hold a
+/// space — a path — drawn whole, as a row draws a [`Span::Command`], with
+/// the prose around it broken between words. A `String` cell is prose
+/// alone, and the table keeps each of its words whole.
 #[derive(Default)]
 pub struct Cell(Vec<(Shape, String)>);
 
@@ -457,9 +458,9 @@ impl Style {
 
     /// Columns sized to their widest cell, a rule under the header. Rich
     /// narrows the widest column first to fit the width, but never below
-    /// its widest run a reader copies: such a run is drawn whole, and a
-    /// table whose copied runs alone pass the width runs past it, which the
-    /// terminal wraps.
+    /// its header's or a cell's widest word, nor its widest copied run: no
+    /// word, name or path breaks in the middle, and a table whose floors
+    /// pass the width runs past it, which the terminal wraps.
     pub fn table<C: TableCell>(&self, headers: &[&str], rows: &[Vec<C>]) -> Vec<String> {
         let headers: Vec<Escaped> = headers
             .iter()
@@ -486,10 +487,10 @@ impl Style {
         if let Look::Rich { width, .. } = self.look {
             let floors: Vec<usize> = (0..widths.len())
                 .map(|column| {
-                    rows.iter()
+                    std::iter::once(&headers)
+                        .chain(&rows)
                         .filter_map(|row| row.get(column))
-                        .flat_map(Escaped::whole)
-                        .map(cells)
+                        .map(|cell| unbroken(&cell.spans()))
                         .fold(1, usize::max)
                 })
                 .collect();
@@ -689,14 +690,6 @@ impl Escaped {
             .iter()
             .map(|(shape, text)| shape.span(text))
             .collect()
-    }
-
-    /// The runs drawn whole: the commands.
-    fn whole(&self) -> impl Iterator<Item = &str> {
-        self.0.iter().filter_map(|(shape, text)| match shape {
-            Shape::Command => Some(text.as_str()),
-            Shape::Prose | Shape::Verbatim => None,
-        })
     }
 
     /// The plain spelling: every run joined with nothing between.

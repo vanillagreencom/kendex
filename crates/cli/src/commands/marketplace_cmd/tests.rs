@@ -48,18 +48,27 @@ fn marketplace_list_snapshots() {
             "  global  old    acme/old @ v2    [not downloaded yet] (switched off)",
         ]
     );
-    // A local subscription's folder, longer than its column could be at
-    // 80 cells, stays whole on one line.
-    let folder = format!("/home/dev/{}/tools", "marketplaces/".repeat(4));
+    // A project's local subscription whose folder leaves the other columns
+    // less room than their words need: the project root, the name, the
+    // folder and every word stay whole, and the row runs past the width.
     let local = SubscriptionRow {
+        scope: Scope::Project {
+            root: "/home/dev/My Projects/acme-web".into(),
+        },
         repo: None,
-        path: Some(folder.clone()),
+        path: Some(format!("/home/dev/{}tools", "marketplaces/".repeat(4))),
         ..subscription("tools", Some(3), true)
     };
-    let drawn = subscriptions(&rich(80), &[subscription_cells(local)]);
-    assert!(
-        drawn.iter().any(|line| line.contains(&folder)),
-        "{drawn:#?}"
+    assert_eq!(
+        tagged(&subscriptions(&rich(80), &[subscription_cells(local)])),
+        [
+            "",
+            "<1;36>subscriptions</>  <90>1</>",
+            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                 <1;90>packages</>",
+            "  <90>───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  /home/dev/My Projects/acme-web  tools  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/tools  [3",
+            "                                         @ v2                                                                 package(s)]",
+        ]
     );
 }
 
