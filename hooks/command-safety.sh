@@ -21,8 +21,10 @@ set -euo pipefail
 # Git refuses any other one, and takes -C only detached.
 # Each refused read is one record of its reason and its -C chain. Outside a
 # worktree that chain alone names the project whose policy judges the read.
-history_git_argv() { # START
-  local cursor=$1 value fenced="" reason="" state=relative words=() tildes=() dirs=()
+# A launched git word may be data rather than the program, and since Git
+# refuses any unlisted option, such an option there ends its judgment.
+history_git_argv() { # START [launched]
+  local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=()
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
     [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
@@ -35,7 +37,7 @@ history_git_argv() { # START
       -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=* | --attr-source=*) ;;
       -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --no-literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
       --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path | --list-cmds=*) break ;;
-      -*) reason=unresolved-git-argv; state=unknown; break ;;
+      -*) [ -n "$launched" ] || { reason=unresolved-git-argv; state=unknown; }; break ;;
       *)
         case "$value" in
           log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
@@ -74,7 +76,8 @@ history_record() { # REASON STATE [DIR...]
 }
 
 # A launcher the matcher does not resolve, such as timeout 5 or nice -n 5,
-# can run any later literal git word as its command, so the first one is
+# can run any later literal git word as its command, and an earlier one can
+# be the launcher's own operand, as in doas -u git git log, so every one is
 # judged as a Git head. A shell, eval or source receiver's later words are
 # its source, forwarded heads or positional data, judged where it runs them.
 history_launched_git() {
@@ -84,8 +87,7 @@ history_launched_git() {
   [ "$receiver" != shell ] || return 0
   for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
     if [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]##*/}" = git ]; then
-      history_git_argv $((cursor + 1))
-      return 0
+      history_git_argv $((cursor + 1)) launched
     fi
   done
 }
@@ -156,10 +158,8 @@ environment_producer() { # command kind
                 # A non-literal operand such as "$@" can expand to no word,
                 # and env then takes the next word as that operand.
                 [ "${arg_kinds[$((pos + 1))]:-}" = literal ] || { mode=dump-unknown; return; }
-                case "$value" in -C | --chdir) history_dir_changed=1 ;; esac
                 pos=$((pos + 2)) ;;
-              --chdir=*) history_dir_changed=1; pos=$((pos + 1)) ;;
-              --unset=*) pos=$((pos + 1)) ;;
+              --unset=* | --chdir=*) pos=$((pos + 1)) ;;
               --help | --version) pos=${#args[@]}; program=""; break ;;
               --) options_ended=1; pos=$((pos + 1)); continue ;;
               -S | --split-string | --split-string=*) program=opaque; break ;;
@@ -182,8 +182,8 @@ environment_producer() { # command kind
     if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
     # A directory change moves any relative -C chain the hook resolves from
     # the payload directory, wherever it stands, since a loop can run it
-    # first. So do env -C and --chdir above: env's own option rules, such as
-    # the last -C winning, are not modelled here.
+    # first. A launcher's own directory option, such as env -C or sudo -D, is
+    # resolved as if absent: launcher option grammars are not modelled here.
     case "${program:-}" in cd | pushd | popd) history_dir_changed=1 ;; esac
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
@@ -1413,43 +1413,41 @@ if [ "$root_status" -ne 0 ]; then
     start=$end
   done
   [ "${#history_roots[@]}" -gt 0 ] || exit 0
-  # The payload directory stands for the hook's scope, as a worktree root does.
+  # Settings support starts in the payload directory; each target's root is
+  # entered before its policy is read.
   root=$cwd
 fi
 
-lib=
 hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
-at="$hook_dir"
-levels=0
-# Registered hook layouts keep the scope's skills one or two directories
-# above hooks. A wider walk can reach executable files outside the install.
-while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
+# The support library is the hook's own install's, found from where the hook
+# sits and never from a directory the payload names, so a command cannot
+# choose the code this hook sources. The harness root holding hooks/, or
+# kendex/hooks/ for Pi, may keep native skills/ beside it. A registered
+# project layout names the install scope whose shared .agents/skills come
+# next: <scope>/.claude, .codex, .github or .gemini /hooks, or
+# <scope>/.pi/kendex/hooks. A harness root in no such form, such as
+# ~/.copilot or ~/.pi/agent, is a global install, and so is one under HOME.
+scope=""
+case "$hook_dir" in
+  */.pi/kendex/hooks) scope=${hook_dir%/.pi/kendex/hooks} ;;
+  */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
+esac
+native=("${hook_dir%/hooks}")
+case "$hook_dir" in */kendex/hooks) native[1]=${hook_dir%/kendex/hooks} ;; esac
+lib=""
+for at in "${native[@]}"; do
   candidate="$at/skills/commit-guards/scripts/lib"
-  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then
-    lib="$candidate"
-    break
-  fi
-  at="${at%/*}"
-  [ -n "$at" ] || at=/
-  levels=$((levels + 1))
+  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then lib=$candidate; break; fi
 done
-# Past that walk, the loader is the first scope the payload names,
-# its root or a history root, that holds the hook, whose missing loader is
-# a broken install wherever the payload stands. A hook in none of them uses
-# HOME's installed dependency, so a project's loader is sourced only when
-# the hook is installed in that project. Outside a worktree, a missing HOME
-# loader leaves the read not judged: the payload names no scope of the hook.
-lib_in_scope=""
 if [ -z "$lib" ]; then
-  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
-  for scope in "$root" ${history_roots[@]+"${history_roots[@]}"}; do
-    case "$hook_dir" in "$scope"/*) lib="$scope/.agents/skills/commit-guards/scripts/lib"; lib_in_scope=1; break ;; esac
-  done
+  if [ -n "$scope" ] && [ "$scope" != "${HOME:-}" ]; then
+    lib="$scope/.agents/skills/commit-guards/scripts/lib"
+  else
+    # A global install's shared skills are HOME's.
+    lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
+  fi
 fi
-if ! [ -f "$lib/common.sh" ] || ! [ -f "$lib/settings.sh" ]; then
-  [ -z "$outside" ] || [ -n "$lib_in_scope" ] || exit 0
-  refuse settings no-loader
-fi
+[ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
 # Keep nested support reads under errexit. A source on the left of || would
 # continue past a failed nested import. EXIT owns the advisory outcome, and

@@ -1611,10 +1611,11 @@ PY
 }
 history_rows() {
   local selected_rows=("$@") selected_seen=() label policy pattern shape command_json expected key reason payload command status output
-  local other="$scratch/other" malformed="$scratch/malformed" foreign="$scratch/foreign" run_hook home
+  local other="$scratch/other" malformed="$scratch/malformed" foreign="$scratch/foreign" mono="$scratch/mono" run_hook home
   # A second project whose settings turn the policy off, a third whose
-  # settings cannot be read, and a project that is in no worktree with the
-  # hook and its loader in a non-Claude layout.
+  # settings cannot be read, a project that is in no worktree with the
+  # hook and its loader in a non-Claude layout, and a project scope below
+  # a Git top level that selects the policy and holds a loader that fails.
   if [ ! -d "$other" ]; then
     git init -q "$other"
     printf '[env]\nCOMMAND_SAFETY_HISTORY_POLICY = "off"\n' >"$other/kendex.settings.toml"
@@ -1623,6 +1624,13 @@ history_rows() {
     mkdir -p "$foreign/.codex/hooks" "$foreign/.agents/skills/commit-guards/scripts"
     cp "$hook" "$foreign/.codex/hooks/command-safety.sh"
     cp -R "$ROOT/skills/commit-guards/scripts/lib" "$foreign/.agents/skills/commit-guards/scripts/lib"
+    git init -q "$mono"
+    printf '[env]\nCOMMAND_SAFETY_HISTORY_POLICY = "no-lazy-fetch"\n' >"$mono/kendex.settings.toml"
+    mkdir -p "$mono/.agents/skills/commit-guards/scripts/lib" "$mono/sub/.codex/hooks" "$mono/sub/.agents/skills/commit-guards/scripts"
+    printf 'return 1\n' >"$mono/.agents/skills/commit-guards/scripts/lib/common.sh"
+    : >"$mono/.agents/skills/commit-guards/scripts/lib/settings.sh"
+    cp "$hook" "$mono/sub/.codex/hooks/command-safety.sh"
+    cp -R "$ROOT/skills/commit-guards/scripts/lib" "$mono/sub/.agents/skills/commit-guards/scripts/lib"
   fi
   while IFS='|' read -r label policy pattern shape command_json expected key reason; do
     row_selected "$label" || continue
@@ -1632,13 +1640,24 @@ history_rows() {
       malformed) printf 'OTHER = false\n' >>"$repo/kendex.settings.toml" ;;
       *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
     esac
-    command=$(jq -nc --arg repo "$repo" --arg other "$other" --arg malformed "$malformed" "$command_json") || exit 1
+    command=$(jq -nc --arg repo "$repo" --arg other "$other" --arg malformed "$malformed" --arg mono "$mono" "$command_json") || exit 1
     run_hook=$hook; home=${HOME:-}
     case "$shape" in
       # A directory in no worktree; a row names the project as \($repo). HOME
       # is the scratch root, so ~/project is the project and HOME holds no loader.
       outside | outside-absent-support)
         mkdir -p "$scratch/outside"; home=$scratch
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch/outside" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      # The payload directory is an ancestor of the hook's project.
+      outside-ancestor)
+        home=$scratch
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      # The hook is installed in mono/sub; mono's own loader fails.
+      mono-sub)
+        run_hook="$mono/sub/.codex/hooks/command-safety.sh"
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$mono/sub" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      outside-mono-sub)
+        mkdir -p "$scratch/outside"; home=$scratch; run_hook="$mono/sub/.codex/hooks/command-safety.sh"
         payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch/outside" '{cwd:$cwd,tool_input:{command:$command}}') ;;
       outside-foreign | outside-foreign-absent-support)
         home=$scratch; run_hook="$foreign/.codex/hooks/command-safety.sh"
@@ -1816,14 +1835,13 @@ unknown-launcher|no-lazy-fetch|^$|shell|"timeout 5 git log -p --all"|2|refused=h
 launcher-path|no-lazy-fetch|^$|shell|"nice -n 5 /usr/bin/git log --stat"|2|refused=history-policy|missing-no-lazy-fetch
 launcher-expanding|no-lazy-fetch|^$|shell|"timeout 5 git \"$OPTIONS\" log"|2|refused=history-policy|unresolved-git-argv
 launcher-fenced|no-lazy-fetch|^$|shell|"timeout 5 git --no-lazy-fetch log -1 HEAD"|0|silent|-
+launcher-git-operand|no-lazy-fetch|^$|shell|"doas -u git git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+launcher-later-git-data|no-lazy-fetch|^$|shell|"timeout 30 git --no-lazy-fetch log --grep git --oneline"|0|silent|-
 outside-target|no-lazy-fetch|^$|outside|"git -C \($repo) log -p --all"|2|refused=history-policy|missing-no-lazy-fetch
 outside-chain|no-lazy-fetch|^$|outside|"git -C .. -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-later-target|no-lazy-fetch|^$|outside|"git -C .. log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-launcher|no-lazy-fetch|^$|outside|"timeout 5 git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-fenced|no-lazy-fetch|^$|outside|"git -C \($repo) --no-lazy-fetch log -p --all"|0|silent|-
-outside-env-chdir-relative|no-lazy-fetch|^$|outside|"env -C .. -C . git -C project log -p"|0|silent|-
-outside-env-chdir-absolute|no-lazy-fetch|^$|outside|"env --chdir=/ git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
-outside-env-chdir-shell|no-lazy-fetch|^$|outside|"env -C / bash -c 'git -C ../project log -p'"|0|silent|-
 outside-tilde|no-lazy-fetch|^$|outside|"git -C ~/project log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-tilde-quoted-tail|no-lazy-fetch|^$|outside|"git -C ~/\"project\" log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-tilde-quoted-prefix|no-lazy-fetch|^$|outside|"git -C \"~\"/project log -p"|0|silent|-
@@ -1831,12 +1849,14 @@ outside-after-cd|no-lazy-fetch|^$|outside|"cd / && git -C ../project log -p"|0|s
 outside-split-escape|no-lazy-fetch|^$|outside|"env -S 'git -C \($repo) --no-lazy-fetch log $X'"|2|refused=history-policy|unresolved-git-argv
 outside-mixed-projects|no-lazy-fetch|^$|outside|"git -C \($other) log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-foreign-hook|no-lazy-fetch|^$|outside-foreign|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-ancestor|no-lazy-fetch|^$|outside-ancestor|"git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
+mono-sub-loader|no-lazy-fetch|^$|mono-sub|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-mono-sub-loader|no-lazy-fetch|^$|outside-mono-sub|"git -C \($mono) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-unreadable|malformed|^$|outside|"git -C \($repo) log -p"|0|settings=unreadable|-
 outside-unreadable-then-selected|no-lazy-fetch|^$|outside|"git -C \($malformed) log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-absent-support|no-lazy-fetch|^$|outside-absent-support|"git -C \($repo) log -p"|0|settings=no-loader|-
 outside-foreign-absent-support|no-lazy-fetch|^$|outside-foreign-absent-support|"git -C \($repo) log -p"|0|settings=no-loader|-
-launcher-data|no-lazy-fetch|^$|shell|"grep -rn 'git' -- ."|2|refused=history-policy|unresolved-git-argv
-launcher-git-user|no-lazy-fetch|^$|shell|"runuser -u git -- git log -p"|2|refused=history-policy|unresolved-git-argv
+launcher-git-user|no-lazy-fetch|^$|shell|"runuser -u git -- git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 known-option-operand|no-lazy-fetch|^$|shell|"git --attr-source HEAD log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-off|off|^$|outside|"git -C \($repo) log -p --all"|0|silent|-
 outside-pattern|off|blocked|outside|"git -C \($repo) log blocked"|0|silent|-
