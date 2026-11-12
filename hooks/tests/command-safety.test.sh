@@ -1612,10 +1612,16 @@ PY
 history_rows() {
   local selected_rows=("$@") selected_seen=() label policy pattern shape command_json expected key reason payload command status output
   local other="$scratch/other" malformed="$scratch/malformed" foreign="$scratch/foreign" mono="$scratch/mono" run_hook home
+  local relocated="$scratch/data" loader_home="$scratch/home" bare="$scratch/bare" harness_var
   # A second project whose settings turn the policy off, a third whose
   # settings cannot be read, a project that is in no worktree with the
-  # hook and its loader in a non-Claude layout, and a project scope below
-  # a Git top level that selects the policy and holds a loader that fails.
+  # hook and its loader in Codex and Pi project layouts, and a project scope
+  # below a Git top level that selects the policy and holds a loader that
+  # fails. Then a global install whose harness homes CODEX_HOME, COPILOT_HOME
+  # and PI_CODING_AGENT_DIR move to data/.codex, .github and .pi, its loader
+  # only in a HOME of its own, beside a data/.agents loader that fails if a
+  # project reading sources it; and a Codex project layout whose scope holds
+  # no loader.
   if [ ! -d "$other" ]; then
     git init -q "$other"
     printf '[env]\nCOMMAND_SAFETY_HISTORY_POLICY = "off"\n' >"$other/kendex.settings.toml"
@@ -1631,6 +1637,17 @@ history_rows() {
     : >"$mono/.agents/skills/commit-guards/scripts/lib/settings.sh"
     cp "$hook" "$mono/sub/.codex/hooks/command-safety.sh"
     cp -R "$ROOT/skills/commit-guards/scripts/lib" "$mono/sub/.agents/skills/commit-guards/scripts/lib"
+    mkdir -p "$foreign/.pi/kendex/hooks"
+    cp "$hook" "$foreign/.pi/kendex/hooks/command-safety.sh"
+    mkdir -p "$relocated/.codex/hooks" "$relocated/.github/hooks" "$relocated/.pi/kendex/hooks" \
+      "$relocated/.agents/skills/commit-guards/scripts/lib" "$loader_home/.agents/skills/commit-guards/scripts" "$bare/.codex/hooks"
+    cp "$hook" "$relocated/.codex/hooks/command-safety.sh"
+    cp "$hook" "$relocated/.github/hooks/command-safety.sh"
+    cp "$hook" "$relocated/.pi/kendex/hooks/command-safety.sh"
+    printf 'return 1\n' >"$relocated/.agents/skills/commit-guards/scripts/lib/common.sh"
+    : >"$relocated/.agents/skills/commit-guards/scripts/lib/settings.sh"
+    cp -R "$ROOT/skills/commit-guards/scripts/lib" "$loader_home/.agents/skills/commit-guards/scripts/lib"
+    cp "$hook" "$bare/.codex/hooks/command-safety.sh"
   fi
   while IFS='|' read -r label policy pattern shape command_json expected key reason; do
     row_selected "$label" || continue
@@ -1641,7 +1658,7 @@ history_rows() {
       *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
     esac
     command=$(jq -nc --arg repo "$repo" --arg other "$other" --arg malformed "$malformed" --arg mono "$mono" "$command_json") || exit 1
-    run_hook=$hook; home=${HOME:-}
+    run_hook=$hook; home=${HOME:-}; harness_var=""
     case "$shape" in
       # A directory in no worktree; a row names the project as \($repo). HOME
       # is the scratch root, so ~/project is the project and HOME holds no loader.
@@ -1662,6 +1679,23 @@ history_rows() {
       outside-foreign | outside-foreign-absent-support)
         home=$scratch; run_hook="$foreign/.codex/hooks/command-safety.sh"
         payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      outside-pi)
+        home=$scratch; run_hook="$foreign/.pi/kendex/hooks/command-safety.sh"
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$foreign" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      # Pi trims its variable and expands a leading ~ against HOME.
+      relocated-codex | relocated-copilot | relocated-pi | bare-codex)
+        home=$loader_home
+        case "$shape" in
+          relocated-codex) run_hook="$relocated/.codex/hooks/command-safety.sh"; harness_var="CODEX_HOME=$relocated/.codex" ;;
+          relocated-copilot) run_hook="$relocated/.github/hooks/command-safety.sh"; harness_var="COPILOT_HOME=$relocated/.github" ;;
+          relocated-pi) run_hook="$relocated/.pi/kendex/hooks/command-safety.sh"; harness_var="PI_CODING_AGENT_DIR= ~/../data/.pi " ;;
+          bare-codex) run_hook="$bare/.codex/hooks/command-safety.sh" ;;
+        esac
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+      # HOME holds no loader, so the project's missing one is not replaced.
+      absent-support)
+        home=$scratch
+        payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
       copilot-object) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
       copilot-string) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:({command:$command}|tojson)}') ;;
       *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
@@ -1671,7 +1705,7 @@ history_rows() {
       *absent-support) mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/history-lib" ;;
     esac
     status=0
-    output=$(env "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share" "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" \
+    output=$(env -u CODEX_HOME -u COPILOT_HOME -u PI_CODING_AGENT_DIR ${harness_var:+"$harness_var"} "HOME=$home" "XDG_CONFIG_HOME=$home/.config" "XDG_DATA_HOME=$home/.local/share" "XDG_STATE_HOME=$home/.local/state" "XDG_CACHE_HOME=$home/.cache" \
       "$BASH" "$run_hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
     case "$shape" in
       outside-foreign-absent-support) mv "$scratch/history-lib" "$foreign/.agents/skills/commit-guards/scripts/lib" ;;
@@ -1849,6 +1883,11 @@ outside-after-cd|no-lazy-fetch|^$|outside|"cd / && git -C ../project log -p"|0|s
 outside-split-escape|no-lazy-fetch|^$|outside|"env -S 'git -C \($repo) --no-lazy-fetch log $X'"|2|refused=history-policy|unresolved-git-argv
 outside-mixed-projects|no-lazy-fetch|^$|outside|"git -C \($other) log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-foreign-hook|no-lazy-fetch|^$|outside-foreign|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-pi-hook|no-lazy-fetch|^$|outside-pi|"git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+relocated-codex-home|no-lazy-fetch|^$|relocated-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+relocated-copilot-home|no-lazy-fetch|^$|relocated-copilot|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+relocated-pi-dir|no-lazy-fetch|^$|relocated-pi|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+scope-without-loader|no-lazy-fetch|^$|bare-codex|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-ancestor|no-lazy-fetch|^$|outside-ancestor|"git -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
 mono-sub-loader|no-lazy-fetch|^$|mono-sub|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 outside-mono-sub-loader|no-lazy-fetch|^$|outside-mono-sub|"git -C \($mono) log -p"|2|refused=history-policy|missing-no-lazy-fetch

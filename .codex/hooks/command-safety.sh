@@ -1413,8 +1413,8 @@ if [ "$root_status" -ne 0 ]; then
     start=$end
   done
   [ "${#history_roots[@]}" -gt 0 ] || exit 0
-  # Settings support starts in the payload directory; each target's root is
-  # entered before its policy is read.
+  # The hook enters the payload directory first and reads nothing there; it
+  # reads each target's policy after entering that target's root.
   root=$cwd
 fi
 
@@ -1425,27 +1425,45 @@ hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
 # kendex/hooks/ for Pi, may keep native skills/ beside it. A registered
 # project layout names the install scope whose shared .agents/skills come
 # next: <scope>/.claude, .codex, .github or .gemini /hooks, or
-# <scope>/.pi/kendex/hooks. A harness root in no such form, such as
-# ~/.copilot or ~/.pi/agent, is a global install, and so is one under HOME.
+# <scope>/.pi/kendex/hooks. HOME's shared .agents/skills come last, which is
+# where a global install keeps them: a harness root in no such form, such
+# as ~/.copilot or ~/.pi/agent, and a registered one whose scope is HOME
+# itself, such as ~/.claude/hooks. A harness home that CODEX_HOME,
+# COPILOT_HOME or PI_CODING_AGENT_DIR moves is a global root even where its
+# name is a project layout's, such as CODEX_HOME=/data/.codex, so a hook in
+# that home's hooks directory reads no scope. Codex and the Pi carrier run
+# the hook with the variable they found it by. Without it, such a hook looks
+# like a project install, and a scope holding no loader still reaches HOME's.
 scope=""
 case "$hook_dir" in
   */.pi/kendex/hooks) scope=${hook_dir%/.pi/kendex/hooks} ;;
   */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
 esac
-native=("${hook_dir%/hooks}")
-case "$hook_dir" in */kendex/hooks) native[1]=${hook_dir%/kendex/hooks} ;; esac
+[ "$scope" != "${HOME:-}" ] || scope=""
+# Pi's own reading of its variable: trimmed, a leading ~ expanded against
+# HOME, used only when absolute (pi_global_root, crates/core/src/harness/pi.rs).
+pi_root=${PI_CODING_AGENT_DIR:-}
+pi_root=${pi_root#"${pi_root%%[![:space:]]*}"}
+pi_root=${pi_root%"${pi_root##*[![:space:]]}"}
+case "$pi_root" in \~ | \~/*) pi_root=${HOME:+$HOME${pi_root#\~}} ;; esac
+case "$pi_root" in /*) ;; *) pi_root="" ;; esac
+hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
+for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}" "${pi_root:+$pi_root/kendex/hooks}"; do
+  if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+    scope=""
+    break
+  fi
+done
+install_roots=("${hook_dir%/hooks}")
+case "$hook_dir" in */kendex/hooks) install_roots[1]=${hook_dir%/kendex/hooks} ;; esac
+[ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
 lib=""
-for at in "${native[@]}"; do
+for at in "${install_roots[@]}"; do
   candidate="$at/skills/commit-guards/scripts/lib"
   if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then lib=$candidate; break; fi
 done
 if [ -z "$lib" ]; then
-  if [ -n "$scope" ] && [ "$scope" != "${HOME:-}" ]; then
-    lib="$scope/.agents/skills/commit-guards/scripts/lib"
-  else
-    # A global install's shared skills are HOME's.
-    lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
-  fi
+  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
 fi
 [ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
