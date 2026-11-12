@@ -59,10 +59,14 @@
 # The pane stands in for Copilot's documented interfaces, none of which judges
 # readiness of the interactive session `jarvis task launch` opens in a pane.
 # Its hooks report turn state (`userPromptSubmitted`, `agentStop`) and
-# permission prompts (`notification`) but mark no prompt ready, folder-trust
-# dialog or sign-in wall, the screens task-ready refuses on:
+# permission prompts and elicitation dialogs (`notification`). No event marks
+# a ready prompt, the screen task-ready waits for, nor a screen it refuses on:
+# a first-run or folder-trust dialog, a selection dialog such as a model
+# switch, or a sign-in or usage wall:
 # https://docs.github.com/en/copilot/reference/hooks-reference
-# Its ACP server creates its own sessions and attaches to none running:
+# Its ACP server is a process the client starts (stdio) or connects to (TCP);
+# it creates or loads sessions in that process, and the page documents no way
+# to attach to the terminal a pane is drawing:
 # https://docs.github.com/en/copilot/reference/copilot-cli-reference/acp-server
 # `-p --output-format json` is a separate non-interactive run that exits after
 # its prompt:
