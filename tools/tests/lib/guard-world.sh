@@ -143,11 +143,18 @@ git -C "$R" commit -q -m fixture
 SEED="$(git -C "$R" rev-parse HEAD)"
 
 # The guard's one runner call names a suite <tree>--<base>, or <base> where
-# the call held one battery.
+# the call held one battery, so the bare form stands for PATH only where that
+# battery is PATH's tree.
 suite_report() { # PATH
-  local base=${1##*/} tree=${1%/tests/*}
+  local base=${1##*/} tree=${1%/tests/*} call want
   base=${base%.sh}
-  awk -v a="suite=${tree##*/}--$base" -v b="suite=$base" '$1 == a || $1 == b' <<<"$OUT"
+  want="suite=${tree##*/}--$base"
+  call="$(sed -n 's#^=== skills/orch/tests/run-all.sh ##p' <<<"$OUT")"
+  case " $call " in
+    *" --battery "*" --battery "*) ;;
+    *" --battery $tree/tests "*) want="suite=$base" ;;
+  esac
+  awk -v want="$want" '$1 == want' <<<"$OUT"
 }
 
 reset_world() { # — the seeded commit, an empty index and a clean tree

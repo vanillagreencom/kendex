@@ -39,8 +39,9 @@
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
 # runs that tree's suites this way. The ALONE list below names this
-# directory's suites, and holds them wherever this directory is a battery;
-# with --battery, the suites each `--alone NAME` after it names run alone too.
+# directory's suites and other trees' of this repository, and holds each
+# wherever its directory is a battery; with --battery, the suites each
+# `--alone NAME` after it names run alone too.
 #
 # Each argument is a substring of a suite's base name, or, written `=name`,
 # the whole of one; `=TREE:name` is that one in the battery whose tree is
@@ -196,21 +197,61 @@ unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
   ORCH_USER_MODE ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY \
   ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
+# Physical directories from here, so this directory and each --battery one
+# compare equal to themselves however the caller reached them: tools/guard
+# calls this file through its own path and names batteries from git's
+# toplevel.
+set -P
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_TEST_DIR="$TEST_DIR"
 
 # Suites that run alone, one at a time, once every other selected suite has
 # finished: each holds a fixed wall-clock window that the code under test
-# must meet, and a loaded host has made it miss. One name per line, first
-# word, with the window it holds; run-all-parallel.sh reads this list.
+# must meet, and a loaded host has made it miss. One suite per line, first
+# word, with the window it holds where its tree records one. This block names
+# this directory's suites; run-all-parallel.sh reads it and plants each name
+# in a battery beside a copy of this file.
 ALONE=(
   open-terminal-lane      # the lane-tree stub holds the picked account for 2s
   oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
+# Other trees' suites, each a path from the repository root this file sits
+# in, so a pool of any batteries holds them; CI's per-tree --alone arguments
+# name the same suites.
+ALONE+=(
+  skills/commit-guards/tests/terminal-paths.test        # the watchdog's caller window
+  tools/tests/bash32-parse.test
+  hooks/tests/lane-mail-usage.test                      # the pending-reading row's real hook wait
+  skills/linear/tests/mutation-isolation.test           # a fixture's short cap
+  skills/linear/tests/interrupt.test                    # a real signal window
+  skills/bot-instructions/tests/fsutil.test             # parent deadlines on bounded reads
+  skills/bot-instructions/tests/globs.test              # parent deadlines on matching
+  skills/worktree/tests/worktree_session_guard_lifecycle # the held mutex before the outer timeout
+  skills/slack/tests/mailbox.test
+  skills/slack/tests/reload.test
+  skills/slack/tests/socket.test
+  skills/github/tests/bounded-signal.test
+  skills/github/tests/pr-merge.test
+  skills/github/tests/pr-view.test
+  skills/github/tests/native-contracts.test
+  skills/harness-ci/tests/wiring-errors.test
+  skills/reviewer/tests/mutation-stability.test
+  skills/second-opinion/tests/cli-failure-gate.test
+  skills/second-opinion/tests/detached-run.test
+  skills/second-opinion/tests/execution-fallback.test
+  skills/second-opinion/tests/process-tree.test
+)
 
-# Whole paths, so a --battery run holds these wherever this directory is one
-# of its batteries, and a same-named suite in another battery is not held.
-for ((i=0; i<${#ALONE[@]}; i++)); do ALONE[i]="$TEST_DIR/${ALONE[i]}.sh"; done
+# Whole physical paths, so a --battery run holds each wherever its directory
+# is one of the batteries, and a same-named suite in another battery is not
+# held. The repository root is the one the caller's path to this file names.
+SUITE_ROOT="$(cd -L "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" || exit 1
+for ((i=0; i<${#ALONE[@]}; i++)); do
+  case "${ALONE[i]}" in
+    */*) ALONE[i]="$SUITE_ROOT/${ALONE[i]}.sh" ;;
+    *) ALONE[i]="$ORCH_TEST_DIR/${ALONE[i]}.sh" ;;
+  esac
+done
 TEST_DIRS=("$TEST_DIR")
 if [ "${1-}" = --battery ]; then
   TEST_DIRS=()
@@ -338,7 +379,6 @@ shard_of() { # BASE
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
-SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd -P)" || exit 1
 CLEAN_PATH=""
 CHECKOUT_PATH=""
 # The kendex tools/ci-job-set gives the suite at PATH, relative to SUITE_ROOT,

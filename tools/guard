@@ -2820,10 +2820,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
         filters+=("=${t%.sh}")
       done <<<"$run"
       # --local replaces PATH with a checkout build. The release leg uses
-      # its inherited release PATH; orch's native entry keeps its ALONE policy.
-      release_args=()
-      [ "$d" = skills/orch ] || release_args=(--battery "$d/tests")
-      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" ${release_args[@]+"${release_args[@]}"} ${filters[@]+"${filters[@]}"} || {
+      # its inherited release PATH.
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --battery "$d/tests" ${filters[@]+"${filters[@]}"} || {
         printf 'catalog-release: version=%s leg=package-suites package=%s suite=%s\n' "$release_version" "$d" "$d/tests"
         printf '%s\n' 'catalog-release: remedy=release-engine' \
           'Release the engine first, then raise min_kendex. See app-deploy Catalog compatibility.'

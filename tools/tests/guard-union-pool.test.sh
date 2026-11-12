@@ -3,8 +3,10 @@
 # skills/orch/tests/run-all.sh call: one --battery per tree and filters
 # qualified by tree, so a base name two trees share selects one suite. A
 # .test.mjs suite keeps its own direct run. The runner rows prove the
-# qualified filter, that orch's ALONE list still holds in a --battery pool,
-# and that the runner copies these rows mutate are never discovered as suites.
+# qualified filter, that the runner's ALONE list holds orch's and another
+# tree's suites in a --battery pool, also when the runner is reached through a
+# symlink, and that the runner copies these rows mutate are never discovered
+# as suites.
 # Inputs: tools/guard, skills/orch/tests/run-all.sh
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -13,28 +15,30 @@ source "$TEST_DIR/lib/guard-world.sh"
 
 # --- the runner ---------------------------------------------------------------
 # W is a repository holding a copy of the runner, so a row can mutate its
-# source, and three trees: skills/a and skills/b share same.test, and the
-# runner's own directory holds a suite planted in its ALONE list.
+# source, and four trees: skills/a and skills/b share same.test, and the
+# runner's own directory and hooks each hold a suite planted in its ALONE list.
 W="$TMP/pool"
 runner_copy() { # NAME [SED-EXPR] — a runner at $W/skills/orch/tests/NAME.runner,
   # which the battery it sits in does not take for a suite
   local src="$W/skills/orch/tests/$1.runner"
   cp "$REPO/skills/orch/tests/run-all.sh" "$src"
   sed -i.bak '/^ALONE=($/a\
-  held
+  held\
+  hooks/tests/held.test
 ' "$src"
   [ -z "${2:-}" ] || sed -i.bak "$2" "$src"
   rm -f -- "$src.bak"
 }
-mkdir -p "$W/skills/a/tests" "$W/skills/b/tests" "$W/skills/orch/tests/lib" \
+mkdir -p "$W/skills/a/tests" "$W/skills/b/tests" "$W/skills/orch/tests/lib" "$W/hooks/tests" \
   "$W/skills/orch/scripts/lib" "$W/skills/github/scripts/lib" "$TMP/pool-bin"
 git -C "$W" init -q
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$W/skills/orch/tests/lib/"
 printf '#!/usr/bin/env bash\n:\n' > "$W/skills/orch/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$W/skills/orch/scripts/lib/"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$W/skills/github/scripts/lib/"
-for s in a/tests/same.test b/tests/same.test b/tests/other.test orch/tests/held orch/tests/pooled; do
-  printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' > "$W/skills/$s.sh"
+for s in skills/a/tests/same.test skills/b/tests/same.test skills/b/tests/other.test \
+  skills/orch/tests/held skills/orch/tests/pooled hooks/tests/held.test; do
+  printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' > "$W/$s.sh"
 done
 printf '#!/usr/bin/env bash\necho 4\n' > "$TMP/pool-bin/nproc"
 chmod +x "$TMP/pool-bin/nproc"
@@ -42,6 +46,7 @@ runner_copy run-all
 grep -q '^ *held$' "$W/skills/orch/tests/run-all.runner" || bad "the copied runner's ALONE list holds the planted name"
 runner_copy unqualified '/^    =\*:\*) battery_tree/d'
 runner_copy alone-dropped 's/^  TEST_DIRS=()$/  ALONE=(); TEST_DIRS=()/'
+runner_copy logical '/^set -P$/d'
 
 echo "=== the battery that holds the copied runners discovers none of them ==="
 # A copy the runner took for a suite would run its own battery, itself
@@ -98,21 +103,40 @@ run_pool unqualified =skills/a:same.test
 if [ "$RC" -ne 0 ] && [ -z "$STARTED" ]; then ok "control: without the qualified form the filter selects nothing"
 else bad "control: without the qualified form the filter selects nothing" "rc=$RC started=$STARTED"; fi
 
-echo "=== orch's ALONE list holds in a pool of batteries ==="
-alone_order() { # RUNNER
+echo "=== the ALONE list holds orch's and another tree's suites in a pool of batteries ==="
+alone_order() { # RUNNER-PATH [FILTER...]
+  local runner=$1
+  shift
   RC=0
-  OUT="$(cd "$W" && PATH="$TMP/pool-bin:$PATH" TMPDIR="$TMP" bash "$W/skills/orch/tests/$1.runner" \
-    --battery skills/orch/tests --battery skills/a/tests 2>&1)" || RC=$?
+  OUT="$(cd "$W" && PATH="$TMP/pool-bin:$PATH" TMPDIR="$TMP" bash "$runner" \
+    --battery hooks/tests --battery skills/orch/tests --battery skills/a/tests "$@" 2>&1)" || RC=$?
   STARTED="$(sed -n 's/^start suite=//p' <<<"$OUT" | paste -sd ' ' -)"
 }
-alone_order run-all
-if [ "rc=$RC $STARTED" = "rc=0 orch--pooled a--same.test orch--held" ]; then
-  ok "an ALONE suite starts after every pooled suite of every battery"
-else bad "an ALONE suite starts after every pooled suite of every battery" "rc=$RC started=$STARTED"; fi
-alone_order alone-dropped
-if [ "rc=$RC $STARTED" = "rc=0 orch--held orch--pooled a--same.test" ]; then
-  ok "control: a --battery run that drops the list pools the ALONE suite"
-else bad "control: a --battery run that drops the list pools the ALONE suite" "rc=$RC started=$STARTED"; fi
+alone_order "$W/skills/orch/tests/run-all.runner"
+if [ "rc=$RC $STARTED" = "rc=0 orch--pooled a--same.test hooks--held.test orch--held" ]; then
+  ok "an ALONE suite of any tree starts after every pooled suite of every battery"
+else bad "an ALONE suite of any tree starts after every pooled suite of every battery" "rc=$RC started=$STARTED"; fi
+alone_order "$W/skills/orch/tests/alone-dropped.runner"
+if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--held orch--pooled a--same.test" ]; then
+  ok "control: a --battery run that drops the list pools every ALONE suite"
+else bad "control: a --battery run that drops the list pools every ALONE suite" "rc=$RC started=$STARTED"; fi
+
+echo "=== a runner reached through a symlink keeps its family aliases and ALONE list ==="
+# tools/guard calls the runner through its own path and names batteries from
+# git's physical toplevel. =dev_validate_run brings its _selection part only
+# where the battery is the runner's own directory.
+for s in dev_validate_run dev_validate_run_selection; do
+  printf '#!/usr/bin/env bash\necho "pass: 1   fail: 0"\n' > "$W/skills/orch/tests/$s.sh"
+done
+ln -s "$W" "$TMP/pool-link"
+alone_order "$TMP/pool-link/skills/orch/tests/run-all.runner" =dev_validate_run =held =held.test =same.test
+if [ "rc=$RC $STARTED" = "rc=0 orch--dev_validate_run orch--dev_validate_run_selection a--same.test hooks--held.test orch--held" ]; then
+  ok "through a symlink the alias family runs and the ALONE suites start last"
+else bad "through a symlink the alias family runs and the ALONE suites start last" "rc=$RC started=$STARTED"; fi
+alone_order "$TMP/pool-link/skills/orch/tests/logical.runner" =dev_validate_run =held =held.test =same.test
+if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--dev_validate_run orch--held a--same.test" ]; then
+  ok "control: logical runner paths drop the family and pool the ALONE suites"
+else bad "control: logical runner paths drop the family and pool the ALONE suites" "rc=$RC started=$STARTED"; fi
 
 # --- the guard ----------------------------------------------------------------
 # skills/alpha and skills/beta each hold same.test.sh. A change to both

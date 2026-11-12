@@ -358,7 +358,12 @@ fi
 printf 'source "$PWD/skills/orch/scripts/open-terminal"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
 printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
 mkdir -p "$TMP/serial-bin"
-printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+# A .test.mjs suite runs by itself before the pool call, beside its tree's
+# shell suites; the node stub holds it in the standalone phase.
+printf '// reads skills/orch/scripts/open-terminal\n' > "$R/skills/orch/tests/direct.test.mjs"
+printf '#!/usr/bin/env bash\nif [ "$PHASE" = standalone ] && [ "$1" = --test ]; then read -r line < "$FIFO"; fi\n' > "$TMP/serial-bin/node"
+chmod +x "$TMP/serial-bin/node"
 # The guard runs the runner beside it, so the loading hold below needs a
 # guard whose runner is a copy: a root linking every package but that one file.
 CANCEL="$TMP/cancel-root"
@@ -412,7 +417,9 @@ read -r line < "$FIFO"
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
                 "skills/orch/tests/open-terminal.test.sh", "tools/tests/later.sh"]
-complete_plan = ["hooks/tests/startup.sh", *packages, *shell_suites]
+standalone = "skills/orch/tests/direct.test.mjs"
+suites = [*shell_suites[:1], standalone, *shell_suites[1:]]
+complete_plan = ["hooks/tests/startup.sh", *packages, *suites]
 # Every shell suite waits for the one pool call after the packages, the hooks
 # suite first; once that call has found them it names each <tree>--<name>.
 pooled = ["hooks/tests/startup.sh", *shell_suites]
@@ -420,10 +427,12 @@ pool_names = [Path(p).parts[-3] + "--" + Path(p).stem for p in pooled]
 # Each row stops a different execution state. The fallback consumes these
 # machine-read suite paths, including later package batteries.
 for phase, expected in (
-    ("npm", [pooled[0], packages[1], *shell_suites]),
-    ("standalone", pool_names[1:]),
+    ("npm", [pooled[0], packages[1], *suites]),
+    # The .test.mjs suite holds: its tree's shell suites and every other
+    # tree's wait for the pool call.
+    ("standalone", pooled),
     ("npm-probe", complete_plan),
-    ("npm-later", pooled),
+    ("npm-later", [pooled[0], *suites]),
     ("loading", pooled),
     ("running", pool_names[2:]),
 ):
@@ -433,10 +442,11 @@ for phase, expected in (
   if phase == "loading":
     # The runner owns the TERM trap this row reads, so its hold ignores TERM:
     # the signal stays pending in the runner until the parent releases the
-    # hold, the worst order a hold entered around the signal can take.
+    # hold, the worst order a hold entered around the signal can take. The
+    # pool call holds, not the .test.mjs suite's direct run before it.
     marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
     assert text.count(marker) == 1
-    text = text.replace(marker, 'sh -c \'trap "" TERM; read -r line < "$FIFO"\'\n' + marker)
+    text = text.replace(marker, 'case "$*" in --battery*) sh -c \'trap "" TERM; read -r line < "$FIFO"\' ;; esac\n' + marker)
   runner.write_text(text)
   env = dict(os.environ, DEV_VALIDATE_SCOPED="true", FIFO=str(fifo), PHASE=phase,
              PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
@@ -465,7 +475,7 @@ for phase, expected in (
                 if line.startswith("guard-note: selected-suite=")]
     assert selected == complete_plan, output
     unstarted = [line for line in output.splitlines() if line.startswith("unstarted suite=")]
-    if phase not in ("standalone", "running", "loading"):
+    if phase not in ("running", "loading"):
         queued = [line.removeprefix("guard-note: unstarted-suite=") for line in output.splitlines()
                   if line.startswith("guard-note: unstarted-suite=")]
         assert queued == expected, output
