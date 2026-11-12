@@ -141,19 +141,25 @@ pub fn invalidate(env: &Env, scope: &Scope) -> Result<()> {
     }
 }
 
-/// The one field every snapshot schema has carried: whose it is. Enough
-/// to judge a snapshot this build no longer reads.
+/// Whose drift file this is: every snapshot schema and every memo from
+/// schema 6 name their scope. An older memo is known only by its schema.
 #[derive(Deserialize)]
 struct Owner {
-    scope: String,
+    #[serde(default)]
+    schema: Option<u32>,
+    #[serde(default)]
+    scope: Option<String>,
 }
 
-/// Drop the snapshot and copies memo of every project scope whose root no
-/// longer exists, so the folder does not grow with each project a person
-/// deletes. Both are derived, so nothing a person wrote is lost. What
-/// stays: the global scope's files, a file that is no snapshot, and a
-/// root whose existence fails to read: only not-found is gone. Returns
-/// notes, as [`super::refresh::refresh_stale`] does.
+/// Drop every snapshot and copies memo whose project root no longer
+/// exists, so the folder does not grow with each project a person
+/// deletes, and every memo from before memos named their scope, which no
+/// build of this schema reads. Each file is judged by the owner it names
+/// itself. Both kinds are derived, so nothing a person wrote is lost.
+/// What stays: the global scope's files, a file that is neither, a label
+/// that cannot name its root exactly ([`Scope::from_label`]), and a root
+/// whose existence fails to read: only not-found is gone. Returns notes,
+/// as [`super::refresh::refresh_stale`] does.
 pub(crate) fn prune_gone_projects(env: &Env) -> Vec<String> {
     let dir = env.drift_dir();
     let entries = match std::fs::read_dir(&dir) {
@@ -179,32 +185,42 @@ pub(crate) fn prune_gone_projects(env: &Env) -> Vec<String> {
                 continue;
             }
         };
-        let Ok(Owner { scope: label }) = serde_json::from_str::<Owner>(&text) else {
+        let Ok(owner) = serde_json::from_str::<Owner>(&text) else {
             continue;
         };
-        if label == Scope::Global.label() {
-            continue;
-        }
-        let root = PathBuf::from(&label);
-        match root.try_exists() {
-            Ok(true) => continue,
-            Ok(false) => {}
-            Err(error) => {
-                notes.push(format!("{label}: not checked for removal ({error})"));
+        let memo = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(super::copies::MEMO_SUFFIX));
+        let label = match (owner.scope, owner.schema) {
+            (Some(label), _) => label,
+            (None, Some(schema)) if memo && schema < super::copies::MEMO_SCHEMA => {
+                remove(&path, &mut notes);
                 continue;
             }
-        }
-        let scope = Scope::Project { root };
-        for removed in [
-            invalidate(env, &scope),
-            super::copies::invalidate(env, &scope),
-        ] {
-            if let Err(error) = removed {
-                notes.push(format!("{label}: drift file not removed ({error})"));
-            }
+            (None, _) => continue,
+        };
+        let Some(Scope::Project { root }) = Scope::from_label(&label) else {
+            continue;
+        };
+        match root.try_exists() {
+            Ok(true) => {}
+            Ok(false) => remove(&path, &mut notes),
+            Err(error) => notes.push(format!("{label}: not checked for removal ({error})")),
         }
     }
     notes
+}
+
+fn remove(path: &std::path::Path, notes: &mut Vec<String>) {
+    match std::fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => notes.push(format!(
+            "{}: drift file not removed ({error})",
+            path.display()
+        )),
+    }
 }
 
 /// Derive the scope's snapshot from the deep reads and store it. This is
