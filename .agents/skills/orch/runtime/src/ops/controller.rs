@@ -438,6 +438,7 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
         | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
@@ -838,6 +839,18 @@ pub(super) fn claim_intent(
     Ok(IntentClaimed { intent })
 }
 
+/// The claimant a write made under `while_owner` yields to: the owner the
+/// intent records now, where it is not the one the writer read. A
+/// launcher-side handle writes only while it still owns the intent: a job
+/// that claimed between the launcher's last read and the write keeps its own
+/// record, read under the store lock. The one owner guard of every progress
+/// write of an intent's members.
+pub(super) fn yielded_to(intent: &Intent, while_owner: Option<&Owner>) -> Option<Owner> {
+    let expected = while_owner?;
+    (intent.owner.as_ref() != Some(expected))
+        .then(|| intent.owner.clone().unwrap_or_else(|| expected.clone()))
+}
+
 /// Write an effect's progress. The phase and the
 /// obligation set go onto an open intent, refusing `intent-complete` on a
 /// closed one as a phase write always has; the sent mark goes onto the
@@ -857,14 +870,7 @@ pub(super) fn record_progress(
             id: r.intent_id.clone(),
         })?;
     let mut intent = intents[index].clone();
-    // The launcher-side handle writes only while it still owns the intent: a
-    // job that claimed between the launcher's last read and this write keeps
-    // its own set, read under the store lock, and the write is yielded to
-    // that claimant by name.
-    if let Some(expected) = &r.while_owner
-        && intent.owner.as_ref() != Some(expected)
-    {
-        let owner = intent.owner.clone().unwrap_or_else(|| expected.clone());
+    if let Some(owner) = yielded_to(&intent, r.while_owner.as_ref()) {
         return Ok(ProgressRecorded {
             intent,
             progress: Progress::Yielded { owner },
@@ -1947,7 +1953,7 @@ mod tests {
             mail_root: None,
             observation: Some(json!({"note": "job-unclaimed"})),
             while_owner: Some(owner()),
-            lane_keys: None,
+            principal_keys: None,
             notice: None,
             set_revision: None,
         }));

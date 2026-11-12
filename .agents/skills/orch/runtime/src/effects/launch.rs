@@ -839,7 +839,7 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 }
 
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
-    let operation = Operation::open(run, intent)?;
+    let operation = super::lane_operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
     // A local window's fleet server is resolved before the route, which
     // reads a record with no home under the home that server hands its
@@ -1922,7 +1922,7 @@ fn marker_reading(lane: &Lane) -> Option<Value> {
 /// supersede.
 pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, &intent.id)?;
-    let mut operation = Operation::open(run, intent)?;
+    let mut operation = super::lane_operation::open(run, intent)?;
     // Every standing handle is read by its own key first.
     operation.read_standing(None)?;
     let Some(phase) = &intent.phase else {

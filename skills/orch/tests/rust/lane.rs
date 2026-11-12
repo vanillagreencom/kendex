@@ -660,20 +660,17 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert_eq!(asking.lane("KEN-A")["status"], "running");
 
     let mail_log = asking.state_dir().join("mail.log");
-    let validate_log = asking.state_dir().join("validate.log");
+    let (command, run_dir) = validation_run(asking.state_dir());
     let fleet = Fleet {
-        env: vec![
-            ("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string()),
-            (
-                "DEV_VALIDATE_LOG".to_owned(),
-                validate_log.display().to_string(),
-            ),
-        ],
+        env: vec![("LANE_MAIL_LOG".to_owned(), mail_log.display().to_string())],
         ..asking
     };
     // The item's own files beside the fleet record: the close on the
     // tracker's verdict is the item's close-out too.
+    // The item record is read as a record: the validation stop reads every
+    // item of the state directory for a stage that admitted a run.
     let item_state = plant(fleet.state_dir(), "workflow-state-KEN-A.json");
+    std::fs::write(&item_state, json!({"stages": []}).to_string()).unwrap();
     let status_file = plant(fleet.state_dir(), "lane-status-KEN-A.md");
     let answer = reply(&fleet.op(&terminal_close("KEN-A")));
     assert_eq!(answer["ok"], true, "{answer}");
@@ -713,9 +710,9 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
         std::fs::read_to_string(&mail_log).unwrap(),
         format!("pending --item KEN-A --root {root}\n")
     );
-    assert_eq!(
-        std::fs::read_to_string(&validate_log).unwrap(),
-        format!("--stop --worktree {root}\n")
+    assert!(
+        run_stopped(&run_dir) && !live(command.pid()),
+        "the worktree's validation run ended"
     );
     let log = fleet.fleet()["fleet_log"].as_array().unwrap().clone();
     let row = log.last().unwrap();
@@ -2712,63 +2709,6 @@ fn a_stale_wall_over_an_account_with_room_closes_the_lane() {
     }
 }
 
-/// A record the released launcher left `preparing` names its background
-/// launch job (`prepare.pid`, an `open-terminal` run leading its own
-/// process group): the close stops that group by its members' identities
-/// and ends the record; a pid that runs anything else is left running.
-#[test]
-fn a_released_preparing_records_job_is_stopped() {
-    for released in [true, false] {
-        let fleet = Fleet::new(4);
-        fleet.init_fleet();
-        let job = if released {
-            // A process group the test leads through `setsid`, its leader a
-            // command named `open-terminal`.
-            let open_terminal = named_sleep(fleet.state_dir(), "open-terminal");
-            Owned(
-                program("setsid")
-                    .arg(&open_terminal)
-                    .arg("600")
-                    .spawn()
-                    .expect("setsid"),
-            )
-        } else {
-            Owned::sleep()
-        };
-        // `setsid` has made the child its group's leader once it runs the
-        // command it exec'd.
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while released
-            && std::fs::read_to_string(format!("/proc/{}/comm", job.pid()))
-                .unwrap_or_default()
-                .trim()
-                != "open-terminal"
-        {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the job never ran open-terminal"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let mut record = record("KEN-P", "preparing", None, fleet.state_dir());
-        record["prepare"] =
-            json!({"pid": job.pid(), "step": "create", "since": "2026-01-29T15:00:00Z"});
-        fleet.write_lanes(vec![record]);
-        let answer = reply(&fleet.op(&json!({"op": "close-lane", "item": "KEN-P"})));
-        assert_eq!(answer["ok"], true, "released={released}: {answer}");
-        assert_ne!(
-            fleet.lane("KEN-P")["status"],
-            "preparing",
-            "released={released}: the record ends"
-        );
-        assert_eq!(
-            live(job.pid()),
-            !released,
-            "released={released}: only an open-terminal job is stopped"
-        );
-    }
-}
-
 /// One close-lane case over a hosted world: the records, the provider's
 /// answers, the world's environment, the tracker's state type (`None`
 /// plants no answer), and the request.
@@ -4633,21 +4573,16 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
 /// here, even where its root names a directory this machine also holds.
 #[test]
 fn a_hosted_close_stops_no_validation_run_of_this_machine() {
-    let mut fleet = Fleet::hosted(4);
-    let validate_log = fleet.state_dir().join("validate.log");
-    fleet.env.push((
-        "DEV_VALIDATE_LOG".to_owned(),
-        validate_log.display().to_string(),
-    ));
+    let fleet = Fleet::hosted(4);
+    let (command, run_dir) = validation_run(fleet.state_dir());
     let mut lane = hosted_lane("KEN-1");
     lane["mail_root"] = json!(fleet.state_dir().display().to_string());
     fleet.write_lanes(vec![lane]);
     fleet.plant_tracker("KEN-1", "completed");
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
     assert_eq!(answer["result"]["word"], "closed", "{answer}");
-    assert_eq!(
-        std::fs::read_to_string(&validate_log).unwrap_or_default(),
-        "",
+    assert!(
+        live(command.pid()) && !run_stopped(&run_dir),
         "no validation run stopped on this machine"
     );
 }

@@ -35,7 +35,7 @@ use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
 use agent_runtime::observe::WallKind;
 
-use super::{Effected, operation};
+use super::{Effected, lane_operation, operation};
 
 /// How the close ended, by the record it left.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -462,9 +462,8 @@ impl Close<'_> {
         Ok(closed)
     }
 
-    /// Preparation before harness start: a park has nothing to judge; a
-    /// released record's background launch job still running is stopped;
-    /// the close supersedes the launch intent and ends the record.
+    /// Preparation before harness start: a park has nothing to judge; the
+    /// close supersedes the launch intent and ends the record.
     fn preparing(self) -> Result<Closed> {
         if self.park().is_some() {
             return Err(refused(
@@ -475,28 +474,6 @@ impl Close<'_> {
                     ("value", "preparing"),
                 ],
             ));
-        }
-        if let Some(pid) = self
-            .lane
-            .extra
-            .get("prepare")
-            .and_then(|p| p.get("pid"))
-            .and_then(Value::as_u64)
-            .filter(|pid| *pid > 0)
-            .and_then(|pid| u32::try_from(pid).ok())
-        {
-            operation::stop_released_prepare(pid, self.settings.close_grace.get()?).map_err(
-                |cause| {
-                    refused(
-                        "prepare-stop-failed",
-                        &[
-                            ("item", self.item()),
-                            ("pid", &pid.to_string()),
-                            ("cause", &cause),
-                        ],
-                    )
-                },
-            )?;
         }
         let mut notes = Vec::new();
         let ground = if self.keep() {
@@ -719,7 +696,12 @@ impl Close<'_> {
             host: Some(self.host.to_owned()),
             admit_unread_scope: false,
         };
-        let answer = operation::pick_account(self.settings, self.path, &request, self.env.now_secs);
+        let answer = super::lane_operation::pick_account(
+            self.settings,
+            self.path,
+            &request,
+            self.env.now_secs,
+        );
         let account = match answer.exit() {
             0 => "room",
             3 => "walled",
@@ -811,7 +793,7 @@ impl Close<'_> {
     /// reach the session the close ends. A mailbox that cannot be read
     /// refuses too.
     fn refuse_ask(&self) -> Result<()> {
-        match operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
+        match lane_operation::pending_ask(&self.settings.lane_mail_cli, &self.lane) {
             Ok(None) => Ok(()),
             Ok(Some(ask)) => Err(refused(
                 "ask-unanswered",
@@ -1084,7 +1066,8 @@ impl Close<'_> {
             identity: Some(self.r.identity.clone()),
             cycle,
         });
-        let applied = operation::apply_request(self.path, &request, self.env, self.locking)?;
+        let applied =
+            super::lane_operation::apply_request(self.path, &request, self.env, self.locking)?;
         let effected = super::run(
             self.path,
             &request,
@@ -1471,7 +1454,7 @@ impl Close<'_> {
                 ));
             }
         }
-        let applied = operation::apply_request(
+        let applied = super::lane_operation::apply_request(
             self.path,
             &Request::ParkLane(park.clone()),
             self.env,

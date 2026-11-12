@@ -25,8 +25,8 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::state::{
-    self, EffectOp, Intent, LaneKeys, LaunchIdentity, Obligation, ObligationRecord, OpenedPane,
-    Overseer, Owner, Phase, Role, WatchJob,
+    self, EffectOp, Intent, LaunchIdentity, Obligation, ObligationRecord, OpenedPane, Overseer,
+    Owner, Phase, Role, WatchJob,
 };
 
 use super::super::{overseer_identity, pid_value};
@@ -62,7 +62,7 @@ impl PaneRef {
 /// The detached job a transfer or a stop was handed to, by the identity its
 /// launcher's record names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum JobHandle {
+pub enum JobHandle {
     /// The job runs as this transient user unit, read through its manager.
     Unit { unit: String },
     /// The job leads this process group, read through the one identity
@@ -85,7 +85,7 @@ impl JobHandle {
 
 /// What a read of the job launcher's record found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum SidecarRead {
+pub enum SidecarRead {
     /// No record: the launcher refused before it asked anything.
     Absent,
     Present(JobHandle),
@@ -140,84 +140,6 @@ pub(super) enum JobEnd {
     Claimed,
 }
 
-/// What ended the worktree's validation obligation: the runner's answer
-/// that every run is stopped, or the lane moved under the close, so the
-/// worktree's runs belong to the session that now holds the lane.
-pub(super) enum ValidationEnd {
-    Stopped,
-    LaneMoved,
-}
-
-/// Why the close kept the lane's worktree instead of removing it: each a
-/// read of the worktree itself through the handle's runner,
-/// recorded as the lane's `kept` reason.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::effects) enum KeptReason {
-    /// The worktree holds a submodule by the reads of git's own unforced
-    /// removal, its module store or a populated gitlink of its index: the
-    /// worktree is never judged, as that removal refuses it and the reads
-    /// are data no setting changes.
-    Submodules,
-    /// `HEAD` carries commits no other local or remote ref reaches:
-    /// removal would lose them.
-    Unmerged,
-    /// The pinned status read of `judge_worktree` (`host.rs`) names
-    /// modified or untracked files, a claim worktree's by-design deletions
-    /// aside.
-    Dirty,
-    /// The path holds no `.git` entry: it is no git worktree this close can
-    /// release.
-    NotAWorktree,
-    /// The path's `.git` is a directory: the repository's main worktree,
-    /// which the worktree package's `remove` never removes.
-    MainWorktree,
-    /// The worktree package's `remove` could not move a lane mailbox under
-    /// the worktree to the main checkout's, so it removed nothing: the mail
-    /// stands where the lane wrote it.
-    MailUnmoved,
-    /// The worktree package's `remove` refused a clean, merged worktree
-    /// (git's refusal, a lock, an unreconciled rebase map, an unregistered
-    /// target); `detail` is its exit status and its keyed stderr lines.
-    Refused { detail: String },
-}
-
-impl KeptReason {
-    /// The reason's word, what the lane record's `kept` carries.
-    pub(in crate::effects) fn word(&self) -> String {
-        match self {
-            KeptReason::Submodules => "submodules".to_owned(),
-            KeptReason::Unmerged => "unmerged".to_owned(),
-            KeptReason::Dirty => "dirty".to_owned(),
-            KeptReason::NotAWorktree => "not-a-worktree".to_owned(),
-            KeptReason::MainWorktree => "main-worktree".to_owned(),
-            KeptReason::MailUnmoved => "mail-unmoved".to_owned(),
-            KeptReason::Refused { detail } => format!("refused:{detail}"),
-        }
-    }
-}
-
-/// What ended the lane's worktree obligation, by the release method's own
-/// reads: the path read gone before any removal, the removal succeeded and
-/// the path read gone after it, or the worktree kept for a recorded reason;
-/// a path or a read that failed leaves the obligation standing. Under a
-/// lane that moved, the worktree is the new session's, released to it as
-/// the validation stop is.
-pub(super) enum WorktreeEnd {
-    Gone,
-    /// Removed by the worktree package, its lane mailboxes moved to the main
-    /// checkout's; `kept_mail` names a mailbox the package could not join
-    /// with the one already there and kept beside it, from its
-    /// `lane-mail-kept` line.
-    Released {
-        kept_mail: Option<String>,
-    },
-    Kept(KeptReason),
-    LaneMoved,
-    Unreadable {
-        cause: String,
-    },
-}
-
 /// What a read of the pane's receipt settled: a receipt read, or one absent
 /// past the bound within which the pane could still register, discharges the
 /// obligation; an invalid or unreadable receipt leaves it standing.
@@ -234,12 +156,12 @@ pub(super) enum ReceiptEnd {
 /// `token-stale` where it does not; whether that set is still the record's
 /// is the store's judgement, made at the write that precedes every act: a
 /// set replaced since the handle read it refuses `set-replaced`.
-pub(in crate::effects) struct Standing<K> {
+pub struct Standing<K> {
     key: K,
 }
 
 impl<K> Standing<K> {
-    pub(in crate::effects) fn key(&self) -> &K {
+    pub fn key(&self) -> &K {
         &self.key
     }
 }
@@ -267,7 +189,6 @@ pub(super) enum Discharge {
         server_start: u64,
     },
     Receipt(ReceiptEnd),
-    Validation(ValidationEnd),
     Job {
         job: JobHandle,
         end: JobEnd,
@@ -278,17 +199,12 @@ pub(super) enum Discharge {
         record: String,
         read: SidecarRead,
     },
-    Worktree {
-        path: String,
-        end: WorktreeEnd,
-    },
 }
 
 impl Discharge {
     /// The one obligation this evidence is about.
     pub(super) fn names(&self) -> Obligation {
         match self {
-            Discharge::Worktree { path, .. } => Obligation::Worktree { path: path.clone() },
             Discharge::Process { identity, .. } => Obligation::Process(identity.clone()),
             Discharge::Pid { pid, .. } => Obligation::Pid { pid: *pid },
             Discharge::Pane { pane, .. } => pane.obligation(),
@@ -300,7 +216,6 @@ impl Discharge {
                 server_start: *server_start,
             },
             Discharge::Receipt(_) => Obligation::Receipt,
-            Discharge::Validation(_) => Obligation::Validation,
             Discharge::Job { job, .. } => job.obligation(),
             Discharge::Sidecar { record, .. } => Obligation::JobSidecar {
                 record: record.clone(),
@@ -610,12 +525,10 @@ impl Obligations {
             | Obligation::PaneUnaddressed { .. }
             | Obligation::Window { .. }
             | Obligation::Receipt
-            | Obligation::Validation
             | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. }
-            | Obligation::Worktree { .. } => None,
+            | Obligation::JobPgid { .. } => None,
         })
     }
 
@@ -651,12 +564,10 @@ impl Obligations {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => None,
+                | Obligation::JobPgid { .. } => None,
             })
     }
 
@@ -671,19 +582,11 @@ impl Obligations {
             | Obligation::PaneUnaddressed { .. }
             | Obligation::Window { .. }
             | Obligation::Receipt
-            | Obligation::Validation
             | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. }
-            | Obligation::Worktree { .. } => None,
+            | Obligation::JobPgid { .. } => None,
         })
-    }
-
-    /// The lane keys the set recorded under the harness role, with the
-    /// stamp the intent was written at.
-    pub(super) fn lane_keys(&self, lane_since: Option<String>) -> LaneKeys {
-        self.record.lane_keys(lane_since)
     }
 
     /// One more independent stale reading of `id`, recorded; the count so
@@ -718,12 +621,10 @@ impl Obligations {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => None,
+                | Obligation::JobPgid { .. } => None,
             })
             .collect()
     }
@@ -739,12 +640,10 @@ impl Obligations {
             | Obligation::PaneUnaddressed { .. }
             | Obligation::Window { .. }
             | Obligation::Receipt
-            | Obligation::Validation
             | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. }
-            | Obligation::Worktree { .. } => false,
+            | Obligation::JobPgid { .. } => false,
         };
         self.record.standing_obligations().any(names)
             || self.record.discharged.iter().any(|d| names(&d.obligation))
@@ -773,30 +672,6 @@ impl Obligations {
             | Obligation::PaneUnaddressed { .. }
             | Obligation::Window { .. }
             | Obligation::Receipt
-            | Obligation::Validation
-            | Obligation::JobSidecar { .. }
-            | Obligation::JobUnit { .. }
-            | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. }
-            | Obligation::Worktree { .. } => None,
-        })
-    }
-
-    /// The standing worktree path recorded under the worktree role: what a
-    /// close releases or keeps.
-    pub(super) fn worktree(&self) -> Option<String> {
-        self.record.standing_obligations().find_map(|o| match o {
-            Obligation::Worktree { path } if self.record.role_of(o) == Some(Role::Worktree) => {
-                Some(path.clone())
-            }
-            Obligation::Worktree { .. }
-            | Obligation::Process(_)
-            | Obligation::Pid { .. }
-            | Obligation::Pane { .. }
-            | Obligation::PaneUnaddressed { .. }
-            | Obligation::Window { .. }
-            | Obligation::Receipt
-            | Obligation::Validation
             | Obligation::JobSidecar { .. }
             | Obligation::JobUnit { .. }
             | Obligation::JobGroup(_)
@@ -834,12 +709,10 @@ impl Obligations {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => None,
+                | Obligation::JobPgid { .. } => None,
             })
             .collect()
     }
@@ -887,8 +760,6 @@ impl Obligations {
                 ReceiptEnd::Read => Ok("receipt-read".to_owned()),
                 ReceiptEnd::Invalid { cause } => Err(format!("receipt-invalid:{cause}")),
             },
-            Discharge::Validation(ValidationEnd::Stopped) => Ok("validation-stopped".to_owned()),
-            Discharge::Validation(ValidationEnd::LaneMoved) => Ok("lane-moved".to_owned()),
             Discharge::Job { end, .. } => match end {
                 JobEnd::UnitGone => Ok("unit-gone".to_owned()),
                 JobEnd::UnitEnded { state } => Ok(format!("unit-{state}")),
@@ -900,18 +771,6 @@ impl Obligations {
                 SidecarRead::Present(_) => Ok("sidecar-read".to_owned()),
                 SidecarRead::Failed { status } => Ok(format!("launch-failed:{status}")),
                 SidecarRead::Unreadable { cause } => Err(format!("job-unread:{cause}")),
-            },
-            Discharge::Worktree { end, .. } => match end {
-                WorktreeEnd::Gone => Ok("worktree-gone".to_owned()),
-                WorktreeEnd::Released { kept_mail: None } => Ok("released".to_owned()),
-                WorktreeEnd::Released {
-                    kept_mail: Some(mail),
-                } => Ok(format!("{}{mail}", state::WORKTREE_MAIL_KEPT)),
-                WorktreeEnd::Kept(reason) => {
-                    Ok(format!("{}{}", state::WORKTREE_KEPT, reason.word()))
-                }
-                WorktreeEnd::LaneMoved => Ok("lane-moved".to_owned()),
-                WorktreeEnd::Unreadable { cause } => Err(format!("worktree-unreadable:{cause}")),
             },
         };
         if !self.record.stands(&named) {
@@ -1016,12 +875,10 @@ fn observation_value(obligation: &Obligation) -> Value {
             server_start,
         } => json!({"kind": "window", "server": server, "server_start": server_start}),
         Obligation::Receipt => json!({"kind": "receipt"}),
-        Obligation::Validation => json!({"kind": "validation"}),
         Obligation::JobSidecar { .. } => json!({"kind": "job", "job": "possibly-started"}),
         Obligation::JobUnit { unit } => json!({"kind": "job", "unit": unit}),
         Obligation::JobGroup(id) => json!({"kind": "job", "pid": id.pid, "start": id.start}),
         Obligation::JobPgid { pgid } => json!({"kind": "job", "pgid": pgid}),
-        Obligation::Worktree { path } => json!({"kind": "worktree", "path": path}),
     }
 }
 
@@ -1058,7 +915,7 @@ fn with_cause(mut observation: Value, cause: Option<&str>) -> Value {
 
 /// The word a settled set of obligations ends an intent with.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::effects) enum Word {
+pub enum Word {
     Failed,
     Confirmed,
 }
@@ -1066,7 +923,7 @@ pub(in crate::effects) enum Word {
 /// What a confirmed launch or succession published: the pane and identity
 /// on the wire are the lane's record, or the controller's, from here.
 #[derive(Debug)]
-pub(in crate::effects) enum Published {
+pub enum Published {
     Lane,
     Successor,
 }
@@ -1094,7 +951,7 @@ pub(super) enum Terminal {
 /// launch or succession publishes, or the pane an unconfirmed effect keeps
 /// for its reconcile.
 #[derive(Default)]
-pub(in crate::effects) struct Wire {
+pub struct Wire {
     pub launch: Option<LaunchIdentity>,
     pub session_id: Option<String>,
     pub server_start: Option<u64>,
@@ -1117,9 +974,9 @@ pub(in crate::effects) struct Wire {
 /// obligation set as the effect left it, written with the outcome;
 /// `while_owner` is the owner the writes are made
 /// under, where the writer may have lost the intent to a claimant;
-/// `lane_keys` are the keys a lane intent's terminal carries to the store's
+/// `principal_keys` are the keys a terminal carries to the store's
 /// moved-lane judgement.
-pub(in crate::effects) struct EffectOutcome {
+pub struct EffectOutcome {
     pub(super) intent_id: String,
     /// The intent's operation, which decides what announcement the outcome
     /// owes.
@@ -1129,7 +986,7 @@ pub(in crate::effects) struct EffectOutcome {
     pub(super) wire: Wire,
     pub(super) record: ObligationRecord,
     pub(super) while_owner: Option<Owner>,
-    pub(super) lane_keys: Option<LaneKeys>,
+    pub(super) principal_keys: Vec<Obligation>,
     /// The identities the handle read stale this run, for the stop the same
     /// request reruns.
     pub(super) stale: Vec<Identity>,
@@ -1151,7 +1008,7 @@ impl EffectOutcome {
             wire: Wire::default(),
             record,
             while_owner: None,
-            lane_keys: None,
+            principal_keys: Vec::new(),
             stale: Vec::new(),
         }
     }
@@ -1253,7 +1110,7 @@ impl EffectOutcome {
         }
     }
 
-    pub(in crate::effects) fn with_wire(self, wire: Wire) -> EffectOutcome {
+    pub fn with_wire(self, wire: Wire) -> EffectOutcome {
         EffectOutcome { wire, ..self }
     }
 
@@ -1267,8 +1124,11 @@ impl EffectOutcome {
     }
 
     /// The lane keys this outcome carries to the store.
-    pub(super) fn keyed(self, lane_keys: Option<LaneKeys>) -> EffectOutcome {
-        EffectOutcome { lane_keys, ..self }
+    pub(super) fn keyed(self, principal_keys: Vec<Obligation>) -> EffectOutcome {
+        EffectOutcome {
+            principal_keys,
+            ..self
+        }
     }
 
     /// The identities the handle read stale this run.
@@ -1278,24 +1138,39 @@ impl EffectOutcome {
 
     /// The identities this outcome's handle read stale, which the stop the
     /// same request reruns counts no second time.
-    pub(in crate::effects) fn stale_read(&self) -> Vec<Identity> {
+    pub fn stale_read(&self) -> Vec<Identity> {
         self.stale.clone()
     }
 
     /// Write `value` under `key` on the observation: a caller's note beside
     /// the outcome, never its word or its set.
-    pub(in crate::effects) fn annotate(&mut self, key: &str, value: Value) {
+    pub fn annotate(&mut self, key: &str, value: Value) {
         self.observation[key] = value;
     }
 
     /// Whether the observation names `key`.
-    pub(in crate::effects) fn notes(&self, key: &str) -> bool {
+    pub fn notes(&self, key: &str) -> bool {
         self.observation.get(key).is_some_and(|v| !v.is_null())
+    }
+
+    pub fn intent_id(&self) -> &str {
+        &self.intent_id
+    }
+
+    /// The intent's operation: which recording boundary takes the outcome.
+    pub fn op(&self) -> EffectOp {
+        self.op
+    }
+
+    /// The keys the set recorded under the principal's role, which a caller
+    /// carries for its target's record under the stamp it knows.
+    pub fn principal_keys(&self) -> &[Obligation] {
+        &self.principal_keys
     }
 
     /// Whether the outcome ends the intent: a terminal word or a
     /// publication, never a hold.
-    pub(in crate::effects) fn ended(&self) -> bool {
+    pub fn ended(&self) -> bool {
         match &self.terminal {
             Terminal::Failed
             | Terminal::Confirmed
@@ -1946,6 +1821,7 @@ mod tests {
             reconciled: None,
             observed_status: None,
             observed_generation: None,
+            extra: Default::default(),
         };
         let recorded = Obligations::recorded(&intent)
             .unwrap()
@@ -2060,11 +1936,14 @@ mod tests {
             Some(&launch(Some("%7"), Some(4242), Some(11), Some("ticks:11"))),
             None,
         );
-        set.add(Obligation::Process(wake.clone()), Role::Wake, None);
+        set.add(Obligation::Process(wake.clone()), Role::Auxiliary, None);
         assert_eq!(set.harness_identity(), Some(harness.clone()));
-        let keys = set.lane_keys(Some("2026-01-29T15:20:00Z".to_owned()));
+        let keys = crate::state::PrincipalKeys {
+            since: Some("2026-01-29T15:20:00Z".to_owned()),
+            keys: set.record().principal_keys(Role::Harness),
+        };
         assert_eq!(
-            keys.harness,
+            keys.keys,
             vec![
                 Obligation::Pane {
                     pane: "%7".to_owned(),

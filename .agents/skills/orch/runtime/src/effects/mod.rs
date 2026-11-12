@@ -53,6 +53,12 @@
 #![deny(clippy::wildcard_enum_match_arm)]
 
 mod close;
+mod coverage;
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lane operation is orch's one opener of the engine's handle and the owner of a close's worktree, validation and lane store acts"
+)]
+mod lane_operation;
 mod launch;
 #[allow(
     clippy::disallowed_methods,
@@ -90,7 +96,7 @@ use crate::schedule::Clock;
 use crate::settings::Settings;
 use crate::state::{self, EffectOp, Intent, Lane, Locking, Overseer};
 
-use operation::{EffectOutcome, Identity, Operation, ProcessReading, State, job};
+use operation::{EffectOutcome, Identity, ProcessReading, State, job};
 
 /// How often a poll re-reads the record within its bound.
 const POLL: Duration = Duration::from_millis(200);
@@ -107,10 +113,17 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// The one recording boundary: the effect's
-    /// outcome becomes the wire record in `operation` and nowhere else.
+    /// The recording boundary an outcome's operation names: a lane
+    /// intent's is the lane operation's, a controller intent's the engine's.
     fn apply_outcome(&self, outcome: EffectOutcome) -> Result<Applied> {
-        operation::apply_outcome(self, outcome)
+        match outcome.op() {
+            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
+                lane_operation::apply_outcome(self, outcome)
+            }
+            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
+                operation::apply_outcome(self, outcome)
+            }
+        }
     }
 
     /// Where the pane of `intent_id` registers itself.
@@ -161,6 +174,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
         | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
@@ -307,6 +321,7 @@ fn live_effect(report: &Report) -> Option<&Effect> {
         | Report::RecordOutcome(_)
         | Report::RecordPhase(_)
         | Report::RecordProgress(_)
+        | Report::RecordLaneProgress(_)
         | Report::RecordDirectiveSend(_)
         | Report::RecordWallPauses(_)
         | Report::AdmitPaths(_)
@@ -367,6 +382,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::RecordOutcome(_)
                     | Request::RecordPhase(_)
                     | Request::RecordProgress(_)
+                    | Request::RecordLaneProgress(_)
                     | Request::RecordDirectiveSend(_)
                     | Request::RecordWallPauses(_)
                     | Request::AdmitPaths(_)
@@ -426,6 +442,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
         | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
@@ -460,7 +477,19 @@ pub fn run_job(
         locking,
         clock,
     };
-    job::run_job(&run, intent_id)
+    let (request, op) = job::read_job(&run, intent_id)?;
+    // The job's own settings may differ from its caller's: a value its
+    // effect would refuse leaves the intent unclaimed.
+    ops::judge_effect_settings(&request, settings)?;
+    job::claim(&run, intent_id)?;
+    let outcome = match (&request, op) {
+        (Request::RequestTransfer(r), job::Op::Transfer) => {
+            transfer::transfer_effect(&run, intent_id, r)?
+        }
+        (_, job::Op::Stop) => transfer::stop_controller_effect(&run, intent_id)?,
+        (_, job::Op::Transfer) => unreachable!("a transfer job reads a transfer request"),
+    };
+    run.apply_outcome(outcome)
 }
 
 /// The status `op --effect-exit` answers for an effect whose outcome is
@@ -517,14 +546,31 @@ pub fn adopt_controller(
 
 /// Register the controller a person opened by hand in the caller's own
 /// pane: its identity read from its session rows or its pane, then the one
-/// adoption.
+/// adoption, then the notices its turn-end coverage owes.
 pub fn register_controller(
     path: &Path,
     account: Option<&str>,
     settings: &Settings,
     locking: Locking,
 ) -> Result<Value> {
-    operation::register_controller(path, account, settings, locking)
+    let (mut reply, harness) = operation::register_controller(path, account, settings, locking)?;
+    // A record proven to name this pane keeps fields the request left out,
+    // so the coverage is judged on the record as written.
+    let recorded = fleet(path)?.overseer;
+    let word = |key: &str| {
+        recorded
+            .as_ref()
+            .and_then(|o| o.extra.get(key))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let cwd = word("cwd").unwrap_or_default();
+    let notices = coverage::coverage_notices(settings, harness, word("home").as_deref(), &cwd);
+    if let Some(list) = reply["notices"].as_array_mut() {
+        list.extend(notices.into_iter().map(Value::String));
+    }
+    Ok(reply)
 }
 
 /// Whether a reconciled close left a stop to run: the recorded identity
@@ -627,7 +673,7 @@ fn supersede_launch(
         // The pane passes to the close that follows, which stops what it
         // holds: nothing is closed or signalled here, so the
         // launch intent ends refused with its handles untouched.
-        let operation = Operation::open(run, &launch.intent)?;
+        let operation = lane_operation::open(run, &launch.intent)?;
         run.apply_outcome(operation.refuse(
             "superseded-by-close",
             json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "answer_by": answer_by, "preparing": preparing}),
@@ -635,7 +681,7 @@ fn supersede_launch(
     }
     // The launch intent is closed either way: the close now persists its
     // own intent and runs, as a close with nothing open does.
-    let applied = operation::persist_close(run, close)?;
+    let applied = lane_operation::persist_close(run, close)?;
     let Report::CloseOwnedResources(persisted) = &applied.report else {
         unreachable!("a close request reports a close")
     };

@@ -272,7 +272,7 @@ pub(super) fn outcome(id: &str, outcome: Outcome) -> Request {
         mail_root: None,
         observation: None,
         while_owner: None,
-        lane_keys: None,
+        principal_keys: None,
         notice: None,
         set_revision: None,
     }))
@@ -300,7 +300,7 @@ pub(super) fn confirmed_with(
         mail_root: None,
         observation: None,
         while_owner: None,
-        lane_keys: None,
+        principal_keys: None,
         notice: None,
         set_revision: None,
     }))

@@ -41,11 +41,11 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
-use super::{Operation, Reading, Word};
-use crate::effects::{POLL, Run, read_intent, transfer};
+use super::{Bootstrap, Operation, Reading, Word};
+use crate::effects::{POLL, Run, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::Mailbox;
-use crate::ops::{self, Applied, ClaimIntent, RecordProgress, Request};
+use crate::ops::{self, ClaimIntent, RecordProgress, Request};
 use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
 use crate::watch::claim;
 
@@ -91,7 +91,7 @@ const WATCH_ERR_FILE: &str = "oversee-watch.err";
 /// started anything; a job started that has not claimed within the bound,
 /// standing in the set for the reconcile; or a claim the runtime could not
 /// read, never acted on.
-pub(in crate::effects) enum WatchStart {
+pub enum WatchStart {
     Claimed(WatchJob),
     Refused { cause: String },
     Unclaimed { job: String },
@@ -107,7 +107,7 @@ const WATCH_CLAIM_UNREADABLE: &str = "watch-claim-unreadable";
 impl WatchStart {
     /// The watch the start publishes, or what holds it: the note the hold
     /// is recorded under and the observation it carries.
-    pub(in crate::effects) fn held(self) -> std::result::Result<WatchJob, (&'static str, Value)> {
+    pub fn held(self) -> std::result::Result<WatchJob, (&'static str, Value)> {
         match self {
             WatchStart::Claimed(job) => Ok(job),
             WatchStart::Refused { cause } => Err((WATCH_LAUNCH_FAILED, json!({"cause": cause}))),
@@ -127,7 +127,7 @@ impl WatchStart {
 /// Which controller operation a job runs, and the words its start replies
 /// and its job name carry.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::effects) enum Op {
+pub enum Op {
     Transfer,
     Stop,
 }
@@ -161,6 +161,7 @@ impl Op {
             | Request::RecordOutcome(_)
             | Request::RecordPhase(_)
             | Request::RecordProgress(_)
+            | Request::RecordLaneProgress(_)
             | Request::RecordDirectiveSend(_)
             | Request::RecordWallPauses(_)
             | Request::AdmitPaths(_)
@@ -173,7 +174,7 @@ impl Op {
         }
     }
 
-    pub(in crate::effects) fn of_intent(op: EffectOp) -> Option<Op> {
+    pub(super) fn of_intent(op: EffectOp) -> Option<Op> {
         match op {
             EffectOp::RequestTransfer => Some(Op::Transfer),
             EffectOp::StopController => Some(Op::Stop),
@@ -211,7 +212,7 @@ impl Op {
 /// stale request file of the dead job is replaced, never refused as a
 /// second launch.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(in crate::effects) enum Start {
+pub enum Start {
     First,
     Repeat,
 }
@@ -227,11 +228,11 @@ enum Runner {
 /// What a launch left: the sidecar's reading, which the launcher knows
 /// without reading its record back, the runner line the reply carries, and
 /// the cause where nothing runs or the launch ended after its fork.
-pub(crate) struct Launched {
-    pub(crate) unanswered: bool,
-    pub(crate) read: SidecarRead,
-    pub(crate) line: String,
-    pub(crate) failed: Option<String>,
+pub struct Launched {
+    pub unanswered: bool,
+    pub read: SidecarRead,
+    pub line: String,
+    pub failed: Option<String>,
 }
 
 impl Launched {
@@ -240,7 +241,7 @@ impl Launched {
     /// unanswered where the job may run (a lost manager answer, a failure
     /// after the fork that left a group standing, a record that cannot be
     /// read), so no caller starts it twice; refused where nothing runs.
-    pub(crate) fn answer(self) -> ops::validate::Launch {
+    pub fn answer(self) -> ops::validate::Launch {
         use ops::validate::Launch;
         let Launched {
             unanswered,
@@ -282,7 +283,7 @@ impl Launched {
     }
 }
 
-pub(crate) struct Launcher<'a> {
+pub(super) struct Launcher<'a> {
     clock: &'a dyn crate::schedule::Clock,
 }
 
@@ -729,12 +730,12 @@ impl Launcher<'_> {
 /// What a launch bounds its job by: its lifetime, and the memory of its
 /// whole process tree in bytes.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct Bounds {
-    pub(crate) runtime: Option<Duration>,
-    pub(crate) memory: Option<u64>,
+pub struct Bounds {
+    pub runtime: Option<Duration>,
+    pub memory: Option<u64>,
 }
 
-pub(crate) fn launch_recorded(
+pub fn launch_recorded(
     name: &str,
     key: &str,
     record: &Path,
@@ -784,7 +785,7 @@ pub fn launch_command(
 
 /// The cgroup v2 directory of this process, where it runs under this
 /// user's manager (`own_cgroup`).
-pub(crate) fn own_cgroup_dir() -> Option<std::path::PathBuf> {
+pub fn own_cgroup_dir() -> Option<std::path::PathBuf> {
     own_cgroup().map(|cgroup| cgroup_dir(&cgroup))
 }
 
@@ -796,7 +797,7 @@ fn cgroup_dir(cgroup: &str) -> std::path::PathBuf {
     clippy::disallowed_methods,
     reason = "the recorded group is stopped by each member's observed start identity"
 )]
-pub(crate) fn stop_group(identity: &Identity) -> Result<bool> {
+pub fn stop_group(identity: &Identity) -> Result<bool> {
     let rows = process::table().map_err(|e| {
         Error::Runtime(agent_runtime::Error::refused(
             "stop-unreadable",
@@ -834,7 +835,7 @@ pub(crate) fn stop_group(identity: &Identity) -> Result<bool> {
     }
 }
 
-pub(crate) fn recorded_live(record: &Path) -> Reading<()> {
+pub fn recorded_live(record: &Path) -> Reading<()> {
     match read_handle(record) {
         SidecarRead::Present(JobHandle::Unit { unit }) => match unit_end(&unit) {
             Some(JobEnd::UnitGone | JobEnd::UnitEnded { .. }) => Reading::Gone,
@@ -903,12 +904,7 @@ pub fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
 /// its cause and the controller as it was; a job that may have started, and
 /// one that never claims within the bound, leave it `unconfirmed` with the
 /// job standing, which the reconcile reads.
-pub(in crate::effects) fn start(
-    run: &Run,
-    intent: &Intent,
-    request: &Request,
-    start: Start,
-) -> Result<JobStarted> {
+pub fn start(run: &Run, intent: &Intent, request: &Request, start: Start) -> Result<JobStarted> {
     let Some(op) = Op::of_request(request) else {
         unreachable!("only a transfer or a stop is handed to the job")
     };
@@ -921,7 +917,10 @@ pub(in crate::effects) fn start(
     // moved it, a job that claimed keeps its own set, and the handle stops
     // at that write without acting; the claimant's state is then the
     // answer, `<op>-started`, as it is for a claim the outcome write found.
-    let operation = Operation::open(run, intent)?;
+    let Some(bootstrap) = Bootstrap::controller(intent.op) else {
+        unreachable!("only a transfer or a stop is handed to the job")
+    };
+    let operation = Operation::open(run, intent, bootstrap)?;
     match launch_job(run, operation, intent, request, op, &handed_from, start) {
         Err(Error::Yielded { owner, .. }) => Ok(JobStarted {
             started: op.started(),
@@ -1182,7 +1181,7 @@ impl Operation<'_> {
     /// discharged by that read; one that has not stands for the reconcile,
     /// which runs this step again. An unreadable claim is never a reason to
     /// launch.
-    pub(in crate::effects) fn ensure_watch(&mut self, words: &[String]) -> Result<WatchStart> {
+    pub fn ensure_watch(&mut self, words: &[String]) -> Result<WatchStart> {
         let paths = claim::Paths::of(self.run.path)?;
         match self.watch_claimed(&paths)? {
             Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
@@ -1267,9 +1266,7 @@ impl Operation<'_> {
                 | Obligation::Pane { .. }
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
-                | Obligation::Receipt
-                | Obligation::Validation
-                | Obligation::Worktree { .. } => continue,
+                | Obligation::Receipt => continue,
             };
             self.discharge(Discharge::Job {
                 job: handle,
@@ -1287,7 +1284,7 @@ impl Operation<'_> {
     /// gone update the set; a job that still runs stands. The predicate reads
     /// the recorded set alone: a job that claimed was
     /// discharged by its claim, so nothing of it stands.
-    pub(in crate::effects) fn job_standing(&mut self, intent: &Intent) -> Result<bool> {
+    pub fn job_standing(&mut self, intent: &Intent) -> Result<bool> {
         if Op::of_intent(intent.op).is_none() {
             return Ok(false);
         }
@@ -1334,9 +1331,7 @@ impl Operation<'_> {
                 | Obligation::Pane { .. }
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
-                | Obligation::Receipt
-                | Obligation::Validation
-                | Obligation::Worktree { .. } => {}
+                | Obligation::Receipt => {}
             }
         }
         Ok(())
@@ -1344,7 +1339,7 @@ impl Operation<'_> {
 
     /// Whether the record says a job of this intent ended by its own read,
     /// for the observation's `job: ended`.
-    pub(in crate::effects) fn job_ended(&self) -> bool {
+    pub fn job_ended(&self) -> bool {
         self.obligations.jobs().is_empty()
             && self
                 .obligations
@@ -1384,9 +1379,7 @@ fn watch_job_of(job: &Obligation) -> WatchJob {
         | Obligation::Pane { .. }
         | Obligation::PaneUnaddressed { .. }
         | Obligation::Window { .. }
-        | Obligation::Receipt
-        | Obligation::Validation
-        | Obligation::Worktree { .. } => WatchJob {
+        | Obligation::Receipt => WatchJob {
             runner: "unread".to_owned(),
             unit: None,
             pid: None,
@@ -1408,7 +1401,7 @@ fn group_end(leader: &Identity) -> Option<JobEnd> {
 /// pid, its group or its session, so a process that took the number, one
 /// that leads a group of its own included, proves no member of the leader's
 /// group runs.
-pub(crate) fn group_reading(leader: &Identity) -> Reading<()> {
+pub fn group_reading(leader: &Identity) -> Reading<()> {
     match process::still_runs(leader) {
         Reading::Live(_) => Reading::Live(()),
         Reading::Unreadable { cause } => Reading::Unreadable { cause },
@@ -1432,7 +1425,7 @@ fn pgid_end(pgid: u32) -> Option<JobEnd> {
 /// group. A pid and a pgid are not reallocated while that process or a
 /// member of that group runs, so this read can hold too long, while another
 /// process holds a pid the job left, and never ends a running job.
-pub(crate) fn pgid_reading(pgid: u32) -> Reading<()> {
+pub fn pgid_reading(pgid: u32) -> Reading<()> {
     table_reading(|row| row.pid == pgid || row.pgrp == pgid)
 }
 
@@ -1461,7 +1454,7 @@ fn table_reading(matches: impl Fn(&process::Row) -> bool) -> Reading<()> {
 /// every post-fork path holds; no start is ever made up for it. The one
 /// reader of the record, so every consumer reads one launch three-valued
 /// the same way.
-pub(crate) fn read_handle(record: &Path) -> SidecarRead {
+pub fn read_handle(record: &Path) -> SidecarRead {
     let text = match std::fs::read_to_string(record) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return SidecarRead::Absent,
@@ -1983,11 +1976,10 @@ pub(super) fn remove_files(state_dir: &Path, intent_id: &str) {
     let _ = std::fs::remove_file(state::job_record_path(state_dir, intent_id));
 }
 
-/// The job's side: claim the intent, run the effect from the
-/// request the caller wrote, record the outcome. A claim that refuses (the
-/// intent ended, or its effect began under its first owner) ends the job
-/// before it opens anything.
-pub(in crate::effects) fn run_job(run: &Run, intent_id: &str) -> Result<Applied> {
+/// The job's side, first: the request the caller wrote beside the record
+/// and the operation it runs. The effect the job then runs is its
+/// operation's own, after `claim`.
+pub fn read_job(run: &Run, intent_id: &str) -> Result<(Request, Op)> {
     let request_path = state::job_request_path(&run.settings.state_dir, intent_id);
     let bytes = std::fs::read(&request_path).map_err(|e| {
         Error::Runtime(agent_runtime::Error::io(
@@ -2006,9 +1998,13 @@ pub(in crate::effects) fn run_job(run: &Run, intent_id: &str) -> Result<Applied>
             cause: format!("{} is not a job's operation", request.name()),
         });
     };
-    // The job's own settings may differ from its caller's: a value its
-    // effect would refuse leaves the intent unclaimed.
-    ops::judge_effect_settings(&request, run.settings)?;
+    Ok((request, op))
+}
+
+/// Claim the intent for this job. A claim that refuses (the intent ended,
+/// or its effect began under its first owner) ends the job before it opens
+/// anything.
+pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
     ops::apply(
         run.path,
         &Request::ClaimIntent(ClaimIntent {
@@ -2016,15 +2012,8 @@ pub(in crate::effects) fn run_job(run: &Run, intent_id: &str) -> Result<Applied>
         }),
         run.env,
         run.locking,
-    )?;
-    let outcome = match (&request, op) {
-        (Request::RequestTransfer(r), Op::Transfer) => {
-            transfer::transfer_effect(run, intent_id, r)?
-        }
-        (_, Op::Stop) => transfer::stop_controller_effect(run, intent_id)?,
-        (_, Op::Transfer) => unreachable!("a transfer job reads a transfer request"),
-    };
-    super::apply_outcome(run, outcome)
+    )
+    .map(drop)
 }
 
 /// The announcement a failed or unconfirmed outcome of a job's operation
@@ -2151,7 +2140,7 @@ pub struct NoticeUnmarked {
 /// gone is sent once here and marked, so the next walk finds nothing owed.
 /// A mark the store refused is returned for the reply and stops neither the
 /// walk nor the request that runs it.
-pub(in crate::effects) fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
+pub fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
     send_notices(run, Notice::owed, false)
 }
 
@@ -2159,7 +2148,7 @@ pub(in crate::effects) fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmar
 /// retry, never the walk's, so the notice's bound is paid once more and not
 /// on every request. A retry that gets no answer either is `unsent`, and
 /// the notice is sent no more.
-pub(in crate::effects) fn send_unanswered_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
+pub fn send_unanswered_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
     send_notices(run, Notice::unanswered, true)
 }
 
@@ -2489,14 +2478,16 @@ mod tests {
         };
         let group = Obligation::JobGroup(leader_identity.clone());
         // The leader lives: the record names the group, which stands.
-        let mut operation = Operation::open(&run, &intent).unwrap();
+        let mut operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert_eq!(operation.obligations.jobs(), vec![group.clone()]);
         // The leader exits; its member runs on in the group: still standing.
         let _ = leader.wait();
         assert_eq!(process::still_runs(&leader_identity), Reading::Gone);
         let current = read_intent(&path, id).unwrap();
-        let mut operation = Operation::open(&run, &current).unwrap();
+        let mut operation =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert_eq!(
             operation.obligations.jobs(),
@@ -2512,7 +2503,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         let current = read_intent(&path, id).unwrap();
-        let mut operation = Operation::open(&run, &current).unwrap();
+        let mut operation =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert!(
             operation.obligations.jobs().is_empty(),
@@ -2679,7 +2671,8 @@ mod tests {
             locking: state::Locking::FLOCK,
             clock: &clock,
         };
-        let mut operation = Operation::open(&run, &intent).unwrap();
+        let mut operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         let mut child = host::start_detached(
             "job",
             "sleep",
@@ -2721,7 +2714,9 @@ mod tests {
         // The next read of the set, as a reconcile makes it.
         let next_read = || {
             let current = read_intent(&path, id).unwrap();
-            let mut operation = Operation::open(&run, &current).unwrap();
+            let mut operation =
+                Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap())
+                    .unwrap();
             operation.read_standing_jobs().unwrap();
             operation.obligations.jobs()
         };
@@ -2828,11 +2823,13 @@ mod tests {
         };
         let group = Obligation::JobPgid { pgid };
         // The record names the group by its key; the member runs: standing.
-        let mut operation = Operation::open(&run, &intent).unwrap();
+        let mut operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert_eq!(operation.obligations.jobs(), vec![group.clone()]);
         let current = read_intent(&path, id).unwrap();
-        let mut operation = Operation::open(&run, &current).unwrap();
+        let mut operation =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert_eq!(
             operation.obligations.jobs(),
@@ -2848,7 +2845,8 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         let current = read_intent(&path, id).unwrap();
-        let mut operation = Operation::open(&run, &current).unwrap();
+        let mut operation =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         operation.read_standing_jobs().unwrap();
         assert!(
             operation.obligations.jobs().is_empty(),
@@ -2942,8 +2940,9 @@ mod tests {
             )
         };
         // The crash: the outcome's write lands, the send never runs.
-        let operation = Operation::open(&run, &intent).unwrap();
-        let request = super::super::record(outcome(operation));
+        let operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
+        let request = outcome(operation).wire();
         let committed = ops::apply(
             &path,
             &Request::RecordOutcome(Box::new(request)),
@@ -2966,7 +2965,8 @@ mod tests {
         assert_eq!(sent_calls(), 0, "nothing was sent before the crash");
         // The next outcome of the intent under the same owner: recorded
         // nowhere, the owed notice sent once and marked.
-        let retry = Operation::open(&run, &current).unwrap();
+        let retry =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         let applied = super::super::apply_outcome(&run, outcome(retry)).unwrap();
         assert!(matches!(applied.report, ops::Report::RecordOutcome(ref r) if !r.recorded_now));
         assert_eq!(sent_calls(), 1, "the owed notice is sent once");
@@ -2983,7 +2983,8 @@ mod tests {
             rows_before + 1
         );
         // A third outcome, and a reconcile's walk: nothing more.
-        let again = Operation::open(&run, &current).unwrap();
+        let again =
+            Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
         super::super::apply_outcome(&run, outcome(again)).unwrap();
         send_owed_notices(&run).unwrap();
         assert_eq!(sent_calls(), 1, "a sent notice is never sent again");
@@ -3045,7 +3046,8 @@ mod tests {
             locking: state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let operation = Operation::open(&run, &intent).unwrap();
+        let operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the reconcile's last read.
         ops::apply(
             &path,
@@ -3156,7 +3158,8 @@ mod tests {
             locking: state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let operation = Operation::open(&run, &intent).unwrap();
+        let operation =
+            Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the launcher's final loop read.
         ops::apply(
             &path,

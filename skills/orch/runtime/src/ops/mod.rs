@@ -88,6 +88,10 @@ pub use lane::{
     NoLanding, ParkLane, ParkWait, PhaseRecorded, RecordPhase, ReleaseLane, ReserveLane, Terminal,
     identity_fills, lane_moved,
 };
+pub use lane::{
+    LaneDischarged, LaneObligation, LaneObligationRecord, RecordLaneProgress, WORKTREE_KEPT,
+    WORKTREE_MAIL_KEPT,
+};
 pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
 pub use verify_pr::{PrVerified, VerifyPr};
@@ -103,8 +107,8 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 use crate::state::{
-    self, Document, EffectOp, Intent, Kind, Lane, LaneKeys, LaunchIdentity, Locking, Notice, Owner,
-    Reconciled, Snapshot,
+    self, Document, EffectOp, Intent, Kind, Lane, LaunchIdentity, Locking, Notice, Owner,
+    PrincipalKeys, Reconciled, Snapshot,
 };
 
 /// The clock and nonce an operation stamps with, supplied by the caller so
@@ -196,13 +200,13 @@ pub struct RecordOutcome {
     /// answers the claimant's state. `None` records always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub while_owner: Option<Owner>,
-    /// The lane keys a lane intent's terminal carries: the lane arms move the
-    /// lane only while its launch names nothing but these and its stamp is the
-    /// intent's; otherwise the intent closes `intent-stale` and the lane is
-    /// left as found. An outcome without them is judged by the intent's own
-    /// recorded set, else by its stamp alone.
+    /// The keys a terminal carries for its target's record: the lane arms
+    /// move the lane only while its launch names nothing but these and its
+    /// stamp is the intent's; otherwise the intent closes `intent-stale` and
+    /// the lane is left as found. An outcome without them is judged by the
+    /// intent's own recorded set, else by its stamp alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lane_keys: Option<LaneKeys>,
+    pub principal_keys: Option<PrincipalKeys>,
     /// The announcement a failed or unconfirmed outcome of a transfer or a
     /// stop owes: recorded `owed` with the outcome, its fleet-log row appended
     /// in the same write, where the intent carries none yet; the send is the
@@ -264,6 +268,7 @@ pub enum Request {
     /// An effect's phase and obligation set, written before the wait that
     /// follows.
     RecordProgress(Box<RecordProgress>),
+    RecordLaneProgress(Box<RecordLaneProgress>),
     /// A directive's send receipt onto the lane.
     RecordDirectiveSend(mail::RecordDirectiveSend),
     /// The lanes' walls as the observation duty read them this pass.
@@ -318,6 +323,7 @@ impl Request {
             Request::RecordOutcome(_) => "record-outcome",
             Request::RecordPhase(_) => "record-phase",
             Request::RecordProgress(_) => "record-progress",
+            Request::RecordLaneProgress(_) => "record-lane-progress",
             Request::RecordDirectiveSend(_) => "record-directive-send",
             Request::RecordWallPauses(_) => "record-wall-pauses",
             Request::AdmitPaths(_) => "admit-paths",
@@ -364,6 +370,7 @@ impl Request {
             | Request::RecordOutcome(_)
             | Request::RecordPhase(_)
             | Request::RecordProgress(_)
+            | Request::RecordLaneProgress(_)
             | Request::RecordDirectiveSend(_)
             | Request::RecordWallPauses(_)
             | Request::AdmitPaths(_)
@@ -430,6 +437,7 @@ pub enum Report {
     RecordOutcome(Box<OutcomeRecorded>),
     RecordPhase(Box<PhaseRecorded>),
     RecordProgress(Box<ProgressRecorded>),
+    RecordLaneProgress(Box<ProgressRecorded>),
     RecordDirectiveSend(mail::DirectiveSendRecorded),
     RecordWallPauses(wall::WallPausesRecorded),
     AdmitPaths(Box<PathsAdmitted>),
@@ -506,6 +514,7 @@ pub(crate) fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
 fn reread_on_record_changed(request: &Request) -> bool {
     match request {
         Request::RecordProgress(r) => r.while_owner.is_some(),
+        Request::RecordLaneProgress(r) => r.while_owner.is_some(),
         Request::RecordOutcome(r) => r.while_owner.is_some(),
         Request::ClaimIntent(_) => true,
         Request::LaunchLane(_)
@@ -681,6 +690,7 @@ pub fn item_transition(
         | Request::RecordOutcome(_)
         | Request::RecordPhase(_)
         | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
         | Request::RecordDirectiveSend(_)
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
@@ -747,6 +757,9 @@ pub fn fleet_transition(
         Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(lane::record_phase(
             path, doc, r,
         )?))),
+        Request::RecordLaneProgress(r) => Ok(Report::RecordLaneProgress(Box::new(
+            lane::record_lane_progress(path, doc, r)?,
+        ))),
         Request::RecordProgress(r) => Ok(Report::RecordProgress(Box::new(
             controller::record_progress(path, doc, r)?,
         ))),
@@ -932,6 +945,7 @@ fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         reconciled: None,
         observed_status: None,
         observed_generation: None,
+        extra: Default::default(),
         notice: None,
     })
 }
@@ -1047,7 +1061,7 @@ fn record_outcome(
     } else {
         match intent.op {
             EffectOp::LaunchLane => {
-                match lane::intent_lane(path, doc, &intent, r.lane_keys.as_ref())? {
+                match lane::intent_lane(path, doc, &intent, r.principal_keys.as_ref())? {
                     IntentTarget::Current { index } => {
                         lane::record_launch_outcome(
                             path,
@@ -1067,7 +1081,7 @@ fn record_outcome(
                 }
             }
             EffectOp::CloseOwnedResources => {
-                match lane::intent_lane(path, doc, &intent, r.lane_keys.as_ref())? {
+                match lane::intent_lane(path, doc, &intent, r.principal_keys.as_ref())? {
                     IntentTarget::Current { index } => {
                         lane::record_close_outcome(
                             path,
@@ -1839,7 +1853,7 @@ mod tests {
                     mail_root: None,
                     observation: None,
                     while_owner: None,
-                    lane_keys: None,
+                    principal_keys: None,
                     notice: None,
                     set_revision: None,
                 })),

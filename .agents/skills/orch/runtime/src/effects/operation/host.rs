@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
-use agent_runtime::host::{self, tmux};
+use agent_runtime::host::tmux;
 use agent_runtime::launch::Permission;
 use agent_runtime::observe::{self, ProcessReading, State};
 use agent_runtime::process::{self, Identity, Stop};
@@ -16,21 +16,15 @@ use agent_runtime::reading::Reading;
 use agent_runtime::session;
 use serde_json::{Value, json};
 
-use super::obligations::{
-    Discharge, KeptReason, PaneEnd, PaneRef, ProcessEnd, Standing, ValidationEnd, WorktreeEnd,
-};
+use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
 use super::{Close, Operation, Pane, Server};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::accounts::usage::Credential;
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
 use crate::settings::Settings;
 use crate::state::{
-    self, BoundSession, Intent, Lane, Locking, Obligation, OpenedPane, Overseer, Phase, Role,
+    self, BoundSession, Intent, Locking, Obligation, OpenedPane, Overseer, Phase, Role,
 };
-
-/// How long a CLI the close asks is given to answer.
-const CLI_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How often a poll re-reads a process within its bound.
 const POLL: Duration = Duration::from_millis(200);
@@ -48,7 +42,7 @@ pub enum Observed<P> {
 
 /// What closing a recorded window established; the close discharged the
 /// recorded pane where it answered.
-pub(in crate::effects) enum WindowClose {
+pub enum WindowClose {
     /// The set holds no addressable pane.
     Unrecorded,
     /// The pane read gone by exact id, or its server gone or replaced.
@@ -63,7 +57,7 @@ pub(in crate::effects) enum WindowClose {
 }
 
 impl WindowClose {
-    pub(in crate::effects) fn word(&self) -> String {
+    pub fn word(&self) -> String {
         match self {
             WindowClose::Unrecorded => "unrecorded".to_owned(),
             WindowClose::Gone { cause } => (*cause).to_owned(),
@@ -80,13 +74,13 @@ impl WindowClose {
 /// supplies no stop answer of its own.
 #[must_use]
 #[derive(Debug)]
-pub(in crate::effects) struct Stopped {
+pub struct Stopped {
     identity: Identity,
     answer: Stop,
 }
 
 impl Stopped {
-    pub(in crate::effects) fn answer(&self) -> &Stop {
+    pub fn answer(&self) -> &Stop {
         &self.answer
     }
 }
@@ -97,33 +91,33 @@ impl Stopped {
 /// the adoption's pane read, what [`crate::ops::apply_adoption`] takes.
 /// Constructible here alone, so a transition that takes one takes no
 /// caller-supplied evidence.
-pub(crate) struct Recorded<T> {
+pub struct Recorded<T> {
     value: T,
 }
 
 impl Recorded<Identity> {
-    pub(in crate::effects) fn identity(&self) -> &Identity {
+    pub fn identity(&self) -> &Identity {
         &self.value
     }
 }
 
 impl Recorded<AdoptionRead> {
     /// What the pane read found, for the adoption's one transition.
-    pub(crate) fn evidence(&self) -> &AdoptionRead {
+    pub fn evidence(&self) -> &AdoptionRead {
         &self.value
     }
 
     /// A token a store test plants: the production build has no constructor
     /// outside this module.
     #[cfg(test)]
-    pub(crate) fn planted(value: AdoptionRead) -> Recorded<AdoptionRead> {
+    pub fn planted(value: AdoptionRead) -> Recorded<AdoptionRead> {
         Recorded { value }
     }
 }
 
 /// Who holds a pane's terminal, through the one judge; `harness` is the
 /// recorded token where the reading is a harness identity.
-pub(in crate::effects) struct Foreground {
+pub struct Foreground {
     pub reading: ProcessReading,
     pub harness: Option<Recorded<Identity>>,
 }
@@ -133,7 +127,7 @@ pub(in crate::effects) struct Foreground {
 /// pid, one reading towards the stale count; or unreadable. The live reading
 /// mints no acting token: a stop acquires its own from the standing set, and
 /// a publication reads its identity through the acquiring poll.
-pub(in crate::effects) enum ProcessRead {
+pub enum ProcessRead {
     Live,
     Gone,
     Stale { other: Identity },
@@ -142,7 +136,7 @@ pub(in crate::effects) enum ProcessRead {
 
 /// What proves a predecessor with no recorded identity terminal, or does
 /// not.
-pub(in crate::effects) enum Proof {
+pub enum Proof {
     /// Proven terminal `by` the generation-bound exit record, the pane gone
     /// on the proven recorded server, or the pane there holding no harness.
     Proven { by: &'static str },
@@ -160,13 +154,13 @@ pub(in crate::effects) enum Proof {
 /// What a launch fixed about the runner's native session before its window
 /// opened: the id it passed on the command line, or the lead sessions that
 /// already stood for the cwd.
-pub(in crate::effects) enum SessionFloor {
+pub enum SessionFloor {
     Fixed(String),
     Baseline(Vec<String>),
 }
 
 impl SessionFloor {
-    pub(in crate::effects) fn session_id(&self) -> Option<&str> {
+    pub fn session_id(&self) -> Option<&str> {
         match self {
             SessionFloor::Fixed(id) => Some(id),
             SessionFloor::Baseline(_) => None,
@@ -177,7 +171,7 @@ impl SessionFloor {
 /// The runner's own native session file as the binding read it: bound, not
 /// yet appeared, two or more appeared and nothing tells the runner's from
 /// the others, or a store that could not be read whole.
-pub(in crate::effects) enum Binding {
+pub enum Binding {
     Bound(BoundSession),
     Absent,
     Ambiguous(Vec<String>),
@@ -187,7 +181,7 @@ pub(in crate::effects) enum Binding {
 /// Whether the process that persisted the intent still runs under its
 /// recorded start. An intent that records no owner reads `Gone`; so
 /// does an owner pid outside the kernel's range.
-pub(in crate::effects) fn owner(intent: &Intent) -> Reading<Identity> {
+pub fn owner(intent: &Intent) -> Reading<Identity> {
     let Some(owner) = &intent.owner else {
         return Reading::Gone;
     };
@@ -203,7 +197,7 @@ pub(in crate::effects) fn owner(intent: &Intent) -> Reading<Identity> {
 /// The reading of a socket that does not answer, from the recorded server
 /// process through the one identity reader: gone with its process, else
 /// unobservable. A record carrying the pid alone is read by that pid.
-pub(in crate::effects) fn unanswering(server: u64, process_start: Option<&str>) -> Observed<Pane> {
+pub fn unanswering(server: u64, process_start: Option<&str>) -> Observed<Pane> {
     let Ok(pid) = u32::try_from(server) else {
         return Observed::Unobservable {
             cause: "server-pid-invalid",
@@ -434,7 +428,7 @@ fn standing_or_gone(pane_pid: u32, target: &super::super::Target) -> Proof {
 /// The directory the session `id` under `home` for `cwd` was recorded in,
 /// read three-valued through the session owner's fixed-id lookup: absent,
 /// unreadable, or the directory its own file names.
-pub(in crate::effects) fn session_owner(
+pub fn session_owner(
     harness: Harness,
     home: &Path,
     cwd: &Path,
@@ -445,7 +439,7 @@ pub(in crate::effects) fn session_owner(
 
 /// The harness's default home, where its sessions are read with no account
 /// named.
-pub(in crate::effects) fn default_home(harness: Harness) -> Option<PathBuf> {
+pub fn default_home(harness: Harness) -> Option<PathBuf> {
     session::default_home(harness)
 }
 
@@ -453,11 +447,7 @@ pub(in crate::effects) fn default_home(harness: Harness) -> Option<PathBuf> {
 /// inherits from the server, where it holds one: a window's process takes
 /// the server's environment, never that of the process that asked for the
 /// window.
-pub(in crate::effects) fn server_home(
-    server: &Server,
-    session: &str,
-    harness: Harness,
-) -> Result<Option<PathBuf>> {
+pub fn server_home(server: &Server, session: &str, harness: Harness) -> Result<Option<PathBuf>> {
     Ok(tmux::inherited(server, session, harness.home_var())?
         .filter(|home| !home.is_empty())
         .map(PathBuf::from))
@@ -465,7 +455,7 @@ pub(in crate::effects) fn server_home(
 
 /// The sign-in a launch starts with, as `Operation::sign_in` reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::effects) enum SignIn {
+pub enum SignIn {
     /// The account holds a credential the harness signs in with.
     Held,
     /// The launch environment carries this token variable.
@@ -478,74 +468,13 @@ pub(in crate::effects) enum SignIn {
 
 /// The file the harness records the session `id` for `cwd` in under `home`,
 /// for a harness whose launch fixes the id.
-pub(in crate::effects) fn fixed_file(
-    harness: Harness,
-    home: &Path,
-    cwd: &Path,
-    id: &str,
-) -> Option<PathBuf> {
+pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option<PathBuf> {
     session::fixed_file(harness, home, cwd, id)
-}
-
-/// The oldest unanswered ask the lane's mailbox holds, read through the
-/// mailbox client (`lane-mail pending --item ITEM --root ROOT [--host]`): the
-/// first envelope of kind `ask`. A hosted lane's mailbox is read under its
-/// record's host, never the caller's. `Err` is a read that did not answer,
-/// or a lane with no recorded root; a host's per-home cap refusal leads
-/// with `lane-host-busy`, the word the close refuses by.
-pub(in crate::effects) fn pending_ask(
-    cli: &Path,
-    lane: &Lane,
-) -> std::result::Result<Option<String>, String> {
-    let Some(root) = lane.mail_root.as_deref() else {
-        return Err("mail-root-unrecorded".to_owned());
-    };
-    let hosted = lane.host.as_deref().filter(|h| !h.is_empty());
-    let envelopes = Mailbox::new(cli.to_path_buf())
-        .pending(&lane.item, Path::new(root), hosted)
-        .map_err(|refusal| match refusal {
-            Refusal::Exit {
-                status: Some(crate::watch::hosted::LANE_HOST_BUSY_EXIT),
-                ..
-            } => format!("lane-host-busy step=mail-read {refusal}"),
-            Refusal::NotStarted { .. }
-            | Refusal::Unanswered { .. }
-            | Refusal::Exit { .. }
-            | Refusal::Reply { .. } => refusal.to_string(),
-        })?;
-    Ok(envelopes
-        .iter()
-        .find(|e| e.kind() == "ask")
-        .map(|e| e.id().to_owned()))
-}
-
-/// The close verb's transitions, its one close and its park record, applied
-/// as the command applies a request: with the kernel's readers.
-pub(in crate::effects) fn apply_request(
-    path: &Path,
-    request: &ops::Request,
-    env: &ops::Env,
-    locking: Locking,
-) -> Result<Applied> {
-    let host = ops::Host::kernel();
-    ops::apply_on(path, request, env, locking, &host)
-}
-
-/// The accounts judge over this fleet's charges for one request, read with
-/// the kernel's readers (`lanes pick` in process).
-pub(in crate::effects) fn pick_account(
-    settings: &Settings,
-    path: &Path,
-    request: &ops::accounts::PickRequest,
-    now: u64,
-) -> ops::accounts::PickAnswer {
-    let host = ops::Host::kernel();
-    ops::accounts::pick_fleet(settings, path, &host, request, now)
 }
 
 /// `check` read on the one clock until it answers or `bound` passes,
 /// `poll` between reads: `None` at the bound.
-pub(in crate::effects) fn poll_until<T>(
+pub fn poll_until<T>(
     clock: &dyn crate::schedule::Clock,
     bound: Duration,
     poll: Duration,
@@ -563,45 +492,6 @@ pub(in crate::effects) fn poll_until<T>(
     }
 }
 
-/// A released preparing record's background launch job (`prepare.pid`, the
-/// `open-terminal` run the released launcher started leading its own
-/// process group): where that pid still runs a command naming
-/// `open-terminal`, every member of its group is read by identity now and
-/// stopped by that identity, so no reused pid is signalled; a pid that runs
-/// anything else, or whose command cannot be read, is left. `Err` is a group
-/// with no member left to stop (the pid leads none), a table that could not
-/// be read, or a member that would not stop.
-pub(in crate::effects) fn stop_released_prepare(
-    pid: u32,
-    grace: Duration,
-) -> std::result::Result<(), String> {
-    let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
-        return Ok(());
-    };
-    if !String::from_utf8_lossy(&cmdline).contains("open-terminal") {
-        return Ok(());
-    }
-    let rows = process::table().map_err(|e| format!("table-unread {}", e.cause))?;
-    let members: Vec<Identity> = rows
-        .iter()
-        .filter(|row| row.pgrp == pid)
-        .filter_map(|row| match process::identity(row.pid) {
-            Reading::Live(identity) => Some(identity),
-            Reading::Gone | Reading::Unreadable { .. } => None,
-        })
-        .collect();
-    if members.is_empty() {
-        return Err("group-absent".to_owned());
-    }
-    match process::stop_identities(&members, grace) {
-        Ok(Stop::Stopped { .. } | Stop::AlreadyGone) => Ok(()),
-        Ok(Stop::IdentityStale) => Err("identity-stale".to_owned()),
-        Ok(Stop::Timeout { pid }) => Err(format!("timeout pid={pid}")),
-        Ok(Stop::Unreadable { pid, cause, .. }) => Err(format!("unreadable pid={pid} {cause}")),
-        Err(e) => Err(e.to_string()),
-    }
-}
-
 /// Whether `pane_id` on `server` is one tmux may name: `%` then digits.
 fn is_pane_id(id: &str) -> bool {
     id.strip_prefix('%')
@@ -611,7 +501,7 @@ fn is_pane_id(id: &str) -> bool {
 impl Operation<'_> {
     /// The session a fleet window opens in: the one the settings name, else
     /// the fleet record's `tmux.session`.
-    pub(in crate::effects) fn fleet_session(&self, doc_session: Option<&str>) -> Result<String> {
+    pub fn fleet_session(&self, doc_session: Option<&str>) -> Result<String> {
         self.run
             .settings
             .tmux_session
@@ -630,10 +520,7 @@ impl Operation<'_> {
     /// the socket the runtime's own `$TMUX` names or the user's default, as
     /// `lib/tmux-server.sh` resolves it, and the session the settings name,
     /// else the fleet record's `tmux.session`.
-    pub(in crate::effects) fn fleet_server(
-        &self,
-        doc_session: Option<&str>,
-    ) -> Result<(Server, String)> {
+    pub fn fleet_server(&self, doc_session: Option<&str>) -> Result<(Server, String)> {
         let session = self.fleet_session(doc_session)?;
         let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
@@ -653,7 +540,7 @@ impl Operation<'_> {
     /// The server's own process identity, read live before a window opens on
     /// it, so a socket that stops answering can later be told from a server
     /// that is gone.
-    pub(in crate::effects) fn server_process_start(
+    pub fn server_process_start(
         &self,
         server: &Server,
     ) -> std::result::Result<String, agent_runtime::Error> {
@@ -674,7 +561,7 @@ impl Operation<'_> {
     /// discharge it by that read where it stands: gone, nothing holds the
     /// pid; live, it stands with the token; another process under the pid is
     /// one stale reading, left standing for the count.
-    pub(in crate::effects) fn read_process(&mut self, id: &Identity) -> Result<ProcessRead> {
+    pub fn read_process(&mut self, id: &Identity) -> Result<ProcessRead> {
         let read = match process::still_runs(id) {
             Reading::Live(_) => ProcessRead::Live,
             Reading::Unreadable { cause } => ProcessRead::Unreadable { cause },
@@ -725,13 +612,13 @@ impl Operation<'_> {
     }
 
     /// The clock the handle's waits read.
-    pub(in crate::effects) fn now(&self) -> std::time::Instant {
+    pub fn now(&self) -> std::time::Instant {
         self.clock.now()
     }
 
     /// The wall-clock time `after` from now, as the record's stamps spell
     /// one.
-    pub(in crate::effects) fn stamp_after(&self, after: Duration) -> String {
+    pub fn stamp_after(&self, after: Duration) -> String {
         let now = self
             .clock
             .wall()
@@ -746,7 +633,7 @@ impl Operation<'_> {
     /// the account holds; else the credential file the account listing
     /// reads (`ops::accounts::usage`), Claude's on Linux alone, since
     /// another platform keeps it in its own store.
-    pub(in crate::effects) fn sign_in(
+    pub fn sign_in(
         &self,
         server: &Server,
         session: &str,
@@ -808,38 +695,35 @@ impl Operation<'_> {
         }
     }
 
-    pub(in crate::effects) fn sleep(&self, d: Duration) {
+    pub fn sleep(&self, d: Duration) {
         self.clock.sleep(d);
     }
 
     /// The token for `id` where `Process(id)` stands in the set.
-    pub(in crate::effects) fn standing_process(&self, id: &Identity) -> Option<Standing<Identity>> {
+    pub fn standing_process(&self, id: &Identity) -> Option<Standing<Identity>> {
         self.obligations.standing_process(id)
     }
 
     /// The token for `pane` where its key stands in the set; the pane comes
     /// back where the set does not hold it, and nothing acts on it.
-    pub(in crate::effects) fn standing_pane(
-        &self,
-        pane: Pane,
-    ) -> std::result::Result<Standing<Pane>, Pane> {
+    pub fn standing_pane(&self, pane: Pane) -> std::result::Result<Standing<Pane>, Pane> {
         self.obligations.standing_pane(pane)
     }
 
     /// The harness identity the set recorded under the harness role, standing
     /// or discharged: what a lane close reads and stops.
-    pub(in crate::effects) fn harness_identity(&self) -> Option<Identity> {
+    pub fn harness_identity(&self) -> Option<Identity> {
         self.obligations.harness_identity()
     }
 
     /// The standing pid-only harness a lane record named with no start.
-    pub(in crate::effects) fn harness_pid(&self) -> Option<u32> {
+    pub fn harness_pid(&self) -> Option<u32> {
         self.obligations.harness_pid()
     }
 
     /// The pane id the set records under the harness role, standing, for the
     /// observation a close writes.
-    pub(in crate::effects) fn harness_pane_id(&self) -> Option<String> {
+    pub fn harness_pane_id(&self) -> Option<String> {
         self.obligations.pane(Role::Harness).map(|key| key.pane)
     }
 
@@ -919,7 +803,7 @@ impl Operation<'_> {
     /// each `Process` and `Pid` through the one identity reader, each `Pane`
     /// and `Window` on the server its key names, each job through its unit
     /// or group. Run first by every reconcile.
-    pub(in crate::effects) fn read_standing(&mut self, overseer: Option<&Overseer>) -> Result<()> {
+    pub fn read_standing(&mut self, overseer: Option<&Overseer>) -> Result<()> {
         self.read_standing_processes()?;
         let sockets = self.sockets(overseer);
         let panes: Vec<(Option<String>, u64, Option<u64>)> = self
@@ -940,12 +824,10 @@ impl Operation<'_> {
                 | Obligation::Pid { .. }
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => None,
+                | Obligation::JobPgid { .. } => None,
             })
             .collect();
         for (pane, server_pid, server_start) in panes {
@@ -987,7 +869,7 @@ impl Operation<'_> {
 
     /// Read every standing `Process` and `Pid` obligation by its own key
     /// through the one identity reader, discharging each read gone.
-    pub(in crate::effects) fn read_standing_processes(&mut self) -> Result<()> {
+    pub fn read_standing_processes(&mut self) -> Result<()> {
         for id in self.obligations.standing_processes() {
             self.read_process(&id)?;
         }
@@ -1002,12 +884,10 @@ impl Operation<'_> {
                 | Obligation::PaneUnaddressed { .. }
                 | Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => None,
+                | Obligation::JobPgid { .. } => None,
             })
             .collect();
         for pid in pids {
@@ -1020,11 +900,7 @@ impl Operation<'_> {
     /// `id` stale, counted in the record once per request; the second
     /// independent reading, a later request's, settles the identity. The
     /// count is written on `observation` and returned.
-    pub(in crate::effects) fn count_stale(
-        &mut self,
-        id: &Identity,
-        observation: &mut Value,
-    ) -> Result<u64> {
+    pub fn count_stale(&mut self, id: &Identity, observation: &mut Value) -> Result<u64> {
         assert!(
             self.stale.contains(id),
             "a stale count follows this run's own stale reading of {}",
@@ -1041,7 +917,7 @@ impl Operation<'_> {
 
     /// Read a pid-only obligation by that pid through the one identity reader
     /// and discharge it where nothing holds it.
-    pub(in crate::effects) fn read_pid(&mut self, pid: u32) -> Result<Reading<Identity>> {
+    pub fn read_pid(&mut self, pid: u32) -> Result<Reading<Identity>> {
         let read = process::identity(pid);
         self.discharge(Discharge::Pid {
             pid,
@@ -1052,10 +928,7 @@ impl Operation<'_> {
 
     /// The recorded phase pane as it reads on its own server; one gone, or
     /// its server with it, discharges the recorded pane by that read.
-    pub(in crate::effects) fn observe_pane(
-        &mut self,
-        opened: &OpenedPane,
-    ) -> Result<Observed<Pane>> {
+    pub fn observe_pane(&mut self, opened: &OpenedPane) -> Result<Observed<Pane>> {
         let observed = observe_pane(opened);
         if let Observed::Gone { .. } = &observed {
             self.discharge(Discharge::Pane {
@@ -1071,7 +944,7 @@ impl Operation<'_> {
     /// records before the ambient one: `None` where the set holds none;
     /// present as its token; gone, discharged by that read; or unobservable,
     /// standing.
-    pub(in crate::effects) fn observe_lane_pane(
+    pub fn observe_lane_pane(
         &mut self,
         overseer: Option<&Overseer>,
     ) -> Result<Option<Observed<Standing<Pane>>>> {
@@ -1111,7 +984,7 @@ impl Operation<'_> {
     }
 
     /// The pane's own process pid by exact id; the pane gone discharges it.
-    pub(in crate::effects) fn pane_pid(&mut self, pane: &Pane) -> Result<Reading<u32>> {
+    pub fn pane_pid(&mut self, pane: &Pane) -> Result<Reading<u32>> {
         let read = tmux::pane_fields(&pane.server, &pane.id).map(|fields| fields.pid);
         if read == Reading::Gone {
             self.pane_end(pane, PaneEnd::Gone)?;
@@ -1122,7 +995,7 @@ impl Operation<'_> {
     /// Who holds the pane's terminal under `pane_pid`, through the one judge:
     /// a harness identity read here is added to the set, written, and
     /// returned as the recorded token.
-    pub(in crate::effects) fn foreground_of(
+    pub fn foreground_of(
         &mut self,
         pane_pid: u32,
         owns: &dyn Fn(&str) -> bool,
@@ -1148,7 +1021,7 @@ impl Operation<'_> {
     /// The process a runner's pane runs now, read by exact pane id through
     /// the one identity reader: added to the set, written, before the stop
     /// that follows; the pane gone discharges the pane.
-    pub(in crate::effects) fn pane_process(&mut self, pane: &Pane) -> Result<Reading<Identity>> {
+    pub fn pane_process(&mut self, pane: &Pane) -> Result<Reading<Identity>> {
         let read = match tmux::pane_fields(&pane.server, &pane.id) {
             Reading::Live(fields) => process::identity(fields.pid),
             Reading::Gone => {
@@ -1167,7 +1040,7 @@ impl Operation<'_> {
     /// capture, and what the screen says. With `recorded`, only that identity
     /// is the harness. The pane gone discharges the pane; a host that does
     /// not answer for a pane that stands is `Unreadable`, never an absence.
-    pub(in crate::effects) fn read_pane(
+    pub fn read_pane(
         &mut self,
         pane: &Pane,
         harness: Harness,
@@ -1206,9 +1079,9 @@ impl Operation<'_> {
 
     /// Close the window the standing pane is in, `signalled` written before
     /// the kill, and discharge the pane by the close's own answer.
-    pub(in crate::effects) fn close_window(&mut self, pane: Standing<Pane>) -> Result<Close> {
+    pub fn close_window(&mut self, pane: Standing<Pane>) -> Result<Close> {
         self.check_pane_token(&pane)?;
-        self.signal()?;
+        self.write_signal()?;
         let close = tmux::kill_window(pane.key());
         self.pane_end(pane.key(), PaneEnd::Close(close.clone()))?;
         Ok(close)
@@ -1216,9 +1089,9 @@ impl Operation<'_> {
 
     /// Close the standing pane alone by exact id, as `close_window` closes
     /// its window.
-    pub(in crate::effects) fn close_pane(&mut self, pane: Standing<Pane>) -> Result<Close> {
+    pub(super) fn close_pane(&mut self, pane: Standing<Pane>) -> Result<Close> {
         self.check_pane_token(&pane)?;
-        self.signal()?;
+        self.write_signal()?;
         let close = tmux::kill_pane(pane.key());
         self.pane_end(pane.key(), PaneEnd::Close(close.clone()))?;
         Ok(close)
@@ -1230,7 +1103,7 @@ impl Operation<'_> {
     /// session, and the retirement closes the dead pane's window. Only a
     /// pane nothing of the effect polls again is kept, since the polls read
     /// a kept pane as unreadable, never gone.
-    pub(in crate::effects) fn keep_pane(
+    pub fn keep_pane(
         &self,
         pane: &Standing<Pane>,
     ) -> std::result::Result<(), agent_runtime::Error> {
@@ -1243,10 +1116,7 @@ impl Operation<'_> {
     /// present is killed by its token; one gone stands no more; none standing
     /// is no window to close; one the host did not answer for stands with
     /// that cause.
-    pub(in crate::effects) fn close_lane_window(
-        &mut self,
-        overseer: Option<&Overseer>,
-    ) -> Result<WindowClose> {
+    pub fn close_lane_window(&mut self, overseer: Option<&Overseer>) -> Result<WindowClose> {
         Ok(match self.observe_lane_pane(overseer)? {
             None => WindowClose::Unrecorded,
             Some(Observed::Gone { cause }) => WindowClose::Gone { cause },
@@ -1277,10 +1147,7 @@ impl Operation<'_> {
     /// it means, so nothing is closed. Another server answering on that
     /// socket, or none with the recorded server's process gone, proves the
     /// window gone with its server, discharged by that read.
-    pub(in crate::effects) fn close_overseer_window(
-        &mut self,
-        overseer: &Overseer,
-    ) -> Result<WindowClose> {
+    pub fn close_overseer_window(&mut self, overseer: &Overseer) -> Result<WindowClose> {
         let Some(key) = self.overseer_pane_key(overseer) else {
             return Ok(WindowClose::Unrecorded);
         };
@@ -1330,11 +1197,7 @@ impl Operation<'_> {
     /// leaves the predecessor as it was: its identity and its window return
     /// to the record they came from, each discharged `not-signalled` by that
     /// answer. `true` where `stopped` was such a stop.
-    pub(in crate::effects) fn release_retirement(
-        &mut self,
-        overseer: &Overseer,
-        stopped: &Stopped,
-    ) -> Result<bool> {
+    pub fn release_retirement(&mut self, overseer: &Overseer, stopped: &Stopped) -> Result<bool> {
         let Stop::Unreadable {
             signalled: false, ..
         } = &stopped.answer
@@ -1357,7 +1220,7 @@ impl Operation<'_> {
     /// The proof for a predecessor whose record carries no identity; its pane
     /// read gone on the proven server discharges the predecessor's pane
     /// where the set holds it.
-    pub(in crate::effects) fn terminal_proof(&mut self, overseer: &Overseer) -> Result<Proof> {
+    pub fn terminal_proof(&mut self, overseer: &Overseer) -> Result<Proof> {
         let target = super::super::overseer_target_of(self.run.settings, overseer)?;
         let proof = proof_of(overseer, target.as_ref());
         if let Proof::Proven { by: "pane-gone" } = &proof
@@ -1376,14 +1239,14 @@ impl Operation<'_> {
     /// the identity by the stop's own answer: stopped or already gone settles
     /// it, a timeout or an unreadable read leaves it standing with the cause,
     /// a pid now holding another process is one stale reading.
-    pub(in crate::effects) fn stop_process(
+    pub fn stop_process(
         &mut self,
         target: Standing<Identity>,
         owns: &dyn Fn(&str) -> bool,
     ) -> Result<Stopped> {
         self.check_process_token(&target)?;
         let id = target.key().clone();
-        self.signal()?;
+        self.write_signal()?;
         let answer = process::stop_tree(&id, owns, self.run.settings.close_grace.get()?)?;
         match &answer {
             Stop::IdentityStale => {
@@ -1405,33 +1268,10 @@ impl Operation<'_> {
         })
     }
 
-    /// Stop the lane's detached wake turn and every other process the set
-    /// still holds. The lane's current wake is added to the set under the
-    /// wake role, written, before its stop; a wake whose pid a later process
-    /// holds is a turn already over, read again through the one identity
-    /// reader. Then every standing process this run did not read stale is
-    /// stopped by its own token. `Some(cause)` where one outlived its grace
-    /// or could not be read: a handle still standing, which the repeated
-    /// close stops again.
-    pub(in crate::effects) fn stop_wake(
-        &mut self,
-        lane: &Lane,
-        owns: &dyn Fn(&str) -> bool,
-    ) -> Result<Option<String>> {
-        let wake = crate::ops::wake::wake_identity(lane);
-        if let Some(id) = &wake {
-            self.add_as(Obligation::Process(id.clone()), Role::Wake)?;
-        }
-        self.stop_standing_processes(owns, wake.as_ref())
-    }
-
-    /// Stop every standing process of the set this run did not read stale,
-    /// each by its own token; `wake` is the lane's
-    /// current wake where one was just added, whose stale reading is a turn
     /// already over. `Some(cause)` where one outlived its grace or could not
     /// be read. A moved intent retries this sweep on its own set alone:
     /// nothing the lane names now is read here.
-    pub(in crate::effects) fn stop_standing_processes(
+    pub fn stop_standing_processes(
         &mut self,
         owns: &dyn Fn(&str) -> bool,
         wake: Option<&Identity>,
@@ -1474,10 +1314,7 @@ impl Operation<'_> {
     /// names the pane the set recorded and no other. The one close a moved
     /// intent retries on its own set with: nothing the target names now is
     /// read.
-    pub(in crate::effects) fn close_standing_panes(
-        &mut self,
-        overseer: Option<&Overseer>,
-    ) -> Result<()> {
+    pub fn close_standing_panes(&mut self, overseer: Option<&Overseer>) -> Result<()> {
         let sockets = self.sockets(overseer);
         for key in self.obligations.standing_panes() {
             let observed = match server_at(&sockets, key.server, key.server_start) {
@@ -1503,32 +1340,25 @@ impl Operation<'_> {
         Ok(())
     }
 
-    /// Add the lane's current wake to the set under the wake role, written,
-    /// and read it through the one identity reader, signalling nothing: a
-    /// reconcile's read.
-    pub(in crate::effects) fn read_wake(
-        &mut self,
-        lane: &Lane,
-    ) -> Result<Option<Reading<Identity>>> {
-        let Some(id) = crate::ops::wake::wake_identity(lane) else {
-            return Ok(None);
-        };
-        self.add_as(Obligation::Process(id.clone()), Role::Wake)?;
-        let read = process::still_runs(&id);
+    /// Read the standing process `id` through the one identity reader,
+    /// signalling nothing, and discharge it by that read: a reconcile's read
+    /// of a process the set holds.
+    pub fn read_process_end(&mut self, id: &Identity) -> Result<Reading<Identity>> {
+        let read = process::still_runs(id);
         self.discharge(Discharge::Process {
-            identity: id,
+            identity: id.clone(),
             end: ProcessEnd::Read(read.clone()),
         })?;
-        Ok(Some(read))
+        Ok(read)
     }
 
     /// Send Copilot `C-c` then `/exit` on the standing pane and wait up to the
     /// close grace, on the injected clock, for it to exit, so it writes its
     /// session totals. The keystrokes are a signal, written before they are
     /// sent. Best effort: the stop that follows ends a pane that stands.
-    pub(in crate::effects) fn copilot_exit(&mut self, pane: &Standing<Pane>) -> Result<()> {
+    pub fn copilot_exit(&mut self, pane: &Standing<Pane>) -> Result<()> {
         self.check_pane_token(pane)?;
-        self.signal()?;
+        self.write_signal()?;
         let pane = pane.key();
         let _ = tmux::send_key(pane, "C-c");
         let _ = tmux::send_line(pane, "/exit");
@@ -1542,212 +1372,11 @@ impl Operation<'_> {
         Ok(())
     }
 
-    /// [`pending_ask`] through this operation's mailbox CLI.
-    pub(in crate::effects) fn unanswered_ask(
-        &self,
-        lane: &Lane,
-    ) -> std::result::Result<Option<String>, String> {
-        pending_ask(&self.run.settings.lane_mail_cli, lane)
-    }
-
-    /// End every validation run in a local lane's worktree through orch's
-    /// own runner (`dev-validate-run --stop --worktree ROOT`) before the
-    /// window closes, and discharge the validation obligation
-    /// by the runner's answer. A hosted lane's runs are its host's; a worktree
-    /// that is gone has none. The inner `Err` names why the stop did not
-    /// confirm, the obligation standing.
-    pub(in crate::effects) fn stop_validations(
-        &mut self,
-        lane: &Lane,
-    ) -> Result<std::result::Result<(), String>> {
-        // Nothing to stop discharges Validation with no signal: a hosted
-        // lane's runs are its host's, and a worktree with no recorded root
-        // or one read gone has none.
-        let root = match &lane.host {
-            Some(_) => None,
-            None => lane.mail_root.as_deref(),
-        };
-        let Some(root) = root else {
-            self.discharge(Discharge::Validation(ValidationEnd::Stopped))?;
-            return Ok(Ok(()));
-        };
-        match std::fs::metadata(root) {
-            Ok(meta) if meta.is_dir() => {}
-            // A worktree gone, or a path that is not a directory, has no runs.
-            Ok(_) => {
-                self.discharge(Discharge::Validation(ValidationEnd::Stopped))?;
-                return Ok(Ok(()));
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                self.discharge(Discharge::Validation(ValidationEnd::Stopped))?;
-                return Ok(Ok(()));
-            }
-            // A root that cannot be read is no proof of absence: Validation
-            // stands, with the cause, and nothing is signalled.
-            Err(e) => return Ok(Err(format!("validation-unreadable:{}", e.kind()))),
-        }
-        // A real stop is the first signal of the close as often as not:
-        // recorded before the runner is called, and Validation discharged
-        // only by the runner's own answer.
-        self.signal()?;
-        let answer = run_validation_stop(self.run.settings, root);
-        if answer.is_ok() {
-            self.discharge(Discharge::Validation(ValidationEnd::Stopped))?;
-        }
-        Ok(answer)
-    }
-
-    /// The worktree's validation runs under a lane that moved belong to the
-    /// session that now holds the lane, which owes its own stop: the
-    /// obligation is discharged `lane-moved` where it stands;
-    /// nothing of this close touches that worktree.
-    pub(in crate::effects) fn release_validation_moved(&mut self) -> Result<()> {
-        self.discharge(Discharge::Validation(ValidationEnd::LaneMoved))
-    }
-
-    /// Release the lane's worktree the set records, or keep it with its
-    /// reason, by this method's own reads through the
-    /// handle's runner: the path gone discharges `worktree-gone`; a linked
-    /// worktree (its `.git` a file, git-worktree(1) § DETAILS) with a dirty
-    /// tree or commits no other ref reaches is kept `dirty` or `unmerged`;
-    /// a clean, merged one is removed, after the signal is written, by the
-    /// worktree package's `remove`, the one owner of what a removal must
-    /// preserve (it moves every lane mailbox under the worktree to the main
-    /// checkout's `tmp/lane-mail/` before git deletes the tree, and refuses
-    /// a locked worktree, an unreconciled rebase map or an unregistered
-    /// target before anything is removed), discharged `released` once the
-    /// path reads gone, `kept:mail-unmoved` where the package moved no
-    /// mailbox and removed nothing, or kept with the package's refusal; a
-    /// path with no `.git`, or the main worktree, is kept as such. A path
-    /// or a read that fails leaves the obligation standing
-    /// `worktree-unreadable`: never released, never kept. Nothing to
-    /// release where the set records no worktree.
-    pub(in crate::effects) fn release_worktree(&mut self) -> Result<Option<WorktreeRelease>> {
-        let Some(path) = self.obligations.worktree() else {
-            return Ok(None);
-        };
-        let release = match read_worktree(&path) {
-            WorktreeRead::Gone => WorktreeRelease::Gone,
-            WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
-            WorktreeRead::NotAWorktree => WorktreeRelease::Kept {
-                reason: KeptReason::NotAWorktree,
-            },
-            WorktreeRead::Main => WorktreeRelease::Kept {
-                reason: KeptReason::MainWorktree,
-            },
-            WorktreeRead::Linked => match judge_worktree(&path).and_then(|kept| match kept {
-                Some(reason) => Ok(Err(reason)),
-                None => main_worktree(&path).map(Ok),
-            }) {
-                Err(cause) => WorktreeRelease::Held { cause },
-                Ok(Err(reason)) => WorktreeRelease::Kept { reason },
-                Ok(Ok(main)) => {
-                    // The removal is an action: recorded before it runs.
-                    self.signal()?;
-                    match package_remove(&self.run.settings.worktree_cli, &main, &path) {
-                        Err(cause) => WorktreeRelease::Held { cause },
-                        Ok(reply) => reply.judge(read_worktree(&path)),
-                    }
-                }
-            },
-        };
-        self.discharge(Discharge::Worktree {
-            path,
-            end: WorktreeEnd::from(&release),
-        })?;
-        Ok(Some(release))
-    }
-
-    /// The item's files out of the state directory once their archive
-    /// stands (`archive::close_out`), the close of an item its tracker
-    /// ended, before the provider's close: a removal that fails is the
-    /// cause, and nothing past it runs.
-    pub(in crate::effects) fn close_out_files(
-        &mut self,
-        item: &str,
-    ) -> Result<std::result::Result<Option<PathBuf>, String>> {
-        self.signal()?;
-        let settings = self.run.settings;
-        Ok(crate::archive::close_out(
-            &settings.archive_root,
-            &settings.roots.project,
-            &settings.state_dir,
-            item,
-            &[],
-            self.run.locking,
-            self.run.env.now_secs,
-        )
-        .map(|closed| closed.archive)
-        .map_err(|e| format!("{}: {e}", e.key())))
-    }
-
-    /// The provider's close of a hosted lane's sandbox (`lane-host close
-    /// --item ITEM [--merged]`), signalled before it runs: what it answered,
-    /// or `Err` with the cause of a close that refused at the dispatcher or
-    /// gave no answer.
-    pub(in crate::effects) fn host_close(
-        &mut self,
-        lane: &Lane,
-        merged: bool,
-    ) -> Result<std::result::Result<crate::watch::hosted::HostClosed, crate::watch::hosted::Asked>>
-    {
-        self.signal()?;
-        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
-        Ok(crate::watch::hosted::close(
-            &scripts,
-            crate::watch::hosted::host_of(lane),
-            &lane.item,
-            merged,
-        ))
-    }
-
-    /// Whether `worktree merged ITEM`, asked from the project checkout,
-    /// shows the item's branch merged: `Ok(true)` on 0, `Ok(false)` on 1,
-    /// `Err` with the status on any other answer.
-    pub(in crate::effects) fn worktree_merged(
-        &self,
-        item: &str,
-    ) -> std::result::Result<bool, String> {
-        let out = host::run_tagged_in(
-            "close",
-            "worktree",
-            &self.run.settings.worktree_cli,
-            "merged",
-            &["merged", item],
-            host::Place {
-                cwd: Some(&self.run.settings.roots.project),
-                env: &[],
-            },
-            CLI_TIMEOUT,
-        )
-        .map_err(|e| format!("cause={e}"))?;
-        match out.status.code() {
-            Some(0) => Ok(true),
-            Some(1) => Ok(false),
-            Some(code) => Err(format!("status={code}")),
-            None => Err(format!("status={}", out.status)),
-        }
-    }
-
-    /// The worktree under a lane that moved belongs to the session that now
-    /// holds the lane: the obligation is discharged `lane-moved` where it
-    /// stands, as the validation stop is, and nothing of this close touches
-    /// that worktree.
-    pub(in crate::effects) fn release_worktree_moved(&mut self) -> Result<()> {
-        if let Some(path) = self.obligations.worktree() {
-            self.discharge(Discharge::Worktree {
-                path,
-                end: WorktreeEnd::LaneMoved,
-            })?;
-        }
-        Ok(())
-    }
-
     /// Wait for the process that handed this intent to the job to exit,
     /// within the launch bound: the pane about to be retired is its own as
     /// often as not. A caller still live past the bound, or one that cannot
     /// be read, holds the succession no longer.
-    pub(in crate::effects) fn await_caller_gone(&self) -> Result<()> {
+    pub fn await_caller_gone(&self) -> Result<()> {
         let Some(caller) = super::read_intent(self.run.path, &self.intent_id)?.handed_from else {
             return Ok(());
         };
@@ -1772,12 +1401,7 @@ impl Operation<'_> {
     /// baseline of lead sessions for `cwd` under `home`. A store with no root
     /// is an empty baseline; one that could not be read refuses before any
     /// window opens.
-    pub(in crate::effects) fn session_floor(
-        &self,
-        harness: Harness,
-        home: &Path,
-        cwd: &Path,
-    ) -> Result<SessionFloor> {
+    pub fn session_floor(&self, harness: Harness, home: &Path, cwd: &Path) -> Result<SessionFloor> {
         if harness.fixes_session_id() {
             return Ok(SessionFloor::Fixed(session::fresh_session_id()?));
         }
@@ -1799,7 +1423,7 @@ impl Operation<'_> {
     /// harness ready at its composer may write its session moments later
     /// (Codex its rollout, Copilot its first event), so none found is read
     /// again within the launch bound before it binds nothing.
-    pub(in crate::effects) fn appeared_session(
+    pub fn appeared_session(
         &self,
         harness: Harness,
         home: &Path,
@@ -1836,7 +1460,7 @@ impl Operation<'_> {
     /// and never pastes twice, while a line refused before the paste leaves
     /// the phase where it stood for a repeat to deliver. No obligation
     /// changes: the pane and its process stand as before.
-    pub(in crate::effects) fn deliver(
+    pub fn deliver(
         &mut self,
         pane: &Standing<Pane>,
         text: &str,
@@ -1855,485 +1479,17 @@ impl Operation<'_> {
     }
 
     /// The user turns the session file `file` records.
-    pub(in crate::effects) fn user_turns(&self, harness: Harness, file: &Path) -> Result<u64> {
+    pub fn user_turns(&self, harness: Harness, file: &Path) -> Result<u64> {
         Ok(session::user_turns(harness, file)? as u64)
     }
 }
 
 /// How a brief's paste went: pasted, refused before anything reached the
 /// pane, or asked with no answer, the text possibly in the pane.
-pub(in crate::effects) enum Delivery {
+pub enum Delivery {
     Pasted,
     Unsent(agent_runtime::Error),
     Unanswered(agent_runtime::Error),
-}
-
-/// How the close's release of the lane's worktree went, by the release's
-/// own reads: what it discharges the obligation by, and what its
-/// observation reports.
-pub(in crate::effects) enum WorktreeRelease {
-    /// The path read gone before any removal.
-    Gone,
-    /// Removed by the worktree package; `kept_mail` is a lane mailbox it
-    /// kept beside the main checkout's, where one could not join.
-    Released {
-        kept_mail: Option<String>,
-    },
-    Kept {
-        reason: KeptReason,
-    },
-    /// The obligation stands: the path or a read of it failed.
-    Held {
-        cause: String,
-    },
-}
-
-impl From<&WorktreeRelease> for WorktreeEnd {
-    fn from(release: &WorktreeRelease) -> WorktreeEnd {
-        match release {
-            WorktreeRelease::Gone => WorktreeEnd::Gone,
-            WorktreeRelease::Released { kept_mail } => WorktreeEnd::Released {
-                kept_mail: kept_mail.clone(),
-            },
-            WorktreeRelease::Kept { reason } => WorktreeEnd::Kept(reason.clone()),
-            WorktreeRelease::Held { cause } => WorktreeEnd::Unreadable {
-                cause: cause.clone(),
-            },
-        }
-    }
-}
-
-/// What the path a lane records as its worktree reads as: a linked
-/// worktree, whose `.git` is a file naming its repository's directory
-/// (git-worktree(1) § DETAILS); the main worktree, whose `.git` is a
-/// directory; a directory with no `.git` entry; gone; or unreadable.
-enum WorktreeRead {
-    Gone,
-    NotAWorktree,
-    Main,
-    Linked,
-    Unreadable { cause: String },
-}
-
-fn read_worktree(path: &str) -> WorktreeRead {
-    match std::fs::metadata(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return WorktreeRead::Gone,
-        Err(e) => {
-            return WorktreeRead::Unreadable {
-                cause: e.kind().to_string(),
-            };
-        }
-        Ok(meta) if !meta.is_dir() => return WorktreeRead::NotAWorktree,
-        Ok(_) => {}
-    }
-    match std::fs::symlink_metadata(Path::new(path).join(".git")) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => WorktreeRead::NotAWorktree,
-        Err(e) => WorktreeRead::Unreadable {
-            cause: format!("git-entry:{}", e.kind()),
-        },
-        Ok(meta) if meta.is_dir() => WorktreeRead::Main,
-        Ok(meta) if meta.is_file() => WorktreeRead::Linked,
-        Ok(_) => WorktreeRead::NotAWorktree,
-    }
-}
-
-/// Whether a linked worktree at `path` must be kept: it holds a submodule
-/// (`holds_submodule`), its tree is dirty (the status read below lists a
-/// line that is dirt), or its `HEAD` carries a commit no other local or
-/// remote ref reaches (`git rev-list` with every ref but its own branch
-/// negated), which removal would lose. `Err` is a read that failed.
-///
-/// A worktree holding a submodule is kept `submodules` and never judged:
-/// git's own unforced `worktree remove` refuses it
-/// (git-worktree(1)), while the package's removal is forced and a
-/// submodule's tree and commits are read under settings the superproject's
-/// command line does not reach. The keep reads exactly what that refusal
-/// reads, the worktree's module store and the populated gitlinks of its
-/// index, data no activation, ignore or status setting changes, where `git
-/// submodule status` lists a populated submodule as uninitialized under a
-/// documented setting (gitsubmodules(7) § Active submodules) and fails on
-/// a gitlink with no `.gitmodules` mapping. A never-initialized gitlink
-/// with no store has nothing to lose, and its worktree continues to the
-/// status read.
-///
-/// A listing used as evidence names its completeness flags. The status
-/// read is `git status --porcelain --untracked-files=all
-/// --ignore-submodules=none`: `--untracked-files=all` overrides
-/// `status.showUntrackedFiles` (git-status(1), git-config(1));
-/// `--ignore-submodules=none` overrides `submodule.<name>.ignore` and
-/// `diff.ignoreSubmodules` (gitmodules(5), git-status(1)), whose `all`
-/// hides a gitlink path a person replaced with a file (` T`), the one
-/// case left to it once a populated submodule is kept above. The listing
-/// then proves the superproject's tracked and untracked files. Ignored
-/// files are not work and are not listed; a lane mailbox under an ignored
-/// `tmp/` is the worktree package's to move at the removal.
-///
-/// A worktree the package made with `create --no-checkout` is a claim: its
-/// index read from `HEAD`, no file written, marked
-/// `kendex-worktree.checkoutMode claim` in its own config (the package's
-/// `setup_app_worktree`), so every tracked file lists ` D`, the
-/// worktree-side deletion the claim makes by design. In a claim a ` D`
-/// line is not dirt and every other line (an untracked file, an index
-/// change, a modification) still is; in any other mode, or none, every
-/// line is dirt. The mark is read with `--default ""`, so an absent key is
-/// no mode and a config that cannot be read is a failed read.
-fn judge_worktree(path: &str) -> std::result::Result<Option<KeptReason>, String> {
-    if holds_submodule(path)? {
-        return Ok(Some(KeptReason::Submodules));
-    }
-    let status = git_lines(
-        path,
-        "status",
-        &[
-            "status",
-            "--porcelain",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-        ],
-    )?;
-    if !status.is_empty() {
-        let claim = git_lines(
-            path,
-            "checkout-mode",
-            &[
-                "config",
-                "--get",
-                "--default",
-                "",
-                "kendex-worktree.checkoutMode",
-            ],
-        )?
-        .first()
-        .is_some_and(|mode| mode == "claim");
-        if !claim || status.iter().any(|line| !line.starts_with(" D ")) {
-            return Ok(Some(KeptReason::Dirty));
-        }
-    }
-    let branch = git_lines(path, "branch", &["branch", "--show-current"])?;
-    let mut args = vec!["rev-list", "-n", "1", "HEAD", "--not"];
-    let own_branch;
-    let own_remote;
-    // `--exclude` takes the ref's name under the set the next option names,
-    // without its `refs/heads/` or `refs/remotes/` prefix (git-rev-list(1)).
-    if let Some(branch) = branch.first() {
-        own_branch = format!("--exclude={branch}");
-        own_remote = format!("--exclude=*/{branch}");
-        args.extend([
-            own_branch.as_str(),
-            "--branches",
-            own_remote.as_str(),
-            "--remotes",
-        ]);
-    } else {
-        args.extend(["--branches", "--remotes"]);
-    }
-    let unreached = git_lines(path, "rev-list", &args)?;
-    Ok((!unreached.is_empty()).then_some(KeptReason::Unmerged))
-}
-
-/// The main checkout of the repository the linked worktree at `path`
-/// belongs to: the parent of its common git directory (`git rev-parse
-/// --path-format=absolute --git-common-dir`, git-rev-parse(1)), as the
-/// worktree package resolves its own `PROJECT_ROOT`. The package takes its
-/// repository from the directory it runs in, so the removal runs there,
-/// never inside the tree it deletes.
-fn main_worktree(path: &str) -> std::result::Result<String, String> {
-    let common = git_path(
-        path,
-        "common-dir",
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?;
-    common
-        .parent()
-        .map(|main| main.display().to_string())
-        .ok_or_else(|| format!("common-dir:no-parent:{}", common.display()))
-}
-
-/// Run the worktree package's `remove` on `path` through the one runner,
-/// which bounds and counts it under the `worktree` tag, with `main` as the
-/// child's working directory: the package takes its repository from the
-/// directory it runs in, so the removal runs in the main worktree, never
-/// inside the tree it deletes. The package inherits the runtime's
-/// environment. `Err` is a run with no reply, held so the next close or
-/// reconcile asks again: a package that never started (a `main` that cannot
-/// be entered included) removed nothing, `removal-not-started`; one that
-/// outran the bound may have removed it, `removal-unanswered`.
-fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<RemoveReply, String> {
-    let output = host::run_tagged_in(
-        "worktree",
-        "worktree",
-        cli,
-        "remove",
-        &["remove", path],
-        host::Place {
-            cwd: Some(Path::new(main)),
-            env: &[],
-        },
-        CLI_TIMEOUT,
-    )
-    .map_err(|e| {
-        if let agent_runtime::Error::NotStarted { .. } = e {
-            format!("removal-not-started:{e}")
-        } else {
-            format!("removal-unanswered:{e}")
-        }
-    })?;
-    let stdout = host::stdout_text(&output);
-    let stderr = host::stderr_text(&output);
-    Ok(RemoveReply {
-        status: output.status.code().unwrap_or(-1),
-        success: output.status.success(),
-        removed: keyed_lines(&stdout).any(|(key, _)| key == "removed"),
-        keyed: keyed_lines(&stderr)
-            .map(|(key, value)| (key.to_owned(), value.to_owned()))
-            .collect(),
-        first_stderr: stderr.lines().next().unwrap_or_default().trim().to_owned(),
-    })
-}
-
-/// The worktree package's keyed lines in `text`, `worktree-<key>: <value>`
-/// (`worktree --help`: the stable message records), as (key, value).
-fn keyed_lines(text: &str) -> impl Iterator<Item = (&str, &str)> {
-    text.lines()
-        .filter_map(|line| line.strip_prefix("worktree-")?.split_once(": "))
-}
-
-/// What the worktree package's `remove` answered: its exit, whether it
-/// reported the worktree removed (`worktree-removed` on stdout, the
-/// `remove` arm's last line), and
-/// its keyed stderr lines, among which `lane-mail-move-failed` says a lane
-/// mailbox could not be moved and nothing was removed
-/// (`git_remove_worktree`), and `lane-mail-kept` names a
-/// mailbox kept beside the main checkout's after the removal
-/// (`lane_mail_settle`); `worktree remove --help` § Lane
-/// mailboxes states both.
-struct RemoveReply {
-    status: i32,
-    success: bool,
-    removed: bool,
-    keyed: Vec<(String, String)>,
-    first_stderr: String,
-}
-
-impl RemoveReply {
-    /// The worktree's end from this reply and the path read `after` it. A
-    /// reply that is no success and carries no `worktree-` keyed line is no
-    /// answer from the package (an executable at the package's path that is
-    /// not the package, or a package ended by a signal; one that cannot
-    /// start, or a main worktree that cannot be entered, never reaches a
-    /// reply: `package_remove` returns the runner's `Err`) and is held
-    /// `removal-unanswered` whatever the path reads: every refusal the
-    /// package's `remove` arm issues writes a keyed line. Else the path
-    /// gone after a removal the package reported, or a success, is
-    /// `released`, carrying the mailbox it kept where it named one; a path
-    /// gone after a refusal that reported no removal is held, the package's
-    /// recovery steps apply (`worktree --help` § Recovering a failed
-    /// removal); a path standing after a success is held `worktree-present`;
-    /// one standing after a refusal is kept `mail-unmoved` where the package
-    /// moved no mailbox, else `refused` with the package's lines.
-    fn judge(&self, after: WorktreeRead) -> WorktreeRelease {
-        if !self.success && !self.removed && self.keyed.is_empty() {
-            return WorktreeRelease::Held {
-                cause: format!("removal-unanswered:{}", self.detail()),
-            };
-        }
-        match after {
-            WorktreeRead::Gone if self.removed || self.success => WorktreeRelease::Released {
-                kept_mail: self.value("lane-mail-kept").map(str::to_owned),
-            },
-            WorktreeRead::Gone => WorktreeRelease::Held {
-                cause: format!("removal-unanswered:{}", self.detail()),
-            },
-            WorktreeRead::Unreadable { cause } => WorktreeRelease::Held { cause },
-            WorktreeRead::NotAWorktree | WorktreeRead::Main | WorktreeRead::Linked => {
-                if self.success {
-                    WorktreeRelease::Held {
-                        cause: "worktree-present".to_owned(),
-                    }
-                } else if self.value("lane-mail-move-failed").is_some() {
-                    WorktreeRelease::Kept {
-                        reason: KeptReason::MailUnmoved,
-                    }
-                } else {
-                    WorktreeRelease::Kept {
-                        reason: KeptReason::Refused {
-                            detail: self.detail(),
-                        },
-                    }
-                }
-            }
-        }
-    }
-
-    /// The value of the keyed stderr line `key`, where the package wrote one.
-    fn value(&self, key: &str) -> Option<&str> {
-        self.keyed
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
-    }
-
-    /// The reply as a refusal's record: the exit status and the keyed
-    /// stderr lines, or the first stderr line where the package wrote none.
-    fn detail(&self) -> String {
-        let lines = if self.keyed.is_empty() {
-            self.first_stderr.clone()
-        } else {
-            self.keyed
-                .iter()
-                .map(|(k, v)| format!("worktree-{k}: {v}"))
-                .collect::<Vec<_>>()
-                .join("; ")
-        };
-        format!("status={} {lines}", self.status)
-    }
-}
-
-/// Whether the worktree at `path` holds a submodule, by the two reads of
-/// git's own unforced `worktree remove` (`worktree.c`
-/// `validate_no_submodules`): the worktree's module store, `git rev-parse
-/// --git-path modules`, is a directory, or a gitlink of its index (`git
-/// ls-files --stage -z`, an entry of mode `160000`, NUL-separated so a path
-/// with special characters is not quoted) has a `.git` under its path.
-/// `Err` is a read that failed.
-fn holds_submodule(path: &str) -> std::result::Result<bool, String> {
-    use std::os::unix::ffi::OsStrExt;
-    let modules = git_path(
-        path,
-        "modules-path",
-        &[
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "modules",
-        ],
-    )?;
-    match std::fs::metadata(&modules) {
-        Ok(meta) if meta.is_dir() => return Ok(true),
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => {
-            return Err(format!("modules-path:{}:{}", modules.display(), e.kind()));
-        }
-    }
-    let index = git_output(path, "ls-files", &["ls-files", "--stage", "-z"])?;
-    for entry in index.stdout.split(|byte| *byte == 0) {
-        // `<mode> <object> <stage>\t<path>` (git-ls-files(1)).
-        let Some(rest) = entry.strip_prefix(b"160000 ") else {
-            continue;
-        };
-        let Some(tab) = rest.iter().position(|byte| *byte == b'\t') else {
-            return Err("ls-files:a gitlink entry names no path".to_owned());
-        };
-        let git_entry = Path::new(path)
-            .join(std::ffi::OsStr::from_bytes(&rest[tab + 1..]))
-            .join(".git");
-        // A file standing at the gitlink's path (a person's replacement of
-        // a vendored submodule) is no populated submodule, as git reads it;
-        // the status read lists it as dirt.
-        match std::fs::symlink_metadata(&git_entry) {
-            Ok(_) => return Ok(true),
-            Err(e)
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ) => {}
-            Err(e) => {
-                return Err(format!("ls-files:{}:{}", git_entry.display(), e.kind()));
-            }
-        }
-    }
-    Ok(false)
-}
-
-/// The output of a git read that must succeed: a run that could not start
-/// or exited non-zero is `Err`, naming the operation, the exit and the
-/// first stderr line.
-fn git_output(
-    path: &str,
-    operation: &'static str,
-    args: &[&str],
-) -> std::result::Result<std::process::Output, String> {
-    let mut argv = vec!["-C", path];
-    argv.extend_from_slice(args);
-    let output = host::run_tagged(
-        "worktree",
-        "git",
-        Path::new("git"),
-        operation,
-        &argv,
-        CLI_TIMEOUT,
-    )
-    .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let line = host::stderr_text(&output)
-            .lines()
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
-        return Err(format!(
-            "{operation}:status={} {line}",
-            output.status.code().unwrap_or(-1)
-        ));
-    }
-    Ok(output)
-}
-
-/// The one pathname a git read that must succeed prints (`rev-parse
-/// --git-path`, `--git-common-dir`): its stdout less the one newline git
-/// ends it with, as bytes, since a pathname is one value whatever
-/// characters it holds; an empty answer is a failed read.
-fn git_path(
-    path: &str,
-    operation: &'static str,
-    args: &[&str],
-) -> std::result::Result<PathBuf, String> {
-    use std::os::unix::ffi::OsStrExt;
-    let output = git_output(path, operation, args)?;
-    let bytes = output.stdout.strip_suffix(b"\n").unwrap_or(&output.stdout);
-    if bytes.is_empty() {
-        return Err(format!("{operation}:no path printed"));
-    }
-    Ok(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
-}
-
-/// The non-empty stdout lines of a git read that must succeed.
-fn git_lines(
-    path: &str,
-    operation: &'static str,
-    args: &[&str],
-) -> std::result::Result<Vec<String>, String> {
-    let output = git_output(path, operation, args)?;
-    Ok(host::stdout_text(&output)
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(str::to_owned)
-        .collect())
-}
-
-/// Run orch's own validation runner's stop for the worktree `root`
-/// (`dev-validate-run --stop --worktree ROOT`).
-/// The caller gates and signals; this only runs the runner and reads its
-/// answer.
-fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(), String> {
-    let output = host::run_tagged(
-        "close",
-        "dev-validate-run",
-        &settings.dev_validate_cli,
-        "stop",
-        &["--stop", "--worktree", root],
-        CLI_TIMEOUT,
-    )
-    .map_err(|e| e.to_string())?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(format!(
-        "status={} {}",
-        output.status.code().unwrap_or(-1),
-        host::stderr_text(&output).trim()
-    ))
 }
 
 /// Read the pane an adoption names and record the controller in it: the
@@ -2346,15 +1502,14 @@ fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(
 /// resolves refuses `predecessor-unproven`. The one
 /// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
-pub(in crate::effects) fn adopt_controller(
+pub fn adopt_controller(
     path: &Path,
     r: &AdoptController,
     settings: &Settings,
     locking: Locking,
 ) -> Result<Applied> {
     let overseer = super::super::fleet(path)?.overseer;
-    let harness = Harness::parse(&r.harness)
-        .ok_or_else(|| super::super::refused("harness-unknown", &[("harness", &r.harness)]))?;
+    let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
         return Err(super::super::refused("pane-invalid", &[("pane", &r.pane)]));
     }
@@ -2456,7 +1611,7 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
 /// which session the process runs, since an older session in the same
 /// directory reads the same. The adoption that names the id, or the
 /// turn-end hook reading its own session's id, binds it.
-pub(in crate::effects) fn heal_controller(
+pub fn heal_controller(
     path: &Path,
     settings: &Settings,
     locking: Locking,
@@ -2538,9 +1693,6 @@ fn reading_word(reading: &ProcessReading) -> String {
         .and_then(|v| v.get("reading").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default()
 }
-
-/// How long `kendex list` is given to answer a register's hook lookup.
-const INVENTORY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The launch identity a hand-opened controller's harness stated at its
 /// start, from the last `SessionStart` row of its rows file.
@@ -2681,10 +1833,7 @@ fn proc_words(pid: u32, file: &str) -> std::result::Result<Vec<String>, &'static
 
 /// The value `name` holds in the environment process `pid` was started
 /// with, `None` where it holds none or an empty one.
-pub(in crate::effects) fn process_var(
-    pid: u32,
-    name: &str,
-) -> std::result::Result<Option<String>, &'static str> {
+pub fn process_var(pid: u32, name: &str) -> std::result::Result<Option<String>, &'static str> {
     Ok(proc_words(pid, "environ")?.into_iter().find_map(|entry| {
         entry
             .strip_prefix(name)
@@ -2749,100 +1898,6 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
     }
 }
 
-/// Whether `kendex list`'s table lists the lane-mail-check hook for
-/// `harness`: a row of four columns, kind `hook`, the harness third, and
-/// the hook's own name after the last colon of its `event:matcher:name`.
-fn lists_turn_end_hook(table: &str, harness: &str) -> bool {
-    table.lines().any(|line| {
-        let columns: Vec<&str> = line.split_whitespace().collect();
-        columns.len() == 4
-            && columns[0] == "hook"
-            && columns[2] == harness
-            && columns[1].rsplit(':').next() == Some("lane-mail-check")
-    })
-}
-
-/// The notices a registered session that runs unseen needs, from the
-/// record as the adoption left it: a Copilot home gets the context reader
-/// (`context-reader=next-start` where it was absent, so this running
-/// session does not load it; `context-reader=missing` where the home
-/// refuses it) and its hooks judged (`turn-end-hook=missing`); every other
-/// harness's turn-end hook is looked up in the checkout's install.
-fn coverage_notices(
-    settings: &Settings,
-    harness: Harness,
-    home: Option<&str>,
-    cwd: &str,
-) -> Vec<String> {
-    let mut notices = Vec::new();
-    let fix = |name: &str| {
-        format!("fix=add {name} to [install] harnesses in kendex.toml and run kendex apply")
-    };
-    if harness == Harness::Copilot {
-        let Some(home) = home else {
-            notices.push("context-reader=missing home=none cause=home-unknown".to_owned());
-            return notices;
-        };
-        let reader = Path::new(home).join("extensions/kendex-lane-context/extension.mjs");
-        let before = std::fs::metadata(&reader).is_ok();
-        match agent_runtime::trust::prepare(
-            Harness::Copilot,
-            Path::new(home),
-            Path::new(cwd),
-            false,
-        ) {
-            Ok(_) => {
-                if !before && std::fs::metadata(&reader).is_ok() {
-                    notices.push(format!("context-reader=next-start home={home}"));
-                }
-            }
-            Err(e) => notices.push(format!("context-reader=missing home={home} cause={e}")),
-        }
-        if let Err(reason) =
-            crate::effects::launch::gate::local(harness, Some(Path::new(home)), Path::new(cwd))
-        {
-            notices.push(format!(
-                "turn-end-hook=missing harness=copilot reason={reason} {}",
-                fix("copilot")
-            ));
-        }
-        return notices;
-    }
-    let name = harness.name();
-    let place = host::Place {
-        cwd: Some(&settings.roots.project),
-        env: &[],
-    };
-    let listed = host::run_tagged_in(
-        "register",
-        "kendex",
-        Path::new("kendex"),
-        "list",
-        &["list", "--harness", name],
-        place,
-        INVENTORY_TIMEOUT,
-    );
-    let (exit, listed) = match &listed {
-        Ok(out) => {
-            let table = format!("{}{}", host::stdout_text(out), host::stderr_text(out));
-            (
-                out.status
-                    .code()
-                    .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
-                out.status.success() && lists_turn_end_hook(&table, name),
-            )
-        }
-        Err(e) => (format!("unanswered cause={e}"), false),
-    };
-    if !listed {
-        notices.push(format!(
-            "turn-end-hook=missing harness={name} exit={exit} {}",
-            fix(name)
-        ));
-    }
-    notices
-}
-
 /// Register the controller a person opened by hand in the caller's own
 /// pane, `$TMUX_PANE` on the server `$TMUX` names: its launch identity from
 /// the last `SessionStart` row its harness wrote to the rows file the hook
@@ -2855,13 +1910,13 @@ fn coverage_notices(
 /// (`launch-unread` where that process cannot be read, the row and the
 /// caller's own environment standing in); `account` ahead of every reading.
 /// Then the one adoption, which writes the rows file as the record's
-/// `session_rows`, and the coverage notices.
-pub(in crate::effects) fn register_controller(
+/// `session_rows`. Answers the reply with the harness it registered.
+pub fn register_controller(
     path: &Path,
     account: Option<&str>,
     settings: &Settings,
     locking: Locking,
-) -> Result<Value> {
+) -> Result<(Value, Harness)> {
     let pane = caller_var("TMUX_PANE")
         .ok_or_else(|| super::super::refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
     if !is_pane_id(&pane) {
@@ -2888,9 +1943,7 @@ pub(in crate::effects) fn register_controller(
     };
     let (harness, identity, row_account, row_model, cwd) = match stated {
         Ok(row) => {
-            let harness = Harness::parse(&row.harness).ok_or_else(|| {
-                super::super::refused("harness-unknown", &[("harness", &row.harness)])
-            })?;
+            let harness = Harness::named(&row.harness)?;
             let identity =
                 harness_in_pane(settings, harness, &pane, fields.pid)?.map_err(|reading| {
                     Error::PaneNotHarness {
@@ -2976,43 +2029,23 @@ pub(in crate::effects) fn register_controller(
         extra_args,
     };
     let applied = adopt_controller(path, &request, settings, locking)?;
-    // A record proven to name this pane keeps fields the request left out,
-    // so the coverage is judged on the record as written.
-    let recorded = super::super::fleet(path)?.overseer;
-    let word = |key: &str| {
-        recorded
-            .as_ref()
-            .and_then(|o| o.extra.get(key))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-    };
-    let cwd = word("cwd").unwrap_or_default();
-    notices.extend(coverage_notices(
-        settings,
+    Ok((
+        json!({
+            "adopted": applied,
+            "pane": pane,
+            "window": fields.pane.window,
+            "server": server.pid,
+            "account": account,
+            "notices": notices,
+        }),
         harness,
-        word("home").as_deref(),
-        &cwd,
-    ));
-    Ok(json!({
-        "adopted": applied,
-        "pane": pane,
-        "window": fields.pane.window,
-        "server": server.pid,
-        "account": account,
-        "notices": notices,
-    }))
+    ))
 }
 
 /// The file the harness holds the session `id` for `cwd` in under `home`,
 /// found by that id and read three-valued: absent is a session the home
 /// never held, unreadable is a store that could not be listed.
-pub(in crate::effects) fn fixed_id_file(
-    harness: Harness,
-    home: &Path,
-    cwd: &Path,
-    id: &str,
-) -> Reading<PathBuf> {
+pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<PathBuf> {
     session::fixed_id_file(harness, home, cwd, id)
 }
 

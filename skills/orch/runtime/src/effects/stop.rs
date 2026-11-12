@@ -18,9 +18,10 @@
 use agent_runtime::harness::Harness;
 use serde_json::{Value, json};
 
+use super::lane_operation::{LaneOperation, WorktreeRelease};
 use super::operation::{
-    EffectOutcome, Foreground, Identity, Observed, Operation, ProcessRead, ProcessReading, Reading,
-    State, Stop, Word, WorktreeRelease,
+    EffectOutcome, Foreground, Identity, Observed, ProcessRead, ProcessReading, Reading, State,
+    Stop, Word,
 };
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
@@ -38,8 +39,8 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     // where it stands, else bootstrapped from the lane's launch record and
     // written before the first signal. This is the one read of the launch
     // record; from here identity and pane come from the set.
-    let mut operation = Operation::open(run, &intent)?;
-    operation.already_read_stale(stale);
+    let mut operation = LaneOperation::open_close(run, &intent, &lane)?;
+    operation.engine().already_read_stale(stale);
     let close = Close {
         item: &item,
         lane: &lane,
@@ -63,18 +64,18 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         operation.owe_worktree(&lane)?;
     }
     // The harness is the set's, by role, never the lane's launch record.
-    let Some(identity) = operation.harness_identity() else {
+    let Some(identity) = operation.engine_ref().harness_identity() else {
         // No recorded process identity: an earlier launcher's record may name a pid with
         // no start, read by that pid and discharged gone where nothing holds
         // it; then the pane the record names is the one handle left, and what
         // it holds is stopped by the identity read there.
-        if let Some(pid) = operation.harness_pid() {
-            let _ = operation.read_pid(pid)?;
+        if let Some(pid) = operation.engine_ref().harness_pid() {
+            let _ = operation.engine().read_pid(pid)?;
         }
         return close.by_pane(operation, None, json!({"identity": "none"}));
     };
     // What the recorded harness reads as before anything is signalled.
-    match operation.read_process(&identity)? {
+    match operation.engine().read_process(&identity)? {
         ProcessRead::Live => {
             if let Err((cause, fields)) = close.guard_live(&mut operation, &identity)? {
                 return Ok(close.refuse_or_hold(operation, cause, fields));
@@ -103,17 +104,20 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     // The recorded identity read live: it must stand in the set to be
     // stopped. One the set no longer names is a moved lane, taken by the pane
     // route.
-    let Some(token) = operation.standing_process(&identity) else {
+    let Some(token) = operation.engine_ref().standing_process(&identity) else {
         return close.by_pane(operation, None, json!({"identity": "none"}));
     };
     // Copilot writes its session totals on `/exit`; give it that before the
     // signal. Best effort: the stop below handles a pane that did not exit.
     if close.harness() == Some(Harness::Copilot)
-        && let Some(Observed::Present(pane)) = operation.observe_lane_pane(close.overseer)?
+        && let Some(Observed::Present(pane)) =
+            operation.engine().observe_lane_pane(close.overseer)?
     {
-        operation.copilot_exit(&pane)?;
+        operation.engine().copilot_exit(&pane)?;
     }
-    let stop = operation.stop_process(token, &|name| close.owns(name))?;
+    let stop = operation
+        .engine()
+        .stop_process(token, &|name| close.owns(name))?;
     match stop.answer() {
         Stop::Stopped { .. } | Stop::AlreadyGone => {
             let mut observation = json!({"identity": "stopped"});
@@ -170,7 +174,7 @@ impl Close<'_> {
     /// the record's cycle carries the merge or `worktree merged` shows the
     /// branch merged. A merge that read cannot judge is noted
     /// `merged-unjudged`, and the close keeps the whole archive.
-    fn merged(&self, operation: &Operation, observation: &mut Value) -> bool {
+    fn merged(&self, operation: &LaneOperation, observation: &mut Value) -> bool {
         if !matches!(
             self.ground,
             Some(CloseGround::Terminal {
@@ -211,21 +215,26 @@ impl Close<'_> {
     }
 
     /// Nothing is settled: the intent stays open with what stands.
-    fn hold(&self, operation: Operation, observation: Value) -> EffectOutcome {
+    fn hold(&self, operation: LaneOperation, observation: Value) -> EffectOutcome {
         let observation = with_pane(&operation, self.observed(observation));
         operation.hold(observation)
     }
 
     /// The close is complete once every obligation is discharged, else
     /// `unconfirmed` with what stands.
-    fn judged(&self, operation: Operation, observation: Value) -> EffectOutcome {
+    fn judged(&self, operation: LaneOperation, observation: Value) -> EffectOutcome {
         let observation = with_pane(&operation, self.observed(observation));
         operation.settle(Word::Confirmed, observation)
     }
 
     /// A refusal where the set says nothing was signalled, else the same
     /// cause held `unconfirmed` with everything standing.
-    fn refuse_or_hold(&self, operation: Operation, cause: &str, fields: Value) -> EffectOutcome {
+    fn refuse_or_hold(
+        &self,
+        operation: LaneOperation,
+        cause: &str,
+        fields: Value,
+    ) -> EffectOutcome {
         let observation = with_pane(&operation, self.observed(fields));
         operation.refuse(cause, observation)
     }
@@ -236,14 +245,14 @@ impl Close<'_> {
     /// cause and fields; `Ok(())` lets the stop proceed.
     fn guard_live(
         &self,
-        operation: &mut Operation,
+        operation: &mut LaneOperation,
         identity: &Identity,
     ) -> Result<std::result::Result<(), (&'static str, Value)>> {
         if self.no_landing() && !self.interrupts() {
             let Some(target) = &self.target else {
                 return Ok(Err(("harness-unknown", json!({}))));
             };
-            let pane = match operation.observe_lane_pane(self.overseer)? {
+            let pane = match operation.engine().observe_lane_pane(self.overseer)? {
                 Some(Observed::Present(pane)) => pane,
                 Some(Observed::Gone { cause } | Observed::Unobservable { cause }) => {
                     return Ok(Err(("idle-unproved", json!({"pane": cause}))));
@@ -252,7 +261,7 @@ impl Close<'_> {
                     return Ok(Err(("idle-unproved", json!({"pane": "unrecorded"}))));
                 }
             };
-            match operation.read_pane(
+            match operation.engine().read_pane(
                 pane.key(),
                 target.harness,
                 &|name| target.owns(name),
@@ -295,7 +304,7 @@ impl Close<'_> {
     /// still holds, and note a handle that outlived its grace or could not be
     /// read: `true`, with `wake: live` and the cause, and the repeat stops it
     /// again.
-    fn wake_held(&self, operation: &mut Operation, observation: &mut Value) -> Result<bool> {
+    fn wake_held(&self, operation: &mut LaneOperation, observation: &mut Value) -> Result<bool> {
         Ok(
             match operation.stop_wake(self.lane, &|name| self.owns(name))? {
                 None => false,
@@ -314,7 +323,11 @@ impl Close<'_> {
     /// then the worktree is released or kept with its reason, then the
     /// obligations are judged. A validation stop or a handle that did not
     /// settle leaves the lane, with the cause, for a repeated close.
-    fn finish(&self, mut operation: Operation, mut observation: Value) -> Result<EffectOutcome> {
+    fn finish(
+        &self,
+        mut operation: LaneOperation,
+        mut observation: Value,
+    ) -> Result<EffectOutcome> {
         if let Err(cause) = operation.stop_validations(self.lane)? {
             observation["validate"] = json!("stop-failed");
             observation["cause"] = json!(cause);
@@ -358,7 +371,7 @@ impl Close<'_> {
                 }
             }
         }
-        let window = operation.close_lane_window(self.overseer)?;
+        let window = operation.engine().close_lane_window(self.overseer)?;
         observation["window"] = json!(window.word());
         // The run's diagnostic of the release; the set's discharge word and
         // the lane's `kept` and `kept_mail` are the reading.
@@ -384,17 +397,17 @@ impl Close<'_> {
     /// identity. A route entered after a signal holds instead of refusing.
     fn by_pane(
         &self,
-        mut operation: Operation,
+        mut operation: LaneOperation,
         stale: Option<&Identity>,
         mut observation: Value,
     ) -> Result<EffectOutcome> {
-        let count = |operation: &mut Operation, observation: &mut Value| -> Result<()> {
+        let count = |operation: &mut LaneOperation, observation: &mut Value| -> Result<()> {
             if let Some(id) = stale {
-                operation.count_stale(id, observation)?;
+                operation.engine().count_stale(id, observation)?;
             }
             Ok(())
         };
-        let pane = match operation.observe_lane_pane(self.overseer)? {
+        let pane = match operation.engine().observe_lane_pane(self.overseer)? {
             // No addressable pane stands: the wake and validation runs are
             // what remains to end.
             None => {
@@ -423,7 +436,7 @@ impl Close<'_> {
             }
             Some(Observed::Present(pane)) => pane,
         };
-        let pane_pid = match operation.pane_pid(pane.key())? {
+        let pane_pid = match operation.engine().pane_pid(pane.key())? {
             Reading::Live(pid) => pid,
             // The pane went between the two reads.
             Reading::Gone => {
@@ -443,7 +456,10 @@ impl Close<'_> {
         count(&mut operation, &mut observation)?;
         // The identity read in the pane is an obligation from here, written
         // before anything is done with it.
-        let foreground = operation.foreground_of(pane_pid, &|name| self.owns(name), None)?;
+        let foreground =
+            operation
+                .engine()
+                .foreground_of(pane_pid, &|name| self.owns(name), None)?;
         observation["process"] = serde_json::to_value(&foreground.reading).unwrap_or(Value::Null);
         match foreground.reading {
             ProcessReading::Harness { identity } => {
@@ -462,13 +478,15 @@ impl Close<'_> {
                     }
                 }
                 if self.harness() == Some(Harness::Copilot) {
-                    operation.copilot_exit(&pane)?;
+                    operation.engine().copilot_exit(&pane)?;
                 }
                 observation["stop"] = json!("pane-foreground");
-                let Some(token) = operation.standing_process(&identity) else {
+                let Some(token) = operation.engine_ref().standing_process(&identity) else {
                     return Ok(self.hold(operation, observation));
                 };
-                let stop = operation.stop_process(token, &|name| self.owns(name))?;
+                let stop = operation
+                    .engine()
+                    .stop_process(token, &|name| self.owns(name))?;
                 let ended = matches!(stop.answer(), Stop::Stopped { .. } | Stop::AlreadyGone);
                 match stop.answer() {
                     Stop::Stopped { .. } | Stop::AlreadyGone => {}
@@ -557,8 +575,8 @@ fn cycle_merged(cycle: &Value) -> bool {
 }
 
 /// `observation` with the pane the set records under the harness role.
-fn with_pane(operation: &Operation, mut observation: Value) -> Value {
-    observation["pane"] = json!(operation.harness_pane_id());
+fn with_pane(operation: &LaneOperation, mut observation: Value) -> Value {
+    observation["pane"] = json!(operation.engine_ref().harness_pane_id());
     observation
 }
 
@@ -574,26 +592,27 @@ fn with_pane(operation: &Operation, mut observation: Value) -> Value {
 /// the intent with `stop: pending`, so the repeat retries again.
 fn moved_lane(
     run: &Run,
-    mut operation: Operation,
+    mut operation: LaneOperation,
     overseer: Option<&Overseer>,
     mut observation: Value,
 ) -> Result<EffectOutcome> {
     observation["lane"] = json!("moved");
-    if !operation.signalled() {
+    if !operation.engine_ref().signalled() {
         return Ok(operation.refuse("lane-moved", observation));
     }
     let target = operation
+        .engine_ref()
         .recorded_harness()
         .map(|h| Target::new(run.settings, h))
         .transpose()?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
-    operation.read_standing(overseer)?;
+    operation.engine().read_standing(overseer)?;
     operation.release_validation_moved()?;
     operation.release_worktree_moved()?;
-    if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
+    if let Some(cause) = operation.engine().stop_standing_processes(&owns, None)? {
         observation["cause"] = json!(cause);
     }
-    operation.close_standing_panes(overseer)?;
+    operation.engine().close_standing_panes(overseer)?;
     let mut outcome = operation.settle(Word::Confirmed, observation);
     if !outcome.ended() {
         outcome.annotate("stop", json!("pending"));
@@ -625,11 +644,11 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     let (lane, item) = lane_for_intent(run.path, &intent.id)?;
     let overseer = fleet(run.path)?.overseer;
     let overseer = overseer.as_ref();
-    let mut operation = Operation::open(run, intent)?;
+    let mut operation = LaneOperation::open_close(run, intent, &lane)?;
     // Every standing handle is read by its own key first: a wake the lane's
     // writer replaced, or a replacement foreground whose pane is gone, is read
     // here whatever the lane record names now.
-    operation.read_standing(overseer)?;
+    operation.engine().read_standing(overseer)?;
     if operation.lane_moved(&lane) {
         return moved_lane(
             run,
@@ -638,14 +657,14 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
             reconcile_observation(&item, json!({})),
         );
     }
-    let hold = |operation: Operation, observation: Value| {
+    let hold = |operation: LaneOperation, observation: Value| {
         operation.hold(reconcile_observation(&item, observation))
     };
     // The set's recorded pane as it stands, written on the observation; a
     // pane gone or none stands is what the close judges beside the recorded
     // process's end, a pane present or unobservable settles nothing here.
-    let pane = |operation: &mut Operation, observation: &mut Value| -> Result<bool> {
-        let (word, cause, judged) = match operation.observe_lane_pane(overseer)? {
+    let pane = |operation: &mut LaneOperation, observation: &mut Value| -> Result<bool> {
+        let (word, cause, judged) = match operation.engine().observe_lane_pane(overseer)? {
             None => ("unrecorded", None, true),
             Some(Observed::Gone { cause }) => ("gone", Some(cause), true),
             Some(Observed::Present(_)) => ("present", None, false),
@@ -660,7 +679,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
     // read: a validation stop owed holds; the wake is read through the one
     // identity reader and discharged where gone; a close-out the ground owes
     // holds last.
-    let settled = |mut operation: Operation, mut observation: Value| -> Result<EffectOutcome> {
+    let settled = |mut operation: LaneOperation, mut observation: Value| -> Result<EffectOutcome> {
         if operation.owes_validation() {
             observation["validate"] = json!("stop-failed");
             observation["cause"] = json!("validation-stop-owed");
@@ -693,7 +712,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
         Ok(outcome)
     };
     // The harness is the set's, by role, never the lane's launch record.
-    match operation.harness_identity() {
+    match operation.engine_ref().harness_identity() {
         None => {
             let mut observation = json!({"identity": "none"});
             // A pane present or unobservable settles nothing here. No pane
@@ -707,7 +726,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
                 Ok(hold(operation, observation))
             }
         }
-        Some(id) => match operation.read_process(&id)? {
+        Some(id) => match operation.engine().read_process(&id)? {
             ProcessRead::Live => Ok(hold(operation, json!({"stop": "pending"}))),
             ProcessRead::Unreadable { cause } => Ok(hold(
                 operation,
@@ -733,7 +752,7 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
                 // confirm alone; a recorded pane the host did not answer for
                 // is a handle still held.
                 if pane(&mut operation, &mut observation)? {
-                    operation.count_stale(&id, &mut observation)?;
+                    operation.engine().count_stale(&id, &mut observation)?;
                     settled(operation, observation)
                 } else {
                     Ok(hold(operation, observation))

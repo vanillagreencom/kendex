@@ -1361,6 +1361,11 @@ pub struct Intent {
     pub observed_status: Option<LaneStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_generation: Option<u64>,
+    /// Members the intent's frame does not own, such as the lane
+    /// operation's own obligation set, kept as written across every write
+    /// of the frame.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 /// One recorded handle of an operation's target, typed by what it is. A
@@ -1391,8 +1396,6 @@ pub enum Obligation {
     Window { server: u64, server_start: u64 },
     /// The pane's receipt was armed: an obligation until read.
     Receipt,
-    /// The worktree's validation runs, owed to orch's own runner's stop.
-    Validation,
     /// The job launcher was asked and its record not yet read: a job
     /// possibly started. `record` is the launcher record's path
     /// the ask named, the one address the record is read at:
@@ -1409,27 +1412,21 @@ pub enum Obligation {
     /// read in the kernel's table, the child whose pid it is and every member
     /// of its group, until neither stands.
     JobPgid { pgid: u32 },
-    /// The lane's local worktree at `path`, an owned resource of the close:
-    /// released through `git worktree remove`, or kept
-    /// with its reason recorded where removal would lose work.
-    Worktree { path: String },
 }
 
-/// The part a recorded handle plays in its intent: the
-/// lane's own harness and pane, its detached wake turn, the runner a
-/// succession opens, the predecessor it retires, the worktree's validation
-/// runs, the detached job, or the lane's worktree itself. A selection from
-/// the set reads the role and never the target's record.
+/// The part a recorded handle plays in its intent: the target's own harness
+/// and pane, the runner a succession opens, the predecessor it retires, the
+/// detached job, or an auxiliary process the opener names beside the
+/// harness. A selection from the set reads the role and never the target's
+/// record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Role {
     Harness,
-    Wake,
     Runner,
     Predecessor,
-    Validation,
     Job,
-    Worktree,
+    Auxiliary,
 }
 
 /// One standing obligation as the record holds it: the handle, flattened
@@ -1486,28 +1483,17 @@ fn is_zero(n: &u64) -> bool {
     *n == 0
 }
 
-/// The prefix of the word a worktree obligation is discharged by when the
-/// close keeps the worktree: `kept:<reason>`, the reason being what the
-/// lane record's `kept` field carries.
-pub const WORKTREE_KEPT: &str = "kept:";
-
-/// The prefix of the word a worktree obligation is discharged by when the
-/// close released the worktree but the worktree package kept a lane mailbox
-/// beside the main checkout's: `released:mail-kept:<path>`, the path being
-/// what the lane record's `kept_mail` field carries.
-pub const WORKTREE_MAIL_KEPT: &str = "released:mail-kept:";
-
-/// The keys a lane intent's terminal carries: the
-/// lane's `session_since` when the intent was written and every identity,
-/// pid and pane key the intent's set recorded under the harness role, the
-/// launch record's own and the harness read in its pane. The store applies a
-/// terminal to the lane only when the lane's launch names nothing but these.
+/// The keys a terminal carries for its target's record: the target's stamp
+/// when the intent was written and every identity, pid and pane key the
+/// intent's set recorded under the principal's role. The store applies a
+/// terminal to the target only when the target's record names nothing but
+/// these.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaneKeys {
+pub struct PrincipalKeys {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub lane_since: Option<String>,
+    pub since: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub harness: Vec<Obligation>,
+    pub keys: Vec<Obligation>,
 }
 
 /// What a lane's `launch` record names as obligations: a pane with its
@@ -1614,13 +1600,12 @@ impl ObligationRecord {
             && self.stale == other.stale
     }
 
-    /// The lane keys the record holds under the harness role, standing or
-    /// discharged: every process, pid and pane key.
-    pub fn lane_keys(&self, lane_since: Option<String>) -> LaneKeys {
-        let harness = self
-            .standing_obligations()
+    /// The keys the record holds under `role`, standing or discharged:
+    /// every process, pid and pane key.
+    pub fn principal_keys(&self, role: Role) -> Vec<Obligation> {
+        self.standing_obligations()
             .chain(self.discharged.iter().map(|d| &d.obligation))
-            .filter(|o| self.role_of(o) == Some(Role::Harness))
+            .filter(|o| self.role_of(o) == Some(role))
             .filter(|o| match o {
                 Obligation::Process(_)
                 | Obligation::Pid { .. }
@@ -1628,55 +1613,13 @@ impl ObligationRecord {
                 | Obligation::PaneUnaddressed { .. } => true,
                 Obligation::Window { .. }
                 | Obligation::Receipt
-                | Obligation::Validation
                 | Obligation::JobSidecar { .. }
                 | Obligation::JobUnit { .. }
                 | Obligation::JobGroup(_)
-                | Obligation::JobPgid { .. }
-                | Obligation::Worktree { .. } => false,
+                | Obligation::JobPgid { .. } => false,
             })
             .cloned()
-            .collect();
-        LaneKeys {
-            lane_since,
-            harness,
-        }
-    }
-
-    /// The reason the close kept the lane's worktree, where its worktree
-    /// obligation was discharged `kept:<reason>`; `None`
-    /// where it was released, read gone, or never acquired. The one reader
-    /// of that word, which the close's outcome writes onto the lane record
-    /// as `kept`.
-    pub fn worktree_kept(&self) -> Option<&str> {
-        self.worktree_word()?.strip_prefix(WORKTREE_KEPT)
-    }
-
-    /// The path of a lane mailbox the worktree package kept beside the main
-    /// checkout's when the close released the lane's worktree, where its
-    /// worktree obligation was discharged `released:mail-kept:<path>`;
-    /// `None` otherwise. The one reader of that word, which the close's
-    /// outcome writes onto the lane record as `kept_mail`.
-    pub fn worktree_mail_kept(&self) -> Option<&str> {
-        self.worktree_word()?.strip_prefix(WORKTREE_MAIL_KEPT)
-    }
-
-    /// The word the worktree obligation was discharged by, where one was.
-    fn worktree_word(&self) -> Option<&str> {
-        self.discharged.iter().find_map(|d| match &d.obligation {
-            Obligation::Worktree { .. } => Some(d.by.as_str()),
-            Obligation::Process(_)
-            | Obligation::Pid { .. }
-            | Obligation::Pane { .. }
-            | Obligation::PaneUnaddressed { .. }
-            | Obligation::Window { .. }
-            | Obligation::Receipt
-            | Obligation::Validation
-            | Obligation::JobSidecar { .. }
-            | Obligation::JobUnit { .. }
-            | Obligation::JobGroup(_)
-            | Obligation::JobPgid { .. } => None,
-        })
+            .collect()
     }
 
     /// Whether `obligation` is a detached job's handle or its unread record.

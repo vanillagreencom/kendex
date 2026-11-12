@@ -18,6 +18,14 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+mod lane_obligations;
+
+pub(super) use lane_obligations::record_lane_progress;
+pub use lane_obligations::{
+    LaneDischarged, LaneObligation, LaneObligationRecord, RecordLaneProgress, WORKTREE_KEPT,
+    WORKTREE_MAIL_KEPT,
+};
+
 use super::accounts::{self, PickAnswer, PickRequest};
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
@@ -28,8 +36,8 @@ use super::{
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, Document, EffectOp, Intent, Lane, LaneKeys, LaneStatus, LaunchIdentity,
-    ObligationRecord, Phase, Reservation, Selection, TerminalVerdict,
+    self, CloseGround, Document, EffectOp, Intent, Lane, LaneStatus, LaunchIdentity, Phase,
+    PrincipalKeys, Reservation, Role, Selection, TerminalVerdict,
 };
 
 /// Open a lane for an item: judge the fleet cap, write its record as
@@ -1633,11 +1641,11 @@ pub(super) enum IntentTarget {
 /// role. The one judgement: the handle applies it before it acts, and the
 /// store applies it before it moves the lane, on the same inputs. A stamp
 /// alone never decides, since a record may carry whole seconds.
-pub fn lane_moved(lane: &Lane, keys: &LaneKeys) -> bool {
-    lane.session_since != keys.lane_since
+pub fn lane_moved(lane: &Lane, keys: &PrincipalKeys) -> bool {
+    lane.session_since != keys.since
         || state::launch_obligations(lane.launch.as_ref())
             .iter()
-            .any(|named| !keys.harness.contains(named))
+            .any(|named| !keys.keys.contains(named))
 }
 
 /// The target of `intent` under `keys`, the terminal's where it carries
@@ -1648,17 +1656,17 @@ pub(super) fn intent_lane(
     path: &Path,
     doc: &Document,
     intent: &Intent,
-    keys: Option<&LaneKeys>,
+    keys: Option<&PrincipalKeys>,
 ) -> Result<IntentTarget> {
     let lanes = lanes(path, doc)?;
     let Some(index) = lanes.iter().position(|l| l.item == intent.target) else {
         return Ok(IntentTarget::Moved { observed: None });
     };
     let lane = &lanes[index];
-    let recorded = intent
-        .obligations
-        .as_ref()
-        .map(|record| record.lane_keys(intent.lane_since.clone()));
+    let recorded = intent.obligations.as_ref().map(|record| PrincipalKeys {
+        since: intent.lane_since.clone(),
+        keys: record.principal_keys(Role::Harness),
+    });
     let moved = match keys.or(recorded.as_ref()) {
         Some(keys) => lane_moved(lane, keys),
         None => lane.session_since != intent.lane_since,
@@ -1912,17 +1920,15 @@ pub(super) fn record_close_outcome(
                     // a release.
                     state::delete(lane, "kept");
                     state::delete(lane, "kept_mail");
-                    if let Some(reason) = intent
-                        .obligations
-                        .as_ref()
-                        .and_then(ObligationRecord::worktree_kept)
+                    let owed = LaneObligationRecord::of(path, intent)?;
+                    if let Some(reason) =
+                        owed.as_ref().and_then(LaneObligationRecord::worktree_kept)
                     {
                         state::set(lane, "kept", reason);
                     }
-                    if let Some(mail) = intent
-                        .obligations
+                    if let Some(mail) = owed
                         .as_ref()
-                        .and_then(ObligationRecord::worktree_mail_kept)
+                        .and_then(LaneObligationRecord::worktree_mail_kept)
                     {
                         state::set(lane, "kept_mail", mail);
                     }

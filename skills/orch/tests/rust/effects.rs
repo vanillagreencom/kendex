@@ -2928,15 +2928,11 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
 fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let validate_log = runner.state_dir().join("validate.log");
-    runner.env.push((
-        "DEV_VALIDATE_LOG".to_owned(),
-        validate_log.display().to_string(),
-    ));
+    let (command, run_dir) = validation_run(runner.state_dir());
     // The validation stop owed: the parent gone, no pane, the last outcome
-    // recorded `validate: stop-failed`.
+    // recorded `validate: stop-failed`, a run of the worktree still going.
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane(
         "KEN-V",
@@ -2953,16 +2949,17 @@ fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(report["intent"]["observation"]["validate"], "stop-failed");
     assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
-    assert!(!validate_log.exists(), "a reconcile stops nothing itself");
+    assert!(
+        live(command.pid()) && !run_stopped(&run_dir),
+        "a reconcile stops nothing itself"
+    );
     // The repeated close runs the validation stop and confirms.
     let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-V")));
     assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
     assert_eq!(closed["lane"]["status"], "done");
     assert!(
-        std::fs::read_to_string(&validate_log)
-            .unwrap()
-            .contains("--stop"),
-        "the owed stop ran"
+        run_stopped(&run_dir) && !live(command.pid()),
+        "the owed stop ended the run"
     );
 
     // The live wake: the parent gone, the wake a child this test holds.
@@ -3048,7 +3045,16 @@ fn reap(pid: u32) {
 /// The discharged rows of the intent's recorded set whose evidence word is
 /// `by`, as `{kind, ...}` objects.
 fn discharged_by(intent: &Value, by: &str) -> Vec<Value> {
-    intent["obligations"]["discharged"]
+    discharged_rows(&intent["obligations"], by)
+}
+
+/// The same rows of the intent's lane set.
+fn lane_discharged_by(intent: &Value, by: &str) -> Vec<Value> {
+    discharged_rows(&intent["lane_obligations"], by)
+}
+
+fn discharged_rows(set: &Value, by: &str) -> Vec<Value> {
+    set["discharged"]
         .as_array()
         .map(|rows| {
             rows.iter()
@@ -3673,9 +3679,9 @@ fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
-            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-            {"kind": "validation", "role": "validation"},
+            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "auxiliary"},
         ], "discharged": [], "signalled": true},
+        "lane_obligations": {"standing": [{"kind": "validation"}]},
     }]);
     // The lane's writer replaced the wake since.
     fleet["lanes"][0]["wake"] = json!({"pid": new_wake.pid(), "start": new_wake.start()});
@@ -3709,7 +3715,7 @@ fn a_replacement_foreground_whose_pane_is_gone_is_read_by_its_own_key() {
         "observation": {"identity": "none", "stop": "pane-foreground"},
         "obligations": {"standing": [
             {"kind": "process", "pid": foreground.pid(), "start": foreground.start(), "role": "harness"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}], "signalled": true},
+        ], "discharged": [], "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
     }]);
     runner.write_fleet(&fleet);
     let held = runner.reconcile_one();
@@ -3772,9 +3778,9 @@ fn a_moved_lane_close_settles_by_its_recorded_set() {
             "lane_since": "2026-01-29T15:20:00Z",
             "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
             "obligations": {"standing": [
-                {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-            ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-            "signalled": true},
+                {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "auxiliary"},
+            ], "discharged": [],
+            "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
         }]);
         runner.write_fleet(&fleet);
         let old_pid = old_wake.pid();
@@ -3830,8 +3836,8 @@ fn held_close_with_an_owed_notice(runner: &Runner, harness: &Owned) {
             "observation": {"identity": "live", "timeout_pid": harness.pid()},
             "obligations": {"standing": [
                 {"kind": "process", "pid": harness.pid(), "start": harness.start(), "role": "harness", "harness": "claude"},
-            ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-            "signalled": true, "revision": 2},
+            ], "discharged": [],
+            "signalled": true, "revision": 2}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
         },
         {
             "id": "request-transfer:overseer:3:1-1", "op": "request-transfer", "target": "overseer:3",
@@ -3968,9 +3974,9 @@ fn a_moved_lanes_old_live_wake_is_stopped_by_its_own_set_on_the_retry() {
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
-            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
+            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "auxiliary"},
+        ], "discharged": [],
+        "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
     }]);
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
@@ -4032,13 +4038,14 @@ fn a_moved_close_owing_its_validation_releases_it_lane_moved() {
         "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "validate": "stop-failed", "cause": "runner-refused"},
-        "obligations": {"standing": [{"kind": "validation", "role": "validation"}], "discharged": [], "signalled": true},
+        "obligations": {"standing": [], "discharged": [], "signalled": true},
+        "lane_obligations": {"standing": [{"kind": "validation"}]},
     }]);
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert!(
-        discharged_by(&report["intent"], "lane-moved")
+        lane_discharged_by(&report["intent"], "lane-moved")
             .iter()
             .any(|o| o["kind"] == "validation"),
         "the owed validation is released to the session holding the lane: {report}"
@@ -4080,8 +4087,8 @@ fn a_moved_close_stops_its_own_recorded_harness_by_token_on_the_repeat() {
         "observation": {"identity": "unreadable", "pid": old_harness.pid(), "cause": "ps-failed"},
         "obligations": {"standing": [
             {"kind": "process", "pid": old_harness.pid(), "start": old_harness.start(), "role": "harness"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
+        ], "discharged": [],
+        "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
     }]);
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
@@ -4168,8 +4175,8 @@ fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
             "lane_since": "2026-01-29T15:20:00Z",
             "observation": {"identity": "unreadable", "pid": root_pid, "cause": "ps-failed"},
             "obligations": {"standing": [held],
-                "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-                "signalled": true},
+                "discharged": [],
+                "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
         }]);
         runner.write_fleet(&fleet);
         let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
@@ -4222,8 +4229,11 @@ fn one_repeated_close_request_counts_one_stale_reading() {
     fleet["intents"][0]["outcome"] = json!("unconfirmed");
     fleet["intents"][0]["obligations"] = json!({
         "standing": [{"kind": "process", "pid": held.pid(), "start": "ticks:0", "role": "harness"}],
-        "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
+        "discharged": [],
         "signalled": true,
+    });
+    fleet["intents"][0]["lane_obligations"] = json!({
+        "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}],
     });
     runner.write_fleet(&fleet);
     let key = format!("{}:ticks:0", held.pid());
@@ -4263,9 +4273,9 @@ fn a_recorded_wake_the_lane_no_longer_names_at_all_is_still_stopped() {
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "none", "wake": "live", "cause": "wake-timeout"},
         "obligations": {"standing": [
-            {"kind": "process", "pid": wake.pid(), "start": wake.start(), "role": "wake"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
+            {"kind": "process", "pid": wake.pid(), "start": wake.start(), "role": "auxiliary"},
+        ], "discharged": [],
+        "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
     }]);
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
@@ -4294,8 +4304,8 @@ fn a_stale_secondary_identity_settles_on_the_second_independent_reading() {
         "observation": {"identity": "none", "stop": "pane-foreground"},
         "obligations": {"standing": [
             {"kind": "process", "pid": held.pid(), "start": "ticks:0", "role": "harness"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
+        ], "discharged": [],
+        "signalled": true}, "lane_obligations": {"discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped"}]},
     }]);
     runner.write_fleet(&fleet);
     let first = runner.reconcile_one();
@@ -4632,13 +4642,13 @@ fn plant_lane_notice(wt: &Path, item: &str) -> (Vec<u8>, PathBuf) {
     (row, path)
 }
 
-/// The standing and discharged worktree rows of `intent`'s set.
+/// The standing and discharged worktree rows of `intent`'s lane set.
 fn worktree_rows(intent: &Value) -> Vec<Value> {
-    let standing = intent["obligations"]["standing"]
+    let standing = intent["lane_obligations"]["standing"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let discharged = intent["obligations"]["discharged"]
+    let discharged = intent["lane_obligations"]["discharged"]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -4818,7 +4828,19 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     let record = runner.state_dir().join("workflow-state-KEN-W.json");
     std::fs::write(&record, "{}\n").unwrap();
     let close = json!({"op": "close-lane", "item": "KEN-W"});
-    let cli = worktree_cli();
+    // The worktree package as planted: it records whether the harness runs
+    // when the release asks it to remove the worktree, then removes it.
+    let saw = runner.state_dir().join("release-saw-harness");
+    let cli = runner.state_dir().join("worktree-recording");
+    write_executable(
+        &cli,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = remove ]; then if kill -0 {pid} 2>/dev/null; then echo live; else echo gone; fi > '{}'; fi\nexec '{}' \"$@\"\n",
+            saw.display(),
+            worktree_cli()
+        ),
+    );
+    let cli = cli.display().to_string();
     let worktree = [("WORKTREE_CLI", cli.as_str())];
 
     let answer = reply(&runner.op_fleet_env(&close, &worktree));
@@ -4837,17 +4859,10 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     assert_eq!(result["word"], "closed", "{answer}");
     assert!(!live(pid), "the harness is stopped");
     assert!(!wt.exists(), "the clean merged worktree is released");
-    let discharged: Vec<&str> = result["effect"]["report"]["intent"]["obligations"]["discharged"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|d| d["obligation"]["kind"].as_str())
-        .collect();
-    let process = discharged.iter().position(|k| *k == "process");
-    let worktree = discharged.iter().position(|k| *k == "worktree");
-    assert!(
-        process.is_some() && process < worktree,
-        "the harness's stop is settled before the worktree's release: {discharged:?}"
+    assert_eq!(
+        std::fs::read_to_string(&saw).unwrap().trim(),
+        "gone",
+        "the harness is stopped before the worktree's release: {answer}"
     );
 }
 
@@ -5552,9 +5567,11 @@ fn a_worktree_package_that_cannot_start_holds_the_close_with_nothing_removed() {
 }
 
 /// The hold: a worktree whose path cannot be read is neither released nor
-/// kept; the obligation stands `worktree-unreadable` and the close does not
-/// settle, so a repeated close reads it again; an unreadable path
-/// discharged as released or kept would record a state nothing read.
+/// kept. Its validation runs cannot be read either, so the validation stop
+/// fails first and the close holds before the worktree is read: both
+/// obligations stand and the close does not settle, so a repeated close
+/// reads them again; an unreadable path discharged as released or kept
+/// would record a state nothing read.
 #[test]
 fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     use std::os::unix::fs::PermissionsExt;
@@ -5566,25 +5583,35 @@ fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([worktree_lane("KEN-U", &runner, &wt)]);
     runner.write_fleet(&fleet);
-    // The worktree itself unreadable: its own metadata reads (the validation
-    // stop's read of the root passes), its `.git` entry does not.
+    // The worktree itself unreadable: its own metadata reads, its entries
+    // (its `.git`, its runs under `tmp/`) do not.
     std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o000)).unwrap();
     let unread = std::fs::metadata(wt.join(".git")).is_err();
     let report = close_with_worktree(&runner, "KEN-U");
     std::fs::set_permissions(&wt, std::fs::Permissions::from_mode(0o700)).unwrap();
     assert!(unread, "the probe's `.git` entry is unreadable");
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
-    assert_eq!(
-        report["intent"]["observation"]["worktree"], "unreadable",
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["validate"], "stop-failed", "{report}");
+    assert!(
+        observation["cause"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("validate-unreadable:")),
         "{report}"
     );
+    for kind in ["validation", "worktree"] {
+        assert!(
+            !remaining(observation, kind).is_null(),
+            "the {kind} stands in what remains: {report}"
+        );
+    }
     assert_eq!(
-        remaining(&report["intent"]["observation"], "worktree")["path"],
+        remaining(observation, "worktree")["path"],
         wt.display().to_string(),
-        "the worktree stands in what remains: {report}"
+        "{report}"
     );
     assert!(
-        discharged_by(&report["intent"], "released").is_empty()
+        lane_discharged_by(&report["intent"], "released").is_empty()
             && worktree_rows(&report["intent"])
                 .iter()
                 .all(|r| r.get("by").is_none()),
@@ -5700,18 +5727,21 @@ fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    // The record at the removal: the worktree standing under its role, the
+    // The record at the removal: the worktree standing in the lane set, the
     // signal written, nothing discharged about it.
     let held = runner.fleet()["intents"][0].clone();
-    let standing = held["obligations"]["standing"].as_array().unwrap().clone();
+    let standing = held["lane_obligations"]["standing"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert!(
-        standing.iter().any(|o| o["kind"] == "worktree"
-            && o["path"] == wt.display().to_string()
-            && o["role"] == "worktree"),
+        standing
+            .iter()
+            .any(|o| o["kind"] == "worktree" && o["path"] == wt.display().to_string()),
         "the worktree is acquired before the removal: {held}"
     );
     assert_eq!(held["obligations"]["signalled"], true, "{held}");
-    assert!(discharged_by(&held, "released").is_empty(), "{held}");
+    assert!(lane_discharged_by(&held, "released").is_empty(), "{held}");
     // The crash: the close is killed at its removal and the held shim
     // released with the skip file in place, so it exits without running the
     // removal its caller is dead for.
@@ -5767,13 +5797,14 @@ fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
         "id": "close-owned-resources:KEN-MW:1-1", "op": "close-owned-resources", "target": "KEN-MW", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
         "lane_since": "2026-01-29T15:20:00Z",
         "observation": {"identity": "stopped", "worktree": "unreadable", "cause": "worktree-unreadable:permission denied"},
-        "obligations": {"standing": [{"kind": "worktree", "path": wt.display().to_string(), "role": "worktree"}], "discharged": [], "signalled": true},
+        "obligations": {"standing": [], "discharged": [], "signalled": true},
+        "lane_obligations": {"standing": [{"kind": "worktree", "path": wt.display().to_string()}]},
     }]);
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-MW")));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert!(
-        discharged_by(&report["intent"], "lane-moved")
+        lane_discharged_by(&report["intent"], "lane-moved")
             .iter()
             .any(|o| o["kind"] == "worktree"),
         "the owed worktree is released to the session holding the lane: {report}"

@@ -808,6 +808,36 @@ impl Drop for Owned {
     }
 }
 
+/// An unfinished validation run under `worktree` as the validation runner
+/// leaves it while its command runs: its `start` record and the command's
+/// identity, the command a process group the test leads and holds. Returns
+/// the command and the run's directory.
+pub fn validation_run(worktree: &Path) -> (Owned, PathBuf) {
+    use std::os::unix::process::CommandExt;
+    let command = Owned(
+        Command::new("sleep")
+            .arg("30")
+            .process_group(0)
+            .spawn()
+            .expect("sleep"),
+    );
+    let dir = worktree.join("tmp/dev-validate-planted");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("start"), "start=1\n").unwrap();
+    std::fs::write(
+        dir.join("command"),
+        json!({"pid": command.pid(), "start": command.start()}).to_string(),
+    )
+    .unwrap();
+    (command, dir)
+}
+
+/// Whether the run's own record reads stopped: the stop mark its stop
+/// writes before it signals.
+pub fn run_stopped(run_dir: &Path) -> bool {
+    std::fs::read_to_string(run_dir.join("stop")).is_ok_and(|text| text == "stop-requested\n")
+}
+
 /// The start string the runtime records for a live pid, read the way its
 /// `process` module reads it so a planted record matches.
 pub fn start_of(pid: u32) -> String {

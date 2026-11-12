@@ -31,14 +31,14 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(200);
 /// `LineUnsent` is a window that opened, recorded at `opening`, whose line
 /// could not be typed, its one pane closed again by exact id and that close
 /// discharged by its own answer, so the caller judges what stands.
-pub(in crate::effects) enum OpenRefusal {
+pub enum OpenRefusal {
     Refused(agent_runtime::Error),
     Unanswered { refusal: agent_runtime::Error },
     LineUnsent { refusal: agent_runtime::Error },
 }
 
 /// What a poll of a pane settled on.
-pub(in crate::effects) enum Polled {
+pub enum Polled {
     /// The harness holds the pane under the recorded identity and the screen
     /// reads a state the caller accepts.
     Ready { identity: Recorded<Identity> },
@@ -59,7 +59,7 @@ pub(in crate::effects) enum Polled {
 /// What a wait for the runner to record the delivered turn settled on:
 /// the user turn appeared in its session file, its pane went
 /// (the harness exited), the pane could not be read, or the bound passed.
-pub(in crate::effects) enum TurnConfirm {
+pub enum TurnConfirm {
     Recorded,
     PaneGone,
     PaneUnobservable { cause: String },
@@ -68,7 +68,7 @@ pub(in crate::effects) enum TurnConfirm {
 
 /// What a reconcile at `opening` settled on, the same reading
 /// for a launch and a succession.
-pub(in crate::effects) enum Recovered {
+pub enum Recovered {
     /// The pane the receipt names, its registered pid live under `identity`
     /// read from the kernel: adopt it and continue as from `window-opened`
     /// under that identity alone. `registered` is the receipt
@@ -94,7 +94,7 @@ pub(in crate::effects) enum Recovered {
 
 /// The observation a reconcile at `opening` records for `op` when it does
 /// not adopt: the note and, where the reading has one, its cause.
-pub(in crate::effects) fn opening_observation(op: &str, note: &str, cause: Option<&str>) -> Value {
+pub fn opening_observation(op: &str, note: &str, cause: Option<&str>) -> Value {
     let mut observation = json!({"reconcile": op, "phase": "opening", "note": note});
     if let Some(cause) = cause {
         observation["cause"] = json!(cause);
@@ -180,7 +180,7 @@ impl Operation<'_> {
     /// live; one that reads gone or unreadable refuses the open with that
     /// cause rather than recording a server identity it does not have. The
     /// moment is the run's clock's wall time, read here.
-    pub(in crate::effects) fn opening(
+    pub fn opening(
         &self,
         server: &Server,
         floor: &SessionFloor,
@@ -218,7 +218,7 @@ impl Operation<'_> {
     /// beside its receipt, for the delivery after the window opens and for a
     /// reconcile that delivers it later; a repeat of the intent writes the
     /// same file again.
-    pub(in crate::effects) fn hold_brief(
+    pub fn hold_brief(
         &self,
         text: &str,
     ) -> std::result::Result<std::path::PathBuf, agent_runtime::Error> {
@@ -270,7 +270,7 @@ impl Operation<'_> {
     /// whose line could not be typed, or whose `new-window` failed after
     /// printing its pane, has its one pane closed again by exact
     /// id and that close discharged by its own answer.
-    pub(in crate::effects) fn open_window(
+    pub fn open_window(
         &mut self,
         server: &Server,
         session: &str,
@@ -367,7 +367,7 @@ impl Operation<'_> {
     /// never written; an invalid or unreadable one stands. A run that ends
     /// before the judge read an identity reads the receipt here, so no
     /// terminal settles over an unread receipt.
-    pub(in crate::effects) fn read_receipt(&mut self) -> Result<()> {
+    pub fn read_receipt(&mut self) -> Result<()> {
         if !self.obligations.stands(&Obligation::Receipt) {
             return Ok(());
         }
@@ -413,7 +413,7 @@ impl Operation<'_> {
     /// only that identity is the harness. A read the host does not answer is
     /// retried within the bound and reported as such past it. The pane gone
     /// discharges the recorded pane by that read.
-    pub(in crate::effects) fn await_state(
+    pub fn await_state(
         &mut self,
         pane: &Pane,
         harness: Harness,
@@ -448,7 +448,7 @@ impl Operation<'_> {
     /// the harness exited; a pane the host does not answer for is retried and
     /// reported past the bound; the bound passed is `Pending`. The wait is a
     /// handle method, so no poll of this loop runs outside the handle.
-    pub(in crate::effects) fn await_delivered_turn(
+    pub fn await_delivered_turn(
         &mut self,
         harness: Harness,
         pane: &Pane,
@@ -489,7 +489,7 @@ impl Operation<'_> {
     /// is three-valued; an adopted pane is recorded as
     /// `window-opened` under the registered identity before the caller goes
     /// on.
-    pub(in crate::effects) fn recover_opening(&mut self, opening: &Opening) -> Result<Recovered> {
+    pub fn recover_opening(&mut self, opening: &Opening) -> Result<Recovered> {
         let server = match tmux::server(Path::new(&opening.socket)) {
             Ok(server) => server,
             Err(_) => {
@@ -565,7 +565,7 @@ impl Operation<'_> {
                             // A pane of ours that never ran its line holds
                             // no harness: closed by exact id, the close
                             // discharging it where it answered.
-                            self.signal()?;
+                            self.write_signal()?;
                             let close = tmux::kill_pane(&fields.pane);
                             let cause = match &close {
                                 Close::Closed => "pane-closed",

@@ -977,6 +977,9 @@ jobs:
             cargo clippy --all-targets --locked --manifest-path "$manifest" -- -D warnings
             cargo test --no-fail-fast --locked --manifest-path "$manifest"
           done
+          # orch's effect engine's privacy, held by the compiler's own error
+          # code for each planted case: a doctest cannot hold which rule refused.
+          bash skills/orch/tests/privacy/privacy-cases.sh
 
       # A failure is announced twice: inline where it happened, and in a
       # FAILED SUITES block at the end — the tail of a red job must name the

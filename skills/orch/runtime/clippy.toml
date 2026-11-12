@@ -4,8 +4,9 @@
 # path readers that collapse an unreadable path into a word, and the
 # store's own entry points are disallowed methods in this crate, so `cargo
 # clippy --all-targets -- -D warnings` refuses an ordinary call of one
-# outside `effects::operation` (the one owner of the primitives) and the
-# functions, trait-impl methods and test modules that carry a reviewed
+# outside `effects::operation` (the one owner of the primitives),
+# `effects::lane_operation` (orch's one opener of the engine's handle and the
+# owner of a close's lane acts) and the functions, trait-impl methods and test modules that carry a reviewed
 # `#[allow(clippy::disallowed_methods, reason = "..")]`; each allowance
 # carries its reason at its attribute, and those attributes are the
 # inventory. The list
@@ -90,9 +91,10 @@ disallowed-methods = [
     { path = "orch_runtime::state::init", reason = "a state file is created only by the `state init` command" },
     { path = "orch_runtime::state::inspect", reason = "a state file is inspected only by the `state inspect` command" },
     { path = "orch_runtime::ops::apply", reason = "the store is reached only by the operation handle's writes, the recording boundary and the command" },
-    { path = "orch_runtime::ops::apply_on", reason = "the store is reached only by the operation module's one close over a superseded launch and the command" },
+    { path = "orch_runtime::ops::apply_on", reason = "the store is reached only by the lane operation's one close over a superseded launch and the command" },
+    { path = "orch_runtime::effects::operation::Operation::open", reason = "the engine's handle is opened only by the lane operation, which names the start of its set" },
     { path = "orch_runtime::ops::apply_adoption", reason = "the adoption's store write takes the pane read only the operation module mints" },
-    { path = "orch_runtime::ops::occupancy::Host::kernel", reason = "the kernel's readers are handed to a transition only by the command's store entry and the operation module" },
+    { path = "orch_runtime::ops::occupancy::Host::kernel", reason = "the kernel's readers are handed to a transition only by the command's store entry and the lane operation" },
     { path = "orch_runtime::state::locked", reason = "a record's locks are taken only by the store, the lane admission and the removal of item records (`archive::records_locked`)" },
     { path = "orch_runtime::verify::run", reason = "GitHub is read and the verdict recorded only by the `verify-head` command" },
     # the file system: a file is written, replaced, linked, created or

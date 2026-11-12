@@ -38,10 +38,11 @@ use serde_json::Value;
 use crate::archive::{name_of, read_dir};
 use crate::error::Result;
 use crate::mailbox::Mailbox;
+use crate::ops::WORKTREE_KEPT;
 use crate::ops::prune::{Dropped, PlannedRows, PruneRecords};
 use crate::ops::{Env, Report, Request};
 use crate::settings::Settings;
-use crate::state::{self, Document, Locking, WORKTREE_KEPT};
+use crate::state::{self, Document, Locking};
 use crate::watch::{Body, Paths, Produced, Runner, Tick, events};
 
 /// Every status word a lane record reads as ended under: `done`, which a

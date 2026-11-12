@@ -18,10 +18,10 @@
 //! yielded to that claimant and the handle acts on nothing. A terminal
 //! outcome is built only by consuming the handle: `settle`, `hold`,
 //! `refuse` and `publish`; nothing else constructs one,
-//! and a settlement needs every obligation discharged. `apply_outcome` is
-//! the one path from an outcome to the store. The effect files' other
-//! entries to the store, beside the handle's own writes, are the few this
-//! module names: `persist_close` for the close over a superseded launch,
+//! and a settlement needs every obligation discharged. `apply_outcome_with`
+//! is the one path from an outcome to the store, its opener's own part of
+//! the request an argument. The effect files' other entries to the store,
+//! beside the handle's own writes, are the few this module names:
 //! `adopt_controller`'s one adoption write, `run_job`'s claim, the
 //! owed-notice walk's marks, and `load`, their one read.
 //!
@@ -40,15 +40,15 @@
 //! What the methods do, each stated at its own declaration: write the
 //! acquisition before the action or wait, discharge by the method's own
 //! read or answer. Every wait and every wall-clock moment reads the run's
-//! one clock, which `main.rs` builds and `open` takes. The validation stop
-//! takes the lane's recorded worktree root and no token; its caller runs
-//! after the moved-lane judgement. A handle's writes yield to a job that
-//! claimed the intent, and `apply` retries the owner-conditional transition
-//! on a conflicting snapshot so the claimant's state is the answer. The
-//! bootstrap at `open` is the one read of a lane's launch record; the set's
-//! roles select the harness and the pane from then on, and the harness kind
-//! recorded under the harness role names what a stop may signal below a
-//! recorded root.
+//! one clock, which `main.rs` builds and `open` takes. A handle's writes
+//! yield to a job that claimed the intent, and `apply` retries the
+//! owner-conditional transition on a conflicting snapshot so the claimant's
+//! state is the answer. The set an intent records nothing of starts from the
+//! record data its opener names ([`Bootstrap`]); the set's roles select the
+//! harness and the pane from then on, and the harness kind recorded under
+//! the harness role names what a stop may signal below a recorded root. An
+//! act outside the handle holds the receipt of its `signalled` write
+//! ([`Signalled`]).
 //!
 //! `host.rs` reads, signals and closes processes and panes; `window.rs`
 //! opens a window, recovers an `opening` and polls a pane; `job.rs` asks the
@@ -56,7 +56,7 @@
 //! outcome model; `receipt.rs` the pane's own registration.
 
 mod host;
-pub(in crate::effects) mod job;
+pub mod job;
 mod obligations;
 mod receipt;
 mod window;
@@ -65,46 +65,104 @@ use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Outcome;
 use serde_json::{Value, json};
 
-pub(in crate::effects) use agent_runtime::host::tmux::{Close, Pane, Server};
-pub(in crate::effects) use agent_runtime::observe::{ProcessReading, State};
-pub(in crate::effects) use agent_runtime::process::{Identity, Stop};
-pub(in crate::effects) use agent_runtime::reading::Reading;
-pub(crate) use host::Recorded;
-pub(in crate::effects) use host::{
-    Binding, Delivery, Foreground, ProcessRead, Proof, SessionFloor, WindowClose, WorktreeRelease,
-    adopt_controller, default_home, fixed_file, fixed_id_file, heal_controller, owner,
+pub use agent_runtime::host::tmux::{Close, Pane, Server};
+pub use agent_runtime::observe::{ProcessReading, State};
+pub use agent_runtime::process::{Identity, Stop};
+pub use agent_runtime::reading::Reading;
+pub use host::Recorded;
+pub use host::{
+    Binding, Delivery, Foreground, ProcessRead, Proof, SessionFloor, WindowClose, adopt_controller,
+    default_home, fixed_file, fixed_id_file, heal_controller, owner,
 };
 pub use host::{Observed, fleet_sockets, overseer_socket, server_at};
-pub(in crate::effects) use host::{SignIn, process_var, register_controller};
-pub(in crate::effects) use host::{
-    apply_request, pending_ask, pick_account, poll_until, server_home, session_owner,
-    stop_released_prepare,
-};
-pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
-pub(crate) use obligations::{JobHandle, SidecarRead};
-pub(in crate::effects) use window::{
-    OpenRefusal, Polled, Recovered, TurnConfirm, opening_observation,
-};
+pub use host::{SignIn, process_var, register_controller};
+pub use host::{poll_until, server_home, session_owner};
+pub use obligations::{EffectOutcome, Published, Wire, Word};
+pub use obligations::{JobHandle, SidecarRead};
+pub use window::{OpenRefusal, Polled, Recovered, TurnConfirm, opening_observation};
 
 use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
-use super::{Run, lane_for_intent, overseer_identity, read_intent, read_overseer};
+use super::{Run, overseer_identity, read_intent, read_overseer};
 use crate::error::{Error, Result};
-use crate::ops::{
-    self, Applied, CLOUD_KIND, Progress, RecordOutcome, RecordProgress, Report, Request,
-};
+use crate::ops::{self, Applied, Progress, RecordOutcome, RecordProgress, Report, Request};
 use crate::schedule::Clock;
 use crate::state::{
-    self, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
+    self, EffectOp, Intent, LaunchIdentity, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
 };
 
-pub(in crate::effects) struct Operation<'a> {
+/// What the opener names as the set's start where the intent records none:
+/// record data, never a token. The engine reads no target record of its
+/// own beside the controller's.
+pub enum Bootstrap<'r> {
+    /// A launch or a succession: what its phase names, under `principal`,
+    /// the harness kind `harness` recorded on the handles under the harness
+    /// role.
+    Phase {
+        principal: Role,
+        harness: Option<Harness>,
+    },
+    /// A target's recorded launch under the harness role, with the harness
+    /// kind it runs, and the auxiliary process it names beside the harness.
+    Launch {
+        launch: Option<&'r LaunchIdentity>,
+        harness: Option<Harness>,
+        auxiliary: Option<Identity>,
+    },
+    /// A controller stop: the handles the controller record names, under
+    /// the predecessor role.
+    Predecessor,
+}
+
+impl Bootstrap<'_> {
+    /// A controller operation's start: a succession's or a start's phase
+    /// under the runner role, a stop's predecessor record. `None` for the
+    /// operations whose opener names their target's record.
+    pub fn controller(op: EffectOp) -> Option<Bootstrap<'static>> {
+        match op {
+            EffectOp::RequestTransfer | EffectOp::StartController => Some(Bootstrap::Phase {
+                principal: Role::Runner,
+                harness: None,
+            }),
+            EffectOp::StopController => Some(Bootstrap::Predecessor),
+            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => None,
+        }
+    }
+
+    /// The role a handle this operation acquires takes where nothing names
+    /// another.
+    fn principal(&self) -> Role {
+        match self {
+            Bootstrap::Phase { principal, .. } => *principal,
+            Bootstrap::Launch { .. } => Role::Harness,
+            Bootstrap::Predecessor => Role::Predecessor,
+        }
+    }
+
+    /// The harness kind the target runs, where the opener read one.
+    fn harness(&self) -> Option<Harness> {
+        match self {
+            Bootstrap::Phase { harness, .. } | Bootstrap::Launch { harness, .. } => *harness,
+            Bootstrap::Predecessor => None,
+        }
+    }
+}
+
+/// The receipt of the handle's `signalled` write: the proof an act outside
+/// the handle holds before it acts, so the act is covered by the write's
+/// revision and owner checks and no refusal is expressible after it.
+#[must_use]
+pub struct Signalled {
+    _written: (),
+}
+
+pub struct Operation<'a> {
     run: &'a Run<'a>,
     intent_id: String,
     op: EffectOp,
-    /// The lane's stamp the intent was written at, carried on a lane
-    /// intent's terminal with the set's lane keys.
-    lane_since: Option<String>,
+    /// The role a handle this operation acquires takes where nothing names
+    /// another, from the opener's bootstrap.
+    principal: Role,
     phase: Option<Phase>,
     /// The set as this handle read it, carrying the store's `revision` of
     /// that read, mirrored after each of the handle's own writes: the one
@@ -113,10 +171,9 @@ pub(in crate::effects) struct Operation<'a> {
     /// set meanwhile.
     obligations: Obligations,
     /// The harness kind the target runs under this intent, recorded on every
-    /// handle acquired under the harness role: a lane
-    /// close's from the lane record at the bootstrap, a lane launch's from
-    /// its selection. `None` on a controller intent, whose handles are the
-    /// runner's and the predecessor's.
+    /// handle acquired under the harness role, from the set where one is
+    /// recorded, else from the opener. `None` on a controller intent, whose
+    /// handles are the runner's and the predecessor's.
     harness: Option<Harness>,
     /// The identities this run read stale: the only ones a
     /// stale count may discharge, since that count is this run's own second
@@ -134,33 +191,33 @@ pub(in crate::effects) struct Operation<'a> {
 }
 
 impl<'a> Operation<'a> {
-    /// Open the handle on `intent`: the recorded set where one stands, else the
-    /// bootstrap of an intent that records no set, written at once. A launch or
-    /// succession bootstraps from its phase; a lane close from the lane's
-    /// launch record, its wake and the validation stop a last outcome recorded
-    /// `validate: stop-failed` for (a close that runs owes it from its start,
-    /// through [`Operation::owe_validation`]); a controller stop from the
-    /// overseer record.
-    pub(in crate::effects) fn open(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a>> {
+    /// Open the handle on `intent`: the recorded set where one stands, else
+    /// the set `bootstrap` names, written at once.
+    pub fn open(
+        run: &'a Run<'a>,
+        intent: &Intent,
+        bootstrap: Bootstrap<'_>,
+    ) -> Result<Operation<'a>> {
         let recorded = Obligations::recorded(intent)?;
         let bootstrapped = recorded.is_none();
-        // The harness kind is the set's where one is recorded; the target's
-        // record is read for it only at a bootstrap.
+        let principal = bootstrap.principal();
+        // The harness kind is the set's where one is recorded; the opener's
+        // only at a bootstrap.
         let (obligations, harness) = match recorded {
             Some(obligations) => {
                 let harness = obligations.recorded_harness();
                 (obligations, harness)
             }
             None => {
-                let harness = Operation::harness_of(run, intent)?;
-                (Operation::bootstrap(run, intent, harness)?, harness)
+                let harness = bootstrap.harness();
+                (Operation::bootstrap(run, intent, bootstrap)?, harness)
             }
         };
         let mut operation = Operation {
             run,
             intent_id: intent.id.clone(),
             op: intent.op,
-            lane_since: intent.lane_since.clone(),
+            principal,
             phase: intent.phase.clone(),
             obligations,
             harness,
@@ -174,47 +231,17 @@ impl<'a> Operation<'a> {
         Ok(operation)
     }
 
-    /// The harness kind the intent's target runs, read once at open: a
-    /// lane close's from the lane record, a lane
-    /// launch's from the intent's selection; a controller intent names none.
-    fn harness_of(run: &Run, intent: &Intent) -> Result<Option<Harness>> {
-        Ok(match intent.op {
-            EffectOp::CloseOwnedResources => {
-                let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-                lane.harness.as_deref().and_then(Harness::parse)
-            }
-            EffectOp::LaunchLane => intent
-                .selection
-                .as_ref()
-                .and_then(|s| Harness::parse(&s.harness)),
-            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-                None
-            }
-        })
-    }
-
     /// The harness kind the set records under the harness role: what names
     /// the processes below a recorded root that a stop on this set may
     /// signal, never the harness the target runs now.
-    pub(in crate::effects) fn recorded_harness(&self) -> Option<Harness> {
+    pub fn recorded_harness(&self) -> Option<Harness> {
         self.obligations.recorded_harness()
-    }
-
-    /// The role a handle plays under `op` where nothing names another: the
-    /// lane's harness for a lane launch or close, the runner for a succession,
-    /// the predecessor for a controller stop.
-    fn principal(op: EffectOp) -> Role {
-        match op {
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => Role::Harness,
-            EffectOp::RequestTransfer | EffectOp::StartController => Role::Runner,
-            EffectOp::StopController => Role::Predecessor,
-        }
     }
 
     /// The role a handle this operation acquires takes where nothing names
     /// another.
     pub(super) fn principal_role(&self) -> Role {
-        Operation::principal(self.op)
+        self.principal
     }
 
     #[cfg(test)]
@@ -222,33 +249,17 @@ impl<'a> Operation<'a> {
         self.obligations.record().revision
     }
 
-    /// The lane keys a lane intent's terminal carries:
-    /// the stamp and the harness identity and pane recorded under the
-    /// harness role. `None` on a controller intent.
-    fn lane_keys(&self) -> Option<LaneKeys> {
-        match self.op {
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
-                Some(self.obligations.lane_keys(self.lane_since.clone()))
-            }
-            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-                None
-            }
-        }
-    }
-
-    /// Whether `lane` moved under this intent: the one judgement the store's
-    /// lane arm applies too, on the same keys.
-    pub(in crate::effects) fn lane_moved(&self, lane: &state::Lane) -> bool {
-        match self.lane_keys() {
-            Some(keys) => ops::lane_moved(lane, &keys),
-            None => lane.session_since != self.lane_since,
-        }
+    /// Every identity, pid and pane key the set recorded under the
+    /// principal's role, standing or discharged: what a terminal carries
+    /// for its target's record.
+    pub fn principal_keys(&self) -> Vec<Obligation> {
+        self.obligations.record().principal_keys(self.principal)
     }
 
     /// The identities an earlier handle of this same request read stale: a
     /// reading this handle makes of one counts no second time; a second
     /// reading is a later request's.
-    pub(in crate::effects) fn already_read_stale(&mut self, stale: &[Identity]) {
+    pub fn already_read_stale(&mut self, stale: &[Identity]) {
         for id in stale {
             if !self.stale.contains(id) {
                 self.stale.push(id.clone());
@@ -256,40 +267,36 @@ impl<'a> Operation<'a> {
         }
     }
 
-    fn bootstrap(run: &Run, intent: &Intent, harness: Option<Harness>) -> Result<Obligations> {
-        let principal = Operation::principal(intent.op);
-        Ok(match intent.op {
-            EffectOp::LaunchLane | EffectOp::RequestTransfer | EffectOp::StartController => {
+    fn bootstrap(run: &Run, intent: &Intent, bootstrap: Bootstrap<'_>) -> Result<Obligations> {
+        Ok(match bootstrap {
+            Bootstrap::Phase { principal, harness } => {
                 Obligations::of_phase(intent.phase.as_ref(), principal, harness)
             }
-            EffectOp::CloseOwnedResources => {
-                let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-                let mut obligations = Obligations::of_launch(lane.launch.as_ref(), harness);
-                if let Some(wake) = crate::ops::wake::wake_identity(&lane) {
-                    obligations.add(Obligation::Process(wake), Role::Wake, None);
-                }
-                let owed = intent.observation.as_ref().is_some_and(|prior| {
-                    prior.get("validate").and_then(Value::as_str) == Some("stop-failed")
-                });
-                if owed {
-                    obligations.add(Obligation::Validation, Role::Validation, None);
+            Bootstrap::Launch {
+                launch,
+                harness,
+                auxiliary,
+            } => {
+                let mut obligations = Obligations::of_launch(launch, harness);
+                if let Some(auxiliary) = auxiliary {
+                    obligations.add(Obligation::Process(auxiliary), Role::Auxiliary, None);
                 }
                 obligations
             }
-            EffectOp::StopController => match read_overseer(run.path) {
+            Bootstrap::Predecessor => match read_overseer(run.path) {
                 Ok(overseer) => Obligations::of_overseer(&overseer),
-                Err(_) => Obligations::of_phase(None, principal, None),
+                Err(_) => Obligations::of_phase(None, Role::Predecessor, None),
             },
         })
     }
 
-    pub(in crate::effects) fn intent_id(&self) -> &str {
+    pub fn intent_id(&self) -> &str {
         &self.intent_id
     }
 
     /// Whether the record says this intent signalled anything, on this run or
     /// an earlier one.
-    pub(in crate::effects) fn signalled(&self) -> bool {
+    pub fn signalled(&self) -> bool {
         self.obligations.record().signalled
     }
 
@@ -297,48 +304,15 @@ impl<'a> Operation<'a> {
     /// nothing was ever discharged. Such a record, with neither identity nor
     /// pane, stays `unconfirmed` and is closed by hand; a set that recorded
     /// any handle settles by what it reads.
-    pub(in crate::effects) fn recorded_nothing(&self) -> bool {
+    pub fn recorded_nothing(&self) -> bool {
         let record = self.obligations.record();
         record.standing.is_empty() && record.discharged.is_empty()
-    }
-
-    pub(in crate::effects) fn owes_validation(&self) -> bool {
-        self.obligations.stands(&Obligation::Validation)
-    }
-
-    /// A close about to run owes the worktree's validation runs to orch's own
-    /// runner's answer: acquired before the first signal.
-    pub(in crate::effects) fn owe_validation(&mut self) -> Result<()> {
-        self.add_as(Obligation::Validation, Role::Validation)
-    }
-
-    /// A close about to run owes the lane's local worktree, the record's
-    /// `mail_root` (a local lane's mail root is its worktree),
-    /// to its own release or keep: acquired before the
-    /// first signal. A hosted lane's worktree is its host's,
-    /// except a `claude-cloud` lane's, whose `mail_root` is the item's
-    /// worktree on this machine (the `lanes` row of the schema), the one
-    /// worktree the close removes for a hosted lane; a record naming
-    /// none owes nothing.
-    pub(in crate::effects) fn owe_worktree(&mut self, lane: &state::Lane) -> Result<()> {
-        if lane.host.is_some() && lane.kind.as_deref() != Some(CLOUD_KIND) {
-            return Ok(());
-        }
-        let Some(root) = lane.mail_root.as_deref() else {
-            return Ok(());
-        };
-        self.add_as(
-            Obligation::Worktree {
-                path: root.to_owned(),
-            },
-            Role::Worktree,
-        )
     }
 
     /// Whether the predecessor's handles the overseer record names were
     /// acquired by this intent: retirement begun, on this run or an earlier
     /// one.
-    pub(in crate::effects) fn retirement_begun(&self, overseer: &Overseer) -> bool {
+    pub fn retirement_begun(&self, overseer: &Overseer) -> bool {
         let handles = Obligations::of_overseer(overseer);
         let record = self.obligations.record();
         handles
@@ -390,7 +364,7 @@ impl<'a> Operation<'a> {
     }
 
     /// Move the intent to `phase`, written before the wait that follows.
-    pub(in crate::effects) fn record_phase(&mut self, phase: Phase) -> Result<()> {
+    pub fn record_phase(&mut self, phase: Phase) -> Result<()> {
         self.phase = Some(phase);
         self.write()
     }
@@ -400,9 +374,17 @@ impl<'a> Operation<'a> {
     /// signal, the first or a later one, since it is the conditional write
     /// that proves this handle's set is still the record's: a set another
     /// handle replaced refuses `set-replaced` here and nothing is signalled.
-    fn signal(&mut self) -> Result<()> {
+    fn write_signal(&mut self) -> Result<()> {
         self.obligations.spend();
         self.write()
+    }
+
+    /// The signal an act outside the handle sends, written before it acts:
+    /// the receipt is what that act holds when it discharges its own
+    /// obligation.
+    pub fn signal(&mut self) -> Result<Signalled> {
+        self.write_signal()?;
+        Ok(Signalled { _written: () })
     }
 
     /// Settle the obligation `discharge` names by its evidence and write the
@@ -418,7 +400,7 @@ impl<'a> Operation<'a> {
 
     /// A handle acquired under the operation's principal role, written.
     fn add(&mut self, obligation: Obligation) -> Result<()> {
-        self.add_as(obligation, Operation::principal(self.op))
+        self.add_as(obligation, self.principal)
     }
 
     /// A handle acquired under `role`, the intent's harness kind recorded on
@@ -432,10 +414,16 @@ impl<'a> Operation<'a> {
         self.write()
     }
 
+    /// The auxiliary process the target's record names now, acquired under
+    /// the auxiliary role and written before the stop or read that follows.
+    pub fn acquire_auxiliary(&mut self, id: Identity) -> Result<()> {
+        self.add_as(Obligation::Process(id), Role::Auxiliary)
+    }
+
     /// The predecessor's recorded handles become obligations of the intent
     /// at the start of its retirement: written
     /// before the stop or the close that follows.
-    pub(in crate::effects) fn begin_retirement(&mut self, overseer: &Overseer) -> Result<()> {
+    pub fn begin_retirement(&mut self, overseer: &Overseer) -> Result<()> {
         self.obligations.extend(Obligations::of_overseer(overseer));
         self.write()
     }
@@ -445,7 +433,7 @@ impl<'a> Operation<'a> {
     /// is settled by this read of its identity, and the pane's receipt is
     /// read and discharged by that read, before the wait that follows. The
     /// identity is a [`Recorded`] token this handle's own reader produced.
-    pub(in crate::effects) fn record_identity(
+    pub fn record_identity(
         &mut self,
         opened: &mut OpenedPane,
         identity: &Recorded<Identity>,
@@ -456,7 +444,7 @@ impl<'a> Operation<'a> {
             &Obligation::Pid { pid: identity.pid },
             "identity-read",
             Obligation::Process(identity.clone()),
-            Operation::principal(self.op),
+            self.principal,
             self.harness,
         );
         if self.obligations.stands(&Obligation::Receipt) {
@@ -472,9 +460,9 @@ impl<'a> Operation<'a> {
     /// discharged, else the intent held open with what stands; the first
     /// reason a discharge left its obligation standing is written as the
     /// observation's `cause` where it names none.
-    pub(in crate::effects) fn settle(self, word: Word, observation: Value) -> EffectOutcome {
+    pub fn settle(self, word: Word, observation: Value) -> EffectOutcome {
         let owner = self.while_owner.clone();
-        let keys = self.lane_keys();
+        let keys = self.principal_keys();
         let stale = self.stale.clone();
         EffectOutcome::judged(
             &self.intent_id,
@@ -489,9 +477,9 @@ impl<'a> Operation<'a> {
     }
 
     /// Nothing ends here: the intent stays open with the recorded remainder.
-    pub(in crate::effects) fn hold(self, observation: Value) -> EffectOutcome {
+    pub fn hold(self, observation: Value) -> EffectOutcome {
         let owner = self.while_owner.clone();
-        let keys = self.lane_keys();
+        let keys = self.principal_keys();
         let stale = self.stale.clone();
         EffectOutcome::unconfirmed(&self.intent_id, self.op, self.obligations, observation)
             .owned_by(owner)
@@ -501,9 +489,9 @@ impl<'a> Operation<'a> {
 
     /// A refusal with `cause` where the record says nothing was signalled,
     /// else the same cause held with everything standing.
-    pub(in crate::effects) fn refuse(self, cause: &str, observation: Value) -> EffectOutcome {
+    pub fn refuse(self, cause: &str, observation: Value) -> EffectOutcome {
         let owner = self.while_owner.clone();
-        let keys = self.lane_keys();
+        let keys = self.principal_keys();
         let stale = self.stale.clone();
         EffectOutcome::refused_or_held(
             &self.intent_id,
@@ -522,7 +510,7 @@ impl<'a> Operation<'a> {
     /// predecessor's handles included, must already be discharged by its own
     /// evidence, else the handle comes back with what stands, boxed since it
     /// carries the whole record.
-    pub(in crate::effects) fn publish(
+    pub fn publish(
         self,
         published: Published,
         opened: &OpenedPane,
@@ -534,12 +522,12 @@ impl<'a> Operation<'a> {
             PaneRef::of_opened(opened).obligation(),
             Obligation::Process(identity.clone()),
         ];
-        let keys = self.lane_keys();
+        let keys = self.principal_keys();
         let Operation {
             run,
             intent_id,
             op,
-            lane_since,
+            principal,
             phase,
             obligations,
             harness,
@@ -560,7 +548,7 @@ impl<'a> Operation<'a> {
                 run,
                 intent_id,
                 op,
-                lane_since,
+                principal,
                 phase,
                 obligations,
                 harness,
@@ -572,10 +560,17 @@ impl<'a> Operation<'a> {
     }
 }
 
+/// The engine's recording boundary for its own operations: an outcome
+/// applied with no caller's arm.
+pub fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
+    apply_outcome_with(run, outcome, |_| {})
+}
+
 /// The record-outcome request an effect's outcome builds, applied on the
-/// same file as a second committed transition: the one recording boundary.
-/// The set the effect left is written first where the record does not hold
-/// it yet; a job's failure
+/// same file as a second committed transition. `arm` is the opener's own
+/// part of the request (a lane operation's remainder and keys), applied to
+/// the wire record before it is written. The set the effect left is
+/// written first where the record does not hold it yet; a job's failure
 /// travels with the outcome as the notice it owes, recorded `owed` by the
 /// outcome's own write, and is sent only once that write stands under this
 /// owner, then marked, so an owner that
@@ -589,10 +584,15 @@ impl<'a> Operation<'a> {
 /// receipt's and the job files' removal, runs only where
 /// the outcome's write reports the intent still this writer's; an owner
 /// that moved leaves the claimant's files alone.
-pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
+pub fn apply_outcome_with(
+    run: &Run,
+    outcome: EffectOutcome,
+    arm: impl FnOnce(&mut RecordOutcome),
+) -> Result<Applied> {
     let record_after = outcome.record.clone();
     let while_owner = outcome.while_owner.clone();
-    let mut outcome = record(outcome);
+    let mut outcome = outcome.wire();
+    arm(&mut outcome);
     let intent = read_intent(run.path, &outcome.intent_id)?;
     if intent.open()
         && !intent
@@ -646,98 +646,76 @@ pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Re
     Ok(applied)
 }
 
-/// The wire record of an effect's outcome: the word,
-/// the record fields it publishes or keeps, and the observation with what
-/// remains or stands untouched written beside it.
-fn record(outcome: EffectOutcome) -> RecordOutcome {
-    let EffectOutcome {
-        intent_id,
-        op,
-        terminal,
-        mut observation,
-        wire,
-        while_owner,
-        lane_keys,
-        record,
-        ..
-    } = outcome;
-    let word = match terminal {
-        Terminal::Unconfirmed { remaining } => {
-            observation["remaining"] = remaining.value();
-            Outcome::Unconfirmed
+impl EffectOutcome {
+    /// The wire record of the outcome: the word,
+    /// the record fields it publishes or keeps, and the observation with what
+    /// remains or stands untouched written beside it. The principal keys
+    /// are the caller's to carry, under the target's stamp it knows.
+    pub fn wire(self) -> RecordOutcome {
+        let EffectOutcome {
+            intent_id,
+            op,
+            terminal,
+            mut observation,
+            wire,
+            while_owner,
+            record,
+            ..
+        } = self;
+        let word = match terminal {
+            Terminal::Unconfirmed { remaining } => {
+                observation["remaining"] = remaining.value();
+                Outcome::Unconfirmed
+            }
+            Terminal::Failed => Outcome::Failed,
+            Terminal::Confirmed => Outcome::Confirmed,
+            Terminal::Published(published) => {
+                observation["published"] = json!(match published {
+                    Published::Lane => "lane",
+                    Published::Successor => "successor",
+                });
+                Outcome::Confirmed
+            }
+            Terminal::Refused { cause, untouched } => {
+                observation["cause"] = json!(cause);
+                observation["stop"] = json!("none");
+                observation["untouched"] = untouched.value();
+                Outcome::Failed
+            }
+        };
+        let notice = job::owed_notice(op, &intent_id, word, &observation);
+        RecordOutcome {
+            intent_id,
+            outcome: word,
+            launch: wire.launch,
+            session_id: wire.session_id,
+            server_start: wire.server_start,
+            server_socket: wire.server_socket,
+            window: wire.window,
+            tmux_session: wire.tmux_session,
+            home: wire.home,
+            home_implicit: wire.home_implicit,
+            watch: wire.watch,
+            mail_root: wire.mail_root,
+            observation: Some(observation),
+            while_owner,
+            principal_keys: None,
+            notice,
+            set_revision: Some(record.revision),
         }
-        Terminal::Failed => Outcome::Failed,
-        Terminal::Confirmed => Outcome::Confirmed,
-        Terminal::Published(published) => {
-            observation["published"] = json!(match published {
-                Published::Lane => "lane",
-                Published::Successor => "successor",
-            });
-            Outcome::Confirmed
-        }
-        Terminal::Refused { cause, untouched } => {
-            observation["cause"] = json!(cause);
-            observation["stop"] = json!("none");
-            observation["untouched"] = untouched.value();
-            Outcome::Failed
-        }
-    };
-    let notice = job::owed_notice(op, &intent_id, word, &observation);
-    RecordOutcome {
-        intent_id,
-        outcome: word,
-        launch: wire.launch,
-        session_id: wire.session_id,
-        server_start: wire.server_start,
-        server_socket: wire.server_socket,
-        window: wire.window,
-        tmux_session: wire.tmux_session,
-        home: wire.home,
-        home_implicit: wire.home_implicit,
-        watch: wire.watch,
-        mail_root: wire.mail_root,
-        observation: Some(observation),
-        while_owner,
-        lane_keys,
-        notice,
-        set_revision: Some(record.revision),
     }
-}
-
-/// The host facts a lane transition judges live processes against: the
-/// kernel's own read, private to `ops`.
-pub(in crate::effects) fn host() -> ops::Host<'static> {
-    ops::Host::kernel()
 }
 
 /// Read a state file for the effect files: their one entry to the store's
 /// reader, which the compiler boundary names. `None`
 /// where no file stands.
-pub(in crate::effects) fn load(path: &std::path::Path) -> Result<Option<state::Snapshot>> {
+pub fn load(path: &std::path::Path) -> Result<Option<state::Snapshot>> {
     state::load(path)
-}
-
-/// Persist the close the dispatcher found over a superseded launch, once the
-/// launch intent is closed: one of the effect files' store
-/// entries beside the handle's own writes (the header names them), judged
-/// against the host as the command's entry is. It takes the typed close
-/// alone, never a request.
-pub(in crate::effects) fn persist_close(
-    run: &Run,
-    close: &ops::CloseOwnedResources,
-) -> Result<Applied> {
-    ops::apply_on(
-        run.path,
-        &Request::CloseOwnedResources(close.clone()),
-        run.env,
-        run.locking,
-        &host(),
-    )
 }
 
 /// The predecessor's identity the overseer record carries, as an identity
 /// the handle's process reads take.
-pub(in crate::effects) fn predecessor_identity(overseer: &Overseer) -> Option<Identity> {
+pub fn predecessor_identity(overseer: &Overseer) -> Option<Identity> {
     overseer_identity(overseer)
 }
 
@@ -835,7 +813,16 @@ mod tests {
             locking: crate::state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let refused = Operation::open(&run, &intent).err();
+        let refused = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .err();
         assert!(
             matches!(&refused, Some(Error::RoleMissing { id }) if *id == intent.id),
             "{refused:?}"
@@ -847,7 +834,16 @@ mod tests {
         );
         let (_, _, path, roled) = close_fixture(dir.path(), json!([process_row(&id, "harness")]));
         let run = Run { path: &path, ..run };
-        let opened = Operation::open(&run, &roled).unwrap();
+        let opened = Operation::open(
+            &run,
+            &roled,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .unwrap();
         assert_eq!(opened.harness_identity(), Some(id));
     }
 
@@ -888,7 +884,16 @@ mod tests {
                 locking: crate::state::Locking::FLOCK,
                 clock: &crate::schedule::SystemClock,
             };
-            let mut operation = Operation::open(&run, &intent).unwrap();
+            let mut operation = Operation::open(
+                &run,
+                &intent,
+                Bootstrap::Launch {
+                    launch: None,
+                    harness: None,
+                    auxiliary: None,
+                },
+            )
+            .unwrap();
             operation.close_standing_panes(None).unwrap();
             let record = operation.obligations.record().clone();
             let discharged: Vec<&str> = record.discharged.iter().map(|d| d.by.as_str()).collect();
@@ -923,7 +928,7 @@ mod tests {
         let other: Intent = serde_json::from_value(json!({
             "id": "close-owned-resources:KEN-U:1-1", "op": "close-owned-resources",
             "target": "KEN-U", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-            "obligations": {"standing": [{"kind": "validation", "role": "validation"}],
+            "obligations": {"standing": [{"kind": "receipt", "role": "harness"}],
                             "discharged": [], "signalled": true}
         }))
         .unwrap();
@@ -940,9 +945,27 @@ mod tests {
             locking: crate::state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let holder = Operation::open(&run, &holder).unwrap();
+        let holder = Operation::open(
+            &run,
+            &holder,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .unwrap();
         let token = holder.standing_process(&id).expect("the process stands");
-        let mut other = Operation::open(&run, &other).unwrap();
+        let mut other = Operation::open(
+            &run,
+            &other,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .unwrap();
         let before = read_intent(&path, other.intent_id()).unwrap();
         let refused = other.stop_process(token, &|_| false);
         let survived = live(&id);
@@ -979,7 +1002,16 @@ mod tests {
             locking: crate::state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let mut handle = Operation::open(&run, &intent).unwrap();
+        let mut handle = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .unwrap();
         let minted_at = handle.revision();
         let token = handle.standing_process(&id).expect("the process stands");
         let mut replaced: state::ObligationRecord = serde_json::from_value(json!({
@@ -1049,7 +1081,16 @@ mod tests {
             locking: crate::state::Locking::FLOCK,
             clock: &crate::schedule::SystemClock,
         };
-        let mut handle = Operation::open(&run, &intent).unwrap();
+        let mut handle = Operation::open(
+            &run,
+            &intent,
+            Bootstrap::Launch {
+                launch: None,
+                harness: None,
+                auxiliary: None,
+            },
+        )
+        .unwrap();
         let token = handle.standing_process(&id).expect("the process stands");
         let claimant = ops::Env {
             owner: Some(new.clone()),

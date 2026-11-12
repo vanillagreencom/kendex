@@ -792,7 +792,7 @@ pub(super) fn start_effect(
 
 fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Result<EffectOutcome> {
     let intent = read_intent(run.path, intent_id)?;
-    let mut operation = Operation::open(run, &intent)?;
+    let mut operation = super::lane_operation::open(run, &intent)?;
     let overseer = read_overseer(run.path)?;
     let doc_session = fleet_tmux_session(run.path)?;
 
@@ -1783,7 +1783,7 @@ fn controller_retired(
 /// own pane as often as not, so it is let exit before the pane is retired.
 pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<EffectOutcome> {
     let intent = read_intent(run.path, intent_id)?;
-    let mut operation = Operation::open(run, &intent)?;
+    let mut operation = super::lane_operation::open(run, &intent)?;
     operation.await_caller_gone()?;
     let overseer = read_overseer(run.path)?;
     let target = overseer_target_of(run.settings, &overseer)?;
@@ -1864,7 +1864,7 @@ fn stop_without_identity(
 pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let overseer = read_overseer(run.path)?;
     let generation = overseer.generation.unwrap_or(0);
-    let mut operation = Operation::open(run, intent)?;
+    let mut operation = super::lane_operation::open(run, intent)?;
     operation.read_standing(Some(&overseer))?;
     if intent.target != overseer_target(generation) {
         // The record the stop named has moved on: before any
@@ -1949,7 +1949,7 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
     let overseer = read_overseer(run.path)?;
     let generation = overseer.generation.unwrap_or(0);
     let mode = Mode::of(intent.op);
-    let mut operation = Operation::open(run, intent)?;
+    let mut operation = super::lane_operation::open(run, intent)?;
     // Every standing handle is read by its own key first.
     operation.read_standing(Some(&overseer))?;
     // The record moved past the generation the intent named, an
