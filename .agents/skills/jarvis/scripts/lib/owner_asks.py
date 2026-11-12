@@ -169,7 +169,7 @@ class Sources:
         return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:] if line]}
 
     def collect(self):
-        local = watch.Destination("local", None)
+        local = watch.Destination("local", None, None)
         config = self.value(local, self.session.home, "mailbox", "owner-tracker-settings")
         tracker = None
         if config["configured"]:
@@ -230,10 +230,13 @@ class Sources:
                                  error, delivery=True) from error
 
     def _send(self, route, text, key):
-        target = watch.Destination(route["destination"], route.get("host"))
+        target = next((target for target in watch.destinations(self.settings)
+                       if target.key == route["destination"]), None)
+        if target is None:
+            raise watch.DestinationRefusal("destination-unknown", route["destination"])
         if route["source"] == "mailbox":
             result = forward.owner_note.send(self.session.env["JARVIS_BASH"], "host" if target.host else "local",
-                                             target.host, route["root"], text,
+                                             target, route["root"], text,
                                              options=["--re", route["ask"], "--delivery-id", key],
                                              timeout=self.remaining(), check=False)
             if result.returncode:
@@ -428,7 +431,7 @@ class OwnerAsks:
         if entry["route"]["source"] == "linear":
             # A recovery needs the actual posting actor, not the configured
             # owner's identity: an app token can post on the owner's behalf.
-            local = watch.Destination("local", None)
+            local = watch.Destination("local", None, None)
             actor = self.sources.value(local, self.session.home, "linear", "linear.sh", ["users", "me", "--format=raw"])
             entry["actor"] = actor["viewer"]["id"]
             entry["body"] += "\n\n<!-- jarvis-owner-action:" + delivery + " -->"
