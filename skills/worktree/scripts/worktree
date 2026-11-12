@@ -2203,14 +2203,46 @@ discover_candidate_ownership() {
   done
 }
 
+# A local or origin branch whose tip the start point already contains holds
+# no work to protect, so it is no claim. Parallel arrays (Bash 3.2) of the
+# branches the last scan passed that way, with each tip and where it was read.
+CONTAINED_BRANCHES=()
+CONTAINED_TIPS=()
+CONTAINED_SOURCES=()
+
+# Only a proved ancestry passes: an empty base, an unknown tip or a failed
+# read is no proof and leaves the branch a claim.
+tip_in_base() {
+  local tip="$1" base="$2"
+  [[ -n "$tip" && -n "$base" ]] || return 1
+  git -C "$PROJECT_ROOT" merge-base --is-ancestor "$tip" "$base" 2>/dev/null
+}
+
+# A branch read at one tip both locally and on origin is one entry,
+# source local+origin.
+note_contained_branch() {
+  local branch="$1" tip="$2" source="$3" last=$((${#CONTAINED_BRANCHES[@]} - 1))
+  if [[ $last -ge 0 && "${CONTAINED_BRANCHES[$last]}" == "$branch" && "${CONTAINED_TIPS[$last]}" == "$tip" ]]; then
+    CONTAINED_SOURCES[$last]+="+$source"
+    return 0
+  fi
+  CONTAINED_BRANCHES+=("$branch")
+  CONTAINED_TIPS+=("$tip")
+  CONTAINED_SOURCES+=("$source")
+}
+
+# The first remote ref that claims the branch. Only an origin ref is passed
+# over, when contained in BASE or when DEFER leaves origin to the post-fetch
+# scan: another remote is not the claim authority origin is.
 remote_ref_for_branch() {
-  local branch="$1" oid="" ref="" i
+  local branch="$1" base="$2" defer="$3" oid="" ref="" remote="" i
   for ((i = 0; i < ${#OWNERSHIP_REMOTE_HEAD_NAMES[@]}; i++)); do
+    remote="${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}"
     while read -r oid ref; do
-      if [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]]; then
-        printf '%s/%s\n' "${OWNERSHIP_REMOTE_HEAD_NAMES[$i]}" "$branch"
-        return 0
-      fi
+      [[ -n "$oid" && "$ref" == "refs/heads/$branch" ]] || continue
+      [[ "$remote" == origin ]] && { [[ "$defer" == true ]] || tip_in_base "$oid" "$base"; } && continue
+      printf '%s/%s\n' "$remote" "$branch"
+      return 0
     done <<<"${OWNERSHIP_REMOTE_HEAD_REFS[$i]}"
   done
   return 1
@@ -2237,8 +2269,17 @@ remote_branch_oid_discovered() {
   return 1
 }
 
+# BASE is the full ref the issue branch will start from; empty, every
+# existing branch is a claim. PHASE pre-fetch, with a BASE, leaves local and
+# origin branches to the post-fetch scan: BASE is not fetched yet, so a branch
+# merged since the last fetch is unproved there, and that scan alone decides
+# containment.
 scan_candidate_ownership() {
-  local issue="$1" branch="" existing_wt="" remote_ref="" pr_details="" pr_number=""
+  local issue="$1" base="$2" phase="${3:-}" defer=false branch="" existing_wt="" remote_ref="" pr_details="" pr_number="" tip=""
+  [[ -n "$base" && "$phase" == pre-fetch ]] && defer=true
+  CONTAINED_BRANCHES=()
+  CONTAINED_TIPS=()
+  CONTAINED_SOURCES=()
   for branch in "${CANDIDATE_BRANCHES[@]}"; do
     existing_wt="$(worktree_for_branch "$branch" 2>/dev/null || true)"
     # The main checkout is never issue work, so it must never be rendered as
@@ -2264,17 +2305,51 @@ scan_candidate_ownership() {
       refuse_existing_branch "$issue" "$branch" pr "#$pr_number"
       return "$ACTIVE_WORK_EXIT"
     fi
-    if git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
-      refuse_existing_branch "$issue" "$branch" local
-      return "$ACTIVE_WORK_EXIT"
+    if [[ "$defer" != true ]] && git -C "$PROJECT_ROOT" show-ref --verify --quiet "refs/heads/$branch"; then
+      tip="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$branch^{commit}" || true)"
+      if ! tip_in_base "$tip" "$base"; then
+        refuse_existing_branch "$issue" "$branch" local
+        return "$ACTIVE_WORK_EXIT"
+      fi
+      note_contained_branch "$branch" "$tip" local
     fi
-    remote_ref="$(remote_ref_for_branch "$branch" 2>/dev/null || true)"
-    if [[ -n "$remote_ref" ]]; then
+    if remote_ref="$(remote_ref_for_branch "$branch" "$base" "$defer" 2>/dev/null)"; then
       refuse_existing_branch "$issue" "$branch" remote "$remote_ref"
       return "$ACTIVE_WORK_EXIT"
     fi
+    if [[ "$defer" != true ]] && tip="$(remote_branch_oid_discovered origin "$branch")"; then
+      note_contained_branch "$branch" "$tip" origin
+    fi
   done
   return 0
+}
+
+# Add the claim's worktree on BRANCH from START. A local BRANCH the scan
+# found contained moves to START by compare-and-swap on the tip the scan
+# proved, so a branch that moved since keeps its commits; its upstream is
+# dropped, as a new --no-track branch has none.
+add_claim_worktree() {
+  local start="$1" start_oid="" reused=false i
+  for ((i = 0; i < ${#CONTAINED_BRANCHES[@]}; i++)); do
+    [[ "${CONTAINED_BRANCHES[$i]}" == "$BRANCH" && "${CONTAINED_SOURCES[$i]}" == local* ]] || continue
+    start_oid="$(git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$start^{commit}")" || return 1
+    if ! git -C "$PROJECT_ROOT" update-ref -m "worktree create: $BRANCH is in $start" "refs/heads/$BRANCH" "$start_oid" "${CONTAINED_TIPS[$i]}" 2>/dev/null; then
+      worktree_message branch-moved "branch=$BRANCH tip=${CONTAINED_TIPS[$i]}" "Error: branch '$BRANCH' moved after the ownership scan; no worktree was created." >&2
+      return 1
+    fi
+    if git -C "$PROJECT_ROOT" config --get "branch.$BRANCH.merge" >/dev/null 2>&1; then
+      git -C "$PROJECT_ROOT" branch --unset-upstream "$BRANCH" >/dev/null 2>&1 || return 1
+    fi
+    reused=true
+  done
+  if [[ "$reused" == true ]]; then
+    git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} "$WT_PATH" "$BRANCH" >/dev/null 2>&1 || return 1
+  else
+    git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$start" >/dev/null 2>&1 || return 1
+  fi
+  for ((i = 0; i < ${#CONTAINED_BRANCHES[@]}; i++)); do
+    worktree_message branch-in-base "branch=${CONTAINED_BRANCHES[$i]} source=${CONTAINED_SOURCES[$i]} tip=${CONTAINED_TIPS[$i]}" "Branch '${CONTAINED_BRANCHES[$i]}' holds no commit $start lacks, so it is no claim." >&2
+  done
 }
 
 acquire_issue_claim_lock() {
@@ -3552,18 +3627,29 @@ case "${1:-}" in
     # candidate ownership scan as bare create. Discovery runs once before any
     # lock/config/directory mutation, then again while the claim lock is held.
     if [[ -n "$FROM" ]]; then
+      # Only a --from of the default branch starts where bare create does and
+      # takes its contained-branch rule. Any other REF can be the candidate
+      # branch itself, which trivially contains its own tip, so every existing
+      # branch stays a claim.
+      CLAIM_BASE=""
+      if resolve_default_branch optional && [[ "$FROM" == "$DEFAULT_BRANCH" ]]; then
+        CLAIM_BASE="refs/remotes/origin/$DEFAULT_BRANCH"
+      fi
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "$CLAIM_BASE" pre-fetch || exit "$ACTIVE_WORK_EXIT"
       acquire_issue_claim_lock "$ISSUE" || exit 1
       guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fetch_origin || exit 1
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "$CLAIM_BASE" || exit "$ACTIVE_WORK_EXIT"
 
       BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
-      # Resolve: try origin/$FROM first (remote branch), then $FROM directly (local branch/tag/commit)
-      if git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
+      # Resolve: the claim base, else origin/$FROM (remote branch), else $FROM
+      # directly (local branch/tag/commit)
+      if [[ -n "$CLAIM_BASE" ]] && git -C "$PROJECT_ROOT" rev-parse --verify --quiet "$CLAIM_BASE^{commit}" >/dev/null; then
+        START_POINT="$CLAIM_BASE"
+      elif git -C "$PROJECT_ROOT" rev-parse --verify "origin/$FROM" &>/dev/null; then
         START_POINT="origin/$FROM"
       elif git -C "$PROJECT_ROOT" rev-parse --verify "$FROM" &>/dev/null; then
         START_POINT="$FROM"
@@ -3572,7 +3658,7 @@ case "${1:-}" in
         exit 1
       fi
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "$START_POINT" >/dev/null 2>&1
+      add_claim_worktree "$START_POINT" || exit 1
       release_issue_claim_lock
       setup_app_worktree "$WT_PATH" "$CHECKOUT" true "$ISSUE"
       report_created_worktree
@@ -3644,16 +3730,16 @@ case "${1:-}" in
       resolve_default_branch || exit 1
       build_candidate_branches "$ISSUE" "$BRANCH"
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "refs/remotes/origin/$DEFAULT_BRANCH" pre-fetch || exit "$ACTIVE_WORK_EXIT"
       acquire_issue_claim_lock "$ISSUE" || exit 1
       guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
       fetch_origin || exit 1
       discover_candidate_ownership || exit 1
-      scan_candidate_ownership "$ISSUE" || exit "$ACTIVE_WORK_EXIT"
+      scan_candidate_ownership "$ISSUE" "refs/remotes/origin/$DEFAULT_BRANCH" || exit "$ACTIVE_WORK_EXIT"
 
       BRANCH="${BRANCH:-$(issue_branch_name "$ISSUE")}"
       mkdir -p "$TREES_DIR"
-      git -C "$PROJECT_ROOT" worktree add ${CHECKOUT_ARGS[@]+"${CHECKOUT_ARGS[@]}"} --no-track -b "$BRANCH" "$WT_PATH" "origin/$DEFAULT_BRANCH" >/dev/null 2>&1
+      add_claim_worktree "refs/remotes/origin/$DEFAULT_BRANCH" || exit 1
     fi
 
     release_issue_claim_lock

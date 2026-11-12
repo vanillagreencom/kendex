@@ -275,6 +275,13 @@ implementer.
     outage as absence.
   - Unreachable secondary remotes are skipped with a warning; reachable ones
     still count as ownership signals.
+  - When the issue branch starts from origin/<default> (bare create,
+    --base <default>, --base origin/<default> or --from <default>), a local
+    or origin branch whose tip the fetched origin/<default> already contains,
+    with no open PR and no worktree, is no claim: the issue branch starts
+    from origin/<default>, and a 'worktree-branch-in-base:' line on stderr
+    names it and its old tip. An ancestry that cannot be read keeps it a
+    claim, and any other --from keeps every existing branch a claim.
   - A repository-local claim lock holds the final repeated discovery through
     'git worktree add'.
   - Run issue creates as separate commands and check each result.
