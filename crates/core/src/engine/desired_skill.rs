@@ -458,6 +458,7 @@ fn render_variant(
             (path, bytes)
         })
         .collect();
+    let files = rebase_for_surface(ctx, state, group, files);
     rendered = crate::render::skill::Rendered::new(files);
     // `SKILL.md.disabled` is the name kendex keeps a switched-off
     // installation's content under, so a catalog shipping one of its own
@@ -529,6 +530,47 @@ fn render_variant(
         hash,
         read_as,
     })
+}
+
+fn rebase_for_surface(
+    ctx: &ItemCtx,
+    state: &mut DesiredState,
+    group: &SurfaceGroup,
+    files: Files,
+) -> Files {
+    let local = matches!(
+        ctx.decl.source.as_str(),
+        crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
+    ) || ctx
+        .manifest
+        .sources
+        .get(&ctx.decl.source)
+        .is_some_and(|source| source.path.is_some());
+    if let Scope::Project { root } = ctx.scope
+        && local
+        && ctx.sealed.root().starts_with(root)
+    {
+        let (files, warnings) = crate::render::skill::rebase_links(
+            files,
+            ctx.item_path,
+            ctx.sealed,
+            &group.native,
+            root,
+        );
+        state
+            .warnings
+            .extend(warnings.into_iter().map(|warning| super::ItemWarning {
+                kind: ItemKind::Skill,
+                name: ctx.name.to_owned(),
+                harness: None,
+                message: warning.message,
+                remediation: warning.remediation,
+                detail: None,
+            }));
+        files
+    } else {
+        files
+    }
 }
 
 /// Nothing installs for this group, and every member is told why.

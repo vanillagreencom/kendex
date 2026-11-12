@@ -15,6 +15,23 @@ pub struct BodyPaths<'a> {
 /// Map catalog-relative targets into the consumer tree. Fork capture uses the
 /// same operation with the file and root pairs reversed.
 pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWarning>) {
+    rebase_links(text, paths, false, |_| false)
+}
+
+pub(crate) fn rebase_skill(
+    text: &str,
+    paths: BodyPaths<'_>,
+    keep: impl Fn(&Path) -> bool,
+) -> (String, Vec<RenderWarning>) {
+    rebase_links(text, paths, true, keep)
+}
+
+fn rebase_links(
+    text: &str,
+    paths: BodyPaths<'_>,
+    preserve_spelling: bool,
+    keep: impl Fn(&Path) -> bool,
+) -> (String, Vec<RenderWarning>) {
     let mut links = relative_links(text);
     links.sort_by_key(|link| link.range.as_ref().map(|range| range.start));
     links.dedup_by(|left, right| left.range == right.range && left.target == right.target);
@@ -22,8 +39,32 @@ pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWar
     let mut warnings = Vec::new();
     let mut copied = 0;
     for link in links {
-        let target = decoded(&link.path, '/')
-            .and_then(|path| crate::fs::resolved(paths.source, Path::new(&path)))
+        let resolved = decoded(&link.path, '/')
+            .and_then(|path| crate::fs::resolved(paths.source, Path::new(&path)));
+        if resolved.as_ref().is_some_and(|target| keep(target)) {
+            continue;
+        }
+        // An installed skill can be an alias of its source. Resolve the
+        // original spelling through that alias before choosing a new one.
+        if preserve_spelling
+            && resolved
+                .as_ref()
+                .is_some_and(|target| target.starts_with(paths.source_root))
+            && decoded(&link.path, '/').is_some_and(|path| {
+                let source = paths
+                    .source
+                    .parent()
+                    .and_then(|parent| crate::paths::canonical(&parent.join(&path)).ok());
+                let rendered = paths
+                    .rendered
+                    .parent()
+                    .and_then(|parent| crate::paths::canonical(&parent.join(&path)).ok());
+                source.is_some() && source == rendered
+            })
+        {
+            continue;
+        }
+        let target = resolved
             .and_then(|path| {
                 path.strip_prefix(paths.source_root)
                     .ok()
@@ -46,6 +87,14 @@ pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWar
             ));
             continue;
         };
+        if preserve_spelling
+            && decoded(&link.path, '/').is_some_and(|path| {
+                crate::fs::resolved(paths.rendered, Path::new(&path))
+                    == crate::fs::resolved(paths.rendered, &target)
+            })
+        {
+            continue;
+        }
         if range.start < copied {
             continue;
         }
