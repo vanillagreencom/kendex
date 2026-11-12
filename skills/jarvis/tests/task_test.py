@@ -372,22 +372,39 @@ sys.exit(task.main())
         self.home.joinpath("meter-rows.json").write_text(json.dumps([[str(spent), "codex", 100], [str(room), "codex", 97]]))
         fleet = self.root / "orch-state/workflow-state-oversee.json"
         fleet.parent.mkdir()
-        # The room account's pick verdict, as the keyed pick-account-excluded line states it.
-        rows = (("full worker", False, False, "walled"),
-                ("short task on an overseer seat", True, True, "seat-reserve"),
-                ("short task", True, False, None))
-        for case, short, seat, refusal in rows:
+        # Live launches on the room account, each a claim on a pane the test's tmux server holds.
+        claims = self.root / "meter-state/claims"
+        claims.mkdir(parents=True)
+        server = self.tmux("display-message", "-p", "-t", self.terminal["pane"], "#{pid}").stdout.strip()
+        # The room account's pick verdict: the keyed lanes refusal line and its fields. A walled
+        # named pick whose reading is below its max-pct was refused on the projection.
+        rows = (("full worker", (), False, 0, ("pick-account-excluded", {"reason": "walled"})),
+                ("short task on an overseer seat", ("--short",), True, 0,
+                 ("pick-account-excluded", {"reason": "seat-reserve"})),
+                ("short task on a named account its live claims project past the wall",
+                 ("--short", "--account", room), False, 3, ("pick-lane-walled", {"wall": "97", "max-pct": "100"})),
+                ("short task", ("--short",), False, 0, None))
+        for case, args, seat, live, refusal in rows:
             with self.subTest(case=case):
                 if seat:
                     fleet.write_text(json.dumps({"overseer": {"account": str(room)}}))
                 else:
                     fleet.unlink(missing_ok=True)
+                for path in claims.iterdir():
+                    path.unlink()
+                for index in range(live):
+                    claims.joinpath(str(index) + ".claim").write_text("\t".join(
+                        (server, self.terminal["pane"], str(room), "task-" + str(index), "0", "", "", "", "plan")) + "\n")
                 result = self.call("launch", "--name", case, "--harness", "codex", "--model", "standard",
                                    "--task-file", self.task_file, "--result-file", self.home / "result-short.md",
-                                   *(["--short"] if short else []), success=refusal is None)
+                                   *args, success=refusal is None)
                 if refusal:
-                    self.assertIn("lanes: pick-account-excluded lane=" + str(room) + " reason=" + refusal + "\n",
-                                  result.stderr)
+                    key, expected = refusal
+                    prefix = "lanes: " + key + " lane=" + str(room) + " "
+                    lines = [line[len(prefix):] for line in result.stderr.splitlines() if line.startswith(prefix)]
+                    self.assertEqual(len(lines), 1, result.stderr)
+                    fields = dict(field.split("=", 1) for field in lines[0].split())
+                    self.assertEqual({name: fields.get(name) for name in expected}, expected)
                 else:
                     self.assertEqual(result["account"], str(room))
                     self.assertTrue(self.acknowledgement(result)["env"]["CODEX_HOME"].startswith(str(room)))
@@ -1064,6 +1081,7 @@ while True: signal.pause()
             ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
                 'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
             ("short-bound", "session-backend.sh", (('pick_args+=(--max-pct "$8")', ':'),), "test_short_task_pick"),
+            ("short-projected", "session-backend.sh", (('pick_args+=(--projected)', ':'),), "test_short_task_pick"),
             ("controller", "session.py", (("        elif not window:\n            self.end_task_session()\n",
                 "        elif False:\n            self.end_task_session()\n"),),
              "test_controller_exit_recovers_task_windows"),
