@@ -1,1 +1,0 @@
-- Returning to an installed package you already opened shows its Files tab from the answers it already read, without reading the package or its place again. A write, a source fetch, a rescan, a window refocus, a newly installed commit or a different place or installation still reads the current files, and a read that failed is asked again.

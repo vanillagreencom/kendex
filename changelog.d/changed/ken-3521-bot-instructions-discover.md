@@ -1,1 +1,0 @@
-- Commit offers find bot-instructions review files through the package's `render --discover` listing instead of its preview, so a hand-written file at a generated path stays out of the offer whatever the preview does with it. A project whose installed bot-instructions copy predates `render --discover` still gets its offer from the older preview.

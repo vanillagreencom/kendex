@@ -1,1 +1,0 @@
-- Automatic consumer refreshes skip commits and pull requests when only project lock records change, and publish the current locks with the next content change.

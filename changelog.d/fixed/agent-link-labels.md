@@ -1,1 +1,0 @@
-- Agent rendering preserves Markdown link and image labels that look like file citations, while rebasing their destinations and standalone citations.
