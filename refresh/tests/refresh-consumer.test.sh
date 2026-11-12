@@ -1370,7 +1370,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1]).resolve()
 text = path.read_text()
-start = 'if git diff --cached --quiet; then\n'
+start = 'if [ "$publication_status" -eq 0 ]; then\n'
 assert text.count(start) == 1
 offset = text.index(start)
 end = text.index('\nfi\n', offset) + len('\nfi\n')
