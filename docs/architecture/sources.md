@@ -25,7 +25,7 @@ The directory is a remote, so it gets a catalog's distrust and a mirror's offlin
 - Do pin an item `rev` as a full commit id; it overrides the source `rev`, and parents demanding different revisions of one dependency conflict and write nothing (`crates/core/tests/package_pins/`).
 - Do subscribe one repository once per scope, by the canonical identity `source_ref::repo_identity` folds every spelling to; the refusal names the existing subscription.
 - Do copy the declaration into the project in the same plan when a project installs from a personal subscription, so it never re-resolves against the project root; the personal manifest is read-only input and the cache is shared (`crates/core/tests/install_into_project.rs`).
-- Do skip both directories that fold to one name, with a finding naming both, unless their bytes are identical.
+- Do skip, in discovery's search, both directories that fold to one name, with a finding naming both, unless their bytes are identical.
 - Do keep `kendex check`'s exit contract: 0 is clean, 1 is drift or not yet evaluated, 2 is could-not-check, and unknown outranks drift (`drift::report::CheckStatus`).
 - Do say where a name comes from: a bare name searching every enabled subscription refuses on two offers, naming both spellings, and the default catalog is reached only when nothing else offers the name.
 - Do date an offered item by the newest commit that touched what it contains, never by the bare tip.
