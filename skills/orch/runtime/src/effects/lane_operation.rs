@@ -235,11 +235,11 @@ pub(super) fn open<'a>(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a
             bootstrap
         }
         EffectOp::CloseOwnedResources => {
-            let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-            return Operation::open(run, intent, close_bootstrap(&lane));
+            let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
+            return Operation::open(&run.engine, intent, close_bootstrap(&lane));
         }
     };
-    Operation::open(run, intent, bootstrap)
+    Operation::open(&run.engine, intent, bootstrap)
 }
 
 /// A close's start in the engine's set: the lane's launch record under the
@@ -275,8 +275,8 @@ impl<'a> LaneOperation<'a> {
         intent: &Intent,
         lane: &Lane,
     ) -> Result<LaneOperation<'a>> {
-        let engine = Operation::open(run, intent, close_bootstrap(lane))?;
-        let recorded = LaneObligationRecord::of(run.path, intent)?;
+        let engine = Operation::open(&run.engine, intent, close_bootstrap(lane))?;
+        let recorded = LaneObligationRecord::of(run.engine.path, intent)?;
         let owed = recorded.is_none()
             && intent.observation.as_ref().is_some_and(|prior| {
                 prior.get("validate").and_then(Value::as_str) == Some("stop-failed")
@@ -336,7 +336,7 @@ impl<'a> LaneOperation<'a> {
         };
         match &r.progress {
             Progress::Recorded => {
-                if let Some(record) = LaneObligationRecord::of(self.run.path, &r.intent)? {
+                if let Some(record) = LaneObligationRecord::of(self.run.engine.path, &r.intent)? {
                     self.lane.set_revision(record.revision);
                 }
                 Ok(())
@@ -492,8 +492,8 @@ impl<'a> LaneOperation<'a> {
             self.run.settings,
             Path::new(root),
             None,
-            self.run.env,
-            self.run.locking,
+            self.run.engine.env,
+            self.run.engine.locking,
         )
         .map(|_| ())
         .map_err(|e| format!("{}: {e}", e.key()));
@@ -589,8 +589,8 @@ impl<'a> LaneOperation<'a> {
             &settings.state_dir,
             item,
             &[],
-            self.run.locking,
-            self.run.env.now_secs,
+            self.run.engine.locking,
+            self.run.engine.env.now_secs,
         )
         .map(|closed| closed.archive)
         .map_err(|e| format!("{}: {e}", e.key())))
@@ -675,15 +675,15 @@ fn note_cause(outcome: &mut EffectOutcome, cause: Option<&str>) {
 /// lane's stamp the intent was written at with the keys the engine's set
 /// recorded under the harness role.
 pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
-    let intent = read_intent(run.path, outcome.intent_id())?;
-    let rows: Vec<Value> = LaneObligationRecord::of(run.path, &intent)?
+    let intent = read_intent(run.engine.path, outcome.intent_id())?;
+    let rows: Vec<Value> = LaneObligationRecord::of(run.engine.path, &intent)?
         .map(|record| record.standing.iter().map(standing_value).collect())
         .unwrap_or_default();
     let keys = PrincipalKeys {
         since: intent.lane_since.clone(),
         keys: outcome.principal_keys().to_vec(),
     };
-    operation::apply_outcome_with(run, outcome, |wire| {
+    operation::apply_outcome_with(&run.engine, outcome, |wire| {
         wire.principal_keys = Some(keys);
         if let Some(observation) = wire.observation.as_mut() {
             for key in ["remaining", "untouched"] {
@@ -708,10 +708,10 @@ fn standing_value(obligation: &LaneObligation) -> Value {
 /// is. It takes the typed close alone, never a request.
 pub(super) fn persist_close(run: &Run, close: &ops::CloseOwnedResources) -> Result<Applied> {
     ops::apply_on(
-        run.path,
+        run.engine.path,
         &Request::CloseOwnedResources(close.clone()),
-        run.env,
-        run.locking,
+        run.engine.env,
+        run.engine.locking,
         &ops::Host::kernel(),
     )
 }
@@ -743,7 +743,7 @@ pub(super) fn pick_account(
 /// The lane set's store transition, applied as the engine's progress
 /// writes are.
 fn apply_lane_store(run: &Run, request: &Request) -> Result<Applied> {
-    ops::apply(run.path, request, run.env, run.locking)
+    ops::apply(run.engine.path, request, run.engine.env, run.engine.locking)
 }
 
 /// The oldest unanswered ask the lane's mailbox holds, read through the

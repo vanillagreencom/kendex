@@ -17,12 +17,9 @@ use serde_json::{Value, json};
 
 use super::host::{Foreground, Observed, Recorded, SessionFloor, unanswering};
 use super::obligations::{Discharge, Obligations, PaneEnd, PaneRef, ReceiptEnd};
-use super::{Close, Operation, Pane, Server, receipt};
+use super::{Close, Operation, POLL, Pane, Server, receipt};
 use crate::error::Result;
 use crate::state::{Obligation, Opening, Phase, Role};
-
-/// How often a poll re-reads the pane within its bound.
-const POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// Why a window did not open with its line typed. `Refused` is a host refusal before the
 /// launcher was asked, nothing of the effect's standing; `Unanswered` is a
@@ -224,7 +221,6 @@ impl Operation<'_> {
     ) -> std::result::Result<std::path::PathBuf, agent_runtime::Error> {
         let path = self
             .run
-            .settings
             .state_dir
             .join("intents")
             .join(format!("{}.brief", self.intent_id));
@@ -239,7 +235,7 @@ impl Operation<'_> {
     }
 
     fn receipt_path(&self) -> std::path::PathBuf {
-        super::host::receipt_path(self.run.settings, &self.intent_id)
+        self.run.receipt_path(&self.intent_id)
     }
 
     /// The end a read of the pane's receipt settles: read

@@ -15,9 +15,10 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::effects;
+use crate::effects::Launch;
 use crate::error::{Error, Result};
 use crate::ops::validate::{
-    Launch, RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
+    RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
 };
 use crate::ops::{self, Env, Report, Request};
 use crate::settings::Settings;

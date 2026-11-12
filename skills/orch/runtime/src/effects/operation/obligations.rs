@@ -29,7 +29,7 @@ use crate::state::{
     Owner, Phase, Role, WatchJob,
 };
 
-use super::super::{overseer_identity, pid_value};
+use super::{pid_value, predecessor_identity};
 
 /// A pane by exact id on the server identity that holds it, pid and tmux
 /// start. A lane record the shell launcher wrote names the server by pid
@@ -400,7 +400,7 @@ impl Obligations {
             }),
             (None, Some(_) | None) => {}
         }
-        if let Some(identity) = overseer_identity(overseer) {
+        if let Some(identity) = predecessor_identity(overseer) {
             standing.push(Obligation::Process(identity));
         }
         Obligations::of(standing, Role::Predecessor, None)

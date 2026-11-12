@@ -21,6 +21,7 @@ use serde_json::json;
 use super::Env;
 use super::item::{self, AcceptResult, Attempt, RecordValidationAdmission};
 use super::proof;
+use crate::effects::Launch;
 use crate::error::{Error, Result};
 use crate::state::{
     self, Document, ItemState, Notice, Proof, Record, Stage, StageKind, StageOutcome, Stop,
@@ -80,32 +81,6 @@ pub struct RecordLaunch {
     pub round_id: String,
     pub run_dir: String,
     pub launch: Launch,
-}
-
-/// The launcher's answer as job-unit's record states it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "launch", rename_all = "kebab-case")]
-pub enum Launch {
-    Started {
-        runner: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        unit: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pid: Option<u32>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        start: Option<String>,
-        line: String,
-    },
-    Refused {
-        cause: String,
-    },
-    /// The launcher gave no answer: the job may have started. The stage
-    /// stays open with its job read from the launcher's record, as a start
-    /// whose answer was never written is read, until the round's reconcile
-    /// reads the job back.
-    Unanswered {
-        cause: String,
-    },
 }
 
 /// The one close of a started run: `accept-result` on the stage with the

@@ -295,7 +295,7 @@ fn same_directory(a: &Path, b: &Path) -> bool {
 /// state file, no record, or a consumed one.
 fn standing_handoff(run: &Run, item: &str) -> Result<Option<Relaunch>> {
     let path = state::item_path(&run.settings.state_dir, item);
-    let Some(snapshot) = operation::load(&path)? else {
+    let Some(snapshot) = super::snapshot(&path)? else {
         return Ok(None);
     };
     let Some(handoff) = state::field::<Value>(&path, &snapshot.doc, "handoff")? else {
@@ -419,7 +419,7 @@ fn prepare_launch(
     let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
-        target: Target::new(settings, harness)?,
+        target: Target::new(&settings.harness_binaries, harness)?,
         home: homes.sessions,
         home_implicit: homes.cleared,
         server: fleet.server,
@@ -840,7 +840,7 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = super::lane_operation::open(run, intent)?;
-    let (lane, _) = lane_for_intent(run.path, &intent.id)?;
+    let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
     // A local window's fleet server is resolved before the route, which
     // reads a record with no home under the home that server hands its
     // panes; one that cannot be resolved fails before anything opens.
@@ -983,7 +983,7 @@ fn open_and_confirm(
 /// an accountless Codex or Claude pane, read from the server's own
 /// environment.
 fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet> {
-    let doc_session = fleet_tmux_session(run.path)?;
+    let doc_session = fleet_tmux_session(run.engine.path)?;
     let (server, session) = operation.fleet_server(doc_session.as_deref())?;
     let served = match (Harness::parse(&r.harness), &r.account) {
         (Some(harness @ (Harness::Codex | Harness::Claude)), None) => {
@@ -1041,7 +1041,7 @@ fn local_launch(
         &prep.session,
         &prep.floor,
         &prep.command,
-        prep.target.harness,
+        prep.target.harness(),
         &|name| target.owns(name),
         Sessions::Store {
             home: prep.home.as_deref(),
@@ -1110,7 +1110,7 @@ fn hosted_launch(
     let (Some(account), Some(repo)) = (r.account.as_deref(), r.repo.as_deref()) else {
         return failed(operation, "host-request-incomplete");
     };
-    let doc_session = fleet_tmux_session(run.path)?;
+    let doc_session = fleet_tmux_session(run.engine.path)?;
     let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
         Ok(found) => found,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
@@ -1190,7 +1190,7 @@ fn hosted_launch(
     if let Err(e) = check_program(&command) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
-    let target = Target::new(run.settings, harness)?;
+    let target = Target::new(&run.settings.harness_binaries, harness)?;
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
@@ -1921,7 +1921,7 @@ fn marker_reading(lane: &Lane) -> Option<Value> {
 /// with that reading and the pane marked present, which a close may
 /// supersede.
 pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
-    let (lane, item) = lane_for_intent(run.path, &intent.id)?;
+    let (lane, item) = lane_for_intent(run.engine.path, &intent.id)?;
     let mut operation = super::lane_operation::open(run, intent)?;
     // Every standing handle is read by its own key first.
     operation.read_standing(None)?;
@@ -2053,7 +2053,7 @@ fn judge_opened(
             json!({"reconcile": "launch", "observed": "present", "cause": "harness-unknown"}),
         ));
     };
-    let target = Target::new(run.settings, harness)?;
+    let target = Target::new(&run.settings.harness_binaries, harness)?;
     let hosted = matches!(surface_of(lane.host.as_deref()), Surface::Hosted(_));
     let owns = |name: &str| (hosted && name == "ssh") || target.owns(name);
     let (foreground, state) =
@@ -2118,7 +2118,7 @@ fn judge_opened(
         };
         // The session the launch resolved, never the one tmux reports for
         // the pane, which in a grouped session may be the other's name.
-        let session = operation.fleet_session(fleet_tmux_session(run.path)?.as_deref())?;
+        let session = operation.fleet_session(fleet_tmux_session(run.engine.path)?.as_deref())?;
         let mut outcome = launch_outcome(
             operation,
             harness,

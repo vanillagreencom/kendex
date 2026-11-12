@@ -61,6 +61,10 @@ mod obligations;
 mod receipt;
 mod window;
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
 use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Outcome;
 use serde_json::{Value, json};
@@ -77,19 +81,162 @@ pub use host::{
 pub use host::{Observed, fleet_sockets, overseer_socket, server_at};
 pub use host::{SignIn, process_var, register_controller};
 pub use host::{poll_until, server_home, session_owner};
+pub use job::{Claimant, Companion};
 pub use obligations::{EffectOutcome, Published, Wire, Word};
 pub use obligations::{JobHandle, SidecarRead};
 pub use window::{OpenRefusal, Polled, Recovered, TurnConfirm, opening_observation};
 
 use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
-use super::{Run, overseer_identity, read_intent, read_overseer};
 use crate::error::{Error, Result};
-use crate::ops::{self, Applied, Progress, RecordOutcome, RecordProgress, Report, Request};
+use crate::ops::{self, Applied, Env, OutcomeArm, Progress, RecordOutcome, RecordProgress, Report};
 use crate::schedule::Clock;
+use crate::settings::Judged;
 use crate::state::{
-    self, EffectOp, Intent, LaunchIdentity, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
+    self, EffectOp, Intent, LaunchIdentity, Locking, Obligation, OpenedPane, Overseer, Owner,
+    Phase, Role,
 };
+
+/// How often a poll re-reads the record, a process or a pane within its
+/// bound.
+const POLL: Duration = Duration::from_millis(200);
+
+/// What one run of the engine acts with, as its opener passes it: the
+/// record, the engine's own settings, the directory its job, receipt,
+/// brief and notice files live in, the grace a stop leaves between its
+/// signals, the mailbox program the owner notice runs and the main checkout
+/// it runs at, the writer's stamp and lock policy, the one clock every wait
+/// reads, and the opener's part of an outcome's transition, which moves the
+/// target record the intent names.
+pub struct Run<'a> {
+    pub path: &'a Path,
+    pub settings: EngineSettings,
+    pub state_dir: PathBuf,
+    pub close_grace: Judged<Duration>,
+    pub mail_program: PathBuf,
+    pub root: PathBuf,
+    pub env: &'a Env,
+    pub locking: Locking,
+    pub clock: &'a dyn Clock,
+    pub outcome_arm: OutcomeArm,
+}
+
+impl Run<'_> {
+    /// Where the pane of `intent_id` registers itself.
+    fn receipt_path(&self, intent_id: &str) -> PathBuf {
+        state::receipt_path(&self.state_dir, intent_id)
+    }
+}
+
+/// The engine's own settings, each judged where it is read, so a value
+/// outside its form refuses the act that reads it and no other: the bound
+/// a pane's harness is confirmed within, the bound a job is given to claim
+/// its intent, the session a fleet window opens in, and the executable
+/// configured for each harness.
+pub struct EngineSettings {
+    pub verify: Judged<Duration>,
+    pub claim: Judged<Duration>,
+    pub tmux_session: Option<String>,
+    pub harness_binaries: Judged<BTreeMap<Harness, PathBuf>>,
+}
+
+/// The harness a pane runs and the executable configured for it: together
+/// they name the processes that are the harness's own, its own names and
+/// the configured program's basename (`Harness::owns_process_of`).
+#[derive(Clone)]
+pub struct Target {
+    harness: Harness,
+    program: Option<PathBuf>,
+}
+
+impl Target {
+    pub fn new(binaries: &Judged<BTreeMap<Harness, PathBuf>>, harness: Harness) -> Result<Target> {
+        Ok(Target {
+            harness,
+            program: binaries.get()?.remove(&harness),
+        })
+    }
+
+    pub fn harness(&self) -> Harness {
+        self.harness
+    }
+
+    pub fn owns(&self, name: &str) -> bool {
+        self.harness.owns_process_of(self.program.as_deref(), name)
+    }
+}
+
+/// The refusal `key` with its fields, as the runtime's error.
+pub fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    Error::from(agent_runtime::Error::refused(key, fields))
+}
+
+/// The fields of the fleet record the engine reads, from one read: the
+/// intents and the controller record.
+pub struct FleetView {
+    pub intents: Vec<Intent>,
+    pub overseer: Option<Overseer>,
+}
+
+/// The fleet record at `path`, read through the store's reader; a missing
+/// file refuses `record-missing`.
+pub fn fleet_view(path: &Path) -> Result<FleetView> {
+    let doc = state::load(path)?
+        .ok_or_else(|| Error::RecordMissing {
+            path: path.to_path_buf(),
+        })?
+        .doc;
+    Ok(FleetView {
+        intents: state::field(path, &doc, "intents")?.unwrap_or_default(),
+        overseer: state::field(path, &doc, "overseer")?,
+    })
+}
+
+/// The controller record the fleet holds; none refuses `overseer-missing`.
+pub fn read_overseer(path: &Path) -> Result<Overseer> {
+    fleet_view(path)?
+        .overseer
+        .ok_or_else(|| Error::OverseerMissing {
+            path: path.to_path_buf(),
+        })
+}
+
+/// The intent `intent_id` as the fleet records it.
+pub fn read_intent(path: &Path, intent_id: &str) -> Result<Intent> {
+    fleet_view(path)?
+        .intents
+        .into_iter()
+        .find(|i| i.id == intent_id)
+        .ok_or_else(|| Error::IntentUnknown {
+            id: intent_id.to_owned(),
+        })
+}
+
+/// The predecessor's harness and configured program, the processes its
+/// exact stop may name below the recorded root.
+pub fn overseer_target_of(
+    binaries: &Judged<BTreeMap<Harness, PathBuf>>,
+    overseer: &Overseer,
+) -> Result<Option<Target>> {
+    overseer
+        .extra
+        .get("harness")
+        .and_then(Value::as_str)
+        .and_then(Harness::parse)
+        .map(|h| Target::new(binaries, h))
+        .transpose()
+}
+
+/// A pid a record carries as the number the runtime writes or the string a
+/// shell writer's jq `--arg` writes (the controller's `server` and
+/// `harness_pid`).
+fn pid_value(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.parse().ok(),
+        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
+    }
+}
 
 /// What the opener names as the set's start where the intent records none:
 /// record data, never a token. The engine reads no target record of its
@@ -333,16 +480,15 @@ impl<'a> Operation<'a> {
     /// route. An unchanged set the recorded owner still holds is accepted, not
     /// yielded.
     fn write(&mut self) -> Result<()> {
-        let applied = ops::apply(
+        let applied = ops::write_progress(
             self.run.path,
-            &Request::RecordProgress(Box::new(RecordProgress {
+            &RecordProgress {
                 intent_id: self.intent_id.clone(),
                 phase: self.phase.clone(),
                 obligations: Some(self.obligations.record().clone()),
                 while_owner: self.while_owner.clone(),
                 notice: None,
-            })),
-            self.run.env,
+            },
             self.run.locking,
         )?;
         let Report::RecordProgress(r) = &applied.report else {
@@ -600,16 +746,15 @@ pub fn apply_outcome_with(
             .as_ref()
             .is_some_and(|recorded| recorded.same_set(&record_after))
     {
-        let applied = ops::apply(
+        let applied = ops::write_progress(
             run.path,
-            &Request::RecordProgress(Box::new(RecordProgress {
+            &RecordProgress {
                 intent_id: outcome.intent_id.clone(),
                 phase: None,
                 obligations: Some(record_after),
                 while_owner: while_owner.clone(),
                 notice: None,
-            })),
-            run.env,
+            },
             run.locking,
         )?;
         if let Report::RecordProgress(r) = &applied.report {
@@ -623,12 +768,7 @@ pub fn apply_outcome_with(
             }
         }
     }
-    let applied = ops::apply(
-        run.path,
-        &Request::RecordOutcome(Box::new(outcome)),
-        run.env,
-        run.locking,
-    )?;
+    let applied = ops::write_outcome(run.path, &outcome, run.env, run.locking, run.outcome_arm)?;
     if let Report::RecordOutcome(r) = &applied.report {
         // The notice the record owes and the closed intent's files are this
         // writer's only while the intent is still its own: a launcher whose
@@ -639,7 +779,7 @@ pub fn apply_outcome_with(
             job::deliver_owed(run, &r.intent, while_owner.clone())?;
             if !r.intent.open() {
                 receipt::remove(&run.receipt_path(&r.intent.id));
-                job::remove_files(&run.settings.state_dir, &r.intent.id);
+                job::remove_files(&run.state_dir, &r.intent.id);
             }
         }
     }
@@ -706,17 +846,20 @@ impl EffectOutcome {
     }
 }
 
-/// Read a state file for the effect files: their one entry to the store's
-/// reader, which the compiler boundary names. `None`
-/// where no file stands.
-pub fn load(path: &std::path::Path) -> Result<Option<state::Snapshot>> {
-    state::load(path)
-}
-
-/// The predecessor's identity the overseer record carries, as an identity
-/// the handle's process reads take.
+/// The predecessor's identity the controller record carries, as an identity
+/// the handle's process reads take: `harness_pid` is a string where a shell
+/// writer wrote it through jq's `--arg`, and a number where the runtime
+/// wrote it. Both are read.
 pub fn predecessor_identity(overseer: &Overseer) -> Option<Identity> {
-    overseer_identity(overseer)
+    let pid = overseer.extra.get("harness_pid").and_then(pid_value)?;
+    let start = overseer
+        .extra
+        .get("harness_start")
+        .and_then(Value::as_str)?;
+    Some(Identity {
+        pid: u32::try_from(pid).ok()?,
+        start: start.to_owned(),
+    })
 }
 
 #[cfg(test)]
@@ -726,6 +869,7 @@ mod tests {
     use agent_runtime::process;
 
     use super::*;
+    use crate::ops::Request;
 
     fn sleeper() -> (std::process::Child, Identity) {
         let child = std::process::Command::new("/bin/sleep")
@@ -806,13 +950,13 @@ mod tests {
             dir.path(),
             json!([{"kind": "process", "pid": id.pid, "start": id.start}]),
         );
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: crate::state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            crate::state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let refused = Operation::open(
             &run,
             &intent,
@@ -877,13 +1021,13 @@ mod tests {
             let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
             fleet["intents"] = json!([intent]);
             std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-            let run = Run {
-                path: &path,
-                settings: &settings,
-                env: &env,
-                locking: crate::state::Locking::FLOCK,
-                clock: &crate::schedule::SystemClock,
-            };
+            let run = crate::effects::engine_run(
+                &path,
+                &settings,
+                &env,
+                crate::state::Locking::FLOCK,
+                &crate::schedule::SystemClock,
+            );
             let mut operation = Operation::open(
                 &run,
                 &intent,
@@ -938,13 +1082,13 @@ mod tests {
             .unwrap()
             .push(serde_json::to_value(&other).unwrap());
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: crate::state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            crate::state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let holder = Operation::open(
             &run,
             &holder,
@@ -995,13 +1139,13 @@ mod tests {
         let (mut child, id) = sleeper();
         let (settings, env, path, intent) =
             close_fixture(dir.path(), json!([process_row(&id, "harness")]));
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: crate::state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            crate::state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let mut handle = Operation::open(
             &run,
             &intent,
@@ -1074,13 +1218,13 @@ mod tests {
         fleet["intents"][0]["owner"] = serde_json::to_value(&old).unwrap();
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let intent = read_intent(&path, &intent.id).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: crate::state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            crate::state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let mut handle = Operation::open(
             &run,
             &intent,

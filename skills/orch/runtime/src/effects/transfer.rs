@@ -25,13 +25,14 @@ use serde_json::{Value, json};
 
 use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
 use super::operation::{
-    self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
-    ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop, TurnConfirm,
-    WindowClose, Wire, Word, opening_observation,
+    self, Binding, Companion, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane,
+    Polled, ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop,
+    TurnConfirm, WindowClose, Wire, Word, opening_observation,
 };
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
     overseer_target_of, pending_observation, read_brief, read_intent, read_overseer, refused, up,
+    watch_companion,
 };
 use crate::error::{Error, Result};
 use crate::ops::{RequestTransfer, StartController, overseer_target};
@@ -444,7 +445,7 @@ impl Successor {
             .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
         Ok(Successor {
             harness,
-            target: Target::new(settings, harness)?,
+            target: Target::new(&settings.harness_binaries, harness)?,
             home,
             named: homes.named,
             cleared: homes.cleared,
@@ -791,10 +792,10 @@ pub(super) fn start_effect(
 }
 
 fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Result<EffectOutcome> {
-    let intent = read_intent(run.path, intent_id)?;
+    let intent = read_intent(run.engine.path, intent_id)?;
     let mut operation = super::lane_operation::open(run, &intent)?;
-    let overseer = read_overseer(run.path)?;
-    let doc_session = fleet_tmux_session(run.path)?;
+    let overseer = read_overseer(run.engine.path)?;
+    let doc_session = fleet_tmux_session(run.engine.path)?;
 
     // --- Preconditions, all before retirement. A failure here is `failed`,
     // the predecessor in control, no waiting runner opened. ---
@@ -1138,7 +1139,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     operation.begin_retirement(&overseer)?;
     let retired_by = match predecessor {
         Predecessor::Identity(identity) => {
-            let predecessor_target = overseer_target_of(run.settings, &overseer)?;
+            let predecessor_target = overseer_target_of(&run.settings.harness_binaries, &overseer)?;
             let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
             // The predecessor's identity stands in the set from the start of
             // retirement; its stop acts only through that token.
@@ -1231,7 +1232,11 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
             overseer: &overseer,
             window: Some(window),
         },
-        intent.watch.as_deref(),
+        intent
+            .watch
+            .as_deref()
+            .map(|words| watch_companion(run, words))
+            .transpose()?,
     )?;
     if let Some(cause) = account_unread {
         outcome.annotate("account_read", json!(cause));
@@ -1260,7 +1265,7 @@ fn complete_transfer(
     runner: Option<&Identity>,
     phase: &Phase,
     retired: Retired,
-    watch: Option<&[String]>,
+    watch: Option<Companion>,
 ) -> Result<EffectOutcome> {
     let by = retired.by;
     // Reached only from `retired` on, or a `window-opened`/`identity-read`
@@ -1570,7 +1575,7 @@ fn publish(
     accept: &dyn Fn(&State) -> bool,
     not_accepted: &str,
     retired: Retired,
-    watch: Option<&[String]>,
+    watch: Option<Companion>,
 ) -> Result<EffectOutcome> {
     let by = retired.by;
     let identity = match operation.await_state(
@@ -1626,7 +1631,7 @@ fn publish(
     let window_word = window.word();
     let mut watch_job = None;
     if let Some(words) = watch {
-        match operation.ensure_watch(words)?.held() {
+        match operation.ensure_watch(&words)?.held() {
             Ok(job) => watch_job = Some(job),
             Err((note, mut observation)) => {
                 observation["predecessor_window"] = json!(window_word);
@@ -1782,11 +1787,11 @@ fn controller_retired(
 /// in the detached job: the process that asked answers from the controller's
 /// own pane as often as not, so it is let exit before the pane is retired.
 pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<EffectOutcome> {
-    let intent = read_intent(run.path, intent_id)?;
+    let intent = read_intent(run.engine.path, intent_id)?;
     let mut operation = super::lane_operation::open(run, &intent)?;
     operation.await_caller_gone()?;
-    let overseer = read_overseer(run.path)?;
-    let target = overseer_target_of(run.settings, &overseer)?;
+    let overseer = read_overseer(run.engine.path)?;
+    let target = overseer_target_of(&run.settings.harness_binaries, &overseer)?;
     operation.begin_retirement(&overseer)?;
     match operation::predecessor_identity(&overseer) {
         Some(identity) => {
@@ -1862,7 +1867,7 @@ fn stop_without_identity(
 /// identity, the terminal proof decides as the effect does. A generation
 /// moved past the intent's is `target-moved`.
 pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
-    let overseer = read_overseer(run.path)?;
+    let overseer = read_overseer(run.engine.path)?;
     let generation = overseer.generation.unwrap_or(0);
     let mut operation = super::lane_operation::open(run, intent)?;
     operation.read_standing(Some(&overseer))?;
@@ -1946,7 +1951,7 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
 /// turn and identity steps give `confirmed` or `unconfirmed` with the
 /// runner kept.
 pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
-    let overseer = read_overseer(run.path)?;
+    let overseer = read_overseer(run.engine.path)?;
     let generation = overseer.generation.unwrap_or(0);
     let mode = Mode::of(intent.op);
     let mut operation = super::lane_operation::open(run, intent)?;
@@ -2081,7 +2086,11 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
         retirement,
         unproven,
         phase,
-        intent.watch.as_deref(),
+        intent
+            .watch
+            .as_deref()
+            .map(|words| watch_companion(run, words))
+            .transpose()?,
     )?;
     if let Some(registered) = receipted {
         outcome.annotate("registered", registered);
@@ -2116,7 +2125,7 @@ fn moved_target(
     if !operation.signalled() {
         return Ok(operation.refuse("target-moved", observation));
     }
-    let target = overseer_target_of(run.settings, overseer)?;
+    let target = overseer_target_of(&run.settings.harness_binaries, overseer)?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
         observation["stop"] = json!(cause);
@@ -2152,7 +2161,7 @@ fn judge_resolved(
     retirement: Option<&'static str>,
     unproven: Option<&'static str>,
     phase: &Phase,
-    watch: Option<&[String]>,
+    watch: Option<Companion>,
 ) -> Result<EffectOutcome> {
     let generation = overseer.generation.unwrap_or(0);
     let opened = phase
@@ -2185,7 +2194,8 @@ fn judge_resolved(
                 // its stop is run again through the signalling method; one
                 // that ends it lets the succession go on from the runner, any
                 // other answer holds.
-                let predecessor_target = overseer_target_of(run.settings, overseer)?;
+                let predecessor_target =
+                    overseer_target_of(&run.settings.harness_binaries, overseer)?;
                 let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
                 let token = operation::predecessor_identity(overseer)
                     .and_then(|id| operation.standing_process(&id));

@@ -31,10 +31,10 @@ use crate::watch::hosted::{Asked, HostClosed};
 /// `stale` is what the reconcile of the same request already read stale,
 /// counted no second time here.
 pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Result<EffectOutcome> {
-    let (lane, item) = lane_for_intent(run.path, intent_id)?;
-    let intent = read_intent(run.path, intent_id)?;
-    let overseer = fleet(run.path)?.overseer;
-    let harness = pane_harness(&lane, launch_intent_of(run.path, &item)?.as_ref());
+    let (lane, item) = lane_for_intent(run.engine.path, intent_id)?;
+    let intent = read_intent(run.engine.path, intent_id)?;
+    let overseer = fleet(run.engine.path)?.overseer;
+    let harness = pane_harness(&lane, launch_intent_of(run.engine.path, &item)?.as_ref());
     // The lane's recorded handles as the durable set, read from the intent
     // where it stands, else bootstrapped from the lane's launch record and
     // written before the first signal. This is the one read of the launch
@@ -44,7 +44,9 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     let close = Close {
         item: &item,
         lane: &lane,
-        target: harness.map(|h| Target::new(run.settings, h)).transpose()?,
+        target: harness
+            .map(|h| Target::new(&run.settings.harness_binaries, h))
+            .transpose()?,
         ground: intent.close.as_ref(),
         cycle: intent.cycle.as_ref().map(|row| &row.cycle),
         overseer: overseer.as_ref(),
@@ -162,7 +164,7 @@ impl Close<'_> {
     }
 
     fn harness(&self) -> Option<Harness> {
-        self.target.as_ref().map(|t| t.harness)
+        self.target.as_ref().map(Target::harness)
     }
 
     fn no_landing(&self) -> bool {
@@ -263,7 +265,7 @@ impl Close<'_> {
             };
             match operation.engine().read_pane(
                 pane.key(),
-                target.harness,
+                target.harness(),
                 &|name| target.owns(name),
                 Some(identity),
             )? {
@@ -603,7 +605,7 @@ fn moved_lane(
     let target = operation
         .engine_ref()
         .recorded_harness()
-        .map(|h| Target::new(run.settings, h))
+        .map(|h| Target::new(&run.settings.harness_binaries, h))
         .transpose()?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     operation.engine().read_standing(overseer)?;
@@ -641,8 +643,8 @@ fn reconcile_observation(item: &str, observation: Value) -> Value {
 /// the intent retries on the recorded set alone, stopping its standing
 /// processes by token and closing its own panes.
 pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
-    let (lane, item) = lane_for_intent(run.path, &intent.id)?;
-    let overseer = fleet(run.path)?.overseer;
+    let (lane, item) = lane_for_intent(run.engine.path, &intent.id)?;
+    let overseer = fleet(run.engine.path)?.overseer;
     let overseer = overseer.as_ref();
     let mut operation = LaneOperation::open_close(run, intent, &lane)?;
     // Every standing handle is read by its own key first: a wake the lane's

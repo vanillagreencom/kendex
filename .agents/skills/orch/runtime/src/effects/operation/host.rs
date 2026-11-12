@@ -17,17 +17,16 @@ use agent_runtime::session;
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, PaneEnd, PaneRef, ProcessEnd, Standing};
-use super::{Close, Operation, Pane, Server};
+use super::{
+    Close, EngineSettings, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of,
+    pid_value, predecessor_identity, refused,
+};
 use crate::error::{Error, Result};
 use crate::ops::accounts::usage::Credential;
 use crate::ops::{self, AdoptController, AdoptionRead, Applied};
-use crate::settings::Settings;
 use crate::state::{
     self, BoundSession, Intent, Locking, Obligation, OpenedPane, Overseer, Phase, Role,
 };
-
-/// How often a poll re-reads a process within its bound.
-const POLL: Duration = Duration::from_millis(200);
 
 /// What a recorded pane reads as on its own server: present as `P` (the
 /// pane, or the standing token for it), gone with the cause (the pane by
@@ -321,10 +320,7 @@ fn names_session(overseer: &Overseer) -> bool {
 
 fn overseer_pane(overseer: &Overseer) -> Option<(u64, String)> {
     Some((
-        overseer
-            .extra
-            .get("server")
-            .and_then(super::super::pid_value)?,
+        overseer.extra.get("server").and_then(pid_value)?,
         overseer
             .extra
             .get("pane")
@@ -357,14 +353,14 @@ fn controller_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
 /// the recorded harness. Another server on that socket, no server, or a
 /// record naming no server, start or pane proves nothing; with no recorded
 /// harness a listed pane stands, since nothing names what would run in it.
-pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target>) -> Proof {
+pub(super) fn proof_of(overseer: &Overseer, target: Option<&Target>) -> Proof {
     let generation = overseer.generation.unwrap_or(0);
     let exited = overseer
         .extra
         .get("exit")
         .and_then(|e| e.get("run"))
         .and_then(|r| r.get("generation"))
-        .and_then(super::super::pid_value);
+        .and_then(pid_value);
     if exited == Some(generation) {
         return Proof::Proven { by: "exit-record" };
     }
@@ -376,11 +372,7 @@ pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target
             cause: "record-unbound",
         };
     };
-    let Some(start) = overseer
-        .extra
-        .get("server_start")
-        .and_then(super::super::pid_value)
-    else {
+    let Some(start) = overseer.extra.get("server_start").and_then(pid_value) else {
         return Proof::Unproven {
             cause: "server-start-unrecorded",
         };
@@ -414,7 +406,7 @@ pub(super) fn proof_of(overseer: &Overseer, target: Option<&super::super::Target
 /// harness process under it is the harness gone from it. A process that is
 /// no shell may be the harness under a name the target does not know, so it
 /// stands, as the harness does.
-fn standing_or_gone(pane_pid: u32, target: &super::super::Target) -> Proof {
+fn standing_or_gone(pane_pid: u32, target: &Target) -> Proof {
     match observe::foreground(pane_pid, &|name| target.owns(name), None) {
         ProcessReading::ShellsOnly => Proof::Proven { by: "harness-gone" },
         ProcessReading::Unread { cause } => Proof::Unreadable { cause },
@@ -1151,11 +1143,7 @@ impl Operation<'_> {
         let Some(key) = self.overseer_pane_key(overseer) else {
             return Ok(WindowClose::Unrecorded);
         };
-        let Some(server_start) = overseer
-            .extra
-            .get("server_start")
-            .and_then(super::super::pid_value)
-        else {
+        let Some(server_start) = overseer.extra.get("server_start").and_then(pid_value) else {
             return Ok(WindowClose::Unobservable {
                 cause: "server-start-unrecorded",
             });
@@ -1221,7 +1209,7 @@ impl Operation<'_> {
     /// read gone on the proven server discharges the predecessor's pane
     /// where the set holds it.
     pub fn terminal_proof(&mut self, overseer: &Overseer) -> Result<Proof> {
-        let target = super::super::overseer_target_of(self.run.settings, overseer)?;
+        let target = overseer_target_of(&self.run.settings.harness_binaries, overseer)?;
         let proof = proof_of(overseer, target.as_ref());
         if let Proof::Proven { by: "pane-gone" } = &proof
             && let Some(key) = self.overseer_pane_key(overseer)
@@ -1247,7 +1235,7 @@ impl Operation<'_> {
         self.check_process_token(&target)?;
         let id = target.key().clone();
         self.write_signal()?;
-        let answer = process::stop_tree(&id, owns, self.run.settings.close_grace.get()?)?;
+        let answer = process::stop_tree(&id, owns, self.run.close_grace.get()?)?;
         match &answer {
             Stop::IdentityStale => {
                 self.note_stale(&id)?;
@@ -1362,7 +1350,7 @@ impl Operation<'_> {
         let pane = pane.key();
         let _ = tmux::send_key(pane, "C-c");
         let _ = tmux::send_line(pane, "/exit");
-        let deadline = self.now() + self.run.settings.close_grace.get()?;
+        let deadline = self.now() + self.run.close_grace.get()?;
         while self.now() < deadline {
             if tmux::pane_fields(&pane.server, &pane.id) == Reading::Gone {
                 break;
@@ -1505,13 +1493,13 @@ pub enum Delivery {
 pub fn adopt_controller(
     path: &Path,
     r: &AdoptController,
-    settings: &Settings,
+    settings: &EngineSettings,
     locking: Locking,
 ) -> Result<Applied> {
-    let overseer = super::super::fleet(path)?.overseer;
+    let overseer = fleet_view(path)?.overseer;
     let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
-        return Err(super::super::refused("pane-invalid", &[("pane", &r.pane)]));
+        return Err(refused("pane-invalid", &[("pane", &r.pane)]));
     }
     let socket = match &r.socket {
         Some(socket) => socket.clone(),
@@ -1519,11 +1507,11 @@ pub fn adopt_controller(
     };
     let server = tmux::server(&socket)?;
     let fields = pane_read(&server, &r.pane)?;
-    let target = super::super::Target::new(settings, harness)?;
+    let target = Target::new(&settings.harness_binaries, harness)?;
     let identity = match observe::foreground(fields.pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => identity,
         ProcessReading::Unread { cause } => {
-            return Err(super::super::refused(
+            return Err(refused(
                 "pane-unreadable",
                 &[("pane", &r.pane), ("cause", cause)],
             ));
@@ -1550,7 +1538,7 @@ pub fn adopt_controller(
             path: path.to_path_buf(),
             cause: cause.to_owned(),
         };
-        match super::super::overseer_identity(recorded) {
+        match predecessor_identity(recorded) {
             Some(prior) => match process::still_runs(&prior) {
                 Reading::Live(_) => return Err(live(prior.pid as u64)),
                 Reading::Gone => {}
@@ -1558,7 +1546,7 @@ pub fn adopt_controller(
             },
             None => match proof_of(
                 recorded,
-                super::super::overseer_target_of(settings, recorded)?.as_ref(),
+                overseer_target_of(&settings.harness_binaries, recorded)?.as_ref(),
             ) {
                 Proof::Standing { pid } => return Err(live(pid as u64)),
                 Proof::Unreadable { cause } => return Err(unreadable(cause)),
@@ -1590,16 +1578,12 @@ pub fn adopt_controller(
 /// Whether the record names `pane` on the server `pid` at `start`, or at
 /// no start (`ol_owns`): the pane is the recorded controller's own.
 fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool {
-    overseer
-        .extra
-        .get("server")
-        .and_then(super::super::pid_value)
-        == Some(server as u64)
+    overseer.extra.get("server").and_then(pid_value) == Some(server as u64)
         && overseer.extra.get("pane").and_then(Value::as_str) == Some(pane)
         && overseer
             .extra
             .get("server_start")
-            .and_then(super::super::pid_value)
+            .and_then(pid_value)
             .is_none_or(|recorded| recorded == start)
 }
 
@@ -1613,10 +1597,10 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
 /// turn-end hook reading its own session's id, binds it.
 pub fn heal_controller(
     path: &Path,
-    settings: &Settings,
+    settings: &EngineSettings,
     locking: Locking,
 ) -> Result<Option<Applied>> {
-    let body = super::super::fleet(path)?;
+    let body = fleet_view(path)?;
     let Some(overseer) = body.overseer else {
         return Ok(None);
     };
@@ -1631,7 +1615,7 @@ pub fn heal_controller(
     let (Some(pane), Some(harness_word)) = (word("pane"), word("harness")) else {
         return Ok(None);
     };
-    let bound = super::super::overseer_identity(&overseer).is_some()
+    let bound = predecessor_identity(&overseer).is_some()
         && overseer
             .extra
             .get("server_start")
@@ -1678,8 +1662,8 @@ pub fn heal_controller(
 fn pane_read(server: &tmux::Server, pane: &str) -> Result<tmux::PaneFields> {
     match tmux::pane_fields(server, pane) {
         Reading::Live(fields) => Ok(fields),
-        Reading::Gone => Err(super::super::refused("pane-gone", &[("pane", pane)])),
-        Reading::Unreadable { cause } => Err(super::super::refused(
+        Reading::Gone => Err(refused("pane-gone", &[("pane", pane)])),
+        Reading::Unreadable { cause } => Err(refused(
             "pane-unreadable",
             &[("pane", pane), ("cause", cause)],
         )),
@@ -1750,7 +1734,7 @@ fn start_row(file: &Path) -> Reading<StartRow> {
 /// every harness in turn, Copilot first since a Copilot CLI runs under a
 /// `node` launcher; none refuses `pane-not-harness`.
 fn foreground_harness(
-    settings: &Settings,
+    settings: &EngineSettings,
     pane: &str,
     pane_pid: u32,
 ) -> Result<(Harness, Identity)> {
@@ -1776,15 +1760,15 @@ fn foreground_harness(
 /// that says another holds it; a process table that cannot be read refuses
 /// `pane-unreadable`.
 fn harness_in_pane(
-    settings: &Settings,
+    settings: &EngineSettings,
     harness: Harness,
     pane: &str,
     pane_pid: u32,
 ) -> Result<std::result::Result<Identity, ProcessReading>> {
-    let target = super::super::Target::new(settings, harness)?;
+    let target = Target::new(&settings.harness_binaries, harness)?;
     match observe::foreground(pane_pid, &|name| target.owns(name), None) {
         ProcessReading::Harness { identity } => Ok(Ok(identity)),
-        ProcessReading::Unread { cause } => Err(super::super::refused(
+        ProcessReading::Unread { cause } => Err(refused(
             "pane-unreadable",
             &[("pane", pane), ("cause", cause)],
         )),
@@ -1914,26 +1898,23 @@ fn spelled(harness: Harness, argv: &[String]) -> Spelled {
 pub fn register_controller(
     path: &Path,
     account: Option<&str>,
-    settings: &Settings,
+    settings: &EngineSettings,
+    root: &Path,
     locking: Locking,
 ) -> Result<(Value, Harness)> {
-    let pane = caller_var("TMUX_PANE")
-        .ok_or_else(|| super::super::refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
+    let pane =
+        caller_var("TMUX_PANE").ok_or_else(|| refused("tmux-missing", &[("var", "TMUX_PANE")]))?;
     if !is_pane_id(&pane) {
-        return Err(super::super::refused("pane-invalid", &[("pane", &pane)]));
+        return Err(refused("pane-invalid", &[("pane", &pane)]));
     }
     let socket = tmux::ambient_socket()?;
     let server = tmux::server(&socket)?;
     let fields = pane_read(&server, &pane)?;
-    let rows = settings
-        .roots
-        .common
-        .join("tmp/lane-mail/overseer")
-        .join(format!(
-            "session-{}-{}.jsonl",
-            server.pid,
-            pane.trim_start_matches('%')
-        ));
+    let rows = root.join("tmp/lane-mail/overseer").join(format!(
+        "session-{}-{}.jsonl",
+        server.pid,
+        pane.trim_start_matches('%')
+    ));
     let given = account.map(str::to_owned);
     let mut notices = Vec::new();
     let stated = match start_row(&rows) {
@@ -2047,11 +2028,6 @@ pub fn register_controller(
 /// never held, unreadable is a store that could not be listed.
 pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<PathBuf> {
     session::fixed_id_file(harness, home, cwd, id)
-}
-
-/// The state module's receipt path for the operation.
-pub(super) fn receipt_path(settings: &Settings, intent_id: &str) -> PathBuf {
-    state::receipt_path(&settings.state_dir, intent_id)
 }
 
 #[cfg(test)]

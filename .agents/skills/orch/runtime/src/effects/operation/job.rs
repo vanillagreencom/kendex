@@ -31,23 +31,20 @@
 //! outstanding-job predicate reads the recorded job obligations alone,
 //! never the claim's `handed_from`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host;
 use agent_runtime::process::{self, Identity};
 use agent_runtime::protocol::Outcome;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
-use super::{Bootstrap, Operation, Reading, Word};
-use crate::effects::{POLL, Run, read_intent};
+use super::{Bootstrap, Operation, POLL, Reading, Run, Word, fleet_view, read_intent};
 use crate::error::{Error, Result};
-use crate::mailbox::Mailbox;
-use crate::ops::{self, ClaimIntent, RecordProgress, Request};
+use crate::ops::{self, ClaimIntent, RecordProgress};
 use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
-use crate::watch::claim;
 
 /// What the caller of a transfer or a stop gets back at once: the effect
 /// runs in a detached job that took the intent's owner lease, so retiring
@@ -80,11 +77,77 @@ const KILL_GRACE: Duration = Duration::from_secs(10);
 /// a `loginctl` or `kill` to answer.
 const UNIT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The launcher's record of the fleet watch's start, beside the fleet state:
-/// written whole before the start, read here as the job's sidecar.
-const WATCH_RUNNER_FILE: &str = "oversee-watch.runner";
-/// The watch's stderr file beside the fleet state, appended on every start.
-const WATCH_ERR_FILE: &str = "oversee-watch.err";
+/// The job a controller start owes beside its runner, as the start's opener
+/// names it: `argv` launched detached as `name`, the launcher's record at
+/// `record`, its standard error appended to `stderr`, and the claimant's
+/// record whose live identity is the job's claim. A start that owes no such
+/// job passes none.
+pub struct Companion<'a> {
+    pub argv: &'a [String],
+    pub name: String,
+    pub record: PathBuf,
+    pub stderr: PathBuf,
+    pub claim: Claimant,
+}
+
+/// A claimant's record: `key=value` lines naming the claimant's `pid`, its
+/// process `start` and the `state` it holds. A record naming another state
+/// or no pid names no claimant.
+pub struct Claimant {
+    pub path: PathBuf,
+    pub state: String,
+}
+
+/// The cause a claimant's record that cannot be read is held under.
+const CLAIM_RECORD: &str = "claim-record";
+
+/// The cause a record with no start whose pid runs is held under: a
+/// running pid with no start to match is no identity to act by.
+const START_MISSING: &str = "start-missing";
+
+impl Claimant {
+    /// The claimant's identity read three-valued: live under its recorded
+    /// start; gone where no record stands, it names no claimant, or its pid
+    /// is dead or reused under another start; unreadable where the record or
+    /// the process table cannot be read. A record with no start is read by
+    /// its pid alone: gone where no process holds it, else unreadable.
+    fn read(&self) -> Reading<Identity> {
+        let text = match std::fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: CLAIM_RECORD,
+                };
+            }
+        };
+        let (mut pid, mut start, mut state) = (0, None, "");
+        for line in text.lines() {
+            match line.split_once('=') {
+                Some(("pid", value)) => pid = value.parse().unwrap_or(0),
+                Some(("start", value)) => start = Some(value),
+                Some(("state", value)) => state = value,
+                _ => {}
+            }
+        }
+        if pid == 0 || state != self.state {
+            return Reading::Gone;
+        }
+        let Some(start) = start else {
+            return match process::identity(pid) {
+                Reading::Live(_) => Reading::Unreadable {
+                    cause: START_MISSING,
+                },
+                Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            };
+        };
+        process::still_runs(&Identity {
+            pid,
+            start: start.to_owned(),
+        })
+    }
+}
 
 /// What the start's watch step found: the watch claimed, by
 /// this run's launch or by an earlier start; the launcher refused before it
@@ -133,47 +196,6 @@ pub enum Op {
 }
 
 impl Op {
-    fn of_request(request: &Request) -> Option<Op> {
-        match request {
-            Request::RequestTransfer(_) => Some(Op::Transfer),
-            Request::StopController(_) => Some(Op::Stop),
-            Request::LaunchLane(_)
-            | Request::CloseOwnedResources(_)
-            | Request::StartController(_)
-            | Request::AdoptSession(_)
-            | Request::BeginRound(_)
-            | Request::RecordValidationAdmission(_)
-            | Request::AdoptController(_)
-            | Request::ClaimIntent(_)
-            | Request::AcceptResult(_)
-            | Request::RecordVerification(_)
-            | Request::VerifyHead(_)
-            | Request::VerifyPr(_)
-            | Request::VerifyReview(_)
-            | Request::ApproveHead(_)
-            | Request::CloseLane(_)
-            | Request::ReconcileRound(_)
-            | Request::RecordHandoff(_)
-            | Request::ResumeHandoff(_)
-            | Request::ParkLane(_)
-            | Request::ReserveLane(_)
-            | Request::ReleaseLane(_)
-            | Request::RecordOutcome(_)
-            | Request::RecordPhase(_)
-            | Request::RecordProgress(_)
-            | Request::RecordLaneProgress(_)
-            | Request::RecordDirectiveSend(_)
-            | Request::RecordWallPauses(_)
-            | Request::AdmitPaths(_)
-            | Request::PruneRecords(_)
-            | Request::Validate(_)
-            | Request::RecordQueueWatch(_)
-            | Request::RecordPush(_)
-            | Request::PruneRound(_)
-            | Request::RecordQaDecision(_) => None,
-        }
-    }
-
     pub(super) fn of_intent(op: EffectOp) -> Option<Op> {
         match op {
             EffectOp::RequestTransfer => Some(Op::Transfer),
@@ -235,14 +257,37 @@ pub struct Launched {
     pub failed: Option<String>,
 }
 
+/// What the launcher answers its caller, as a stage records it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "launch", rename_all = "kebab-case")]
+pub enum Launch {
+    Started {
+        runner: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pid: Option<u32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start: Option<String>,
+        line: String,
+    },
+    Refused {
+        cause: String,
+    },
+    /// The launcher gave no answer: the job may have started, so no caller
+    /// starts it again; its record is read back for its handle.
+    Unanswered {
+        cause: String,
+    },
+}
+
 impl Launched {
     /// What the launch answers its caller, the one reading every caller
     /// takes: started by the unit or the group identity the record names;
     /// unanswered where the job may run (a lost manager answer, a failure
     /// after the fork that left a group standing, a record that cannot be
     /// read), so no caller starts it twice; refused where nothing runs.
-    pub fn answer(self) -> ops::validate::Launch {
-        use ops::validate::Launch;
+    pub fn answer(self) -> Launch {
         let Launched {
             unanswered,
             read,
@@ -765,12 +810,7 @@ pub fn launch_recorded(
 /// A caller's own command started as a recorded job: `orch-runtime
 /// launch-job`, which the watch and waiter fences run. The unit is keyed by
 /// this process's pid, so two launches of one name never share a unit.
-pub fn launch_command(
-    name: &str,
-    record: &Path,
-    argv: &[&str],
-    stderr: Option<&Path>,
-) -> ops::validate::Launch {
+pub fn launch_command(name: &str, record: &Path, argv: &[&str], stderr: Option<&Path>) -> Launch {
     launch_recorded(
         name,
         &std::process::id().to_string(),
@@ -904,8 +944,13 @@ pub fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
 /// its cause and the controller as it was; a job that may have started, and
 /// one that never claims within the bound, leave it `unconfirmed` with the
 /// job standing, which the reconcile reads.
-pub fn start(run: &Run, intent: &Intent, request: &Request, start: Start) -> Result<JobStarted> {
-    let Some(op) = Op::of_request(request) else {
+pub fn start(
+    run: &Run,
+    intent: &Intent,
+    request: &impl Serialize,
+    start: Start,
+) -> Result<JobStarted> {
+    let Some(op) = Op::of_intent(intent.op) else {
         unreachable!("only a transfer or a stop is handed to the job")
     };
     let handed_from = intent
@@ -944,17 +989,17 @@ fn launch_job(
     run: &Run,
     mut operation: Operation,
     intent: &Intent,
-    request: &Request,
+    request: &impl Serialize,
     op: Op,
     handed_from: &Owner,
     start: Start,
 ) -> Result<JobStarted> {
     let id = intent.id.as_str();
-    let request_path = state::job_request_path(&run.settings.state_dir, id);
-    let record_path = state::job_record_path(&run.settings.state_dir, id);
+    let request_path = state::job_request_path(&run.state_dir, id);
+    let record_path = state::job_record_path(&run.state_dir, id);
     if start == Start::Repeat {
         operation.write()?;
-        remove_files(&run.settings.state_dir, id);
+        remove_files(&run.state_dir, id);
     }
     if let Err(e) = write_request(&request_path, request) {
         return fail(
@@ -982,7 +1027,7 @@ fn launch_job(
         }
     };
     let exe = exe.display().to_string();
-    let state_dir = run.settings.state_dir.display().to_string();
+    let state_dir = run.state_dir.display().to_string();
     let file = run.path.display().to_string();
     let argv = [
         exe.as_str(),
@@ -1170,20 +1215,17 @@ impl Operation<'_> {
         self.obligations.record().standing.is_empty()
     }
 
-    /// The fleet watch a start owes: the claim beside the fleet state read
-    /// first, and a live one, this run's or an earlier start's, is the
-    /// watch; else a job of this intent still standing is read again and
-    /// holds while it runs; else `words`, `orch-runtime watch run` and its
-    /// arguments as the request names them, are launched detached, the
-    /// launcher's unread record an obligation before anything starts, the
-    /// watch's stderr appended beside the fleet state, and the claim is
-    /// waited for within the job claim bound. A job that claimed is
-    /// discharged by that read; one that has not stands for the reconcile,
-    /// which runs this step again. An unreadable claim is never a reason to
-    /// launch.
-    pub fn ensure_watch(&mut self, words: &[String]) -> Result<WatchStart> {
-        let paths = claim::Paths::of(self.run.path)?;
-        match self.watch_claimed(&paths)? {
+    /// The companion job a start owes: its claimant's record read first,
+    /// and a live claimant, this run's job or an earlier start's, is the
+    /// job; else a job of this intent still standing is read again and
+    /// holds while it runs; else the companion's argv is launched detached,
+    /// the launcher's unread record an obligation before anything starts,
+    /// and the claim is waited for within the job claim bound. A job that
+    /// claimed is discharged by that read; one that has not stands for the
+    /// reconcile, which runs this step again. An unreadable claim is never a
+    /// reason to launch.
+    pub fn ensure_watch(&mut self, companion: &Companion) -> Result<WatchStart> {
+        match self.watch_claimed(&companion.claim)? {
             Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
             Reading::Unreadable { cause } => {
                 return Ok(WatchStart::Unreadable {
@@ -1200,19 +1242,21 @@ impl Operation<'_> {
                 });
             }
         }
-        let record = paths.dir.join(WATCH_RUNNER_FILE);
-        let err = paths.dir.join(WATCH_ERR_FILE);
-        let name = format!("watch-{}", self.run.env.iso().replace(['-', ':'], ""));
-        let argv: Vec<&str> = words.iter().map(String::as_str).collect();
-        let launched = self.launch(&name, &record, &argv, Some(&err))?;
-        self.read_sidecar(&record, Some(launched.read))?;
+        let argv: Vec<&str> = companion.argv.iter().map(String::as_str).collect();
+        let launched = self.launch(
+            &companion.name,
+            &companion.record,
+            &argv,
+            Some(&companion.stderr),
+        )?;
+        self.read_sidecar(&companion.record, Some(launched.read))?;
         if let Some(cause) = launched.failed {
             return Ok(WatchStart::Refused { cause });
         }
         let line = launched.line;
         let deadline = self.now() + self.run.settings.claim.get()?;
         loop {
-            match self.watch_claimed(&paths)? {
+            match self.watch_claimed(&companion.claim)? {
                 Reading::Live(job) => return Ok(WatchStart::Claimed(job)),
                 Reading::Unreadable { cause } => {
                     return Ok(WatchStart::Unreadable {
@@ -1228,20 +1272,13 @@ impl Operation<'_> {
         }
     }
 
-    /// The watch's claim beside the fleet state, read by the runtime's own
-    /// reader: `Live` with the record `overseer.watch` takes where it names
-    /// a live identity, every job obligation of this intent discharged
-    /// `watch-claimed` by that read and the first of them naming the job;
-    /// `Gone` where no record stands or its identity reads gone; the
-    /// reader's own unreadable otherwise. A record whose file the runtime
-    /// cannot read is unreadable too.
-    fn watch_claimed(&mut self, paths: &claim::Paths) -> Result<Reading<WatchJob>> {
-        let claimed = match claim::read(paths) {
-            Ok(Some(claimed)) => claimed,
-            Ok(None) => return Ok(Reading::Gone),
-            Err(e) => return Ok(Reading::Unreadable { cause: e.key() }),
-        };
-        let identity = match claim::read_live(&claimed) {
+    /// The companion's claim: `Live` with the record `overseer.watch` takes
+    /// where the claimant's record names a live identity, every job
+    /// obligation of this intent discharged `watch-claimed` by that read and
+    /// the first of them naming the job; `Gone` where no claimant stands;
+    /// the claimant's unreadable otherwise.
+    fn watch_claimed(&mut self, claimant: &Claimant) -> Result<Reading<WatchJob>> {
+        let identity = match claimant.read() {
             Reading::Live(identity) => identity,
             Reading::Gone => return Ok(Reading::Gone),
             Reading::Unreadable { cause } => return Ok(Reading::Unreadable { cause }),
@@ -1954,7 +1991,7 @@ fn unit_state(load: &str, active: &str) -> Option<JobEnd> {
 /// Write the job's request exclusively: a standing file is another launch
 /// of the same intent, which never happens twice, so it is refused rather
 /// than replaced.
-fn write_request(path: &Path, request: &Request) -> std::io::Result<()> {
+fn write_request(path: &Path, request: &impl Serialize) -> std::io::Result<()> {
     use std::io::Write;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -1976,40 +2013,15 @@ pub(super) fn remove_files(state_dir: &Path, intent_id: &str) {
     let _ = std::fs::remove_file(state::job_record_path(state_dir, intent_id));
 }
 
-/// The job's side, first: the request the caller wrote beside the record
-/// and the operation it runs. The effect the job then runs is its
-/// operation's own, after `claim`.
-pub fn read_job(run: &Run, intent_id: &str) -> Result<(Request, Op)> {
-    let request_path = state::job_request_path(&run.settings.state_dir, intent_id);
-    let bytes = std::fs::read(&request_path).map_err(|e| {
-        Error::Runtime(agent_runtime::Error::io(
-            "read-job-request",
-            &request_path,
-            e,
-        ))
-    })?;
-    let request: Request = serde_json::from_slice(&bytes).map_err(|e| Error::Request {
-        path: request_path.clone(),
-        cause: e.to_string(),
-    })?;
-    let Some(op) = Op::of_request(&request) else {
-        return Err(Error::Request {
-            path: request_path,
-            cause: format!("{} is not a job's operation", request.name()),
-        });
-    };
-    Ok((request, op))
-}
-
 /// Claim the intent for this job. A claim that refuses (the intent ended,
 /// or its effect began under its first owner) ends the job before it opens
 /// anything.
 pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
-    ops::apply(
+    ops::write_claim(
         run.path,
-        &Request::ClaimIntent(ClaimIntent {
+        &ClaimIntent {
             intent_id: intent_id.to_owned(),
-        }),
+        },
         run.env,
         run.locking,
     )
@@ -2099,9 +2111,9 @@ fn mark_notice(
     mark: String,
     while_owner: Option<Owner>,
 ) -> Result<()> {
-    ops::apply(
+    ops::write_progress(
         run.path,
-        &Request::RecordProgress(Box::new(RecordProgress {
+        &RecordProgress {
             intent_id: intent.id.clone(),
             phase: None,
             obligations: None,
@@ -2112,8 +2124,7 @@ fn mark_notice(
                 to: owed.to.clone(),
                 owner: mark,
             }),
-        })),
-        run.env,
+        },
         run.locking,
     )?;
     Ok(())
@@ -2155,7 +2166,7 @@ pub fn send_unanswered_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
 /// Send each notice `due` picks on a closed intent whose owner is gone, and
 /// mark it; `last` makes a send with no answer final.
 fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<NoticeUnmarked>> {
-    let owed: Vec<Intent> = crate::effects::fleet(run.path)?
+    let owed: Vec<Intent> = fleet_view(run.path)?
         .intents
         .into_iter()
         .filter(|i| !i.open() && i.notice.as_ref().is_some_and(due))
@@ -2191,7 +2202,6 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
 /// never a reason to hold the outcome.
 fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let path = run
-        .settings
         .state_dir
         .join("intents")
         .join(format!("{intent_id}.notice"));
@@ -2203,19 +2213,72 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     if let Err(e) = std::fs::write(&path, format!("{text}\n")) {
         return format!("unsent:notice-write:{e}");
     }
-    let sent = Mailbox::new(run.settings.lane_mail_cli.clone())
-        .owner_notice(&run.settings.roots.common, &path);
+    let mark = owner_notice(&run.mail_program, &run.root, &path);
     let _ = std::fs::remove_file(&path);
-    match sent {
-        Ok(()) => "sent".to_owned(),
-        Err(refusal) if refusal.wrote_nothing() => format!("unsent:{refusal}"),
-        Err(refusal) => format!("{}{refusal}", state::NOTICE_UNANSWERED),
+    mark
+}
+
+/// How long the mailbox program's notice may take to answer.
+const NOTICE_BOUND: Duration = Duration::from_secs(60);
+
+/// The keyed line's prefix on the mailbox program's stderr.
+const NOTICE_KEYED: &str = "lane-mail: ";
+
+/// `notice --item overseer --to owner --file F --root ROOT` of the mailbox
+/// program at `program`, run at the main checkout `root`: the mark the send
+/// earns. The program prints each keyed refusal of a notice before its
+/// append, so an exit with a keyed line wrote nothing (`unsent:`); a repeat
+/// of a notice that landed (`duplicate id=` inside the minute,
+/// `owner-notice-repeated=` inside the day) is `sent`; a run that gave no
+/// answer, a signal, or an exit with no keyed line may follow the append.
+fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
+    const VERB: &str = "notice";
+    let root_text = root.display().to_string();
+    let file = file.display().to_string();
+    let argv = [
+        VERB, "--item", "overseer", "--to", "owner", "--file", &file, "--root", &root_text,
+    ];
+    let place = host::Place {
+        cwd: Some(root),
+        env: &[],
+    };
+    let output = match host::run_tagged_in(
+        "mail",
+        "lane-mail",
+        program,
+        VERB,
+        &argv,
+        place,
+        NOTICE_BOUND,
+    ) {
+        Ok(output) => output,
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => return format!("unsent:{VERB}: {e}"),
+        Err(e) => return format!("{}{VERB}: {e}", state::NOTICE_UNANSWERED),
+    };
+    let stderr = host::stderr_text(&output);
+    let keyed = stderr.lines().find_map(|l| l.strip_prefix(NOTICE_KEYED));
+    if output.status.success()
+        || keyed.is_some_and(|k| {
+            k.starts_with("duplicate id=") || k.starts_with("owner-notice-repeated=")
+        })
+    {
+        return "sent".to_owned();
     }
+    let status = output.status.code();
+    let mark = if status.is_some() && keyed.is_some() {
+        "unsent:"
+    } else {
+        state::NOTICE_UNANSWERED
+    };
+    let status = status.map_or_else(|| "signal".to_owned(), |code| code.to_string());
+    let detail = keyed.map_or_else(|| stderr.trim().to_owned(), str::to_owned);
+    format!("{mark}{VERB}: status={status} {detail}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ops::Request;
 
     /// The slice a unit is started in and the caps it copies, from the
     /// cgroup file the kernel writes and the cgroup's limit files: a pane
@@ -2469,13 +2532,13 @@ mod tests {
         let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let group = Obligation::JobGroup(leader_identity.clone());
         // The leader lives: the record names the group, which stands.
         let mut operation =
@@ -2664,13 +2727,7 @@ mod tests {
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let clock = Stepping(std::sync::Mutex::new(std::time::Instant::now()));
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &clock,
-        };
+        let run = crate::effects::engine_run(&path, &settings, &env, state::Locking::FLOCK, &clock);
         let mut operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         let mut child = host::start_detached(
@@ -2814,13 +2871,13 @@ mod tests {
         let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let group = Obligation::JobPgid { pgid };
         // The record names the group by its key; the member runs: standing.
         let mut operation =
@@ -2919,13 +2976,13 @@ mod tests {
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let rows_before = fleet["fleet_log"].as_array().map_or(0, Vec::len);
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let sent_calls = || {
             std::fs::read_to_string(&calls)
                 .unwrap_or_default()
@@ -3039,13 +3096,13 @@ mod tests {
         let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the reconcile's last read.
@@ -3151,13 +3208,13 @@ mod tests {
         let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
-        let run = Run {
-            path: &path,
-            settings: &settings,
-            env: &env,
-            locking: state::Locking::FLOCK,
-            clock: &crate::schedule::SystemClock,
-        };
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            state::Locking::FLOCK,
+            &crate::schedule::SystemClock,
+        );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         // The real claim, landed after the launcher's final loop read.

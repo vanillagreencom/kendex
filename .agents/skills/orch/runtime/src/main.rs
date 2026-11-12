@@ -1705,9 +1705,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
             let launch = effects::launch_command(&name, &record, &argv, stderr.as_deref());
             let status = match &launch {
-                ops::validate::Launch::Started { .. } => 0,
-                ops::validate::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
-                ops::validate::Launch::Refused { cause } => {
+                effects::Launch::Started { .. } => 0,
+                effects::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
+                effects::Launch::Refused { cause } => {
                     return Err(agent_runtime::Error::refused(
                         "job-launch-failed",
                         &[("cause", cause)],

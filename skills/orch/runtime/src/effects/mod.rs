@@ -74,11 +74,11 @@ pub(crate) use operation::job::{
     Bounds, group_reading, launch_recorded, own_cgroup_dir, pgid_reading, read_handle,
     recorded_live, stop_group,
 };
-pub use operation::job::{JobStarted, NoticeUnmarked, launch_command, stop_recorded};
+pub use operation::job::{JobStarted, Launch, NoticeUnmarked, launch_command, stop_recorded};
 pub(crate) use operation::{JobHandle, SidecarRead};
 pub use operation::{Observed, fleet_sockets, overseer_socket, server_at};
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
@@ -94,25 +94,35 @@ use crate::error::{Error, Result};
 use crate::ops::{self, AdoptController, Applied, Effect, Env, OutcomeRecorded, Report, Request};
 use crate::schedule::Clock;
 use crate::settings::Settings;
-use crate::state::{self, EffectOp, Intent, Lane, Locking, Overseer};
+use crate::state::{self, EffectOp, Intent, Lane, Locking};
 
-use operation::{EffectOutcome, Identity, ProcessReading, State, job};
+use operation::{
+    Claimant, Companion, EffectOutcome, EngineSettings, Identity, ProcessReading, State, Target,
+    job, overseer_target_of, read_intent, read_overseer, refused,
+};
 
-/// How often a poll re-reads the record within its bound.
-const POLL: Duration = Duration::from_millis(200);
-
-/// What one effect run or reconcile acts with: the record, the settings,
-/// the writer's stamp and lock policy, and the one clock every wait reads,
-/// reached only through the operation handle.
+/// What one effect run or reconcile acts with: the engine's run, which
+/// every generic act reaches through the operation handle, and orch's
+/// settings, which the lane and launch acts read.
 struct Run<'a> {
-    path: &'a Path,
+    engine: operation::Run<'a>,
     settings: &'a Settings,
-    env: &'a Env,
-    locking: Locking,
-    clock: &'a dyn Clock,
 }
 
-impl Run<'_> {
+impl<'a> Run<'a> {
+    fn new(
+        path: &'a Path,
+        settings: &'a Settings,
+        env: &'a Env,
+        locking: Locking,
+        clock: &'a dyn Clock,
+    ) -> Run<'a> {
+        Run {
+            engine: engine_run(path, settings, env, locking, clock),
+            settings,
+        }
+    }
+
     /// The recording boundary an outcome's operation names: a lane
     /// intent's is the lane operation's, a controller intent's the engine's.
     fn apply_outcome(&self, outcome: EffectOutcome) -> Result<Applied> {
@@ -121,14 +131,43 @@ impl Run<'_> {
                 lane_operation::apply_outcome(self, outcome)
             }
             EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-                operation::apply_outcome(self, outcome)
+                operation::apply_outcome(&self.engine, outcome)
             }
         }
     }
+}
 
-    /// Where the pane of `intent_id` registers itself.
-    fn receipt_path(&self, intent_id: &str) -> PathBuf {
-        state::receipt_path(&self.settings.state_dir, intent_id)
+/// The engine's run over the record at `path`, filled from orch's settings:
+/// the engine's own keys, and orch's state directory, close grace, mailbox
+/// program and main checkout as the arguments the engine takes.
+fn engine_run<'a>(
+    path: &'a Path,
+    settings: &Settings,
+    env: &'a Env,
+    locking: Locking,
+    clock: &'a dyn Clock,
+) -> operation::Run<'a> {
+    operation::Run {
+        path,
+        settings: engine_settings(settings),
+        state_dir: settings.state_dir.clone(),
+        close_grace: settings.close_grace.clone(),
+        mail_program: settings.lane_mail_cli.clone(),
+        root: settings.roots.common.clone(),
+        env,
+        locking,
+        clock,
+        outcome_arm: ops::outcome_arm,
+    }
+}
+
+/// The engine's own keys as orch's settings read them.
+fn engine_settings(settings: &Settings) -> EngineSettings {
+    EngineSettings {
+        verify: settings.verify.clone(),
+        claim: settings.claim.clone(),
+        tmux_session: settings.tmux_session.clone(),
+        harness_binaries: settings.harness_binaries.clone(),
     }
 }
 
@@ -205,14 +244,8 @@ pub fn send_owed_notices(
     if !has_live_effect(request) {
         return Ok(Vec::new());
     }
-    let run = Run {
-        path,
-        settings,
-        env,
-        locking,
-        clock,
-    };
-    job::send_owed_notices(&run)
+    let run = Run::new(path, settings, env, locking, clock);
+    job::send_owed_notices(&run.engine)
 }
 
 /// Send once more the notices whose send got no answer, the watch
@@ -224,14 +257,8 @@ pub fn send_unanswered_notices(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Vec<NoticeUnmarked>> {
-    let run = Run {
-        path,
-        settings,
-        env,
-        locking,
-        clock,
-    };
-    job::send_unanswered_notices(&run)
+    let run = Run::new(path, settings, env, locking, clock);
+    job::send_unanswered_notices(&run.engine)
 }
 
 /// What a reconcile answers: the committed outcome of every open intent it
@@ -274,13 +301,7 @@ pub fn run(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Option<Effected>> {
-    let run = Run {
-        path,
-        settings,
-        env,
-        locking,
-        clock,
-    };
+    let run = Run::new(path, settings, env, locking, clock);
     let Some(effect) = live_effect(report) else {
         return Ok(None);
     };
@@ -354,8 +375,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                         Some(stop::stop_effect(run, &intent.id, &stale)?)
                     }
                     Request::StopController(_) => {
-                        let current = read_intent(run.path, &intent.id)?;
-                        return job::start(run, &current, request, job::Start::Repeat)
+                        let current = read_intent(run.engine.path, &intent.id)?;
+                        return job::start(&run.engine, &current, request, job::Start::Repeat)
                             .map(Effected::Started);
                     }
                     Request::LaunchLane(_)
@@ -418,7 +439,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         // takes the intent's lease. A start retires
         // nothing and stays here.
         Request::RequestTransfer(_) | Request::StopController(_) => {
-            return job::start(run, &intent, request, job::Start::First).map(Effected::Started);
+            return job::start(&run.engine, &intent, request, job::Start::First)
+                .map(Effected::Started);
         }
         Request::StartController(r) => transfer::start_effect(run, &intent.id, r),
         Request::AdoptSession(_)
@@ -470,18 +492,12 @@ pub fn run_job(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Applied> {
-    let run = Run {
-        path,
-        settings,
-        env,
-        locking,
-        clock,
-    };
-    let (request, op) = job::read_job(&run, intent_id)?;
+    let run = Run::new(path, settings, env, locking, clock);
+    let (request, op) = read_job(&run, intent_id)?;
     // The job's own settings may differ from its caller's: a value its
     // effect would refuse leaves the intent unclaimed.
     ops::judge_effect_settings(&request, settings)?;
-    job::claim(&run, intent_id)?;
+    job::claim(&run.engine, intent_id)?;
     let outcome = match (&request, op) {
         (Request::RequestTransfer(r), job::Op::Transfer) => {
             transfer::transfer_effect(&run, intent_id, r)?
@@ -490,6 +506,69 @@ pub fn run_job(
         (_, job::Op::Transfer) => unreachable!("a transfer job reads a transfer request"),
     };
     run.apply_outcome(outcome)
+}
+
+/// The job's side, first: the request the caller wrote beside the record
+/// and the controller operation it runs. The effect the job then runs is
+/// its operation's own, after the claim.
+fn read_job(run: &Run, intent_id: &str) -> Result<(Request, job::Op)> {
+    let request_path = state::job_request_path(&run.settings.state_dir, intent_id);
+    let bytes = std::fs::read(&request_path).map_err(|e| {
+        Error::Runtime(agent_runtime::Error::io(
+            "read-job-request",
+            &request_path,
+            e,
+        ))
+    })?;
+    let request: Request = serde_json::from_slice(&bytes).map_err(|e| Error::Request {
+        path: request_path.clone(),
+        cause: e.to_string(),
+    })?;
+    let op = match &request {
+        Request::RequestTransfer(_) => Some(job::Op::Transfer),
+        Request::StopController(_) => Some(job::Op::Stop),
+        Request::LaunchLane(_)
+        | Request::CloseOwnedResources(_)
+        | Request::StartController(_)
+        | Request::AdoptSession(_)
+        | Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::AdoptController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::RecordVerification(_)
+        | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::CloseLane(_)
+        | Request::ReconcileRound(_)
+        | Request::RecordHandoff(_)
+        | Request::ResumeHandoff(_)
+        | Request::ParkLane(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::RecordOutcome(_)
+        | Request::RecordPhase(_)
+        | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_)
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => None,
+    };
+    let Some(op) = op else {
+        return Err(Error::Request {
+            path: request_path,
+            cause: format!("{} is not a job's operation", request.name()),
+        });
+    };
+    Ok((request, op))
 }
 
 /// The status `op --effect-exit` answers for an effect whose outcome is
@@ -541,7 +620,7 @@ pub fn adopt_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Applied> {
-    operation::adopt_controller(path, r, settings, locking)
+    operation::adopt_controller(path, r, &engine_settings(settings), locking)
 }
 
 /// Register the controller a person opened by hand in the caller's own
@@ -553,7 +632,13 @@ pub fn register_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Value> {
-    let (mut reply, harness) = operation::register_controller(path, account, settings, locking)?;
+    let (mut reply, harness) = operation::register_controller(
+        path,
+        account,
+        &engine_settings(settings),
+        &settings.roots.common,
+        locking,
+    )?;
     // A record proven to name this pane keeps fields the request left out,
     // so the coverage is judged on the record as written.
     let recorded = fleet(path)?.overseer;
@@ -718,26 +803,26 @@ struct Spec<'a> {
     extra_args: &'a [String],
 }
 
-/// The harness a pane runs and the executable configured for it: together
-/// they name the processes that are the harness's own, its own names and
-/// the configured program's basename (`Harness::owns_process_of`).
-#[derive(Clone)]
-struct Target {
-    harness: Harness,
-    program: Option<PathBuf>,
-}
+/// The launcher's record of the fleet watch's start, beside the fleet state.
+const WATCH_RUNNER_FILE: &str = "oversee-watch.runner";
+/// The watch's stderr file beside the fleet state, appended on every start.
+const WATCH_ERR_FILE: &str = "oversee-watch.err";
 
-impl Target {
-    fn new(settings: &Settings, harness: Harness) -> Result<Target> {
-        Ok(Target {
-            harness,
-            program: settings.harness_binaries.get()?.remove(&harness),
-        })
-    }
-
-    fn owns(&self, name: &str) -> bool {
-        self.harness.owns_process_of(self.program.as_deref(), name)
-    }
+/// The fleet watch as a controller start's companion job: `words`, the
+/// watch's command line as the start's request names it, launched beside
+/// the fleet state, its claim the watch's own record there.
+fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> {
+    let paths = crate::watch::claim::Paths::of(run.engine.path)?;
+    Ok(Companion {
+        argv: words,
+        name: format!("watch-{}", run.engine.env.iso().replace(['-', ':'], "")),
+        record: paths.dir.join(WATCH_RUNNER_FILE),
+        stderr: paths.dir.join(WATCH_ERR_FILE),
+        claim: Claimant {
+            path: paths.pid,
+            state: paths.state.display().to_string(),
+        },
+    })
 }
 
 /// The intent the harness launches under, built from a spec and the settings
@@ -789,10 +874,6 @@ fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, Launc
     };
     let command = agent_runtime::launch::build(&intent)?;
     Ok((intent, command))
-}
-
-fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
-    Error::from(agent_runtime::Error::refused(key, fields))
 }
 
 /// Whether the command's program will run: a path names an existing file,
@@ -879,13 +960,7 @@ pub fn reconcile(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<ReconcileRun> {
-    let run = Run {
-        path,
-        settings,
-        env,
-        locking,
-        clock,
-    };
+    let run = Run::new(path, settings, env, locking, clock);
     let open = open_intents(path)?;
     let mut reconciled = Vec::new();
     let mut refused = Vec::new();
@@ -903,12 +978,12 @@ pub fn reconcile(
     // too: the continuation a crash between the outcome's write and the
     // send left behind is run once here; a mark the
     // store refused goes into the reply.
-    let notices_unmarked = job::send_owed_notices(&run)?;
+    let notices_unmarked = job::send_owed_notices(&run.engine)?;
     // A directive send whose mark the store refused stands owed with
     // its receipt kept beside the state; it is stamped here, never sent
     // again.
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
-    let controller = match operation::heal_controller(path, settings, locking) {
+    let controller = match operation::heal_controller(path, &engine_settings(settings), locking) {
         Ok(None) => None,
         Ok(Some(applied)) => {
             let Report::AdoptController(adopted) = applied.report else {
@@ -952,7 +1027,7 @@ struct Reconciled {
 }
 
 fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
-    let intent = read_intent(run.path, intent_id)?;
+    let intent = read_intent(run.engine.path, intent_id)?;
     // The owner the intent recorded at persist: a reconcile
     // that finds that process still live defers to it and records only the
     // observation, so a contender racing the owner before its first phase
@@ -962,7 +1037,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     // and so does the reconciling process itself: the watch, which persists
     // a terminal close or a transfer and reconciles on the one runner thread
     // that ran the effect, has no effect of its own in flight beside it.
-    let own = intent.owner.is_some() && intent.owner == run.env.owner;
+    let own = intent.owner.is_some() && intent.owner == run.engine.env.owner;
     match operation::owner(&intent) {
         Reading::Live(_) if own => {}
         Reading::Live(_) => {
@@ -1013,7 +1088,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
 /// is its to move; a reconcile that wrote even its observation would move
 /// the file under the owner for no change the owner made.
 fn deferred(run: &Run, intent: Intent, observation: Value) -> Result<Applied> {
-    let snapshot = load(run.path)?;
+    let snapshot = load(run.engine.path)?;
     let mut intent = intent;
     intent.outcome = Outcome::Unconfirmed;
     intent.observation = Some(observation);
@@ -1029,12 +1104,23 @@ fn deferred(run: &Run, intent: Intent, observation: Value) -> Result<Applied> {
     })
 }
 
+/// A state file as the effect files read it, `None` where no file stands:
+/// their one entry to the store's reader outside the engine.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the effect files' one read of a state file outside the engine's own"
+)]
+fn snapshot(path: &Path) -> Result<Option<state::Snapshot>> {
+    state::load(path)
+}
+
 fn load(path: &Path) -> Result<state::Snapshot> {
-    operation::load(path)?.ok_or_else(|| Error::RecordMissing {
+    snapshot(path)?.ok_or_else(|| Error::RecordMissing {
         path: path.to_path_buf(),
     })
 }
 
+/// The fleet record whole, as orch's lane and launch reads take it.
 fn fleet(path: &Path) -> Result<state::FleetState> {
     use state::Record;
     let snapshot = load(path)?;
@@ -1049,22 +1135,6 @@ fn fleet_tmux_session(path: &Path) -> Result<Option<String>> {
         .and_then(|t| t.get("session"))
         .and_then(Value::as_str)
         .map(str::to_owned))
-}
-
-fn read_overseer(path: &Path) -> Result<Overseer> {
-    fleet(path)?.overseer.ok_or_else(|| Error::OverseerMissing {
-        path: path.to_path_buf(),
-    })
-}
-
-fn read_intent(path: &Path, intent_id: &str) -> Result<Intent> {
-    fleet(path)?
-        .intents
-        .into_iter()
-        .find(|i| i.id == intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: intent_id.to_owned(),
-        })
 }
 
 fn open_intents(path: &Path) -> Result<Vec<String>> {
@@ -1119,42 +1189,4 @@ fn pane_harness(lane: &Lane, launch: Option<&Intent>) -> Option<Harness> {
         .map(|s| s.harness.as_str())
         .or(lane.harness.as_deref())
         .and_then(Harness::parse)
-}
-
-/// The predecessor's identity the overseer record carries: `harness_pid`
-/// is a string where a shell writer wrote it through jq's `--arg`, and a
-/// number where the runtime wrote it. Both are read.
-fn overseer_identity(overseer: &Overseer) -> Option<Identity> {
-    let pid = overseer.extra.get("harness_pid").and_then(pid_value)?;
-    let start = overseer
-        .extra
-        .get("harness_start")
-        .and_then(Value::as_str)?;
-    Some(Identity {
-        pid: u32::try_from(pid).ok()?,
-        start: start.to_owned(),
-    })
-}
-
-/// The predecessor's harness and configured program, the processes its
-/// exact stop may name below the recorded root.
-fn overseer_target_of(settings: &Settings, overseer: &Overseer) -> Result<Option<Target>> {
-    overseer
-        .extra
-        .get("harness")
-        .and_then(Value::as_str)
-        .and_then(Harness::parse)
-        .map(|h| Target::new(settings, h))
-        .transpose()
-}
-
-/// A pid a record carries as the number the runtime writes or the string a
-/// shell writer's jq `--arg` writes (the overseer's `server` and
-/// `harness_pid`).
-fn pid_value(value: &Value) -> Option<u64> {
-    match value {
-        Value::Number(n) => n.as_u64(),
-        Value::String(s) => s.parse().ok(),
-        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
-    }
 }

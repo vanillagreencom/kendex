@@ -552,12 +552,34 @@ fn reread_on_record_changed(request: &Request) -> bool {
     }
 }
 
+/// One attempt of a write: the record read, `transition` applied to the
+/// document, `between` run, and the document committed through the state
+/// module's write check against the snapshot it read.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one store write of every request and journal write: the transition's document committed through the state module's write check"
+)]
+fn commit(
+    path: &Path,
+    kind: Kind,
+    locking: Locking,
+    between: &dyn Fn(),
+    transition: impl Fn(&mut Document) -> Result<Report>,
+) -> Result<Applied> {
+    let snapshot = loaded(path)?;
+    let mut doc = snapshot.doc.clone();
+    let report = transition(&mut doc)?;
+    between();
+    state::store(path, &snapshot, &doc, locking)?;
+    Ok(Applied { kind, report })
+}
+
 /// [`apply_host`] with `between` run after the transition and before the
 /// store on each attempt: the seam a test uses to land another writer's
 /// commit in the gap. Production passes a no-op.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the one store write of every request: the transition's document committed through the state module's write check"
+    reason = "the lane and path admissions' fleet launch lock, held around their one write"
 )]
 fn apply_interleaved(
     path: &Path,
@@ -569,15 +591,10 @@ fn apply_interleaved(
 ) -> Result<Applied> {
     let kind = target_kind(path, request)?;
     let transition = || -> Result<Applied> {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let report = match kind {
-            Kind::Item => item_transition(path, &mut doc, request, env)?,
-            Kind::Fleet => fleet_transition(path, &mut doc, request, env, host)?,
-        };
-        between();
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(Applied { kind, report })
+        commit(path, kind, locking, between, |doc| match kind {
+            Kind::Item => item_transition(path, doc, request, env),
+            Kind::Fleet => fleet_transition(path, doc, request, env, host),
+        })
     };
     if reread_on_record_changed(request) {
         // The owner the transition compared is the one the store commits
@@ -596,6 +613,99 @@ fn apply_interleaved(
         return state::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()
+}
+
+/// The part of an outcome's transition the intent's operation owns: the
+/// target record the outcome moves, judged against the record's target as
+/// it stands now. It answers the staleness the intent closes with, `None`
+/// where its target is the intent's own; a target that moved notes what it
+/// observed on `intent` and answers `IntentStale` on a terminal word
+/// (`terminal`), so the handles an unconfirmed outcome's set still holds
+/// keep their reader.
+pub type OutcomeArm = fn(
+    &Path,
+    &mut Document,
+    &mut Intent,
+    &RecordOutcome,
+    &str,
+    bool,
+    &mut OutcomeRecorded,
+) -> Result<Option<Reconciled>>;
+
+/// The fleet journal a library write acts on: any other file refuses
+/// `op-kind` naming `op`.
+fn journal_kind(path: &Path, op: &'static str) -> Result<Kind> {
+    let kind = Kind::of_path(path);
+    if kind != Kind::Fleet {
+        return Err(Error::OpKind {
+            op,
+            path: path.to_path_buf(),
+            kind,
+            wanted: Kind::Fleet,
+        });
+    }
+    Ok(kind)
+}
+
+/// The journal's progress write: the phase, the obligation set or the
+/// notice's mark on one intent, revision-checked against the set the writer
+/// read and conditional on its owner. A write made under an owner is read
+/// again while the store refuses `record-changed`, so a claim that landed
+/// in the gap is answered with the claimant's state.
+pub fn write_progress(path: &Path, r: &RecordProgress, locking: Locking) -> Result<Applied> {
+    let kind = journal_kind(path, "record-progress")?;
+    let attempt = || {
+        commit(path, kind, locking, &|| {}, |doc| {
+            Ok(Report::RecordProgress(Box::new(
+                controller::record_progress(path, doc, r)?,
+            )))
+        })
+    };
+    if r.while_owner.is_some() {
+        reread(attempt)
+    } else {
+        attempt()
+    }
+}
+
+/// The journal's claim of an intent's owner lease for the caller, read
+/// again while the store refuses `record-changed`: the first store can meet
+/// the launcher's own write that lands the instant the job starts.
+pub fn write_claim(path: &Path, r: &ClaimIntent, env: &Env, locking: Locking) -> Result<Applied> {
+    let kind = journal_kind(path, "claim-intent")?;
+    reread(|| {
+        commit(path, kind, locking, &|| {}, |doc| {
+            Ok(Report::ClaimIntent(Box::new(controller::claim_intent(
+                path, doc, r, env,
+            )?)))
+        })
+    })
+}
+
+/// The journal's outcome write: the intent closed or held with how its
+/// effect ended, and `arm` moving the target record in the same locked
+/// transition. A write made under an owner is read again while the store
+/// refuses `record-changed`.
+pub fn write_outcome(
+    path: &Path,
+    r: &RecordOutcome,
+    env: &Env,
+    locking: Locking,
+    arm: OutcomeArm,
+) -> Result<Applied> {
+    let kind = journal_kind(path, "record-outcome")?;
+    let attempt = || {
+        commit(path, kind, locking, &|| {}, |doc| {
+            Ok(Report::RecordOutcome(Box::new(record_outcome(
+                path, doc, r, env, arm,
+            )?)))
+        })
+    };
+    if r.while_owner.is_some() {
+        reread(attempt)
+    } else {
+        attempt()
+    }
 }
 
 /// The precondition every operation shares: the state file at `path` is
@@ -752,7 +862,11 @@ pub fn fleet_transition(
             lane::close_owned_resources(path, doc, r, env, host()?)?,
         ))),
         Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(record_outcome(
-            path, doc, r, env,
+            path,
+            doc,
+            r,
+            env,
+            outcome_arm,
         )?))),
         Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(lane::record_phase(
             path, doc, r,
@@ -965,17 +1079,15 @@ fn null_held(doc: &mut Document, key: &str) {
 }
 
 /// Close an intent with how its effect ended and move the record the
-/// intent's operation transitions: the lane arms are `lane`'s, the
-/// succession arms `controller`'s. A target whose record moved under the
-/// intent (a lane whose stamp or launch keys are not the intent's, closed or
-/// removed since; an overseer whose generation moved past the one the intent
-/// names) closes the intent `intent-stale` and moves nothing, whatever the
-/// outcome reports.
+/// intent's operation transitions through `arm`. A target whose record
+/// moved under the intent closes the intent `intent-stale` and moves
+/// nothing, whatever the outcome reports.
 fn record_outcome(
     path: &Path,
     doc: &mut Document,
     r: &RecordOutcome,
     env: &Env,
+    arm: OutcomeArm,
 ) -> Result<OutcomeRecorded> {
     if r.outcome == Outcome::NotStarted {
         return Err(Error::OutcomeInvalid { outcome: r.outcome });
@@ -1059,65 +1171,7 @@ fn record_outcome(
     let stale = if owner_live {
         None
     } else {
-        match intent.op {
-            EffectOp::LaunchLane => {
-                match lane::intent_lane(path, doc, &intent, r.principal_keys.as_ref())? {
-                    IntentTarget::Current { index } => {
-                        lane::record_launch_outcome(
-                            path,
-                            doc,
-                            &intent,
-                            r,
-                            &at,
-                            index,
-                            &mut recorded,
-                        )?;
-                        None
-                    }
-                    IntentTarget::Moved { observed } => {
-                        intent.observed_status = observed;
-                        terminal.then_some(Reconciled::IntentStale)
-                    }
-                }
-            }
-            EffectOp::CloseOwnedResources => {
-                match lane::intent_lane(path, doc, &intent, r.principal_keys.as_ref())? {
-                    IntentTarget::Current { index } => {
-                        lane::record_close_outcome(
-                            path,
-                            doc,
-                            &intent,
-                            r,
-                            &at,
-                            index,
-                            &mut recorded,
-                        )?;
-                        None
-                    }
-                    IntentTarget::Moved { observed } => {
-                        intent.observed_status = observed;
-                        terminal.then_some(Reconciled::IntentStale)
-                    }
-                }
-            }
-            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-                let generation = controller::overseer(path, doc)?.generation.unwrap_or(0);
-                if controller::target_generation(&intent.target) == Some(generation) {
-                    controller::record_controller_outcome(
-                        path,
-                        doc,
-                        &intent,
-                        r,
-                        &at,
-                        &mut recorded,
-                    )?;
-                    None
-                } else {
-                    intent.observed_generation = Some(generation);
-                    terminal.then_some(Reconciled::IntentStale)
-                }
-            }
-        }
+        arm(path, doc, &mut intent, r, &at, terminal, &mut recorded)?
     };
     intent.outcome = r.outcome;
     intent.reconciled = stale;
@@ -1183,6 +1237,49 @@ fn record_outcome(
     recorded.reconciled = stale;
     recorded.intent = intent;
     Ok(recorded)
+}
+
+/// orch's arms of an outcome's transition, by the intent's operation: the
+/// lane arms are `lane`'s, judged against the lane's stamp and launch keys;
+/// the succession arms `controller`'s, judged against the controller
+/// record's generation.
+pub fn outcome_arm(
+    path: &Path,
+    doc: &mut Document,
+    intent: &mut Intent,
+    r: &RecordOutcome,
+    at: &str,
+    terminal: bool,
+    recorded: &mut OutcomeRecorded,
+) -> Result<Option<Reconciled>> {
+    Ok(match intent.op {
+        EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
+            match lane::intent_lane(path, doc, intent, r.principal_keys.as_ref())? {
+                IntentTarget::Current { index } => {
+                    if intent.op == EffectOp::LaunchLane {
+                        lane::record_launch_outcome(path, doc, intent, r, at, index, recorded)?;
+                    } else {
+                        lane::record_close_outcome(path, doc, intent, r, at, index, recorded)?;
+                    }
+                    None
+                }
+                IntentTarget::Moved { observed } => {
+                    intent.observed_status = observed;
+                    terminal.then_some(Reconciled::IntentStale)
+                }
+            }
+        }
+        EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
+            let generation = controller::overseer(path, doc)?.generation.unwrap_or(0);
+            if controller::target_generation(&intent.target) == Some(generation) {
+                controller::record_controller_outcome(path, doc, intent, r, at, recorded)?;
+                None
+            } else {
+                intent.observed_generation = Some(generation);
+                terminal.then_some(Reconciled::IntentStale)
+            }
+        }
+    })
 }
 
 #[cfg(test)]

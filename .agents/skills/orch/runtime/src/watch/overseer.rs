@@ -1100,8 +1100,8 @@ fn relaunch_through_runtime(
 /// A launch that may have started is read as started: the marker written
 /// before it owns its outcome, said from the relaunch's status or as stuck
 /// past the prepare bound. A refused launch ran nothing.
-fn relaunch_started(launch: crate::ops::validate::Launch) -> Result<(), String> {
-    use crate::ops::validate::Launch;
+fn relaunch_started(launch: crate::effects::Launch) -> Result<(), String> {
+    use crate::effects::Launch;
     match launch {
         Launch::Started { .. } | Launch::Unanswered { .. } => Ok(()),
         Launch::Refused { cause } => Err(cause),
@@ -2857,7 +2857,7 @@ mod tests {
     /// route's refusal with the launcher's cause.
     #[test]
     fn a_relaunch_that_may_have_started_is_started_and_one_that_started_nothing_is_refused() {
-        use crate::ops::validate::Launch;
+        use crate::effects::Launch;
         let started = Launch::Started {
             runner: "setsid".to_owned(),
             unit: None,

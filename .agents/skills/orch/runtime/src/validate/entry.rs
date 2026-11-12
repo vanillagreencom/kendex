@@ -453,11 +453,11 @@ fn entry(
                 &SystemClock,
             );
             match launch.answer() {
-                crate::ops::validate::Launch::Started { .. } => {}
-                crate::ops::validate::Launch::Refused { cause } => {
+                crate::effects::Launch::Started { .. } => {}
+                crate::effects::Launch::Refused { cause } => {
                     return Err(files::unreadable("launch-failed", cause));
                 }
-                crate::ops::validate::Launch::Unanswered { cause } => {
+                crate::effects::Launch::Unanswered { cause } => {
                     return Err(files::unreadable(
                         "launch-unanswered",
                         format!("run-dir={} {cause}", run_dir.display()),
