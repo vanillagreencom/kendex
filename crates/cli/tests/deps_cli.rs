@@ -532,10 +532,33 @@ fn a_later_scopes_unanswered_sweep_refuses_before_the_first_scope_writes() {
     assert!(tree(&home.join(".claude/skills")) == home_skills, "{said}");
 }
 
+/// A leftover the sweep would hold, here one the person edited, adds no
+/// change, so there is nothing to ask: with no terminal and no flag the
+/// removal goes ahead and the edited copy stays.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_sweep_that_would_hold_its_leftover_asks_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = project(&tmp);
+    let edited = project.join(".claude/skills/github/SKILL.md");
+    let body = format!("{}\nA local note.\n", fs::read_to_string(&edited).unwrap());
+    fs::write(&edited, &body).unwrap();
+
+    let removed = kendex(home, &project, &["remove", "dev"]);
+    let said = String::from_utf8_lossy(&removed.stderr);
+
+    assert!(removed.status.success(), "{said}");
+    assert!(!project.join(".claude/skills/dev").exists(), "{said}");
+    assert_eq!(fs::read_to_string(&edited).unwrap(), body, "{said}");
+}
+
 /// The sweep asked at a terminal, by its keys: `s` takes what nothing
 /// needs anymore with the removal, Enter keeps it, and Escape cancels
-/// before anything is written. `src/commands/remove/tests.rs` holds how the
-/// question is drawn.
+/// before anything is written. Each run asks the question the real plans
+/// give: the sweep's own changes, github's two copies and the settings
+/// file nothing of its own is left in, and none of the removal's.
+/// `src/commands/remove/tests.rs` holds how the question is drawn.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_sweep_is_answered_by_its_keys() {
@@ -566,6 +589,27 @@ fn the_sweep_is_answered_by_its_keys() {
 
         let said = String::from_utf8_lossy(&output.stderr);
         assert_eq!(output.status.code(), Some(code), "{key:?}: {said}");
+        let question: Vec<&str> = said
+            .lines()
+            .map(str::trim_end)
+            .skip_while(|line| !line.starts_with("! also remove "))
+            .take_while(|line| !line.contains("[s] remove them too"))
+            .collect();
+        let settings = format!(
+            "  - Move {} to the trash, nothing of its own left",
+            home.join("dev/app/.claude/settings.json").display()
+        );
+        assert_eq!(
+            question,
+            [
+                "! also remove skill github, which nothing needs anymore?",
+                "  3 more changes; --sweep or --no-sweep answers this without asking",
+                "  - Move skill github's files to the trash",
+                "  - Move skill github's files to the trash",
+                &settings,
+            ],
+            "{key:?}: {said}"
+        );
         assert_eq!(
             !project.join(".claude/skills/dev").exists(),
             dev_gone,

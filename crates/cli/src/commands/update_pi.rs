@@ -623,7 +623,12 @@ fn plan_lines(style: &Style, plan: &ScopePlan) -> Vec<(Stream, Vec<String>)> {
     let mut drawn = vec![(
         Stream::Err,
         style.report_heading(
-            &format!("{} ({})", plan.label, plan.root.display()),
+            match plan.scope {
+                Scope::Global => "global",
+                Scope::Project { .. } => "project",
+            },
+            &plan.label,
+            &plan.root.display().to_string(),
             plan.rows.len(),
             ui::Status::Notice,
         ),
@@ -775,11 +780,12 @@ fn update<'p>(env: &Env, plans: &'p [ScopePlan], wrote: &mut Vec<&'p Scope>) -> 
     // Every replaced copy went to the trash with its dependency tree;
     // the pass runs once every scope is written, before the closing line.
     super::engine_common::tidy_trash(env);
-    // A cancel at the offer still lets the run say what it installed; the
-    // run then ends as the cancel.
-    let offered = offer_to_commit(env, plans);
+    // An offer that fails is one more failure of the run, said with the
+    // others rather than in their place. A cancel at the offer still lets
+    // the run say what it installed, and ends the run as a cancel only
+    // where nothing else failed.
+    failures.extend(offer_to_commit(env, plans));
     ui::stderr(&closing_lines(&style, updated, failures.is_empty()));
-    offered?;
     match failures.is_empty() {
         true => Ok(()),
         false => Err(format!("update failed for: {}", failures.join(", ")).into()),
@@ -895,7 +901,11 @@ fn install_rows(
 /// project, which only a plan names — so one is derived here for that
 /// alone. A scope whose plan will not derive gets no offer: the writes
 /// above still stand, and nothing about them is claimed.
-fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
+///
+/// Each project whose offer fails is one failure, named by its scope, and
+/// the next project is still offered, as `refresh` offers each scope.
+fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> Vec<String> {
+    let mut failures = Vec::new();
     for plan in plans {
         if !matches!(plan.scope, Scope::Project { .. }) {
             continue;
@@ -907,14 +917,16 @@ fn offer_to_commit(env: &Env, plans: &[ScopePlan]) -> CliResult {
         ) else {
             continue;
         };
-        super::commit_offer::after_writing(
+        if let Err(error) = super::commit_offer::after_writing(
             env,
             &plan.scope,
             &report.generated,
             &kendex_core::commit_offer::Before::Untaken,
-        )?;
+        ) {
+            failures.push(format!("{}: {error}", plan.label));
+        }
     }
-    Ok(())
+    failures
 }
 
 fn record_pi_installs(
@@ -1037,7 +1049,17 @@ mod tests {
             ],
             vec![("pi-broken".into(), "source cat is not readable".into())],
         );
-        let rows: [(&ScopePlan, &[&str], &[&str]); 2] = [
+        // A project's label is its root and its place the root's `.pi`:
+        // plain says both on the one line scripts read, and rich puts the
+        // place on its own line, so neither path runs past the width.
+        let root = PathBuf::from("/home/a/dev/a-project-whose-folder-name-is-long");
+        let project = ScopePlan {
+            scope: Scope::Project { root: root.clone() },
+            label: root.display().to_string(),
+            root: root.join(".pi"),
+            ..plan(Vec::new(), Vec::new())
+        };
+        let rows: [(&ScopePlan, &[&str], &[&str]); 3] = [
             (
                 &full,
                 &[
@@ -1052,7 +1074,8 @@ mod tests {
                 ],
                 &[
                     "err|",
-                    "err|<1;36>user (/home/a/.pi/agent)</>  <90>6</>",
+                    "err|<1;36>global</>  <90>6</>",
+                    "err|    <90>/home/a/.pi/agent</>",
                     "out|  <32>✓</> pi-current 1.0.0",
                     "out|    <90>up to date</>",
                     "out|  <33>!</> pi-stale 1.0.0",
@@ -1076,7 +1099,21 @@ mod tests {
                 ],
                 &[
                     "err|",
-                    "err|<1;36>user (/home/a/.pi/agent)</>  <90>0</>",
+                    "err|<1;36>global</>  <90>0</>",
+                    "err|    <90>/home/a/.pi/agent</>",
+                    "err|    <90>no pi packages installed</>",
+                ],
+            ),
+            (
+                &project,
+                &[
+                    "err|/home/a/dev/a-project-whose-folder-name-is-long (/home/a/dev/a-project-whose-folder-name-is-long/.pi)",
+                    "err|  no pi packages installed",
+                ],
+                &[
+                    "err|",
+                    "err|<1;36>project</>  <90>0</>",
+                    "err|    <90>/home/a/dev/a-project-whose-folder-name-is-long/.pi</>",
                     "err|    <90>no pi packages installed</>",
                 ],
             ),

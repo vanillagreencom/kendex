@@ -71,8 +71,8 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
             return Err(error.into());
         }
     }
-    let planned = plan_scopes(env, &scopes, prepared);
-    refuse_an_unanswerable_sweep(&planned, mode)?;
+    let planned = plan_scopes(env, &scopes, prepared, mode);
+    refuse_an_unanswerable_sweep(&planned)?;
     // Each scope's closing line is held until every scope is written and
     // the trash pass has run, so the pass's own line never lands under a
     // line the run already closed on. A scope that fails, or a cancel at
@@ -121,32 +121,44 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
     }
 }
 
-/// One scope's removal as planned before any scope writes: the captured
-/// inputs a sweep answer plans again from, and their plan.
+/// One scope's removal as planned before any scope writes: its plan, and
+/// the sweep a person is asked about where a yes would add a change.
 struct Planned {
-    prepared: ops::PreparedRemoval,
     report: EngineReport,
+    sweep: Option<Sweep>,
+}
+
+/// The sweep a yes writes: the plan that also takes what nothing needs
+/// anymore, and the changes it adds to the plan that keeps it.
+struct Sweep {
+    report: EngineReport,
+    added: Consent,
 }
 
 type Planning = Result<Planned, Box<dyn std::error::Error>>;
 
-/// Every scope planned from its captured inputs before the first write, so
-/// a question nobody is there to answer stops the run before any scope
-/// writes. Planning stops at the first scope that fails, as the writes
-/// after it would: the scopes before it still write.
+/// Every scope planned from its captured inputs before the first write,
+/// the sweep included, so a question nobody is there to answer stops the
+/// run before any scope writes. Planning stops at the first scope that
+/// fails, as the writes after it would: the scopes before it still write.
 fn plan_scopes(
     env: &Env,
     scopes: &[Scope],
     prepared: Vec<kendex_core::error::Result<ops::PreparedRemoval>>,
+    mode: Removal,
 ) -> Vec<Planning> {
     let mut planned = Vec::new();
     for (scope, prepared) in scopes.iter().zip(prepared) {
         let planning = prepared.map_err(Into::into).and_then(|prepared| {
-            let report = {
-                let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
-                prepared.plan(env)
-            }?;
-            Ok(Planned { prepared, report })
+            let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
+            let report = prepared.plan(env)?;
+            let sweep = match mode {
+                Removal::Disown { sweep: None, .. } if !report.sweepable.is_empty() => {
+                    sweep_of(env, &prepared, &report)?
+                }
+                Removal::Disown { .. } | Removal::KeepDeclaration => None,
+            };
+            Ok(Planned { report, sweep })
         });
         let failed = planning.is_err();
         planned.push(planning);
@@ -157,19 +169,36 @@ fn plan_scopes(
     planned
 }
 
+/// The sweep as the plan that takes the leftovers too, where nobody
+/// answered it and a yes adds a change. A leftover the sweep would hold,
+/// an edited copy or a package with nothing to write, adds none, and a
+/// sweep that adds no change is not asked.
+fn sweep_of(
+    env: &Env,
+    prepared: &ops::PreparedRemoval,
+    report: &EngineReport,
+) -> Result<Option<Sweep>, Box<dyn std::error::Error>> {
+    let sweeping = prepared.plan_sweeping(env)?;
+    let added = Approved::of(report, &Consent::of(report, &[]))
+        .added(&sweeping)
+        .consent;
+    Ok((!added.is_empty()).then_some(Sweep {
+        report: sweeping,
+        added,
+    }))
+}
+
 /// Removing the last thing that needed something leaves it behind. Asking
 /// is the whole point of the step, so with nobody to ask and no flag the
 /// removal stops before any scope writes, naming the flags that answer it.
-fn refuse_an_unanswerable_sweep(planned: &[Planning], mode: Removal) -> CliResult {
-    if !matches!(mode, Removal::Disown { sweep: None, .. }) || answerable(false) {
-        return Ok(());
-    }
+fn refuse_an_unanswerable_sweep(planned: &[Planning]) -> CliResult {
     let leftovers: Vec<String> = planned
         .iter()
         .flatten()
+        .filter(|planned| planned.sweep.is_some())
         .flat_map(|planned| leftover_names(&planned.report))
         .collect();
-    if leftovers.is_empty() {
+    if leftovers.is_empty() || answerable(false) {
         return Ok(());
     }
     Err(format!(
@@ -206,11 +235,8 @@ fn remove_scope(
     planned: Planned,
     mode: Removal,
 ) -> Result<Removed, Box<dyn std::error::Error>> {
-    let Planned { prepared, report } = planned;
-    let report = match mode {
-        Removal::Disown { sweep, .. } => answer(env, style, &prepared, report, sweep)?,
-        Removal::KeepDeclaration => report,
-    };
+    let Planned { report, sweep } = planned;
+    let report = answer(style, report, sweep)?;
     // What still wants a removed item says so now, not on the next
     // audit. Kept declared, a dependency's "kept removed" is true only
     // until the refresh the closing line names; the warning carries no
@@ -247,7 +273,7 @@ fn remove_scope(
 fn changes_lines(style: &Style, ops: &[PlannedOp]) -> Vec<String> {
     let mut lines = style.report_row(Status::Done, &[Span::Prose("changes:")], "");
     for op in ops {
-        lines.extend(style.report_row(Status::Done, &[Span::Prose(&op.line())], "  - "));
+        lines.extend(style.report_op(Status::Done, op, "  - "));
     }
     lines
 }
@@ -321,31 +347,25 @@ fn split_lines(style: &Style, report: &EngineReport, mode: Removal, file: &str) 
         .collect()
 }
 
-/// The answer to the sweep, where nobody gave one. The question names the
+/// The answer to the sweep planning left to ask. The question names the
 /// changes a yes adds to this plan, read off the plan that sweeps, so the
-/// yes writes exactly what it was shown. A sweep that adds nothing is not
-/// asked about. `run` refused before any write where nobody can answer.
+/// yes writes exactly what it was shown. `run` refused before any write
+/// where nobody can answer.
 fn answer(
-    env: &Env,
     style: &Style,
-    prepared: &ops::PreparedRemoval,
     report: EngineReport,
-    sweep: Option<bool>,
+    sweep: Option<Sweep>,
 ) -> Result<EngineReport, Box<dyn std::error::Error>> {
-    if sweep.is_some() || report.sweepable.is_empty() {
+    let Some(sweep) = sweep else {
         return Ok(report);
-    }
-    let sweeping = prepared.plan_sweeping(env)?;
-    let question = {
-        let added = Approved::of(&report, &Consent::of(&report, &[])).added(&sweeping);
-        match added.consent.is_empty() {
-            true => return Ok(report),
-            false => sweep_question(style, &leftover_names(&report), &added.consent),
-        }
     };
-    ui::stderr(&question);
+    ui::stderr(&sweep_question(
+        style,
+        &leftover_names(&report),
+        &sweep.added,
+    ));
     match ui::choose(&SWEEP)? {
-        true => Ok(sweeping),
+        true => Ok(sweep.report),
         false => Ok(report),
     }
 }

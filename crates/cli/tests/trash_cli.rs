@@ -359,10 +359,10 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     );
     assert!(!removed.status.success(), "{}", said(&removed));
     let text = said(&removed);
-    let closed = text.find(": removed ");
-    let failed = text.find("Error:");
+    // The project scope's own ledger line, which the trash pass's
+    // `trash: removed` line above it cannot stand in for.
     assert!(
-        matches!((closed, failed), (Some(closed), Some(failed)) if closed < failed),
+        before(&text, &format!("{}: removed ", project.display()), "Error:"),
         "the written scope did not close before the error: {text}"
     );
     assert!(!names(&home).iter().any(|name| name.ends_with("-old")));

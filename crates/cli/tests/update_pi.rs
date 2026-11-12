@@ -162,8 +162,10 @@ fn a_scope_whose_record_will_not_save_leaves_the_next_scope_updated_and_counted(
         matches!((closing, failed), (Some(closing), Some(failed)) if closing < failed),
         "{said}"
     );
+    // The label's own clause: the record error's path continues past the
+    // root with `/.cache`, never with `: `.
     assert!(
-        said[failed.unwrap()..].contains(&project.display().to_string()),
+        said[failed.unwrap()..].contains(&format!("{}: ", project.display())),
         "the error does not name the scope: {said}"
     );
 }

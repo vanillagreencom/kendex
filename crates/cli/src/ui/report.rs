@@ -177,12 +177,25 @@ impl Style {
         }
     }
 
-    /// A titled group whose plain heading is the title alone, at column 0,
-    /// the line a script reads as opening the block; rich, a section.
-    pub fn report_heading(&self, title: &str, count: usize, status: Status) -> Vec<String> {
+    /// A group held at a place. Plain is `label (place)` at column 0, the
+    /// line a script reads as opening the block. Rich is a `section` under
+    /// a short `title` with the place whole on its own line under it, since
+    /// a label and a place that are both paths do not fit one line.
+    pub fn report_heading(
+        &self,
+        title: &str,
+        label: &str,
+        place: &str,
+        count: usize,
+        status: Status,
+    ) -> Vec<String> {
         match self.look {
-            Look::Plain => vec![escaped(title)],
-            Look::Rich { .. } => self.section(title, count, status),
+            Look::Plain => vec![escaped(&format!("{label} ({place})"))],
+            Look::Rich { .. } => {
+                let mut lines = self.section(title, count, status);
+                lines.extend(self.detail(None, &[Span::Command(place)]));
+                lines
+            }
         }
     }
 
@@ -209,6 +222,21 @@ impl Style {
                 lines
             }
         }
+    }
+
+    /// A plan operation under the mark of what became of it, such as a
+    /// write that landed: `plan_row`'s spans, so its landed path stays
+    /// whole, behind the plain prefix scripts read.
+    pub fn report_op(&self, status: Status, op: &PlannedOp, prefix: &'static str) -> Vec<String> {
+        let parts = op.description_parts();
+        let spans: Vec<_> = parts
+            .iter()
+            .map(|part| match part {
+                DescriptionPart::Text(text) => Span::Prose(text),
+                DescriptionPart::Path(path) => Span::Command(path),
+            })
+            .collect();
+        self.report_row(status, &spans, prefix)
     }
 
     /// A line the reader can open rich; plain, its text alone.

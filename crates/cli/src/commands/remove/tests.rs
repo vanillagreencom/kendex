@@ -1,7 +1,7 @@
 use super::*;
 use crate::ui::testing::{asked, plain, rich, tagged};
 use console::Key as Pressed;
-use kendex_core::apply::{Plan, Pre};
+use kendex_core::apply::{Description, Plan, Pre};
 use kendex_core::engine::{Disowned, KeptInstall, SetChange};
 use kendex_core::model::{HarnessId, ItemKind};
 
@@ -102,6 +102,37 @@ fn a_removal_says_what_it_drops_takes_and_keeps_then_what_it_wrote() {
         assert_eq!(draw(&plain(), mode), want_plain);
         assert_eq!(tagged(&draw(&rich(80), mode)), want_rich);
     }
+}
+
+/// A written op keeps its landed path whole on a rich terminal, a path
+/// with a space included, where prose around it wraps; plain is the one
+/// `  - ` line scripts read.
+#[test]
+fn a_written_op_keeps_its_path_whole() {
+    let root = std::path::Path::new("/home/a/My Projects/app/.claude/skills");
+    let op = PlannedOp {
+        description: Description::around("Trash skill alpha's files at ", ""),
+        op: Op::Trash {
+            path: root.join("alpha"),
+            pre: Pre::Absent,
+            absent_is_done: false,
+        },
+    };
+    assert_eq!(
+        changes_lines(&plain(), std::slice::from_ref(&op)),
+        [
+            "changes:",
+            "  - Trash skill alpha's files at /home/a/My Projects/app/.claude/skills/alpha",
+        ]
+    );
+    assert_eq!(
+        tagged(&changes_lines(&rich(60), &[op])),
+        [
+            "  <32>✓</> changes:",
+            "  <32>✓</> Trash skill alpha's files at",
+            "    /home/a/My Projects/app/.claude/skills/alpha",
+        ]
+    );
 }
 
 /// The sweep is a decision: what it takes, how many more changes a yes

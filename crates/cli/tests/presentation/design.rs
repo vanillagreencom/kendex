@@ -454,16 +454,19 @@ fn unmanaged_paths_with_spaces_stay_on_one_output_line() {
 /// The writing verbs converted from the frame, `remove` and `update-pi`:
 /// no frame character in a pipe or on a terminal, `NO_COLOR` and
 /// `TERM=dumb` print what a pipe gets on both streams, a rich run at 80
-/// columns draws its rows marked and within 80 cells, and every rendering
-/// exits the same. Each run writes, so each starts from
-/// the fixture rebuilt at the same paths, which keeps a line from one run
-/// comparable with the next.
+/// columns draws its rows marked and within 80 cells, a path wider than
+/// that drawn whole on a line of its own, and every rendering exits the
+/// same. The project sits deep enough under the fixture home that its
+/// paths pass 80 cells on any runner, so the pipe has lines rich must
+/// wrap. Each run writes, so each starts from the fixture rebuilt at the
+/// same paths, which keeps a line from one run comparable with the next.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let project = home.join("dev/app");
+    let project = home
+        .join("dev/a-folder-whose-name-alone-takes-up-most-of-a-line/and-a-project-under-it/app");
     let pi = |project: &Path| {
         let catalog = project.join("pi-catalog");
         let source = catalog.join("pi-extensions/pi-widgets");
@@ -534,6 +537,10 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
         let piped = run("auto", &[]);
         assert!(!piped.2.is_empty(), "{args:?}: nothing said");
         let piped_both = format!("{}{}", piped.1, piped.2);
+        assert!(
+            piped_both.lines().any(|line| cells(line) > 80),
+            "{args:?}: fixture never reaches width: {piped:?}"
+        );
         let in_pipe: Vec<char> = FRAMING
             .into_iter()
             .filter(|symbol| piped_both.contains(*symbol))
@@ -559,7 +566,12 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
             drawn.lines().map(stripped).any(|line| line == marked),
             "{args:?}: no marked row {marked:?}: {rich:?}"
         );
-        for line in drawn.lines() {
+        // A path wider than the line is the one thing drawn past it, whole
+        // and alone after its indent.
+        for line in drawn.lines().filter(|line| {
+            let text = stripped(line);
+            text.trim_start().contains(' ')
+        }) {
             assert!(
                 cells(line) <= 80,
                 "{args:?}: {} cells: {line:?}",
