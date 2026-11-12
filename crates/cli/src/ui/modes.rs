@@ -172,6 +172,9 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
+    // The cells on `line`, kept as pieces join it: measuring the whole
+    // line again for each piece is quadratic in a long table cell.
+    let mut used = 0;
     let mut room = first.max(1);
     // Whether a space separates the next piece from the one before it:
     // the spans are one text, so a space at a span's edge is still a space.
@@ -184,7 +187,7 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                 // The space a prose span left pending is the prose's own;
                 // the verbatim text's spaces are its content.
                 if spaced && !line.is_empty() {
-                    match cells(&line) + 1 > room {
+                    match used + 1 > room {
                         true => {
                             lines.push(std::mem::take(&mut line));
                             room = rest.max(1);
@@ -193,6 +196,7 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                     }
                 }
                 push_cells(&mut line, &mut lines, &mut room, rest, text);
+                used = cells(&line);
                 spaced = false;
                 continue;
             }
@@ -202,20 +206,26 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
             if piece.is_empty() {
                 continue;
             }
-            let used = cells(&line);
+            let width = cells(piece);
             let gap = usize::from(used > 0 && spaced);
-            if used > 0 && used + gap + cells(piece) > room {
+            if used > 0 && used + gap + width > room {
                 lines.push(std::mem::take(&mut line));
+                used = 0;
                 room = rest.max(1);
             } else if gap == 1 {
                 line.push(' ');
+                used += 1;
             }
             spaced = false;
-            if whole {
+            // A piece that fits joins whole; only a word wider than the
+            // room breaks by cells.
+            if whole || used + width <= room {
                 line.push_str(piece);
+                used += width;
                 continue;
             }
             push_cells(&mut line, &mut lines, &mut room, rest, piece);
+            used = cells(&line);
         }
         spaced |= !whole && text.ends_with(' ');
     }

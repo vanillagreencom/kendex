@@ -459,8 +459,9 @@ impl Style {
     /// Columns sized to their widest cell, a rule under the header. Rich
     /// narrows the widest column first to fit the width, but never below
     /// its header's or a cell's widest word, nor its widest copied run: no
-    /// word, name or path breaks in the middle, and a table whose floors
-    /// pass the width runs past it, which the terminal wraps.
+    /// word and no copied run breaks in the middle, and a table whose
+    /// floors pass the width runs past it, which the terminal wraps. A path
+    /// that can hold a space stays whole only as a [`Cell`] copy.
     pub fn table<C: TableCell>(&self, headers: &[&str], rows: &[Vec<C>]) -> Vec<String> {
         let headers: Vec<Escaped> = headers
             .iter()

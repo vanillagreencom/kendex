@@ -56,7 +56,10 @@ fn marketplace_list_snapshots() {
             root: "/home/dev/My Projects/acme-web".into(),
         },
         repo: None,
-        path: Some(format!("/home/dev/{}tools", "marketplaces/".repeat(4))),
+        path: Some(format!(
+            "/home/dev/My Marketplaces/{}tools",
+            "marketplaces/".repeat(3)
+        )),
         ..subscription("tools", Some(3), true)
     };
     assert_eq!(
@@ -64,10 +67,10 @@ fn marketplace_list_snapshots() {
         [
             "",
             "<1;36>subscriptions</>  <90>1</>",
-            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                 <1;90>packages</>",
-            "  <90>───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
-            "  /home/dev/My Projects/acme-web  tools  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/tools  [3",
-            "                                         @ v2                                                                 package(s)]",
+            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                    <1;90>packages</>",
+            "  <90>──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  /home/dev/My Projects/acme-web  tools  /home/dev/My Marketplaces/marketplaces/marketplaces/marketplaces/tools  [3",
+            "                                         @ v2                                                                    package(s)]",
         ]
     );
 }

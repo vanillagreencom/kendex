@@ -93,7 +93,7 @@ fn inspection_show_snapshots() {
 }
 
 #[test]
-fn inspection_show_wraps_links_and_keeps_file_paths_whole() {
+fn inspection_show_wraps_links_and_keeps_a_spaceless_file_path_whole() {
     let long = "path-part-".repeat(15);
     let meta = detail::PackageMeta {
         source: long.clone(),
@@ -122,8 +122,8 @@ fn inspection_show_wraps_links_and_keeps_file_paths_whole() {
             .iter()
             .any(|line| visible_width(line) > 80)
     );
-    // A file path wider than the line stays whole on one line, and the row
-    // runs past the width.
+    // A file path with no space, wider than the line, stays whole on one
+    // line, and the table runs past the width.
     let files = [detail::PackageFile {
         path: long.clone(),
         size: 42,

@@ -52,7 +52,10 @@ fn source_list_snapshots() {
         root: PathBuf::from("/home/dev/My Projects/acme-web"),
     };
     let local = source_ops::SourceRow {
-        reference: format!("/home/dev/{}tools", "marketplaces/".repeat(4)),
+        reference: format!(
+            "/home/dev/My Marketplaces/{}tools",
+            "marketplaces/".repeat(3)
+        ),
         is_remote: false,
         ..row("tools", Some("abc1234"), true, 2)
     };
@@ -61,10 +64,10 @@ fn source_list_snapshots() {
         [
             "",
             "<1;36>marketplaces</>  <90>1</>",
-            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                 <1;90>packages</>",
-            "  <90>───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
-            "  /home/dev/My Projects/acme-web  tools  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/tools  [2",
-            "                                         @abc1234                                                             package(s)]",
+            "  <1;90>scope</>                           <1;90>name</>   <1;90>from</>                                                                    <1;90>packages</>",
+            "  <90>──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  /home/dev/My Projects/acme-web  tools  /home/dev/My Marketplaces/marketplaces/marketplaces/marketplaces/tools  [2",
+            "                                         @abc1234                                                                package(s)]",
         ]
     );
 }

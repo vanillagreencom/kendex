@@ -69,7 +69,7 @@ fn mine_snapshots() {
     // A folder longer than its column could be at 80 cells: the folder
     // keeps its line, and what the marketplace holds wraps beside it.
     let far = author::MineRow {
-        path: "/home/dev/projects/marketplaces/acme/team-skills-1".to_owned(),
+        path: "/home/dev/My Projects/marketplaces/acme/skills-1".to_owned(),
         ..mine_row(1, None)
     };
     assert_eq!(
@@ -77,11 +77,11 @@ fn mine_snapshots() {
         [
             "",
             "<1;36>marketplaces</>  <90>1</>",
-            "  <1;90>name</>         <1;90>holds</>          <1;90>folder</>",
+            "  <1;90>name</>         <1;90>holds</>            <1;90>folder</>",
             "  <90>──────────────────────────────────────────────────────────────────────────────</>",
-            "  team-skills  3 package(s),  /home/dev/projects/marketplaces/acme/team-skills-1",
-            "               1 bundle(s),",
-            "               1 problem(s)",
+            "  team-skills  3 package(s), 1  /home/dev/My Projects/marketplaces/acme/skills-1",
+            "               bundle(s), 1",
+            "               problem(s)",
         ]
     );
     assert_eq!(
@@ -142,7 +142,10 @@ fn import_candidate_snapshots() {
     // A place that leaves the other columns less room than their words
     // need: every word, the name and the place stay whole, and the row runs
     // past the width.
-    let place = format!("/home/dev/{}review", "marketplaces/".repeat(4));
+    let place = format!(
+        "/home/dev/My Marketplaces/{}review",
+        "marketplaces/".repeat(3)
+    );
     let mut far = candidates[0].clone();
     far.origins[0].locations = vec![place];
     assert_eq!(
@@ -151,8 +154,8 @@ fn import_candidate_snapshots() {
             "",
             "<1;36>candidates</>  <90>2</>",
             "  <1;90>kind</>   <1;90>name</>    <1;90>origin</>       <1;90>hash</>          <1;90>places</>",
-            "  <90>──────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
-            "  skill  review  [from        0123456789ab  /home/dev/marketplaces/marketplaces/marketplaces/marketplaces/review",
+            "  <90>─────────────────────────────────────────────────────────────────────────────────────────────────────────────────</>",
+            "  skill  review  [from        0123456789ab  /home/dev/My Marketplaces/marketplaces/marketplaces/marketplaces/review",
             "                 marketplace",
             "                 'cat'",
             "                 (MIT)]",

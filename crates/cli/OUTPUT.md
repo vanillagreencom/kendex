@@ -59,7 +59,7 @@ ASCII applies when `LC_ALL`, `LC_CTYPE` or `LANG`, first non-empty, names no UTF
 | `choices(&[Choice])` | `[Enter] Set up · [s] Skip`, indented two spaces, the Enter default bold, wrapped between buttons | the same on one line, uncoloured |
 | `picked(label)` | `›` and the choice a key picked, under its buttons | the same, uncoloured |
 | `link(text, Target)` | OSC 8 hyperlink to a file or URL, with visible text wrapped to width | the text, indented two spaces |
-| `table(headers, rows)` | columns sized to content and reduced to fit the width, but never below a column's header, its widest word or a `Cell`'s copied run, a path that can hold a space; cells wrap between words, a row whose floors pass the width runs past it, and a rule sits under the header | the columns, no rule |
+| `table(headers, rows)` | columns sized to content and reduced to fit the width, but never below a column's header, its widest word or a `Cell`'s copied run, a path that can hold a space; cells wrap between words, a table whose floors pass the width runs past it, and a rule sits under the header | the columns, no rule |
 | `spinner(label, tick)`, `ui::Spinner` | one line on stderr, cleared when dropped | nothing |
 | `progress(done, total, label)` | a 20-cell bar and the count | nothing |
 | `summary(status, text)` | blank line, glyph and bold text: the run's last line | the text |
