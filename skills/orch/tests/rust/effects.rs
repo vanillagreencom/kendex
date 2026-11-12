@@ -900,6 +900,7 @@ fn unanswering_server(runner: &Runner, process: &Owned) -> Server {
         pid: process.pid(),
         start: 1,
         process_start: process.start(),
+        guard: None,
     }
 }
 
@@ -912,6 +913,7 @@ fn gone_server(runner: &Runner) -> Server {
         pid: GONE_PID as u32,
         start: 1,
         process_start: "ticks:1".to_owned(),
+        guard: None,
     }
 }
 

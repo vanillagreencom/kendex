@@ -1,8 +1,8 @@
 //! The hosted readings of the lane duty: the preparation, stall, start-stall,
 //! long-lane and handoff readings of a hosted lane, a Pi lane's session rows,
-//! its status verb and its finished-hosted close, over the fleet record's
-//! hosted lanes and inside the lane duty's pass (`watch::lanes`); and the
-//! provider calls a hosted launch makes.
+//! its status verb, over the fleet record's hosted lanes and inside the lane
+//! duty's pass (`watch::lanes`); the finished close of a merged lane, local
+//! or hosted; and the provider calls a hosted launch makes.
 //!
 //! Every provider read is one `lane-host` call through the one runner under
 //! `ORCH_LANE_HOST=<the record's host>`, from the scripts directory the pass
@@ -80,20 +80,20 @@ pub const ORCH_RUNTIME: &str = "orch-runtime";
 /// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
 pub const PREPARE_ROW: &str = "lane-prepare";
-/// `close-pending<TAB><lane><TAB><row>|<key>`: a finished-hosted close the
+/// `close-pending<TAB><lane><TAB><row>|<key>`: a finished close the
 /// tracker's quota hold deferred, retried while the notification row still
 /// reads `<key>|reported`.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
 /// `lane-left<TAB><lane><TAB><screen key>|reported`: the screen under which
-/// a merged hosted lane read neither idle nor exited was asked whether its
-/// work left its host.
+/// a merged lane read neither idle nor exited was asked whether its work
+/// left nothing behind.
 pub const LEFT_ROW: &str = "lane-left";
 /// `clone-root<TAB><item><TAB><clone>`: the clone a hosted lane's worktree
 /// `.git` named on the last pass that read it, kept once the worktree is
 /// gone, since the merge's saved state stays in that clone.
 pub const CLONE_ROW: &str = "clone-root";
 /// The row the GitHub duty writes for an item's merged pull requests, which
-/// admits the finished-hosted close.
+/// admits the finished close.
 const MERGED_ROW: &str = super::github::MERGED_ROW;
 
 /// The reads the hosted arms take beyond the scripts directory, injected
@@ -2128,6 +2128,24 @@ pub fn record_left(scripts: &Path, lane: &Lane) -> Answer<()> {
     }
 }
 
+/// [`record_left`] for a lane on this machine, read by the close verb and
+/// the watch alike: its worktree (the record's `mail_root`) gone, else the
+/// item's live state record under `state_dir`, the fleet's, which the
+/// close-out removes. `Unreadable` carries the state record's read error.
+pub fn left_locally(state_dir: &Path, lane: &Lane) -> Answer<()> {
+    let root = lane.mail_root.as_deref().unwrap_or("");
+    if std::fs::symlink_metadata(root).is_err() {
+        return Answer::Gone;
+    }
+    match std::fs::metadata(state::item_path(state_dir, &lane.item)) {
+        Ok(_) => Answer::Live(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Answer::Gone,
+        Err(e) => Answer::Unreadable {
+            cause: e.to_string(),
+        },
+    }
+}
+
 /// The clone [`CLONE_ROW`] keeps for `item` in the watch's baseline beside
 /// the fleet state at `fleet`. `None` is a lane no pass read standing; `Err`
 /// a baseline that does not read.
@@ -2201,11 +2219,12 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
     )
 }
 
-// --- the finished-hosted close ------------------------------------------------
+// --- the finished close -------------------------------------------------------
 
-/// The finished-hosted close at a hosted lane's
+/// The finished close at a lane's
 /// `lane-exited`, `lane-idle` or `lane-left` line: a lane whose item the GitHub duty read
-/// merged and whose work left nothing on its host ([`record_left`]) is
+/// merged and whose work left nothing behind ([`left_locally`] on this
+/// machine, [`record_left`] on its host) is
 /// closed through the one close; one whose item's record stands is inside
 /// its merge close-out or resumed and is left. A lane its provider's status
 /// verb read exited on two passes (`lane-exited`) whose item has no merge
@@ -2228,18 +2247,19 @@ pub fn close_finished(
     let Ok(caps) = hosts.of(lane) else {
         return;
     };
-    if host_of(lane) == "local" {
-        return;
-    }
     let merged = pass
         .baseline
         .get(MERGED_ROW, &lane.item)
         .is_some_and(|row| !row.is_empty());
     let reason = if merged {
-        if caps.files != Files::Verb {
+        let left = if host_of(lane) == "local" {
+            left_locally(pass.state_dir, lane)
+        } else if caps.files == Files::Verb {
+            record_left(pass.scripts, lane)
+        } else {
             return;
-        }
-        match record_left(pass.scripts, lane) {
+        };
+        match left {
             Answer::Live(()) => return,
             Answer::Gone => {}
             Answer::Unreadable { cause } => {
@@ -2277,17 +2297,17 @@ pub fn close_finished(
     }
 }
 
-/// A hosted lane read neither idle nor exited: where the GitHub duty read
-/// its item merged, it is asked once per screen `key` whether its work left
-/// its host, and closed through [`close_finished`] where it did, since the
-/// screen of a lane whose work is over proves nothing. A close that failed
-/// un-reports the row, so the next pass asks again.
+/// A lane, local or hosted, read neither idle nor exited: where the GitHub
+/// duty read its item merged, it is asked once per screen `key` whether its
+/// work left nothing behind, and closed through [`close_finished`] where it
+/// did, since the screen of a lane whose work is over proves nothing. A
+/// close that failed un-reports the row, so the next pass asks again.
 pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut Produced) {
     let merged = pass
         .baseline
         .get(MERGED_ROW, &lane.item)
         .is_some_and(|row| !row.is_empty());
-    if !merged || host_of(lane) == "local" {
+    if !merged {
         return;
     }
     let name = lane_name(lane);

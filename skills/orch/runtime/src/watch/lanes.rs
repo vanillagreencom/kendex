@@ -36,8 +36,8 @@
 //! (`watch::hosted`): a kind with a local pane is read by that pane as a local
 //! lane is, a `status=verb` kind through the provider's status verb as well, a
 //! `status=none` kind (a cloud session) by its pull request alone; a hosted
-//! lane's status file and records are read through the provider, and a merged
-//! hosted lane whose worktree the host no longer has is closed through
+//! lane's status file and records are read through the provider. A merged
+//! lane, local or hosted, whose work left nothing behind is closed through
 //! `close-lane` at its `lane-exited` or `lane-idle` line, or once per screen
 //! on any other reading.
 
@@ -948,7 +948,7 @@ pub fn watch_state_dir(claim_store: &Path) -> &Path {
 
 /// The lanes pass: every in-flight lane a pane or the provider's status verb
 /// judges read once, the lines printed for each kind, the hosted readings (the
-/// prepare records, the cloud stall, the finished-hosted close), the stray
+/// prepare records, the cloud stall), the finished close of a merged lane, the stray
 /// sweep and the start stall, with the rows that keep each line news once. A
 /// host whose capability line could not be read is the pass's failure once,
 /// and its lanes are left unjudged this pass.

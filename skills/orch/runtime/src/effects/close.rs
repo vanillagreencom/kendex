@@ -741,16 +741,28 @@ impl Close<'_> {
     /// The ground a lane whose work may be over closes on: its item ended
     /// by its tracker, else its merge landed with its work over
     /// ([`Self::merged_and_done`]); `None` is a lane still at work on an
-    /// open item. A tracker that does not answer refuses.
+    /// open item. A tracker that does not answer refuses, unless the landing
+    /// and the work's end prove the lane over, as they do whatever its
+    /// screen reads: the item's files then stay with the tracker's cause.
     fn finished(&self, notes: &mut Vec<String>) -> Result<Option<Ground>> {
-        if let Some(t) = terminal(verdict(self.settings, &self.lane, &self.who, false)?) {
-            return Ok(Some(Ground::Terminal(t)));
+        let open = match verdict(self.settings, &self.lane, &self.who, false) {
+            Ok(state) => match terminal(state) {
+                Some(t) => return Ok(Some(Ground::Terminal(t))),
+                None => Ok(()),
+            },
+            Err(e) => Err(e),
+        };
+        match self.merged_and_done() {
+            Ok(true) => {
+                let cause = open
+                    .as_ref()
+                    .map_or_else(cause_word, |()| "open".to_owned());
+                notes.push(format!("item-files-kept cause={cause}"));
+                Ok(Some(Ground::Ended("merged")))
+            }
+            Ok(false) => open.map(|()| None),
+            Err(e) => Err(open.err().unwrap_or(e)),
         }
-        if !self.merged_and_done()? {
-            return Ok(None);
-        }
-        notes.push("item-files-kept cause=open".to_owned());
-        Ok(Some(Ground::Ended("merged")))
     }
 
     /// A record no pane carries, its recorded pane gone or none recorded:
@@ -866,8 +878,9 @@ impl Close<'_> {
 
     /// Whether the record's merge cycle, or the delivery the request names,
     /// stands and the lane's last work is over: its item closed out or its
-    /// worktree gone, read on its host through the provider where it is
-    /// hosted ([`hosted::record_left`]). The close-out removes the live state
+    /// worktree gone, read here ([`hosted::left_locally`], the watch's own
+    /// reading) or on its host through the provider where it is hosted
+    /// ([`hosted::record_left`]). The close-out removes the live state
     /// record only once the project's verification passed, and the close
     /// stops the session before it releases the worktree, so a lane need not
     /// remove the directory it runs in. A recorded merge alone is no proof:
@@ -879,7 +892,23 @@ impl Close<'_> {
         }
         let root = self.lane.mail_root.as_deref().unwrap_or("");
         if !self.hosted() {
-            return Ok(std::fs::symlink_metadata(root).is_err() || self.closed_out()?);
+            return match hosted::left_locally(&self.settings.state_dir, &self.lane) {
+                HostAnswer::Gone => Ok(true),
+                HostAnswer::Live(()) => Ok(false),
+                HostAnswer::Unreadable { cause } => Err(refused(
+                    "state-unreadable",
+                    &[
+                        ("item", self.item()),
+                        (
+                            "path",
+                            &state::item_path(&self.settings.state_dir, self.item())
+                                .display()
+                                .to_string(),
+                        ),
+                        ("cause", &cause),
+                    ],
+                )),
+            };
         }
         match hosted::record_left(self.scripts, &self.lane) {
             HostAnswer::Gone => Ok(true),
@@ -891,23 +920,6 @@ impl Close<'_> {
                     "worktree-read-failed"
                 },
                 &[("item", self.item()), ("root", root), ("cause", &cause)],
-            )),
-        }
-    }
-
-    /// Whether the item's close-out removed its live state record.
-    fn closed_out(&self) -> Result<bool> {
-        let path = state::item_path(&self.settings.state_dir, self.item());
-        match std::fs::metadata(&path) {
-            Ok(_) => Ok(false),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
-            Err(e) => Err(refused(
-                "state-unreadable",
-                &[
-                    ("item", self.item()),
-                    ("path", &path.display().to_string()),
-                    ("cause", &e.to_string()),
-                ],
             )),
         }
     }

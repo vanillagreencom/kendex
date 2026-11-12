@@ -13,6 +13,7 @@
 )]
 
 use serde_json::{Value, json};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -334,9 +335,10 @@ pub fn pane_shell() -> &'static str {
 }
 
 /// A private tmux server on its own socket with one detached session, ended
-/// on drop so a panicking test still reaps it. It reads no configuration
-/// file and names its pane shell, so the host's `~/.tmux.conf` and login
-/// shell reach no row.
+/// on drop so a panicking test still reaps it, and by its guard when this
+/// test process ends with no drop (a signal, `timeout`, an interrupted run).
+/// It reads no configuration file and names its pane shell, so the host's
+/// `~/.tmux.conf` and login shell reach no row.
 pub struct Server {
     pub socket: PathBuf,
     pub session: String,
@@ -347,7 +349,20 @@ pub struct Server {
     /// The server process's start as the runtime's identity reader records
     /// it, which a recorded phase carries beside the tmux start.
     pub process_start: String,
+    /// The child that ends the server once this process is gone: tmux
+    /// detaches its server from the process that started it, so a test
+    /// process ended by a signal, which runs no drop, would leave the server
+    /// and every pane process standing. The guard blocks reading a pipe
+    /// whose one writer is this process, in a process group of its own and
+    /// ignoring the hangup, so no signal a terminal or `timeout` sends this
+    /// process's group reaches it, and ends the server at the pipe's end of
+    /// file, which the kernel gives however this process ends. `None` for a
+    /// server a row stands in with no process of tmux's.
+    pub guard: Option<Child>,
 }
+
+/// The guard's script: `$1` is the server's socket.
+const SERVER_GUARD: &str = "trap '' HUP INT TERM; read -r _; exec tmux -S \"$1\" kill-server";
 
 impl Server {
     pub fn start(dir: &Path, session: &str) -> Server {
@@ -395,12 +410,22 @@ impl Server {
         let mut parts = text.split_whitespace();
         let pid = parts.next().unwrap().parse().expect("server pid");
         let start = parts.next().unwrap().parse().expect("server start");
+        let guard = program("sh")
+            .args(["-c", SERVER_GUARD, "server-guard"])
+            .arg(&socket)
+            .process_group(0)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("the server's guard");
         Server {
             socket,
             session: session.to_owned(),
             pid,
             start,
             process_start: start_of(pid),
+            guard: Some(guard),
         }
     }
 
@@ -639,6 +664,12 @@ impl Drop for Server {
                 .args(["-TERM", &self.pid.to_string()])
                 .output();
         }
+        // The pipe's end lets the guard go; it is reaped here, so a row
+        // leaves no process of its own behind.
+        if let Some(mut guard) = self.guard.take() {
+            drop(guard.stdin.take());
+            let _ = guard.wait();
+        }
     }
 }
 
@@ -684,7 +715,6 @@ impl Drop for Owned {
 /// identity, the command a process group the test leads and holds. Returns
 /// the command and the run's directory.
 pub fn validation_run(worktree: &Path) -> (Owned, PathBuf) {
-    use std::os::unix::process::CommandExt;
     let command = Owned(
         Command::new("sleep")
             .arg("30")

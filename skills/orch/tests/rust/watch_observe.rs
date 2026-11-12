@@ -4522,6 +4522,274 @@ fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
     assert_eq!(world.close_log().len(), 1, "one ask per screen");
 }
 
+/// The scripts directory a pass runs the real close verb from: `orch-runtime`
+/// a wrapper that starts this build's binary in `project` under a cleared
+/// environment, the `gh` fixture in `bin` first on its `PATH` with a fixture
+/// token, the row's private tmux server as its fleet server and git's ceiling
+/// at the temporary root, so `project` is its project root and nothing above
+/// it is read; `project` holds the orch, github and mailbox packages' shipped
+/// scripts, which the verb runs from there (the cycle recorder's
+/// `pr-timeline`, the mailbox reader, `sync-base`).
+fn real_close_scripts(dir: &Path, server: &Server, fleet: &Fleet) -> PathBuf {
+    let project = dir.join("project");
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for package in ["orch", "github", "mailbox"] {
+        let dest = project.join(".agents/skills").join(package);
+        std::fs::create_dir_all(&dest).unwrap();
+        let out = program("cp")
+            .arg("-R")
+            .arg(repo.join(package).join("scripts"))
+            .arg(&dest)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+    let scripts = dir.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let root = std::env::temp_dir();
+    write_executable(
+        &scripts.join(hosted::ORCH_RUNTIME),
+        format!(
+            "#!/bin/sh\ncd '{project}' || exit 1\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{ceiling}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token TMUX='{socket},0,0' AGENT_RUNTIME_TMUX_SESSION='{session}' AGENT_RUNTIME_ACCOUNT_STATE_DIR='{accounts}' '{binary}' --no-private-env \"$@\"\n",
+            project = project.display(),
+            path = tool_path(&[bin.as_path()]),
+            root = root.display(),
+            home = root.join("isolated-home").display(),
+            ceiling = ceilings(&root).to_string_lossy(),
+            socket = server.socket.display(),
+            session = server.session,
+            accounts = fleet.runner.state_dir().join("tmp/oversee-watch").display(),
+            binary = binary().display(),
+        ),
+    );
+    scripts
+}
+
+/// The fleet's slot charges as `lane charges` counts them, by account.
+fn charges(fleet: &Fleet) -> Value {
+    let out = fleet.runner.run(&["lane", "charges", "--fleet"]);
+    reply(&out)["result"]["charges"].clone()
+}
+
+/// A merged local lane whose work left nothing behind is closed by the
+/// watch's own pass whatever its screen reads, and its slot is free: a
+/// local Claude Code lane drawn at the harness's working hint, its item's
+/// live state record gone from the fleet's state directory, the GitHub
+/// duty's merged row standing, is asked closed through the real close verb
+/// with the merge as the delivery (its cycle recorded by the real
+/// `pr-timeline` over the `gh` fixture); the pass says `lane-closed`, the
+/// record reads done, the harness is ended, and `lane charges` counts one
+/// slot fewer for the lane's account than before the pass.
+#[test]
+fn a_merged_local_lane_read_working_is_closed_by_the_watch_and_frees_its_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9c\\xbb Working\\xe2\\x80\\xa6 (esc to interrupt)\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &pane, "claude");
+    await_drawn(&server, &pane, "esc to interrupt");
+    let worktree = dir.path().join("worktree");
+    let mut lane = lane_record(
+        "issue-1",
+        "gh-1",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        &worktree,
+    );
+    lane["repo"] = json!("o/r");
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    let scripts = real_close_scripts(dir.path(), &server, &fleet);
+    std::fs::write(
+        dir.path().join("bin/gh.json"),
+        json!({"graphql number=7 cursor=": pull_seven_timeline()}).to_string(),
+    )
+    .unwrap();
+    let before = charges(&fleet);
+    assert_eq!(before["/home/me/.eclaude"], json!(1), "{before}");
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = scripts;
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "issue-1".into(),
+        value: "o/r#7".into(),
+    });
+    let first = driver.pass(&state);
+    let said = lines(&first);
+    assert!(
+        said.contains(&"EVENT lane-closed issue-1".to_owned()),
+        "{said:?} {:?}",
+        first.failed
+    );
+    let closed = fleet.read();
+    let record = closed.lanes.iter().find(|l| l.item == "issue-1").unwrap();
+    assert_eq!(record.status, state::LaneStatus::Done, "{record:?}");
+    assert!(!live(identity.pid), "the harness was ended");
+    let after = charges(&fleet);
+    assert_eq!(
+        after.get("/home/me/.eclaude"),
+        None,
+        "{before} then {after}"
+    );
+}
+
+/// A merged local lane whose work left nothing behind is closed by the
+/// watch's own pass at its finished line, and its slot is free: one local
+/// Claude Code lane at its composer, read idle on two passes
+/// (`idle-after-return`), and one whose harness ended and whose pane holds
+/// only its shell, read exited on two passes (`lane-exited`), each with its
+/// item's live state
+/// record gone from the fleet's state directory and the GitHub duty's merged
+/// row standing, are asked closed through the real close verb with their
+/// merges as the deliveries; the pass says `lane-closed` for each, the
+/// records read done, the idle lane's harness is ended, and `lane charges`
+/// no longer counts its account, which it counted before the pass.
+#[test]
+fn a_merged_local_lane_read_idle_or_exited_is_closed_by_the_watch_and_frees_its_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let idle = server.open_window(
+        "gh-1",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &idle, "claude");
+    await_drawn(&server, &idle, "❯");
+    let exited = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    await_bare(&server, &exited);
+    // The second lane's harness ran and ended: its launch identity names a
+    // process that is gone, and its pane holds only its shell.
+    let mut harness = std::process::Command::new(&claude)
+        .arg("600")
+        .spawn()
+        .unwrap();
+    let Reading::Live(ended) = agent_runtime::process::identity(harness.id()) else {
+        panic!("the harness's identity did not read");
+    };
+    harness.kill().unwrap();
+    harness.wait().unwrap();
+    let mut one = lane_record(
+        "issue-1",
+        "gh-1",
+        "claude",
+        &server,
+        &idle,
+        Some(&identity),
+        &dir.path().join("worktree-1"),
+    );
+    one["repo"] = json!("o/r");
+    let mut two = lane_record(
+        "issue-2",
+        "gh-2",
+        "claude",
+        &server,
+        &exited,
+        Some(&ended),
+        &dir.path().join("worktree-2"),
+    );
+    two["repo"] = json!("o/r");
+    two["account"] = json!("/home/me/.fclaude");
+    fleet.set_lanes(vec![one, two]);
+    let state = fleet.read();
+    let scripts = real_close_scripts(dir.path(), &server, &fleet);
+    let mut eight = pull_seven_timeline();
+    eight["body"]["data"]["repository"]["pullRequest"]["number"] = json!(8);
+    std::fs::write(
+        dir.path().join("bin/gh.json"),
+        json!({
+            "graphql number=7 cursor=": pull_seven_timeline(),
+            "graphql number=8 cursor=": eight,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let before = charges(&fleet);
+    assert_eq!(
+        (
+            before.get("/home/me/.eclaude"),
+            before.get("/home/me/.fclaude")
+        ),
+        (Some(&json!(1)), None),
+        "an ended harness charges no slot: {before}"
+    );
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = scripts;
+    for (item, merged) in [("issue-1", "o/r#7"), ("issue-2", "o/r#8")] {
+        driver.baseline.apply(Change::Set {
+            kind: "merged".into(),
+            identity: item.into(),
+            value: merged.into(),
+        });
+    }
+    let first = driver.pass(&state);
+    assert!(event_lines(&first).is_empty(), "{:?}", lines(&first));
+    let second = driver.pass(&state);
+    let said = event_lines(&second);
+    for line in [
+        "EVENT idle-after-return gh-1",
+        "EVENT lane-exited gh-2",
+        "EVENT lane-closed issue-1",
+        "EVENT lane-closed issue-2",
+    ] {
+        assert!(
+            said.contains(&line.to_owned()),
+            "{line}: {said:?} {:?}",
+            second.failed
+        );
+    }
+    let closed = fleet.read();
+    for item in ["issue-1", "issue-2"] {
+        let record = closed.lanes.iter().find(|l| l.item == item).unwrap();
+        assert_eq!(record.status, state::LaneStatus::Done, "{record:?}");
+    }
+    assert!(!live(identity.pid), "the harness was ended");
+    let after = charges(&fleet);
+    assert_eq!(
+        (
+            after.get("/home/me/.eclaude"),
+            after.get("/home/me/.fclaude")
+        ),
+        (None, None),
+        "{before} then {after}"
+    );
+}
+
+/// pr-timeline's one GraphQL read of the merged pull request 7, its three
+/// selections of `commits` planted under their arguments.
+fn pull_seven_timeline() -> Value {
+    json!({"body": {"data": {"repository": {"pullRequest": {
+        "number": 7, "state": "MERGED", "body": "", "createdAt": "2026-09-20T09:10:00Z", "mergedAt": "2026-09-20T11:20:00Z",
+        "author": {"login": "lane-app"}, "headRefName": "", "headRepository": null,
+        "mergeCommit": {"__typename": "Commit", "oid": "m1",
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}},
+        "commits(first: 1)": {"nodes": [{"commit": {"authoredDate": "2026-09-20T09:00:00Z"}}]},
+        "commits(last: 1)": {"nodes": [{"commit": {"__typename": "Commit", "oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
+            "status": {"context": {"state": "SUCCESS", "createdAt": "2026-09-20T10:25:00Z"}},
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}]},
+        "commits(last: 100)": {"totalCount": 0, "nodes": []},
+        "reviews": {"totalCount": 0, "nodes": []},
+        "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}
+    }}}}})
+}
+
 /// A close the tracker's quota refusal deferred has its `lane-exited` line
 /// already reported, so the deferred close keeps `close-pending` as
 /// `lane-exited|<pane key>`; the next pass, its line still reported under
