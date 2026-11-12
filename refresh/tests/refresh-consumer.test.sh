@@ -144,11 +144,23 @@ case "$*" in
       [ "$(cat "$TEST_STATE/branch-protected")" != fail ] || exit 87
       cat "$TEST_STATE/branch-protected"
     else printf 'false\n'; fi ;;
+  'api repos/acme/test/rulesets/'*' --jq .current_user_can_bypass')
+    answer="$TEST_STATE/ruleset-bypass-${2##*/}"
+    if [ -f "$answer" ]; then
+      [ "$(cat "$answer")" != fail ] || exit 87
+      cat "$answer"
+    else printf 'never\n'; fi ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
+  'api graphql '*'mergeQueue(branch: $branch)'*)
+    # The landing check's queue read, answered as its --jq filter prints it.
+    if [ -f "$TEST_STATE/queue-entries" ]; then
+      [ "$(cat "$TEST_STATE/queue-entries")" != fail ] || exit 87
+      cat "$TEST_STATE/queue-entries"
+    else printf '0\n'; fi ;;
   'api graphql '*)
     # A read before any refusal is the run-start read, which precedes the
     # refresh.
@@ -352,6 +364,25 @@ if [ -f "$TEST_STATE/classifier-proof" ] &&
 fi
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
+if [ "${1:-}" = push ] && [[ " $* " == *':refs/heads/main '* ]] && [ -f "$TEST_STATE/land-mode" ]; then
+  printf 'git push main\n' >>"$TEST_STATE/calls"
+  # git's own refusal of a push behind the remote, then GitHub's refusal of
+  # a push a ruleset holds.
+  case "$(cat "$TEST_STATE/land-mode")" in
+    moved)
+      printf '%s\n' 'To https://github.com/acme/test' \
+        ' ! [rejected]        HEAD -> main (fetch first)' \
+        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
+      exit 1 ;;
+    rejected)
+      printf '%s\n' 'remote: error: GH013: Repository rule violations found for refs/heads/main.        ' \
+        'To https://github.com/acme/test' \
+        ' ! [remote rejected] HEAD -> main (push declined due to repository rule violations)' \
+        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
+      exit 1 ;;
+    *) exit 2 ;;
+  esac
+fi
 if [ "${1:-}" = push ]; then
   printf 'git push\n' >>"$TEST_STATE/calls"
   case "${TEST_PUSH_MODE:-normal}" in
@@ -945,8 +976,10 @@ ARM_CONTROL
         ok "control: $name without pauses turns the arm assertion red"
       else bad "$name pause control" "$OUT"; fi
     elif [ "$mutation" = skip-rules ]; then
+      # The landing check reads the rules once, ahead of the read this
+      # control removes.
       if [ "$RC" -eq 0 ] && [ "$arm_matches" = false ] && [ -f "$TMP/state/armed" ] &&
-          ! grep -qxF 'api repos/acme/test/rules/branches/main' "$TMP/state/calls"; then
+          [ "$(grep -cxF 'api repos/acme/test/rules/branches/main' "$TMP/state/calls")" -eq 1 ]; then
         ok 'control: skipping the rules read turns the unprotected merge assertion red'
       else bad "$name skipped rules control" "$OUT"; fi
     elif [ "$mutation" = ignore-rules ] || [ "$mutation" = ignore-protection ]; then
@@ -972,6 +1005,101 @@ rm -f -- "$TMP/state/branch-rules" "$TMP/state/branch-protected"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 cp "$TMP/arm-helper" "$arm_helper"
+# A proved render lands on the default branch from the run itself, with no
+# pull request, where each ruleset on that branch answers always for the
+# run's credential and its merge queue is empty. Every other answer, class
+# and refusal keeps the pull request route. A default branch that moved and
+# a busy merge queue defer to the next run.
+# Each run restores the remote's default branch, so the next starts from it.
+land_matches() { # OUTCOME CLASS
+  local main rolling
+  main="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" || return 1
+  rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
+  [ "$RC" -eq 0 ] || return 1
+  case "$1" in
+    landed)
+      [ "$main" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$main^")" = "$land_base" ] &&
+        [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=landed pr=none class=render head=$main" <<<"$OUT" &&
+        grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" &&
+        ! grep -q '^pr merge \|^api --method ' "$TMP/state/calls" &&
+        grep -qxF "Landed \`$main\` on \`main\` with no pull request." "$TMP/state/summary" &&
+        grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" ;;
+    base-moved | queue-busy)
+      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+        grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
+        ! grep -q '^pr \|^api --method ' "$TMP/state/calls" || return 1
+      # A busy queue is read before any push.
+      [ "$1" = base-moved ] || ! grep -q '^git push' "$TMP/state/calls" ;;
+    pull | refused | unasked)
+      [ "$main" = "$land_base" ] && [ "$rolling" != "$land_rolling" ] &&
+        grep -qxF "refresh-state=pushed pr=1 class=$2" <<<"$OUT" &&
+        grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
+      case "$1" in
+        refused) grep -qxF 'refresh-land=refused value=1' <<<"$OUT" ;;
+        unasked) ! grep -q 'rules/branches/main$\|/rulesets/' <(sed -n '1,/^git push$/p' "$TMP/state/calls") ;;
+        pull) ! grep -q '^git push main$' "$TMP/state/calls" ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+printf '[{"type":"pull_request","ruleset_id":11},{"type":"merge_queue","ruleset_id":12},{"type":"deletion","ruleset_id":11}]\n' >"$TMP/state/branch-rules"
+for row in \
+  'every-ruleset|always|always|render|true||landed|ignore-answer|' \
+  'one-never|always|never|render|true||pull|ignore-answer|' \
+  'pull-requests-only|pull_request|always|render|true||pull||' \
+  'unread-ruleset|always|fail|render|true||pull||' \
+  'small-class|always|always|small|true||unasked||' \
+  'unmeasured|always|always|standard|false||unasked||' \
+  'base-moved|always|always|render|true|moved|base-moved||' \
+  'push-refused|always|always|render|true|rejected|refused||' \
+  'queue-busy|always|always|render|true||queue-busy||2' \
+  'unread-queue|always|always|render|true||pull||fail'; do
+  IFS='|' read -r name first second class MEASURED land expected control queue <<<"$row"
+  printf '%s\n' "$first" >"$TMP/state/ruleset-bypass-11"
+  printf '%s\n' "$second" >"$TMP/state/ruleset-bypass-12"
+  rm -f -- "$TMP/state/queue-entries"
+  [ -z "$queue" ] || printf '%s\n' "$queue" >"$TMP/state/queue-entries"
+  for mutation in none $control; do
+    reset_default
+    cp "$TMP/arm-runner" "$runner"
+    if [ "$mutation" = ignore-answer ]; then
+      python3 - "$runner" <<'LAND_CONTROL'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1]).resolve()
+s = p.read_text()
+old = '    [ "$answer" = always ] || return 1'
+assert s.count(old) == 1
+changed = s.replace(old, '    : # ' + old.strip())
+assert changed != s
+p.write_text(changed)
+LAND_CONTROL
+    fi
+    commit "$repo"
+    git -C "$repo" push -q origin main
+    land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
+    rm -f -- "$TMP/state/land-mode"
+    [ -z "$land" ] || printf '%s\n' "$land" >"$TMP/state/land-mode"
+    land_rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    : >"$TMP/state/calls"
+    run_refresh "land-$name-$mutation" pass "$class"
+    if [ "$mutation" = none ]; then
+      if land_matches "$expected" "$class"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
+    elif [ "$name" = one-never ]; then
+      if ! land_matches "$expected" "$class" && land_matches landed "$class"; then
+        ok 'control: ignoring a ruleset answer lands past a refusing ruleset'
+      else bad "$name $mutation landing control" "$OUT"; fi
+    elif land_matches "$expected" "$class"; then
+      ok "control: $name $mutation keeps the landing"
+    else bad "$name $mutation landing control" "$OUT"; fi
+    git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+  done
+done
+unset MEASURED
+rm -f -- "$TMP/state/branch-rules" "$TMP/state/land-mode" "$TMP/state/ruleset-bypass-11" "$TMP/state/ruleset-bypass-12" "$TMP/state/queue-entries"
+reset_default
+cp "$TMP/arm-runner" "$runner"
 commit "$repo"
 git -C "$repo" push -q origin main
 run_refresh stale pass render

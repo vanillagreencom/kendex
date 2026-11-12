@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Record this repository's install record on the default branch after a
-# merge, and land it through one rolling pull request.
+# merge, and land it: with one push where GitHub admits this credential past
+# every ruleset on that branch, else through one rolling pull request.
 #
 # Usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]
 #
@@ -42,8 +43,23 @@
 # armed, and a head GitHub never shows within those reads leaves the pull
 # request unarmed, which the next run arms; the run also prints a warning
 # annotation, so under GitHub Actions the unarmed pull request shows on a
-# green run. Nothing here pushes to the default branch: the organization
-# ruleset takes every change to it through the merge queue
+# green run.
+#
+# The record lands with no pull request where every ruleset on the base
+# answers current_user_can_bypass=always for the credential in GH_TOKEN and
+# the base's merge queue is empty, since a push to a branch whose queue
+# holds an entry makes GitHub rebuild every running group: the
+# record is a function of the merged tree, which that tree's merge group
+# already proved, so a second group proves nothing more. The run then
+# commits the record on the head it judged, with [skip ci] in its title, and
+# pushes that one commit to the base: no workflow starts on it, and an open
+# rolling pull request is closed. An unread ruleset, a base with no ruleset,
+# any other answer, a merge queue that holds an entry or could not be read,
+# and a push GitHub refuses keep the rolling pull request.
+# A base that moved past the judged head ends the run with nothing landed:
+# the push that moved it starts a run of its own. Without that admission
+# nothing here pushes to the default branch: the organization ruleset takes
+# every change to it through the merge queue
 # (docs/decisions/D003-one-merge-path.md), and the record takes the same
 # route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
 # follows is skills/AGENTS.md.
@@ -80,6 +96,10 @@
 #   dequeue=<n>                 it could not be removed from the merge queue; nothing pushed (exit 1)
 #   disarmed=<n>                auto-merge was disabled on it ahead of the push
 #   dequeued=<n>                it left the merge queue ahead of the push
+#   landed=<sha> paths=<n>      the record's commit, pushed to the base with no pull request; its paths follow
+#   land-deferred=<sha>         the base moved past that judged head before the push; nothing landed, and the run the newer push started records it
+#   land-refused=<status>       GitHub refused the push to the base; the rolling pull request carries the record instead
+#   pull-request-closed=<n>     the open rolling pull request the landed record superseded
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
 #   pull-request=<n> action=<opened|updated>
@@ -332,6 +352,56 @@ if [[ "$queued" == true ]]; then
     exit 1
   fi
   say dequeued "$number"
+fi
+
+# Whether this credential may push the record to the base itself: every
+# ruleset on the base must answer always, and the base's merge queue must be
+# empty, read after the dequeue above took this run's own pull request out.
+# The filter refuses a rule that names no ruleset, and a base with no
+# ruleset has none to ask.
+may_land() {
+  local ids id answer queued
+  ids="$(cd -- "$repo" && gh api "repos/{owner}/{repo}/rules/branches/$base" \
+    --jq 'map(.ruleset_id) | if all(type == "number") then unique | .[] else error("ruleset") end')" || return 1
+  [[ -n "$ids" ]] || return 1
+  while IFS= read -r id; do
+    answer="$(cd -- "$repo" && gh api "repos/{owner}/{repo}/rulesets/$id" --jq .current_user_can_bypass)" || return 1
+    [[ "$answer" == always ]] || return 1
+  done <<<"$ids"
+  queued="$(cd -- "$repo" && gh api graphql -F owner='{owner}' -F repo='{repo}' -f branch="$base" \
+    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
+    --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1
+  [[ "$queued" == 0 ]]
+}
+if may_land; then
+  # The commit is made from the index and never checked out, so a refused
+  # push leaves the tree as the rolling route below expects it.
+  land_err="$(mktemp)"
+  trap 'rm -f -- "$land_err"' EXIT
+  tree="$(git -C "$repo" write-tree)"
+  landed="$(git -C "$repo" commit-tree "$tree" -p "$head" \
+    -m "$title [skip ci]" \
+    -m "kendex refresh, built from $head, wrote these paths on $base after the merges up to that head. Every ruleset on $base admits this run's credential, so the run pushed the record to $base itself, and [skip ci] starts no workflow on it.")"
+  rc=0
+  git -C "$repo" push --quiet "$remote" "$landed:refs/heads/$base" 2>"$land_err" || rc=$?
+  cat -- "$land_err" >&2
+  if [[ $rc -eq 0 ]]; then
+    say landed "$landed paths=$count" "$changed"
+    if [[ -n "$number" ]]; then
+      (cd -- "$repo" && gh pr close "$number")
+      say pull-request-closed "$number"
+    fi
+    git -C "$repo" reset -q --hard HEAD
+    exit 0
+  fi
+  # git prints "[rejected]" for a base that moved; GitHub's own refusal
+  # prints "[remote rejected]".
+  if grep -qF ' ! [rejected]' "$land_err"; then
+    say land-deferred "$head" "$base moved past $head before the record could land; the run the newer push started records it"
+    git -C "$repo" reset -q --hard HEAD
+    exit 0
+  fi
+  say land-refused "$rc" "GitHub refused the push of the record to $base, as printed above; the rolling pull request carries it instead" >&2
 fi
 
 git -C "$repo" checkout -q -B "$branch"

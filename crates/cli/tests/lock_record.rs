@@ -41,6 +41,12 @@
 //! unarmed; and with the failed edit's `arm=` field always `armed`, the
 //! unarmed failed-edit row reddens.
 //!
+//! The landing route: with the ruleset answer taken as `always` whatever
+//! GitHub said, the refusing-ruleset row lands the record on `main` and
+//! opens no pull request; with the queue read taken as empty, the
+//! busy-queue row lands it too; and with the `[rejected]` read dropped, the
+//! moved-base row pushes the rolling branch.
+//!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
 //! nothing and stay countable.
@@ -165,7 +171,13 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// hold a merge queue with `GH_QUEUE`'s method where it is set, and the
 /// repository's squash, merge and rebase flags are `GH_METHODS` (all three
 /// unset). `GH_FAIL` fails the `default`, `rules` or `settings` read, and
-/// `methods-none` answers flags that allow nothing.
+/// `methods-none` answers flags that allow nothing. The landing reads: the
+/// base's ruleset ids are `GH_RULESETS`, none unset, and each ruleset
+/// answers `GH_BYPASS` for the credential, `never` unset and for the id
+/// `GH_REFUSES` names; `GH_FAIL` fails the `rulesets` list or the `bypass`
+/// read. The base's merge queue holds `GH_QUEUED` entries, none unset, and
+/// `GH_FAIL` fails that `queue` read. `pr close` removes the pull request's
+/// open, armed and queued state.
 const GH_STUB: &str = "#!/bin/sh
 printf '%s\\n' \"$*\" >> \"$GH_LOG\"
 case \"$1 $2\" in
@@ -173,7 +185,16 @@ case \"$1 $2\" in
   'api repos/acme/widgets')
     [ \"$GH_FAIL\" != default ] || { echo 'gh stub: default refused' >&2; exit 1; }
     printf '%s\\n' \"${GH_DEFAULT:-main}\"; exit 0 ;;
+  'api repos/{owner}/{repo}/rulesets/'*)
+    [ \"$GH_FAIL\" != bypass ] || { echo 'gh stub: bypass refused' >&2; exit 1; }
+    [ \"${2##*/}\" != \"$GH_REFUSES\" ] || { echo never; exit 0; }
+    printf '%s\\n' \"${GH_BYPASS:-never}\"; exit 0 ;;
   'api repos/{owner}/{repo}/rules/branches/'*)
+    case \"$*\" in *ruleset_id*)
+      [ \"$GH_FAIL\" != rulesets ] || { echo 'gh stub: rulesets refused' >&2; exit 1; }
+      [ -z \"$GH_RULESETS\" ] || printf '%s\\n' $GH_RULESETS
+      exit 0 ;;
+    esac
     [ \"$GH_FAIL\" != rules ] || { echo 'gh stub: rules refused' >&2; exit 1; }
     [ -z \"$GH_QUEUE\" ] || printf '{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"%s\"}}\\n' \"$GH_QUEUE\"
     exit 0 ;;
@@ -192,6 +213,8 @@ case \"$1 $2\" in
   'pr edit')
     [ \"$GH_FAIL\" != edit ] || { echo 'gh stub: edit refused' >&2; exit 1; }
     exit 0 ;;
+  'pr close')
+    rm -f \"$GH_STATE/open\" \"$GH_STATE/armed\" \"$GH_STATE/queued\"; exit 0 ;;
   'pr view')
     [ \"$GH_FAIL\" != view ] || { echo 'gh stub: view refused' >&2; exit 1; }
     lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
@@ -209,6 +232,9 @@ case \"$1 $2\" in
     : > \"$GH_STATE/armed\"; exit 0 ;;
   'api graphql')
     case \"$*\" in
+      *'mergeQueue(branch'*)
+        [ \"$GH_FAIL\" != queue ] || { echo 'gh stub: queue refused' >&2; exit 1; }
+        printf '%s\\n' \"${GH_QUEUED:-0}\"; exit 0 ;;
       *isInMergeQueue*)
         [ \"$GH_FAIL\" != state ] || { echo 'gh stub: state refused' >&2; exit 1; }
         if [ -f \"$GH_STATE/armed\" ]; then a=true; else a=false; fi
@@ -438,15 +464,30 @@ impl World {
     /// The script against the checkout it judges, every `gh` read answered
     /// and every `kendex` verb run.
     fn lock_record(&self) -> Output {
+        self.lock_record_with("", &[])
+    }
+
+    /// `lock_record`, with `GH_FAIL` set to `gh_fail` and `env` added to the
+    /// `gh` stub's environment.
+    fn lock_record_with(&self, gh_fail: &str, env: &[(&str, &str)]) -> Output {
         let judged = match self.checkout {
             Checkout::Clone => self.main.clone(),
             Checkout::Shallow => self.shallow_checkout(),
         };
-        self.run(
+        self.run_with(
             &["--repo", &judged.display().to_string(), "--base", "main"],
+            gh_fail,
             "",
-            "",
+            env,
         )
+    }
+
+    /// The origin's `main` as the remote holds it.
+    fn origin_main(&self) -> String {
+        self.fetch_origin();
+        git_ok(&self.home, &self.main, &["rev-parse", "origin/main"])
+            .trim()
+            .to_owned()
     }
 
     /// The checkout the script judged on its last run.
@@ -835,6 +876,239 @@ fn the_rolling_pull_request_takes_the_default_branch_and_merge_method_github_nam
 /// the rolling pull request's commit verifies clean on the new head, so
 /// nothing is pushed and the gh reads are the base's merge method, the list
 /// and the state.
+/// Variables added to the `gh` stub's environment for one run.
+type StubEnv = &'static [(&'static str, &'static str)];
+
+/// GitHub admits the run's credential past both rulesets on the base.
+const ADMITTED: StubEnv = &[("GH_RULESETS", "7 8"), ("GH_BYPASS", "always")];
+
+/// The record landed on `main` itself: one commit on the judged `head`,
+/// holding the record and nothing else, titled with `[skip ci]` so no
+/// workflow starts on it, with no pull request opened or armed and the
+/// judged checkout left clean.
+fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
+    let tip = world.origin_main();
+    assert!(
+        output.contains(&format!("lock-record: landed={tip} paths=")),
+        "{output}"
+    );
+    let parent = git_ok(&world.home, &world.main, &["rev-parse", "origin/main^"]);
+    assert_eq!(parent.trim(), head, "{output}");
+    let changed = git_ok(
+        &world.home,
+        &world.main,
+        &["diff", "--name-only", head, "origin/main"],
+    );
+    assert_eq!(changed.trim(), ".kendex-lock.json", "{output}");
+    let title = git_ok(
+        &world.home,
+        &world.main,
+        &["log", "-1", "--format=%s", "origin/main"],
+    );
+    let short = git_ok(&world.home, &world.main, &["rev-parse", "--short", head]);
+    assert_eq!(
+        title.trim(),
+        format!(
+            "chore(lock): record the install record at {} [skip ci]",
+            short.trim()
+        ),
+        "{output}"
+    );
+    let log = world.gh_log();
+    let asked = log.strip_prefix(before).unwrap_or(&log);
+    assert!(!asked.contains("pr create"), "{asked}");
+    assert!(!asked.contains("pr merge"), "{asked}");
+    let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
+    assert_eq!(status, "", "{output}");
+}
+
+/// Where every ruleset on the base admits the run's credential, the record
+/// lands on `main` with one push and no pull request, from the clone and
+/// from the workflow's shallow checkout, and `main` then verifies clean.
+#[test]
+fn the_record_lands_on_main_where_every_ruleset_admits_the_credential() {
+    for checkout in [Checkout::Clone, Checkout::Shallow] {
+        let world = world_with(Source::Path, checkout);
+        world.branch("a", "ship");
+        assert!(world.queue_merge("a").status.success());
+        let head = world.main_head();
+        let before = world.gh_log();
+        let landed = world.lock_record_with("", ADMITTED);
+        let output = said(&landed);
+        assert_eq!(landed.status.code(), Some(0), "{output}");
+        assert_landed(&world, &head, &before, &output);
+        let absent = git(
+            &world.home,
+            &world.main,
+            &[
+                "ls-remote",
+                "--exit-code",
+                "origin",
+                "refs/heads/kendex/lock",
+            ],
+        );
+        assert_eq!(absent.status.code(), Some(2), "{}", said(&absent));
+        world.fresh_clone_verifies_clean();
+    }
+}
+
+/// A landed record supersedes the open rolling pull request an earlier run
+/// armed: the run disarms it, lands the record and closes it.
+#[test]
+fn a_landed_record_closes_the_open_rolling_pull_request() {
+    let world = world();
+    world.branch("a", "ship");
+    world.branch("b", "roll");
+    assert!(world.queue_merge("a").status.success());
+    let first = world.lock_record();
+    let output = said(&first);
+    assert_eq!(first.status.code(), Some(0), "{output}");
+    assert_recorded_and_opened(&world, &output, 41);
+    let rolling = world.rolling_head();
+    assert!(world.queue_merge("b").status.success());
+    let head = world.main_head();
+    let before = world.gh_log();
+    let landed = world.lock_record_with("", ADMITTED);
+    let output = said(&landed);
+    assert_eq!(landed.status.code(), Some(0), "{output}");
+    assert_landed(&world, &head, &before, &output);
+    assert!(output.contains("lock-record: disarmed=41"), "{output}");
+    assert!(
+        output.contains("lock-record: pull-request-closed=41"),
+        "{output}"
+    );
+    let log = world.gh_log();
+    assert!(log.contains("pr close 41\n"), "{log}");
+    assert_eq!(world.rolling_head(), rolling, "{output}");
+    assert!(!world.gh_state.join("open").exists(), "{output}");
+    world.fresh_clone_verifies_clean();
+}
+
+/// Every answer short of `always` from every ruleset keeps the rolling pull
+/// request: a ruleset that refuses, one that admits the credential on pull
+/// requests only, an unread ruleset list and an unread ruleset. So does a
+/// merge queue that holds an entry, whose running groups a push to `main`
+/// would rebuild, and one that could not be read. `main` stays where the
+/// merge left it.
+#[test]
+fn any_ruleset_short_of_always_or_a_busy_queue_keeps_the_rolling_pull_request() {
+    let rows: &[(&str, StubEnv)] = &[
+        (
+            "",
+            &[
+                ("GH_RULESETS", "7 8"),
+                ("GH_BYPASS", "always"),
+                ("GH_REFUSES", "8"),
+            ],
+        ),
+        ("", &[("GH_RULESETS", "7 8"), ("GH_BYPASS", "pull_request")]),
+        ("rulesets", ADMITTED),
+        ("bypass", ADMITTED),
+        (
+            "",
+            &[
+                ("GH_RULESETS", "7 8"),
+                ("GH_BYPASS", "always"),
+                ("GH_QUEUED", "1"),
+            ],
+        ),
+        ("queue", ADMITTED),
+    ];
+    for (gh_fail, env) in rows {
+        let world = world();
+        world.branch("a", "ship");
+        assert!(world.queue_merge("a").status.success());
+        let head = world.main_head();
+        let recorded = world.lock_record_with(gh_fail, env);
+        let output = said(&recorded);
+        assert_eq!(
+            recorded.status.code(),
+            Some(0),
+            "{gh_fail} {env:?}: {output}"
+        );
+        assert!(
+            !output.contains("lock-record: landed="),
+            "{gh_fail} {env:?}: {output}"
+        );
+        assert_recorded_and_opened(&world, &output, 41);
+        assert_eq!(world.origin_main(), head, "{gh_fail} {env:?}: {output}");
+    }
+}
+
+/// A base that moved past the judged head lands nothing and pushes nothing:
+/// the push that moved it starts a run of its own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_base_that_moved_past_the_judged_head_defers_the_record() {
+    let world = world();
+    world.branch("a", "ship");
+    assert!(world.queue_merge("a").status.success());
+    let head = world.main_head();
+    let other = world.home.join("other");
+    git_ok(
+        &world.home,
+        &world.home,
+        &[
+            "clone",
+            "--quiet",
+            &world.origin.display().to_string(),
+            &other.display().to_string(),
+        ],
+    );
+    git_ok(
+        &world.home,
+        &other,
+        &["commit", "-q", "--allow-empty", "-m", "a later merge"],
+    );
+    git_ok(&world.home, &other, &["push", "-q", "origin", "main"]);
+    let moved = git_ok(&world.home, &other, &["rev-parse", "HEAD"]);
+    let before = world.gh_log();
+    let deferred = world.lock_record_with("", ADMITTED);
+    let output = said(&deferred);
+    assert_eq!(deferred.status.code(), Some(0), "{output}");
+    assert!(
+        output.contains(&format!("lock-record: land-deferred={head}")),
+        "{output}"
+    );
+    assert_eq!(world.origin_main(), moved.trim(), "{output}");
+    let log = world.gh_log();
+    let asked = log.strip_prefix(&before).unwrap();
+    assert!(!asked.contains("pr create"), "{asked}");
+    let status = git_ok(&world.home, &world.main, &["status", "--porcelain"]);
+    assert_eq!(status, "", "{output}");
+    let absent = git(
+        &world.home,
+        &world.main,
+        &[
+            "ls-remote",
+            "--exit-code",
+            "origin",
+            "refs/heads/kendex/lock",
+        ],
+    );
+    assert_eq!(absent.status.code(), Some(2), "{}", said(&absent));
+}
+
+/// A push GitHub refuses, where the rulesets answered `always`, names the
+/// refusal and falls back to the rolling pull request.
+#[test]
+fn a_refused_push_to_main_falls_back_to_the_rolling_pull_request() {
+    let world = world();
+    world.branch("a", "ship");
+    assert!(world.queue_merge("a").status.success());
+    let head = world.main_head();
+    executable(
+        &world.origin.join("hooks/update"),
+        "#!/bin/sh\n[ \"$1\" != refs/heads/main ] || { echo 'GH013: Repository rule violations found for refs/heads/main.' >&2; exit 1; }\n",
+    );
+    let recorded = world.lock_record_with("", ADMITTED);
+    let output = said(&recorded);
+    assert_eq!(recorded.status.code(), Some(0), "{output}");
+    assert!(output.contains("lock-record: land-refused=1"), "{output}");
+    assert_recorded_and_opened(&world, &output, 41);
+    assert_eq!(world.origin_main(), head, "{output}");
+}
+
 fn assert_stood_down(world: &World, before: &str, output: &str, rolling: &str) {
     assert!(
         output.contains(&format!(

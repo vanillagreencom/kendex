@@ -28,6 +28,7 @@ A path filter that stops a workflow from starting leaves a required context that
 - Do report a consumer's stale settings in the refresh pull request body and remove none of them, from the one list `skills/review-gate/retired-settings.json`; a failed report stops publication and auto-merge like a failed extraction. `refresh/tests/refresh-consumer.test.sh` and `refresh-report.test.sh` hold it.
 - Never replay a consumer refresh in a kendex pull-request check: kendex is public, a check without secrets reads only what kendex commits, and a committed copy of a consumer's inputs would publish private repositories' files.
 - Never record the install record on a branch; `main` re-records it after each merge through one rolling pull request, per [D007](../decisions/D007-lock-record-on-main.md).
+- Do land an update from the run that proved it, with no pull request, only where every ruleset on the default branch answers `current_user_can_bypass=always` for that run's credential and that branch's merge queue is empty. `refresh/refresh-consumer.sh` lands a render it measured as `render measured=true`. `tools/lock-record` lands the record it verified, in a commit titled with `[skip ci]`, so no workflow starts on it. Every other answer keeps the rolling pull request. `refresh/tests/refresh-consumer.test.sh` and `crates/cli/tests/lock_record.rs` hold both routes.
 
 ## The canonical example
 

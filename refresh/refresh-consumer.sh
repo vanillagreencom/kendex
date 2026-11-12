@@ -3,11 +3,16 @@
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
 # checkout and never executes the remote rolling branch. After GitHub shows the
 # published head, it merges directly where the base has no rules or protection,
-# or requests auto-merge. SKILL.md defines the arm outcomes.
+# or requests auto-merge. SKILL.md defines the arm outcomes. A proved render
+# takes neither route where GitHub answers that this run's credential may
+# always bypass every ruleset on the default branch and that branch's merge
+# queue is empty: the run pushes its one commit to that branch, and no pull
+# request, merge group or approval follows.
 # Output records: refresh-state=current pr=none class=none, or
+# refresh-state=landed pr=none class=render head=REVISION, or
 # refresh-state=unchanged|pushed|merged pr=NUMBER class=CLASS, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
-# refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
+# refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved|queue-busy. A consumer
 # whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
@@ -571,6 +576,70 @@ if [ "$class_result" -ne 0 ] || [ -z "$class" ] ||
       { [ "$class" != standard ] || [[ "$class_line" != "class: class=standard measured=false "* ]]; }; }; then
   printf 'refresh-error=read value=class\n' >&2
   exit 1
+fi
+# Whether this run may land its commit on the default branch itself. Only a
+# render this run measured qualifies, and only where each ruleset on that
+# branch answers current_user_can_bypass=always for this credential. An
+# unread rule, a rule with no ruleset and any other answer keep the pull
+# request route. So does a branch with no rules, which the direct merge
+# below already serves. The commit must sit on the base this run fetched: a
+# retained rolling head on an older base keeps the pull request route too.
+# A push to a branch whose merge queue holds an entry makes GitHub rebuild
+# every running group, so a busy queue sets land_hold and the run defers to
+# the next one. An unread queue keeps the pull request route.
+land_hold=""
+refresh_may_land() {
+  local rules ids id answer queued
+  [ "$class" = render ] && [[ "$class_line" == "class: class=render measured=true "* ]] || return 1
+  [ "$(git rev-parse "$head^")" = "$base" ] || return 1
+  rules="$(gh api "repos/$GH_REPO/rules/branches/$default")" || return 1
+  ids="$(jq -r 'if type != "array" then error("rules") else
+    [.[] | .ruleset_id | if type == "number" then . else error("ruleset") end] | unique | .[] end' <<<"$rules")" || return 1
+  [ -n "$ids" ] || return 1
+  while IFS= read -r id; do
+    answer="$(gh api "repos/$GH_REPO/rulesets/$id" --jq .current_user_can_bypass)" || return 1
+    [ "$answer" = always ] || return 1
+  done <<<"$ids"
+  queued="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" -f branch="$default" \
+    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
+    --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1
+  case "$queued" in
+    0) ;;
+    '' | *[!0-9]*) return 1 ;;
+    *) land_hold=queue-busy; return 1 ;;
+  esac
+}
+if refresh_may_land; then
+  land_status=0
+  git push origin "$head:refs/heads/$default" 2>"$TMP/land-stderr" || land_status=$?
+  cat -- "$TMP/land-stderr" >&2
+  if [ "$land_status" -eq 0 ]; then
+    report_settings
+    # The landed commit supersedes an open rolling pull request.
+    if [ -n "$pr" ]; then
+      gh pr close "$pr" --repo "$GH_REPO"
+    fi
+    printf 'refresh-state=landed pr=none class=%s head=%s\n' "$class" "$head"
+    {
+      printf 'Landed `%s` on `%s` with no pull request.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n' \
+        "$head" "$default" "$version_report" "$class" "$class_line"
+      [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report"
+      [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+      [ -z "$retired_items" ] || printf '\nRetired items:\n```text\n%s```\n' "$retired_items"
+    } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+    exit 0
+  fi
+  # git prints "[rejected]" where the default branch moved after this run's
+  # fetch. The next run renders on the new base. GitHub's own refusal prints
+  # "[remote rejected]" and keeps the pull request route.
+  if grep -qF ' ! [rejected]' "$TMP/land-stderr"; then
+    printf 'refresh-state=deferred reason=base-moved\n'
+    exit 0
+  fi
+  printf 'refresh-land=refused value=%s\n' "$land_status"
+elif [ -n "$land_hold" ]; then
+  printf 'refresh-state=deferred reason=%s\n' "$land_hold"
+  exit 0
 fi
 report_settings
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'

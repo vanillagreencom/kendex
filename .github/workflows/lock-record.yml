@@ -2,9 +2,10 @@ name: lock-record
 
 # After each push to main, this repository's install record
 # (.kendex-lock.json) is judged by a kendex built from that tree and, where
-# a merge moved what `kendex refresh` records, re-recorded and landed
-# through the one rolling pull request kendex/lock, which the lanes app arms
-# for the merge queue. A pull request never re-records it: two branches
+# a merge moved what `kendex refresh` records, re-recorded and landed:
+# pushed to main by this run where every ruleset on main admits the run's
+# credential, else through the one rolling pull request kendex/lock, which
+# the lanes app arms for the merge queue. A pull request never re-records it: two branches
 # changing one package would each rewrite the same rows and conflict at
 # every merge ahead of them (docs/decisions/D007-lock-record-on-main.md).
 # tools/lock-record is the body and says what each line it prints means;
