@@ -53,6 +53,7 @@ case "$query" in
     type=started
     [[ "$SCENARIO" != retry || "$id" != CC-720 || ! -e "$TRACKER_STATE.done" ]] || type=completed
     [[ "$SCENARIO" != terminal || "$id" != CC-721 ]] || type=completed
+    [[ "$SCENARIO" != terminal-duplicate || "$id" != CC-721 ]] || type=duplicate
     children='[]'
     if [[ "$id" = CC-721 && ( "$SCENARIO" = children-fail || "$SCENARIO" = closed-children ) ]]; then
       child_type=started
@@ -85,7 +86,7 @@ printf '___HTTP_CODE___200'
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
-for scenario in done closed-children deep-closed-children related-only malformed held terminal comment-fail cancel-fail complete-fail unreadable-fail children-fail deep-children-fail deep-read-fail retry; do
+for scenario in done closed-children deep-closed-children related-only malformed held terminal terminal-duplicate comment-fail cancel-fail complete-fail unreadable-fail children-fail deep-children-fail deep-read-fail retry; do
   description="$TMP_ROOT/description"
   printf '%s\n' 'Related: CC-999' '**Supersedes**:' '' '- CC-721 (at-completion): Replaced scope' >"$description"
   case "$scenario" in

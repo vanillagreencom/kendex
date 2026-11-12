@@ -1858,7 +1858,7 @@ pending_issue_descendants() {
         done <<<"$frontier"
         frontier="$next_frontier"
     done
-    jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' <<<"$descendants"
+    jq -r "$STATE_TYPE_CLOSED_JQ"'.[] | select(.state_type | state_type_closed | not) | .id' <<<"$descendants"
 }
 
 # Both update routes use the description that will be written. Completion can
@@ -1866,7 +1866,7 @@ pending_issue_descendants() {
 # FLT-1168 reached update from Verifying with an open post-merge box.
 resolve_issue_update_state() {
     local issue_result="$1" state="$2" description="$3"
-    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type pending_children
+    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type closing pending_children
     issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
     team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
     if [ -z "$team_id" ]; then
@@ -1875,7 +1875,10 @@ resolve_issue_update_state() {
     fi
     resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
     state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
-    if [ "$state_type" = canceled ]; then
+    # Every closing type but completed (Canceled, Duplicate) closes the parent
+    # without judging its children; completed is held by its checklist below.
+    closing=$(jq -r "$STATE_TYPE_CLOSED_JQ"'(.type // "") | state_type_closed and . != "completed"' <<<"$resolved") || return 1
+    if [ "$closing" = true ]; then
         pending_children=$(pending_issue_descendants "$issue_result") || return 1
         if [ -n "$pending_children" ]; then
             printf 'linear: refused=open-children issue=%s children=%s fix=detach-or-cancel-children\n' "$issue_id" "${pending_children//$'\n'/,}" >&2
@@ -3430,14 +3433,17 @@ unblock_issue() {
 complete_superseded_issues() {
     local replacement="$1"
     shift
-    local superseded_id superseded_result superseded_terminal disposition_result pending_children
+    local superseded_id superseded_result superseded_terminal superseded_closed disposition_result pending_children
     for superseded_id in "$@"; do
         if ! superseded_result=$(get_issue "$superseded_id" --format=raw); then
             jq -cn --arg issue "$superseded_id" '{error: "supersession-read", issue: $issue}' >&2
             return 1
         fi
         superseded_terminal=$(jq -er '.issue.state.type | strings' <<<"$superseded_result") || return 1
-        case "$superseded_terminal" in completed|canceled) continue ;; esac
+        superseded_closed=$(jq -nr --arg type "$superseded_terminal" "$STATE_TYPE_CLOSED_JQ"'$type | state_type_closed') || return 1
+        if [ "$superseded_closed" = true ]; then
+            continue
+        fi
         linear_guard_issue_team complete "$superseded_id" || return 1
         pending_children=$(pending_issue_descendants "$superseded_result") || return 1
         if [ -n "$pending_children" ]; then

@@ -33,7 +33,8 @@ case "$query" in
   name="$(jq -r '.variables.name' <<<"$payload")"
   case "$name" in
     Done|Closed) type=completed ;;
-    Canceled|Duplicate) type=canceled ;;
+    Canceled) type=canceled ;;
+    Duplicate) type=duplicate ;;
     Verifying) type=started ;;
     Todo) type=unstarted ;;
     *) exit 2 ;;
@@ -87,7 +88,7 @@ while IFS='|' read -r name action current state body expected tree; do
     closed|grandchild|unreadable)
       child_type=completed
       [[ "$tree" != grandchild ]] || child_type=started
-      children="$(jq -cn --arg type "$child_type" '{"CC-2":[{id:"CC-4",type:"completed"}],"CC-4":[{id:"CC-5",type:"canceled"},{id:"CC-6",type:$type}]}')"
+      children="$(jq -cn --arg type "$child_type" '{"CC-2":[{id:"CC-4",type:"completed"}],"CC-4":[{id:"CC-5",type:"canceled"},{id:"CC-6",type:$type},{id:"CC-7",type:"duplicate"}]}')"
       [[ "$tree" != unreadable ]] || unread_child=CC-4
       ;;
   esac
@@ -108,13 +109,14 @@ while IFS='|' read -r name action current state body expected tree; do
   run_case "${args[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || rc=$?
   requests="$(jq -s . "$TMP_ROOT/requests.jsonl")"
   if [ "$expected" != pass ]; then
+    fix='issues complete'
     case "$expected" in
       refuse) refusal='done-when-open' boxes='open_boxes=[1,3]' ;;
       evidence) refusal='done-when-evidence' boxes='missing_evidence_boxes=[1,3]' ;;
       outside=*) refusal='done-when-outside' boxes="outside_lines=${expected#outside=}" ;;
       fields=*) refusal='post-merge-checklist' boxes="errors=${expected#fields=}" ;;
       children)
-        refusal='open-children' boxes='children=CC-4'
+        refusal='open-children' boxes='children=CC-4' fix='detach-or-cancel-children'
         [[ "$tree" != grandchild ]] || boxes='children=CC-6'
         ;;
       unreadable) ;;
@@ -126,13 +128,13 @@ while IFS='|' read -r name action current state body expected tree; do
         'any(.[]; (.query | contains("query GetChildren(")) and .variables.id == "CC-4")'
     else
       assert_file_contains "$name identifies refused input" "$TMP_ROOT/err" \
-        "linear: refused=$refusal issue=CC-2 $boxes fix="
+        "linear: refused=$refusal issue=CC-2 $boxes fix=$fix"
     fi
     assert_jq "$name writes nothing" "$requests" 'all(.[]; (.query | test("^\\s*mutation") | not))'
     if [[ "$action" = bulk-update && "$expected" != unreadable ]]; then
       [[ "$expected" != children ]] || boxes='children=CC-5'
       assert_file_contains "$name identifies the later refused item" "$TMP_ROOT/err" \
-        "linear: refused=$refusal issue=CC-3 $boxes fix="
+        "linear: refused=$refusal issue=CC-3 $boxes fix=$fix"
     fi
   else
     assert_eq "$name succeeds" "$rc" 0
