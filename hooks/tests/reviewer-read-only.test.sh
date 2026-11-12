@@ -194,12 +194,13 @@ fi
 echo "reviewer-read-only: a reviewer deletes nothing inside a work tree"
 printf 'cli\n' >"$REPO/cli.md"
 DELETE_SCRATCH="$(mktemp -d "$TMP_ROOT/delete.XXXXXX")" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
-# delete_row AGENT CWD COMMAND WANT: WANT is the refusal's first line, or
-# pass. The payload names the cwd the call starts in, as Claude Code's does;
-# an empty CWD omits the field and runs the hook from $REPO, as the Pi
-# carrier, whose payload names none, spawns it in the session's directory.
+# delete_row AGENT CWD COMMAND WANT [NAME]: WANT is the refusal's first line,
+# or pass; NAME stands for a command too long to print. The payload names the
+# cwd the call starts in, as Claude Code's does; an empty CWD omits the field
+# and runs the hook from $REPO, as the Pi carrier, whose payload names none,
+# spawns it in the session's directory.
 delete_row() {
-  local agent="$1" cwd="$2" cmd="$3" want="$4" payload here=$PWD
+  local agent="$1" cwd="$2" cmd="$3" want="$4" name="${5:-$3}" payload here=$PWD
   payload=$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
     '{agent_type: $a, tool_name: "Bash", tool_input: {command: $v}} + (if $c == "" then {} else {cwd: $c} end)')
   if [ -n "$cwd" ]; then
@@ -210,18 +211,43 @@ delete_row() {
     cd "$here"
   fi
   if [ "$want" = pass ]; then
-    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $cmd"
+    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $name"
   else
-    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $cmd"
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $name"
   fi
 }
-# An rm is judged where it runs as a command of the call. One inside a quoted
-# argument or a heredoc body, and an rm word that is an argument, runs
-# nothing here.
+# A quoted program of about 64 KB: the scan reads it whole within the hook's
+# 10 s timeout, past which the harness runs the call unjudged.
+BIG_PROGRAM='print("rm cli.md")'$'\n'
+while [ "${#BIG_PROGRAM}" -lt 65536 ]; do BIG_PROGRAM=$BIG_PROGRAM$BIG_PROGRAM; done
+# Every rm word with no quote marks is judged, wherever it stands: after any
+# separator, as a launcher's or find's argument, and inside a substitution,
+# double quotes and an unquoted heredoc body included. A single-quoted
+# string, a quoted-delimiter heredoc body, a comment and a text reader's
+# arguments run nothing here.
 delete_rows() {
+  local started
   delete_row reviewer-test "$REPO" 'rm cli.md' "delete=$REPO/cli.md"
   # The overnight form: the cd fails and the rm runs where the call started.
   delete_row reviewer-test "$REPO" 'cd /nonexistent-review-dir; rm cli.md' "delete=$REPO/cli.md"
+  # Each separator ends a text reader's inert arguments.
+  delete_row reviewer-test "$REPO" 'cat src/lib.rs && rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat src/lib.rs\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'cat src/lib.rs | xargs -r rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'find . -name cli.md -exec rm {} \;' "delete=$REPO/{}"
+  delete_row reviewer-test "$REPO" 'env -u FOO rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'sudo -u root rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'xargs -n 1 rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'timeout 30 rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'echo "$(rm cli.md)"' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(rm cli.md)\nEOF' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'x=$((1<<2))\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "echo \$'x\\'y'; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'cat <(rm cli.md)' "delete=$REPO/cli.md"
+  started=$SECONDS
+  delete_row reviewer-test "$REPO" "python3 -c '$BIG_PROGRAM'; rm cli.md" "delete=$REPO/cli.md" \
+    "python3 -c '<${#BIG_PROGRAM} bytes>'; rm cli.md"
+  assert_eq "$((SECONDS - started < 10))" 1 "a ${#BIG_PROGRAM}-byte call is judged within the 10 s hook timeout"
   delete_row reviewer-test "" 'rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$SCRATCH" "rm -f $REPO/src/lib.rs" "delete=$REPO/src/lib.rs"
   delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log cli.md" "delete=$REPO/cli.md"
@@ -236,6 +262,8 @@ delete_rows() {
   delete_row reviewer-test "$REPO" "mutation-stability --mutate 'rm -f cli.md && sed -i s/a/b/ src/lib.rs'" pass
   delete_row reviewer-test "$REPO" "bash -c 'ls; rm cli.md'" pass
   delete_row reviewer-test "$REPO" "cat >$DELETE_SCRATCH/t.sh <<'EOF'"$'\nrm cli.md\nEOF' pass
+  delete_row reviewer-test "$REPO" 'git grep -n rm -- cli.md' pass
+  delete_row reviewer-test "$REPO" 'ls # rm cli.md' pass
   delete_row dev "$REPO" 'rm cli.md' pass
 }
 delete_rows
