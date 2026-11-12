@@ -144,9 +144,9 @@ def main():
             row = {"SUCCESSION_CONTROL_ROW": json.dumps(rows[name])} if name in rows else {}
             result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(ROOT / "skills/jarvis/tests/succession.test.sh"),
                                      "--failfast", "SuccessionContract." + case], env=env | row, capture_output=True, text=True, timeout=180)
-            print(result.stdout, end="", flush=True)
-            print(result.stderr, end="", flush=True)
-            assert result.returncode != 0, name + " passed its planted defect"
+            # A rejected defect's FAIL output is expected; printing it would read
+            # as a real failure in the job log, so it goes only into a refusal.
+            assert result.returncode != 0, name + " passed its planted defect\n" + result.stdout + result.stderr
             assert "FAILED (failures=" in result.stderr, result.stdout + result.stderr
             completed += 1
             print("control: rejected=" + name + " case=" + case, flush=True)
