@@ -224,6 +224,7 @@ case "$verb" in
     pick_args=(pick --harness "$harness" --json)
     [[ -z "$model" ]] || pick_args+=(--native-model "$model")
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
+    [[ -z "$8" ]] || pick_args+=(--max-pct "$8")
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
     setup="$(harness_setup_check "$harness" "$account")" || exit 1

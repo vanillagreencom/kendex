@@ -49,12 +49,14 @@ class TaskContract(unittest.TestCase):
         # Exercise the production picker; only its external host meter is a
         # fixture. No account credentials or live quota endpoints are read.
         meter = self.bin / "meter"
-        meter.write_text("#!" + sys.executable + "\nfrom pathlib import Path\nimport sys\n"
+        meter.write_text("#!" + sys.executable + "\nfrom pathlib import Path\nimport json,sys\n"
             + "if sys.argv[1]=='capabilities':\n print('kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane'); sys.exit(0)\n"
             + "assert sys.argv[1]=='accounts'\n"
             + "pct=99 if Path('refuse-pick').exists() else 5\n"
-            + "for harness in ('claude','codex','copilot','pi'):\n"
-            + " print('account=' + " + repr(str(self.account)) + " + '\\tharness='+harness+'\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Opus\\tmonthly-pct='+str(pct))\n")
+            + "rows=json.loads(Path('meter-rows.json').read_text()) if Path('meter-rows.json').exists() else [["
+            + repr(str(self.account)) + ",harness,pct] for harness in ('claude','codex','copilot','pi')]\n"
+            + "for account,harness,pct in rows:\n"
+            + " print('account='+account+'\\tharness='+harness+'\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Opus\\tmonthly-pct='+str(pct))\n")
         meter.chmod(0o755)
         settings = {"ORCH_LANE_HOST": str(meter), "LANES_HOME": str(self.root / "empty-home"),
                     "OVERSEE_WATCH_STATE_DIR": str(self.root / "meter-state"),
@@ -361,6 +363,34 @@ sys.exit(task.main())
         self.assertFalse(Path(record["scratch"]).exists())
         self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
                          [self.terminal["window"]])
+
+    def test_short_task_pick(self):
+        # Every Codex account is past the launch limit; one has room below its wall.
+        spent, room = self.root / "spent account", self.root / "room account"
+        spent.mkdir()
+        room.mkdir()
+        self.home.joinpath("meter-rows.json").write_text(json.dumps([[str(spent), "codex", 100], [str(room), "codex", 97]]))
+        fleet = self.root / "orch-state/workflow-state-oversee.json"
+        fleet.parent.mkdir()
+        # The room account's pick verdict, as the keyed pick-account-excluded line states it.
+        rows = (("full worker", False, False, "walled"),
+                ("short task on an overseer seat", True, True, "seat-reserve"),
+                ("short task", True, False, None))
+        for case, short, seat, refusal in rows:
+            with self.subTest(case=case):
+                if seat:
+                    fleet.write_text(json.dumps({"overseer": {"account": str(room)}}))
+                else:
+                    fleet.unlink(missing_ok=True)
+                result = self.call("launch", "--name", case, "--harness", "codex", "--model", "standard",
+                                   "--task-file", self.task_file, "--result-file", self.home / "result-short.md",
+                                   *(["--short"] if short else []), success=refusal is None)
+                if refusal:
+                    self.assertIn("lanes: pick-account-excluded lane=" + str(room) + " reason=" + refusal + "\n",
+                                  result.stderr)
+                else:
+                    self.assertEqual(result["account"], str(room))
+                    self.assertTrue(self.acknowledgement(result)["env"]["CODEX_HOME"].startswith(str(room)))
 
     def test_native_start_failure_is_recoverable(self):
         # Resolve tools from a private PATH so an optional harness installed
@@ -1033,6 +1063,7 @@ while True: signal.pause()
                 "      asking|rate-limit-switch|walled) ;;"),), "test_setup_screen_refuses"),
             ("picker", "session-backend.sh", (('pick_args+=(--native-model "$model")',
                 'pick_args+=(--model "$model")'),), "test_model_classes_use_production_picker"),
+            ("short-bound", "session-backend.sh", (('pick_args+=(--max-pct "$8")', ':'),), "test_short_task_pick"),
             ("controller", "session.py", (("        elif not window:\n            self.end_task_session()\n",
                 "        elif False:\n            self.end_task_session()\n"),),
              "test_controller_exit_recovers_task_windows"),
