@@ -160,7 +160,11 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
+    assert!(
+        said(&out).contains("conflict-markers: match="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// An installed sibling joins the chain. An absent sibling leaves the
@@ -423,7 +427,11 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
+    assert!(
+        said(&out).contains("conflict-markers: match="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// A checkout path holding an apostrophe: the installer escapes it into the
@@ -464,7 +472,11 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
+    assert!(
+        said(&out).contains("conflict-markers: match="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// A kendex project can sit below the git top level, and the package
@@ -510,7 +522,11 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     git_ok(home, &outer, &["add", "-A"]);
     let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
+    assert!(
+        said(&out).contains("conflict-markers: match="),
+        "{}",
+        said(&out)
+    );
 
     // And arming from there gates a real commit.
     let armed = run(home, &project, "kendex", &["guard", "install"]);
@@ -589,7 +605,11 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
         said(&out)
     );
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
+    assert!(
+        said(&out).contains("conflict-markers: match="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// A package next to the git directory is not this repository's package.
