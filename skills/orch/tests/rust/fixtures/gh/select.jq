@@ -186,10 +186,15 @@ def SCHEMA: {
     "author": ["Actor", false], "authorAssociation": ["S", false], "body": ["S", false]
   },
   "PullRequestTimelineItemsConnection": {
-    "pageInfo": ["PageInfo", false], "nodes": ["PullRequestTimelineItems", true]
+    "pageInfo": ["PageInfo", false], "totalCount": ["S", false],
+    "nodes": ["PullRequestTimelineItems", true]
   },
   "HeadRefForcePushedEvent": {"createdAt": ["S", false], "beforeCommit": ["Commit", false]},
   "AutoMergeEnabledEvent": {"createdAt": ["S", false]},
+  "AutoMergeDisabledEvent": {
+    "createdAt": ["S", false], "actor": ["Actor", false], "reason": ["S", false],
+    "reasonCode": ["S", false]
+  },
   "AutoSquashEnabledEvent": {"createdAt": ["S", false]},
   "AutoRebaseEnabledEvent": {"createdAt": ["S", false]},
   "AddedToMergeQueueEvent": {"createdAt": ["S", false]},
@@ -208,14 +213,14 @@ def ENUMS: {
   "PullRequestTimelineItemsItemType": [
     "HEAD_REF_FORCE_PUSHED_EVENT", "AUTO_MERGE_ENABLED_EVENT", "AUTO_SQUASH_ENABLED_EVENT",
     "AUTO_REBASE_ENABLED_EVENT", "ADDED_TO_MERGE_QUEUE_EVENT", "REVIEW_DISMISSED_EVENT",
-    "READY_FOR_REVIEW_EVENT"
+    "READY_FOR_REVIEW_EVENT", "AUTO_MERGE_DISABLED_EVENT"
   ]
 };
 def SCALARS: ["Int", "String", "Boolean", "ID"];
 def EVENTS: [
   "HeadRefForcePushedEvent", "AutoMergeEnabledEvent", "AutoSquashEnabledEvent",
   "AutoRebaseEnabledEvent", "AddedToMergeQueueEvent", "ReviewDismissedEvent",
-  "ReadyForReviewEvent"
+  "ReadyForReviewEvent", "AutoMergeDisabledEvent"
 ];
 def ACTORS: ["Bot", "EnterpriseUserAccount", "Mannequin", "Organization", "User"];
 def POSSIBLE: {

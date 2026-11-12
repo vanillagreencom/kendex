@@ -3825,6 +3825,40 @@ fn the_overseers_ledger_stamps_its_audit_and_holds_each_entry_to_its_readers_sha
     }
 }
 
+/// The merge question's hold: the ask opens one `merge-hold` pause stamped
+/// by the runtime, an ask again while it stands keeps that one, the answer
+/// closes it, and an answer with none standing changes nothing.
+#[test]
+fn a_merge_hold_opens_at_the_ask_and_closes_at_the_answer() {
+    let store = Store::new();
+    store.init(ITEM);
+    let step = |name: &str| with_op("record-pr-progress", json!({ "step": name }));
+    let pauses = || store.doc(&store.item_path(ITEM))["pauses"].clone();
+    let before = now_secs();
+    let asked = store.op_ok(&step("merge-asked"));
+    assert_eq!(asked["opened"], true, "{asked}");
+    let opened = pauses();
+    let from = agent_runtime::clock::epoch_secs(opened[0]["from"].as_str().unwrap()).unwrap();
+    assert!((before..=now_secs()).contains(&from), "{opened}");
+    assert_eq!(
+        (&opened[0]["to"], &opened[0]["cause"]),
+        (&Value::Null, &json!("merge-hold"))
+    );
+    let again = store.op_ok(&step("merge-asked"));
+    assert_eq!(
+        (&again["opened"], pauses()),
+        (&json!(false), opened.clone())
+    );
+    let answered = store.op_ok(&step("merge-answered"));
+    assert_eq!(answered["closed"], true, "{answered}");
+    let closed = pauses();
+    assert_eq!(closed.as_array().unwrap().len(), 1, "{closed}");
+    let to = agent_runtime::clock::epoch_secs(closed[0]["to"].as_str().unwrap()).unwrap();
+    assert!((from..=now_secs()).contains(&to), "{closed}");
+    let late = store.op_ok(&step("merge-answered"));
+    assert_eq!((&late["closed"], pauses()), (&json!(false), closed));
+}
+
 /// A pointer write into a field a progress, budget, stop or ledger record
 /// owns lands only a value its owner writes: anything else refuses
 /// `field-owned` naming the field and the operation, with nothing written.
@@ -3834,7 +3868,7 @@ fn a_pointer_write_into_an_owned_progress_field_is_held_to_its_owners_check() {
     store.init(ITEM);
     store.init_fleet();
     let skip = store.write_file("skip.json", r#"{"head":"abc"}"#);
-    let rows: [(&[&str], &str, &str); 14] = [
+    let rows: [(&[&str], &str, &str); 15] = [
         (
             &["set", "--item", ITEM, "/worktree", "w/ken"],
             "worktree",
@@ -3891,6 +3925,17 @@ fn a_pointer_write_into_an_owned_progress_field_is_held_to_its_owners_check() {
                 &skip,
             ],
             "restack_skips",
+            "record-pr-progress",
+        ),
+        (
+            &[
+                "set",
+                "--item",
+                ITEM,
+                "/pauses",
+                r#"[{"from":"2026-09-20T08:00:00Z","to":null,"cause":"walled"}]"#,
+            ],
+            "pauses",
             "record-pr-progress",
         ),
         (

@@ -1,10 +1,12 @@
 //! The item's progress records: where it works and the cycle it runs
 //! (`record-route`), what a dev round returned (`record-dev-return`), and how
-//! far its pull request has come (`record-pr-progress`). `state init` writes
+//! far its pull request has come (`record-pr-progress`), its merge
+//! question's wait among it. `state init` writes
 //! the first `worktree`, `branch`, `qa_labels` and `sub_issues`; this module
 //! is the one writer of every later value of those and of the other fields
 //! below, and the pointer verbs reach them only through the checks at its end.
 
+use agent_runtime::clock;
 use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
 
@@ -160,7 +162,8 @@ pub(crate) fn record_dev_return(doc: &mut Document, r: &RecordDevReturn) -> Resu
 
 /// One step of a pull request's progress, tagged by `step`: its
 /// publication order, the item-wide approval flags, the one CI rerun of a
-/// head and its run, and a restack's skipped re-test.
+/// head and its run, a restack's skipped re-test, and the merge question's
+/// hold.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "step", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum RecordPrProgress {
@@ -188,6 +191,29 @@ pub enum RecordPrProgress {
     RestackSkip {
         file: PathBuf,
     },
+    /// The lane asked its merge question: a `merge-hold` pause opened now
+    /// in `pauses`, or the one standing kept, since a relaunched lane asks
+    /// again while the first question still waits.
+    MergeAsked {},
+    /// The merge question's answer arrived: the standing hold closed now.
+    MergeAnswered {},
+}
+
+/// The one cause `pauses` holds on an item: the merge cycle reads the
+/// span from the lane's merge question to its answer as a wait.
+const MERGE_HOLD: &str = "merge-hold";
+
+/// A pause on the item, as `merge-asked` and `merge-answered` write it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pause {
+    from: String,
+    to: Option<String>,
+    cause: String,
+}
+
+fn is_open(pause: &Value) -> bool {
+    pause.get("to").is_some_and(Value::is_null)
 }
 
 /// A restack's skipped re-test as the proof reader reads it: the restacked
@@ -283,6 +309,23 @@ pub(crate) fn record_pr_progress(
             skips.push(entry.clone());
             Ok(json!({"pointer": "/restack_skips", "value": entry, "replaced": replaced}))
         }
+        RecordPrProgress::MergeAsked {} => {
+            let pauses = array_at(path, doc, "/pauses")?;
+            if let Some(standing) = pauses.iter().find(|p| is_open(p)) {
+                return Ok(json!({"pointer": "/pauses", "value": standing, "opened": false}));
+            }
+            let hold = json!({"from": env.iso(), "to": Value::Null, "cause": MERGE_HOLD});
+            pauses.push(hold.clone());
+            Ok(json!({"pointer": "/pauses", "value": hold, "opened": true}))
+        }
+        RecordPrProgress::MergeAnswered {} => {
+            let pauses = array_at(path, doc, "/pauses")?;
+            let Some(standing) = pauses.iter_mut().find(|p| is_open(p)) else {
+                return Ok(json!({"pointer": "/pauses", "value": Value::Null, "closed": false}));
+            };
+            standing["to"] = json!(env.iso());
+            Ok(json!({"pointer": "/pauses", "value": standing, "closed": true}))
+        }
     }
 }
 
@@ -347,4 +390,26 @@ pub(crate) fn check_skips(was: Option<&Value>, now: &Value) -> std::result::Resu
     added_entries(was, now)?
         .into_iter()
         .try_for_each(restack_skip)
+}
+
+/// Every pause a merge hold, its stamps ISO 8601 UTC, at most one standing:
+/// the cycle refuses a pause that does not read.
+pub(crate) fn check_pauses(now: &Value) -> std::result::Result<(), String> {
+    let pauses: Option<Vec<Pause>> =
+        serde_json::from_value(now.clone()).map_err(|e| e.to_string())?;
+    let pauses = pauses.unwrap_or_default();
+    for pause in &pauses {
+        if pause.cause != MERGE_HOLD {
+            return Err(format!("cause not {MERGE_HOLD}: {}", pause.cause));
+        }
+        for stamp in std::iter::once(&pause.from).chain(&pause.to) {
+            if clock::epoch_secs(stamp).is_none() {
+                return Err(format!("not a UTC stamp: {stamp}"));
+            }
+        }
+    }
+    if pauses.iter().filter(|p| p.to.is_none()).count() > 1 {
+        return Err("two holds standing".into());
+    }
+    Ok(())
 }

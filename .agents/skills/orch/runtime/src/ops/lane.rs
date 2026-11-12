@@ -707,6 +707,69 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
     Ok(())
 }
 
+/// Whether a launch refusal is a wait for a slot: the lane cap reached, or
+/// the named account with no room for the lane. An account refused by its
+/// word, or one the judge could not read, is no wait for capacity.
+pub(super) fn held_for_capacity(refusal: &Error) -> bool {
+    matches!(
+        refusal,
+        Error::CapReached { .. } | Error::AccountWalled { .. }
+    )
+}
+
+/// The wait of a stopped lane whose relaunch [`held_for_capacity`] refused:
+/// the first such refusal stamps `capacity_wait {at}` on the record, and a
+/// later one leaves the first stamp, so the wait runs from the first refusal
+/// to the admitted relaunch. Any other record, or none, is left as it
+/// stands: a first launch waits in the launch queue before it has lane time,
+/// and a parked record's wait is its park.
+pub(super) fn hold_for_capacity(
+    path: &Path,
+    doc: &mut Document,
+    item: &str,
+    at: &str,
+) -> Result<()> {
+    let lanes = lanes(path, doc)?;
+    let Some(index) = lanes.iter().position(|l| l.item == item) else {
+        return Ok(());
+    };
+    let lane = lane_doc_mut(path, doc, index)?;
+    let standing = lane.get("capacity_wait").is_some_and(|v| !v.is_null());
+    if lanes[index].status == LaneStatus::Stopped && !standing {
+        record::set(lane, "capacity_wait", json!({"at": at}));
+    }
+    Ok(())
+}
+
+/// The admitted relaunch closes a standing `capacity_wait` into `pauses` as
+/// `{from: capacity_wait.at, to: $at, cause: "capacity"}`. The pause goes in
+/// before a trailing park, never after it: the hosted relaunch reads the
+/// last pause as the sandbox's standing (`parked_last` in
+/// `effects/launch.rs`), and a wait for a slot brings no sandbox back.
+fn close_capacity_wait(path: &Path, lane: &mut Document, at: &str) -> Result<()> {
+    let Some(from) = lane
+        .get("capacity_wait")
+        .and_then(|w| w.get("at"))
+        .filter(|v| !v.is_null())
+        .cloned()
+    else {
+        record::delete(lane, "capacity_wait");
+        return Ok(());
+    };
+    let pauses = record::array_mut(path, lane, "pauses")?;
+    let parked_last = pauses
+        .last()
+        .is_some_and(|p| p.get("cause").and_then(Value::as_str) == Some("parked"));
+    let place = if parked_last {
+        pauses.len() - 1
+    } else {
+        pauses.len()
+    };
+    pauses.insert(place, json!({"from": from, "to": at, "cause": "capacity"}));
+    record::delete(lane, "capacity_wait");
+    Ok(())
+}
+
 /// What the lane's recorded harness reads as, through the one identity
 /// reader: live, gone, or unreadable, with no identity recorded as `None`.
 fn recorded_harness(lane: &Lane, host: &Host) -> Option<Reading<Identity>> {
@@ -1169,6 +1232,7 @@ pub(super) fn launch_lane(
             record::delete(lane, "prepare");
             record::delete(lane, "live_display");
             record::delete(lane, "reservation");
+            close_capacity_wait(path, lane, &at)?;
             unpark(path, lane, index, &at)?;
             if let Some(judged) = &judged {
                 admission::record(path, doc, index, judged)?;

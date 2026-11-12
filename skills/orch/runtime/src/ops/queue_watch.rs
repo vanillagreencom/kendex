@@ -32,15 +32,19 @@ use agent_runtime::host::{self, Place};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::progress::RecordPrProgress;
+use super::records::{self, Record};
 use super::{Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
+use crate::settings::{Settings, StoreSettings};
 use crate::state::{self, Stage, StageKind};
 use crate::validate::files::RunFile;
 use crate::verify::wire::{
-    CheckRunsPage, GraphError, GraphReply, Nullable, Optional, RunConclusion, RunStatus,
+    ActorKind, CheckRunsPage, DisarmData, GraphError, GraphReply, Nullable, Optional,
+    RunConclusion, RunStatus, TypedActor,
 };
 use crate::verify::{self, Answer, Bucket, Budget, Gh, Status};
-use agent_runtime::clock::Clock;
+use agent_runtime::clock::{self, Clock};
 use agent_runtime::journal::Env;
 
 /// The github package's program under the project's install, whose
@@ -239,6 +243,9 @@ enum Cause {
     CheckFailed,
     NotMergeable,
     AutoMergeCleared,
+    /// A person disabled the automatic merge: a deliberate hold, recorded
+    /// as the item's merge hold, never a fault.
+    MergeHold,
     NeverArmed,
     ClosedWithoutMerge,
     LateFindings,
@@ -260,6 +267,7 @@ impl Cause {
             Cause::CheckFailed => "check_failed",
             Cause::NotMergeable => "not_mergeable",
             Cause::AutoMergeCleared => "auto_merge_cleared",
+            Cause::MergeHold => "merge_hold",
             Cause::NeverArmed => "never_armed",
             Cause::ClosedWithoutMerge => "closed_without_merge",
             Cause::LateFindings => "late_findings",
@@ -318,6 +326,10 @@ pub struct Reply {
     pub reach_cause: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failed_checks: Option<Vec<FailedCheck>>,
+    /// On `cause: merge_hold` alone: the login of the person who disabled
+    /// the automatic merge, whom the hold waits on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub disarmed_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -659,6 +671,20 @@ impl Candidate {
 
 // --- the wait -------------------------------------------------------------------
 
+/// Who disabled the arm a confirmed disarm lost, as the pull request's
+/// timeline names it.
+enum Disabling {
+    /// A person's account, with no reason given: a deliberate hold.
+    Person(String),
+    /// GitHub disabled it for a reason it names, or an actor that is no
+    /// person did.
+    Other,
+    /// No disabling of the remembered arm stands on the timeline.
+    Absent,
+    /// The read failed, or its answer did not decode or add up.
+    Refused,
+}
+
 struct Wait<'a> {
     path: &'a Path,
     r: &'a QueueWatch,
@@ -666,6 +692,7 @@ struct Wait<'a> {
     project: &'a Path,
     clock: &'a dyn Clock,
     env: &'a Env,
+    store: &'a StoreSettings,
     locking: Locking,
     owner: String,
     name: String,
@@ -899,6 +926,7 @@ impl<'a> Wait<'a> {
             reach: None,
             reach_cause: None,
             failed_checks: None,
+            disarmed_by: None,
             error: None,
         }
     }
@@ -987,6 +1015,91 @@ impl<'a> Wait<'a> {
             .and_then(|r| r.pull_request)
             .map(QueueRead::of)
             .ok_or(ReadEnd::Malformed)
+    }
+
+    /// The latest automatic-merge disabling on the pull request's timeline,
+    /// read once where a confirmed disarm ends the wait. The one page asked
+    /// holds the newest event alone, and it must state the count it carries:
+    /// none only where the timeline holds none, one where it holds any. An
+    /// event older than the remembered arm disabled an earlier one.
+    fn read_disabling(&self) -> Disabling {
+        let query = format!(
+            "query {{ repository(owner: {}, name: {}) {{ pullRequest(number: {}) {{ timelineItems(last: 1, itemTypes: [AUTO_MERGE_DISABLED_EVENT]) {{ totalCount nodes {{ ... on AutoMergeDisabledEvent {{ createdAt reason reasonCode actor {{ __typename login }} }} }} }} }} }} }}",
+            self.owner, self.name, self.r.pr
+        );
+        let query = format!("query={query}");
+        let Call::Printed(bytes) = self.gh("api", &["api", "graphql", "-f", &query]) else {
+            return Disabling::Refused;
+        };
+        let Ok(reply) = serde_json::from_slice::<GraphReply<DisarmData>>(&bytes) else {
+            return Disabling::Refused;
+        };
+        if errors_present(&reply.errors) {
+            return Disabling::Refused;
+        }
+        let Nullable::Present(DisarmData {
+            repository: Nullable::Present(repository),
+        }) = reply.data
+        else {
+            return Disabling::Refused;
+        };
+        let Nullable::Present(pull) = repository.pull_request else {
+            return Disabling::Refused;
+        };
+        let total = pull.timeline_items.total_count;
+        let mut nodes = pull.timeline_items.nodes.into_iter();
+        let event = match (total, nodes.next(), nodes.next()) {
+            (0, None, None) => return Disabling::Absent,
+            (1.., Some(Nullable::Present(event)), None) => event,
+            _ => return Disabling::Refused,
+        };
+        let armed = self.memory_ref().enabled_at.as_deref();
+        match (
+            clock::epoch_secs(&event.created_at),
+            armed.map(clock::epoch_secs),
+        ) {
+            (None, _) | (_, Some(None)) => return Disabling::Refused,
+            (Some(at), Some(Some(armed))) if at < armed => return Disabling::Absent,
+            (Some(_), _) => {}
+        }
+        let reasoned = matches!(event.reason, Nullable::Present(_))
+            || matches!(event.reason_code, Nullable::Present(_));
+        match event.actor {
+            Nullable::Present(TypedActor {
+                kind: ActorKind::User,
+                actor,
+            }) if !reasoned => Disabling::Person(actor.login),
+            Nullable::Present(_) | Nullable::Null | Nullable::Absent => Disabling::Other,
+        }
+    }
+
+    /// A confirmed disarm a person made: the item's merge hold opened, or
+    /// the standing one kept, through `record-pr-progress`'s `merge-asked`,
+    /// and the person's login answered. A disarm this wait's guard sent is
+    /// the runtime's own and is never read as one, and every other reading
+    /// answers `None`: the disarm stays the fault it reads as.
+    fn person_hold(&self) -> Result<Option<String>> {
+        let guarded = self
+            .memory_ref()
+            .guard
+            .as_ref()
+            .is_some_and(|g| !matches!(g.disarm, Mutation::Unneeded));
+        if guarded {
+            return Ok(None);
+        }
+        match self.read_disabling() {
+            Disabling::Person(login) => {
+                records::apply_record(
+                    self.path,
+                    &Record::RecordPrProgress(RecordPrProgress::MergeAsked {}),
+                    self.store,
+                    self.env,
+                    self.locking,
+                )?;
+                Ok(Some(login))
+            }
+            Disabling::Other | Disabling::Absent | Disabling::Refused => Ok(None),
+        }
     }
 
     /// The completed and not-completed check-run counts on the merge-group
@@ -1606,11 +1719,17 @@ impl<'a> Wait<'a> {
         if let Some(candidate) = self.candidate
             && self.candidate_count >= self.r.confirm_polls
         {
-            let mut reply = self.reply(
-                Outcome::Complete,
-                candidate.verdict(),
-                Some(candidate.cause()),
-            );
+            let held = match candidate {
+                Candidate::Disarmed => self.person_hold()?,
+                Candidate::Conflicting | Candidate::Ejected => None,
+            };
+            let cause = if held.is_some() {
+                Cause::MergeHold
+            } else {
+                candidate.cause()
+            };
+            let mut reply = self.reply(Outcome::Complete, candidate.verdict(), Some(cause));
+            reply.disarmed_by = held;
             if candidate == Candidate::Ejected {
                 let (reach, cause, checks) = self.reach();
                 reply.reach = Some(reach.word());
@@ -1744,8 +1863,8 @@ fn invalid(field: &str, value: &str) -> Error {
 /// Wait on the pull request `r` names for the item at `path`: the request
 /// refused before any read, the memory read from the item, the poll loop
 /// on `clock` under the budget, the reply the deadline or a verdict ends it
-/// with. The checkout `project` is where the thread reader runs and whose
-/// disappearance ends the wait without a result.
+/// with. The checkout `settings.roots.project` is where the thread reader
+/// runs and whose disappearance ends the wait without a result.
 #[allow(
     clippy::disallowed_methods,
     reason = "the queue wait's one read of the item record before the loop, its sleeps on the one injected clock, and the checkout's presence read before each poll"
@@ -1754,11 +1873,12 @@ pub fn run(
     path: &Path,
     r: &QueueWatch,
     programs: &Programs,
-    project: &Path,
+    settings: &Settings,
     clock: &dyn Clock,
     env: &Env,
     locking: Locking,
 ) -> Result<Reply> {
+    let (project, store) = (settings.roots.project.as_path(), &settings.store);
     verify::validate_repo(&r.repo)?;
     if r.pr == 0 {
         return Err(Error::VerifyRequestInvalid {
@@ -1803,6 +1923,7 @@ pub fn run(
         project,
         clock,
         env,
+        store,
         locking,
         owner,
         name,

@@ -2102,7 +2102,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &path,
                 &request,
                 &programs,
-                &settings.roots.project,
+                &settings,
                 &SystemClock,
                 &env,
                 locking,

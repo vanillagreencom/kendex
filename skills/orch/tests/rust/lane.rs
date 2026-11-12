@@ -266,9 +266,10 @@ fn refusal_fields(answer: &Value) -> HashMap<String, String> {
 /// leaves room for no second lane. KEN-1's record stands stopped with a
 /// reservation (a charge) and KEN-2 runs live on the account: KEN-1's
 /// relaunch is refused `account-walled` on KEN-2's charge and its own as
-/// the candidate (two lanes' projection, not three) and moves nothing; with
-/// KEN-2 ended it is admitted, its own reservation left out of the
-/// judgement as the relaunch drops it, and its record carries none after.
+/// the candidate (two lanes' projection, not three) and moves nothing but
+/// the stamp of its wait for room; with the other lane ended it is admitted, its own
+/// reservation left out of the judgement as the relaunch drops it, its
+/// record carrying none after and the wait closed into its pauses.
 #[test]
 fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     let mut fleet = Fleet::new(4);
@@ -308,10 +309,11 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
         "{}",
         stderr(&out)
     );
+    let mut held = fleet.lane("KEN-1");
+    let wait = held.as_object_mut().unwrap().remove("capacity_wait");
     assert_eq!(
-        fleet.lane("KEN-1"),
-        before,
-        "a refused relaunch moves nothing"
+        held, before,
+        "a refused relaunch moves nothing but its wait's stamp"
     );
     assert!(live(other.pid()), "a refused relaunch signals nothing");
 
@@ -323,10 +325,15 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
         answer["result"]["persisted"]["report"]["admission"]["cap"],
         4
     );
+    let relaunched = fleet.lane("KEN-1");
     assert!(
-        fleet.lane("KEN-1").get("reservation").is_none(),
-        "the relaunch takes its own reservation's slot: {}",
-        fleet.lane("KEN-1")
+        relaunched.get("reservation").is_none(),
+        "the relaunch takes its own reservation's slot: {relaunched}"
+    );
+    assert_eq!(
+        relaunched["pauses"],
+        json!([{"from": wait.unwrap()["at"], "to": relaunched["session_since"], "cause": "capacity"}]),
+        "an account with no room held the relaunch: {relaunched}"
     );
 }
 
@@ -616,6 +623,96 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
     let answer = reply(&out);
     assert_eq!(answer["refusal"]["key"], "cap-reached");
     assert_eq!(answer["refusal"]["fields"][0], json!(["occupancy", "1"]));
+}
+
+/// Through the executable: a stopped lane's relaunch the cap refuses is a
+/// wait from its first refusal to its admission. The first refusal stamps
+/// `capacity_wait` at its own time and a later one leaves that stamp; each
+/// prints the refusal a launch with no record prints, byte for byte, with
+/// its exit. The admitted relaunch closes the wait into `pauses` with cause
+/// `capacity`, ahead of the park the record ended on, and a lane never
+/// refused carries neither.
+#[test]
+fn a_relaunch_held_for_the_cap_is_a_wait_from_its_first_refusal_to_its_admission() {
+    let fleet = Fleet::new(1);
+    fleet.init_fleet();
+    let mut harness = Owned::sleep();
+    let park =
+        json!({"from": "2026-01-29T15:10:00Z", "to": "2026-01-29T15:20:00Z", "cause": "parked"});
+    let mut held = record("KEN-B", "stopped", None, fleet.state_dir());
+    held["pauses"] = json!([park]);
+    fleet.write_lanes(vec![
+        record("KEN-A", "running", Some(&harness), fleet.state_dir()),
+        held,
+        record("KEN-D", "stopped", None, fleet.state_dir()),
+    ]);
+    let before = fleet.lane("KEN-B");
+
+    let from = epoch_now();
+    let first = fleet.op(&launch("KEN-B", fleet.state_dir()));
+    let to = epoch_now();
+    assert_eq!(reply(&first)["refusal"]["key"], "cap-reached");
+    let mut stamped = fleet.lane("KEN-B");
+    let at = stamped
+        .as_object_mut()
+        .unwrap()
+        .remove("capacity_wait")
+        .expect("the first refusal stamps the wait");
+    let at = clock::epoch_secs(at["at"].as_str().unwrap()).unwrap();
+    assert!((from..=to).contains(&at), "stamped at its refusal: {at}");
+    assert_eq!(stamped, before, "the stamp is all a refusal writes");
+
+    // The stamp stands in for a first refusal earlier than this one.
+    let mut doc = fleet.fleet();
+    doc["lanes"][1]["capacity_wait"] = json!({"at": "2026-01-29T15:30:00Z"});
+    std::fs::write(
+        fleet.fleet_path(),
+        serde_json::to_string_pretty(&doc).unwrap(),
+    )
+    .unwrap();
+    let second = fleet.op(&launch("KEN-B", fleet.state_dir()));
+    assert_eq!(
+        fleet.lane("KEN-B")["capacity_wait"],
+        json!({"at": "2026-01-29T15:30:00Z"}),
+        "a later refusal leaves the first stamp"
+    );
+    let fresh = fleet.op(&launch("KEN-C", fleet.state_dir()));
+    assert!(
+        stderr(&fresh).starts_with(
+            "orch-runtime: cap-reached occupancy=1 cap=1 lanes=1 setting=ORCH_OVERSEER_LANES"
+        ),
+        "{}",
+        stderr(&fresh)
+    );
+    for out in [&first, &second] {
+        assert_eq!(
+            (&out.status, &out.stdout, &out.stderr),
+            (&fresh.status, &fresh.stdout, &fresh.stderr),
+            "a held relaunch prints a fresh launch's refusal"
+        );
+    }
+
+    end(&mut harness);
+    let out = fleet.op(&launch("KEN-B", fleet.state_dir()));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let relaunched = fleet.lane("KEN-B");
+    assert_eq!(relaunched.get("capacity_wait"), None, "{relaunched}");
+    assert_eq!(
+        relaunched["pauses"],
+        json!([
+            {"from": "2026-01-29T15:30:00Z", "to": relaunched["session_since"], "cause": "capacity"},
+            park,
+        ])
+    );
+
+    let out = fleet.op(&launch("KEN-D", fleet.state_dir()));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let never = fleet.lane("KEN-D");
+    assert_eq!(
+        (never.get("pauses"), never.get("capacity_wait")),
+        (None, None),
+        "{never}"
+    );
 }
 
 /// Through the executable: a bare close on a lane whose harness
@@ -4299,10 +4396,12 @@ fn merged_timeline() -> Value {
 }
 
 /// The lane state whose fix rounds are `fix`, with one review, three bot
-/// iterations and one full validation besides.
+/// iterations and one full validation besides, and its merge question held
+/// 15:30 to 16:10, the 2400 seconds the cycle takes off as a wait.
 fn rounds_state(fix: u64) -> Value {
     json!({"first_panel": {"agents": ["a"]}, "rereview_cycles": 1, "cycles": fix,
-        "pr_comment_review": {"iterations": 3}, "validate_rounds": [{"mode": "full"}, {"mode": "range"}]})
+        "pr_comment_review": {"iterations": 3}, "validate_rounds": [{"mode": "full"}, {"mode": "range"}],
+        "pauses": [{"from": "2026-01-29T15:30:00Z", "to": "2026-01-29T16:10:00Z", "cause": "merge-hold"}]})
 }
 
 /// A merged hosted lane's close records its cycle through the real
@@ -4514,12 +4613,19 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             .collect();
         match fix {
             Some(fix) => assert_eq!(
-                cycle["rounds"],
-                json!({"review": 2, "fix": fix, "bot": 3, "full_validations": 1}),
+                (cycle["rounds"].clone(), cycle["waited"].clone()),
+                (
+                    json!({"review": 2, "fix": fix, "bot": 3, "full_validations": 1}),
+                    json!(2400)
+                ),
                 "{case}: {notes:?}"
             ),
             None => {
-                assert_eq!(cycle["rounds"], Value::Null, "{case}");
+                assert_eq!(
+                    (cycle["rounds"].clone(), cycle["waited"].clone()),
+                    (Value::Null, json!(0)),
+                    "{case}"
+                );
                 assert!(
                     notes
                         .iter()

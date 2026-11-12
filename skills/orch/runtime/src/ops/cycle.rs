@@ -30,8 +30,8 @@ use crate::state::{self, CycleRow, FleetState, Lane};
 use crate::verify::{Answer, ci_proof};
 use crate::watch::hosted::{self, Answer as HostAnswer};
 
-/// The class bases, lane-controlled seconds; only a clean final-head CI run
-/// and the merge group are forgiven.
+/// The class bases, lane-controlled seconds; only the recorded waits, a
+/// clean final-head CI run and the merge group are forgiven.
 pub const TARGETS: [(&str, i64); 5] = [
     ("render", 300),
     ("trivial", 300),
@@ -173,7 +173,7 @@ pub fn record(
         }
     };
     let class = classify(gh, lane, &checkout, repo.as_deref(), &merge);
-    let pauses = pauses_of(lane)?;
+    let pauses = waits_of(lane, state.as_ref().ok().and_then(Option::as_ref))?;
     notes.extend(negative_notes(item, &timeline));
     let cycle = compute(&Inputs {
         lane,
@@ -891,12 +891,23 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
-/// The record's pauses and a standing park or wall, which runs on past the
-/// gap, as epoch spans; a pause that does not read refuses.
-fn pauses_of(lane: &Lane) -> Result<Vec<(i64, Option<i64>)>> {
+/// The lane's waits as epoch spans: the lane record's pauses (parks, walls
+/// and relaunches held for capacity) with a standing one, and the merge holds its workflow
+/// state records (`record-pr-progress`'s `merge-asked` to `merge-answered`).
+/// A span with no end runs on past the gap, so it ends where the cycle
+/// does; a pause that does not read refuses. A state that does not read
+/// holds no hold.
+fn waits_of(lane: &Lane, state: Option<&Map<String, Value>>) -> Result<Vec<(i64, Option<i64>)>> {
+    let mut spans = pauses_of(lane)?;
+    spans.extend(spans_of(lane, state.and_then(|s| s.get("pauses")))?);
+    Ok(spans)
+}
+
+/// The `{from, to}` spans of a `pauses` array.
+fn spans_of(lane: &Lane, pauses: Option<&Value>) -> Result<Vec<(i64, Option<i64>)>> {
     let unreadable = || refused("pauses-unreadable", &[("item", &lane.item)]);
     let mut spans = Vec::new();
-    match lane.extra.get("pauses") {
+    match pauses {
         None | Some(Value::Null) => {}
         Some(Value::Array(pauses)) => {
             for pause in pauses {
@@ -911,7 +922,15 @@ fn pauses_of(lane: &Lane) -> Result<Vec<(i64, Option<i64>)>> {
         }
         Some(_) => return Err(unreadable()),
     }
-    for key in ["parked", "walled"] {
+    Ok(spans)
+}
+
+/// The lane record's pauses and a standing park, wall or wait for a slot
+/// (`capacity_wait`, stamped by a relaunch refused for capacity).
+fn pauses_of(lane: &Lane) -> Result<Vec<(i64, Option<i64>)>> {
+    let unreadable = || refused("pauses-unreadable", &[("item", &lane.item)]);
+    let mut spans = spans_of(lane, lane.extra.get("pauses"))?;
+    for key in ["parked", "walled", "capacity_wait"] {
         if let Some(at) = lane
             .extra
             .get(key)
@@ -1044,20 +1063,23 @@ fn compute(input: &Inputs) -> Value {
     let ci_clean = get("ci_head_clean_secs");
     let mg = num(&merge_group).unwrap_or(0);
     let cc = num(&ci_clean).unwrap_or(0);
-    let class = input.class.class.as_deref();
-    let base = class.and_then(target_of);
-    let target = base.map(|b| b + mg + cc);
     let stamp_at = |key: &str| {
         stamps
             .iter()
             .find(|(k, _)| *k == key)
             .and_then(|(_, v)| epoch(v))
     };
-    let actual = match (stamp_at("launched"), stamp_at("merged")) {
-        (Some(l), Some(m)) => Some(m - l),
-        _ => None,
-    };
-    let lane_secs = actual.map(|a| a - mg - cc);
+    let window = stamp_at("launched").zip(stamp_at("merged"));
+    let actual = window.map(|(l, m)| m - l);
+    // A recorded wait is no lane time: it comes off the lane's time and
+    // widens the target as the forgiven CI does, so neither it nor a miss
+    // it explains counts toward the repeat bar.
+    let waited = window.map(|(l, m)| covered(input.pauses, l, m));
+    let wt = waited.unwrap_or(0);
+    let class = input.class.class.as_deref();
+    let base = class.and_then(target_of);
+    let target = base.map(|b| b + mg + cc + wt);
+    let lane_secs = actual.map(|a| a - mg - cc - wt);
     let missing: Vec<&str> = stamps
         .iter()
         .filter(|(_, v)| v.is_null())
@@ -1089,7 +1111,7 @@ fn compute(input: &Inputs) -> Value {
         let mut gaps: Vec<(&str, i64)> = seq
             .windows(2)
             .map(|w| {
-                let mut secs = w[1].1 - w[0].1;
+                let mut secs = w[1].1 - w[0].1 - covered(input.pauses, w[0].1, w[1].1);
                 match w[1].0 {
                     "merged" => secs = (secs - mg).max(0),
                     "ci_green" => secs = (secs - cc).max(0),
@@ -1261,6 +1283,7 @@ fn compute(input: &Inputs) -> Value {
     cycle.insert("merge_group".to_owned(), merge_group);
     cycle.insert("ci_head".to_owned(), ci_head);
     cycle.insert("ci_clean".to_owned(), ci_clean);
+    cycle.insert("waited".to_owned(), waited.map_or(Value::Null, Value::from));
     cycle.insert(
         "lane_secs".to_owned(),
         lane_secs.map_or(Value::Null, Value::from),
@@ -1337,13 +1360,14 @@ pub fn line_of(item: &str, c: &Value) -> String {
         None => "-".to_owned(),
     };
     format!(
-        "cycle item={item} {delivery} class={} tier={} target={} merge_group={} ci_head={} ci_clean={} lane={} actual={} open={} verdict={} phase={} phase_secs={} cause={} bot_wait={} draft={} thread_fix={} paused={} missing={missing} review={} fix={} bot={} full_validations={} pr_rounds={pr_rounds} escaped={} tier_inputs={} class_reason={} escape_cause={} refixed={}",
+        "cycle item={item} {delivery} class={} tier={} target={} merge_group={} ci_head={} ci_clean={} waited={} lane={} actual={} open={} verdict={} phase={} phase_secs={} cause={} bot_wait={} draft={} thread_fix={} paused={} missing={missing} review={} fix={} bot={} full_validations={} pr_rounds={pr_rounds} escaped={} tier_inputs={} class_reason={} escape_cause={} refixed={}",
         n(&g("class")),
         n(&g("tier")),
         n(&g("target")),
         n(&g("merge_group")),
         n(&g("ci_head")),
         n(&g("ci_clean")),
+        n(&g("waited")),
         n(&g("lane_secs")),
         n(&g("actual")),
         n(&g("open")),
@@ -1840,7 +1864,7 @@ mod tests {
             assert_eq!(
                 format!("{head} {}", fields(&got, &["escaped"])),
                 format!(
-                    "cycle item=KEN-1 pr=7 class={name} tier={tier} target={target} merge_group=- ci_head=60 ci_clean=- lane={merged} actual={merged} open={} verdict={verdict} escaped={escaped}",
+                    "cycle item=KEN-1 pr=7 class={name} tier={tier} target={target} merge_group=- ci_head=60 ci_clean=- waited=0 lane={merged} actual={merged} open={} verdict={verdict} escaped={escaped}",
                     merged - 120
                 ),
                 "{name} at {merged} s, tier {tier}"
@@ -1922,7 +1946,7 @@ mod tests {
         });
         assert_eq!(
             line_of("KEN-2", &c),
-            "cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- ci_head=60 ci_clean=- lane=1500 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 draft=0 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true"
+            "cycle item=KEN-2 pr=7 class=micro tier=micro target=1200 merge_group=- ci_head=60 ci_clean=- waited=0 lane=1500 actual=1500 open=1380 verdict=miss phase=merged phase_secs=1080 cause=merged bot_wait=180 draft=0 thread_fix=0 paused=0 missing=- review=3 fix=5 bot=4 full_validations=2 pr_rounds=2 escaped=false tier_inputs=- class_reason=stub escape_cause=- refixed=true"
         );
         assert_eq!(
             c["stamps"],
@@ -1945,7 +1969,7 @@ mod tests {
                 &class("small", "stub"),
                 Some("micro")
             ),
-            "cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- lane=1100 actual=1100 open=140 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 draft=0 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-"
+            "cycle item=KEN-3 pr=7 class=small tier=micro target=1800 merge_group=- ci_head=- ci_clean=- waited=0 lane=1100 actual=1100 open=140 verdict=met phase=first_commit phase_secs=900 cause=- bot_wait=40 draft=0 thread_fix=0 paused=0 missing=- review=- fix=- bot=- full_validations=- pr_rounds=- escaped=true tier_inputs=- class_reason=stub escape_cause=- refixed=-"
         );
     }
 
@@ -2471,11 +2495,16 @@ mod tests {
         );
     }
 
+    /// A wait comes off the lane's time, so each pause case misses on the
+    /// lane time the rest of its merge gap holds; the pause still names
+    /// the gap it fills most of.
     #[test]
     fn a_merged_miss_names_the_pause_the_merge_group_or_the_route() {
         let admin = json!({"route": "admin", "cause": "queue-bypass-safe"});
         let queue = json!({"route": "queue", "cause": "queue-required"});
-        for (name, tier, group, pauses, parked, route, want, gate_paused) in [
+        let hold: &[(i64, i64)] = &[(500, 6700)];
+        let clipped: &[(i64, i64)] = &[(0, 300), (400, 2000), (1500, 6700)];
+        for (name, tier, group, pauses, parked, route, merged, phase_secs, want, gate_paused) in [
             (
                 "standard CI",
                 "standard",
@@ -2483,6 +2512,8 @@ mod tests {
                 &[][..],
                 None,
                 admin.clone(),
+                12420,
+                5000,
                 "merge_group",
                 0,
             ),
@@ -2493,6 +2524,8 @@ mod tests {
                 &[][..],
                 None,
                 Value::Null,
+                12420,
+                5000,
                 "merge_group",
                 0,
             ),
@@ -2503,6 +2536,8 @@ mod tests {
                 &[][..],
                 None,
                 Value::Null,
+                12420,
+                5000,
                 "merge_group",
                 0,
             ),
@@ -2510,9 +2545,11 @@ mod tests {
                 "standard hold",
                 "standard",
                 0,
-                &[(500, 7600)][..],
+                hold,
                 None,
                 queue.clone(),
+                12420,
+                5800,
                 "paused",
                 0,
             ),
@@ -2520,9 +2557,11 @@ mod tests {
                 "small hold",
                 "small",
                 0,
-                &[(500, 7600)][..],
+                hold,
                 None,
                 Value::Null,
+                12420,
+                5800,
                 "paused",
                 0,
             ),
@@ -2530,9 +2569,11 @@ mod tests {
                 "micro hold",
                 "micro",
                 0,
-                &[(500, 7600)][..],
+                hold,
                 None,
                 Value::Null,
+                12420,
+                5800,
                 "paused",
                 0,
             ),
@@ -2540,9 +2581,11 @@ mod tests {
                 "overlapping clipped holds",
                 "standard",
                 0,
-                &[(0, 300), (400, 2000), (1500, 7600)][..],
+                clipped,
                 None,
                 Value::Null,
+                12420,
+                5720,
                 "paused",
                 180,
             ),
@@ -2551,8 +2594,10 @@ mod tests {
                 "standard",
                 0,
                 &[][..],
-                Some(500),
+                Some(6220),
                 Value::Null,
+                12420,
+                5800,
                 "paused",
                 0,
             ),
@@ -2563,6 +2608,8 @@ mod tests {
                 &[][..],
                 None,
                 Value::Null,
+                12420,
+                6000,
                 "merge_group",
                 0,
             ),
@@ -2573,6 +2620,8 @@ mod tests {
                 &[(420, 6420)][..],
                 None,
                 Value::Null,
+                17420,
+                5000,
                 "paused",
                 0,
             ),
@@ -2583,6 +2632,8 @@ mod tests {
                 &[][..],
                 None,
                 queue.clone(),
+                12420,
+                12000,
                 "queue",
                 0,
             ),
@@ -2593,6 +2644,8 @@ mod tests {
                 &[][..],
                 None,
                 admin.clone(),
+                12420,
+                12000,
                 "admin",
                 0,
             ),
@@ -2603,11 +2656,13 @@ mod tests {
                 &[][..],
                 None,
                 Value::Null,
+                12420,
+                12000,
                 "merged",
                 0,
             ),
         ] {
-            let mut t = timeline(12420, 300, 110);
+            let mut t = timeline(merged, 300, 110);
             t["ci_merge_group_secs"] = json!(group);
             t["merge_decision"] = route;
             let c = cycle(
@@ -2626,8 +2681,7 @@ mod tests {
                     c["cause"]
                 ),
                 format!(
-                    "verdict=miss phase=merged phase_secs={} cause={want} paused={gate_paused}|\"{want}\"",
-                    12000 - group
+                    "verdict=miss phase=merged phase_secs={phase_secs} cause={want} paused={gate_paused}|\"{want}\""
                 ),
                 "{name}"
             );
@@ -2936,7 +2990,7 @@ mod tests {
         let got = line_of("KEN-1", &c);
         assert_eq!(
             got.split(" phase=").next().unwrap(),
-            "cycle item=KEN-1 commit=SHA class=- tier=micro target=- merge_group=- ci_head=- ci_clean=- lane=900 actual=900 open=- verdict=unclassified"
+            "cycle item=KEN-1 commit=SHA class=- tier=micro target=- merge_group=- ci_head=- ci_clean=- waited=0 lane=900 actual=900 open=- verdict=unclassified"
         );
         assert_eq!((c.get("commit"), c.get("pr")), (Some(&json!("SHA")), None));
     }
@@ -2952,11 +3006,58 @@ mod tests {
         }
     }
 
+    /// A merge hold the answer never closed runs to the merge and no
+    /// further, one answered stops at its answer, and one asked after the
+    /// merge takes nothing off.
+    #[test]
+    fn a_hold_never_answered_runs_to_the_merge_and_no_further() {
+        for (name, from, to, want) in [
+            (
+                "never answered",
+                500,
+                None,
+                "waited=4500 lane=500 verdict=met",
+            ),
+            (
+                "answered",
+                500,
+                Some(900),
+                "waited=400 lane=4600 verdict=miss",
+            ),
+            (
+                "asked after the merge",
+                6000,
+                None,
+                "waited=0 lane=5000 verdict=miss",
+            ),
+        ] {
+            let state = json!({"pauses": [{"from": at(from), "to": to.map_or(Value::Null, at), "cause": "merge-hold"}]});
+            let lane = lane("KEN-1", json!({}));
+            let pauses = waits_of(&lane, state.as_object()).unwrap();
+            let c = compute(&Inputs {
+                lane: &lane,
+                timeline: &timeline(5000, 300, 110),
+                rounds: Value::Null,
+                stages: Value::Null,
+                pauses: &pauses,
+                class: &class("micro", "stub"),
+                tier: Some("micro"),
+            });
+            assert_eq!(
+                fields(&line_of("KEN-1", &c), &["waited", "lane", "verdict"]),
+                want,
+                "{name}"
+            );
+        }
+    }
+
     /// A fleet record of KEN-1..KEN-6 launched at T0, as the recorder's
-    /// repeat bar and the rollup read it.
+    /// repeat bar and the rollup read it, and the workflow states the
+    /// record reads beside it.
     struct Fleet {
         dir: tempfile::TempDir,
         lanes: Vec<Value>,
+        states: BTreeMap<String, Value>,
     }
 
     impl Fleet {
@@ -2967,6 +3068,7 @@ mod tests {
             Fleet {
                 dir: tempfile::tempdir().unwrap(),
                 lanes,
+                states: BTreeMap::new(),
             }
         }
 
@@ -2993,7 +3095,17 @@ mod tests {
         fn record(&mut self, item: &str, timeline: &Value) -> Option<String> {
             self.write();
             let lane = self.lane(item);
-            let c = cycle(&lane, timeline, &class("micro", "stub"), Some("micro"));
+            let state = self.states.get(item).and_then(Value::as_object);
+            let pauses = waits_of(&lane, state).unwrap();
+            let c = compute(&Inputs {
+                lane: &lane,
+                timeline,
+                rounds: Value::Null,
+                stages: Value::Null,
+                pauses: &pauses,
+                class: &class("micro", "stub"),
+                tier: Some("micro"),
+            });
             let bar = repeat_miss(&self.path(), &lane, &c).unwrap();
             let record = self.lanes.iter_mut().find(|l| l["item"] == item).unwrap();
             record["cycle"] = c;
@@ -3035,9 +3147,10 @@ mod tests {
                     t
                 }
                 "ok" => timeline(800, 300, 110),
+                "h" | "c" | "q" | "qs" => timeline(5000, 300, 110),
                 "g" | "w" => gate_timeline(Some(&[100, 1400]), &[400, 1500, 2000], 3200),
                 "cw" => ci_timeline(Some(3500), Some(&[(3500, 4000)]), None),
-                "cc" => ci_timeline(Some(400), Some(&[(400, 4000)]), None),
+                "cc" | "hc" => ci_timeline(Some(400), Some(&[(400, 4000)]), None),
                 "cv" => ci_timeline(Some(400), Some(&[(400, 546), (3864, 4000)]), Some(136)),
                 other => panic!("no step {other}"),
             }
@@ -3077,12 +3190,29 @@ mod tests {
             ("unnamed-phase", "n:1 n:2 n:3", None),
             ("recorded-again", "m:1 m:2 m:3 m:3", None),
             ("fourth", "m:1 m:2 m:3 m:4", None),
+            // A wall over most of a gate gap is a wait: it explains that
+            // lane's overrun, so the lane meets its target and the bar
+            // waits for a third lane missing on its own time.
+            ("a-wall-is-a-wait", "g:1 w:2 g:3", None),
             (
-                "causes",
-                "g:1 w:2 g:3",
+                "own-time-beside-a-wait",
+                "g:1 w:2 g:3 g:4",
                 Some(
-                    "repeat-miss phase=gate_green items=KEN-1,KEN-2,KEN-3 causes=thread_fix,paused,thread_fix",
+                    "repeat-miss phase=gate_green items=KEN-1,KEN-3,KEN-4 causes=thread_fix,thread_fix,thread_fix",
                 ),
+            ),
+            ("merge-holds", "h:1 h:2 h:3", None),
+            ("walls-with-no-account-to-move-to", "c:1 c:2 c:3", None),
+            ("relaunches-held-for-capacity", "q:1 q:2 q:3", None),
+            (
+                "a-capacity-wait-standing-to-the-merge",
+                "qs:1 qs:2 qs:3",
+                None,
+            ),
+            (
+                "ci-under-a-hold",
+                "hc:1 hc:2 hc:3",
+                Some("repeat-miss phase=ci_green items=KEN-1,KEN-2,KEN-3 causes=ci,ci,ci"),
             ),
             ("ci-work", "cw:1 cw:2 cw:3", None),
             (
@@ -3103,13 +3233,36 @@ mod tests {
             for step_word in sequence.split(' ') {
                 let (kind, n) = step_word.split_once(':').unwrap();
                 let item = format!("KEN-{n}");
-                if kind == "w" {
-                    let record = fleet
-                        .lanes
-                        .iter_mut()
-                        .find(|l| l["item"] == item.as_str())
-                        .unwrap();
-                    record["pauses"] = paused(&[(400, 2900)], None)["pauses"].clone();
+                let record = fleet
+                    .lanes
+                    .iter_mut()
+                    .find(|l| l["item"] == item.as_str())
+                    .unwrap();
+                match kind {
+                    "w" => record["pauses"] = paused(&[(400, 2900)], None)["pauses"].clone(),
+                    // The wall stands to the merge: no account had room
+                    // to move the lane onto.
+                    "c" => record["walled"] = json!({"at": at(500)}),
+                    // The relaunch refused for capacity from 500 and
+                    // admitted at 4900, as the admission closes the wait;
+                    // and one whose pull request merged while it stood.
+                    "q" => {
+                        record["pauses"] =
+                            json!([{"from": at(500), "to": at(4900), "cause": "capacity"}]);
+                    }
+                    "qs" => record["capacity_wait"] = json!({"at": at(500)}),
+                    "h" | "hc" => {
+                        let (from, to) = if kind == "h" {
+                            (500, 4900)
+                        } else {
+                            (4100, 4200)
+                        };
+                        fleet.states.insert(
+                            item.clone(),
+                            json!({"pauses": [{"from": at(from), "to": at(to), "cause": "merge-hold"}]}),
+                        );
+                    }
+                    _ => {}
                 }
                 bar = fleet.record(&item, &step(kind));
             }

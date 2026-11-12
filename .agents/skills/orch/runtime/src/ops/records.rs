@@ -331,6 +331,11 @@ fn owned_fields() -> Vec<(&'static str, &'static str, Check)> {
             Check::Added(progress::check_skips),
         ),
         (
+            "pauses",
+            "record-pr-progress",
+            Check::Whole(progress::check_pauses),
+        ),
+        (
             "post_pr_stop",
             "post-pr-stop",
             Check::Whole(store::check_stop),

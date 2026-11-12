@@ -18,7 +18,9 @@ mod support;
 
 use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
+use agent_runtime::settings::Roots;
 use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
+use orch_runtime::settings::{self, Flags as SettingsFlags};
 use serde_json::{Map, Value, json};
 use support::{FakeClock, fixtures, tool_path, write_executable};
 
@@ -397,8 +399,30 @@ impl World {
             clock: wait_clock,
             free: std::sync::atomic::AtomicBool::new(false),
         };
+        let settings = settings::load(
+            &Roots {
+                project: root.clone(),
+                common: root.clone(),
+            },
+            &[],
+            &SettingsFlags {
+                state_dir: Some(root.clone()),
+                private_env: false,
+            },
+        )
+        .unwrap();
         std::thread::scope(|s| {
-            let handle = s.spawn(|| run(&item, request, &programs, &root, &freeable, &env(), LOCK));
+            let handle = s.spawn(|| {
+                run(
+                    &item,
+                    request,
+                    &programs,
+                    &settings,
+                    &freeable,
+                    &env(),
+                    LOCK,
+                )
+            });
             // The wait sleeps on a clock only this thread releases: run it
             // out by a bounded count of deadlines, as long in real time as
             // the slowest fixture read's own bound. A wait no advance ended
@@ -662,11 +686,21 @@ fn late_finding_with_a_failed_dequeue_half_is_loud() {
 /// A conflicting head is read from `mergeable` ahead of the membership
 /// transitions and confirmed like them: one reading ends nothing, and a
 /// pull request that also left the queue routes to the restack, never to
-/// a CI cycle for a failure CI never had.
+/// a CI cycle for a failure CI never had. Who disabled its arm is read on a
+/// disarm alone, never here, whatever the timeline holds.
 #[test]
 fn conflicting_outranks_ejected_and_is_confirmed() {
     let mut world = World::new();
     world.pull("OPEN", "CONFLICTING").queue(in_queue(None));
+    world.replies.insert(
+        "disarm".to_owned(),
+        disabling(
+            "2026-07-24T10:05:00Z",
+            json!({"__typename": "User", "login": "octo"}),
+            Value::Null,
+            Value::Null,
+        ),
+    );
     let request = world.request(10, 60);
     let reply = world.wait(&request, |world, clock| {
         clock.await_sleepers(1);
@@ -678,6 +712,14 @@ fn conflicting_outranks_ejected_and_is_confirmed() {
         ("complete", "conflicting", Some("base_conflict"), 2)
     );
     assert!(reply.was_in_merge_queue);
+    assert!(
+        !world
+            .gh_log()
+            .iter()
+            .any(|l| l.contains("AUTO_MERGE_DISABLED_EVENT")),
+        "{:?}",
+        world.gh_log()
+    );
 }
 
 /// An entry that exposes no merge-group head has nothing to read progress
@@ -979,6 +1021,148 @@ fn a_closed_pull_request_is_closed_without_merge_before_any_queue_read() {
         "{:?}",
         world.gh_log()
     );
+}
+
+/// The pull request's latest automatic-merge disabling, as the timeline
+/// read answers it (fields from GitHub's `AutoMergeDisabledEvent`).
+fn disabling(created_at: &str, actor: Value, reason: Value, reason_code: Value) -> Value {
+    json!({"body": {"data": {"repository": {"pullRequest": {"timelineItems": {
+        "totalCount": 1,
+        "nodes": [{"__typename": "AutoMergeDisabledEvent", "createdAt": created_at,
+                   "actor": actor, "reason": reason, "reasonCode": reason_code}]
+    }}}}}})
+}
+
+/// A confirmed disarm reads who disabled the arm, once: a person's account
+/// with no reason is a deliberate hold, `cause: merge_hold` naming the
+/// person, the item's merge hold opened through `record-pr-progress`; GitHub
+/// naming its reason, an account that is no person, the disabling of an
+/// earlier arm, none on the timeline, a page that does not carry its count
+/// and a read that fails each answer `auto_merge_cleared` as before, with no
+/// hold. The runtime's own guard disarm is never read as a person's.
+#[test]
+fn a_persons_disarm_is_a_merge_hold_and_every_other_reading_a_cleared_arm() {
+    let user = json!({"__typename": "User", "login": "octo"});
+    let after = "2026-07-24T10:05:00Z";
+    let hold = json!([{"from": agent_runtime::clock::iso_utc(env().now_secs), "to": null, "cause": "merge-hold"}]);
+    let cleared = ("auto_merge_cleared", None, Value::Null, 1);
+    // (case, the read's answer, a guard disarm standing, (cause, disarmed_by, pauses, reads))
+    let rows = [
+        (
+            "a person, no reason",
+            Some(disabling(after, user.clone(), Value::Null, Value::Null)),
+            false,
+            ("merge_hold", Some("octo"), hold, 1),
+        ),
+        (
+            "GitHub, its reason named",
+            Some(disabling(
+                after,
+                user.clone(),
+                json!("a required check failed"),
+                json!("CHECK_FAILED"),
+            )),
+            false,
+            cleared.clone(),
+        ),
+        (
+            "an app",
+            Some(disabling(
+                after,
+                json!({"__typename": "Bot", "login": "some-app"}),
+                Value::Null,
+                Value::Null,
+            )),
+            false,
+            cleared.clone(),
+        ),
+        (
+            "no actor",
+            Some(disabling(after, Value::Null, Value::Null, Value::Null)),
+            false,
+            cleared.clone(),
+        ),
+        (
+            "an earlier arm's disabling",
+            Some(disabling(
+                "2026-07-24T09:00:00Z",
+                user.clone(),
+                Value::Null,
+                Value::Null,
+            )),
+            false,
+            cleared.clone(),
+        ),
+        (
+            "none on the timeline",
+            Some(
+                json!({"body": {"data": {"repository": {"pullRequest": {"timelineItems": {"totalCount": 0, "nodes": []}}}}}}),
+            ),
+            false,
+            cleared.clone(),
+        ),
+        (
+            "a count the page does not carry",
+            Some(
+                json!({"body": {"data": {"repository": {"pullRequest": {"timelineItems": {"totalCount": 1, "nodes": []}}}}}}),
+            ),
+            false,
+            cleared.clone(),
+        ),
+        ("a read that fails", None, false, cleared.clone()),
+        (
+            "the guard's own disarm",
+            Some(disabling(after, user.clone(), Value::Null, Value::Null)),
+            true,
+            ("auto_merge_cleared", None, Value::Null, 0),
+        ),
+    ];
+    for (case, answer, guarded, (cause, by, pauses, reads)) in rows {
+        let mut world = World::new();
+        world.queue(armed_only());
+        if let Some(answer) = answer {
+            world.replies.insert("disarm".to_owned(), answer);
+        }
+        if guarded {
+            let mut doc: Value =
+                serde_json::from_str(&fs::read_to_string(&world.item).unwrap()).unwrap();
+            doc["queue_watch"] = json!({
+                "pr": PR, "head": HEAD, "enabled_at": "2026-07-24T10:00:00Z",
+                "was_queued": true, "was_in_queue": false,
+                "guard": {"threads": 1, "disarm": {"state": "done"}, "dequeue": {"state": "unneeded"}}
+            });
+            fs::write(&world.item, doc.to_string()).unwrap();
+            world.queue(out());
+        }
+        let request = world.request(10, 60);
+        // The guarded memory already saw the arm: its first poll is the
+        // disarm's first reading.
+        let reply = world.wait(&request, |world, clock| {
+            clock.await_sleepers(1);
+            if !guarded {
+                world.queue(out()).write();
+                clock.pass(secs(10));
+            }
+            clock.release(secs(10));
+        });
+        assert_eq!(
+            (reply.verdict, reply.cause, reply.disarmed_by.as_deref()),
+            ("disarmed", Some(cause), by),
+            "{case}: {reply:?}"
+        );
+        let doc: Value = serde_json::from_str(&fs::read_to_string(&world.item).unwrap()).unwrap();
+        assert_eq!(
+            doc.get("pauses").cloned().unwrap_or(Value::Null),
+            pauses,
+            "{case}"
+        );
+        let read = world
+            .gh_log()
+            .iter()
+            .filter(|l| l.contains("AUTO_MERGE_DISABLED_EVENT"))
+            .count();
+        assert_eq!(read, reads, "{case}: {:?}", world.gh_log());
+    }
 }
 
 /// An arm GitHub cleared from a pull request a poll saw armed and never

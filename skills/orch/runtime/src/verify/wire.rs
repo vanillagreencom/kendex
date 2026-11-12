@@ -1438,6 +1438,74 @@ pub struct ParkQueueEntry {
     pub position: u64,
 }
 
+// --- graphql: who disabled the automatic merge ------------------------------------
+
+/// The queue wait's read of a pull request's latest automatic-merge
+/// disabling (`repository.pullRequest.timelineItems(last: 1, itemTypes:
+/// [AUTO_MERGE_DISABLED_EVENT])`, GraphQL `Repository.pullRequest`:
+/// `PullRequest`, null where the number names none).
+#[derive(Debug, Deserialize)]
+pub(crate) struct DisarmData {
+    pub(crate) repository: Nullable<DisarmRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct DisarmRepository {
+    #[serde(rename = "pullRequest")]
+    pub(crate) pull_request: Nullable<DisarmPull>,
+}
+
+/// `PullRequest.timelineItems`: `PullRequestTimelineItemsConnection!`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct DisarmPull {
+    #[serde(rename = "timelineItems")]
+    pub(crate) timeline_items: DisarmItems,
+}
+
+/// `PullRequestTimelineItemsConnection`: `totalCount` (`Int!`, the items
+/// of the asked types) and `nodes` (`[PullRequestTimelineItems]`, an entry
+/// null where a field error left it unresolved).
+#[derive(Debug, Deserialize)]
+pub(crate) struct DisarmItems {
+    #[serde(rename = "totalCount")]
+    pub(crate) total_count: u64,
+    pub(crate) nodes: Vec<Nullable<AutoMergeDisabledEvent>>,
+}
+
+/// `AutoMergeDisabledEvent`: `actor` (`Actor`, null where the account is
+/// gone), `createdAt` (`DateTime!`), `reason` and `reasonCode` (`String`,
+/// null where none is given: GitHub names a reason where it disabled the
+/// merge itself, for a failed check or a conflict).
+#[derive(Debug, Deserialize)]
+pub(crate) struct AutoMergeDisabledEvent {
+    pub(crate) actor: Nullable<TypedActor>,
+    #[serde(rename = "createdAt")]
+    pub(crate) created_at: String,
+    pub(crate) reason: Nullable<String>,
+    #[serde(rename = "reasonCode")]
+    pub(crate) reason_code: Nullable<String>,
+}
+
+/// An [`Actor`] with its concrete type, `__typename`.
+#[derive(Debug, Deserialize)]
+pub(crate) struct TypedActor {
+    #[serde(rename = "__typename")]
+    pub(crate) kind: ActorKind,
+    #[serde(flatten)]
+    pub(crate) actor: Actor,
+}
+
+/// The types that implement the `Actor` interface; a word outside them
+/// refuses the reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub(crate) enum ActorKind {
+    Bot,
+    EnterpriseUserAccount,
+    Mannequin,
+    Organization,
+    User,
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{Value, json};
@@ -1743,6 +1811,33 @@ mod tests {
         catalogue::<IssueComment>(
             json!({"id": 9, "user": null, "body": "Each decline holds."}),
             &[("id", Required), ("user", Nullable), ("body", Optional)],
+        );
+        catalogue::<GraphReply<DisarmData>>(
+            json!({"data": {"repository": null}, "errors": []}),
+            &[("data", OptionalNullable), ("errors", Optional)],
+        );
+        catalogue::<DisarmData>(json!({"repository": null}), &[("repository", Nullable)]);
+        catalogue::<DisarmRepository>(json!({"pullRequest": null}), &[("pullRequest", Nullable)]);
+        catalogue::<DisarmPull>(
+            json!({"timelineItems": {"totalCount": 0, "nodes": []}}),
+            &[("timelineItems", Required)],
+        );
+        catalogue::<DisarmItems>(
+            json!({"totalCount": 1, "nodes": [null]}),
+            &[("totalCount", Required), ("nodes", Required)],
+        );
+        catalogue::<AutoMergeDisabledEvent>(
+            json!({"actor": {"__typename": "User", "login": "octo"}, "createdAt": "2026-01-29T15:10:00Z", "reason": null, "reasonCode": null}),
+            &[
+                ("actor", Nullable),
+                ("createdAt", Required),
+                ("reason", Nullable),
+                ("reasonCode", Nullable),
+            ],
+        );
+        catalogue::<TypedActor>(
+            json!({"__typename": "Bot", "login": "app"}),
+            &[("__typename", Required), ("login", Required)],
         );
         catalogue::<Pull>(
             json!({

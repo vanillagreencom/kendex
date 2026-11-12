@@ -471,7 +471,7 @@ fn reread_on_record_changed(request: &Request) -> bool {
 /// commit in the gap. Production passes a no-op.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the journal's one store write of every request, and the lane and path admissions' fleet launch lock, held around their one write"
+    reason = "the journal's one store write of every request and of a refused relaunch's capacity wait, and the lane and path admissions' fleet launch lock, held around those writes"
 )]
 fn apply_interleaved(
     path: &Path,
@@ -506,7 +506,25 @@ fn apply_interleaved(
         // `<fleet>.launch.lock`) from before the snapshot read through the
         // committed row, so two contenders on one path are judged one after
         // the other; the state file's own lock is taken inside, by the write.
-        return record::locked(&occupancy::launch_lock_base(path), locking, transition);
+        return record::locked(&occupancy::launch_lock_base(path), locking, || {
+            let applied = transition();
+            if let (Request::LaunchLane(r), Err(refusal)) = (request, &applied)
+                && lane::held_for_capacity(refusal)
+            {
+                // The refusal is the caller's answer whatever this write
+                // answers: a wait that did not land stays lane time, and the
+                // next refusal stamps it.
+                let _unrecorded = record::reread(
+                    || {
+                        journal::commit(path, locking, &|| {}, |doc| {
+                            lane::hold_for_capacity(path, doc, &r.item, &env.iso())
+                        })
+                    },
+                    Error::key,
+                );
+            }
+            applied
+        });
     }
     transition()
 }
