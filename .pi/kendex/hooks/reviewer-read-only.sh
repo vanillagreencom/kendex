@@ -3,9 +3,9 @@
 # name: reviewer-read-only
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed), or `rm` (`git rm` too) on a path inside a git work tree: every `rm` word, quoted or not, is judged wherever the call holds it, its operands the words after it up to a separator, a relative operand judged against the directory the call starts in (the payload's `cwd`, or on Pi, whose payload carries none, the hook's own working directory; `git -C` moves it for that Git command only), whatever `cd` precedes it, since a failed `cd` leaves the shell there. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
-# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, no `rm` inside a work tree, only its review report.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete check is quote-blind: it drops quote marks and backslashes, then judges every `rm` word, `/bin/rm` too, wherever it stands: a command, a launcher's or `find -exec`'s argument, inside a substitution, a quoted string, a `bash -c`, `eval` or `--mutate` body, or a heredoc body. Its operands are the words after it up to a control operator, a parenthesis, a backtick, a redirection or a newline; `git` with its options before it, `git -C` included, moves the base for that Git command only. After quote removal, a semicolon, ampersand, pipe or newline ends that context. An operand holding a `$` or backtick expansion names nothing before the shell runs and is not judged, and a non-path operand such as find's `{}` is judged as a path in the directory the call starts in. A search pattern written `[r]m` and a script file run by its path are not read as an rm. Not judged: `find -delete`, `mv`, an `rm` whose operands come from input, as `xargs rm`, and a delete inside a script file. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write, or for a delete the routes that clear it: write a search pattern as `[r]m`, put a body that runs elsewhere in a script file under a `mktemp -d` of its own and run that file, delete scratch in that `mktemp -d`, and leave a probe it made in a work tree, named in its report; it never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Its delete model stops a cooperating reviewer deleting work-tree files with ordinary `rm` or `git rm` commands as Bash reads them after line joining. A relative operand is judged against the call's starting directory (payload `cwd`, or the hook's working directory on Pi); `git -C` moves it for that Git command only. Expansions (variables, command substitution, `eval`, here-docs) and other deleting programs are outside this model and remain the reviewer's read-only role and tools' responsibility. The scan is quote-blind and can also refuse quoted text. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
+# summary: Stops a cooperating reviewer's edits, commits, pushes, Git commands that discard work, and ordinary `rm` or `git rm` deletes in a work tree; lets it write its review report.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete model covers a cooperating reviewer's ordinary `rm` and `git rm` commands after Bash line joining. It does not model expansions (variables, command substitution, `eval`, here-docs) or other deleting programs; the reviewer's read-only role and tools own those. The quote-blind scan first removes backslash-newline pairs, then drops quote marks and backslashes, then turns semicolons, ampersands and pipes into line boundaries. It judges every remaining `rm` word, `/bin/rm` too, so quoted strings and bodies can also cause refusals. Operands are the words after the match up to a control operator, a parenthesis, a backtick, a redirection or a newline. A relative operand uses the call's starting directory regardless of preceding `cd`, since that `cd` can fail; `git -C` moves the base for that Git command only. An operand holding a `$` or backtick expansion names nothing before the shell runs and is not judged. A search pattern written `[r]m` and a script file run by its path are not read as an rm. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. A delete refusal names the clearing routes: write a search pattern as `[r]m`, put a body that runs elsewhere in a script file under a `mktemp -d` of its own and run that file, delete scratch in that `mktemp -d`, and leave a probe it made in a work tree named in its report. Every refusal opens with `reviewer-read-only: <key>=<value>`; command diagnostics follow that key.
 # timeout: 10
 # harnesses: [claude, pi, opencode, cursor]
 # ---
@@ -107,20 +107,18 @@ in_work_tree() { # PATH -> 0 inside, 1 outside
   refuse git unreadable
 }
 
-# The delete check, quote-blind. Quote marks and backslashes are dropped
-# before anything is matched, so an `rm` is judged wherever the call holds
-# it: a quoted `rm`, one in a `bash -c` or `--mutate` body, a heredoc body or
-# a substitution alike. Each match is an `rm` word, `/bin/rm` too, with any
-# `git` and its options before it and the words after it up to a control
-# operator, a parenthesis, a backtick, a redirection or the end of the line.
-# Shell separators become line boundaries once, so neither Git-option
-# branch can carry a directory into a later command. grep reads each line.
+# Join Bash continuations before dropping backslashes: otherwise the
+# preserved newline separates an rm from the path Bash gives it. The
+# quote-blind scan also matches quoted mentions; it does not evaluate them.
+# Shell separators then become line boundaries once, so neither Git-option
+# branch can carry a directory into a later command.
 judge_deletes() {
   local pattern bare calls call words word state base ended
   pattern='(^|[^[:alnum:]_.-])(git([[:space:]]+(-C|-c|--git-dir|--work-tree|--namespace|--exec-path)[[:space:]]+[^[:space:]]+|[[:space:]]+-[^[:space:]]*)*[[:space:]]+)?rm([[:space:]]+[^[:space:]&;|()<>`]+)*[<>]?'
   # jq drops the quote marks: a Bash 3.2 pattern substitution over the
   # command takes time that grows with its length squared.
   bare=$(printf '%s' "$INPUT" | jq -er '.tool_input.command
+    | split("\\\n") | join("")
     | explode | map(select(. != 34 and . != 39 and . != 92))
     | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode' 2>/dev/null) ||
     refuse payload invalid-json
@@ -266,10 +264,10 @@ case "$TOOL_NAME" in
     if printf '%s\n' "$COMMAND" | grep -E -- "$GIT_DISCARD" >/dev/null; then
       refuse refused git-discard
     fi
-    # A delete inside a work tree can take uncommitted work with it. Only a
-    # command that names rm can run one, so any other passes unread.
+    # A continuation can form an rm word only after Bash line joining.
+    # Send every such command through normalization before judging it.
     case "$COMMAND" in
-      *rm*) ;;
+      *rm* | *$'\\\n'*) ;;
       *) exit 0 ;;
     esac
     CWD=$(printf '%s' "$INPUT" | jq -er '.cwd

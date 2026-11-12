@@ -283,6 +283,36 @@ git_boundary_rows() {
 }
 git_boundary_rows
 
+# Bash joins continuations before recognizing command words and operands.
+# The same table covers rm, git rm, and continued scratch operands.
+continuation_rows() {
+  local cmd cwd
+  for cmd in \
+    'rm -f -- \'$'\n''cli.md' \
+    'r\'$'\n''m cli.md' \
+    'rm cli.\'$'\n''md' \
+    'git \'$'\n''rm cli.md'; do
+    for cwd in "$REPO" ''; do
+      delete_row reviewer-test "$cwd" "$cmd" "delete=$REPO/cli.md"
+    done
+  done
+  delete_row reviewer-test "$REPO" 'rm -rf -- \'$'\n'"$DELETE_SCRATCH" pass
+}
+continuation_rows
+
+# Keep the control on the incident row: its old transform preserves the
+# newline instead of joining it, while retaining the other normalizations.
+continuation_control_row() {
+  delete_row reviewer-test "$REPO" 'rm -f -- \'$'\n''cli.md' "delete=$REPO/cli.md"
+}
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control continuation-not-joined "$HOOK" \
+    '    | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '  bare=$(printf '\''%s\n'\'' "$COMMAND" | jq -Rr '\''explode | map(select(. != 34 and . != 39 and . != 92)) | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'')' \
+    HOOK continuation_control_row
+fi
+
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control git-boundary-ignored "$HOOK" \
     '    | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'' 2>/dev/null) ||
