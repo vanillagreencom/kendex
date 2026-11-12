@@ -85,7 +85,12 @@ g "$SEED" update-ref refs/remotes/origin/main HEAD
   printf 'COMMIT_GUARDS_CHANGELOG_PACKAGE_PATHS = "skills/*/SKILL.md"\n'
 } > "$SEED/kendex.settings.toml"
 ln -s "$COMMIT_GUARDS_DIR" "$SEED/.agents/skills/commit-guards"
-printf 'kendex.settings.toml\ntmp/\n.agents/skills/commit-guards\n' \
+# The runtime's validation runs the orch and github scripts from the
+# project's install (`.agents/skills/<name>`): link this checkout's own.
+for name in orch github; do
+  ln -s "$(cd "$TEST_DIR/../../$name" && pwd)" "$SEED/.agents/skills/$name"
+done
+printf 'kendex.settings.toml\ntmp/\n.agents/skills/commit-guards\n.agents/skills/orch\n.agents/skills/github\n' \
   >> "$(git -C "$SEED" rev-parse --path-format=absolute --git-path info/exclude)"
 skills "$SEED" 1.0.1 "Body, branch."
 agent 1.0.1 > "$SEED/agents/a.md"
