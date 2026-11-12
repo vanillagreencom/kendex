@@ -12,6 +12,15 @@
 # for the queue-only default's stand-down, as the harness-ci template's
 # `queue-only-default: true` input does; false, the default, matches a
 # workflow that passes none.
+# The base commit's HARNESS_CI_UNREAD_PATHS, blank-separated globs read from
+# its settings tables alone, never the environment, names paths no lane
+# reads: a changed path it matches, outside the docs set, not declared text,
+# not a path git quotes and not on the shipped queue list, that no lane
+# claims turns no lane on.
+# Every verdict prints its globs on one `unread-paths:` line, bare where it
+# is unset or blank, after all this script relays from tools that read the
+# head, so the change-class action's lane producer, lib/change-class.sh,
+# reads the last such line as this script's own.
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
@@ -550,7 +559,7 @@ harness_err="$work/harness-stderr"
 # An admitted manifest's narrow answers are its own small, the one class
 # the light-ci line marks for the lanes.
 answer() { # CLASS FIELDS [measured]
-  local queue_line per_push_line rule light_line=""
+  local queue_line per_push_line rule light_line="" unread_line
   if [ -n "$SETTINGS_ADMITTED" ] && [ "$1" != trivial ]; then
     rule="${2%% *}"
     settings_note "cause=class-$1 rule=${rule#cause=}"
@@ -570,6 +579,11 @@ answer() { # CLASS FIELDS [measured]
   per_push_mode
   queue_line="queue-only: queue_only=$QUEUE_ONLY inputs=$QUEUE_INPUTS $QUEUE_CAUSE"
   per_push_line="per-push: state=$PER_PUSH"
+  # per_push_mode read the base's settings; the action's lane producer reads
+  # this record.
+  set_globs "${HARNESS_CI_UNREAD_PATHS:-}"
+  unread_line="unread-paths:"
+  [ "${#GLOB_LIST[@]}" -eq 0 ] || unread_line="$unread_line ${GLOB_LIST[*]}"
   if [ -n "$output" ] && [ "$output" != /dev/null ]; then
     local lane_docs
     lane_docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
@@ -579,7 +593,8 @@ answer() { # CLASS FIELDS [measured]
     [ -f "$work/declared" ] || die "cause=declared-paths-unreadable" \
       "the docs reader did not complete declaration discovery"
     # harness-only owns the resolved endpoints; render move checks read them.
-    # The two records below are the ones the action's log carries.
+    # The records below are the ones the action's log carries, save the
+    # unread-paths line: this route publishes no lane verdict it could change.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"
       [ -z "$light_line" ] || printf '%s\n' "$light_line"; } >"$work/class-log"
     change_class_lanes "$1" "$lane_docs" "$event" "$repo" "$head" \
@@ -595,6 +610,7 @@ answer() { # CLASS FIELDS [measured]
   fi
   printf '%s\n%s\n' "$queue_line" "$per_push_line" >&2
   [ -z "$light_line" ] || printf '%s\n' "$light_line" >&2
+  printf '%s\n' "$unread_line" >&2
   printf 'class: class=%s measured=%s %s\n' "$1" "$measured" "$2" >&2
   printf 'change_class=%s\n' "$1"
   exit 0
@@ -743,6 +759,10 @@ queue_lane_of_paths() {
     index=$((index + 1))
   done
 }
+
+# The paths no lane reads, from the base's tables alone, as the keys above.
+unset HARNESS_CI_UNREAD_PATHS
+BASE_SETTINGS_KEYS="$BASE_SETTINGS_KEYS HARNESS_CI_UNREAD_PATHS"
 
 # The repository's per-push mode, as PER_PUSH: `unset` where the base
 # commit's HARNESS_CI_PER_PUSH_REASON is unset or blank, the default, where

@@ -142,6 +142,17 @@ opencode.jsonc'
   fi
 }
 
+# The unread rule's queue list and globs take the list grammar, extglob on,
+# for this match alone: the change-class action sources this file with it
+# off. The caller's setting is restored.
+unread_list_match() { # PATH GLOBS
+  local extglob=true status=0
+  shopt -q extglob || { extglob=false; shopt -s extglob; }
+  change_class_path_match "$1" "$2" || status=$?
+  [ "$extglob" = true ] || shopt -u extglob
+  return "$status"
+}
+
 # Lane decisions shared by the installed command and the action. The caller
 # supplies the class and harness-only's paths, outside list and range log in
 # WORK, the log also holding change-class's per-push line.
@@ -167,6 +178,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local reader_missing queue_reader per_push_reader standdown_missing hit
   local reach reach_kind unclaimed_unproved
   local declared_paths=""
+  local unread_globs unread_hit queue_globs
   # Older library callers do not write declaration evidence.
   if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then
     declared_paths="$(cat -- "${work:?}/declared" 2>/dev/null)" ||
@@ -187,6 +199,26 @@ per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
 # change-class's light-ci record, likewise.
 light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
   die "cause=light-record-unreadable" "could not read change-class's light-ci line"
+# change-class's unread-paths record: the base's HARNESS_CI_UNREAD_PATHS,
+# globs of paths no lane reads. change-class prints it on every verdict after
+# all it relays from tools that read the head, so only the last line is its
+# own. An absent record declares none.
+unread_globs="$(sed -n 's/^unread-paths://p' "${work:?}/class-log" | tail -n 1 | tr ' ' '\n')" ||
+  die "cause=unread-record-unreadable" "could not read change-class's unread-paths line"
+unread_hit=""
+# A path the shipped queue list names is a CI input no declaration takes out
+# of the lanes: change-class's queue-only rule reads that list from orch
+# beside this package. Unread, the declaration is refused.
+queue_globs=""
+if [ -n "$unread_globs" ]; then
+  queue_globs="$(change_class_list_globs \
+    "${BASH_SOURCE[0]%/*}/../../../orch/references/narrow-change.conf" queue 2>/dev/null)" ||
+    queue_globs=""
+  if [ -z "$queue_globs" ]; then
+    printf 'setting-refused: setting=HARNESS_CI_UNREAD_PATHS cause=queue-list-unreadable\n' >&2
+    unread_globs=""
+  fi
+fi
 
 declaration=""
 if [ -n "$lanes_from" ]; then
@@ -219,11 +251,19 @@ needs_lane_claim() { # PATH — declared text and paths outside the docs set nee
   case $'\n'"$declared_paths"$'\n' in *$'\n'"$1"$'\n'*) return 0 ;; esac
   grep -qxF -- "$1" "${work:?}/outside" 2>/dev/null || status=$?
   case "$status" in
-    0) return 0 ;;
+    0) ;;
     1) return 1 ;;
     *) die "cause=outside-list-unreadable status=$status" \
       "could not read the paths harness-only placed outside the docs set" ;;
   esac
+  # A path the base declares unread needs none; declared text, a path git
+  # quoted, whose spelling no queue glob reads, and a queue-listed path keep
+  # their claim.
+  case "$1" in \"*) return 0 ;; esac
+  ! unread_list_match "$1" "$queue_globs" || return 0
+  unread_list_match "$1" "$unread_globs" || return 0
+  [ -n "$unread_hit" ] || unread_hit="$PATH_MATCH_HIT"
+  return 1
 }
 
 lane_count=0
@@ -525,6 +565,8 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   elif [ "${lane_nightly[$index]}" = true ]; then
     lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
+  elif [ -n "$unread_hit" ]; then
+    lane_values[$index]=false lane_causes[$index]="cause=unread-path setting=HARNESS_CI_UNREAD_PATHS $unread_hit"
   else
     lane_values[$index]=false lane_causes[$index]="cause=unreached"
   fi

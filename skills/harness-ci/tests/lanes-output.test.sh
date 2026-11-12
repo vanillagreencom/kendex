@@ -68,7 +68,7 @@ run_local() { # COMMAND EVENT BASE DECLARATION [DEFAULT]
 }
 run_action() { # EVENT BASE DECLARATION DEFAULT — DEFAULT empty passes no input
   : >"$SANDBOX/action-output"
-  CLASSIFIER="$ROOT" EVENT="$1" BASE="$2" HEAD="$(git -C "$repo" rev-parse HEAD)" REPO="$repo" \
+  CLASSIFIER="${ACTION_ROOT:-$ROOT}" EVENT="$1" BASE="$2" HEAD="$(git -C "$repo" rev-parse HEAD)" REPO="$repo" \
     LANES_FROM="$3" QUEUE_ONLY_DEFAULT="$4" GITHUB_OUTPUT="$SANDBOX/action-output" \
     "$CLASSIFY" >"$SANDBOX/action-stdout" 2>"$SANDBOX/action-stderr"
 }
@@ -326,6 +326,110 @@ assert_eq "the control still completes with its original trivial class" \
   change_class=trivial "$(cat "$SANDBOX/local-stdout")"
 assert_eq "the control reaches the wrong successful stand-down" \
   false/trivial "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
+
+# Paths the base declares no lane reads turn no lane on in the action. A
+# glob takes extglob patterns whatever the caller's shell sets. A lane claim
+# still selects its lane, an undeclared unclaimed path beside one still runs
+# every lane, declared text, a path git quotes and a path on the shipped
+# queue list keep the fallback whatever glob matches them, and the caller's
+# environment declares nothing.
+base_unread="$(base_with_settings base-unread "$(printf '[env]\nHARNESS_CI_UNREAD_PATHS = ".github/@(dependabot|renovate).yml  src/declared.sh"')")"
+base_unreadtext="$(base_with_settings base-unreadtext "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"\nHARNESS_CI_UNREAD_PATHS = "product/*"')")"
+base_unreadwide="$(base_with_settings base-unreadwide "$(printf '[env]\nHARNESS_CI_UNREAD_PATHS = ".github/*.yml"')")"
+base_unreadquote="$(base_with_settings base-unreadquote "$(printf '[env]\nHARNESS_CI_UNREAD_PATHS = "*"')")"
+# NAME|BASE|PATHS|ENVIRONMENT|VERDICTS|OTHER LANE
+unread_rows() {
+  cat <<'ROWS'
+only-unread|unread|.github/dependabot.yml|-|lane_check=false,lane_other=false,lane_mac=false|verdict=false cause=unread-path setting=HARNESS_CI_UNREAD_PATHS path=.github/dependabot.yml glob=.github/@(dependabot|renovate).yml
+unread-beside-unclaimed|unread|.github/dependabot.yml Makefile|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=Makefile claim=none
+unread-claimed|unread|src/declared.sh|-|lane_check=true,lane_other=false,lane_mac=false|verdict=false cause=unreached
+environment-unread|default|.github/dependabot.yml|.github/dependabot.yml|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=.github/dependabot.yml claim=none
+unread-text|unreadtext|product/text.md|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=product/text.md claim=none
+unread-ci-input|unreadwide|.github/dependabot.yml .github/workflows/ci.yml|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=.github/workflows/ci.yml claim=none
+unread-quoted|unreadquote|.github/workflows/a"b.yml|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=".github/workflows/a\"b.yml" claim=none
+ROWS
+}
+unread_case() { # ROW, through the action at ACTION_ROOT
+  local name base_name paths environment expected other base_var base
+  IFS='|' read -r name base_name paths environment expected other <<<"$1"
+  base_var="base_$base_name"
+  base="${!base_var}"
+  write_row "$name" "$base" "$paths" 3
+  [ "$environment" = - ] || export HARNESS_CI_UNREAD_PATHS="$environment"
+  run_action merge_group "$base" "$SANDBOX/default" true
+  unset HARNESS_CI_UNREAD_PATHS
+  assert_eq "$name: lane verdicts" "$expected" "$(verdicts)"
+  assert_eq "$name: other lane's cause" "lane: name=other $other" \
+    "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
+}
+rows=0
+while IFS= read -r row; do
+  rows=$((rows + 1))
+  unread_case "$row"
+done < <(unread_rows)
+require_rows unread-paths "$rows"
+# The control ignores the declaration and must reach the unclaimed fallback.
+unread_mutant="$(mutant unread-ignored lib/change-class.sh \
+  '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"
+mkdir -p "$SANDBOX/unread-root"
+ln -s "${unread_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/unread-root/skills"
+control_status=0
+(PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/unread-root"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/unread-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the only-unread row rejects an ignored declaration" 1 "$control_status"
+assert_eq "the control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+# The action sources the library with extglob off, so the unread match sets
+# it for itself and restores the caller's setting. The control drops the
+# shopt: the extglob glob then misses, and the unclaimed fallback runs.
+extglob_mutant="$(mutant unread-no-extglob lib/change-class.sh \
+  '  shopt -q extglob || { extglob=false; shopt -s extglob; }' -)"
+mkdir -p "$SANDBOX/extglob-root"
+ln -s "${extglob_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/extglob-root/skills"
+control_status=0
+(PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/extglob-root"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/extglob-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the only-unread row rejects a match with extglob off" 1 "$control_status"
+assert_eq "the extglob control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+for setting in -s -u; do
+  assert_eq "the unread match restores the caller's extglob, shopt $setting" \
+    "hit $setting" "$(
+      shopt "$setting" extglob
+      die() { exit 2; }
+      . "${CHANGE_CLASS%/*}/lib/change-class.sh"
+      unread_list_match a.yml '@(a|b).yml' && printf 'hit '
+      shopt -q extglob && printf -- -s || printf -- -u
+    )"
+done
+# An unread-paths line relayed from a tool that reads the head, here the
+# review-bot check naming a manifest key that holds a newline, never stands
+# for change-class's own: the base declares nothing, so the manifest the
+# head check refuses still runs every lane. The manifest is on the shipped
+# queue list, which keeps its fallback on its own, so the case also runs at
+# a copy that drops that rule: the record alone must hold there.
+git -C "$repo" checkout -q -B row "$base_default"
+printf '[bot-instructions]\nschema = 1\n[bot-instructions.repo]\nname = "r"\nsummary = "s"\n[bot-instructions.doctrine."x\\nunread-paths: * "]\n' >"$repo/kendex.toml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm forged-record
+queue_mutant="$(mutant unread-queue-ignored lib/change-class.sh \
+  '  ! unread_list_match "$1" "$queue_globs" || return 0' -)"
+mkdir -p "$SANDBOX/queue-root"
+ln -s "${queue_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/queue-root/skills"
+for root in shipped queue-rule-dropped; do
+  action_root="$ROOT"
+  [ "$root" = shipped ] || action_root="$SANDBOX/queue-root"
+  ACTION_ROOT="$action_root" run_action merge_group "$base_default" "$SANDBOX/default" true
+  assert_eq "a forged record, $root: the head relays it" true \
+    "$(grep -q '^unread-paths: \* ' "$SANDBOX/action-stderr" && echo true || echo false)"
+  assert_eq "a forged record, $root: lane verdicts" \
+    lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+  assert_eq "a forged record, $root: other lane's cause" \
+    "lane: name=other verdict=true cause=unclaimed-path path=kendex.toml claim=none" \
+    "$(sed -n '/^lane: name=other /p' "$SANDBOX/action-stderr")"
+done
 
 # The pre-declaration library contract takes eight arguments and writes no
 # declared file. The control restores the unconditional evidence read.
