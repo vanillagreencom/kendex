@@ -896,7 +896,7 @@ Where the repository has its own overseer, ask it which workflow holds its night
 
 Restart the watch after the change merges.
 
-### `security-alert`, `security-alerts-unread`, and a `heartbeat`'s `bot-fix` line
+### `security-alert`, `security-alerts-unread`, and a `heartbeat` line on a Dependabot pull request
 
 [security-alerts.md](security-alerts.md).
 
