@@ -141,6 +141,7 @@ refused|-
 refused|[SUPERSESSION]
 refused|none
 refused|none found
+refused|none found; searched:
 refused|none found; searched: TBD
 refused|none found; searched: [TERMS]
 refused|superseded

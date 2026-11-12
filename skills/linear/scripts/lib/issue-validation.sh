@@ -214,7 +214,8 @@ blocking_level_violation_message() {
 # record — an unsubstituted placeholder and a null token counting as absent.
 # Whether the line names a real producer is the author's judgement, not this
 # guard's. Unset is on, the value the settings template ships.
-# The bar itself is project-management SKILL.md, § Disposition.
+# The reach bar is project-management SKILL.md, § Disposition; the
+# supersession form is project-management audit-output.md, § ISSUE Mode.
 
 # The rule the refusal quotes, so message and rule cannot drift apart.
 REACH_RULE='An issue names what reaches it: the user action, run, check, or shipped producer that arrives at the defect (an owner-directed item names the ask). An unsubstituted placeholder or a null token is no value at all.'
@@ -305,7 +306,7 @@ issue_supersession_valid() {
 		terms="${terms%"${terms##*[![:space:]]}"}"
 		[ -n "$terms" ] || return 1
 		[[ ! "$terms" =~ $REACH_ABSENT_TOKENS ]] || return 1
-		[[ ! "$(printf '%s' "$terms" | tr '[:lower:]' '[:upper:]')" =~ $REACH_ABSENT_PLACEHOLDER ]] || return 1
+		[[ ! "$terms" =~ ^\[[a-z_]+\]$ ]] || return 1
 		return 0
 	fi
 

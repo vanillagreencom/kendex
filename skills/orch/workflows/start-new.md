@@ -19,6 +19,8 @@ Build and validate the complete label set against the live inventory and the pro
 
 Write the issue body to `tmp/issue-body-[SLUG].md` with the harness file-write tool, following project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), including the `Reached by:` line naming what arrives at the defect. `[BODY_FILE]` is that path.
 
+Beside `Reached by:`, write `Supersession:` from the search above: each matched open item with its action and identifier, else `none found; searched: [TERMS]`.
+
 ```bash
 .agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```

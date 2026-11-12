@@ -71,7 +71,7 @@
 
 ## Rules
 
-1. Drop any header line with no value. `**Reached by**` and `**Supersession**` are not among them: fill them, or do not create the issue — an item with nothing to name is a decline.
+1. Drop any header line with no value except `**Reached by**` and `**Supersession**`. Fill `**Reached by**`, or do not create the issue — an item with nothing to name is a decline. Always fill `**Supersession**`, using `none found; searched: [TERMS]` when nothing matched.
 2. Write the body to a file with the harness file-write tool and pass `--description-file` (Linear) or `--body-file` (GitHub). Never an inline string, heredoc, or command substitution. The same flags work on update.
 3. Before creating, check the governing decision with `.agents/skills/decider/scripts/decisions search "[KEYWORDS]"` and reference it in Filing record. A description must not contradict an active decision.
 4. Every create passes the validated final `labels[]` from the label preflight.
