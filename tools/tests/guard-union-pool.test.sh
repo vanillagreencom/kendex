@@ -3,7 +3,8 @@
 # skills/orch/tests/run-all.sh call: one --battery per tree and filters
 # qualified by tree, so a base name two trees share selects one suite. A
 # .test.mjs suite keeps its own direct run. The runner rows prove the
-# qualified filter and that orch's ALONE list still holds in a --battery pool.
+# qualified filter, that orch's ALONE list still holds in a --battery pool,
+# and that the runner copies these rows mutate are never discovered as suites.
 # Inputs: tools/guard, skills/orch/tests/run-all.sh
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -39,6 +40,35 @@ printf '#!/usr/bin/env bash\necho 4\n' > "$TMP/pool-bin/nproc"
 chmod +x "$TMP/pool-bin/nproc"
 runner_copy run-all
 grep -q '^ *held$' "$W/skills/orch/tests/run-all.runner" || bad "the copied runner's ALONE list holds the planted name"
+runner_copy unqualified '/^    =\*:\*) battery_tree/d'
+runner_copy alone-dropped 's/^  TEST_DIRS=()$/  ALONE=(); TEST_DIRS=()/'
+
+echo "=== the battery that holds the copied runners discovers none of them ==="
+# A copy the runner took for a suite would run its own battery, itself
+# included, without end. The runner hands its discovered suites to
+# RUN_ALL_NATIVE_CONTRACTS before it starts any; this probe records them and
+# refuses, so no suite starts.
+printf '#!/usr/bin/env bash\ncat > "$DISCOVERED"\nexit 1\n' > "$TMP/discover"
+chmod +x "$TMP/discover"
+discovered() { # BATTERY — the base names the runner discovers in BATTERY
+  : > "$TMP/discovered"
+  (cd "$W" && DISCOVERED="$TMP/discovered" RUN_ALL_NATIVE_CONTRACTS="$TMP/discover" TMPDIR="$TMP" \
+    bash "$REPO/skills/orch/tests/run-all.sh" --battery "$1" >/dev/null 2>&1) || true
+  sed 's|.*/||' "$TMP/discovered" | paste -sd ' ' -
+}
+got="$(discovered skills/orch/tests)"
+if [ "$got" = "held.sh pooled.sh" ]; then ok "no copied runner is discovered as a suite"
+else
+  bad "no copied runner is discovered as a suite" "got [$got]"
+  # The rows below would run the copy, and it would recurse.
+  printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
+  exit 1
+fi
+mkdir -p "$W/skills/copied/tests"
+cp "$REPO/skills/orch/tests/run-all.sh" "$W/skills/copied/tests/copied.sh"
+got="$(discovered skills/copied/tests)"
+if [ "$got" = copied.sh ]; then ok "control: a copied runner named .sh is discovered as a suite"
+else bad "control: a copied runner named .sh is discovered as a suite" "got [$got]"; fi
 
 STARTED=""
 run_pool() { # RUNNER ARG... — the start order in STARTED, the status in RC
@@ -64,7 +94,6 @@ a qualified rejector leaves the other tree's suite of that name|!=skills/a:same.
 a bare filter keeps its meaning in every tree|=same.test|rc=0 a--same.test b--same.test
 a tree no battery has selects nothing|=skills/c:same.test|rc=1
 ROWS
-runner_copy unqualified '/^    =\*:\*) battery_tree/d'
 run_pool unqualified =skills/a:same.test
 if [ "$RC" -ne 0 ] && [ -z "$STARTED" ]; then ok "control: without the qualified form the filter selects nothing"
 else bad "control: without the qualified form the filter selects nothing" "rc=$RC started=$STARTED"; fi
@@ -80,7 +109,6 @@ alone_order run-all
 if [ "rc=$RC $STARTED" = "rc=0 orch--pooled a--same.test orch--held" ]; then
   ok "an ALONE suite starts after every pooled suite of every battery"
 else bad "an ALONE suite starts after every pooled suite of every battery" "rc=$RC started=$STARTED"; fi
-runner_copy alone-dropped 's/^  TEST_DIRS=()$/  ALONE=(); TEST_DIRS=()/'
 alone_order alone-dropped
 if [ "rc=$RC $STARTED" = "rc=0 orch--held orch--pooled a--same.test" ]; then
   ok "control: a --battery run that drops the list pools the ALONE suite"
