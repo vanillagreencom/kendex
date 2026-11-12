@@ -1918,6 +1918,34 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
     }
 }
 
+/// The ladder's refusal is its last line, after any warning it printed
+/// first, and the watch's refusal carries that line: here a bound the
+/// ladder cannot read is warned about ahead of it, the env token goes
+/// unchecked and no bot token loads, so the refusal names both sources.
+#[test]
+fn a_watch_run_refusal_carries_the_ladders_sources_after_its_warning() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let mut command = watch_run_command(&state_dir, &["--interval", "240"]);
+    command
+        .env("GH_TOKEN", "ghp_rowEnvToken")
+        .env("KENDEX_GITHUB_AUTH_TIMEOUT", "2.55");
+    let out = bounded_output(
+        command.spawn().unwrap(),
+        secs(30),
+        "the watch ran on with no credential selected",
+    );
+    let err = stderr(&out);
+    assert!(!out.status.success(), "{err}");
+    assert!(
+        err.contains("gh-auth-ladder: auth-failed service=github env=unreadable bot-token=absent")
+            && !err.contains("ghp_rowEnvToken"),
+        "{err}"
+    );
+}
+
 /// An open intent the reconcile cannot complete or mark (a close whose lane
 /// record is gone) reaches the log. Through `watch run`, the fixture emits
 /// one `reconcile-refused` line and the intent stands unchanged; and the

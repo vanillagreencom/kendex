@@ -21,8 +21,26 @@ kendex_github_is_resolved_token() {
   _KENDEX_GITHUB_REFUSED_TOKEN="$token"
   return 1
 }
-# Never inherited: a refusal counts only for a probe this shell ran.
-unset _KENDEX_GITHUB_REFUSED_TOKEN
+# Never inherited: a refusal counts only for a probe this shell ran, and so
+# does the class of a failed probe (`kendex_github_failure_class`), which
+# KENDEX_GITHUB_TOKEN_FAILURE holds for a token and KENDEX_GITHUB_KEYRING_FAILURE
+# for the keyring.
+unset _KENDEX_GITHUB_REFUSED_TOKEN KENDEX_GITHUB_TOKEN_FAILURE KENDEX_GITHUB_KEYRING_FAILURE
+
+# Print the class of a failed credential probe from what gh wrote, never the
+# text itself: `absent` gh holds no sign-in; `expired` GitHub answered 401,
+# or gh calls its stored token invalid (gh 2.103.3 says so for any refusal
+# of it short of a timeout); `refused` GitHub answered any other HTTP error;
+# `unreadable` no answer from GitHub (killed at the bound, unreachable,
+# never run).
+kendex_github_failure_class() { # DETAIL
+  case "$1" in
+    *"HTTP 401"* | *" is invalid."*) printf 'expired' ;;
+    *"not logged into any"*) printf 'absent' ;;
+    *"HTTP "[1-5][0-9][0-9]*) printf 'refused' ;;
+    *) printf 'unreadable' ;;
+  esac
+}
 
 _GH_AUTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bounded.sh
@@ -51,9 +69,18 @@ _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
   fi
   kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api user --jq '.login' || status=$?
   if [[ "$status" -ne 0 ]]; then
-    detail="$(<"$stderr_file")" || return "$status"
-    _kendex_github_is_integration_refusal "$detail" || return "$status"
-    kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || return
+    detail="$(<"$stderr_file")" || detail=""
+    if _kendex_github_is_integration_refusal "$detail"; then
+      status=0
+      kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || status=$?
+      if [[ "$status" -ne 0 ]]; then
+        detail="$(<"$stderr_file")" || detail=""
+      fi
+    fi
+    if [[ "$status" -ne 0 ]]; then
+      KENDEX_GITHUB_TOKEN_FAILURE="$(kendex_github_failure_class "$detail")"
+      return "$status"
+    fi
   fi
   export KENDEX_GITHUB_VALIDATED_TOKEN="$token"
 }
@@ -121,8 +148,11 @@ kendex_github_auth_status_capture() {
 }
 
 kendex_github_keyring_auth_status() {
-  local auth_timeout="${KENDEX_GITHUB_AUTH_TIMEOUT:-10}"
-  kendex_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status >/dev/null 2>&1
+  local auth_timeout="${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" output="" status=0
+  output="$(kendex_github_run_bounded "$auth_timeout" env -u GH_TOKEN -u GITHUB_TOKEN gh auth status 2>&1)" || status=$?
+  [[ "$status" -ne 0 ]] || return 0
+  KENDEX_GITHUB_KEYRING_FAILURE="$(kendex_github_failure_class "$output")"
+  return "$status"
 }
 
 kendex_github_resolve_op_reference_to_var() {
@@ -322,13 +352,22 @@ kendex_github_load_project_env_preserving_caller() {
   return "$load_status"
 }
 
+# Print MODE's token from the caller's environment, else from the project's
+# env files. Finding none, it returns 1 with KENDEX_GITHUB_TOKEN_FAILURE the
+# class: `absent`, `unreadable` (an env file or a 1Password reference that
+# could not be read), or the class of the caller's own value GitHub refused.
 kendex_github_load_token() {
   local project_root="${1:?kendex_github_load_token: project_root required}"
   local mode="${2:-default}"
   local token=""
   local resolved=""
+  local selected=""
+  local load_status=0
 
-  token="$(kendex_github_select_auth_token "$mode" || true)"
+  unset KENDEX_GITHUB_TOKEN_FAILURE
+  if kendex_github_select_auth_token_source "$mode" selected; then
+    token="${!selected}"
+  fi
   if [[ -z "$token" || "$token" == op://* ]]; then
     token=$(
       set +u
@@ -342,20 +381,31 @@ kendex_github_load_token() {
       # value exported ahead of the bad line would beat the .env.local
       # override the ladder promises wins.
       source "$lib_dir/kendex-env.sh" >/dev/null || true
-      kendex_load_project_env "$project_root" >/dev/null || exit 0
+      kendex_load_project_env "$project_root" >/dev/null || exit 3
       kendex_github_select_auth_token "$mode" || true
-    )
+    ) || load_status=$?
   fi
 
-  [[ -n "$token" ]] || return 1
+  if [[ -z "$token" ]]; then
+    if [[ "$load_status" -eq 3 ]]; then
+      KENDEX_GITHUB_TOKEN_FAILURE="unreadable"
+    else
+      KENDEX_GITHUB_TOKEN_FAILURE="${KENDEX_GITHUB_TOKEN_FAILURE:-absent}"
+    fi
+    return 1
+  fi
   if [[ "$token" == op://* ]]; then
     if kendex_github_resolve_op_reference_to_var "$token" "GitHub token" resolved; then
       token="$resolved"
     else
+      KENDEX_GITHUB_TOKEN_FAILURE="unreadable"
       return 1
     fi
     # Select already checked any value it returned; only a resolved one is new.
-    kendex_github_is_resolved_token "$token" || return 1
+    if ! kendex_github_is_resolved_token "$token"; then
+      KENDEX_GITHUB_TOKEN_FAILURE="${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
+      return 1
+    fi
   fi
 
   printf '%s' "$token"

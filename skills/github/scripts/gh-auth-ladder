@@ -14,8 +14,11 @@
 #       ROOT is the project whose env files hold GH_BOT_TOKEN. Prints two
 #       lines, `GH_TOKEN=VALUE` and `GITHUB_TOKEN=VALUE`, the two variables as
 #       the ladder leaves them; an empty VALUE is a variable the caller unsets.
-#       Exit 0 a candidate works; 2 `gh-auth-ladder: auth-failed
-#       service=github` on stderr, nothing works; 3 usage.
+#       Exit 0 a candidate works; 2 nothing works, its last line on stderr
+#       `gh-auth-ladder: auth-failed service=github env=CLASS
+#       [keyring=CLASS] bot-token=CLASS`, each source tried with the class
+#       of its failure: absent, expired, refused or unreadable (lib/gh-auth.sh's
+#       `kendex_github_failure_class`), keyring only where it was asked; 3 usage.
 #   gh-auth-ladder --help
 set -euo pipefail
 
@@ -36,24 +39,41 @@ done
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 
+# The keyring probe stays silent: what gh says of it can name the account.
 auth_status() {
   local status=0
-  kendex_github_auth_status || status=$?
-  if [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then
-    kendex_github_auth_status
+  kendex_github_has_env_token || {
+    kendex_github_keyring_auth_status
+    return
+  }
+  kendex_github_token_auth_status || status=$?
+  if [[ "$status" -eq 124 ]]; then
+    kendex_github_token_auth_status
     return
   fi
   return "$status"
 }
 
+refuse() { # BOT_TOKEN_CLASS
+  echo "gh-auth-ladder: auth-failed service=github env=$ENV_CLASS${KENDEX_GITHUB_KEYRING_FAILURE:+ keyring=$KENDEX_GITHUB_KEYRING_FAILURE} bot-token=$1" >&2
+  exit 2
+}
+
+ENV_CLASS=absent
+ENV_HELD=""
+kendex_github_has_env_token && ENV_HELD=1
 kendex_github_sanitize_gh_env
 if ! auth_status; then
-  unset GH_TOKEN GITHUB_TOKEN
-  if ! token="$(kendex_github_load_token "$PROJECT" default)" || [[ -z "$token" ]]; then
-    echo 'gh-auth-ladder: auth-failed service=github' >&2
-    exit 2
+  [[ -z "$ENV_HELD" ]] || ENV_CLASS="${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
+  unset GH_TOKEN GITHUB_TOKEN KENDEX_GITHUB_TOKEN_FAILURE
+  # The bot token where one loads, else its class, told apart by the status.
+  if ! loaded="$(kendex_github_load_token "$PROJECT" default || {
+    printf '%s' "${KENDEX_GITHUB_TOKEN_FAILURE:-absent}"
+    exit 1
+  })"; then
+    refuse "$loaded"
   fi
-  export GH_TOKEN="$token"
-  auth_status || { echo 'gh-auth-ladder: auth-failed service=github' >&2; exit 2; }
+  export GH_TOKEN="$loaded"
+  auth_status || refuse "${KENDEX_GITHUB_TOKEN_FAILURE:-unreadable}"
 fi
 printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\n' "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"

@@ -99,10 +99,22 @@ _integration_403() {
   exit 1
 }
 
+# What gh 2.103.3 prints for a keyring sign-in it cannot use, by
+# STUB_KEYRING_STATE: none stored, or one GitHub no longer accepts.
+_keyring_refused() {
+  case "${STUB_KEYRING_STATE:-}" in
+    absent) echo "You are not logged into any GitHub hosts. To log in, run: gh auth login" >&2 ;;
+    invalid) printf '%s\n' "X Failed to log in to github.com account test-user (keyring)" \
+      "  - The token in keyring is invalid." >&2 ;;
+    *) echo "auth failed" >&2 ;;
+  esac
+  exit 1
+}
+
 case "${1:-}" in
   auth)
     if [[ "${2:-}" == "status" ]]; then
-      _token_ok || { echo "auth failed" >&2; exit 1; }
+      _token_ok || _keyring_refused
       echo "Logged in"
       exit 0
     fi
@@ -115,6 +127,8 @@ case "${1:-}" in
       exit 0
     fi
     if [[ "${2:-}" == "installation/repositories" ]]; then
+      # A case can have the bound kill the installation's endpoint alone.
+      [[ -z "${STUB_GH_INSTALLATION_TIMEOUT:-}" ]] || exit 124
       _token_ok || _integration_403
       echo 24
       exit 0
@@ -495,9 +509,47 @@ ladder_run() { # TIMEOUTS — the exit status and the token checks gh answered
 }
 assert_eq "$(ladder_run 2)|$(head -1 "$TMP_ROOT/ladder.out")" "rc=0 checks=3|GH_TOKEN=dtn_PLACEHOLDER" \
   "the ladder asks an env token the bound killed once more, and selects it"
-assert_eq "$(ladder_run 3)|$(head -1 "$TMP_ROOT/ladder.err")" \
-  "rc=2 checks=3|gh-auth-ladder: auth-failed service=github" \
+assert_eq "$(ladder_run 3)|$(tail -1 "$TMP_ROOT/ladder.err")" \
+  "rc=2 checks=3|gh-auth-ladder: auth-failed service=github env=unreadable bot-token=absent" \
   "a re-ask the bound kills too drops the token, never asked a third time"
+
+# The ladder's refusal, its last line, names each source it tried with the
+# class of that source's failure, the keyring only where it was asked, and
+# never a value, an account or what GitHub answered.
+ladder_refusal() { # env-assignment... — the exit status and the last line on stderr
+  local rc=0
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env "$@" \
+      bash "$REPO_ROOT/skills/github/scripts/gh-auth-ladder" --project "$TMP_ROOT/repo") \
+    >"$TMP_ROOT/ladder.out" 2>"$TMP_ROOT/ladder.err" || rc=$?
+  printf 'rc=%s|%s' "$rc" "$(tail -1 "$TMP_ROOT/ladder.err")"
+}
+ladder_said() { # the planted values and answers the ladder's stderr repeats
+  grep -o -E 'ghp_[A-Z0-9]+|dtn_[A-Z]+|op://[a-z/]+|test-user|Bad credentials|not accessible|not logged|is invalid' \
+    "$TMP_ROOT/ladder.err" | sort -u | tr '\n' ' '
+}
+assert_eq "$(ladder_refusal GH_TOKEN=ghp_REVOKED111 STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=expired keyring=absent bot-token=absent|" \
+  "an env token GitHub answers 401 is expired, a keyring with no sign-in absent"
+assert_eq "$(ladder_refusal GH_TOKEN=dtn_APPDENIED STUB_KEYRING_STATE=invalid GH_BOT_TOKEN=op://vault/github/missing)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=refused keyring=expired bot-token=unreadable|" \
+  "a token both endpoints answer 403 is refused, an invalid keyring expired, an unresolved reference unreadable"
+assert_eq "$(ladder_refusal GH_TOKEN=dtn_APPDENIED STUB_GH_INSTALLATION_TIMEOUT=1 STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=unreadable bot-token=absent|" \
+  "an installation token whose own endpoint the bound kills is unreadable, not refused"
+assert_eq "$(ladder_refusal STUB_KEYRING_STATE=invalid GH_BOT_TOKEN=ghp_BOTREVOKED)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=expired bot-token=expired|" \
+  "with no env token the keyring is asked silently, and a bot token GitHub answers 401 is expired"
+assert_eq "$(ladder_refusal GH_BOT_TOKEN=dtn_BOTREFUSED STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=expired|" \
+  "a bot value the selection's own check refuses keeps that check's class, not absent"
+assert_eq "$(ladder_refusal GH_BOT_TOKEN=op://vault/github/garbage STUB_KEYRING_STATE=absent)|$(ladder_said)" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=expired|" \
+  "a resolved reference GitHub refuses keeps the check's class"
+printf '[env]\nDUP = "a"\nDUP = "b"\n' > "$TMP_ROOT/repo/kendex.settings.toml"
+assert_eq "$(ladder_refusal STUB_KEYRING_STATE=absent)|$(grep -c 'assigned more than once' "$TMP_ROOT/ladder.err")" \
+  "rc=2|gh-auth-ladder: auth-failed service=github env=absent keyring=absent bot-token=unreadable|1" \
+  "env files that cannot be read leave the bot token unreadable, the loader's diagnostic ahead of the refusal"
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
 # The same collision on the op side. The status is what github-api.sh branches
 # on, so calling op's own 125 a bad setting suppresses the "Run: op signin"

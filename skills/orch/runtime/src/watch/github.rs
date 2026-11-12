@@ -182,9 +182,10 @@ pub(crate) fn credential_env(credential: &[(String, OsString)]) -> Vec<(&str, &O
 
 /// Run the ladder over the project at `project`, its environment this
 /// process's with `current` over it: the two variables it prints, or
-/// `auth-failed service=github` with its first line where no candidate
-/// works; a ladder that never started or gave no answer is the runner's
-/// error.
+/// `auth-failed service=github` with its last line where no candidate
+/// works, the ladder's refusal naming each source it tried and why that
+/// failed, after any warning the ladder printed first; a ladder that never
+/// started or gave no answer is the runner's error.
 #[allow(
     clippy::disallowed_methods,
     reason = "the watch's run of the github skill's credential ladder through the one runner, at its start and on a refused sign-in"
@@ -205,7 +206,7 @@ pub fn select_sign_in(project: &Path, current: &[(String, OsString)]) -> Result<
     )?;
     if !out.status.success() {
         let stderr = agent_runtime::host::stderr_text(&out);
-        let line = stderr.lines().next().unwrap_or_default();
+        let line = stderr.lines().last().unwrap_or_default();
         return Err(refused(
             "auth-failed",
             &[("service", "github"), ("detail", line)],
