@@ -16,7 +16,7 @@ tags: [communication]
 
 ## Scope
 
-Use this package for messages to a person. Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners. The caller owns authority, delivery and report schedules.
+Use this package for messages to a person. Agent-to-agent messages, literal return formats, tool prompts, documentation and text sent as the user follow their own owners. The caller owns authority, delivery and report schedules. It selects the [presentation choices](references/messages.md#reader-modes) from its own settings.
 
 ## Reading routes
 

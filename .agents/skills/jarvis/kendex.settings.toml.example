@@ -25,6 +25,18 @@ JARVIS_WAKE_SETTLE_SECS = "15"
 # session launches unattended, with the full-bypass permission words orch
 # writes for overseers. Empty launches every harness with its native defaults.
 JARVIS_UNATTENDED_HARNESSES = ""
+# How much technical detail Jarvis's messages to you carry. Off explains the
+# outcome in plain words and names a tool only when you asked about it or
+# must act on it. On uses technical terms. The facts stay the same.
+# values: off | on
+# ci: unread
+JARVIS_TECHNICAL = "off"
+# The writing style of Jarvis's messages to you. Friendly adds a short
+# greeting and closing line, concise gives the facts only and fun adds light
+# humor. The facts, actions and questions stay the same in every style.
+# values: friendly | concise | fun
+# ci: unread
+JARVIS_STYLE = "concise"
 # Optional existing Slack hold. Set this in each root whose relay is held.
 # Accepts an absolute path, ~/path, or a path relative to that root.
 SLACK_JARVIS_SESSION_FILE = ""

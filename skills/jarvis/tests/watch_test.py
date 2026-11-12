@@ -1634,12 +1634,16 @@ with open(sys.argv[1], "ab") as out:
     def test_settings_precedence_and_transport(self):
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
-        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7"}
+        values = {"JARVIS_CONTROL_HOST": "host", "JARVIS_LOG_DIR": str(self.root / "logs"), "JARVIS_WAKE_SETTLE_SECS": "7",
+                  "JARVIS_TECHNICAL": "on", "JARVIS_STYLE": "fun"}
+        # The presentation choices take only listed values, so their private
+        # layer holds a listed value different from the shared one.
+        overrides = {**dict.fromkeys(values, "private"), "JARVIS_TECHNICAL": "off", "JARVIS_STYLE": "friendly"}
         shared.write_text("[env]\n" + "".join('%s = "%s"\n' % pair for pair in values.items()))
         with patch.dict(os.environ, self.env, clear=True):
             self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, values)
-            private.write_text("".join('%s=private\n' % key for key in values))
-            self.assertEqual({self.module.config(BASH, self.home)[key] for key in values}, {"private"})
+            private.write_text("".join('%s=%s\n' % pair for pair in overrides.items()))
+            self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, overrides)
             with patch.dict(os.environ, values):
                 self.assertEqual({key: self.module.config(BASH, self.home)[key] for key in values}, values)
         private.unlink()
@@ -1647,14 +1651,22 @@ with open(sys.argv[1], "ab") as out:
         example = (REPO / "skills/jarvis/kendex.settings.toml.example").read_text()
         declared = set(re.findall(r'^(JARVIS_[A-Z_]+)\s*=', example, re.M))
         # The watch reads its settings by quoted key; session-backend.sh reads
-        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load.
+        # JARVIS_UNATTENDED_HARNESSES by expansion after jarvis_load; config
+        # reports the presentation choices to Jarvis and VGS by quoted key.
         consumed = set(re.findall(r'["\'](JARVIS_[A-Z_]+)["\']', (SCRIPTS / "lib/watch.py").read_text()))
         consumed |= set(re.findall(r'\$\{(JARVIS_[A-Z_]+)', (SCRIPTS / "lib/session-backend.sh").read_text()))
+        consumed |= set(re.findall(r'"(JARVIS_[A-Z_]+)"', (SCRIPTS / "lib/jarvis-env.sh").read_text()))
         self.assertEqual(declared, consumed)
+        shipped = dict(re.findall(r'^(JARVIS_[A-Z_]+) = "([^"]*)"', example, re.M))
         with patch.dict(os.environ, self.env, clear=True):
             defaults = self.module.config(BASH, self.home)
             self.assertEqual(defaults["JARVIS_CONTROL_HOST"], "")
             self.assertEqual(defaults["JARVIS_WAKE_SETTLE_SECS"], "15")
+            for key, default in (("JARVIS_TECHNICAL", "off"), ("JARVIS_STYLE", "concise")):
+                self.assertEqual((defaults[key], shipped[key]), (default, default))
+            with patch.dict(os.environ, JARVIS_TECHNICAL="yes", JARVIS_STYLE="loud"):
+                unlisted = self.module.config(BASH, self.home)
+            self.assertEqual((unlisted["JARVIS_TECHNICAL"], unlisted["JARVIS_STYLE"]), ("off", "concise"))
             self.assertEqual(defaults["JARVIS_LOG_DIR"], str(self.root / ".local/state/jarvis"))
             with patch.dict(os.environ, XDG_STATE_HOME=str(self.root / "xdg")):
                 self.assertEqual(self.module.config(BASH, self.home)["JARVIS_LOG_DIR"], str(self.root / "xdg/jarvis"))

@@ -4,12 +4,20 @@ Apply these rules before every message to a person. Read this file once per revi
 
 ## Reader modes
 
-Use the reader mode the caller supplies. The default prose is for a CEO with moderate technical knowledge.
+A message to a person has two independent presentation choices, Technical and Style. Use the values the caller supplies, which it selects from its own settings. An unset choice takes its default. Reader mode is the other name for Technical, and a caller may supply it as `ceo` or `engineer`.
 
-| Mode | Prose |
+| Technical | Prose |
 |---|---|
-| `ceo` | Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person must act on it. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
-| `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
+| `off`, the default, or reader mode `ceo` | Write for a CEO with moderate technical knowledge. Say what the thing does and why it matters. Report the outcome and its cost. Name a tool, file, command or mechanism only when the person asked about it or must act on it, and then use its precise name. Name a tool, script, session or folder the person must act on with its job in the same sentence. Expand unfamiliar jargon. Keep common terms such as AI, CPU and API. |
+| `on`, or reader mode `engineer` | Use the session's technical vocabulary for the same outcomes and costs. |
+
+| Style | Prose |
+|---|---|
+| `friendly` | [Plain language](#plain-language), except that a message may open with one short greeting before the answer and end with one short closing line. Those two lines are exempt from "Start with the answer itself", "Stop after the last fact" and "Delete a sentence that could sit in an answer about anything else". |
+| `concise`, the default | [Plain language](#plain-language) as written. |
+| `fun` | As `friendly`, and a sentence may also carry light humor or a playful word, while each fact stays in a plain sentence of its own. |
+
+Every combination writes the same facts from the same input. Each keeps the outcome, its effect on the person, the action the person must take, the uncertainty and the consent asked for or given. Style never relaxes [Evidence and costs](#evidence-and-costs), "Never rate, rank, praise or sell" or "Never trade correctness for brevity". It never changes a literal format a consumer or caller sets, such as a report-format override or the structure of a [decision request](questions.md). Neither choice grants authority or changes where, when or whether a message is sent.
 
 ## Plain language
 
