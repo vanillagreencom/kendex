@@ -43,9 +43,8 @@ contexts. The repository's own required contexts are the review-gate setting
 REVIEW_GATE_STANDARD_CONTEXTS, and the bypass actors its merge-queue and
 required-checks rulesets admit the optional
 REVIEW_GATE_STANDARD_QUEUE_BYPASS and REVIEW_GATE_STANDARD_CHECKS_BYPASS,
-with the landing app every ruleset admits the optional
-REVIEW_GATE_STANDARD_LAND_BYPASS, each empty by default, all resolved from
-the current directory like every
+with the landing app the optional REVIEW_GATE_STANDARD_LAND_BYPASS, each
+empty by default, all resolved from the current directory like every
 other setting. The repository is the one `gh` resolves: GH_REPO when set,
 else the checkout's remote. The organization's own tooling sets up and
 checks the review-secret environment and the app installation; this report
@@ -109,10 +108,14 @@ never advisory.
                                     whose rules are required_status_checks
                                     alone, an entry of
                                     REVIEW_GATE_STANDARD_CHECKS_BYPASS; on any
-                                    other, none; and on every ruleset, an
-                                    entry of REVIEW_GATE_STANDARD_LAND_BYPASS,
-                                    the app that lands a proved update with
-                                    no pull request. An entry is TYPE:ID:MODE,
+                                    other, none. An entry of
+                                    REVIEW_GATE_STANDARD_LAND_BYPASS, the app
+                                    that lands a proved update with no pull
+                                    request, is also admitted on those two
+                                    and, as its one bypass actor, on one
+                                    whose rules are pull_request alone or
+                                    pull_request and workflows, and on no
+                                    other. An entry is TYPE:ID:MODE,
                                     GitHub's actor_type, actor_id and
                                     bypass_mode. VALUE is the count of actors,
                                     or on a FAIL each departure as
@@ -370,10 +373,13 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
   # REVIEW_GATE_STANDARD_QUEUE_BYPASS admits, and one whose rules are
   # required_status_checks alone those REVIEW_GATE_STANDARD_CHECKS_BYPASS
   # admits: bypassing either skips only the queue or only the checks, while
-  # every other rule stays on a ruleset nobody bypasses. Every ruleset also
-  # admits REVIEW_GATE_STANDARD_LAND_BYPASS, the landing app, which pushes
-  # an update its own run proved to the branch past every rule. Any other
-  # actor on any ruleset is a departure.
+  # every other rule stays on a ruleset nobody bypasses. The landing app,
+  # REVIEW_GATE_STANDARD_LAND_BYPASS, pushes an update its own run proved
+  # past the queue, the checks, the pull-request rule and the required
+  # workflows that run on a pull request, so those two rulesets and one
+  # holding pull_request alone, or with workflows, admit it; one holding
+  # deletion, non_fast_forward or any other rule does not.
+  # Any other actor on any ruleset is a departure.
   actors=0
   unadmitted=""
   unreadable=""
@@ -411,12 +417,13 @@ if read_api "repos/$FULL/rules/branches/$BRANCH_URI" '.[] | @json' --paginate &&
       continue
     fi
     case "$(rules "[.[] | select(.ruleset_id == $id) | .type] | unique | join(\",\")")" in
-      merge_queue) admitted="$WANT_QUEUE_BYPASS" ;;
-      required_status_checks) admitted="$WANT_CHECKS_BYPASS" ;;
+      merge_queue) admitted="$WANT_QUEUE_BYPASS
+$WANT_LAND_BYPASS" ;;
+      required_status_checks) admitted="$WANT_CHECKS_BYPASS
+$WANT_LAND_BYPASS" ;;
+      pull_request | pull_request,workflows) admitted="$WANT_LAND_BYPASS" ;;
       *) admitted="" ;;
     esac
-    admitted="$admitted
-$WANT_LAND_BYPASS"
     listed="$(rg_pack "${READ_OUT#actors:}" ';')" ||
       die rules-query "$id" "could not split the bypass actors of this ruleset"
     while IFS= read -r actor; do
@@ -431,7 +438,7 @@ EOF_OWNED
     bad standard-bypass-actors "unreadable:$unreadable" "the bypass actors of these rulesets could not be read:
 $causes"
   elif [ -n "$unadmitted" ]; then
-    bad standard-bypass-actors "$unadmitted" "these bypass actors, as RULESET=TYPE:ID:MODE, are ones the standard does not admit on that ruleset; a ruleset holding merge_queue alone admits REVIEW_GATE_STANDARD_QUEUE_BYPASS, one holding required_status_checks alone REVIEW_GATE_STANDARD_CHECKS_BYPASS, any other none, and every ruleset REVIEW_GATE_STANDARD_LAND_BYPASS"
+    bad standard-bypass-actors "$unadmitted" "these bypass actors, as RULESET=TYPE:ID:MODE, are ones the standard does not admit on that ruleset; a ruleset holding merge_queue alone admits REVIEW_GATE_STANDARD_QUEUE_BYPASS, one holding required_status_checks alone REVIEW_GATE_STANDARD_CHECKS_BYPASS, any other none, and those two and one holding pull_request alone or with workflows also REVIEW_GATE_STANDARD_LAND_BYPASS"
   else
     ok standard-bypass-actors "$actors" "every bypass actor on $BRANCH's rulesets is one the standard admits there"
   fi

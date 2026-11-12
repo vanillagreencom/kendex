@@ -4,11 +4,11 @@
 # checkout and never executes the remote rolling branch. After GitHub shows the
 # published head, it merges directly where the base has no rules or protection,
 # or requests auto-merge. SKILL.md defines the arm outcomes. A render this
-# run committed takes neither route where GitHub answers that the landing
-# token, KENDEX_LAND_TOKEN, may always bypass every ruleset on the default
-# branch and that branch's merge queue holds no entry: the run pushes its
-# one commit to that branch with that token, and no pull request, merge
-# group or approval follows.
+# run committed first goes to the default branch itself where the landing
+# token, KENDEX_LAND_TOKEN, is set and that branch's merge queue holds no
+# entry: the run pushes its one commit with that token, and where GitHub's
+# rulesets let the push through, no pull request, merge group or approval
+# follows.
 # Output records: refresh-state=current pr=none class=none, or
 # refresh-state=landed pr=none class=render head=REVISION, or
 # refresh-state=pushed|merged pr=NUMBER class=CLASS, or
@@ -591,25 +591,15 @@ fi
 # Only a commit this run made lands on the default branch: the retained head
 # above may be one a failed merge group left, and this run proved only its
 # own commit, on the base it fetched. KENDEX_LAND_TOKEN is the landing app's
-# token, which only the protected environment mints. The bypass reads and
-# the push use it alone, since GitHub answers current_user_can_bypass for
-# the credential that asks. Each ruleset on the branch must answer always.
-# No token, a class other than render, an unread rule, a rule with no
-# ruleset, a branch with no ruleset, any other answer and a merge queue that
-# holds an entry or could not be read keep the pull request route: a push to
-# a branch whose queue holds an entry makes GitHub rebuild every running
-# group. GitHub still judges the push itself.
+# token, which only the protected environment mints, and the push uses it
+# alone. The default branch's rulesets decide the push: the run asks
+# nothing about them first. No token, a class other than render and a merge
+# queue that holds an entry or could not be read keep the pull request
+# route: a push to a branch whose queue holds an entry makes GitHub rebuild
+# every running group.
 refresh_may_land() {
-  local rules ids id answer queued
+  local queued
   [ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ] || return 1
-  rules="$(GH_TOKEN="$KENDEX_LAND_TOKEN" gh api "repos/$GH_REPO/rules/branches/$default?per_page=100")" || return 1
-  ids="$(jq -r 'if type != "array" then error("rules") else
-    [.[] | .ruleset_id | if type == "number" then . else error("ruleset") end] | unique | .[] end' <<<"$rules")" || return 1
-  [ -n "$ids" ] || return 1
-  while IFS= read -r id; do
-    answer="$(GH_TOKEN="$KENDEX_LAND_TOKEN" gh api "repos/$GH_REPO/rulesets/$id" --jq .current_user_can_bypass)" || return 1
-    [ "$answer" = always ] || return 1
-  done <<<"$ids"
   queued="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" -f branch="$default" \
     -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
     --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1

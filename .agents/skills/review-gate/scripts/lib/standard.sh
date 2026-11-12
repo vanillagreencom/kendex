@@ -14,8 +14,9 @@
 # (REVIEW_GATE_STANDARD_QUEUE_BYPASS, for a ruleset holding only
 # merge_queue) and WANT_CHECKS_BYPASS (REVIEW_GATE_STANDARD_CHECKS_BYPASS,
 # for one holding only required_status_checks), with WANT_LAND_BYPASS
-# (REVIEW_GATE_STANDARD_LAND_BYPASS, the landing app, admitted on every
-# ruleset), each empty where the key is.
+# (REVIEW_GATE_STANDARD_LAND_BYPASS, the landing app, admitted on those two
+# and on one holding pull_request alone or with workflows), each empty
+# where the key is.
 # An empty WANT_CONTEXTS is no refusal: the standard-required-contexts row
 # reports it. With no jq on PATH, a missing, unreadable or malformed
 # manifest, an unreadable setting, or a bypass entry that is not

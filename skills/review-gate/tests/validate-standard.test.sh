@@ -82,8 +82,8 @@ CHECKS_BYPASS='REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_re
 CONTEXTS='REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
 settings_consumer full "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
 settings_consumer no-bypass "$CONTEXTS"
-# `land` also admits the landing app on every ruleset.
-settings_consumer land "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_LAND_BYPASS = "Integration:6200001:always"'
+# `land` also names the landing app.
+settings_consumer land "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_LAND_BYPASS = "Integration:5726115:always"'
 settings_consumer bad-bypass "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
 settings_consumer no-contexts
 settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
@@ -383,28 +383,46 @@ bypass_row "the lanes app is admitted on the queue ruleset and a departure on th
 bypass_row "an admitted app in another bypass mode is a departure" full \
   '[{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "always"}]' 1 \
   'FAIL check=standard-bypass-actors value=3=Integration:5115517:always\,4=Integration:5115517:always'
-# The landing app on every ruleset, the organization's included: admitted
-# where the consumer declares it, and a departure on each where it does not.
-land_row() { # LABEL CONSUMER WANT_RC WANT_LINE
-  local dir="$TMP/case-land-$((PASS + FAIL))" id
+# The landing app: admitted on the queue and checks rulesets and as the one
+# bypass of a ruleset holding pull_request alone or with workflows, here a
+# new organization ruleset 5; a departure on one holding pull_request,
+# workflows and deletion, on one holding deletion and non_fast_forward, on
+# one holding workflows alone, and wherever the consumer names no landing
+# app.
+LAND='{"actor_type": "Integration", "actor_id": 5726115, "bypass_mode": "always"}'
+land_row() { # LABEL CONSUMER RULES_FILTER FILES ACTORS_JSON WANT_RC WANT_LINE
+  local dir="$TMP/case-land-$((PASS + FAIL))" file id
   cp -R "$BASE" "$dir"
-  for id in 1 2; do
-    printf '{"id": %s, "bypass_actors": [{"actor_type": "Integration", "actor_id": 6200001, "bypass_mode": "always"}]}\n' "$id" >"$dir/org-ruleset-$id.json"
-  done
-  for id in 3 4; do
-    printf '{"id": %s, "bypass_actors": [{"actor_type": "Integration", "actor_id": 6200001, "bypass_mode": "always"}]}\n' "$id" >"$dir/ruleset-$id.json"
+  jq "$3" "$BASE/rules.json" >"$dir/rules.json"
+  for file in $4; do
+    id="${file##*-}"
+    printf '{"id": %s, "bypass_actors": %s}\n' "$id" "$5" >"$dir/$file.json"
   done
   CONSUMER="$TMP/consumer-$2"
   run "$dir" ""
   CONSUMER="$TMP/consumer-full"
   got="$(grep 'check=standard-bypass-actors ' <<<"$OUT" || true)"
-  if [ "$RC" -eq "$3" ] && [ "$got" = "$4" ]; then ok "$1"; else bad "$1 (rc=$RC, want $3)" "$got
+  if [ "$RC" -eq "$6" ] && [ "$got" = "$7" ]; then ok "$1"; else bad "$1 (rc=$RC, want $6)" "$got
 $RAW"; fi
 }
-land_row "the landing app is admitted on every ruleset" land 0 \
-  'ok check=standard-bypass-actors value=4'
-land_row "a consumer that names no landing app reads it as a departure on every ruleset" full 1 \
-  'FAIL check=standard-bypass-actors value=1=Integration:6200001:always\,2=Integration:6200001:always\,3=Integration:6200001:always\,4=Integration:6200001:always'
+land_row "the landing app is the one bypass of a pull-request-only ruleset" land \
+  '.[2].ruleset_id = 5' org-ruleset-5 "[$LAND]" 0 'ok check=standard-bypass-actors value=1'
+land_row "the landing app is the one bypass of a pull-request and workflows ruleset" land \
+  '.[2].ruleset_id = 5 | .[3].ruleset_id = 5' org-ruleset-5 "[$LAND]" 0 'ok check=standard-bypass-actors value=1'
+land_row "the landing app on a pull-request, workflows and deletion ruleset is a departure" land \
+  '.[0].ruleset_id = 5 | .[2].ruleset_id = 5 | .[3].ruleset_id = 5' org-ruleset-5 "[$LAND]" 1 'FAIL check=standard-bypass-actors value=5=Integration:5726115:always'
+land_row "the landing app is admitted on the queue and checks rulesets" land \
+  '.' 'ruleset-3 ruleset-4' "[$LAND]" 0 'ok check=standard-bypass-actors value=2'
+land_row "a second actor beside the landing app on a pull-request-only ruleset is a departure" land \
+  '.[2].ruleset_id = 5' org-ruleset-5 "[$LAND, {\"actor_type\": \"Integration\", \"actor_id\": 5115517, \"bypass_mode\": \"pull_request\"}]" 1 \
+  'FAIL check=standard-bypass-actors value=5=Integration:5115517:pull_request'
+land_row "the landing app on the deletion and force-push ruleset is a departure" land \
+  '.' org-ruleset-1 "[$LAND]" 1 'FAIL check=standard-bypass-actors value=1=Integration:5726115:always'
+land_row "the landing app on a workflows-only ruleset is a departure" land \
+  '.' org-ruleset-2 "[$LAND]" 1 'FAIL check=standard-bypass-actors value=2=Integration:5726115:always'
+land_row "a consumer that names no landing app reads it as a departure" full \
+  '.[2].ruleset_id = 5' 'org-ruleset-5 ruleset-3' "[$LAND]" 1 \
+  'FAIL check=standard-bypass-actors value=5=Integration:5726115:always\,3=Integration:5726115:always'
 
 echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules

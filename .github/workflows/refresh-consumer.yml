@@ -285,8 +285,8 @@ jobs:
           permission-secrets: read
           permission-organization-secrets: ${{ github.event.repository.owner.type != 'User' && 'read' || '' }}
       # The landing app's token, which pushes a render the refresh committed
-      # to the default branch where every ruleset there lets that app
-      # bypass it, and which refresh-consumer.sh uses for nothing else. It
+      # to the default branch, where the rulesets there let that app
+      # through, and which refresh-consumer.sh uses for nothing else. It
       # holds contents: write alone. A caller without the pair, or a failed
       # mint, leaves the token empty and every update on the rolling pull
       # request.

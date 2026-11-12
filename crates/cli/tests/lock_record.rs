@@ -41,13 +41,13 @@
 //! unarmed; and with the failed edit's `arm=` field always `armed`, the
 //! unarmed failed-edit row reddens.
 //!
-//! The landing route: with the ruleset answer taken as `always` whatever
-//! GitHub said, the refusing-ruleset row lands the record on `main` and
-//! opens no pull request; with the landing-token check dropped, the
-//! no-token row lands it; with the bypass reads left on `GH_TOKEN`, the
-//! landed row finds them under the lanes app's token; with the queue read
-//! taken as empty, the busy-queue row lands it too; and with the
-//! `[rejected]` read dropped, the moved-base row pushes the rolling branch.
+//! The landing route: with the landing-token check dropped, the no-token
+//! row lands the record on `main` and opens no pull request; with the push
+//! left on `GH_TOKEN`, the landed row finds it under the lanes app's token;
+//! with the queue read taken as empty, the busy-queue row lands it too;
+//! with the `[rejected]` read dropped, the moved-base row pushes the rolling
+//! branch; and with every refused landing push read as a moved base, the
+//! refused-push row opens no pull request.
 //!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
@@ -173,11 +173,8 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// hold a merge queue with `GH_QUEUE`'s method where it is set, and the
 /// repository's squash, merge and rebase flags are `GH_METHODS` (all three
 /// unset). `GH_FAIL` fails the `default`, `rules` or `settings` read, and
-/// `methods-none` answers flags that allow nothing. The landing reads: the
-/// base's ruleset ids are `GH_RULESETS`, none unset, and each ruleset
-/// answers `GH_BYPASS` for the credential, `never` unset and for the id
-/// `GH_REFUSES` names; `GH_FAIL` fails the `rulesets` list or the `bypass`
-/// read. The base's merge queue holds `GH_QUEUED` entries, none unset, and
+/// `methods-none` answers flags that allow nothing. The base's merge queue
+/// holds `GH_QUEUED` entries, none unset, and
 /// `GH_FAIL` fails that `queue` read. `pr close` removes the pull request's
 /// open, armed and queued state. Each call is also logged to
 /// `GH_LOG.tokens` behind the `GH_TOKEN` it ran with, `none` unset.
@@ -189,16 +186,7 @@ case \"$1 $2\" in
   'api repos/acme/widgets')
     [ \"$GH_FAIL\" != default ] || { echo 'gh stub: default refused' >&2; exit 1; }
     printf '%s\\n' \"${GH_DEFAULT:-main}\"; exit 0 ;;
-  'api repos/{owner}/{repo}/rulesets/'*)
-    [ \"$GH_FAIL\" != bypass ] || { echo 'gh stub: bypass refused' >&2; exit 1; }
-    [ \"${2##*/}\" != \"$GH_REFUSES\" ] || { echo never; exit 0; }
-    printf '%s\\n' \"${GH_BYPASS:-never}\"; exit 0 ;;
   'api repos/{owner}/{repo}/rules/branches/'*)
-    case \"$*\" in *ruleset_id*)
-      [ \"$GH_FAIL\" != rulesets ] || { echo 'gh stub: rulesets refused' >&2; exit 1; }
-      [ -z \"$GH_RULESETS\" ] || printf '%s\\n' $GH_RULESETS
-      exit 0 ;;
-    esac
     [ \"$GH_FAIL\" != rules ] || { echo 'gh stub: rules refused' >&2; exit 1; }
     [ -z \"$GH_QUEUE\" ] || printf '{\"type\":\"merge_queue\",\"parameters\":{\"merge_method\":\"%s\"}}\\n' \"$GH_QUEUE\"
     exit 0 ;;
@@ -913,13 +901,10 @@ fn the_rolling_pull_request_takes_the_default_branch_and_merge_method_github_nam
 /// Variables added to the `gh` stub's environment for one run.
 type StubEnv = &'static [(&'static str, &'static str)];
 
-/// The run holds the lanes app's token and the landing app's token, and
-/// GitHub lets the landing token past both rulesets on the base.
+/// The run holds the lanes app's token and the landing app's token.
 const ADMITTED: StubEnv = &[
     ("GH_TOKEN", "lanes-token"),
     ("KENDEX_LAND_TOKEN", "land-token"),
-    ("GH_RULESETS", "7 8"),
-    ("GH_BYPASS", "always"),
 ];
 
 /// The record landed on `main` itself: one commit on the judged `head`,
@@ -960,16 +945,11 @@ fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
     assert!(!asked.contains("pr merge"), "{asked}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(status, "", "{output}");
-    // The bypass reads and the push to main carry the landing token, and
-    // the queue read the lanes app's.
+    // The push to main carries the landing token, and no gh call does; the
+    // queue read carries the lanes app's.
     let tokens = world.gh_tokens();
-    let landing: Vec<&str> = tokens
-        .lines()
-        .filter(|line| line.contains("/rulesets/") || line.contains("ruleset_id"))
-        .collect();
-    assert!(!landing.is_empty(), "{tokens}");
     assert!(
-        landing.iter().all(|line| line.starts_with("land-token ")),
+        !tokens.lines().any(|line| line.starts_with("land-token ")),
         "{tokens}"
     );
     let queue: Vec<&str> = tokens
@@ -990,11 +970,11 @@ fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
     assert!(landing_push[0].starts_with("land-token "), "{pushes}");
 }
 
-/// Where every ruleset on the base admits the run's credential, the record
-/// lands on `main` with one push and no pull request, from the clone and
-/// from the workflow's shallow checkout, and `main` then verifies clean.
+/// Where the run holds the landing token and GitHub takes its push, the
+/// record lands on `main` with one push and no pull request, from the clone
+/// and from the workflow's shallow checkout, and `main` then verifies clean.
 #[test]
-fn the_record_lands_on_main_where_every_ruleset_admits_the_credential() {
+fn the_record_lands_on_main_where_github_takes_the_landing_push() {
     for checkout in [Checkout::Clone, Checkout::Shallow] {
         let world = world_with(Source::Path, checkout);
         world.branch("a", "ship");
@@ -1052,71 +1032,47 @@ fn a_landed_record_closes_the_open_rolling_pull_request() {
     world.fresh_clone_verifies_clean();
 }
 
-/// A run with no landing token keeps the rolling pull request whatever the
-/// rulesets answer, and so does every answer short of `always` from every
-/// ruleset: a ruleset that refuses, one that admits the token on pull
-/// requests only, a base with no ruleset, an unread ruleset list and an
-/// unread ruleset. So does a merge queue that holds an entry, whose running
-/// groups a push to `main` would rebuild, and one that could not be read.
-/// `main` stays where the merge left it.
+/// A run with no landing token keeps the rolling pull request and pushes
+/// nothing to `main`, and so does a merge queue that holds an entry, whose
+/// running groups a push to `main` would rebuild, and one that could not be
+/// read. `main` stays where the merge left it.
 #[test]
-fn any_ruleset_short_of_always_or_a_busy_queue_keeps_the_rolling_pull_request() {
-    let rows: &[(&str, bool, StubEnv)] = &[
+fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
+    let rows: &[(&str, StubEnv)] = &[
+        ("", &[("GH_TOKEN", "lanes-token")]),
         (
             "",
-            false,
-            &[("GH_RULESETS", "7 8"), ("GH_BYPASS", "always")],
-        ),
-        (
-            "",
-            true,
             &[
-                ("GH_RULESETS", "7 8"),
-                ("GH_BYPASS", "always"),
-                ("GH_REFUSES", "8"),
-            ],
-        ),
-        (
-            "",
-            true,
-            &[("GH_RULESETS", "7 8"), ("GH_BYPASS", "pull_requests_only")],
-        ),
-        ("", true, &[("GH_BYPASS", "always")]),
-        ("rulesets", true, ADMITTED),
-        ("bypass", true, ADMITTED),
-        (
-            "",
-            true,
-            &[
-                ("GH_RULESETS", "7 8"),
-                ("GH_BYPASS", "always"),
+                ("GH_TOKEN", "lanes-token"),
+                ("KENDEX_LAND_TOKEN", "land-token"),
                 ("GH_QUEUED", "1"),
             ],
         ),
-        ("queue", true, ADMITTED),
+        ("queue", ADMITTED),
     ];
-    for (gh_fail, token, env) in rows {
+    for (gh_fail, env) in rows {
         let world = world();
         world.branch("a", "ship");
         assert!(world.queue_merge("a").status.success());
         let head = world.main_head();
-        let mut with: Vec<(&str, &str)> = env.to_vec();
-        if *token {
-            with.push(("KENDEX_LAND_TOKEN", "land-token"));
-        }
-        let recorded = world.lock_record_with(gh_fail, &with);
+        let recorded = world.lock_record_with(gh_fail, env);
         let output = said(&recorded);
         assert_eq!(
             recorded.status.code(),
             Some(0),
-            "{gh_fail} {with:?}: {output}"
+            "{gh_fail} {env:?}: {output}"
         );
         assert!(
             !output.contains("lock-record: landed="),
-            "{gh_fail} {with:?}: {output}"
+            "{gh_fail} {env:?}: {output}"
         );
         assert_recorded_and_opened(&world, &output, 41);
-        assert_eq!(world.origin_main(), head, "{gh_fail} {with:?}: {output}");
+        assert_eq!(world.origin_main(), head, "{gh_fail} {env:?}: {output}");
+        let pushes = world.pushes();
+        assert!(
+            !pushes.lines().any(|line| line.contains(":refs/heads/main")),
+            "{gh_fail} {env:?}: {pushes}"
+        );
     }
 }
 
@@ -1174,9 +1130,8 @@ fn a_base_that_moved_past_the_judged_head_defers_the_record() {
     assert_eq!(absent.status.code(), Some(2), "{}", said(&absent));
 }
 
-/// A push GitHub refuses, where the rulesets answered `always`, names the
-/// refusal and falls back to the rolling pull request, pushed with the
-/// lanes app's token.
+/// A landing push a ruleset refuses names the refusal and falls back to the
+/// rolling pull request, pushed with the lanes app's token.
 #[test]
 fn a_refused_push_to_main_falls_back_to_the_rolling_pull_request() {
     let world = world();

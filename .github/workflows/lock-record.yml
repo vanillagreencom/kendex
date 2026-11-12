@@ -3,8 +3,8 @@ name: lock-record
 # After each push to main, this repository's install record
 # (.kendex-lock.json) is judged by a kendex built from that tree and, where
 # a merge moved what `kendex refresh` records, re-recorded and landed:
-# pushed to main by this run with the landing app's token where every
-# ruleset on main lets that app bypass it, else through the one rolling pull
+# pushed to main by this run with the landing app's token where the rulesets
+# on main let that push through, else through the one rolling pull
 # request kendex/lock, which the lanes app arms for the merge queue. A pull
 # request never re-records it: two branches
 # changing one package would each rewrite the same rows and conflict at
@@ -95,8 +95,8 @@ jobs:
           owner: vanillagreencom
           repositories: kendex
 
-      # The landing app's token pushes the record to main where every
-      # ruleset there lets that app bypass it, and tools/lock-record uses it
+      # The landing app's token pushes the record to main where the rulesets
+      # there let it through, and tools/lock-record uses it
       # for nothing else. It holds contents: write alone. No pair, or a
       # failed mint, leaves it empty and the record on the rolling pull
       # request.

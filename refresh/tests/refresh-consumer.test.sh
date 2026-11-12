@@ -135,7 +135,7 @@ shown_head() {
 }
 case "$*" in
   'api repos/acme/test --jq .default_branch') printf 'main\n' ;;
-  'api repos/acme/test/rules/branches/main' | 'api repos/acme/test/rules/branches/main?per_page=100')
+  'api repos/acme/test/rules/branches/main')
     if [ -f "$TEST_STATE/branch-rules" ]; then
       [ "$(cat "$TEST_STATE/branch-rules")" != fail ] || exit 87
       cat "$TEST_STATE/branch-rules"
@@ -145,12 +145,6 @@ case "$*" in
       [ "$(cat "$TEST_STATE/branch-protected")" != fail ] || exit 87
       cat "$TEST_STATE/branch-protected"
     else printf 'false\n'; fi ;;
-  'api repos/acme/test/rulesets/'*' --jq .current_user_can_bypass')
-    answer="$TEST_STATE/ruleset-bypass-${2##*/}"
-    if [ -f "$answer" ]; then
-      [ "$(cat "$answer")" != fail ] || exit 87
-      cat "$answer"
-    else printf 'never\n'; fi ;;
   api\ --paginate\ *pulls*) cat "$TEST_STATE/pr" ;;
   api\ users/*) printf '123\n' ;;
   'api --method POST repos/acme/test/pulls '*) printf '1\n' >"$TEST_STATE/pr"; printf 'created\n' >>"$TEST_STATE/creates"; printf '1\n' ;;
@@ -1025,13 +1019,13 @@ rm -f -- "$TMP/state/branch-rules" "$TMP/state/branch-protected"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 cp "$TMP/arm-helper" "$arm_helper"
-# A render this run committed lands on the default branch from the run
-# itself, with no pull request and with the landing token alone, where each
-# ruleset on that branch answers always for that token and its merge queue
-# holds no entry. Every other answer, class, queue and refusal keeps the pull
-# request route, and a default branch that moved defers to the next run. A
-# retained head never lands, and a landed run closes the open rolling pull
-# request only while GitHub still holds it open. Each run restores the
+# A render this run committed goes to the default branch from the run
+# itself, with no pull request and with the landing token alone, where its
+# merge queue holds no entry, and lands where GitHub takes the push. No
+# token, another class, a busy or unread queue and GitHub's refusal keep the
+# pull request route, and a default branch that moved defers to the next
+# run. A retained head never lands, and a landed run closes the open rolling
+# pull request only while GitHub still holds it open. Each run restores the
 # remote's default branch, so the next starts from it.
 land_matches() { # OUTCOME CLASS CLOSE
   local main rolling
@@ -1048,11 +1042,9 @@ land_matches() { # OUTCOME CLASS CLOSE
         grep -qxF 'Engine version: `kendex 7.8.9 (release-build)`.' "$TMP/state/summary" &&
         [ "$(grep -c '^git push main ' "$TMP/state/calls")" -eq 1 ] &&
         grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
-        # The bypass reads carry the landing token alone, and the queue read
-        # the repository token.
-        grep -q '^land-token|api repos/acme/test/rules/branches/main?' "$TMP/state/tokens" &&
-        grep -q '^land-token|api repos/acme/test/rulesets/' "$TMP/state/tokens" &&
-        ! grep -v '^land-token|' "$TMP/state/tokens" | grep -q 'rules/branches/main?\|/rulesets/' &&
+        # No gh call carries the landing token; the queue read carries the
+        # repository token.
+        ! grep -q '^land-token|' "$TMP/state/tokens" &&
         grep -q '^test-token|api graphql .*mergeQueue' "$TMP/state/tokens" || return 1
       case "$3" in
         close) grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" ;;
@@ -1073,34 +1065,29 @@ land_matches() { # OUTCOME CLASS CLOSE
         grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
       case "$1" in
         refused) grep -qxF 'refresh-land=refused value=1' <<<"$OUT" ;;
-        unasked) ! grep -q 'rules/branches/main?\|/rulesets/\|mergeQueue\|^git push main ' "$TMP/state/calls" ;;
+        unasked) ! grep -q 'mergeQueue\|^git push main ' "$TMP/state/calls" ;;
         pull) ! grep -q '^git push main ' "$TMP/state/calls" ;;
       esac ;;
     *) return 1 ;;
   esac
 }
 cp "$TMP/arm-runner" "$TMP/land-runner"
-# NAME|BYPASS_11|BYPASS_12|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE
-# CONTROL is a source edit on a copy of the runner that must turn the row's
-# assertion red.
+# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE
+# PUSH is GitHub's answer to the landing push: taken, moved (the base moved)
+# or rejected (a ruleset refused it). CONTROL is a source edit on a copy of
+# the runner that must turn the row's assertion red.
 for row in \
-  'every-ruleset|always|always|render|true||landed||0|land-token|close' \
-  'merged-since-start|always|always|render|true||landed|close-merged|0|land-token|merged' \
-  'no-token|always|always|render|true||unasked|token-unchecked|0||' \
-  'one-never|always|never|render|true||pull|ignore-answer|0|land-token|' \
-  'pull-requests-only|pull_requests_only|always|render|true||pull||0|land-token|' \
-  'unread-ruleset|always|fail|render|true||pull||0|land-token|' \
-  'small-class|always|always|small|true||unasked||0|land-token|' \
-  'unmeasured|always|always|standard|false||unasked||0|land-token|' \
-  'base-moved|always|always|render|true|moved|base-moved||0|land-token|' \
-  'push-refused|always|always|render|true|rejected|refused||0|land-token|' \
-  'queue-busy|always|always|render|true||pull|queue-ignored|2|land-token|' \
-  'unread-queue|always|always|render|true||pull||fail|land-token|' \
-  'retained|always|always|render|true||retained|skip-unchanged|0|land-token|'; do
-  IFS='|' read -r name first second class MEASURED land expected control queue LAND_TOKEN close <<<"$row"
-  printf '[{"type":"pull_request","ruleset_id":11},{"type":"merge_queue","ruleset_id":12},{"type":"deletion","ruleset_id":11}]\n' >"$TMP/state/branch-rules"
-  printf '%s\n' "$first" >"$TMP/state/ruleset-bypass-11"
-  printf '%s\n' "$second" >"$TMP/state/ruleset-bypass-12"
+  'landed|render|true||landed||0|land-token|close' \
+  'merged-since-start|render|true||landed|close-merged|0|land-token|merged' \
+  'no-token|render|true||unasked|token-unchecked|0||' \
+  'small-class|small|true||unasked||0|land-token|' \
+  'unmeasured|standard|false||unasked||0|land-token|' \
+  'base-moved|render|true|moved|base-moved||0|land-token|' \
+  'push-refused|render|true|rejected|refused|refusal-deferred|0|land-token|' \
+  'queue-busy|render|true||pull|queue-ignored|2|land-token|' \
+  'unread-queue|render|true||pull||fail|land-token|' \
+  'retained|render|true||retained|skip-unchanged|0|land-token|'; do
+  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close <<<"$row"
   printf '%s\n' "$queue" >"$TMP/state/queue-entries"
   for mutation in none $control; do
     reset_default
@@ -1112,7 +1099,7 @@ import sys
 p = Path(sys.argv[1]).resolve()
 s = p.read_text()
 old, new = {
-    'ignore-answer': ('    [ "$answer" = always ] || return 1', '    : # [ "$answer" = always ] || return 1'),
+    'refusal-deferred': ("  printf 'refresh-land=refused value=%s\\n' \"$land_status\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
     'close-merged': ('    merged | closed) return 0 ;;', '    merged | closed) ;;'),
     'token-unchecked': ('[ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ]', 'KENDEX_LAND_TOKEN="${KENDEX_LAND_TOKEN:-}"; [ "$class" = render ]'),
     'queue-ignored': ('  [ "$queued" = 0 ]\n}', '  : # [ "$queued" = 0 ]\n}'),
@@ -1132,12 +1119,12 @@ LAND_CONTROL
     printf '1\n' >"$TMP/state/pr"
     content="land-$name-$mutation"
     if [ "$name" = retained ]; then
-      # The rolling head a run published on this base while a ruleset held
-      # the landing app, kept open as after a failed merge group. The run
-      # under test renders the same tree.
-      printf 'never\n' >"$TMP/state/ruleset-bypass-11"
+      # The rolling head a run published on this base after a ruleset
+      # refused its landing push, kept open as after a failed merge group.
+      # The run under test renders the same tree.
+      printf 'rejected\n' >"$TMP/state/land-mode"
       run_refresh "$content" pass "$class"
-      printf '%s\n' "$first" >"$TMP/state/ruleset-bypass-11"
+      rm -f -- "${TMP:?}/state/land-mode"
       [ "$RC" -eq 0 ] || bad "$name rolling head setup" "$OUT"
       reset_default
     fi
@@ -1184,8 +1171,6 @@ done
 # replaced lands on top of it.
 reset_default
 cp "$TMP/land-runner" "$runner"
-printf '[{"type":"pull_request","ruleset_id":11}]\n' >"$TMP/state/branch-rules"
-printf 'always\n' >"$TMP/state/ruleset-bypass-11"
 printf '0\n' >"$TMP/state/queue-entries"
 LAND_TOKEN=land-token
 MEASURED=true
@@ -1207,7 +1192,7 @@ if [ "$RC" -eq 0 ] && [ "$forward" != "$land_base" ] && [ "$(git --git-dir="$TMP
 else bad 'reverted render landing' "$OUT"; fi
 git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
 unset MEASURED LAND_TOKEN
-rm -f -- "${TMP:?}/state/branch-rules" "${TMP:?}/state/land-mode" "${TMP:?}/state/ruleset-bypass-11" "${TMP:?}/state/ruleset-bypass-12" "${TMP:?}/state/queue-entries"
+rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/queue-entries"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 commit "$repo"
