@@ -8,8 +8,9 @@ use kendex_core::env::Env;
 use kendex_core::model::ItemKind;
 use kendex_core::process::Hardened;
 
-use super::{CliResult, Lines, answer, escaped, out, resolve_scopes, say};
+use super::{CliResult, Lines, answer, escaped, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Span, Status, Style};
 
 pub fn new(
     env: &Env,
@@ -35,6 +36,8 @@ pub fn new(
         Some(dir) => dir,
         None => std::env::current_dir()?.join(name),
     };
+    let style = ui::style();
+    ui::stderr(&style.header("marketplace new", name));
     let row = author::create(
         env,
         &CreateRequest {
@@ -45,30 +48,52 @@ pub fn new(
             dir: dir.clone(),
         },
     )?;
-    say(&format!(
-        "created {} — a git repository with kendex.toml, README.md and the check workflow",
-        dir.display()
-    ));
-    summarize(&row);
+    let mut lines = folder_line(
+        &style,
+        "created ",
+        &dir,
+        " — a git repository with kendex.toml, README.md and the check workflow",
+    );
+    lines.extend(summarized(&style, &row));
+    ui::stderr(&lines);
     Ok(())
 }
 
 pub fn use_existing(env: &Env, dir: &std::path::Path) -> CliResult {
+    let style = ui::style();
+    ui::stderr(&style.header("marketplace use", &dir.display().to_string()));
     let row = author::use_existing(env, dir)?;
-    say(&format!(
-        "registered {} under Mine — nothing inside it was changed",
-        dir.display()
-    ));
-    summarize(&row);
+    let mut lines = folder_line(
+        &style,
+        "registered ",
+        dir,
+        " under Mine — nothing inside it was changed",
+    );
+    lines.extend(summarized(&style, &row));
+    ui::stderr(&lines);
     Ok(())
 }
 
+/// The marketplace folder a verb made or took, drawn whole.
+fn folder_line(style: &Style, lead: &str, dir: &std::path::Path, tail: &str) -> Vec<String> {
+    let dir = dir.display().to_string();
+    style.report_row(
+        Status::Done,
+        &[Span::Prose(lead), Span::Command(&dir), Span::Prose(tail)],
+        "",
+    )
+}
+
 pub fn mine(env: &Env, json: bool) -> CliResult {
+    let style = ui::style();
+    if !json {
+        ui::stderr(&style.header("marketplace mine", "your marketplaces"));
+    }
     let mut rows = Vec::new();
     for path in author::list(env)? {
         match author::status(&path) {
             Ok(row) => rows.push(row),
-            Err(error) => say(&format!("{}: {}", path.display(), error)),
+            Err(error) => ui::stderr(&unread(&style, &path, &error.to_string())),
         }
     }
     if json {
@@ -78,14 +103,46 @@ pub fn mine(env: &Env, json: bool) -> CliResult {
         }))?);
         return Ok(());
     }
-    for row in rows {
-        let packages: u32 = row.counts.values().sum();
-        out(&format!(
-            "{}  {packages} package(s), {} bundle(s), {} problem(s)  {}",
-            row.name, row.bundles, row.breakage, row.path,
-        ));
-    }
+    ui::stdout(&mine_lines(&style, &rows));
     Ok(())
+}
+
+/// A marketplace on Mine whose folder could not be read: nothing about it
+/// can be shown until it can.
+fn unread(style: &Style, path: &std::path::Path, error: &str) -> Vec<String> {
+    let path = path.display().to_string();
+    style.report_row(
+        Status::of(kendex_core::decision::Need::Blocked),
+        &[Span::Command(&path), Span::Prose(": "), Span::Prose(error)],
+        "",
+    )
+}
+
+/// One row per marketplace on Mine: its name, what it holds, and where.
+fn mine_lines(style: &Style, rows: &[author::MineRow]) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let packages: u32 = row.counts.values().sum();
+            vec![
+                row.name.clone(),
+                format!(
+                    "{packages} package(s), {} bundle(s), {} problem(s)",
+                    row.bundles, row.breakage
+                ),
+                row.path.clone(),
+            ]
+        })
+        .collect();
+    style.report_table(
+        "marketplaces",
+        &["name", "holds", "folder"],
+        &cells,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
 pub struct ImportArgs {
@@ -104,6 +161,10 @@ pub struct ImportArgs {
 }
 
 pub fn import(env: &Env, args: ImportArgs) -> CliResult {
+    let style = ui::style();
+    if !args.json {
+        ui::stderr(&style.header("marketplace import", &args.target.display().to_string()));
+    }
     let filter = ScopeFilter::resolve(args.from_scope.as_deref(), false, ScopeFilter::All)?;
     let scopes = resolve_scopes(env, filter)?;
     let candidates = author::inventory(env, &scopes)?;
@@ -118,7 +179,7 @@ pub fn import(env: &Env, args: ImportArgs) -> CliResult {
     .flat_map(|(kind, names)| names.iter().map(move |name| (kind, name)))
     .collect();
     if wanted.is_empty() {
-        return list_candidates(&candidates, args.json);
+        return list_candidates(&style, &candidates, args.json);
     }
     if args.rename.is_some() && wanted.len() != 1 {
         return Err("--as renames exactly one package — pass one selection with it".into());
@@ -128,14 +189,28 @@ pub fn import(env: &Env, args: ImportArgs) -> CliResult {
         selections.push(selection(&candidates, kind, name, &args)?);
     }
     let outcome = author::apply(env, &scopes, &args.target, &selections)?;
-    for written in &outcome.written {
-        say(&format!("imported {}", written));
-    }
-    for present in &outcome.already_present {
-        say(&format!("already present: {}", present));
-    }
+    ui::stderr(&imported(&style, &outcome));
     // The same check the app shows: findings with files, then the tally.
     super::check_catalog::run(&args.target, false, false)
+}
+
+/// What an import copied, and what was already there with the same bytes.
+fn imported(style: &Style, outcome: &author::ImportOutcome) -> Vec<String> {
+    let written = outcome.written.iter().flat_map(|written| {
+        style.report_row(
+            Status::Done,
+            &[Span::Prose(&format!("imported {written}"))],
+            "",
+        )
+    });
+    let present = outcome.already_present.iter().flat_map(|present| {
+        style.report_row(
+            Status::Notice,
+            &[Span::Prose(&format!("already present: {present}"))],
+            "",
+        )
+    });
+    written.chain(present).collect()
 }
 
 fn selection(
@@ -226,7 +301,7 @@ fn selection(
     })
 }
 
-fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliResult {
+fn list_candidates(style: &Style, candidates: &[author::ImportCandidate], json: bool) -> CliResult {
     if json {
         answer(&serde_json::to_string_pretty(&serde_json::json!({
             "schema": author::import::IMPORT_SCHEMA,
@@ -234,6 +309,14 @@ fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliRes
         }))?);
         return Ok(());
     }
+    ui::stdout(&candidate_lines(style, candidates));
+    Ok(())
+}
+
+/// Every place each candidate's bytes live, one row per origin: the hash
+/// to select it by, or the word that says it cannot be taken.
+fn candidate_lines(style: &Style, candidates: &[author::ImportCandidate]) -> Vec<String> {
+    let mut cells = Vec::new();
     for candidate in candidates {
         for origin in &candidate.origins {
             let group = match &origin.group {
@@ -264,27 +347,51 @@ fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliRes
                 Some(problem) => format!("{} — {problem}", origin.locations.join(" = ")),
                 None => origin.locations.join(" = "),
             };
-            out(&format!(
-                "{}  {}  [{group}]  {hash}  {places}",
-                candidate.kind.name(),
-                candidate.name,
-            ));
+            cells.push(vec![
+                candidate.kind.name().to_owned(),
+                candidate.name.clone(),
+                format!("[{group}]"),
+                hash,
+                places,
+            ]);
         }
     }
-    Ok(())
+    if cells.is_empty() {
+        return Vec::new();
+    }
+    style.report_table(
+        "candidates",
+        &["kind", "name", "origin", "hash", "places"],
+        &cells,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
-fn summarize(row: &author::MineRow) {
+/// What a marketplace holds and what its check found, then where its
+/// repository stands. Breakage blocks installing it, so it draws as a
+/// failure.
+fn summarized(style: &Style, row: &author::MineRow) -> Vec<String> {
+    use kendex_core::decision::Need;
     let packages: u32 = row.counts.values().sum();
-    say(&format!(
-        "{}: {packages} package(s), {} bundle(s); check: {} breakage, {} safety finding(s)",
-        row.name, row.bundles, row.breakage, row.safety_findings
-    ));
-    match (&row.git.repository, &row.git.candidate) {
-        (false, _) => say("git: not a repository yet"),
-        (true, Some(candidate)) => say(&format!("git: remote candidate {}", candidate)),
-        (true, None) => say("git: no GitHub remote yet"),
-    }
+    let status = match row.breakage {
+        0 => Status::Done,
+        _ => Status::of(Need::Blocked),
+    };
+    let mut lines = style.report_row(
+        status,
+        &[Span::Prose(&format!(
+            "{}: {packages} package(s), {} bundle(s); check: {} breakage, {} safety finding(s)",
+            row.name, row.bundles, row.breakage, row.safety_findings
+        ))],
+        "",
+    );
+    let git = match (&row.git.repository, &row.git.candidate) {
+        (false, _) => "git: not a repository yet".to_owned(),
+        (true, Some(candidate)) => format!("git: remote candidate {candidate}"),
+        (true, None) => "git: no GitHub remote yet".to_owned(),
+    };
+    lines.extend(style.report_row(Status::Notice, &[Span::Prose(&git)], ""));
+    lines
 }
 
 pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> CliResult {
@@ -292,59 +399,109 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
     use kendex_core::registry::{CurlFetch, submit};
     let _ = env;
     let fetch = CurlFetch;
+    let style = ui::style();
     if status {
-        for row in submit::submissions(&fetch, &KeyringStore)? {
-            let reason = row
-                .status_reason
-                .map(|reason| format!(" — {reason}"))
-                .unwrap_or_default();
-            out(&format!("{}  {}{}", row.repo, row.status, reason));
-        }
+        ui::stderr(&style.header("marketplace submit", "--status"));
+        let rows = {
+            let _asking = ui::spinner("reading your submissions");
+            submit::submissions(&fetch, &KeyringStore)?
+        };
+        ui::stdout(&submissions(&style, &rows));
         return Ok(());
     }
     let dir = match dir {
         Some(dir) => dir,
         None => std::env::current_dir()?,
     };
-    let preflight = author::submit_preflight(&dir, &fetch)?;
-    for check in &preflight.checks {
-        let mark = match check.ok {
-            Some(true) => "ok",
-            Some(false) => " ✗",
-            None => " ?",
-        };
-        say(&format!("{mark}  {}", check.label));
-        if let Some(fix) = &check.fix {
-            say(&format!("      {}", fix));
-        }
-    }
+    ui::stderr(&style.header("marketplace submit", &dir.display().to_string()));
+    let preflight = {
+        let _checking = ui::spinner("checking the marketplace");
+        author::submit_preflight(&dir, &fetch)?
+    };
+    ui::stderr(&preflight_lines(&style, &preflight.checks));
     let Some(candidate) = &preflight.candidate else {
         return Err("nothing to submit yet — push the repository to GitHub first".into());
     };
     if dry_run {
-        say(&format!(
-            "would submit {} to {}",
-            candidate,
-            kendex_core::registry::base_url()
+        ui::stderr(&style.summary(
+            Status::Notice,
+            &format!(
+                "would submit {} to {}",
+                candidate,
+                kendex_core::registry::base_url()
+            ),
         ));
         return Ok(());
     }
     if !preflight.ready {
         return Err("fix the rows marked ✗ first — or --dry-run to see what would be sent".into());
     }
-    let outcome = submit::submit(&fetch, &KeyringStore, candidate)?;
-    say(&format!(
-        "submitted {} — status: {}{}",
-        outcome.repo,
-        outcome.status,
-        match outcome.status.as_str() {
-            "pending" =>
-                " (waiting for review; run the marketplace submit verb with --status to see when it is listed)",
-            "listed" => " (listed in the community directory)",
-            _ => "",
-        }
+    let outcome = {
+        let _sending = ui::spinner("submitting");
+        submit::submit(&fetch, &KeyringStore, candidate)?
+    };
+    ui::stderr(&style.summary(
+        Status::Done,
+        &format!(
+            "submitted {} — status: {}{}",
+            outcome.repo,
+            outcome.status,
+            match outcome.status.as_str() {
+                "pending" =>
+                    " (waiting for review; run the marketplace submit verb with --status to see when it is listed)",
+                "listed" => " (listed in the community directory)",
+                _ => "",
+            }
+        ),
     ));
     Ok(())
+}
+
+/// The submission checks: each row's verdict, and the fix under a row
+/// that has one. A failed check blocks the submission; one that could not
+/// be read is a notice.
+fn preflight_lines(style: &Style, checks: &[author::PreflightCheck]) -> Vec<String> {
+    use kendex_core::decision::Need;
+    let mut lines = Vec::new();
+    for check in checks {
+        let (status, mark) = match check.ok {
+            Some(true) => (Status::Done, "ok  "),
+            Some(false) => (Status::of(Need::Blocked), " ✗  "),
+            None => (Status::of(Need::Notice), " ?  "),
+        };
+        lines.extend(style.report_row(status, &[Span::Prose(&check.label)], mark));
+        if let Some(fix) = &check.fix {
+            lines.extend(style.report_detail(&[Span::Prose(fix)], "      "));
+        }
+    }
+    lines
+}
+
+/// Every submission and where it stands.
+fn submissions(
+    style: &Style,
+    rows: &[kendex_core::registry::submit::SubmissionRow],
+) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let reason = row
+                .status_reason
+                .as_ref()
+                .map(|reason| format!(" — {reason}"))
+                .unwrap_or_default();
+            vec![row.repo.clone(), format!("{}{reason}", row.status)]
+        })
+        .collect();
+    style.report_table(
+        "submissions",
+        &["repository", "status"],
+        &cells,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
 fn git_config_name() -> Option<String> {
@@ -358,3 +515,6 @@ fn git_config_name() -> Option<String> {
     let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     (!name.is_empty()).then_some(name)
 }
+
+#[cfg(test)]
+mod tests;

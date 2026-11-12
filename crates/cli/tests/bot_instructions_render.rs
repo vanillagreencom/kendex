@@ -285,3 +285,73 @@ fn a_render_that_fails_after_the_refresh_wrote_still_commits_the_write() {
         );
     }
 }
+
+/// A subscription edit is on disk once its write lands, so a render that
+/// fails after it is said beside the edit, never in its place: the run
+/// names what it changed, then the failure it exits on. Unsubscribing
+/// with `--keep-packages` lands its first transaction before the re-sync
+/// whose render fails.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_render_that_fails_after_a_subscription_edit_keeps_the_edit_said() {
+    const BREAKS: &str = "#!/bin/sh\nif [ \"$1\" = check ]; then\n  exit 0\nfi\necho 'fixture-render: broke' >&2\nexit 1\n";
+    let cases: [(&[&str], &str, &str); 4] = [
+        (
+            &["source", "add", "other", "other"],
+            "added marketplace 'other'",
+            "[sources.other]",
+        ),
+        (
+            &["source", "disable", "cat"],
+            "marketplace 'cat' switched off",
+            "enabled = false",
+        ),
+        (
+            &["marketplace", "subscribe", "other", "--name", "more"],
+            "subscribed to 'more' (other)",
+            "[sources.more]",
+        ),
+        (
+            &["marketplace", "unsubscribe", "cat", "--keep-packages"],
+            "unsubscribed from 'cat', 1 kept",
+            "[skills.bot-instructions]\nsource = \"local\"",
+        ),
+    ];
+    let mut missed = Vec::new();
+    for (args, landed, manifest) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp).join("home");
+        let project = installed(&home, BREAKS);
+        write(
+            &project.join("other/skills/note/SKILL.md"),
+            "---\nname: note\ndescription: another catalog's skill\n---\nNote.\n",
+        );
+        let repo = kendex_core::guard::Repo::at(&project).unwrap();
+        kendex_core::repo_effects::armed::arm(
+            kendex_core::repo_effects::armed::record_dir(&repo, false),
+            "bot-instructions",
+        )
+        .unwrap();
+
+        let ran = kendex(&home, &project, args);
+
+        let said = String::from_utf8_lossy(&ran.stderr);
+        assert_eq!(ran.status.code(), Some(1), "{args:?}: {said}");
+        assert!(
+            fs::read_to_string(project.join("kendex.toml"))
+                .unwrap()
+                .contains(manifest),
+            "{args:?} did not write its edit: {said}"
+        );
+        let edit = said.lines().position(|line| line.ends_with(landed));
+        let failure = said
+            .lines()
+            .position(|line| line.contains("fixture-render: broke"));
+        if !matches!((edit, failure), (Some(edit), Some(failure)) if edit < failure) {
+            missed.push(format!(
+                "{args:?} did not say {landed:?} before the failure: {said}"
+            ));
+        }
+    }
+    assert!(missed.is_empty(), "{}", missed.join("\n"));
+}

@@ -8,8 +8,8 @@ use kendex_core::{discover, settings};
 
 use kendex_core::settings_compare::Answer;
 
-use super::{CliResult, out};
-use crate::ui::{self, Lines, Span, Status, escaped};
+use super::CliResult;
+use crate::ui::{self, Lines, Span, Status, Style, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -92,6 +92,8 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             yes,
             throwaway,
         } => {
+            let style = ui::style();
+            ui::stderr(&style.header("project add", &path.display().to_string()));
             // With a template, registering and filling the project is
             // one path — the template lands before the hook offer rather
             // than as a second command somebody has to know about — and
@@ -112,7 +114,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 None => {
                     registrable(env, &path, throwaway)?;
                     settings::register_project(env, &path)?;
-                    out(&format!("registered {}", path.display()));
+                    ui::stdout(&folder_line(&style, Status::Done, "registered ", &path, ""));
                 }
             }
             offer_to_manage(env, &path);
@@ -123,32 +125,30 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
                 // Registration is where the drift hook is offered: agents in
                 // this project start blind until it is installed.
-                false => out(
-                    "tip: the drift-hook verb installs package checks, which run when a session starts",
-                ),
+                false => ui::stdout(&style.report_row(
+                    Status::Notice,
+                    &[Span::Prose(
+                        "the drift-hook verb installs package checks, which run when a session starts",
+                    )],
+                    "tip: ",
+                )),
             }
         }
         ProjectCommand::Remove { path } => {
+            let style = ui::style();
+            ui::stderr(&style.header("project remove", &path.display().to_string()));
             settings::unregister_project(env, &path)?;
-            out(&format!("removed {}", path.display()));
+            ui::stdout(&folder_line(&style, Status::Done, "removed ", &path, ""));
         }
         ProjectCommand::Reconnect {
             from,
             to,
             consolidate,
         } => {
+            let style = ui::style();
+            ui::stderr(&style.header("project reconnect", &from.display().to_string()));
             let (plan, _, _) = settings::relocate_project(env, &from, &to, consolidate)?;
-            out(&format!(
-                "{} is now at {}{}",
-                plan.from.display(),
-                plan.to.display(),
-                match plan.standing {
-                    settings::Standing::Registered =>
-                        "  (joined with the project already listed there)",
-                    settings::Standing::NoRecord => "  (no packages recorded there)",
-                    _ => "",
-                }
-            ));
+            ui::stdout(&reconnected(&style, &plan));
         }
         ProjectCommand::List { json } => list(env, json)?,
         ProjectCommand::Settings => compare_settings(env)?,
@@ -157,31 +157,105 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             register,
             throwaway,
         } => {
+            let style = ui::style();
+            ui::stderr(&style.header("project discover", &root.display().to_string()));
             let found_projects = discover::discover_projects(&root)?;
             // Every folder is judged before the first is registered, so a
             // refusal registers nothing rather than the ones sorted ahead
             // of it.
-            if register {
-                for found in &found_projects {
-                    registrable(env, found, throwaway)?;
-                }
+            if !register {
+                ui::stdout(&found(&style, &found_projects));
+                return Ok(());
             }
-            for found in found_projects {
-                if register {
-                    match settings::register_project(env, &found) {
-                        Ok(_) => out(&format!("registered {}", found.display())),
-                        Err(CoreError::ProjectAlreadyRegistered { .. }) => {
-                            out(&format!("already registered {}", found.display()));
-                        }
-                        Err(e) => return Err(e.into()),
+            for found in &found_projects {
+                registrable(env, found, throwaway)?;
+            }
+            for found in &found_projects {
+                // Each line is said as its registration lands, so a later
+                // failure does not hide the folders already added.
+                match settings::register_project(env, found) {
+                    Ok(_) => {
+                        ui::stdout(&folder_line(&style, Status::Done, "registered ", found, ""))
                     }
-                } else {
-                    out(&format!("{}", found.display()));
+                    Err(CoreError::ProjectAlreadyRegistered { .. }) => ui::stdout(&folder_line(
+                        &style,
+                        Status::Notice,
+                        "already registered ",
+                        found,
+                        "",
+                    )),
+                    Err(e) => return Err(e.into()),
                 }
             }
         }
     }
     Ok(())
+}
+
+/// One folder and what was done to it. The folder is drawn whole, never
+/// broken; plain is the sentence scripts read.
+fn folder_line(
+    style: &Style,
+    status: Status,
+    lead: &str,
+    folder: &std::path::Path,
+    tail: &str,
+) -> Vec<String> {
+    let folder = folder.display().to_string();
+    style.report_row(
+        status,
+        &[Span::Prose(lead), Span::Command(&folder), Span::Prose(tail)],
+        "",
+    )
+}
+
+/// A project moved: where Projects listed it, where it is now, and what
+/// was already recorded at the destination.
+fn reconnected(style: &Style, plan: &settings::Relocation) -> Vec<String> {
+    use settings::Standing;
+    let (from, to) = (
+        plan.from.display().to_string(),
+        plan.to.display().to_string(),
+    );
+    // The standings that refuse a move never reach here: the relocation
+    // returned their refusal instead of a plan.
+    let standing = match plan.standing {
+        Standing::Registered => "  (joined with the project already listed there)",
+        Standing::NoRecord => "  (no packages recorded there)",
+        Standing::Moved
+        | Standing::Settled
+        | Standing::Unchanged
+        | Standing::FolderMissing { .. }
+        | Standing::RecordUnreadable { .. }
+        | Standing::RecordElsewhere { .. } => "",
+    };
+    style.report_row(
+        Status::Done,
+        &[
+            Span::Command(&from),
+            Span::Prose(" is now at "),
+            Span::Command(&to),
+            Span::Prose(standing),
+        ],
+        "",
+    )
+}
+
+/// The project folders discovery found, one per line plain.
+fn found(style: &Style, folders: &[PathBuf]) -> Vec<String> {
+    if folders.is_empty() {
+        return Vec::new();
+    }
+    let rows: Vec<Vec<String>> = folders
+        .iter()
+        .map(|folder| vec![folder.display().to_string()])
+        .collect();
+    style.report_table(
+        "projects found",
+        &["folder"],
+        &rows,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
 /// The projects this machine tracks, one per line, each with what is
@@ -202,36 +276,57 @@ fn list(env: &Env, json: bool) -> CliResult {
         super::answer(&serde_json::to_string_pretty(&listed)?);
         return Ok(());
     }
+    let style = ui::style();
+    ui::stderr(&style.header("project list", &format!("{} projects", projects.len())));
     for project in projects {
-        let missing = kendex_core::scan::missing_why(&project);
-        out(&format!(
-            "{}{}{}",
-            project.display(),
-            match &missing {
-                None => "",
-                Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
-                Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
-                Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
-                    "  (folder could not be read)",
+        let state = match kendex_core::scan::missing_why(&project) {
+            Some(missing) => Listed::Missing(missing),
+            // A git that cannot answer says nothing rather than guessing:
+            // an entry annotated from a failed read would claim a
+            // repository relationship nobody established.
+            None => match linked_worktree(&project) {
+                Ok(Some(linked)) => Listed::Worktree(linked),
+                Ok(None) | Err(_) => Listed::Folder,
             },
-            match missing {
-                // A folder nobody could read answers no question about the
-                // repository it might be in.
-                Some(_) => String::new(),
-                // A git that cannot answer says nothing rather than
-                // guessing: an entry annotated from a failed read would
-                // claim a repository relationship nobody established.
-                None => match linked_worktree(&project) {
-                    Ok(Some(Linked { main: Some(main) })) => {
-                        format!("  (worktree of {})", main.display())
-                    }
-                    Ok(Some(Linked { main: None })) => "  (worktree)".to_owned(),
-                    Ok(None) | Err(_) => String::new(),
-                },
-            }
-        ));
+        };
+        ui::stdout(&listed_row(&style, &project, &state));
     }
     Ok(())
+}
+
+/// What `project list` says about one registered folder.
+enum Listed {
+    Folder,
+    Worktree(Linked),
+    /// A folder nobody could read answers no question about the
+    /// repository it might be in.
+    Missing(kendex_core::scan::MissingWhy),
+}
+
+/// One project row: the folder drawn whole, and what is wrong with it or
+/// what it is. A folder that is not there blocks every write into it, so
+/// it is drawn as a failure.
+fn listed_row(style: &Style, project: &std::path::Path, state: &Listed) -> Vec<String> {
+    use kendex_core::decision::Need;
+    use kendex_core::scan::MissingWhy;
+    let (need, said) = match state {
+        Listed::Folder => (Need::Notice, String::new()),
+        Listed::Worktree(Linked { main: Some(main) }) => {
+            (Need::Notice, format!("  (worktree of {})", main.display()))
+        }
+        Listed::Worktree(Linked { main: None }) => (Need::Notice, "  (worktree)".to_owned()),
+        Listed::Missing(MissingWhy::Gone) => (Need::Blocked, "  (folder not found)".to_owned()),
+        Listed::Missing(MissingWhy::NotAFolder) => (Need::Blocked, "  (not a folder)".to_owned()),
+        Listed::Missing(MissingWhy::Unreadable { .. }) => {
+            (Need::Blocked, "  (folder could not be read)".to_owned())
+        }
+    };
+    let folder = project.display().to_string();
+    style.report_row(
+        Status::of(need),
+        &[Span::Command(&folder), Span::Prose(&said)],
+        "",
+    )
 }
 
 /// One registered folder as `project list --json` prints it.
@@ -503,9 +598,12 @@ pub fn register_target(env: &Env, registering: &Registering, scope: &Scope) -> C
     if let Scope::Project { root } = scope
         && worktrees.contains(root)
     {
-        out(&format!(
-            "worktree-not-listed={}: a linked git worktree is not added to your projects",
-            root.display()
+        ui::stdout(&folder_line(
+            &ui::style(),
+            Status::Notice,
+            "worktree-not-listed=",
+            root,
+            ": a linked git worktree is not added to your projects",
         ));
         return Ok(());
     }
@@ -538,9 +636,12 @@ pub fn register_destination(env: &Env, scope: &Scope) -> CliResult {
         // already tracks is the ordinary case, and a line about it under
         // every install is a line nobody reads.
         Ok(registered) if registered.added => {
-            out(&format!(
-                "added {} to your projects",
-                registered.root.display()
+            ui::stdout(&folder_line(
+                &ui::style(),
+                Status::Done,
+                "added ",
+                &registered.root,
+                " to your projects",
             ));
             Ok(())
         }
@@ -572,17 +673,27 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
         root: root.to_path_buf(),
     };
     let rows = kendex_core::engine::unmanaged_here(env, &scope);
-    let items = grouped(&rows);
+    ui::stdout(&offer_lines(&ui::style(), root, &grouped(&rows)));
+}
+
+/// The offer: how many items nothing manages, then each with the command
+/// that takes it. A choice left to the reader, so drawn as a decision.
+fn offer_lines(style: &Style, root: &std::path::Path, items: &[Offer]) -> Vec<String> {
+    use kendex_core::decision::Need;
     if items.is_empty() {
-        return;
+        return Vec::new();
     }
-    out(&format!(
-        "{} package{} here {} not managed by kendex yet:",
-        items.len(),
-        if items.len() == 1 { "" } else { "s" },
-        if items.len() == 1 { "is" } else { "are" }
-    ));
-    for item in &items {
+    let mut lines = style.report_row(
+        Status::of(Need::Decision),
+        &[Span::Prose(&format!(
+            "{} package{} here {} not managed by kendex yet:",
+            items.len(),
+            if items.len() == 1 { "" } else { "s" },
+            if items.len() == 1 { "is" } else { "are" }
+        ))],
+        "",
+    );
+    for item in items {
         // Runnable as printed, from wherever this was typed: `adopt` acts on
         // the current project and defaults to Claude Code, so the line names
         // the project and every tool the item sits at.
@@ -591,16 +702,28 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
             .iter()
             .map(|harness| format!(" --harness {harness}"))
             .collect();
-        out(&format!(
-            "  - {} {} [{}]  (cd {} && kendex adopt {} {}{tools})",
+        let what = format!(
+            "{} {} [{}]  (",
             item.kind.name(),
             item.name,
-            item.tools.join(", "),
+            item.tools.join(", ")
+        );
+        let command = format!(
+            "cd {} && kendex adopt {} {}{tools}",
             kendex_core::names::quoted(&root.display().to_string()),
             item.kind.name(),
             item.name,
+        );
+        lines.extend(style.report_detail(
+            &[
+                Span::Prose(&what),
+                Span::Command(&command),
+                Span::Prose(")"),
+            ],
+            "  - ",
         ));
     }
+    lines
 }
 
 /// One offer: an item, and every tool holding it at the same place.
@@ -640,3 +763,6 @@ fn grouped(rows: &[kendex_core::engine::DriftRow]) -> Vec<Offer> {
     }
     items.into_iter().map(|(_, offer)| offer).collect()
 }
+
+#[cfg(test)]
+mod tests;
