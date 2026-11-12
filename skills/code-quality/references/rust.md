@@ -5,6 +5,17 @@
 - Match owned enums exhaustively, with no wildcard arm. Use enums instead of strings, sentinels or booleans that encode cases.
 - Acquire an owned scratch file with `OpenOptions::create_new(true)` before assigning cleanup responsibility. A prior existence check does not make a later create-and-truncate exclusive.
 
+## Modules
+
+- Give each file one concept, and the whole of it. A file split off at a concept seam stands alone: its reader never needs the source file open beside it.
+- Test a proposed seam by counting the names the new file imports straight from its parent (`use super::{...}`). A real seam sits near zero, and `use super::*` fails the test. Moving half a function, a helper only one caller uses, or "part 2 of X" into a second file is worse than the long file.
+- Three Rust shapes are that move, whatever the seam is called:
+  1. `#[path = "<sibling>.rs"]` on a private `mod` that exists to hold the parent's lines. `#[path]` chosen for another reason, such as a test module or a `cfg`-selected alternative, names a real seam.
+  2. A hub that declares `mod child;` then `use child::*`, with every spoke opening `use super::*`. A hub carries declarations, narrow orchestration and stable exports. A spoke depends on the hub's shared types or on a lower shared module, never on a sibling's internals.
+  3. A file whose only top-level items are inherent `impl` blocks on a type its parent declares. That file is part 2 of the type by construction.
+- A file header that justifies the file by a line count records that the seam is not real.
+- Merge files that are one concept read together: calls that ping-pong between them, a helper file with one importer, a "part 2" file.
+
 ## Tests
 
 - Group a coherent contract or state machine in a test module. Private helpers and native assertion macros belong there; do not split every function into a file or export helpers to meet a shared-library rule.

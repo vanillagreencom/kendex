@@ -52,6 +52,8 @@ Client-pair token storage: [references/authentication.md § Client-pair token st
 
 Set `KENDEX_USER_EMAIL` to the address your Linear account signs in with. The app's Customize tab writes it to the private env file, never to `kendex.settings.toml`. Matching ignores case and uses the whole address. Empty or absent assigns nobody.
 
+A worktree whose `WORKTREE_SYMLINKS` lists `.env.local` links that file to its main checkout, so a value set there reaches every such worktree. A value exported only in the shell that starts the lanes does not reach a local lane: its tmux pane takes its environment from the tmux server, not from that shell.
+
 `LINEAR_CACHE_ROOT` is retired with the local store: set in the environment or a project file, even empty, it fails every command with `linear-setting: retired=LINEAR_CACHE_ROOT`. Remove it.
 
 ## Licence
