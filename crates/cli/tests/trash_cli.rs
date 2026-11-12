@@ -354,19 +354,16 @@ fn a_remove_that_fails_at_a_later_scope_still_closes_the_scopes_it_wrote() {
     let removed = kendex(
         &home,
         &project,
-        &[
-            ("KENDEX_TRASH_KEEP_DAYS", "7"),
-            ("KENDEX_UI", "pretty"),
-            ("LANG", "C.UTF-8"),
-        ],
+        &[("KENDEX_TRASH_KEEP_DAYS", "7")],
         &["remove", "deploy", "--scope", "all"],
     );
     assert!(!removed.status.success(), "{}", said(&removed));
     let text = said(&removed);
-    let frame = text.split('└').next().unwrap();
+    let closed = text.find(": removed ");
+    let failed = text.find("Error:");
     assert!(
-        crate::presentation::escaped_the_frame(frame).is_empty(),
-        "a write report escaped the frame: {text}"
+        matches!((closed, failed), (Some(closed), Some(failed)) if closed < failed),
+        "the written scope did not close before the error: {text}"
     );
     assert!(!names(&home).iter().any(|name| name.ends_with("-old")));
     assert!(!project.join(".claude/settings.json").exists());

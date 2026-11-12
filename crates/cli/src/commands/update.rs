@@ -15,7 +15,8 @@ use kendex_core::update_feed::{
     signature_url, verify_signature,
 };
 
-use super::{CliResult, answer, out, say};
+use super::{CliResult, answer};
+use crate::ui::{self, Span, Status, Style, Target};
 
 #[derive(Args)]
 pub struct ReleaseMainBuildArgs {
@@ -63,7 +64,7 @@ pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
     // family update on bytes it is about to refuse to touch.
     let channel = match for_cli(&current_exe, &Host) {
         CommandChannel::InsideTheApp => {
-            out(INSIDE_THE_APP);
+            ui::stdout(&ui::style().summary(Status::Notice, INSIDE_THE_APP));
             return Ok(());
         }
         CommandChannel::OnItsOwn(channel) => channel,
@@ -147,11 +148,9 @@ fn run_on_with_source(
     target: &str,
     source_install: impl FnOnce(&Path, &AuthenticatedMainIdentity) -> Result<(), String>,
 ) -> CliResult {
+    let style = ui::style();
     if let InstallChannel::Managed { manager, command } = channel {
-        out(&format!(
-            "this install came from {manager}; update it with:"
-        ));
-        out(&format!("  {command}"));
+        ui::stdout(&managed_lines(&style, manager, command));
         return Ok(());
     }
     // Managed answered above with the one thing it has to say and an exit
@@ -165,8 +164,12 @@ fn run_on_with_source(
     // carry the command across from then on.
     let current = env!("KENDEX_BUILD_VERSION");
     if let Err(why) = record_command_on(env, current_exe, UpdateChannel::for_version(current)) {
-        say(&format!(
-            "the desktop app will not update this command until it can be recorded: {why}"
+        ui::stderr(&style.report_row(
+            Status::Decision,
+            &[Span::Prose(&format!(
+                "the desktop app will not update this command until it can be recorded: {why}"
+            ))],
+            "",
         ));
     }
     let feed_bytes = fetch(feed_url)?;
@@ -175,7 +178,7 @@ fn run_on_with_source(
     let relation = feed.relation_to(current, update_channel)?;
     match relation {
         VersionRelation::Current if !force => {
-            out(&format!("already up to date ({current})"));
+            ui::stdout(&style.summary(Status::Done, &format!("already up to date ({current})")));
             return Ok(());
         }
         VersionRelation::Older if update_channel == UpdateChannel::Main => {
@@ -202,22 +205,25 @@ fn run_on_with_source(
             source_install,
         )? {
             record_command_on(env, current_exe, update_channel)?;
-            for line in installed_message(&feed, update_channel)?.lines() {
-                out(line);
-            }
+            ui::stdout(&installed_lines(&style, &feed, update_channel)?);
             return Ok(());
         }
-        out(&missing_asset_message(
-            relation,
-            &feed,
-            update_channel,
-            current,
-            target,
-        )?);
+        let status = match relation {
+            VersionRelation::Newer => Status::Notice,
+            VersionRelation::Current | VersionRelation::Older => Status::Done,
+        };
+        ui::stdout(&style.summary(
+            status,
+            &missing_asset_message(relation, &feed, update_channel, current, target)?,
+        ));
         return Ok(());
     };
 
-    say(&format!("updating {} → {}", current, latest));
+    ui::stderr(&style.report_row(
+        Status::Notice,
+        &[Span::Prose(&format!("updating {current} → {latest}"))],
+        "",
+    ));
     // The command's own baked version is the state marker for the whole
     // install, so it is the last thing written. Any failure before it
     // leaves the old command in place, the next run still reads the feed
@@ -235,7 +241,7 @@ fn run_on_with_source(
     // download. A signature that is genuine over some other release's
     // artifact is refused here rather than written over the running
     // command.
-    let app_half = app_half(env, &feed, update_channel, latest, target, channel)?;
+    let app_half = app_half(env, &style, &feed, update_channel, latest, target, channel)?;
     let digests = match (update_channel, feed.digests_for(target)) {
         (UpdateChannel::Main, Some(document)) => {
             published_release_at(document, target, latest, public_key)?
@@ -254,7 +260,7 @@ fn run_on_with_source(
     let signature = fetch(&signature_url(asset))?;
     let app_replaced = match &app_half {
         Some(half) => {
-            replace_app(half, latest, &digests, public_key)?;
+            replace_app(&style, half, latest, &digests, public_key)?;
             true
         }
         None => false,
@@ -266,19 +272,36 @@ fn run_on_with_source(
         return Err(command_failure(latest, app_replaced, &error).into());
     }
     record_command_on(env, current_exe, update_channel)?;
-    for line in installed_message(&feed, update_channel)?.lines() {
-        out(line);
-    }
+    ui::stdout(&installed_lines(&style, &feed, update_channel)?);
     Ok(())
 }
 
-fn installed_message(
+/// A package-managed install's answer: whose it is, and the command that
+/// updates it, drawn whole.
+fn managed_lines(style: &Style, manager: &str, command: &str) -> Vec<String> {
+    let mut lines = style.report_row(
+        Status::Notice,
+        &[Span::Prose(&format!(
+            "this install came from {manager}; update it with:"
+        ))],
+        "",
+    );
+    lines.extend(style.report_detail(&[Span::Command(command)], "  "));
+    lines
+}
+
+/// The run's outcome once the command is replaced, and where its release
+/// notes are.
+fn installed_lines(
+    style: &Style,
     feed: &ReleaseFeed,
     update_channel: UpdateChannel,
-) -> Result<String, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let latest = feed.version.as_str();
     let notes = feed.release_notes_url(update_channel)?;
-    Ok(format!("updated to {latest}\nwhat changed: {notes}"))
+    let mut lines = style.summary(Status::Done, &format!("updated to {latest}"));
+    lines.extend(style.report_link(&format!("what changed: {notes}"), Target::Url(&notes)));
+    Ok(lines)
 }
 
 fn install_main_fallback(
@@ -292,9 +315,13 @@ fn install_main_fallback(
     let Some(identity) = main_source_fallback(update_channel, feed, public_key)? else {
         return Ok(false);
     };
-    say(&format!(
-        "no prebuilt main artifact for {target}; building commit {} with cargo",
-        identity.commit
+    ui::stderr(&ui::style().report_row(
+        Status::Notice,
+        &[Span::Prose(&format!(
+            "no prebuilt main artifact for {target}; building commit {} with cargo",
+            identity.commit
+        ))],
+        "",
     ));
     source_install(current_exe, &identity)?;
     Ok(true)
@@ -327,6 +354,7 @@ struct AppHalf {
 /// here, with the old command still on disk, so neither half has moved.
 fn app_half(
     env: &Env,
+    style: &Style,
     feed: &ReleaseFeed,
     update_channel: UpdateChannel,
     latest: &str,
@@ -361,7 +389,13 @@ fn app_half(
     };
     let path = env.app_image_file();
     if !path.exists() {
-        out("no kendex desktop app here; the kendex command is the whole install");
+        ui::stdout(&style.report_row(
+            Status::Notice,
+            &[Span::Prose(
+                "no kendex desktop app here; the kendex command is the whole install",
+            )],
+            "",
+        ));
         return Ok(None);
     }
     if !Host.replaceable(&path) {
@@ -379,14 +413,19 @@ fn app_half(
 
 /// Bring the desktop app on this machine to the same release.
 fn replace_app(
+    style: &Style,
     half: &AppHalf,
     latest: &str,
     digests: &ReleaseDigests,
     public_key: &str,
 ) -> Result<(), String> {
-    say(&format!(
-        "updating the desktop app at {}",
-        half.path.display()
+    ui::stderr(&style.report_row(
+        Status::Notice,
+        &[
+            Span::Prose("updating the desktop app at "),
+            Span::Command(&half.path.display().to_string()),
+        ],
+        "",
     ));
     let image = fetch(&half.url)?;
     // The release job publishes each AppImage beside a minisign signature
@@ -398,7 +437,11 @@ fn replace_app(
         digests.verify_app(bytes)
     })
     .map_err(|why| app_refused(latest, &why))?;
-    out(&format!("updated the desktop app to {latest}"));
+    ui::stdout(&style.report_row(
+        Status::Done,
+        &[Span::Prose(&format!("updated the desktop app to {latest}"))],
+        "",
+    ));
     Ok(())
 }
 

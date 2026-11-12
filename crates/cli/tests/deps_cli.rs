@@ -482,6 +482,103 @@ fn removing_the_last_dependent_asks_about_what_it_leaves_behind() {
     assert!(!project.join(".claude/skills/github").exists());
 }
 
+/// The sweep question a later scope needs refuses the run before an
+/// earlier scope writes: the project's removal leaves nothing behind, the
+/// personal scope's leaves a dependency, and with nobody to ask neither
+/// scope is written.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_later_scopes_unanswered_sweep_refuses_before_the_first_scope_writes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    fs::create_dir_all(home.join(".claude/skills")).unwrap();
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    skill(home, "dev", "dependencies:\n  required: [github]\n");
+    skill(home, "github", "");
+    skill(home, "linear", "");
+    let catalog = home.join("catalog");
+    let catalog = catalog.to_str().unwrap();
+    for (name, scope) in [("linear", None), ("dev", Some("--global"))] {
+        let mut args = vec!["add", catalog, "--skill", name, "--harness", "claude", "-y"];
+        args.extend(scope);
+        let added = kendex(home, &project, &args);
+        assert!(
+            added.status.success(),
+            "add {name}: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
+    }
+    assert!(home.join(".claude/skills/github").exists());
+    let project_before = tree(&project);
+    let home_skills = tree(&home.join(".claude/skills"));
+
+    let refused = kendex(
+        home,
+        &project,
+        &["remove", "linear", "dev", "--scope", "all"],
+    );
+    let said = String::from_utf8_lossy(&refused.stderr);
+
+    assert!(!refused.status.success(), "{said}");
+    assert!(
+        said.contains("skill github") && said.contains("--no-sweep"),
+        "{said}"
+    );
+    assert!(
+        tree(&project) == project_before,
+        "the project scope wrote before the refusal: {said}"
+    );
+    assert!(tree(&home.join(".claude/skills")) == home_skills, "{said}");
+}
+
+/// The sweep asked at a terminal, by its keys: `s` takes what nothing
+/// needs anymore with the removal, Enter keeps it, and Escape cancels
+/// before anything is written. `src/commands/remove/tests.rs` holds how the
+/// question is drawn.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_sweep_is_answered_by_its_keys() {
+    // (key, exit, dev removed, github removed)
+    let rows: [(&str, i32, bool, bool); 3] = [
+        ("s", 0, true, true),
+        ("\n", 0, true, false),
+        ("\x1b", 130, false, false),
+    ];
+    for (key, code, dev_gone, github_gone) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = &rooted(&tmp);
+        let project = project(&tmp);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+        command
+            .args(["remove", "dev"])
+            .current_dir(&project)
+            .env_clear()
+            .envs(test_util::fixture_env(home))
+            .env("KENDEX_UI", "plain")
+            .env("PATH", std::env::var("PATH").unwrap_or_default());
+
+        let output = crate::pty::conversation(
+            command,
+            &[("[s] remove them too", key)],
+            crate::pty::Stderr::Terminal,
+        );
+
+        let said = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(code), "{key:?}: {said}");
+        assert_eq!(
+            !project.join(".claude/skills/dev").exists(),
+            dev_gone,
+            "{key:?}: {said}"
+        );
+        assert_eq!(
+            !project.join(".claude/skills/github").exists(),
+            github_gone,
+            "{key:?}: {said}"
+        );
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn sweeping_takes_the_leftovers_and_a_held_back_dependency_says_so() {

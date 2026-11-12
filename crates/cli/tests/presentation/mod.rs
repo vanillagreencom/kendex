@@ -81,39 +81,12 @@ fn said(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-/// One line's text with its spacing flattened, so a claim about what was
-/// said survives the wrapping a box does to fit a terminal width.
-pub fn flat(line: &str) -> String {
-    line.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// The same, with the spaces gone as well. A box wraps to the terminal's
+/// A line with the spaces gone. A box wraps to the terminal's
 /// width and breaks a long path mid-word to do it, so a temp directory
 /// deep enough to wrap would fail an assertion about text the run did
 /// print. What survives that is the characters, in order.
 pub fn squashed(text: &str) -> String {
     text.chars().filter(|c| !c.is_whitespace()).collect()
-}
-
-/// One framed line with its frame taken off, and nothing else touched —
-/// so a run of these still reads as the lines the verb said, in the order
-/// it said them.
-pub fn unframe(line: &str) -> String {
-    let stripped: String = line
-        .chars()
-        .map(|c| if FRAMING.contains(&c) { ' ' } else { c })
-        .collect();
-    flat(&stripped)
-}
-
-/// The framed session with its frame taken off, line by line. Blank lines
-/// and the rules a box draws leave nothing behind and are dropped.
-pub fn unframed_lines(printed: &str) -> Vec<String> {
-    printed
-        .lines()
-        .map(unframe)
-        .filter(|line| !line.is_empty())
-        .collect()
 }
 
 /// The whole framed session as one run of characters, for a claim that

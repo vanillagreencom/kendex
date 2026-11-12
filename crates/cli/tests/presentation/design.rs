@@ -450,3 +450,108 @@ fn unmanaged_paths_with_spaces_stay_on_one_output_line() {
         );
     }
 }
+
+/// The writing verbs converted from the frame, `remove` and `update-pi`:
+/// `NO_COLOR` and `TERM=dumb` print what a pipe gets on both streams, a
+/// rich run at 80 columns draws its rows marked and within 80 cells, and
+/// every rendering exits the same. Each run writes, so each starts from
+/// the fixture rebuilt at the same paths, which keeps a line from one run
+/// comparable with the next.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    let pi = |project: &Path| {
+        let catalog = project.join("pi-catalog");
+        let source = catalog.join("pi-extensions/pi-widgets");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(
+            source.join("package.json"),
+            r#"{"name":"pi-widgets","version":"2.0.0","pi":{"extensions":["index.js"]}}"#,
+        )
+        .unwrap();
+        fs::write(source.join("index.js"), "export const version = 2;\n").unwrap();
+        let manifest = project.join("kendex.toml");
+        let declared = fs::read_to_string(&manifest).unwrap();
+        fs::write(
+            manifest,
+            format!(
+                "{declared}\n[sources.pis]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"pis\"\n",
+                source_path(&catalog)
+            ),
+        )
+        .unwrap();
+    };
+    // (arguments, a row the rich run draws marked, once its colour is off)
+    let verbs: [(&[&str], &str); 3] = [
+        (
+            &[
+                "remove",
+                "commit-guards",
+                "--no-sweep",
+                "--scope",
+                "project",
+            ],
+            "  ✓ changes:",
+        ),
+        (
+            &["update-pi", "--check", "--scope", "project"],
+            "  ! pi-widgets -",
+        ),
+        (
+            &["update-pi", "--scope", "project", "--leave"],
+            "  ✓ installed pi-widgets -> 2.0.0",
+        ),
+    ];
+    for (args, marked) in verbs {
+        let run = |ui: &str, extra: &[(&str, &str)]| {
+            fs::remove_dir_all(&home).unwrap();
+            fs::create_dir_all(&home).unwrap();
+            blocked_project_at(&home, &project);
+            pi(&project);
+            let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+            command
+                .args(args)
+                .current_dir(&project)
+                .env_clear()
+                .envs(test_util::fixture_env(&home))
+                .env("KENDEX_BACKGROUND_REFRESH", "off")
+                .env("KENDEX_UI", ui)
+                .env("LANG", "C.UTF-8")
+                .env("COLUMNS", "80")
+                .env("PATH", std::env::var("PATH").unwrap_or_default());
+            command.envs(extra.iter().copied());
+            let output = command.output().unwrap();
+            (
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout).into_owned(),
+                said(&output),
+            )
+        };
+        let piped = run("auto", &[]);
+        assert!(!piped.2.is_empty(), "{args:?}: nothing said");
+        for extra in [[("NO_COLOR", "1")], [("TERM", "dumb")]] {
+            assert_eq!(run("pretty", &extra), piped, "{args:?}: {extra:?}");
+        }
+        let rich = run("pretty", &[]);
+        assert_eq!(rich.0, piped.0, "{args:?}: presentation changed the exit");
+        let drawn = format!("{}{}", rich.1, rich.2);
+        assert!(
+            drawn.contains('\u{1b}'),
+            "{args:?}: no rich rendering: {rich:?}"
+        );
+        assert!(
+            drawn.lines().map(stripped).any(|line| line == marked),
+            "{args:?}: no marked row {marked:?}: {rich:?}"
+        );
+        for line in drawn.lines() {
+            assert!(
+                cells(line) <= 80,
+                "{args:?}: {} cells: {line:?}",
+                cells(line)
+            );
+        }
+    }
+}

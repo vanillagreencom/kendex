@@ -177,6 +177,40 @@ impl Style {
         }
     }
 
+    /// A titled group whose plain heading is the title alone, at column 0,
+    /// the line a script reads as opening the block; rich, a section.
+    pub fn report_heading(&self, title: &str, count: usize, status: Status) -> Vec<String> {
+        match self.look {
+            Look::Plain => vec![escaped(title)],
+            Look::Rich { .. } => self.section(title, count, status),
+        }
+    }
+
+    /// A package, the version it is at and what is true of it. Plain is
+    /// the fixed columns `update-pi` has always printed under its scope;
+    /// rich, a row naming the package and its version with the state
+    /// under it.
+    pub fn report_package(
+        &self,
+        status: Status,
+        name: &str,
+        version: &str,
+        state: &str,
+    ) -> Vec<String> {
+        match self.look {
+            Look::Plain => vec![escaped(&format!("  {name:<34} {version:<22} {state}"))],
+            Look::Rich { .. } => {
+                let mut lines = self.row(
+                    status,
+                    &[Span::Prose(name), Span::Prose("  "), Span::Command(version)],
+                    None,
+                );
+                lines.extend(self.detail(None, &[Span::Prose(state)]));
+                lines
+            }
+        }
+    }
+
     /// A line the reader can open rich; plain, its text alone.
     pub fn report_link(&self, text: &str, target: Target<'_>) -> Vec<String> {
         match self.look {

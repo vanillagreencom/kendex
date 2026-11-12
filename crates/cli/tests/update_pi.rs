@@ -110,6 +110,64 @@ fn fixture() -> tempfile::TempDir {
     tmp
 }
 
+/// A scope whose install record will not save after its package landed
+/// is one failure of the run, not its end: the next scope still updates,
+/// the closing line counts every package that landed, and the run exits
+/// with the error naming the scope. The project's record has its machine
+/// half under a directory the run may not write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_scope_whose_record_will_not_save_leaves_the_next_scope_updated_and_counted() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let project = home.join("dev/app");
+    let catalog = home.join("catalog");
+    write(
+        &catalog.join("pi-extensions/pi-gadgets/package.json"),
+        r#"{"name":"pi-gadgets","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+    );
+    write(
+        &catalog.join("pi-extensions/pi-gadgets/index.js"),
+        "export const version = 1;\n",
+    );
+    let env = kendex_core::env::Env::host_rooted(home);
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-gadgets]\nsource = 'cat'\n",
+            test_util::source_path(&catalog)
+        ),
+    );
+    let cache = project.join(".cache/kendex");
+    fs::create_dir_all(&cache).unwrap();
+    let Some(unwritable) = test_util::unwritable_dir(&cache) else {
+        return;
+    };
+
+    let output = kendex(home, &project, &["update-pi", "--scope", "all", "--leave"]);
+    drop(unwritable);
+
+    let progress = String::from_utf8_lossy(&output.stdout);
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{progress}{said}");
+    for landed in [
+        "updated pi-widgets -> 2.0.0",
+        "installed pi-gadgets -> 1.0.0",
+    ] {
+        assert!(progress.contains(landed), "{landed}: {progress}{said}");
+    }
+    let closing = said.find("updated 2 package(s)");
+    let failed = said.find("update failed for: ");
+    assert!(
+        matches!((closing, failed), (Some(closing), Some(failed)) if closing < failed),
+        "{said}"
+    );
+    assert!(
+        said[failed.unwrap()..].contains(&project.display().to_string()),
+        "the error does not name the scope: {said}"
+    );
+}
+
 #[test]
 fn check_reports_stale_packages_without_touching_them() {
     let tmp = fixture();

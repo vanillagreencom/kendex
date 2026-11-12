@@ -6,20 +6,23 @@
 use super::*;
 
 /// The verbs routed through the module and given a frame.
-const FRAMED: [&[&str]; 1] = [&[
-    "remove",
-    "commit-guards",
-    "--no-sweep",
-    "--scope",
-    "project",
-]];
+const FRAMED: [&[&str]; 1] = [&["trash", "empty", "--yes"]];
 
 /// Verbs that route through the module with no frame of their own. They
 /// are the reason framing is armed rather than detected: a verb with no
 /// frame has to keep printing plain lines on a terminal, not block glyphs
 /// hanging off a gutter nobody drew. A verb built from the design system's
 /// components is one of them: it draws its own layout and never a frame.
-const UNFRAMED: [&[&str]; 9] = [
+const UNFRAMED: [&[&str]; 12] = [
+    &[
+        "remove",
+        "commit-guards",
+        "--no-sweep",
+        "--scope",
+        "project",
+    ],
+    &["update-pi", "--check"],
+    &["update-pi"],
     &["verify", "--scope", "project"],
     &["check", "--scope", "project"],
     &["refresh", "-y", "--scope", "project"],
