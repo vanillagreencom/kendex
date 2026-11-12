@@ -2253,12 +2253,12 @@
     "agent:reviewer-test:claude": {
       "installation": "655668adb032aff6",
       "sourceRepo": ".",
-      "sourceHash": "abe9a773ef0567e0c034c23fe01575fd85c4e07de6781d86142a58a7a21d3aa2",
+      "sourceHash": "9eb0e4a95722014c0a1ff601c3d0ab1c1e90fa24cbf87f5571a4dd1ceadf18ec",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "1433ff12eff8f68b7277c1777ce26db598b89d0fa953fe451640ee8970e836e8",
+      "renderedHash": "cc23cebf982fbd889f868754d7a7505f34263835fe2224069b5980f8d3a39b17",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -2276,12 +2276,12 @@
     "agent:reviewer-test:codex": {
       "installation": "d64a5daaaac6ba7d",
       "sourceRepo": ".",
-      "sourceHash": "7d780f98a30630760f70620bf14f8a2aaf4a2b4f103d5b7af6fc161c1441c340",
+      "sourceHash": "1d194d7ed22319aad32a7c4b31a779bca0f1dc9b35edbada9c1aed03f2b60f6f",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "eb7a84c6f5af56197dcabf97779aaa579b3ae66c7633b2576f40401ae1c7fba7",
+      "renderedHash": "c877c4662319dfcf60d5bda278fdf4c63a5c7e8cab473c589ed33fd227148509",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -2299,12 +2299,12 @@
     "agent:reviewer-test:copilot": {
       "installation": "9dd216d1838404aa",
       "sourceRepo": ".",
-      "sourceHash": "c78ff8129f774a0d5c8020c65f3b76cd7c022098868c9510edf6498f184443a8",
+      "sourceHash": "6ad334fb02febf27c64cc19d8633f002fdd49e391dd53bbeb4004604ae0ca49b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "a0cb56a96828a3b09ef5cdfa7b2a8dc624192689847a541fab192fdf628ca162",
+      "renderedHash": "3229e31766280ffdadc3d49c1a3038c324b6946bd2e5d682fcbbb2f0386741d8",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -2322,12 +2322,12 @@
     "agent:reviewer-test:pi": {
       "installation": "c3642bed7098f1b7",
       "sourceRepo": ".",
-      "sourceHash": "8750591a21bced348c6f2592ad57c726e6f36562514cd4ea7377cf2c2c73a89d",
+      "sourceHash": "72cdafc330b2acad4e5f0f6cfec6b31e3d9266c7c551c806eda77be7a8ed9c1b",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "358c1e52eae61a7218d044c5b5e1090e1fcaebfc62468c28c2db46a86f42a0f4",
+      "renderedHash": "789579a3675314c2901b335566feed665d98178fc2fe987ea269cc11b8cbe8fb",
       "enabled": true,
       "upstreamSkills": [
         "code-quality",
@@ -7008,7 +7008,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "493f8889f655feb9f2c3a96758c3a31a2968b4cc"
+      "commit": "5db926e61ee13d793c5f231cab4e0123842910db"
     }
   },
   "claudeProjectDefault": "released"
