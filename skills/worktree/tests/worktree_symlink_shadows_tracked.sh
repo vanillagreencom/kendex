@@ -93,6 +93,7 @@ chmod +x "$TMP_ROOT/failbin/git"
 ROOT=""
 MAIN=""
 WT=""
+SIBLING=""
 ENTRY=""
 # The update-index flag the git shim fails once during the row's command;
 # empty leaves the shim off PATH entirely.
@@ -133,6 +134,18 @@ tool() {
   (cd "$MAIN" && "$WORKTREE_SCRIPT" "$@" >/dev/null 2>"$ROOT/fixture.err") && return 0
   echo "FIXTURE: $* failed: $(cat "$ROOT/fixture.err")" >&2
   exit 2
+}
+
+# Replace the tool's link at, or above, a configured path with a real file
+# and commit it on that lane's branch only.
+lane_track() {
+  local lane="$1" rel="$2" top="${2%%/*}"
+  if [[ -L "$lane/$top" ]]; then rm -- "$lane/$top"; fi
+  if [[ -L "$lane/$rel" ]]; then rm -- "$lane/$rel"; fi
+  mkdir -p "$(dirname "$lane/$rel")"
+  printf 'lane %s\n' "${rel##*/}" >"$lane/$rel"
+  git -C "$lane" add -f -- "$rel"
+  git -C "$lane" commit -q -m "lane: $rel"
 }
 
 step() {
@@ -315,6 +328,24 @@ step() {
       [[ "$(git -C "$WT" status --porcelain)" == ' T harnessrc' ]] || { echo 'FIXTURE: no typechanged link' >&2; exit 2; }
       ;;
     untracked-scratch) printf 'scratch\n' >"$WT/scratch.txt" ;;
+    # A directory entry holding runtime files only, with no ignore rule.
+    tooldir)
+      mkdir -p "$MAIN/tooldir"
+      printf 'state\n' >"$MAIN/tooldir/state"
+      printf 'settings\n' >"$MAIN/tooldir/settings"
+      entry tooldir
+      ;;
+    track-tooldir-child) commit_main tooldir/settings ;;
+    # An untracked directory child beside the tracked anchor, which create links.
+    runtime-child-dir) mkdir -p "$MAIN/.agents/tools"; printf 'tool cfg\n' >"$MAIN/.agents/tools/cfg" ;;
+    track-runtime-child-dir) commit_main .agents/tools/cfg ;;
+    # A second lane, whose passes write the same common exclude file.
+    sibling) tool create sibling ;;
+    sibling-fix) tool fix-links "$SIBLING" ;;
+    # One lane's branch alone starts tracking a configured path.
+    track-in-wt:*) lane_track "$WT" "${1#track-in-wt:}" ;;
+    track-in-sibling:*) lane_track "$SIBLING" "${1#track-in-sibling:}" ;;
+    new-output) printf 'new\n' >"$WT/tooldir/new" ;;
     # Arm the shim above for this row's command only, on the flag whose site
     # the row pins.
     fail-set-bit) GIT_FAIL=--assume-unchanged ;;
@@ -333,6 +364,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
+  SIBLING="$ROOT/trees/sibling"
   ENTRY=""
   GIT_FAIL=""
   make_repo
@@ -459,6 +491,13 @@ a file entry main starts tracking stays hidden in a worktree whose branch predat
 that worktree restacks onto the commit that tracks the file|runtime-file create feature track-entry-file repair|create topic --restack|0|wt|map:1|harnessrc=link(<main>/harnessrc) assume=harnessrc status=-
 a linked file child main starts tracking stays hidden in a worktree whose branch predates it|anchored runtime-child create track-runtime-child|fix-links @wt|0|restored|-|.agents=dir .agents/notes.md=link(<main>/.agents/notes.md) .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
 that worktree restacks onto the commit that tracks the child|anchored runtime-child create feature track-runtime-child repair|create topic --restack|0|wt|map:1|.agents=dir .agents/notes.md=file:notes .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
+a lane predating main's tracked child of a directory entry stays clean after another lane's pass and replays|tooldir create feature track-tooldir-child sibling|create topic --restack --replay|0|wt|map:1|tooldir=dir tooldir/settings=file:settings tooldir/state=link(<main>/tooldir/state) assume=- status=-
+a lane predating main's tracked file under a linked child directory stays clean after another lane's pass and replays|anchored runtime-child-dir create feature track-runtime-child-dir sibling|create topic --restack --replay|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/anchor.md=file:anchor .agents/tools=dir .agents/tools/cfg=file:tool cfg assume=- status=-
+a sibling's branch tracking a file entry leaves this lane's link hidden from status and add|runtime-file create sibling track-in-sibling:harnessrc sibling-fix|@add|0|-|-|harnessrc=link(<main>/harnessrc) assume=- status=-
+a sibling's branch tracking a linked file child leaves this lane's link hidden from status and add|anchored runtime-child create sibling track-in-sibling:.agents/notes.md sibling-fix|@add|0|-|-|.agents=dir .agents/notes.md=link(<main>/.agents/notes.md) .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
+a sibling's branch tracking a directory entry's child leaves this lane's link hidden from status and add|tooldir create sibling track-in-sibling:tooldir/settings sibling-fix|@add|0|-|-|tooldir=link(<main>/tooldir) assume=- status=-
+this lane's branch tracking a directory entry's child keeps new output visible after a sibling's pass|tooldir create track-in-wt:tooldir/settings repair sibling new-output|@add|0|-|-|tooldir=dir tooldir/new=file:new tooldir/settings=file:lane settings tooldir/state=link(<main>/tooldir/state) assume=- status=A  tooldir/new
+a dropped file entry this lane's branch alone tracks restores the lane's file from its record|runtime-file create track-in-wt:harnessrc repair drop-entry|fix-links @wt|0|restored|-|harnessrc=file:lane harnessrc assume=- status=-
 a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed+map:1|$SHADOW_V2
 "
 
@@ -479,6 +518,11 @@ while IFS= read -r row; do
     merge_rc=0
     (git -C "$WT" fetch -q origin && git -C "$WT" merge -q --no-edit origin/main >/dev/null 2>&1) || merge_rc=$?
     got="rc=$merge_rc out= err= $(layout)"
+  elif [[ "$command" == @add ]]; then
+    # An ordinary add in the observed lane; its status shows what it staged.
+    add_rc=0
+    git -C "$WT" add -A >/dev/null 2>&1 || add_rc=$?
+    got="rc=$add_rc out= err= $(layout)"
   else
     got="$(run "$command")"
   fi

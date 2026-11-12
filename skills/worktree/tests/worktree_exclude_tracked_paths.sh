@@ -261,14 +261,14 @@ out_text() {
 
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
-ROWS='a tracked directory keeps only its runtime-child exclusions, and main stages its tracked file|repo tracked-entry edit:harness/skills/tool.md|create tracked-check|0|wt:tracked-check|-|exclude=/harness/state.json main= M harness/skills/tool.md stage=0:add '\''harness/skills/tool.md'\'' wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the runtime-child line stays after the worktree is removed|repo tracked-entry create:tracked-check|remove tracked-check|0|removed:tracked-check|deleted:tracked-check|exclude=/harness/state.json main=- stage=0:- wt=gone
+ROWS='a tracked directory keeps its line with the negation after it, and main stages its tracked file|repo tracked-entry edit:harness/skills/tool.md|create tracked-check|0|wt:tracked-check|-|exclude=/harness,!/harness/,/harness/state.json main= M harness/skills/tool.md stage=0:add '\''harness/skills/tool.md'\'' wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the lines stay after the worktree is removed|repo tracked-entry create:tracked-check|remove tracked-check|0|removed:tracked-check|deleted:tracked-check|exclude=/harness,!/harness/,/harness/state.json main=- stage=0:- wt=gone
 a runtime-only entry keeps the anchored line, and main does not see the runtime tree|repo runtime-entry|create clean-check|0|wt:clean-check|-|exclude=/runtime main=- stage=- wt=.env.local,base.txt,runtime-><main>/runtime wt-status=-
-the blanket line goes once either index owns content, and the link becomes per-child links|repo runtime-entry create:clean-check track:runtime/sub/keep.md|fix-links <wt>|0|restored:clean-check|-|exclude=/runtime/state.json,/runtime/sub/x.json main=- stage=0:- wt=.env.local,base.txt,runtime/state.json-><main>/runtime/state.json,runtime/sub/x.json-><main>/runtime/sub/x.json wt-status=-
-a repeated pass keeps only the runtime-child exclusions|repo tracked-entry create:tracked-check|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the parent stays visible while the worktree index still tracks the file main dropped|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness/state.json main=?? harness/ stage=- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
-the runtime parent exclusion returns once neither index owns its content|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness/state.json,/harness main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
-a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the blanket line gains the negation once either index owns content, and the link becomes per-child links|repo runtime-entry create:clean-check track:runtime/sub/keep.md|fix-links <wt>|0|restored:clean-check|-|exclude=/runtime,!/runtime/,/runtime/state.json,/runtime/sub/x.json main=- stage=0:- wt=.env.local,base.txt,runtime/state.json-><main>/runtime/state.json,runtime/sub/x.json-><main>/runtime/sub/x.json wt-status=-
+a repeated pass leaves the lines unchanged|repo tracked-entry create:tracked-check|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,!/harness/,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the parent stays visible while the worktree index still tracks the file main dropped|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,!/harness/,/harness/state.json main=?? harness/ stage=- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
+the negation goes once no checkout tracks content beneath the path|repo tracked-entry create:tracked-check untrack:harness/skills/tool.md sync-wt|fix-links <wt>|0|restored:tracked-check|-|exclude=/harness,/harness/state.json main=- stage=- wt=.env.local,.gitignore,base.txt,harness-><main>/harness wt-status=-
+a line another tool wrote into the exclude file stays, before ours|repo tracked-entry foreign-line|create tracked-check|0|wt:tracked-check|-|exclude=**/.claude/*,/harness,!/harness/,/harness/state.json main=- stage=0:- wt=.env.local,.gitignore,base.txt,harness/skills/tool.md,harness/state.json-><main>/harness/state.json wt-status=-
 a root runtime link leaves new files in a nested tracked namesake visible and stageable|repo runtime-entry nested-entry|create nested-check|0|wt:nested-check|-|exclude=/runtime main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
 creation migrates a bare rule with the source present and exposes nested new files|repo runtime-entry nested-entry bare-line foreign-patterns|create migrated-source|0|wt:migrated-source|-|exclude=/runtime,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
 fix-links migrates existing bare rules on a healthy link and exposes nested new files|repo runtime-entry nested-entry create:cut-check legacy-lines foreign-patterns|fix-links <wt>|0|restored:cut-check|-|exclude=/runtime,/runtime,**/.claude/*,nested/runtime/ignored,/runtime/cache,!runtime/sub/ main=A  nested/runtime/new.md stage=- wt=.env.local,base.txt,nested/runtime/keep.md,nested/runtime/new.md,runtime-><main>/runtime wt-status=A  nested/runtime/new.md
@@ -324,39 +324,23 @@ for setup in present missing healthy; do
 done
 fi
 
-# New output must be observed in the checkout where it is untracked. An
-# already tracked anchor cannot demonstrate visibility under an old rule.
+# New output must be observed in a real directory whose content either index
+# tracks, while the old '/<path>' line stays for links elsewhere. An already
+# tracked anchor cannot demonstrate visibility under an old rule.
 tracked_visibility_case() {
-  local kind="$1" name="$2" route=repair-links rc=0 expected=0 probe="" old_link="" noise="" remaining=""
+  local kind="$1" name="$2" route=repair-links rc=0 expected=0 probe="" noise="" remaining=""
   case "$kind" in
-    file|healthy|missing-file)
-      build "$name" repo
-      ENTRY=harnessrc
-      printf 'original\n' >"$MAIN/$ENTRY"
-      printf 'WORKTREE_SYMLINKS="harnessrc"\n' >>"$MAIN/.env.local"
-      must git -C "$MAIN" add harnessrc
-      commit_push file
-      step create:visibility
-      must git -C "$MAIN" rm -q --cached harnessrc
-      commit_push untrack-file
-      probe=harnessrc
-      [[ -L "$WT/harnessrc" ]] || { echo 'fixture: expected tracked file link' >&2; exit 2; }
-      old_link="$(readlink "$WT/harnessrc")"
-      if [[ "$kind" == file ]]; then route=fix-links; fi
-      if [[ "$kind" == missing-file ]]; then must mv -- "$MAIN/harnessrc" "$ROOT/source"; fi
-      ;;
     child-main)
       build "$name" repo runtime-entry create:visibility
       step track:runtime/sub/keep.md
       ENTRY=runtime/sub
       probe=runtime/sub/generated.md
       ;;
-    child-wt|child-file|missing-directory)
+    child-wt|missing-directory)
       build "$name" repo tracked-entry create:visibility
       if [[ "$kind" != missing-directory ]]; then step untrack:harness/skills/tool.md; fi
       ENTRY=harness/skills
       probe=harness/skills/generated.md
-      if [[ "$kind" == child-file ]]; then ENTRY=harness/skills/tool.md; probe="$ENTRY"; fi
       if [[ "$kind" == missing-directory ]]; then
         ENTRY=harness
         probe=harness/generated.md
@@ -368,46 +352,36 @@ tracked_visibility_case() {
   # These are the exact old owned records. The other bytes belong to a user.
   case "$kind" in
     child-main) noise=$'/runtime/state.json\n/runtime/sub/x.json\n' ;;
-    child-wt|child-file|missing-directory) noise=$'/harness/state.json\n' ;;
+    child-wt|missing-directory) noise=$'/harness/state.json\n' ;;
   esac
   printf '/%s\n' "$ENTRY" >"$MAIN/.git/info/exclude"
-  if [[ -n "$old_link" ]]; then printf '!/%s/\n' "$ENTRY" >>"$MAIN/.git/info/exclude"; fi
   printf '%s# user\r\nunrelated/cache\n!/user-choice\nlast-user-line' "$noise" >>"$MAIN/.git/info/exclude"
   must chmod 664 "$MAIN/.git/info/exclude"
   printf '# user\r\nunrelated/cache\n!/user-choice\nlast-user-line' >"$ROOT/user-lines"
-  if [[ "$kind" == missing-file ]]; then
-    # The healthy link becomes dangling. Repair must remove the exclusion
-    # before the absent-source skip, without replacing or following the link.
-    [[ ! -e "$MAIN/harnessrc" ]] || exit 2
-  elif [[ "$kind" != missing-directory ]]; then
-    if [[ "$probe" == */* ]]; then
+  if [[ "$kind" != missing-directory ]]; then
     mkdir -p "${MAIN}/${probe%/*}"
-    fi
     printf 'new output\n' >"$MAIN/$probe"
     assert_eq "$(git -C "$MAIN" status --porcelain --untracked-files=all -- "$probe")" '' "$kind: old rule really hides output before repair"
     # Generate the asserted new sibling after the pass. A file already
     # present during setup is an untracked runtime child and gets linked.
-    if [[ "$probe" == */generated.md ]]; then rm -- "${MAIN:?}/$probe"; fi
+    rm -- "${MAIN:?}/$probe"
   fi
   (cd "$MAIN" && "$WORKTREE_SCRIPT" "$route" "$WT" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   assert_eq "$rc" "$expected" "$kind: invoked configured-path route result"
-  if [[ -n "$old_link" ]]; then
-    assert_eq "$(readlink "$WT/harnessrc")" "$old_link" "$kind: existing file link keeps its target"
-  fi
-  # Filtering out only the existing owned negation leaves every user byte,
-  # including the unterminated last line, independently comparable.
-  remaining="$(cat "$MAIN/.git/info/exclude"; printf .)"; remaining="${remaining%.}"
-  remaining="${remaining#"!/$ENTRY/"$'\n'}"
-  remaining="${remaining#"$noise"}"
-  printf '%s' "$remaining" >"$ROOT/user-after"
+  assert_eq "$(grep -cxF -- "/$ENTRY" "$MAIN/.git/info/exclude")" 1 "$kind: the old line stays for links elsewhere"
+  # The writer's lines are root-anchored paths and trailing-slash negations;
+  # dropping them leaves every user byte. Appending after the unterminated
+  # last user line terminates it.
+  remaining="$(grep -v -e '^/' -e '^!/.*/$' -- "$MAIN/.git/info/exclude"; printf .)"; remaining="${remaining%.}"
+  printf '%s' "${remaining%$'\n'}" >"$ROOT/user-after"
   assert_eq "$(cmp -s -- "$ROOT/user-lines" "$ROOT/user-after" && printf same)" same "$kind: unrelated exclude bytes stay"
   assert_eq "$(find "$MAIN/.git/info/exclude" -perm 0664 -print)" "$MAIN/.git/info/exclude" "$kind: shared mode stays"
-  if [[ "$probe" == */* ]]; then mkdir -p "$MAIN/${probe%/*}"; fi
+  mkdir -p "$MAIN/${probe%/*}"
   printf 'new output\n' >"$MAIN/$probe"
   assert_eq "$(git -C "$MAIN" status --porcelain --untracked-files=all -- "$probe")" "?? $probe" "$kind: new main output is visible"
   must git -C "$MAIN" add -A
   assert_eq "$(git -C "$MAIN" ls-files -- "$probe")" "$probe" "$kind: ordinary add stages new main output"
-  if [[ "$probe" == */generated.md && "$kind" != missing-directory ]]; then
+  if [[ "$kind" != missing-directory ]]; then
     mkdir -p "$WT/${probe%/*}"
     printf 'new output\n' >"$WT/$probe"
     assert_eq "$(git -C "$WT" status --porcelain --untracked-files=all -- "$probe")" "?? $probe" "$kind: new lane output is visible"
@@ -417,17 +391,17 @@ tracked_visibility_case() {
 }
 
 if [[ "${WORKTREE_EXCLUDE_CONTROL:-}" != 1 && "${WORKTREE_EXCLUDE_MATRIX_ONLY:-}" != 1 ]]; then
-for visibility_kind in file healthy missing-file child-main child-wt child-file missing-directory; do
+for visibility_kind in child-main child-wt missing-directory; do
   tracked_visibility_case "$visibility_kind" "visibility-$visibility_kind"
 done
 
 # Only the stale-child row runs against the copied writer. Keep its predicate
-# text but bypass removal; real status/add must then omit the planted file.
+# text but bypass the negation; real status/add must then omit the planted file.
 visibility_control="$TMP_ROOT/visibility-control"
 cp -R -- "${WORKTREE_SCRIPT%/*}" "$visibility_control"
 visibility_writer="$visibility_control/lib/links.sh"
-visibility_from='  elif [[ "$shape" == visible ]]; then'
-visibility_to='  elif false && [[ "$shape" == visible ]]; then'
+visibility_from='  if [[ "$negate" == true ]]; then'
+visibility_to='  if false && [[ "$negate" == true ]]; then'
 [[ ! -L "$visibility_writer" && "$(grep -cFx -- "$visibility_from" "$visibility_writer")" == 1 ]] || { echo 'visibility control: match is not unique' >&2; exit 2; }
 F="$visibility_from" T="$visibility_to" awk '{ if ($0 == ENVIRON["F"]) print ENVIRON["T"]; else print }' "$visibility_writer" >"$visibility_writer.edit"
 ! cmp -s -- "$visibility_writer" "$visibility_writer.edit" || { echo 'visibility control: no change' >&2; exit 2; }
@@ -557,6 +531,10 @@ outcome_case() {
       ;;
     failed)
       printf '%s\n' "$failed_path" >"$MAIN/.git/info/exclude"
+      # A link pass filters only a negation that no checkout needs.
+      case "$caller:$fault" in
+        symlink:filter|child-link:filter) printf '!/%s/\n' "$failed_path" >>"$MAIN/.git/info/exclude" ;;
+      esac
       ;;
     unchanged)
       printf '/%s\n' "$failed_path" >"$MAIN/.git/info/exclude"

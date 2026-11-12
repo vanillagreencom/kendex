@@ -55,67 +55,59 @@ is_managed_symlink_path() {
   return 1
 }
 
-# Sets CES_SHAPE, the exclusion a configured link path needs. Every checkout
-# reads the one common file, and a root-anchored line hides only untracked
-# paths, so the shape depends on which index tracks the path:
-#   tracked descendants in either index  visible: each lane keeps a real
-#     directory, and its child links carry their own records.
-#   main tracks the exact path  runtime: the line cannot hide main's tracked
-#     path and still hides each lane's link, including a predating lane's.
-#   only this lane tracks it  record: main's untracked file is new output, so
-#     '!/<path>/' stays only as the link's dropped-link record.
-#   neither tracks it  runtime.
-# Without a managed link, the tracked rows need no line: a main-tracked path
-# keeps its lines and a lane-only one becomes visible. MODE link means the
-# caller lays the link; migrate reads the link from disk and leaves the
-# lines of an untracked path in place.
-configured_exclusion_shape() {
-  local wt="$1" path="$2" mode="$3" main_exact="" wt_exact="" descendants="" linked=false target=""
-  CES_SHAPE=""
-  classify_index_entry "$PROJECT_ROOT" "$path" || return 1
-  main_exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
-  classify_index_entry "$wt" "$path" || return 1
-  wt_exact="$CIE_EXACT"; descendants+="$CIE_DESCENDANTS"
-  if [[ "$mode" == link ]]; then
-    linked=true
-  elif [[ -L "$wt/$path" ]]; then
-    target="$(readlink "$wt/$path")" || return 1
-    [[ "$target" != "$PROJECT_ROOT/$path" ]] || linked=true
+# Fails only when every registered checkout's index was read and none holds
+# content beneath $1. An unread listing or index keeps the answer at "may",
+# because the unread checkout may be the one whose new output the negation
+# keeps visible. A record whose directory is gone holds nothing to expose.
+some_checkout_may_track_beneath() {
+  local rel="$1" list="" field="" checkout="" hits=""
+  list="$(mktemp "${TMPDIR:-/tmp}/worktree-checkouts.XXXXXX")" || return 0
+  if ! git -C "$PROJECT_ROOT" worktree list --porcelain -z >"$list" 2>/dev/null; then
+    rm -f -- "$list" 2>/dev/null || true
+    return 0
   fi
-  if [[ -n "$descendants" ]]; then
-    CES_SHAPE=visible
-  elif [[ -n "$main_exact" ]]; then
-    CES_SHAPE=migrate
-    [[ "$linked" != true ]] || CES_SHAPE=runtime
-  elif [[ -n "$wt_exact" ]]; then
-    CES_SHAPE=visible
-    [[ "$linked" != true ]] || CES_SHAPE=record
-  else
-    CES_SHAPE="$mode"
-    [[ "$mode" != link ]] || CES_SHAPE=runtime
-  fi
+  while IFS= read -r -d '' field; do
+    case "$field" in
+      worktree\ *) checkout="${field#worktree }" ;;
+      bare) checkout="" ;;
+      '')
+        if [[ -n "$checkout" && -d "$checkout" ]]; then
+          if ! hits="$(git -C "$checkout" ls-files -- ":(literal)$rel/" 2>/dev/null)" || [[ -n "$hits" ]]; then
+            rm -f -- "$list" 2>/dev/null || true
+            return 0
+          fi
+        fi
+        checkout=""
+        ;;
+    esac
+  done <"$list"
+  rm -f -- "$list" 2>/dev/null || true
+  return 1
 }
 
-# Only the common info/exclude is read by every checkout. Runtime links need
-# root-anchored exclusions because directory-only .gitignore rules miss links.
-# A configured link path passes link or migrate, and configured_exclusion_shape
-# decides its shape. Other tools share this file, so only the writer's exact
-# path forms are changed.
+# Only the common info/exclude is read by every checkout, and a pass in one
+# checkout cannot tell which other checkout holds the tool's link. So a
+# configured link path (MODE link or migrate) never loses its '/<path>' line:
+# a root-anchored line cannot hide a tracked path and still hides every
+# lane's link. Tracked content beneath the path in main's or this checkout's
+# index puts '!/<path>/' after that line, which leaves a real directory
+# visible and matches no link. A link pass drops that negation only when no
+# registered checkout tracks content beneath the path, since a lane whose
+# branch alone tracks it still needs its new output visible. migrate
+# rewrites the old spellings and places the negation only after an existing
+# line, so a never-linked tracked child gets no line. Other callers keep the
+# plain '/<path>' and drop the negation. Other tools share this file, so
+# only the writer's exact path forms are changed.
 exclude_from_worktree_index() (
-  local wt="$1" path="$2" shape="${3:-runtime}"
+  local wt="$1" path="$2" shape="${3:-runtime}" negate=false
   [[ -z "$path" ]] && return 0
   if [[ "$shape" == link || "$shape" == migrate ]]; then
-    configured_exclusion_shape "$wt" "$path" "$shape" || return 1
-    shape="$CES_SHAPE"
+    classify_index_entry "$wt" "$path" "$PROJECT_ROOT" || return 1
+    [[ -z "$CIE_DESCENDANTS" ]] || negate=true
   fi
   local common_dir info_exclude entry negation tmp="" candidate="" filtered="" rc=0 exists=false
   local original="" line="" ending=""
-  local -a removed=("!/$path/")
-  if [[ "$shape" == record ]]; then
-    removed=("/$path" "$path" "!$path/")
-  elif [[ "$shape" == visible ]]; then
-    removed+=("/$path" "$path" "!$path/")
-  fi
+  local -a removed=()
   local failure=read operation=git-common-directory result=0
   trap '
     result=$?
@@ -133,13 +125,20 @@ exclude_from_worktree_index() (
   entry="/$path"
   negation="!/$path/"
   # Migration runs before source and link-health skips. It changes only the
-  # configured entry's exact old lines, without inventing a missing rule.
+  # configured entry's exact old lines and its negation's place, without
+  # inventing a missing entry.
   operation=filter
   if [[ -e "$info_exclude" || -L "$info_exclude" ]]; then
     [[ -f "$info_exclude" && ! -L "$info_exclude" ]] || return 1
     exists=true
     original="$(cat -- "$info_exclude" 2>/dev/null && printf '.')" || return 1
     original="${original%.}"
+    if [[ "$shape" == runtime ]]; then
+      removed=("$negation")
+    elif [[ "$shape" == link && "$negate" == false ]] && grep -qxF -- "$negation" <<<"$original" &&
+      ! some_checkout_may_track_beneath "$path"; then
+      removed=("$negation")
+    fi
     if [[ "$shape" == migrate ]]; then
       while IFS= read -r line || [[ -n "$line" ]]; do
         ending=""
@@ -151,6 +150,8 @@ exclude_from_worktree_index() (
         esac
         filtered+="$line$ending"
       done <<<"${original%$'\n'}"
+    elif [[ ${#removed[@]} -eq 0 ]]; then
+      filtered="$original"
     else
       # The sentinel retains final newlines; grep's empty result is successful.
       filtered="$(
@@ -172,7 +173,7 @@ exclude_from_worktree_index() (
     fi
   fi
 
-  if [[ "$shape" == runtime ]]; then
+  if [[ "$shape" != migrate ]]; then
     operation=entry-inspection
     grep -qxF -- "$entry" <<<"$filtered" 2>/dev/null || rc=$?
     [[ "$rc" -le 1 ]] || return 1
@@ -180,13 +181,31 @@ exclude_from_worktree_index() (
       [[ -z "$filtered" || "$filtered" == *$'\n' ]] || filtered+=$'\n'
       filtered+="$entry"$'\n'
     fi
-  elif [[ "$shape" == record ]]; then
-    rc=0
-    grep -qxF -- "$negation" <<<"$filtered" 2>/dev/null || rc=$?
-    [[ "$rc" -le 1 ]] || return 1
-    [[ "$rc" -eq 0 ]] || filtered="$negation"$'\n'"$filtered"
   elif [[ "$exists" == false ]]; then
     return 0
+  fi
+  # Gitignore takes the last matching line, so the negation must follow the
+  # entry's last line. One already there is kept in place.
+  if [[ "$negate" == true ]]; then
+    local rest="$filtered" kept="" entry_seen=false negated=false
+    while [[ -n "$rest" ]]; do
+      ending=""
+      if [[ "$rest" == *$'\n'* ]]; then
+        line="${rest%%$'\n'*}"; rest="${rest#*$'\n'}"; ending=$'\n'
+      else
+        line="$rest"; rest=""
+      fi
+      if [[ "$line" == "$entry" ]]; then
+        entry_seen=true; negated=false
+      elif [[ "$line" == "$negation" && "$entry_seen" == true ]]; then
+        negated=true
+      fi
+      [[ "$line" == "$negation" ]] || kept+="$line$ending"
+    done
+    if [[ "$entry_seen" == true && "$negated" == false ]]; then
+      [[ -z "$kept" || "$kept" == *$'\n' ]] || kept+=$'\n'
+      filtered="$kept$negation"$'\n'
+    fi
   fi
 
   failure=write; operation=directory

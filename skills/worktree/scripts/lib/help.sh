@@ -872,20 +872,23 @@ Symlink entries that shadow tracked content:
 
 info/exclude entries:
   Runtime links use '/<path>' in the COMMON git dir's info/exclude, which
-  every checkout reads. The leading slash limits the rule to the root.
-  A configured path or linked child with tracked content beneath it in
-  either index loses its exact blanket exclusion, so new output stays
-  visible; its links below carry their own lines. A path main tracks keeps
-  '/<path>', which cannot hide main's tracked path and still hides each
-  lane's link, a lane created before main tracked it included. A link
-  tracked only by its lane's branch drops '/<path>', so main's untracked
-  file stays visible, and retains '!/<path>/' as its dropped-link record.
-  Never-linked tracked children get no new line. Unrelated user rules keep
-  their bytes and permissions. Reconciliation precedes healthy-link and
-  missing-source skips, which still preserve their existing layout.
-  Visibility follows an existing linked-worktree create, fix-links or
-  repair-links pass. A change made only in main has no automatic cleanup;
-  same-checkout setup and read-only commands remain no-ops for exclusions.
+  every checkout reads. The leading slash limits the rule to the root. No
+  pass removes that line for a configured path or linked child: the shared
+  file cannot tell which checkout holds the link, and the line cannot hide
+  a tracked path. A lane created before main tracked the path, or beside a
+  lane whose branch tracks it, keeps its link hidden; main's untracked file
+  at a file entry that only a lane's branch tracks stays hidden until main
+  tracks it. Tracked content beneath the path in main's or the passing
+  checkout's index adds '!/<path>/' after that line, which keeps a real
+  directory and its new output visible and matches no link. A pass drops
+  that negation only when it has read every registered checkout's index
+  and none tracks content beneath the path. Never-linked tracked children
+  get no new line. Unrelated user rules keep their bytes and permissions.
+  Reconciliation precedes healthy-link and missing-source skips, which
+  still preserve their existing layout. Visibility follows an existing
+  linked-worktree create, fix-links or repair-links pass. A change made
+  only in main has no automatic cleanup; same-checkout setup and read-only
+  commands remain no-ops for exclusions.
 
 Git-hook auto-repair:
   create and fix-links install shared post-checkout, post-merge, and
