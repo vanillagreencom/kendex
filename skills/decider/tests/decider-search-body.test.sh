@@ -79,6 +79,9 @@ evaluate_search_rows() {
       status-rationale)
         projected=$(jq -cer 'if type == "array" then [.[] | "\(.id)|\(.status)|\(.rationale)"] | join(";") else error("not an array") end' <<<"$out" 2>/dev/null)
         ;;
+      status-path)
+        projected=$(jq -cer 'if type == "array" then [.[] | "\(.id)|\(.status)|\(.path | sub(".*/"; ""))"] | join(";") else error("not an array") end' <<<"$out" 2>/dev/null)
+        ;;
       ids-scores)
         projected=$(jq -cer 'if type == "array" then [.[] | "\(.id):\(.score)"] | join(",") else error("not an array") end' <<<"$out" 2>/dev/null)
         ;;
@@ -106,6 +109,10 @@ status-keyword~dormant~status-rationale~D048|Removed|Lives in dormant tools-runn
 status-active-keyword~hermetic~status-rationale~D027|Active|Needs stable baselines~none
 status-regex~dormant|zzz-absent-token~status-rationale~D048|Removed|Lives in dormant tools-runner code~none
 status-issue~--issue=KEN-9001~status-rationale~D048|Removed|Lives in dormant tools-runner code~none
+removed-path-keyword~dormant~status-path~D048|Removed|~none
+removed-path-regex~dormant|zzz-absent-token~status-path~D048|Removed|~none
+removed-path-issue~--issue=KEN-9001~status-path~D048|Removed|~none
+active-path-keyword~hermetic~status-path~D027|Active|D027-perf.md~none
 SEARCH_CASES
   if [[ "$executed_rows" -eq 0 ]]; then
     guard="body-search table executed no rows"
@@ -141,6 +148,29 @@ if [[ "$failures" == *'|status-issue|'* ]]; then
   pass "rows without status and rationale fail the issue row"
 else
   fail "rows without status and rationale did not fail the issue row"
+fi
+
+removed_mutant="$(decider_mutate_script "$TMP_ROOT/removed-path/decisions" 'then .path = "" else' 'then . else' 1)"
+failures="$(evaluate_search_rows "$removed_mutant" control removed-path-keyword)"
+if [[ "$failures" == *'|removed-path-keyword|'* ]]; then
+  pass "a Removed row's deleted path fails the Removed path row"
+else
+  fail "a Removed row's deleted path did not fail the Removed path row"
+fi
+
+echo "=== get on a Removed row ==="
+get_removed() { # SCRIPT — prints path|rationale for D048
+  (cd "$REPO" && DECISIONS_DIR="$REPO/docs/decisions" "$1" get D048) 2>/dev/null | jq -r '"\(.path)|\(.rationale)"'
+}
+if [[ "$(get_removed "$DECISIONS")" == "|Lives in dormant tools-runner code" ]]; then
+  pass "get gives a Removed row no path and its rationale"
+else
+  fail "get on a Removed row (got: $(get_removed "$DECISIONS"))"
+fi
+if [[ "$(get_removed "$removed_mutant")" != "|Lives in dormant tools-runner code" ]]; then
+  pass "a Removed row's deleted path fails the get row"
+else
+  fail "a Removed row's deleted path did not fail the get row"
 fi
 
 echo

@@ -77,10 +77,11 @@ Options:
 Output (JSON):
   search:  [{id, decision, status, rationale, path}] (keyword mode adds
            score); status and rationale are the INDEX cells verbatim. A
-           Removed row has no document: its rationale names where the
-           reason lives
+           Removed row has no document: its path is "", its body is not
+           searched, and its rationale names where the reason lives
   list:    [{id, decision, path}]
-  get:     {id, decision, status, date, path}
+  get:     {id, research, decision, rationale, status, date, path}; a
+           Removed row's path is "" and its date is unknown
   check:   nothing on stdout; each finding is an error= record on
            stderr, exit 1; a notice= record (base-unverified,
            decisions-dir-absent) leaves exit 0
@@ -271,6 +272,13 @@ parse_index() {
     return
   fi
   parse_rows "$(<"$INDEX_FILE")" "$INDEX_FILE" "$DECISIONS_DIR/"
+}
+
+# The rows search and get answer with. A Removed row's document is deleted, so
+# its path is empty and its rationale names where the reason lives; check keeps
+# the parsed path, which names the deleted file across branches.
+result_rows() {
+  parse_index | jq -c 'map(if .status == "Removed" then .path = "" else . end)'
 }
 
 # ROW_INVALID_KIND is notice, or error under check, which may pass only an
@@ -604,7 +612,7 @@ search_decisions() {
   fi
 
   local all
-  all=$(parse_index)
+  all=$(result_rows)
 
   if [[ -n "$issue" ]]; then
     # Negative lookahead prevents PROJ-18 matching PROJ-189.
@@ -773,7 +781,7 @@ cmd_get() {
   local id="$1"
 
   local matches count match fields
-  matches=$(parse_index | jq -c --arg id "$id" '[.[] | select(.id == $id)]')
+  matches=$(result_rows | jq -c --arg id "$id" '[.[] | select(.id == $id)]')
   # jq's own diagnostic names a failed count.
   if ! count=$(jq 'length' <<<"$matches"); then
     return 1
