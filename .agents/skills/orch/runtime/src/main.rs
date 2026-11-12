@@ -214,6 +214,22 @@ enum Verb {
         #[arg(long, allow_hyphen_values = true)]
         repo: String,
     },
+    /// The turn-end check a harness hook runs: the harness payload on
+    /// stdin, the harness's answer on stdout and stderr, its exit status the
+    /// harness's. Reads no settings.
+    TurnEnd {
+        /// The directory the hook is installed in, which names the harness.
+        #[arg(long)]
+        hook_dir: PathBuf,
+        /// The event judged: none for a turn end, or deliver, halt, start,
+        /// prompt, compact, usage, row or lane. Any other word is refused by
+        /// the check itself, in the harness's own shape.
+        #[arg(allow_hyphen_values = true)]
+        arm: Option<String>,
+        /// The event a row is written under where the payload names none.
+        #[arg(allow_hyphen_values = true)]
+        event: Option<String>,
+    },
     /// The merge cycles the fleet record holds, printed as text lines: the
     /// per-class totals, or a running lane's stage rows. No fleet record
     /// prints nothing.
@@ -1823,6 +1839,21 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     std::process::exit(1);
                 }
             }
+        }
+        Verb::TurnEnd {
+            hook_dir,
+            arm,
+            event,
+        } => {
+            let answer = orch_runtime::turnend::run(
+                &hook_dir,
+                arm.as_deref(),
+                event.as_deref(),
+                &mut std::io::stdin().lock(),
+            );
+            let _ = std::io::stderr().lock().write_all(answer.stderr.as_bytes());
+            let _ = std::io::stdout().lock().write_all(answer.stdout.as_bytes());
+            std::process::exit(answer.code);
         }
         Verb::Cycle { op } => {
             let settings = resolve_settings(&flags)?;

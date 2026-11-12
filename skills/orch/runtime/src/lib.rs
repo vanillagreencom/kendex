@@ -34,6 +34,7 @@ pub mod schedule;
 pub mod send;
 pub mod settings;
 pub mod state;
+pub mod turnend;
 pub mod validate;
 pub mod verify;
 pub mod watch;

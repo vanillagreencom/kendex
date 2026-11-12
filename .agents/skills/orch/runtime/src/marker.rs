@@ -81,17 +81,20 @@ pub struct Checkout {
 /// Where the record of a launch into `worktree` belongs, read from git;
 /// a checkout git cannot answer for is refused by its cause.
 pub fn checkout(worktree: &Path) -> Result<Checkout> {
-    located(worktree)?.map_err(|line| refused("marker-git-failed", &[("cause", &line)]))
+    located(worktree)?.map_err(|words| {
+        let line = words.lines().next().unwrap_or("");
+        refused("marker-git-failed", &[("cause", line)])
+    })
 }
 
 /// The checkout `worktree` is in as git answers for it: its directories,
-/// or the first line of git's own refusal, read in the C locale so a
-/// reader can tell a directory outside any repository by its words.
+/// or git's own words of refusal, read in the C locale so a reader can tell
+/// a directory outside any repository by them.
 #[allow(
     clippy::disallowed_methods,
     reason = "the marker's one read of the lane's checkout roots, `git rev-parse` through the one runner; it acts on nothing"
 )]
-fn located(worktree: &Path) -> Result<std::result::Result<Checkout, String>> {
+pub fn located(worktree: &Path) -> Result<std::result::Result<Checkout, String>> {
     let dir = worktree.display().to_string();
     let (program, prefix, isolation) = git_start();
     let mut args: Vec<&str> = prefix;
@@ -123,8 +126,8 @@ fn located(worktree: &Path) -> Result<std::result::Result<Checkout, String>> {
     )
     .map_err(|e| refused("marker-git-failed", &[("cause", &e.to_string())]))?;
     if !out.status.success() {
-        let cause = host::stderr_text(&out);
-        return Ok(Err(cause.lines().next().unwrap_or("").to_owned()));
+        let words = host::stderr_text(&out);
+        return Ok(Err(words.trim_end_matches('\n').to_owned()));
     }
     let text = host::stdout_text(&out);
     let mut lines = text.lines();
@@ -407,18 +410,35 @@ pub fn read_from(cwd: &Path, item: &str) -> Reading<String> {
 }
 
 /// The root the marker for `item` holds under the common git directory
-/// `common`, read three-valued as [`read`] reads it.
+/// `common`, read three-valued as [`read`] reads it. A marker is a plain
+/// file the launch writes, never a link: one present in any other form is
+/// unreadable, never read through and never read as absent.
 #[allow(
     clippy::disallowed_methods,
     reason = "the marker read by its path, three-valued: absent is no launch record"
 )]
-fn read_in(common: &Path, item: &str) -> Reading<String> {
+pub fn read_in(common: &Path, item: &str) -> Reading<String> {
     let Ok(item) = item_name(item) else {
         return Reading::Unreadable {
             cause: "marker-item-invalid",
         };
     };
-    match std::fs::read_to_string(marker_path(common, item)) {
+    let path = marker_path(common, item);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Reading::Unreadable {
+                cause: "marker-unreadable",
+            };
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => {
+            return Reading::Unreadable {
+                cause: "marker-unreadable",
+            };
+        }
+    }
+    match std::fs::read_to_string(path) {
         Ok(text) => Reading::Live(text.trim_end_matches('\n').to_owned()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
         Err(_) => Reading::Unreadable {

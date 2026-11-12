@@ -136,6 +136,10 @@ path = "../tests/rust/state.rs"
 name = "push"
 path = "../tests/rust/push.rs"
 
+[[test]]
+name = "turnend"
+path = "../tests/rust/turnend.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 
