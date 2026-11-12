@@ -1,20 +1,82 @@
 #!/usr/bin/env bash
-# The fake gh for the admission rows: it answers
-# `issue view N --repo R --json body,labels`, the one read the admission
-# makes of a GitHub item, with the JSON at $GH_ISSUES_DIR/N.json, the
-# shape gh prints for those fields ({body, labels: [{name, ...}]}). An
-# issue with no file is a failed read (exit 1, gh's `HTTP 404` line on
-# stderr); any other call is refused. Every call appends its arguments to
+# The fake gh for a GitHub item's rows. It answers three calls, each in the
+# exact form the runtime sends:
+# - `issue view N --repo R --json body,labels`, the one read the runtime
+#   makes of a GitHub item (the admission's, and the no-change receipt's),
+#   with the JSON at $GH_ISSUES_DIR/N.json, the shape gh prints for those
+#   fields ({body, labels: [{name, ...}]}). An issue with no file is a failed
+#   read (exit 1, gh's `HTTP 404` line on stderr).
+# - `api --method POST repos/R/issues/N/comments --input -`, the comparison
+#   an unchanged result posts, its stdin GitHub's `{"body": ...}`: the
+#   comment is appended to $GH_ISSUES_DIR/N.comments, one JSON line each,
+#   and answered as "Create an issue comment" documents it.
+# - `api --method PATCH repos/R/issues/N --input -` with exactly
+#   `{"state":"closed","state_reason":"completed"}`, the close: refused
+#   (exit 1, gh's `HTTP 403` line) where $GH_ISSUE_CLOSE is `refused` or no
+#   comment was posted first, else answered with the issue as "Update an
+#   issue" documents it.
+# Any other call is refused. Every call appends its arguments to
 # $GH_FAKE_LOG, one line each.
 set -u
 printf '%s\n' "$*" >> "${GH_FAKE_LOG:?}"
-if [ "${1:-} ${2:-} ${4:-} ${6:-} ${7:-}" != "issue view --repo --json body,labels" ]; then
+unexpected() {
   echo "gh-issue: unexpected-call args=[$*]" >&2
   exit 1
+}
+if [ "$#" -eq 7 ] && [ "$1 $2 $4 $6 $7" = "issue view --repo --json body,labels" ]; then
+  file="${GH_ISSUES_DIR:?}/$3.json"
+  if [ ! -r "$file" ]; then
+    echo "gh: HTTP 404: Not Found (https://api.github.com/repos/$5/issues/$3)" >&2
+    exit 1
+  fi
+  cat -- "$file"
+  exit 0
 fi
-file="${GH_ISSUES_DIR:?}/$3.json"
-if [ ! -r "$file" ]; then
-  echo "gh: HTTP 404: Not Found (https://api.github.com/repos/$5/issues/$3)" >&2
-  exit 1
-fi
-cat -- "$file"
+[ "$#" -eq 6 ] && [ "$1 $2 $5 $6" = "api --method --input -" ] || unexpected "$@"
+path=$4
+repo=${path#repos/}
+repo=${repo%/issues/*}
+rest=${path#repos/"$repo"/issues/}
+case "$3 $rest" in
+  POST\ *[0-9]/comments)
+    number=${rest%/comments}
+    case "$number" in '' | *[!0-9]*) unexpected "$@" ;; esac
+    comments="${GH_ISSUES_DIR:?}/$number.comments"
+    body=$(jq -ec '.body | strings') || unexpected "$@"
+    id=$((7001 + $(cat -- "$comments" 2>/dev/null | wc -l)))
+    comment=$(jq -cn --argjson body "$body" --arg repo "$repo" --argjson number "$number" --argjson id "$id" '{
+      id: $id, node_id: ("IC_" + ($id | tostring)),
+      url: ("https://api.github.com/repos/" + $repo + "/issues/comments/" + ($id | tostring)),
+      html_url: ("https://github.com/" + $repo + "/issues/" + ($number | tostring) + "#issuecomment-" + ($id | tostring)),
+      body: $body, user: {login: "lane-app[bot]", id: 2002, type: "Bot"},
+      created_at: "2026-01-29T15:20:00Z", updated_at: "2026-01-29T15:20:00Z",
+      issue_url: ("https://api.github.com/repos/" + $repo + "/issues/" + ($number | tostring)),
+      author_association: "NONE", performed_via_github_app: null}')
+    printf '%s\n' "$comment" >> "$comments"
+    printf '%s\n' "$comment"
+    ;;
+  PATCH\ *[0-9])
+    number=$rest
+    case "$number" in '' | *[!0-9]*) unexpected "$@" ;; esac
+    sent=$(jq -cS . 2>/dev/null) || unexpected "$@"
+    [ "$sent" = '{"state":"closed","state_reason":"completed"}' ] || unexpected "$@"
+    if [ "${GH_ISSUE_CLOSE:-}" = refused ] || [ ! -s "${GH_ISSUES_DIR:?}/$number.comments" ]; then
+      echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+      exit 1
+    fi
+    jq -cn --arg repo "$repo" --argjson number "$number" '{
+      id: (5000 + $number), node_id: ("I_" + ($number | tostring)),
+      url: ("https://api.github.com/repos/" + $repo + "/issues/" + ($number | tostring)),
+      repository_url: ("https://api.github.com/repos/" + $repo),
+      html_url: ("https://github.com/" + $repo + "/issues/" + ($number | tostring)),
+      number: $number, state: "closed", state_reason: "completed",
+      title: ("Issue " + ($number | tostring)), body: null,
+      user: {login: "owner", id: 1001, type: "User"}, labels: [], assignee: null,
+      assignees: [], milestone: null, locked: false, active_lock_reason: null,
+      comments: 1, closed_at: "2026-01-29T15:21:00Z",
+      created_at: "2026-01-29T15:00:00Z", updated_at: "2026-01-29T15:21:00Z",
+      closed_by: {login: "lane-app[bot]", id: 2002, type: "Bot"},
+      author_association: "OWNER"}'
+    ;;
+  *) unexpected "$@" ;;
+esac

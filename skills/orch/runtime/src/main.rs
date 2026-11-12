@@ -1637,11 +1637,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // close's report.
             if let Request::AcceptResult(r) = &request {
                 return Ok(serde_json::to_value(ops::accept(
-                    &path,
-                    r,
-                    &settings.reads.tracker_cli,
-                    &env,
-                    locking,
+                    &path, r, &settings, &env, locking,
                 )?)?);
             }
             let applied = persist(&path, &request, &env, locking, &settings)?;

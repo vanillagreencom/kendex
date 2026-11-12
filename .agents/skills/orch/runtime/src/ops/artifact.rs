@@ -1182,13 +1182,8 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
     }
     let issue = r.id.issue.as_str();
     // The item key is the tracker's own: a Linear identifier, or `issue-N`
-    // for a GitHub issue, whose end without a pull request has no owner.
-    if issue
-        .strip_prefix("issue-")
-        .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
-    {
-        return Err(refuse("no-change-tracker", "tracker=github"));
-    }
+    // for a GitHub issue, which the acceptance closes.
+    let github = super::accept::issue_number(issue).is_some();
     let linear = issue.split_once('-').is_some_and(|(team, n)| {
         team.bytes().next().is_some_and(|b| b.is_ascii_uppercase())
             && team
@@ -1197,7 +1192,7 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
             && !n.is_empty()
             && n.bytes().all(|b| b.is_ascii_digit())
     });
-    if !linear {
+    if !github && !linear {
         return Err(refuse("no-change-unverifiable", format!("item={issue}")));
     }
     let worktree = &r.id.worktree;
@@ -1238,8 +1233,16 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
         scope_paths: settings.scope_paths_cli.clone(),
         resolver: crate::repo::resolver(&settings.roots.project),
     };
-    let item = super::admission::read_item(&clis, "linear", issue, None)
-        .map_err(|cause| refuse("item-unread", format!("cause={cause}")))?;
+    let item = if github {
+        // The issue's repository, which the item key does not carry, is the
+        // checkout's own: the one repository identity.
+        let repo = crate::repo::of(&clis.resolver, worktree)
+            .map_err(|unread| refuse("repo-unresolved", format!("item={issue} cause={unread}")))?;
+        super::admission::read_item(&clis, "github", issue, Some(&repo))
+    } else {
+        super::admission::read_item(&clis, "linear", issue, None)
+    }
+    .map_err(|cause| refuse("item-unread", format!("cause={cause}")))?;
     let folded = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
     if !folded(&item.body).contains(&folded(clause)) {
         return Err(refuse("no-change-unpermitted", format!("item={issue}")));

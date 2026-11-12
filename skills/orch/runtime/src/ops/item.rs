@@ -358,6 +358,10 @@ pub struct ResultAccepted {
     /// How this acceptance's summary post ended, where a file was named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<super::accept::SummaryPost>,
+    /// How this acceptance ended the GitHub issue an unchanged result
+    /// completes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<super::accept::IssueClose>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -903,6 +907,7 @@ pub(super) fn accept_result_at(
         authorization,
         summary_comment,
         summary: None,
+        issue: None,
     })
 }
 

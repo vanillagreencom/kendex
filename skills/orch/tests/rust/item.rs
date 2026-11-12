@@ -3703,7 +3703,9 @@ mod dev_artifacts {
             }
         }
         /// The command with the tracker CLI as the linear package's item
-        /// read, its real bundle formatter over the planted answers.
+        /// read, its real bundle formatter over the planted answers, and
+        /// `gh` as the GitHub item's fake (`gh-issue`) over the same
+        /// directory.
         fn tracked(&self) -> Command {
             let mut command = self.command();
             command
@@ -3717,8 +3719,72 @@ mod dev_artifacts {
                     Path::new(env!("CARGO_MANIFEST_DIR"))
                         .join("../../linear/scripts/lib/formatters.sh"),
                 )
-                .env("LINEAR_FAKE_LOG", self.root.join("linear.log"));
+                .env("LINEAR_FAKE_LOG", self.root.join("linear.log"))
+                .env(
+                    "PATH",
+                    support::tool_path(&[fixtures().join("gh-issue").as_path()]),
+                )
+                .env("GH_ISSUES_DIR", self.root.join("items"))
+                .env("GH_FAKE_LOG", self.root.join("gh.log"));
             command
+        }
+        /// The GitHub issue 8 of `o/r`, the world's own item, delegated at
+        /// the current HEAD, its description `body`; the checkout's origin
+        /// names the repository where `origin` holds.
+        fn github_item(&self, body: &str, origin: bool) {
+            self.linear_item("issue-8", None);
+            fs::write(
+                self.root.join("items/8.json"),
+                json!({"body": body, "labels": []}).to_string(),
+            )
+            .unwrap();
+            if origin {
+                git(
+                    &self.wt,
+                    &["remote", "add", "origin", "https://github.com/o/r.git"],
+                );
+            }
+        }
+        /// `op accept-result` of round `r1` of issue 8 with `outcome`,
+        /// naming `summary` as its summary file where given, under `gh`
+        /// as the GitHub item's fake with `env` added.
+        fn accept_github(
+            &self,
+            outcome: &str,
+            summary: Option<&Path>,
+            env: &[(&str, &str)],
+        ) -> Output {
+            let mut request = json!({"op": "accept-result", "round_id": "r1", "outcome": outcome});
+            if let Some(summary) = summary {
+                request["summary_file"] = json!(summary);
+            }
+            let mut command = self.tracked();
+            command.args([
+                "op",
+                "--item",
+                "issue-8",
+                "--request-json",
+                &request.to_string(),
+            ]);
+            command.envs(env.iter().copied());
+            command.output().unwrap()
+        }
+        /// The fake `gh`'s calls, one argument line each.
+        fn gh_calls(&self) -> Vec<String> {
+            fs::read_to_string(self.root.join("gh.log"))
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_owned)
+                .collect()
+        }
+        /// The comments the fake `gh` holds on issue 8, as GitHub answered
+        /// their posts.
+        fn issue_comments(&self) -> Vec<Value> {
+            fs::read_to_string(self.root.join("items/8.comments"))
+                .unwrap_or_default()
+                .lines()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .collect()
         }
         /// `dev-return --text write` of round `r1` of `key` at HEAD, its
         /// comparison as the summary, quoting `clause`.
@@ -3822,8 +3888,7 @@ mod dev_artifacts {
     /// A round that should have changed something cannot end as one that
     /// needed none: the item's text without the quoted sentence, a HEAD
     /// moved since the delegation, a dirty tree, a run or record beside the
-    /// receipt, a fix round, a GitHub issue (whose end without a pull
-    /// request has no owner) and an item the tracker did not answer each
+    /// receipt, a fix round and an item the tracker did not answer each
     /// refuse with their key and write no receipt.
     #[test]
     fn a_no_change_receipt_is_refused_without_the_items_permission_beside_a_move_a_run_or_dirt() {
@@ -3842,7 +3907,7 @@ mod dev_artifacts {
             fn(&World),
             &'a str,
         );
-        let cases: [Case<'_>; 8] = [
+        let cases: [Case<'_>; 7] = [
             (
                 "KEN-9",
                 Some("Compare the two and land the fix.\n"),
@@ -3898,15 +3963,6 @@ mod dev_artifacts {
                 "no-change-kind",
             ),
             (
-                "issue-8",
-                Some(&permitting),
-                "implement",
-                "not-run",
-                &[],
-                nothing,
-                "no-change-tracker",
-            ),
-            (
                 "KEN-9",
                 None,
                 "implement",
@@ -3934,6 +3990,144 @@ mod dev_artifacts {
                 .collect();
             assert!(receipts.is_empty(), "{want}: {receipts:?}");
         }
+    }
+
+    /// An unchanged result on a GitHub issue completes through the issue:
+    /// the receipt quotes the issue's own sentence, read from the
+    /// repository the checkout names, the check answers `no-change`, and
+    /// the acceptance closes the round, posts the comparison on the issue,
+    /// records the comment, and then closes the issue as completed. The
+    /// defect: such a result was refused `no-change-tracker`, so a GitHub
+    /// issue could end only through a fake change.
+    #[test]
+    fn an_unchanged_result_on_a_github_issue_posts_its_comparison_and_closes_the_issue() {
+        let w = World::new();
+        w.github_item(&format!("Compare the two.\n\n{PERMIT}\n"), true);
+        let out = w.no_change("issue-8", "implement", "not-run", PERMIT, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let read = "issue view 8 --repo o/r --json body,labels".to_owned();
+        assert!(w.gh_calls().contains(&read), "{:?}", w.gh_calls());
+        let answer = result(
+            &w.command()
+                .args(["dev-return", "check", "--worktree"])
+                .arg(&w.wt)
+                .args(["--issue", "issue-8", "--round-id", "r1"])
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(answer["verdict"], "no-change", "{answer}");
+        let summary = w.wt.join("tmp/completion-summary-issue-8.md");
+        let closed = result(&w.accept_github("no-change", Some(&summary), &[]));
+        let report = &closed["report"];
+        assert_eq!(report["outcome"], "no-change", "{closed}");
+        assert_eq!(report["closed_now"], true);
+        assert_eq!(report["summary"]["posted"], "created", "{closed}");
+        assert_eq!(report["summary"]["id"], "7001");
+        assert_eq!(
+            report["issue"],
+            json!({"closed": "completed", "repo": "o/r", "number": 8}),
+            "{closed}"
+        );
+        let comments = w.issue_comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0]["body"], fs::read_to_string(&summary).unwrap());
+        let state = w.doc();
+        assert_eq!(state["stages"][0]["outcome"], "no-change");
+        assert_eq!(state["summary_comment"]["id"], "7001");
+        let calls = w.gh_calls();
+        let at = |call: &str| calls.iter().position(|c| c == call);
+        let post = at("api --method POST repos/o/r/issues/8/comments --input -");
+        let close = at("api --method PATCH repos/o/r/issues/8 --input -");
+        assert!(
+            matches!((post, close), (Some(p), Some(c)) if p < c),
+            "{calls:?}"
+        );
+    }
+
+    /// The issue's close is the acceptance's report, never its condition:
+    /// an acceptance naming no comparison sends nothing to GitHub (`held`),
+    /// a close GitHub refuses is reported in gh's words while the round
+    /// stays closed `no-change`, and a later acceptance closes the issue
+    /// with the comparison already on it, posting none again.
+    #[test]
+    fn a_github_close_held_or_refused_is_reported_and_the_acceptance_stands() {
+        let w = World::new();
+        w.github_item(&format!("Compare the two.\n\n{PERMIT}\n"), true);
+        let out = w.no_change("issue-8", "implement", "not-run", PERMIT, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        let summary = w.wt.join("tmp/completion-summary-issue-8.md");
+        let held = result(&w.accept_github("no-change", None, &[]));
+        assert_eq!(held["report"]["closed_now"], true, "{held}");
+        assert_eq!(
+            held["report"]["issue"],
+            json!({"closed": "held", "repo": "o/r", "number": 8, "cause": "summary-unnamed"}),
+            "{held}"
+        );
+        assert!(
+            !w.gh_calls().iter().any(|c| c.starts_with("api ")),
+            "{:?}",
+            w.gh_calls()
+        );
+        let refused = result(&w.accept_github(
+            "no-change",
+            Some(&summary),
+            &[("GH_ISSUE_CLOSE", "refused")],
+        ));
+        let report = &refused["report"];
+        assert_eq!(report["outcome"], "no-change", "{refused}");
+        assert_eq!(report["summary"]["posted"], "created", "{refused}");
+        assert_eq!(report["issue"]["closed"], "refused", "{refused}");
+        assert!(
+            report["issue"]["cause"]
+                .as_str()
+                .is_some_and(|c| c.contains("(HTTP 403)")),
+            "{refused}"
+        );
+        assert_eq!(w.doc()["stages"][0]["outcome"], "no-change");
+        let again = result(&w.accept_github("no-change", Some(&summary), &[]));
+        assert_eq!(
+            again["report"]["issue"],
+            json!({"closed": "completed", "repo": "o/r", "number": 8}),
+            "{again}"
+        );
+        assert!(again["report"].get("summary").is_none(), "{again}");
+        assert_eq!(w.issue_comments().len(), 1);
+    }
+
+    /// A GitHub issue whose repository neither its key nor the checkout's
+    /// repository identity names is refused `repo-unresolved`, by the
+    /// receipt's writer before it reads the issue and by the acceptance
+    /// before the round's close: no receipt, no change to the item's record
+    /// and no GitHub call past the identity's own read.
+    #[test]
+    fn a_github_issue_whose_repository_cannot_be_read_is_refused_by_name_before_any_write() {
+        let w = World::new();
+        w.github_item(&format!("Compare the two.\n\n{PERMIT}\n"), false);
+        let out = w.no_change("issue-8", "implement", "not-run", PERMIT, &[]);
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+        assert!(
+            stderr(&out)
+                .starts_with("dev-return-write: repo-unresolved item=issue-8 cause=unresolved"),
+            "{}",
+            stderr(&out)
+        );
+        assert!(!w.receipt_path("r1").exists());
+        let before = fs::read_to_string(w.item()).unwrap();
+        let summary = w.wt.join("tmp/completion-summary-issue-8.md");
+        let out = w.accept_github("no-change", Some(&summary), &[]);
+        refused(&out, "repo-unresolved");
+        let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            v["refusal"]["fields"],
+            json!([["item", "issue-8"], ["cause", "unresolved"]]),
+            "{v}"
+        );
+        assert_eq!(fs::read_to_string(w.item()).unwrap(), before);
+        assert!(
+            w.gh_calls().iter().all(|c| c.starts_with("repo view ")),
+            "{:?}",
+            w.gh_calls()
+        );
     }
 
     /// The declared command a passing run runs, the world's own.
@@ -4011,8 +4205,9 @@ mod dev_artifacts {
                 .unwrap()
         }
         /// A real validation run of `round` over the checkout under the
-        /// declared command `cmd`, waited for until its stage closes;
-        /// returns its run directory.
+        /// declared command `cmd`, waited for until its job's last write to
+        /// the item's record: the stage closed and its end notice marked
+        /// with the send's word, never `owed`. Returns its run directory.
         fn validated(&self, round: &str, cmd: &str) -> PathBuf {
             let started = result(
                 &self
@@ -4027,12 +4222,15 @@ mod dev_artifacts {
             );
             let dir = PathBuf::from(started["run_dir"].as_str().unwrap());
             let bound = std::time::Instant::now() + Duration::from_secs(90);
-            while !self.doc()["stages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|s| s["run_dir"] == dir.to_str().unwrap() && s["end"].is_u64())
-            {
+            // The job closes the stage with its notice `owed`, sends it, and
+            // then marks it: an acceptance stored between the close and the
+            // mark meets the mark's write and refuses `record-changed`.
+            while !self.doc()["stages"].as_array().unwrap().iter().any(|s| {
+                s["run_dir"] == dir.to_str().unwrap()
+                    && s["end"].is_u64()
+                    && s["notice"]["owner"].is_string()
+                    && s["notice"]["owner"] != agent_runtime::intent::NOTICE_OWED
+            }) {
                 assert!(
                     std::time::Instant::now() < bound,
                     "{}",

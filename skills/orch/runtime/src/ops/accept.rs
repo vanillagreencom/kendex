@@ -20,7 +20,11 @@
 //! the reply and the acceptance stands: the comment is advisory to
 //! `container-close`, never the close's condition. A failed list creates
 //! nothing: whether a comment exists is then not known, and the next
-//! acceptance asks again.
+//! acceptance asks again. An unchanged result (`no-change`) on an item
+//! keyed `issue-N` completes through the GitHub issue instead, through the
+//! one GitHub module: the summary file, the comparison, is posted on the
+//! issue once, and the issue is then closed as completed; the post's and
+//! the close's outcomes are in the reply and the acceptance stands.
 use agent_runtime::record::Locking;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -29,10 +33,13 @@ use agent_runtime::host;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::item::AcceptResult;
+use super::item::{AcceptResult, ResultAccepted};
 use super::{Applied, Report, Request, apply};
 use crate::error::Result;
-use crate::state::{self, Attachment, SummaryComment};
+use crate::settings::Settings;
+use crate::state::{self, Attachment, StageOutcome, SummaryComment};
+use crate::verify::wire::{Issue as WireIssue, IssueComment, Nullable};
+use crate::verify::{Answer as GhAnswer, Gh};
 use agent_runtime::journal::Env;
 
 /// How long one tracker call may take.
@@ -65,66 +72,288 @@ pub enum SummaryPost {
 
 /// Accept the round's result and post its summary. The reply is the
 /// close's report, with `summary` where a file was named; every request
-/// naming a file posts, a repeat of a closed stage included.
+/// naming a file posts, a repeat of a closed stage included. An unchanged
+/// result on a GitHub issue reads the issue's repository before the close
+/// ([`completed_issue`]) and ends the issue after it ([`end_issue`]), with
+/// `issue` in the reply.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the acceptance's two store entries through `ops::apply`: the close, then the comment id its post earned, the request's own repeat"
+    reason = "the acceptance's first store entry through `ops::apply`: the close"
 )]
 pub fn accept(
     path: &Path,
     r: &AcceptResult,
-    tracker_cli: &Path,
+    settings: &Settings,
     env: &Env,
     locking: Locking,
 ) -> Result<Applied> {
+    let issue = completed_issue(path, r, settings)?;
     let mut applied = apply(path, &Request::AcceptResult(r.clone()), env, locking)?;
-    let Some(file) = &r.summary_file else {
+    let Report::AcceptResult(accepted) = &mut applied.report else {
         return Ok(applied);
     };
-    let Report::AcceptResult(accepted) = &mut applied.report else {
+    if let Some(issue) = &issue {
+        end_issue(path, r, issue, accepted, env, locking);
+        return Ok(applied);
+    }
+    let Some(file) = &r.summary_file else {
         return Ok(applied);
     };
     let recorded = accepted.summary_comment.clone();
     let posted = match state::item_of(path) {
-        Some(item) => post(tracker_cli, item, recorded.as_ref(), file, &r.attachments),
+        Some(item) => post(
+            &settings.reads.tracker_cli,
+            item,
+            recorded.as_ref(),
+            file,
+            &r.attachments,
+        ),
         None => Err("the path names no item".to_owned()),
     };
     let summary = match posted {
         Err(cause) => SummaryPost::Failed { cause },
-        Ok(posted) => {
-            let id = posted.id.clone();
-            let comment = SummaryComment {
-                id: id.clone(),
-                at: env.iso(),
-                attachments: posted.attachments.clone(),
-            };
-            let record = AcceptResult {
-                summary_comment: Some(comment.clone()),
-                ..r.clone()
-            };
-            // The close's report is the reply; the repeat lends it the
-            // comment it recorded.
-            match apply(path, &Request::AcceptResult(record), env, locking) {
-                Ok(Applied {
-                    report: Report::AcceptResult(again),
-                    ..
-                }) => {
-                    accepted.summary_comment = again.summary_comment;
-                    posted.reply(comment.at)
-                }
-                Ok(Applied { report, .. }) => SummaryPost::Unrecorded {
-                    id,
-                    cause: format!("the record answered a {} report", report_name(&report)),
-                },
-                Err(e) => SummaryPost::Unrecorded {
-                    id,
-                    cause: format!("{}: {e}", e.key()),
-                },
-            }
-        }
+        Ok(posted) => record_comment(path, r, accepted, posted, env, locking),
     };
     accepted.summary = Some(summary);
     Ok(applied)
+}
+
+/// Record the comment `posted` earned as the item's `summary_comment`, by
+/// the acceptance's own repeat of its request, and answer how the post
+/// ended.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the acceptance's second store entry through `ops::apply`: the comment id its post earned, the request's own repeat"
+)]
+fn record_comment(
+    path: &Path,
+    r: &AcceptResult,
+    accepted: &mut ResultAccepted,
+    posted: Posted,
+    env: &Env,
+    locking: Locking,
+) -> SummaryPost {
+    let id = posted.id.clone();
+    let comment = SummaryComment {
+        id: id.clone(),
+        at: env.iso(),
+        attachments: posted.attachments.clone(),
+    };
+    let record = AcceptResult {
+        summary_comment: Some(comment.clone()),
+        ..r.clone()
+    };
+    // The close's report is the reply; the repeat lends it the
+    // comment it recorded.
+    match apply(path, &Request::AcceptResult(record), env, locking) {
+        Ok(Applied {
+            report: Report::AcceptResult(again),
+            ..
+        }) => {
+            accepted.summary_comment = again.summary_comment;
+            posted.reply(comment.at)
+        }
+        Ok(Applied { report, .. }) => SummaryPost::Unrecorded {
+            id,
+            cause: format!("the record answered a {} report", report_name(&report)),
+        },
+        Err(e) => SummaryPost::Unrecorded {
+            id,
+            cause: format!("{}: {e}", e.key()),
+        },
+    }
+}
+
+// --- An unchanged result on a GitHub issue ----------------------------------------
+
+/// The number an item keyed `issue-N` names, a GitHub issue's; `None` for
+/// every other key.
+pub(super) fn issue_number(item: &str) -> Option<u64> {
+    item.strip_prefix("issue-")
+        .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|n| n.parse().ok())
+}
+
+/// The GitHub issue an unchanged result completes.
+struct Issue {
+    repo: String,
+    number: u64,
+}
+
+/// How the acceptance ended the GitHub issue an unchanged result
+/// completes, in the reply. The acceptance stands whichever it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "closed", rename_all = "kebab-case")]
+pub enum IssueClose {
+    /// GitHub answered the issue closed as completed.
+    Completed { repo: String, number: u64 },
+    /// gh exited non-zero: GitHub refused the close or gh could not reach
+    /// it, in gh's words.
+    Refused {
+        repo: String,
+        number: u64,
+        cause: String,
+    },
+    /// The close's answer is unknown: gh was killed, did not start or
+    /// answered outside GitHub's documented shape.
+    Unconfirmed {
+        repo: String,
+        number: u64,
+        cause: String,
+    },
+    /// The comparison is not on the issue, so no close was sent.
+    Held {
+        repo: String,
+        number: u64,
+        cause: String,
+    },
+}
+
+/// The issue an unchanged result on an item keyed `issue-N` completes,
+/// read before any write: `None` for every other acceptance. The item key
+/// carries no repository (the item alphabet admits no `/`), so the issue's
+/// repository is the one repository identity of the item's recorded
+/// checkout; neither read refuses `repo-unresolved` and writes nothing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the acceptance's one read of the item record for its recorded checkout, before the close"
+)]
+fn completed_issue(path: &Path, r: &AcceptResult, settings: &Settings) -> Result<Option<Issue>> {
+    let Some((item, number)) = state::item_of(path).and_then(|i| Some((i, issue_number(i)?)))
+    else {
+        return Ok(None);
+    };
+    if r.outcome != StageOutcome::NoChange || r.run_dir.is_some() {
+        return Ok(None);
+    }
+    let unresolved = |cause: &str| -> crate::error::Error {
+        agent_runtime::Error::refused("repo-unresolved", &[("item", item), ("cause", cause)]).into()
+    };
+    let worktree = state::load(path)?
+        .and_then(|s| {
+            s.doc
+                .get("worktree")
+                .and_then(Value::as_str)
+                .filter(|w| !w.is_empty())
+                .map(PathBuf::from)
+        })
+        .ok_or_else(|| unresolved("worktree-unrecorded"))?;
+    let resolver = crate::repo::resolver(&settings.roots.project);
+    let repo =
+        crate::repo::of(&resolver, &worktree).map_err(|unread| unresolved(&unread.to_string()))?;
+    Ok(Some(Issue { repo, number }))
+}
+
+/// Post the comparison on the issue and close the issue as completed,
+/// through the one GitHub module, after the close committed. The
+/// comparison is the summary file the request names, posted once and
+/// recorded as the item's `summary_comment`: a comment the item already
+/// records is the comparison, and a repeat posts none. The issue is closed
+/// only once the comparison is on it.
+fn end_issue(
+    path: &Path,
+    r: &AcceptResult,
+    issue: &Issue,
+    accepted: &mut ResultAccepted,
+    env: &Env,
+    locking: Locking,
+) {
+    let gh = Gh::new(Path::new("gh")).tagged("accept");
+    let held = |cause: &str| IssueClose::Held {
+        repo: issue.repo.clone(),
+        number: issue.number,
+        cause: cause.to_owned(),
+    };
+    let on_issue = match (&accepted.summary_comment, &r.summary_file) {
+        (Some(_), _) => true,
+        (None, None) => {
+            accepted.issue = Some(held("summary-unnamed"));
+            return;
+        }
+        (None, Some(file)) => {
+            let summary = match comment(&gh, issue, file) {
+                Err(cause) => SummaryPost::Failed { cause },
+                Ok(posted) => record_comment(path, r, accepted, posted, env, locking),
+            };
+            let posted = !matches!(summary, SummaryPost::Failed { .. });
+            accepted.summary = Some(summary);
+            posted
+        }
+    };
+    accepted.issue = Some(if on_issue {
+        close_issue(&gh, issue)
+    } else {
+        held("summary-unposted")
+    });
+}
+
+/// The comparison as a comment on the issue (issues/comments, "Create an
+/// issue comment"): the summary file's text as its body, the comment's id
+/// as GitHub answered it, or the cause nothing is known by.
+fn comment(gh: &Gh, issue: &Issue, file: &Path) -> std::result::Result<Posted, String> {
+    let operation = "issue-comment";
+    let body = std::fs::read_to_string(file)
+        .map_err(|e| format!("{operation}: {}: {e}", file.display()))?;
+    let payload = serde_json::to_vec(&serde_json::json!({ "body": body }))
+        .map_err(|e| format!("{operation}: {e}"))?;
+    let url = format!("repos/{}/issues/{}/comments", issue.repo, issue.number);
+    match gh.run(
+        operation,
+        &["api", "--method", "POST", &url, "--input", "-"],
+        Some(&payload),
+    ) {
+        Ok(GhAnswer::Printed { stdout, .. }) => serde_json::from_slice::<IssueComment>(&stdout)
+            .map(|answer| Posted {
+                id: answer.id.to_string(),
+                attachments: Vec::new(),
+                sent: Sent::Created,
+            })
+            .map_err(|e| format!("{operation}: answer: {e}")),
+        Ok(GhAnswer::Failed(failed)) => Err(format!("{operation}: {}", failed.detail())),
+        Err(unrun) => Err(format!("{operation}: {}", unrun.detail())),
+    }
+}
+
+/// The issue closed as completed (issues, "Update an issue"), judged by
+/// the state GitHub answered.
+fn close_issue(gh: &Gh, issue: &Issue) -> IssueClose {
+    let operation = "issue-close";
+    let url = format!("repos/{}/issues/{}", issue.repo, issue.number);
+    let payload = br#"{"state":"closed","state_reason":"completed"}"#;
+    let (repo, number) = (issue.repo.clone(), issue.number);
+    let unconfirmed = |cause: String| IssueClose::Unconfirmed {
+        repo: repo.clone(),
+        number,
+        cause: format!("{operation}: {cause}"),
+    };
+    match gh.run(
+        operation,
+        &["api", "--method", "PATCH", &url, "--input", "-"],
+        Some(payload),
+    ) {
+        Ok(GhAnswer::Printed { stdout, .. }) => {
+            match serde_json::from_slice::<WireIssue>(&stdout) {
+                Ok(answer)
+                    if answer.state == "closed"
+                        && answer.state_reason == Nullable::Present("completed".to_owned()) =>
+                {
+                    IssueClose::Completed {
+                        repo: repo.clone(),
+                        number,
+                    }
+                }
+                Ok(answer) => unconfirmed(format!("the answer reads state={}", answer.state)),
+                Err(e) => unconfirmed(format!("answer: {e}")),
+            }
+        }
+        Ok(GhAnswer::Failed(failed)) if failed.exit.is_some() => IssueClose::Refused {
+            repo: repo.clone(),
+            number,
+            cause: format!("{operation}: {}", failed.detail()),
+        },
+        Ok(GhAnswer::Failed(failed)) => unconfirmed(failed.detail()),
+        Err(unrun) => unconfirmed(unrun.detail()),
+    }
 }
 
 /// The `op` word a report carries, for a cause naming one.
