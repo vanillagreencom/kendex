@@ -207,10 +207,8 @@ ORCH_TEST_DIR="$TEST_DIR"
 
 # Suites that run alone, one at a time, once every other selected suite has
 # finished: each holds a fixed wall-clock window that the code under test
-# must meet, and a loaded host has made it miss. One suite per line, first
-# word, with the window it holds where its tree records one. This block names
-# this directory's suites; run-all-parallel.sh reads it and plants each name
-# in a battery beside a copy of this file.
+# must meet, and a loaded host has made it miss. One name per line, first
+# word, with the window it holds; run-all-parallel.sh reads this list.
 ALONE=(
   open-terminal-lane      # the lane-tree stub holds the picked account for 2s
   oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
