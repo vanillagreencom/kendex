@@ -368,7 +368,7 @@ done < <(unread_rows)
 require_rows unread-paths "$rows"
 # The control ignores the declaration and must reach the unclaimed fallback.
 unread_mutant="$(mutant unread-ignored lib/change-class.sh \
-  '  change_class_path_match "$1" "$unread_globs" || return 0' '  return 0')"
+  '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"
 mkdir -p "$SANDBOX/unread-root"
 ln -s "${unread_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/unread-root/skills"
 control_status=0
@@ -378,6 +378,30 @@ control_status=0
 assert_eq "must-fail: the only-unread row rejects an ignored declaration" 1 "$control_status"
 assert_eq "the control reaches the unclaimed fallback" \
   lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+# The action sources the library with extglob off, so the unread match sets
+# it for itself and restores the caller's setting. The control drops the
+# shopt: the extglob glob then misses, and the unclaimed fallback runs.
+extglob_mutant="$(mutant unread-no-extglob lib/change-class.sh \
+  '  shopt -q extglob || { extglob=false; shopt -s extglob; }' -)"
+mkdir -p "$SANDBOX/extglob-root"
+ln -s "${extglob_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/extglob-root/skills"
+control_status=0
+(PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/extglob-root"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/extglob-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the only-unread row rejects a match with extglob off" 1 "$control_status"
+assert_eq "the extglob control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
+for setting in -s -u; do
+  assert_eq "the unread match restores the caller's extglob, shopt $setting" \
+    "hit $setting" "$(
+      shopt "$setting" extglob
+      die() { exit 2; }
+      . "${CHANGE_CLASS%/*}/lib/change-class.sh"
+      unread_list_match a.yml '@(a|b).yml' && printf 'hit '
+      shopt -q extglob && printf -- -s || printf -- -u
+    )"
+done
 # An unread-paths line relayed from a tool that reads the head, here the
 # review-bot check naming a manifest key that holds a newline, never stands
 # for change-class's own: the base declares nothing, so the manifest the
@@ -389,7 +413,7 @@ printf '[bot-instructions]\nschema = 1\n[bot-instructions.repo]\nname = "r"\nsum
 git -C "$repo" add -A
 git -C "$repo" commit -qm forged-record
 queue_mutant="$(mutant unread-queue-ignored lib/change-class.sh \
-  '  ! change_class_path_match "$1" "$queue_globs" || return 0' -)"
+  '  ! unread_list_match "$1" "$queue_globs" || return 0' -)"
 mkdir -p "$SANDBOX/queue-root"
 ln -s "${queue_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/queue-root/skills"
 for root in shipped queue-rule-dropped; do

@@ -12,8 +12,9 @@
 # on a read failure, with CHANGE_CLASS_PATH_CAUSE; callers must refuse a
 # narrow class. Call it before the narrow or launch phase.
 # change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
-# GLOBS is newline-separated, with bash patterns matching the whole path and
-# extglob on whatever the caller's shell sets.
+# GLOBS is newline-separated, with bash patterns matching the whole path.
+# unread_list_match PATH GLOBS matches the same way with extglob on, whatever
+# the caller's shell sets.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 
 # The adopted caller can lack an inventory entry when adoption preserves its
@@ -42,16 +43,25 @@ names_only_roots_rendered() { # ROOTS LOAD_ROOTS [ARG...]
 }
 
 change_class_path_match() { # PATH GLOBS
-  local glob extglob=true status=1
+  local glob
   PATH_MATCH_HIT=""
-  shopt -q extglob || { extglob=false; shopt -s extglob; }
   while IFS= read -r glob; do
     [ -n "$glob" ] || continue
     # shellcheck disable=SC2254
     case "$1" in
-      $glob) PATH_MATCH_HIT="path=$1 glob=$glob" status=0; break ;;
+      $glob) PATH_MATCH_HIT="path=$1 glob=$glob"; return 0 ;;
     esac
   done <<<"$2"
+  return 1
+}
+
+# The unread rule's queue list and globs take the list grammar, extglob on,
+# for this match alone: the change-class action sources this file with it
+# off. The caller's setting is restored.
+unread_list_match() { # PATH GLOBS
+  local extglob=true status=0
+  shopt -q extglob || { extglob=false; shopt -s extglob; }
+  change_class_path_match "$1" "$2" || status=$?
   [ "$extglob" = true ] || shopt -u extglob
   return "$status"
 }
@@ -252,8 +262,8 @@ needs_lane_claim() { # PATH — declared text and paths outside the docs set nee
   # quoted, whose spelling no queue glob reads, and a queue-listed path keep
   # their claim.
   case "$1" in \"*) return 0 ;; esac
-  ! change_class_path_match "$1" "$queue_globs" || return 0
-  change_class_path_match "$1" "$unread_globs" || return 0
+  ! unread_list_match "$1" "$queue_globs" || return 0
+  unread_list_match "$1" "$unread_globs" || return 0
   [ -n "$unread_hit" ] || unread_hit="$PATH_MATCH_HIT"
   return 1
 }
