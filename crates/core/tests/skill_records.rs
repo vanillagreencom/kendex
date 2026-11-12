@@ -64,6 +64,123 @@ fn declare(f: &Fixture, harnesses: &str) {
     );
 }
 
+#[test]
+fn local_skill_links_reach_their_source_targets_from_every_markdown_file() {
+    for (location, fetched, prefix) in [
+        (".", false, Some("")),
+        ("vendor/catalog", false, Some("vendor/catalog/")),
+        ("outside", false, None),
+        ("fetched", true, None),
+    ] {
+        let mut f = fixture();
+        let catalog = if fetched {
+            // A project rooted at the home also encloses the source cache.
+            // Containment alone must not treat a fetched source as local.
+            f.project = f.env.home.clone();
+            f.scope = Scope::Project {
+                root: f.project.clone(),
+            };
+            f.env = f.env.with_var(
+                "KENDEX_GIT_BASE",
+                &format!("file://{}", f.project.join("git").display()),
+            );
+            f.project.join("git/acme/catalog")
+        } else if prefix.is_some() {
+            f.project.join(location)
+        } else {
+            f.source.clone()
+        };
+        let source = catalog.join("skills/ship");
+        let body = "[memory](../../memory/x.md#part)\n[own](<./guide%2Emd>)\n[sibling](../other/SKILL.md)\n[loose](../notes.md)\n[escape](../../../../../../outside.md)\n";
+        let authored = format!("---\nname: ship\ndescription: ship\n---\n{body}");
+        put(&source.join("SKILL.md"), &authored);
+        put(&source.join("guide.md"), "Guide.\n");
+        put(
+            &source.join("reference.txt"),
+            "[memory](../../memory/x.md)\n",
+        );
+        fs::write(source.join("binary"), b"\xff[memory](../../memory/x.md)").unwrap();
+        put(
+            &source.join("references/read.md"),
+            "[memory](../../../memory/x.md)\n[own](../guide.md)\n",
+        );
+        let sibling = "---\nname: other\ndescription: other\n---\n";
+        put(&catalog.join("skills/other/SKILL.md"), sibling);
+        put(&catalog.join("skills/notes.md"), "Notes.\n");
+        put(&catalog.join("memory/x.md"), "Memory.\n");
+        let declaration = if fetched {
+            put(&catalog.join("kendex.toml"), "is_source_catalog = true\n");
+            test_util::git(&catalog, &["init", "-q"]);
+            test_util::git(&catalog, &["add", "-A"]);
+            test_util::git(&catalog, &["commit", "-qm", "catalog"]);
+            kendex_core::remote::sync(&f.env, "acme/catalog", None).unwrap();
+            "repo = \"acme/catalog\"".to_owned()
+        } else if prefix.is_some() {
+            format!("path = {location:?}")
+        } else {
+            source_path(&catalog)
+        };
+        put(
+            &f.project.join("kendex.toml"),
+            &format!(
+                "schema = 7\n[sources.\".\"]\n{declaration}\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n[skills.ship]\nsource = \".\"\n[skills.other]\nsource = \".\"\n"
+            ),
+        );
+        let report = audit(&f.env, &f.scope).unwrap();
+        assert_eq!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.message.starts_with("agent-link-unrepresentable:")),
+            prefix.is_some(),
+            "{location}"
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        let installed = f.project.join(".agents/skills/ship");
+        let expected = if let Some(prefix) = prefix {
+            let memory = format!("../../../{prefix}memory/x.md");
+            assert_eq!(
+                fs::canonicalize(installed.join(&memory)).unwrap(),
+                fs::canonicalize(source.join("../../memory/x.md")).unwrap()
+            );
+            authored
+                .replace("../../memory", &format!("../../../{prefix}memory"))
+                .replace("../notes.md", &format!("../../../{prefix}skills/notes.md"))
+        } else {
+            authored.clone()
+        };
+        assert_eq!(
+            fs::read_to_string(installed.join("SKILL.md")).unwrap(),
+            expected,
+            "{location}"
+        );
+        let target = prefix.map_or_else(
+            || "../../memory/x.md".to_owned(),
+            |prefix| format!("../../../{prefix}memory/x.md"),
+        );
+        assert_eq!(
+            fs::read_to_string(installed.join("reference.txt")).unwrap(),
+            format!("[memory]({target})\n")
+        );
+        assert_eq!(
+            fs::read_to_string(installed.join("references/read.md")).unwrap(),
+            format!("[memory](../{target})\n[own](../guide.md)\n")
+        );
+        assert_eq!(
+            fs::read(installed.join("binary")).unwrap(),
+            b"\xff[memory](../../memory/x.md)"
+        );
+        assert_eq!(
+            fs::read_to_string(installed.join("../other/SKILL.md")).unwrap(),
+            sibling
+        );
+        assert_eq!(
+            fs::read_to_string(source.join("SKILL.md")).unwrap(),
+            authored
+        );
+    }
+}
+
 #[allow(clippy::unwrap_used)]
 fn apply_now(f: &Fixture) {
     let report = audit(&f.env, &f.scope).unwrap();

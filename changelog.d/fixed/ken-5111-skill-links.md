@@ -1,0 +1,1 @@
+- Skills from a local source inside the project keep relative Markdown links pointing at the same project files after installation. Links within skills and to sibling packages keep their spelling.

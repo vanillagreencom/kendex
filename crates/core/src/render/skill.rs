@@ -98,6 +98,54 @@ pub fn render_skill(
     with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
+/// Rebase Markdown in copied skill trees; source trees keep their own paths.
+pub(crate) fn rebase_links(
+    files: Files,
+    source_dir: &Path,
+    sealed: &SealedSource,
+    rendered_dir: &Path,
+    install_root: &Path,
+) -> (Files, Vec<super::RenderWarning>) {
+    let mut warnings = Vec::new();
+    let files = files
+        .into_iter()
+        .map(|(rel, bytes)| {
+            let bytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+                let (text, notices) = super::agent::rebase_skill(
+                    text,
+                    super::agent::BodyPaths {
+                        source: &source_dir.join(&rel),
+                        source_root: install_root,
+                        rendered: &rendered_dir.join(&rel),
+                        install_root,
+                    },
+                    |target| {
+                        if target.starts_with(source_dir) {
+                            return true;
+                        }
+                        // A sibling package moves with its own tree; a loose
+                        // file beside the packages still needs rebasing.
+                        source_dir
+                            .parent()
+                            .and_then(|parent| {
+                                let sibling =
+                                    target.strip_prefix(parent).ok()?.components().next()?;
+                                Some(sealed.is_file(&parent.join(sibling).join(SKILL_FILE)))
+                            })
+                            .unwrap_or(false)
+                    },
+                );
+                warnings.extend(notices);
+                text.into_bytes()
+            } else {
+                bytes
+            };
+            (rel, bytes)
+        })
+        .collect();
+    (files, warnings)
+}
+
 /// Shared skill directories must fit older Codex loaders too. Only the
 /// rendered description changes; source bytes and the body stay intact.
 pub(crate) fn bounded_description(text: &str) -> String {
@@ -313,6 +361,40 @@ mod tests {
     use std::path::PathBuf;
 
     const SKILL: &str = "---\nname: github\ndescription: gh\n---\n\n# GitHub\n\nAuthor text.\n";
+
+    #[test]
+    fn skill_links_that_already_reach_the_target_keep_their_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::test_util::rooted(&tmp);
+        let source = root.join("skills/ship");
+        std::fs::create_dir_all(&source).unwrap();
+        let sealed = SealedSource::open(&root.join("skills")).unwrap();
+        let rows = vec![(source.clone(), "[memory](../.././memory/x%2Emd#part)\n")];
+        #[cfg(unix)]
+        let rows = {
+            let mut rows = rows;
+            std::fs::create_dir_all(root.join(".pi")).unwrap();
+            std::fs::write(root.join(".pi/other.md"), "Other.\n").unwrap();
+            std::fs::create_dir_all(root.join("skills/other")).unwrap();
+            std::os::unix::fs::symlink(
+                root.join(".pi/other.md"),
+                root.join("skills/other/SKILL.md"),
+            )
+            .unwrap();
+            let alias = root.join(".claude/skills/ship");
+            std::fs::create_dir_all(alias.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&source, &alias).unwrap();
+            rows.push((alias, "[sibling](../other/SKILL.md)\n"));
+            rows
+        };
+        for (rendered, text) in rows {
+            let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
+            let (rebased, warnings) =
+                rebase_links(files.clone(), &source, &sealed, &rendered, &root);
+            assert_eq!(rebased, files);
+            assert!(warnings.is_empty());
+        }
+    }
 
     #[test]
     fn descriptions_fit_every_harness_without_changing_the_source_or_body() {
