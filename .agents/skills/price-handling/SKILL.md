@@ -28,17 +28,36 @@ Use `i64` fixed-point **only** for a matching engine (bit-exact required), a reg
 
 ## Never `==` on prices
 
+Each comparison domain takes its own rule. An absolute tolerance collapses every tick finer than itself, so no single epsilon serves all prices.
+
+| Domain | Comparison |
+|---|---|
+| Executable prices: limits, order prices, fills | `prices_equal`: at most four representable doubles (ULPs) apart, no absolute tolerance |
+| Tick alignment | `tick_index`: the nearest tick count, admitting representation noise capped at a quarter tick |
+| Derived summaries: a broker's average or last-fill price | `derived_equal`, with a relative tolerance the project chooses |
+| Raw depth ordering | strict `<` and `>` on the feed values |
+
 ```rust
-use float_cmp::{approx_eq, F64Margin};
-
-pub const PRICE_EPSILON: f64 = 1e-10;  // sub-pipette tolerance
-
+/// Executable prices: equal when at most four representable doubles apart.
 pub fn prices_equal(a: f64, b: f64) -> bool {
-    approx_eq!(f64, a, b, epsilon = PRICE_EPSILON, ulps = 4)
+    if a == b {
+        return true; // also +0.0 against -0.0
+    }
+    if !a.is_finite() || !b.is_finite() || a.is_sign_negative() != b.is_sign_negative() {
+        return false;
+    }
+    // Same-sign finite doubles order like their bit patterns.
+    a.to_bits().abs_diff(b.to_bits()) <= 4
 }
 
 pub fn price_gte(a: f64, b: f64) -> bool { a > b || prices_equal(a, b) }
 pub fn price_lte(a: f64, b: f64) -> bool { a < b || prices_equal(a, b) }
+
+/// Derived summaries: `rel_tol` is the project's constant, scaled by the
+/// larger magnitude.
+pub fn derived_equal(a: f64, b: f64, rel_tol: f64) -> bool {
+    prices_equal(a, b) || (a - b).abs() <= rel_tol * a.abs().max(b.abs())
+}
 ```
 
 ## Round only at the boundaries
@@ -55,10 +74,29 @@ pub fn round_to_tick(price: f64, tick_size: f64) -> f64 {
     (price / tick_size).round() * tick_size
 }
 
+/// The tick count of an aligned price. None when the price is off-grid, an
+/// input is not finite, or the grid cannot be resolved at this magnitude.
+pub fn tick_index(price: f64, tick_size: f64) -> Option<f64> {
+    if !(price.is_finite() && tick_size.is_finite() && tick_size > 0.0) {
+        return None;
+    }
+    let n = (price / tick_size).round();
+    let (below, at, above) = ((n - 1.0) * tick_size, n * tick_size, (n + 1.0) * tick_size);
+    // Neighbours come from the same tick count. They must stay more than half
+    // a tick apart, or the quarter-tick noise ranges would overlap.
+    if !(at - below > tick_size / 2.0 && above - at > tick_size / 2.0) {
+        return None;
+    }
+    // Representation noise is admitted, capped at a quarter tick.
+    (prices_equal(price, at) && (price - at).abs() <= tick_size / 4.0).then_some(n)
+}
+
 pub fn validate_tick_alignment(price: f64, tick_size: f64) -> bool {
-    prices_equal(price, round_to_tick(price, tick_size))
+    tick_index(price, tick_size).is_some()
 }
 ```
+
+Two supported ticks stay distinct however fine they are: alignment works in tick counts, and equality allows only representation steps. The four-ULP allowance and the quarter-tick cap are defaults a project with a measured need can change; the relative tolerance is the project's own constant.
 
 Order submission order: round to tick, validate alignment (on failure return an error, never re-round), then format for the broker API if it takes a string.
 

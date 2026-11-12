@@ -22,9 +22,9 @@ A grant covers only the action it names. Spending money, an external commitment 
 ## Approach
 
 - Use the platform's supported feature before adding a replacement. Read its documentation and name any gap that requires another route.
-- Find the cause and correct it where it starts. Check every affected path.
+- Find the cause and correct it where it starts. Check every affected path. Before accepting, repeating or explaining a difference, deviation or special case, ask whether it makes inherent sense, and why.
 - Extend the existing owner of a concern. Add an owner only when none exists.
-- Add a mechanism only for a present requirement. Identify the person or system that needs it.
+- Add a mechanism only for a present requirement. Identify the person or system that needs it and the harm it prevents. An incident alone does not show a recurring requirement for a new rule, limit or mechanism; fix its cause in the existing owner. One evidenced incident still warrants protection when its named harm requires it.
 - When judging an existing rule, step, mechanism or check, ask what it provides and for whom. Remove what protects nothing real or is over-engineered, after reading what uses or relies on it.
 - Before a shared rule or tool replaces a local one, compare what each does, not its name, and keep a local difference that has a reason.
 - Follow the user's current project conventions and compatibility policy.
