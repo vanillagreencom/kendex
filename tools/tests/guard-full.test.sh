@@ -495,7 +495,9 @@ git -C "$R" commit -q -m "chore: a skill whose suite fails"
 printf 'echo more\n' >>"$R/skills/demo/scripts/demo.sh"
 printf 'echo more\n' >>"$R/.agents/skills/demo/scripts/demo.sh"
 run_guard
+# hooks/tests/demo.test.sh shares the touched suite's base name and does not run.
 [ "$RC" -eq 0 ] && [ -n "$(suite_report skills/demo/tests/demo.test.sh)" ] && [ -z "$(suite_report skills/quiet/tests/quiet.test.sh)" ] \
+  && [ -z "$(suite_report hooks/tests/demo.test.sh)" ] \
   && ok "a touched skill's suite runs in full validation and an untouched skill's does not" \
   || bad "a touched skill's suite runs in full validation and an untouched skill's does not" "rc=$RC out=$OUT"
 printf 'echo touched\n' >>"$R/skills/quiet/tests/quiet.test.sh"
