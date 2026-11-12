@@ -71,8 +71,8 @@ pub fn diagnostic_line(error: &Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::error::ShapeReason;
     use crate::state::{EffectOp, LaneStatus};
+    use agent_runtime::error::ShapeReason;
 
     #[test]
     fn refusals_open_with_their_key_and_fields() {
@@ -92,11 +92,11 @@ mod tests {
                 "orch-runtime: overseer-changed path=/s.json fields=server,pane",
             ),
             (
-                Error::IntentOpen {
+                Error::Runtime(agent_runtime::Error::IntentOpen {
                     intent: "close-owned-resources:KEN-1:1769700000123456789-4242".into(),
-                    op: EffectOp::CloseOwnedResources,
+                    op: EffectOp::CloseOwnedResources.word(),
                     target: "KEN-1".into(),
-                },
+                }),
                 "orch-runtime: intent-open intent=close-owned-resources:KEN-1:1769700000123456789-4242 op=close-owned-resources target=KEN-1",
             ),
             (
@@ -138,12 +138,12 @@ mod tests {
                 request_cause,
             ),
             (
-                Error::Shape {
+                Error::Runtime(agent_runtime::Error::RecordShape {
                     path: "/s.json".into(),
                     field: "lanes/0".into(),
                     reason: ShapeReason::TypeMismatch,
                     cause: shape_cause.into(),
-                },
+                }),
                 shape_cause,
             ),
         ];

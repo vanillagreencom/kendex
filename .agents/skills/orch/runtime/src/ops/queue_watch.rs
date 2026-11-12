@@ -22,6 +22,7 @@
 //! command over the change the item's validation recorded for the pull
 //! request's head, since only the consumer's own selector knows which of
 //! its checks a change's paths select.
+use agent_runtime::record::{self, Document, Locking};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -33,13 +34,13 @@ use serde_json::Value;
 
 use super::{Env, Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
-use crate::state::{self, Document, Locking, Stage, StageKind};
+use crate::state::{self, Stage, StageKind};
 use crate::validate::files::RunFile;
 use crate::verify::wire::{
     CheckRunsPage, GraphError, GraphReply, Nullable, Optional, RunConclusion, RunStatus,
 };
 use crate::verify::{self, Answer, Bucket, Budget, Gh, Status};
+use agent_runtime::clock::Clock;
 
 /// The github package's program under the project's install, whose
 /// `pr-threads` reads the review threads.
@@ -130,7 +131,7 @@ pub struct QueueWatchRecorded {
 
 pub(super) fn record(doc: &mut Document, r: &RecordQueueWatch) -> Result<QueueWatchRecorded> {
     let replaced = !matches!(doc.get(MEMORY_KEY), None | Some(Value::Null));
-    state::set(doc, MEMORY_KEY, serde_json::to_value(&r.memory)?);
+    record::set(doc, MEMORY_KEY, serde_json::to_value(&r.memory)?);
     Ok(QueueWatchRecorded {
         pr: r.memory.pr,
         was_queued: r.memory.was_queued,
@@ -1408,7 +1409,7 @@ impl<'a> Wait<'a> {
     )]
     fn recorded_change(&self, head: &str) -> Option<RecordedChange> {
         let snapshot = state::load(self.path).ok()??;
-        let stages: Vec<Stage> = state::field(self.path, &snapshot.doc, "stages").ok()??;
+        let stages: Vec<Stage> = record::field(self.path, &snapshot.doc, "stages").ok()??;
         let (stage, proof) = stages.iter().rev().find_map(|stage| {
             let proof = stage.proof.as_ref()?;
             (stage.kind == StageKind::Validate
@@ -1788,10 +1789,12 @@ pub fn run(
             value: r.repo.clone(),
         });
     };
-    let snapshot = state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    let snapshot = state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
-    let memory: Option<Memory> = state::field(path, &snapshot.doc, MEMORY_KEY)?;
+    let memory: Option<Memory> = record::field(path, &snapshot.doc, MEMORY_KEY)?;
     let mut wait = Wait {
         path,
         r,

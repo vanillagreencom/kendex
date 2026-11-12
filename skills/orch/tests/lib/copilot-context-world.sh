@@ -62,7 +62,7 @@ SDK
   payload="$(jq -nc --arg cwd "$root" --arg transcript "$cop_home/session-state/s1/events.jsonl" \
     '{sessionId:"s1",cwd:$cwd,transcript_path:$transcript}')" || return 1
   FLOW_STOP="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" AGENT_RUNTIME_CACHE="$cache" \
-    ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
+    ORCH_STATE_DIR="$root/tmp" AGENT_RUNTIME_ACCOUNT_DIRS="" AGENT_RUNTIME_CONTROLLER_SUCCESSION=on "$@" \
     bash "$root/.github/hooks/lane-mail-check.sh" <<<"$payload")" || return 1
   FLOW_RECORD=none
   if [[ -f "$root/tmp/lane-mail/CC-1/context.json" ]]; then

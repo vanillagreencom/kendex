@@ -65,7 +65,7 @@ case "$verb" in
     source "$SCRIPT_DIR/lib/lane-context.sh"
     source "$SCRIPT_DIR/lib/overseer-launch.sh"
     harness="$1" account="$2" model="$4" effort="$5"
-    trigger="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
+    trigger="${AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT:-5}"
     ol_account "$harness" "$model"
     caller_account="$OL_ACCOUNT_HARNESS"
     rc=4

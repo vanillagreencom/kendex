@@ -1,5 +1,5 @@
 //! The preference walk: the entries of `ORCH_LANE_PREFERENCE` (a lane) or
-//! `ORCH_OVERSEER_PREFERENCE` (an overseer's session) in the setting's
+//! `AGENT_RUNTIME_CONTROLLER_PREFERENCE` (an overseer's session) in the setting's
 //! order, each entry's model classified through `kendex tier-model` and
 //! its account asked of the accounts judge, the first that names an
 //! account chosen; every passed-over entry is in the reply with the
@@ -18,7 +18,9 @@ use serde_json::{Value, json};
 use super::accounts::{self, PickAnswer, PickRequest};
 use super::occupancy::Host;
 use crate::error::{Error, Result};
-use crate::settings::{DEFAULT_OVERSEER_PREFERENCE, Settings};
+use agent_runtime::settings::DEFAULT_CONTROLLER_PREFERENCE;
+
+use crate::settings::Settings;
 use crate::watch::hosted::{self, Capabilities, Launch};
 
 const CLASSIFY_BOUND: Duration = Duration::from_secs(60);
@@ -38,7 +40,7 @@ pub enum Scope {
     /// A lane: `ORCH_LANE_PREFERENCE`, the launcher's bound, a named lane
     /// judged for every entry, the `:last` hold.
     Lane,
-    /// An overseer's session: `ORCH_OVERSEER_PREFERENCE`, seats judged as
+    /// An overseer's session: `AGENT_RUNTIME_CONTROLLER_PREFERENCE`, seats judged as
     /// ordinary accounts, the headroom trigger as the bound, a Codex or
     /// Copilot entry held to its account's binding bucket too (the
     /// overseer's own mark reads that bucket), the caller's entry last.
@@ -332,7 +334,7 @@ struct Resolved {
 /// The harness's entry of the default overseer preference, whose class a
 /// numeric entry with no caller model takes.
 fn default_class(harness: &str) -> Option<String> {
-    DEFAULT_OVERSEER_PREFERENCE
+    DEFAULT_CONTROLLER_PREFERENCE
         .split(',')
         .find(|e| e.split(':').next() == Some(harness))
         .and_then(|e| e.split(':').nth(1))
@@ -644,6 +646,7 @@ pub fn walk(
     now: u64,
 ) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
+    let provider = settings.provider.get()?;
     // The session the walk is asked for and its predecessor each run one of
     // the four harnesses; any other is refused by its name, never walked as
     // a session of no posture or no entry.
@@ -654,7 +657,7 @@ pub fn walk(
     }
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
         Scope::Lane => settings.lane_preference.clone().unwrap_or_default(),
-        Scope::Overseer => settings.overseer_preference.clone(),
+        Scope::Overseer => settings.engine.controller_preference.clone(),
     });
     // An entry whose harness is none of the four names that harness and the
     // four beside the entry, so the reader is not left guessing which of its
@@ -676,18 +679,14 @@ pub fn walk(
         .as_deref()
         .map(|lane| named_lane(settings, lane, now))
         .transpose()?;
-    let scripts = settings
-        .lanes_cli
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+    let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     let mut hosts = Hosts {
         scripts: &scripts,
         lines: BTreeMap::new(),
     };
     let trigger = req
         .min_headroom_pct
-        .unwrap_or(accounts.overseer_headroom_pct);
+        .unwrap_or(accounts.controller_headroom_pct);
     let caller_model = req
         .caller
         .as_ref()
@@ -816,7 +815,7 @@ pub fn walk(
         // The host the entry is judged under: a lane's own, else the
         // fleet's; an overseer runs here, so only a provider sharing the
         // Claude plan's pool over ssh reads for it.
-        let fleet_host = accounts.host.as_deref();
+        let fleet_host = provider.host.as_deref();
         let (judge_host, launch) = match req.scope {
             Scope::Lane => {
                 let host = host.as_deref().or(fleet_host).filter(|h| *h != LOCAL);

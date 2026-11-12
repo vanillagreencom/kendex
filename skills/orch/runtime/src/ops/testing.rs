@@ -2,6 +2,9 @@
 //! mints with, the request builders and the typed readbacks of a written
 //! file.
 
+use agent_runtime::controller::{Pending, TransferCause};
+use agent_runtime::intent::{LaunchIdentity, Owner};
+use agent_runtime::record::{self, Document, Locking};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -17,11 +20,8 @@ use super::{
     RecordOutcome, Report, Request, RequestTransfer, apply_on,
 };
 use crate::error::Result;
-use crate::settings::Judged;
-use crate::state::{
-    self, Document, FleetState, ItemState, Lane, LaunchIdentity, Locking, Owner, Pending, Record,
-    TransferCause, fixtures,
-};
+use crate::state::{FleetState, ItemState, Lane, Record, fixtures};
+use agent_runtime::settings::Judged;
 
 pub(super) const NOW_SECS: u64 = 1_769_700_000;
 pub(super) const NOW_NANOS: u128 = 1_769_700_000_123_456_789;
@@ -63,8 +63,8 @@ fn gone(_: &Identity) -> Reading<Identity> {
 /// liveness hold their own children or plant their readings.
 pub(super) fn host() -> Host<'static> {
     Host {
-        lane_cap: Some(Judged::valid(4)),
-        cloud_lane_cap: Some(Judged::valid(4)),
+        lane_cap: Some(Judged { read: Ok(4) }),
+        cloud_lane_cap: Some(Judged { read: Ok(4) }),
         still_runs: &gone,
         admission: Some(no_reads()),
         accounts: None,
@@ -106,7 +106,7 @@ pub(super) fn item_file(dir: &Path) -> PathBuf {
 }
 
 pub(super) fn fleet_file(dir: &Path) -> PathBuf {
-    let path = dir.join(state::FLEET_FILE_NAME);
+    let path = dir.join(record::FLEET_FILE_NAME);
     fs::write(&path, fixtures::FLEET).unwrap();
     path
 }

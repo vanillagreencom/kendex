@@ -78,6 +78,7 @@ disallowed-methods = [
     # file through the store's reader
     { path = "agent_runtime::record::read_value", reason = "a record file is read only by the state module's load" },
     { path = "agent_runtime::record::read", reason = "a record file is read only by the state module's load" },
+    { path = "agent_runtime::record::read_document", reason = "a record file is read only by the state module's load" },
     { path = "agent_runtime::record::flock_on_path", reason = "the lock tool is looked up only where the command resolves its locking and by the account renewal's credentials lock" },
     { path = "agent_runtime::record::write", reason = "a record is written only by the state module's store" },
     { path = "agent_runtime::record::replace_atomically", reason = "a record is written only by the state module's store" },
@@ -87,7 +88,7 @@ disallowed-methods = [
     { path = "agent_runtime::record::Guard::with_wait", reason = "a record's lock is held only by the state module's store" },
     { path = "agent_runtime::record::Wait::start", reason = "the lock wait's clock is read only by the state module's store" },
     { path = "orch_runtime::state::load", reason = "a state file is read only by the transitions' one read, the operation module's one read, the inspection, the verification and a watch duty's one snapshot per pass, each site carrying its reason" },
-    { path = "orch_runtime::state::store", reason = "the state file is written only through `ops::apply` and the journal's writes beside it, `ops::apply_adoption` and the state verbs' `store::run_write`" },
+    { path = "agent_runtime::record::store", reason = "the state file is written only through `ops::apply` and the journal's writes beside it, `ops::apply_adoption` and the state verbs' `store::run_write`" },
     { path = "orch_runtime::state::init", reason = "a state file is created only by the `state init` command" },
     { path = "orch_runtime::state::inspect", reason = "a state file is inspected only by the `state inspect` command" },
     { path = "orch_runtime::ops::apply", reason = "the store is reached only by the operation handle's writes, the recording boundary and the command" },
@@ -95,7 +96,7 @@ disallowed-methods = [
     { path = "orch_runtime::effects::operation::Operation::open", reason = "the engine's handle is opened only by the lane operation, which names the start of its set" },
     { path = "orch_runtime::ops::apply_adoption", reason = "the adoption's store write takes the pane read only the operation module mints" },
     { path = "orch_runtime::ops::occupancy::Host::kernel", reason = "the kernel's readers are handed to a transition only by the command's store entry and the lane operation" },
-    { path = "orch_runtime::state::locked", reason = "a record's locks are taken only by the store, the lane admission and the removal of item records (`archive::records_locked`)" },
+    { path = "agent_runtime::record::locked", reason = "a record's locks are taken only by the store, the lane admission and the removal of item records (`archive::records_locked`)" },
     { path = "orch_runtime::verify::run", reason = "GitHub is read and the verdict recorded only by the `verify-head` command" },
     # the file system: a file is written, replaced, linked, created or
     # removed only by the store, the receipt, sidecar and notice writers
@@ -143,11 +144,9 @@ disallowed-methods = [
     { path = "std::sync::Condvar::wait_while", reason = "a wait reads the one injected clock through the operation handle" },
     { path = "std::sync::mpsc::Receiver::recv", reason = "a wait on a channel reads the one injected clock through the operation handle" },
     { path = "std::sync::mpsc::Receiver::recv_timeout", reason = "a timed wait reads the one injected clock through the operation handle" },
-    { path = "orch_runtime::schedule::Clock::now", reason = "the clock is read only by the scheduler's runner, the watch stop and the operation handle" },
-    { path = "orch_runtime::schedule::Clock::wall", reason = "the wall clock is read only by the scheduler's runner and the operation handle" },
-    { path = "orch_runtime::schedule::Clock::sleep", reason = "the clock is waited on only by the scheduler's runner, the watch stop and the operation handle" },
+    { path = "agent_runtime::clock::Clock::now", reason = "the clock is read only by the scheduler's runner, the watch stop and the operation handle" },
+    { path = "agent_runtime::clock::Clock::wall", reason = "the wall clock is read only by the scheduler's runner and the operation handle" },
+    { path = "agent_runtime::clock::Clock::sleep", reason = "the clock is waited on only by the scheduler's runner, the watch stop and the operation handle" },
     { path = "orch_runtime::schedule::Schedule::new", reason = "a schedule starts from an instant only where the runner drives it, never from an effect file" },
-    { path = "agent_runtime::record::Timer::now", reason = "the lock wait's clock is read only inside agent-runtime's record locks" },
-    { path = "agent_runtime::record::Timer::sleep", reason = "the lock wait's sleep runs only inside agent-runtime's record locks" },
     { path = "agent_runtime::clock::now", reason = "the wall clock is read only by the command's stamp, through the one injected clock" },
 ]

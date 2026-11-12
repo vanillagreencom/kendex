@@ -4,6 +4,7 @@
 //! artifacts returned). `record-panel` and `record-agents` are the writers;
 //! a pointer write into these fields is held to the checks below.
 
+use agent_runtime::record::{self, Document};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -14,7 +15,6 @@ use serde_json::{Map, Value, json};
 use super::store::{Cap, close_all, count_at, tier};
 use crate::error::{Error, Result};
 use crate::settings::StoreSettings;
-use crate::state::{self, Document};
 
 /// A small item's review panel holds this many reviewers, the external lane
 /// counted.
@@ -179,7 +179,7 @@ pub(crate) fn panel_write(
     }
     let value = serde_json::to_value(panel)?;
     if kind != PanelKind::Rereview {
-        state::set(doc, field, value.clone());
+        record::set(doc, field, value.clone());
         return Ok(json!({"pointer": format!("/{field}"), "value": value}));
     }
     let entered = count_at(path, doc, "/rereview_cycles")?;
@@ -193,8 +193,8 @@ pub(crate) fn panel_write(
             ],
         ));
     }
-    state::set(doc, field, value.clone());
-    state::set(doc, "rereview_cycles", entered + 1);
+    record::set(doc, field, value.clone());
+    record::set(doc, "rereview_cycles", entered + 1);
     Ok(json!({"pointer": "/rereview_panel", "value": value, "rereview_cycles": entered + 1}))
 }
 
@@ -239,7 +239,7 @@ pub enum RecordAgents {
 
 /// Append `value` to the array `field` unless it holds it: whether it did.
 fn append_once(path: &Path, doc: &mut Document, field: &str, value: &str) -> Result<bool> {
-    let items = state::array_mut(path, doc, field)?;
+    let items = record::array_mut(path, doc, field)?;
     let fresh = !items.iter().any(|i| i.as_str() == Some(value));
     if fresh {
         items.push(json!(value));
@@ -272,7 +272,7 @@ pub(crate) fn record_agents(path: &Path, doc: &mut Document, r: &RecordAgents) -
                 "agent_type_fallback": agent_type_fallback,
             });
             if doc.get("child_sessions").is_none_or(Value::is_null) {
-                state::set(doc, "child_sessions", Value::Object(Map::new()));
+                record::set(doc, "child_sessions", Value::Object(Map::new()));
             }
             let Some(Value::Object(sessions)) = doc.get_mut("child_sessions") else {
                 return Err(refused("agents-field", &[("field", "child_sessions")]));
@@ -286,9 +286,9 @@ pub(crate) fn record_agents(path: &Path, doc: &mut Document, r: &RecordAgents) -
             Ok(closed)
         }
         RecordAgents::WaveStart { slots_observed } => {
-            state::set(doc, "review_wave_done", json!([]));
+            record::set(doc, "review_wave_done", json!([]));
             if let Some(slots) = slots_observed {
-                state::set(doc, "reviewer_slots_observed", *slots);
+                record::set(doc, "reviewer_slots_observed", *slots);
             }
             Ok(json!({"step": "wave-start", "slots_observed": slots_observed}))
         }
@@ -310,9 +310,9 @@ pub(crate) fn record_agents(path: &Path, doc: &mut Document, r: &RecordAgents) -
             {
                 return Err(refused("reviewer-unlisted", &[("agent", stray)]));
             }
-            state::set(doc, "review_agents", json!(agents));
-            state::set(doc, "review_agent_ids", json!(ids));
-            state::set(doc, "review_agent_runtime_types", json!(runtime_types));
+            record::set(doc, "review_agents", json!(agents));
+            record::set(doc, "review_agent_ids", json!(ids));
+            record::set(doc, "review_agent_runtime_types", json!(runtime_types));
             Ok(json!({"step": "active", "agents": agents}))
         }
         RecordAgents::Returned { artifact, agent } => {
@@ -333,9 +333,9 @@ pub(crate) fn record_agents(path: &Path, doc: &mut Document, r: &RecordAgents) -
             Ok(report)
         }
         RecordAgents::Cleared {} => {
-            state::set(doc, "review_agents", json!([]));
-            state::set(doc, "review_agent_ids", json!({}));
-            state::set(doc, "review_wave_done", json!([]));
+            record::set(doc, "review_agents", json!([]));
+            record::set(doc, "review_agent_ids", json!({}));
+            record::set(doc, "review_wave_done", json!([]));
             Ok(json!({"step": "cleared"}))
         }
     }

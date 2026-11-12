@@ -1,6 +1,7 @@
 //! A delegation token binds a completion receipt to its round.
 //! Validation belongs to the tree it proves, independent of delegation time.
 
+use agent_runtime::record::{self, Locking};
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
@@ -17,10 +18,10 @@ use serde_json::{Value, json};
 
 use super::{Env, proof};
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
 use crate::settings::Settings;
-use crate::state::{self, ItemState, Locking, Stage, StageKind, ValidateMode};
+use crate::state::{self, ItemState, Stage, StageKind, ValidateMode};
 use crate::validate::files::{self, RunFile};
+use agent_runtime::clock::Clock;
 
 #[derive(Debug, Subcommand)]
 pub enum DevReturn {
@@ -290,11 +291,7 @@ fn committed_tree(worktree: &Path, head: &str) -> Result<String> {
 }
 
 fn script(settings: &Settings, name: &str) -> PathBuf {
-    settings
-        .dev_validate_cli
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(name)
+    crate::watch::overseer::scripts_dir(&settings.roots.project).join(name)
 }
 
 fn shared_measure(
@@ -1674,59 +1671,63 @@ fn record_check(
     answer: &Answer,
 ) -> Result<()> {
     let path = state::item_path(&settings.state_dir, &id.issue);
-    super::reread(|| {
-        let Some(snapshot) = crate::validate::load(&path)? else {
-            return Ok(());
-        };
-        let mut doc = snapshot.doc.clone();
-        if let Some(rows) = doc.get_mut("stages").and_then(Value::as_array_mut) {
-            for row in rows {
-                if row["round_id"] == id.round_id && row["kind"] != "validate" {
-                    row["kind"] = receipt["kind"].clone();
+    record::reread(
+        || {
+            let Some(snapshot) = crate::validate::load(&path)? else {
+                return Ok(());
+            };
+            let mut doc = snapshot.doc.clone();
+            if let Some(rows) = doc.get_mut("stages").and_then(Value::as_array_mut) {
+                for row in rows {
+                    if row["round_id"] == id.round_id && row["kind"] != "validate" {
+                        row["kind"] = receipt["kind"].clone();
+                    }
                 }
             }
-        }
-        let name = file
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or_else(|| refuse("artifact-unreadable", file.display()))?;
-        let mut batch = json!({"records":[]});
-        if let Some(failed) = receipt["validate"]
-            .as_str()
-            .and_then(|s| s.strip_prefix("FAILING:"))
-        {
-            let checks: BTreeSet<_> = failed.split(',').map(str::trim).collect();
-            if checks.contains("") {
-                batch["unknown"] = json!(true);
-            } else {
-                batch["records"] = json!(checks.iter().map(|check| json!({"kind":"validation","check":check,"source":{"round_id":id.round_id,"receipt":name,"identity":["receipt",id.round_id,name,check]}})).collect::<Vec<_>>());
-            }
-        }
-        super::store::findings_record_batch(&mut doc, batch, file)?;
-        if !answer.value["validate_time"].is_null() {
-            let mut rows = doc
-                .get("validate_rounds")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let original = format!("dev-return-{}-{}.json", id.issue, id.round_id);
-            rows.retain(|r| {
-                r["round_id"] != id.round_id || r["receipt"].as_str().unwrap_or(&original) != name
-            });
-            let mut row = json!({"round_id":id.round_id,"receipt":name,"kind":receipt["kind"],"mode":receipt["validate_mode"],"seconds":receipt["validate_time"]["seconds"]});
-            for (key, field) in [
-                ("lanes", "validate_lanes"),
-                ("selection", "validate_selection"),
-            ] {
-                if let Some(value) = receipt.get(field) {
-                    row[key] = value.clone();
+            let name = file
+                .file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(|| refuse("artifact-unreadable", file.display()))?;
+            let mut batch = json!({"records":[]});
+            if let Some(failed) = receipt["validate"]
+                .as_str()
+                .and_then(|s| s.strip_prefix("FAILING:"))
+            {
+                let checks: BTreeSet<_> = failed.split(',').map(str::trim).collect();
+                if checks.contains("") {
+                    batch["unknown"] = json!(true);
+                } else {
+                    batch["records"] = json!(checks.iter().map(|check| json!({"kind":"validation","check":check,"source":{"round_id":id.round_id,"receipt":name,"identity":["receipt",id.round_id,name,check]}})).collect::<Vec<_>>());
                 }
             }
-            rows.push(row);
-            doc.insert("validate_rounds".into(), json!(rows));
-        }
-        state::store(&path, &snapshot, &doc, Locking::FLOCK)
-    })
+            super::store::findings_record_batch(&mut doc, batch, file)?;
+            if !answer.value["validate_time"].is_null() {
+                let mut rows = doc
+                    .get("validate_rounds")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                let original = format!("dev-return-{}-{}.json", id.issue, id.round_id);
+                rows.retain(|r| {
+                    r["round_id"] != id.round_id
+                        || r["receipt"].as_str().unwrap_or(&original) != name
+                });
+                let mut row = json!({"round_id":id.round_id,"receipt":name,"kind":receipt["kind"],"mode":receipt["validate_mode"],"seconds":receipt["validate_time"]["seconds"]});
+                for (key, field) in [
+                    ("lanes", "validate_lanes"),
+                    ("selection", "validate_selection"),
+                ] {
+                    if let Some(value) = receipt.get(field) {
+                        row[key] = value.clone();
+                    }
+                }
+                rows.push(row);
+                doc.insert("validate_rounds".into(), json!(rows));
+            }
+            Ok(record::store(&path, &snapshot.doc, &doc, Locking::FLOCK)?)
+        },
+        Error::key,
+    )
 }
 
 fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
@@ -2034,61 +2035,65 @@ fn recovery_answer(state: &str, round: &str, from: &str, reason: &str) -> Answer
 )]
 fn redelegate(settings: &Settings, r: &RecoverRound, reason: &str, env: &Env) -> Result<Answer> {
     let path = state::item_path(&settings.state_dir, &r.id.issue);
-    super::reread(|| {
-        let snapshot = crate::validate::load(&path)?
-            .ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
-        let mut doc = snapshot.doc.clone();
-        if let Some(previous) = doc.get("round_recovery")
-            && previous["from"] == r.id.round_id
-        {
-            return Ok(recovery_answer(
+    record::reread(
+        || {
+            let snapshot = crate::validate::load(&path)?.ok_or_else(|| {
+                Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+            })?;
+            let mut doc = snapshot.doc.clone();
+            if let Some(previous) = doc.get("round_recovery")
+                && previous["from"] == r.id.round_id
+            {
+                return Ok(recovery_answer(
+                    "redelegate",
+                    previous["to"]
+                        .as_str()
+                        .ok_or_else(|| refuse("state-failed", "round_recovery.to"))?,
+                    &r.id.round_id,
+                    previous["reason"].as_str().unwrap_or(reason),
+                ));
+            }
+            if !r.directive_unconfirmed
+                && doc
+                    .get("recovery_round_id")
+                    .is_some_and(|v| *v == r.id.round_id)
+            {
+                return Ok(recovery_answer(
+                    "exhausted",
+                    &r.id.round_id,
+                    &r.id.round_id,
+                    reason,
+                ));
+            }
+            if doc.get("dev_round_id").is_some_and(|v| *v != r.id.round_id) {
+                return Err(refuse("round-superseded", &r.id.round_id));
+            }
+            let begun = super::item::begin_round(
+                &path,
+                &mut doc,
+                &super::BeginRound {
+                    kind: super::RoundKind::Dev,
+                    body_revision: None,
+                },
+                env,
+            )?;
+            if !r.directive_unconfirmed {
+                doc.insert("recovery_round_id".into(), json!(begun.round_id));
+            }
+            doc.insert(
+                "round_recovery".into(),
+                json!({"from":r.id.round_id,"to":begun.round_id,"reason":reason}),
+            );
+            record::store(&path, &snapshot.doc, &doc, Locking::FLOCK)?;
+            Ok(recovery_answer(
                 "redelegate",
-                previous["to"]
-                    .as_str()
-                    .ok_or_else(|| refuse("state-failed", "round_recovery.to"))?,
-                &r.id.round_id,
-                previous["reason"].as_str().unwrap_or(reason),
-            ));
-        }
-        if !r.directive_unconfirmed
-            && doc
-                .get("recovery_round_id")
-                .is_some_and(|v| *v == r.id.round_id)
-        {
-            return Ok(recovery_answer(
-                "exhausted",
-                &r.id.round_id,
+                &begun.round_id,
                 &r.id.round_id,
                 reason,
-            ));
-        }
-        if doc.get("dev_round_id").is_some_and(|v| *v != r.id.round_id) {
-            return Err(refuse("round-superseded", &r.id.round_id));
-        }
-        let begun = super::item::begin_round(
-            &path,
-            &mut doc,
-            &super::BeginRound {
-                kind: super::RoundKind::Dev,
-                body_revision: None,
-            },
-            env,
-        )?;
-        if !r.directive_unconfirmed {
-            doc.insert("recovery_round_id".into(), json!(begun.round_id));
-        }
-        doc.insert(
-            "round_recovery".into(),
-            json!({"from":r.id.round_id,"to":begun.round_id,"reason":reason}),
-        );
-        state::store(&path, &snapshot, &doc, Locking::FLOCK)?;
-        Ok(recovery_answer(
-            "redelegate",
-            &begun.round_id,
-            &r.id.round_id,
-            reason,
-        ))
-    })
+            ))
+        },
+        Error::key,
+    )
 }
 
 #[allow(

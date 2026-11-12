@@ -26,7 +26,7 @@
 # The job runs inside a mktemp -d root: a consumer repository, its bare
 # origin, a private tmux server on the suite's own socket, and the lane's
 # worktree. The harness is tests/job/stub-harness, selected through
-# ORCH_HARNESS_BINARIES; ONE_JOB_STUB_HARNESS names another copy, which is
+# AGENT_RUNTIME_HARNESS_BINARIES; ONE_JOB_STUB_HARNESS names another copy, which is
 # how a control runs a mutated stub without touching the tracked one.
 # Nothing here reaches a real harness home, GitHub, Linear or a network
 # remote: PATH is sealed behind tools/tests/lib/sealed-bin.
@@ -65,8 +65,8 @@ STUB="${ONE_JOB_STUB_HARNESS:-$TEST_DIR/job/stub-harness}"
 # Nothing of the caller's orchestration environment reaches the job: the
 # settings file is the one source of the job's configuration, the gh fake
 # is its GitHub, and its tmux server is the private one.
-unset ORCH_STATE_DIR ORCH_DELIVERY ORCH_PR_ORDER ORCH_TMUX_SESSION ORCH_HARNESS_BINARIES ORCH_LAUNCH_PERMISSION \
-  ORCH_TMUX_VERIFY_SECS ORCH_LANE_CLOSE_SECS DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_CI_CONTEXT \
+unset ORCH_STATE_DIR ORCH_DELIVERY ORCH_PR_ORDER AGENT_RUNTIME_TMUX_SESSION AGENT_RUNTIME_HARNESS_BINARIES AGENT_RUNTIME_LAUNCH_PERMISSION \
+  AGENT_RUNTIME_TMUX_VERIFY_SECS ORCH_LANE_CLOSE_SECS DEV_VALIDATE_CMD DEV_VALIDATE_RANGE_CMD DEV_VALIDATE_CI_CONTEXT \
   DEV_VALIDATE_SELECTION_CMD DEV_VALIDATE_TIMEOUT_SECS WORKTREE_DEFAULT_BRANCH WORKTREE_BASE_DIR WORKTREE_SYMLINKS \
   KENDEX_ENV_FILE GH_REPO GITHUB_REPOSITORY GITHUB_TOKEN GH_BOT_TOKEN KENDEX_SESSION_OWNER HT_SESSION_OWNER \
   CI_WAIT_MAX_SECS

@@ -16,6 +16,7 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
+use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
@@ -24,7 +25,6 @@ use serde_json::{Value, json};
 
 use super::Env;
 use crate::error::Result;
-use crate::state::{self, Document};
 
 /// POSIX `cksum`: CRC-32 over the bytes then over the byte count, least
 /// significant byte first until none is left, complemented (POSIX.1-2017,
@@ -68,12 +68,10 @@ pub fn canon(config_dir: &str) -> String {
 }
 
 /// The record file for `config_dir`: `walls/<cksum of the canon>.json`
-/// beside the claim store (`account_wall_dir`, `account_wall_file`).
-pub fn account_wall_path(claim_store: &Path, config_dir: &str) -> PathBuf {
+/// under the account records' root.
+pub fn account_wall_path(account_state: &Path, config_dir: &str) -> PathBuf {
     let canon = canon(config_dir);
-    claim_store
-        .parent()
-        .unwrap_or(claim_store)
+    account_state
         .join("walls")
         .join(format!("{}.json", cksum(canon.as_bytes())))
 }
@@ -144,10 +142,10 @@ pub struct AccountWallWrite {
 /// `lanes` never reads half a record.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the account wall record, the watch's own file beside the claim store, read for the sighting it holds and written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
+    reason = "the account wall record, under the account records' root, read for the sighting it holds and written whole and renamed into place, the bytes `lib/account-wall.sh` reads"
 )]
 pub fn record_account_wall(
-    claim_store: &Path,
+    account_state: &Path,
     write: &AccountWallWrite,
 ) -> Result<Option<PathBuf>> {
     let Some(reset) = write.reset else {
@@ -159,7 +157,7 @@ pub fn record_account_wall(
     {
         return Ok(None);
     }
-    let path = account_wall_path(claim_store, &write.config_dir);
+    let path = account_wall_path(account_state, &write.config_dir);
     let dir = path.parent().unwrap_or(&path);
     std::fs::create_dir_all(dir).map_err(|e| agent_runtime::Error::io("create", dir, e))?;
     let config_dir = canon(&write.config_dir);
@@ -337,14 +335,14 @@ pub fn record_wall_pauses(
         {
             if at < now {
                 let pause = json!({"from": stamp, "to": clock::iso_utc(now), "cause": "walled"});
-                state::array_mut(path, lane, "pauses")?.push(pause);
+                record::array_mut(path, lane, "pauses")?.push(pause);
             }
-            state::delete(lane, "walled");
+            record::delete(lane, "walled");
         }
         if let Some(from) = from
             && from <= now
         {
-            state::set(lane, "walled", json!({"at": clock::iso_utc(from)}));
+            record::set(lane, "walled", json!({"at": clock::iso_utc(from)}));
         }
     }
     Ok(WallPausesRecorded {
@@ -364,7 +362,7 @@ mod tests {
         assert_eq!(cksum(b"/home/me/.eclaude"), 2_455_569_205);
         assert_eq!(cksum(b""), 0xFFFF_FFFF);
         assert_eq!(
-            account_wall_path(Path::new("/s/claims"), "/home/me/.eclaude/"),
+            account_wall_path(Path::new("/s"), "/home/me/.eclaude/"),
             PathBuf::from("/s/walls/2455569205.json")
         );
     }

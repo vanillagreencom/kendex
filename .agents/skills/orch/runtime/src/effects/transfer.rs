@@ -15,6 +15,8 @@
 //! retirement, before the first signal, and every terminal outcome after
 //! that consumes them with the runner's.
 
+use agent_runtime::controller::{Overseer, TransferCause};
+use agent_runtime::intent::LaunchIdentity;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
@@ -37,10 +39,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::ops::{RequestTransfer, StartController, overseer_target};
 use crate::settings::Settings;
-use crate::state::{
-    self, BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Overseer, Phase,
-    TransferCause,
-};
+use crate::state::{BoundSession, EffectOp, Intent, OpenedPane, Phase};
 
 /// Which controller lifetime a succession effect serves: a transfer retires
 /// the recorded predecessor; a start has none to retire and refuses over a
@@ -278,7 +277,7 @@ fn unconfirmed_after_retirement(
 /// account names its own home.
 fn kept(
     settings: &Settings,
-    pending: &state::Pending,
+    pending: &agent_runtime::controller::Pending,
     harness: Harness,
     served: Option<&Path>,
 ) -> Option<Kept> {
@@ -339,7 +338,7 @@ impl Successor {
     /// effect that builds the command.
     fn from_pending(
         settings: &Settings,
-        pending: &state::Pending,
+        pending: &agent_runtime::controller::Pending,
         served: Option<&Path>,
         sign_in: &dyn Fn(Harness, &Path) -> SignIn,
     ) -> std::result::Result<(Successor, Option<Value>), Unready> {
@@ -371,7 +370,7 @@ impl Successor {
                 harness,
                 pending
                     .permission
-                    .map_or_else(|| settings.permission.get(), Ok)?,
+                    .map_or_else(|| settings.engine.permission.get(), Ok)?,
                 &pending.extra_args,
             ),
         )?;
@@ -386,7 +385,7 @@ impl Successor {
     /// home is all the launch fields it carries.
     fn opened(
         settings: &Settings,
-        pending: &state::Pending,
+        pending: &agent_runtime::controller::Pending,
         recorded: Option<&str>,
     ) -> Result<Successor> {
         let (harness, cwd) = Self::checked(pending)?;
@@ -406,7 +405,7 @@ impl Successor {
 
     /// The harness word and the working directory, and the account where
     /// the pending names one, each standing.
-    fn checked(pending: &state::Pending) -> Result<(Harness, PathBuf)> {
+    fn checked(pending: &agent_runtime::controller::Pending) -> Result<(Harness, PathBuf)> {
         let harness = pending
             .harness
             .as_deref()
@@ -435,7 +434,7 @@ impl Successor {
 
     fn of(
         settings: &Settings,
-        pending: &state::Pending,
+        pending: &agent_runtime::controller::Pending,
         harness: Harness,
         cwd: PathBuf,
         homes: LaunchHome,
@@ -445,7 +444,7 @@ impl Successor {
             .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
         Ok(Successor {
             harness,
-            target: Target::new(&settings.harness_binaries, harness)?,
+            target: Target::new(&settings.engine.harness_binaries, harness)?,
             home,
             named: homes.named,
             cleared: homes.cleared,
@@ -484,7 +483,7 @@ impl Successor {
                 cwd: &self.cwd,
                 brief: None,
                 permission: self.permission,
-                question_tool: settings.question_tool.get()?.for_overseer(),
+                question_tool: settings.engine.question_tool.get()?.for_controller(),
                 compaction,
                 session_id: match &self.resume {
                     Some(_) => None,
@@ -1139,7 +1138,8 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     operation.begin_retirement(&overseer)?;
     let retired_by = match predecessor {
         Predecessor::Identity(identity) => {
-            let predecessor_target = overseer_target_of(&run.settings.harness_binaries, &overseer)?;
+            let predecessor_target =
+                overseer_target_of(&run.settings.engine.harness_binaries, &overseer)?;
             let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
             // The predecessor's identity stands in the set from the start of
             // retirement; its stop acts only through that token.
@@ -1791,7 +1791,7 @@ pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<Effec
     let mut operation = super::lane_operation::open(run, &intent)?;
     operation.await_caller_gone()?;
     let overseer = read_overseer(run.engine.path)?;
-    let target = overseer_target_of(&run.settings.harness_binaries, &overseer)?;
+    let target = overseer_target_of(&run.settings.engine.harness_binaries, &overseer)?;
     operation.begin_retirement(&overseer)?;
     match operation::predecessor_identity(&overseer) {
         Some(identity) => {
@@ -2125,7 +2125,7 @@ fn moved_target(
     if !operation.signalled() {
         return Ok(operation.refuse("target-moved", observation));
     }
-    let target = overseer_target_of(&run.settings.harness_binaries, overseer)?;
+    let target = overseer_target_of(&run.settings.engine.harness_binaries, overseer)?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     if let Some(cause) = operation.stop_standing_processes(&owns, None)? {
         observation["stop"] = json!(cause);
@@ -2195,7 +2195,7 @@ fn judge_resolved(
                 // that ends it lets the succession go on from the runner, any
                 // other answer holds.
                 let predecessor_target =
-                    overseer_target_of(&run.settings.harness_binaries, overseer)?;
+                    overseer_target_of(&run.settings.engine.harness_binaries, overseer)?;
                 let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
                 let token = operation::predecessor_identity(overseer)
                     .and_then(|id| operation.standing_process(&id));

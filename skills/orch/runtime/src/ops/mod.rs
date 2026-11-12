@@ -97,6 +97,8 @@ pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
 pub use verify_pr::{PrVerified, VerifyPr};
 pub use verify_review::{ReviewVerified, VerifyReview};
 
+use agent_runtime::intent::{LaunchIdentity, Notice, Owner, Reconciled};
+use agent_runtime::record::{self, Document, Locking};
 use std::path::Path;
 
 use agent_runtime::clock;
@@ -106,10 +108,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::{Error, Result};
-use crate::state::{
-    self, Document, EffectOp, Intent, Kind, Lane, LaunchIdentity, Locking, Notice, Owner,
-    PrincipalKeys, Reconciled, Snapshot,
-};
+use crate::state::{self, EffectOp, Intent, Kind, Lane, PrincipalKeys, Snapshot};
 
 /// The clock and nonce an operation stamps with, supplied by the caller so
 /// a transition is a pure function of the record and this value. One call
@@ -185,7 +184,7 @@ pub struct RecordOutcome {
     /// the record's `overseer.watch`; a succession carries none and keeps the
     /// field as it stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch: Option<crate::state::WatchJob>,
+    pub watch: Option<agent_runtime::controller::WatchJob>,
     /// The root a confirmed lane's files are read under, where its host
     /// named one: a hosted lane's worktree on its host, a cloud lane's
     /// worktree the launch made.
@@ -488,24 +487,6 @@ fn apply_host(
     apply_interleaved(path, request, env, locking, host, &|| {})
 }
 
-/// How many fresh reads a re-applied write takes before a record that keeps
-/// moving under it is reported as `record-changed`.
-const REREADS: u32 = 8;
-
-/// Run `attempt` again while its store refuses `record-changed`, up to
-/// [`REREADS`] times. Each attempt reads the record afresh and re-applies its
-/// transition, so a write another writer committed between the read and the
-/// store is kept, never overwritten.
-pub(crate) fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
-    let mut attempts = 0;
-    loop {
-        match attempt() {
-            Err(e) if attempts < REREADS && e.key() == "record-changed" => attempts += 1,
-            settled => return settled,
-        }
-    }
-}
-
 /// Whether a store of `request` that refuses `record-changed` is read again
 /// and re-applied: the launcher-side progress and outcome writes, which write
 /// only while their owner still holds the intent, and the job's claim, whose
@@ -570,7 +551,7 @@ fn commit(
     let mut doc = snapshot.doc.clone();
     let report = transition(&mut doc)?;
     between();
-    state::store(path, &snapshot, &doc, locking)?;
+    record::store(path, &snapshot.doc, &doc, locking)?;
     Ok(Applied { kind, report })
 }
 
@@ -602,7 +583,7 @@ fn apply_interleaved(
         // store is read again, so a claim that landed in the gap is answered
         // with the claimant's state, never `record-changed`. The ordinary
         // stale-write refusal stays for a record that keeps moving.
-        return reread(transition);
+        return record::reread(transition, Error::key);
     }
     if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
         // A lane admission, and the path admission that judges against the
@@ -610,7 +591,7 @@ fn apply_interleaved(
         // `<fleet>.launch.lock`) from before the snapshot read through the
         // committed row, so two contenders on one path are judged one after
         // the other; the state file's own lock is taken inside, by the write.
-        return state::locked(&occupancy::launch_lock_base(path), locking, transition);
+        return record::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()
 }
@@ -662,7 +643,7 @@ pub fn write_progress(path: &Path, r: &RecordProgress, locking: Locking) -> Resu
         })
     };
     if r.while_owner.is_some() {
-        reread(attempt)
+        record::reread(attempt, Error::key)
     } else {
         attempt()
     }
@@ -673,13 +654,16 @@ pub fn write_progress(path: &Path, r: &RecordProgress, locking: Locking) -> Resu
 /// the launcher's own write that lands the instant the job starts.
 pub fn write_claim(path: &Path, r: &ClaimIntent, env: &Env, locking: Locking) -> Result<Applied> {
     let kind = journal_kind(path, "claim-intent")?;
-    reread(|| {
-        commit(path, kind, locking, &|| {}, |doc| {
-            Ok(Report::ClaimIntent(Box::new(controller::claim_intent(
-                path, doc, r, env,
-            )?)))
-        })
-    })
+    record::reread(
+        || {
+            commit(path, kind, locking, &|| {}, |doc| {
+                Ok(Report::ClaimIntent(Box::new(controller::claim_intent(
+                    path, doc, r, env,
+                )?)))
+            })
+        },
+        Error::key,
+    )
 }
 
 /// The journal's outcome write: the intent closed or held with how its
@@ -702,7 +686,7 @@ pub fn write_outcome(
         })
     };
     if r.while_owner.is_some() {
-        reread(attempt)
+        record::reread(attempt, Error::key)
     } else {
         attempt()
     }
@@ -733,8 +717,10 @@ pub fn target_kind(path: &Path, request: &Request) -> Result<Kind> {
     reason = "the transitions' one read of a state file, whose snapshot the write check commits against"
 )]
 pub(crate) fn loaded(path: &Path) -> Result<Snapshot> {
-    state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })
 }
 
@@ -913,26 +899,28 @@ pub fn fleet_transition(
 }
 
 fn lanes(path: &Path, doc: &Document) -> Result<Vec<Lane>> {
-    Ok(state::field(path, doc, "lanes")?.unwrap_or_default())
+    Ok(record::field(path, doc, "lanes")?.unwrap_or_default())
 }
 
 fn intents(path: &Path, doc: &Document) -> Result<Vec<Intent>> {
-    Ok(state::field(path, doc, "intents")?.unwrap_or_default())
+    Ok(record::field(path, doc, "intents")?.unwrap_or_default())
 }
 
 fn lane_at(path: &Path, doc: &Document, index: usize) -> Result<Lane> {
     let lanes = lanes(path, doc)?;
-    lanes.into_iter().nth(index).ok_or_else(|| Error::Shape {
-        path: path.to_path_buf(),
-        field: format!("lanes/{index}"),
-        reason: crate::error::ShapeReason::NotObject,
-        cause: "absent".to_owned(),
+    lanes.into_iter().nth(index).ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordShape {
+            path: path.to_path_buf(),
+            field: format!("lanes/{index}"),
+            reason: agent_runtime::error::ShapeReason::NotObject,
+            cause: "absent".to_owned(),
+        })
     })
 }
 
 fn lane_doc_mut<'a>(path: &Path, doc: &'a mut Document, index: usize) -> Result<&'a mut Document> {
-    let rows = state::array_mut(path, doc, "lanes")?;
-    state::element_mut(path, rows, index, "lanes")
+    let rows = record::array_mut(path, doc, "lanes")?;
+    Ok(record::element_mut(path, rows, index, "lanes")?)
 }
 
 /// What stands open on a target when an operation arrives.
@@ -973,11 +961,11 @@ fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standin
             EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController,
         )
         | (EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController, _) => {
-            Err(Error::IntentOpen {
+            Err(Error::Runtime(agent_runtime::Error::IntentOpen {
                 intent: intent.id.clone(),
-                op: intent.op,
+                op: intent.op.word(),
                 target: target.to_owned(),
-            })
+            }))
         }
     }
 }
@@ -988,11 +976,11 @@ fn same_open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Op
     match open_intent(intents, op, target)? {
         Standing::Clear => Ok(None),
         Standing::Same(intent) => Ok(Some(intent)),
-        Standing::Supersedable(intent) => Err(Error::IntentOpen {
+        Standing::Supersedable(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
             intent: intent.id.clone(),
-            op: intent.op,
+            op: intent.op.word(),
             target: target.to_owned(),
-        }),
+        })),
     }
 }
 
@@ -1000,11 +988,11 @@ fn same_open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Op
 /// its own.
 fn no_open_intent(intents: &[Intent], target: &str) -> Result<()> {
     match intents.iter().find(|i| i.target == target && i.open()) {
-        Some(intent) => Err(Error::IntentOpen {
+        Some(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
             intent: intent.id.clone(),
-            op: intent.op,
+            op: intent.op.word(),
             target: target.to_owned(),
-        }),
+        })),
         None => Ok(()),
     }
 }
@@ -1014,14 +1002,14 @@ fn no_open_intent(intents: &[Intent], target: &str) -> Result<()> {
 /// `Env`, never a second effect.
 fn push_intent(path: &Path, doc: &mut Document, intent: &Intent) -> Result<()> {
     let value = serde_json::to_value(intent)?;
-    let rows = state::array_mut(path, doc, "intents")?;
+    let rows = record::array_mut(path, doc, "intents")?;
     if rows
         .iter()
         .any(|row| row.get("id").and_then(Value::as_str) == Some(intent.id.as_str()))
     {
-        return Err(Error::IntentDuplicate {
+        return Err(Error::Runtime(agent_runtime::Error::IntentDuplicate {
             id: intent.id.clone(),
-        });
+        }));
     }
     rows.push(value);
     Ok(())
@@ -1034,7 +1022,9 @@ fn push_intent(path: &Path, doc: &mut Document, intent: &Intent) -> Result<()> {
 /// it, and is judged as one with no owner.
 fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
     let Some(owner) = env.owner.clone() else {
-        return Err(Error::OwnerUnreadable { op: op.word() });
+        return Err(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
+            op: op.word(),
+        }));
     };
     Ok(Intent {
         id: format!("{}:{target}:{}", op.word(), env.round_id()),
@@ -1074,7 +1064,7 @@ fn string_or_null(value: &Option<String>) -> Value {
 /// Null `key` where `doc` holds it; an absent optional field gains no null.
 fn null_held(doc: &mut Document, key: &str) {
     if doc.contains_key(key) {
-        state::set(doc, key, Value::Null);
+        record::set(doc, key, Value::Null);
     }
 }
 
@@ -1090,15 +1080,19 @@ fn record_outcome(
     arm: OutcomeArm,
 ) -> Result<OutcomeRecorded> {
     if r.outcome == Outcome::NotStarted {
-        return Err(Error::OutcomeInvalid { outcome: r.outcome });
+        return Err(Error::Runtime(agent_runtime::Error::OutcomeInvalid {
+            outcome: r.outcome,
+        }));
     }
     let at = env.iso();
     let intents = intents(path, doc)?;
     let index = intents
         .iter()
         .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: r.intent_id.clone(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: r.intent_id.clone(),
+            })
         })?;
     let mut intent = intents[index].clone();
     // The launcher-side handle closes only while it still owns the intent: a
@@ -1124,10 +1118,10 @@ fn record_outcome(
                 reconciled: None,
             });
         }
-        return Err(Error::IntentComplete {
+        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
-        });
+        }));
     }
     // The set as the writer read it: a terminal over a set another handle
     // replaced since is refused, the same answer a progress write on that set
@@ -1135,11 +1129,11 @@ fn record_outcome(
     if let Some(read) = r.set_revision {
         let found = intent.obligations.as_ref().map_or(0, |o| o.revision);
         if read != found {
-            return Err(Error::SetReplaced {
+            return Err(Error::Runtime(agent_runtime::Error::SetReplaced {
                 id: intent.id.clone(),
                 expected: read,
                 found,
-            });
+            }));
         }
     }
     // The document as read, kept to compare the patched one against: an
@@ -1161,7 +1155,7 @@ fn record_outcome(
             .as_ref()
             .and_then(|o| o.get("note"))
             .and_then(Value::as_str),
-        Some(state::OWNER_LIVE | state::OWNER_UNREAD)
+        Some(agent_runtime::intent::OWNER_LIVE | agent_runtime::intent::OWNER_UNREAD)
     );
     // A target that moved under the intent closes it only on a terminal word:
     // an `unconfirmed` outcome keeps the intent open, with the generation or
@@ -1193,7 +1187,7 @@ fn record_outcome(
             EffectOp::RequestTransfer | EffectOp::StopController | EffectOp::StartController
         )
     {
-        state::array_mut(path, doc, "fleet_log")?.push(serde_json::json!({
+        record::array_mut(path, doc, "fleet_log")?.push(serde_json::json!({
             "at": at,
             "kind": "close",
             "item": "overseer",
@@ -1203,35 +1197,35 @@ fn record_outcome(
             key: notice.key.clone(),
             text: notice.text.clone(),
             to: notice.to.clone(),
-            owner: state::NOTICE_OWED.to_owned(),
+            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
         });
     }
-    let rows = state::array_mut(path, doc, "intents")?;
-    let row = state::element_mut(path, rows, index, "intents")?;
-    state::set(row, "outcome", serde_json::to_value(r.outcome)?);
+    let rows = record::array_mut(path, doc, "intents")?;
+    let row = record::element_mut(path, rows, index, "intents")?;
+    record::set(row, "outcome", serde_json::to_value(r.outcome)?);
     if let Some(notice) = &intent.notice
         && r.notice.is_some()
     {
-        state::set(row, "notice", serde_json::to_value(notice)?);
+        record::set(row, "notice", serde_json::to_value(notice)?);
     }
     if let Some(completed_at) = &intent.completed_at {
-        state::set(row, "completed_at", completed_at.as_str());
+        record::set(row, "completed_at", completed_at.as_str());
     }
     if let Some(observation) = &r.observation {
-        state::set(row, "observation", observation.clone());
+        record::set(row, "observation", observation.clone());
     }
     if let Some(reconciled) = stale {
-        state::set(row, "reconciled", serde_json::to_value(reconciled)?);
+        record::set(row, "reconciled", serde_json::to_value(reconciled)?);
     }
     if let Some(status) = intent.observed_status {
-        state::set(row, "observed_status", status.word());
+        record::set(row, "observed_status", status.word());
     }
     if let Some(generation) = intent.observed_generation {
-        state::set(row, "observed_generation", generation);
+        record::set(row, "observed_generation", generation);
     }
     // An outcome that left the document as it was is recorded nowhere, and the
     // store then writes nothing.
-    if state::same_document(path, doc, &before)? {
+    if record::same_document(path, doc, &before)? {
         recorded.recorded_now = false;
     }
     recorded.reconciled = stale;
@@ -1556,7 +1550,7 @@ mod tests {
         ] {
             let err = apply_on(&path, &request, &unowned, LOCK, &host()).unwrap_err();
             assert!(
-                matches!(&err, Error::OwnerUnreadable { op: refused } if *refused == op),
+                matches!(&err, Error::Runtime(agent_runtime::Error::OwnerUnreadable { op: refused }) if *refused == op),
                 "{op}: {err}"
             );
             assert_eq!(err.key(), "owner-unreadable");
@@ -1595,7 +1589,7 @@ mod tests {
         let before = fs::read_to_string(&path).unwrap();
         let err = apply_on(&path, &launch("KEN-4468"), &env(), LOCK, &host()).unwrap_err();
         assert!(
-            matches!(&err, Error::IntentDuplicate { id } if *id == first),
+            matches!(&err, Error::Runtime(agent_runtime::Error::IntentDuplicate { id }) if *id == first),
             "{err}"
         );
         assert_eq!(err.key(), "intent-duplicate");
@@ -1760,7 +1754,10 @@ mod tests {
                     assert_eq!(lane(p, "KEN-4468").status, LaneStatus::Done);
                     let intent = &fleet(p).intents[0];
                     assert!(!intent.open(), "the intent is closed, not wedged");
-                    assert_eq!(intent.reconciled, Some(state::Reconciled::IntentStale));
+                    assert_eq!(
+                        intent.reconciled,
+                        Some(agent_runtime::intent::Reconciled::IntentStale)
+                    );
                     assert_eq!(intent.observed_status, Some(LaneStatus::Done));
                 },
             },
@@ -1791,7 +1788,10 @@ mod tests {
                         .find(|i| i.op == EffectOp::CloseOwnedResources)
                         .unwrap();
                     assert!(!close.open());
-                    assert_eq!(close.reconciled, Some(state::Reconciled::IntentStale));
+                    assert_eq!(
+                        close.reconciled,
+                        Some(agent_runtime::intent::Reconciled::IntentStale)
+                    );
                 },
             },
         ];
@@ -1841,10 +1841,10 @@ mod tests {
         let err = run(&path, &outcome(id, Outcome::Failed)).unwrap_err();
         assert!(matches!(
             err,
-            Error::IntentComplete {
+            Error::Runtime(agent_runtime::Error::IntentComplete {
                 outcome: Outcome::Confirmed,
                 ..
-            }
+            })
         ));
         // A confirmed launch is no longer an open intent, so a new launch of
         // the item is judged on the lane's status alone.
@@ -1888,7 +1888,7 @@ mod tests {
             &env(),
         )
         .unwrap();
-        state::store(&path, &first, &a, LOCK).unwrap();
+        record::store(&path, &first.doc, &a, LOCK).unwrap();
         let mut b = second.doc.clone();
         let other = Env { nonce: 1, ..env() };
         item_transition(
@@ -1901,7 +1901,7 @@ mod tests {
             &other,
         )
         .unwrap();
-        let err = state::store(&path, &second, &b, LOCK).unwrap_err();
+        let err = record::store(&path, &second.doc, &b, LOCK).unwrap_err();
         assert_eq!(err.key(), "record-changed");
         let Report::BeginRound(begun) = report_a else {
             panic!()

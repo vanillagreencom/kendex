@@ -65,7 +65,9 @@ use agent_runtime::reading::Reading;
 use serde::Serialize;
 
 use crate::error::{Error, Result, WatchError};
-use crate::schedule::{Anchor, Cadences, Clock, Duty, Schedule};
+use agent_runtime::clock::Clock;
+
+use crate::schedule::{Anchor, Cadences, Duty, Schedule};
 use crate::settings::Settings;
 
 pub use baseline::{Baseline, Change};
@@ -706,7 +708,7 @@ mod tests {
     fn a_replacement_reading_the_running_loops_start_less_record_waits_for_its_release_then_claims()
     {
         let dir = tempfile::tempdir().unwrap();
-        let paths = Paths::of(&dir.path().join(crate::state::FLEET_FILE_NAME)).unwrap();
+        let paths = Paths::of(&dir.path().join(agent_runtime::record::FLEET_FILE_NAME)).unwrap();
         let mut held = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
@@ -721,7 +723,7 @@ mod tests {
         )
         .unwrap();
         let settings = crate::settings::load(
-            &crate::settings::Roots {
+            &agent_runtime::settings::Roots {
                 project: dir.path().to_path_buf(),
                 common: dir.path().to_path_buf(),
             },

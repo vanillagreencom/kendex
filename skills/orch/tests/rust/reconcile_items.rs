@@ -5,7 +5,9 @@
 
 mod support;
 
-use orch_runtime::settings::{self, Flags, Roots};
+use agent_runtime::record::Locking;
+use agent_runtime::settings::Roots;
+use orch_runtime::settings::{self, Flags};
 use orch_runtime::watch::tracker::reconcile_items as reconcile;
 use serde_json::{Value, json};
 use std::fs;
@@ -842,8 +844,8 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
 }
 
 fn repair_passes(mode: &str) {
-    use orch_runtime::schedule::{Clock, Duty, SystemClock};
-    use orch_runtime::state::Locking;
+    use agent_runtime::clock::{Clock, SystemClock};
+    use orch_runtime::schedule::Duty;
     use orch_runtime::watch::{Baseline, Tick, tracker};
     // A rate-limited update ends the owner read: no read-back, no comment
     // read, no answer delivered on that pass.
@@ -1147,7 +1149,8 @@ fn a_checklist_the_parser_could_not_read_refuses_the_verb() {
 const WATCH_INVALID: &str = "The Verifying item has invalid post-merge metadata or an open branch-provable box. Correct its checklist before verification.";
 
 fn verification_passes() {
-    use orch_runtime::schedule::{Clock, Duty, SystemClock};
+    use agent_runtime::clock::{Clock, SystemClock};
+    use orch_runtime::schedule::Duty;
     use orch_runtime::watch::tracker::{Latest, TrackerInventory, VerifyingItem};
     use orch_runtime::watch::{Baseline, Change, Event, Tick, verifying};
     let world = World::new(vec![]);

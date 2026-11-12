@@ -2052,7 +2052,7 @@ pub(crate) fn configured_state_dir(
             }
         }
     };
-    let read = |path: &Path| -> crate::error::Result<Option<String>> {
+    let read = |path: &Path| -> agent_runtime::Result<Option<String>> {
         let shown = path.display().to_string();
         match fetch(scripts, host, &lane.item, &shown) {
             Answer::Live(text) => Ok(Some(text)),
@@ -2060,8 +2060,7 @@ pub(crate) fn configured_state_dir(
             Answer::Unreadable { cause } => Err(agent_runtime::Error::refused(
                 "host-file-unread",
                 &[("path", &shown), ("cause", &cause)],
-            )
-            .into()),
+            )),
         }
     };
     let dir = settings::state_dir_named(Path::new(root), &read).map_err(|e| e.to_string())?;

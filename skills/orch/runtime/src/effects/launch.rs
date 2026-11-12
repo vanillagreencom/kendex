@@ -7,6 +7,8 @@
 //! created through the Claude CLI's own answer and opens no window. Every
 //! host read and write here goes through [`Operation`] or the one runner.
 
+use agent_runtime::intent::LaunchIdentity;
+use agent_runtime::record;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -32,7 +34,7 @@ use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch, accounts};
 use crate::settings::{LaneOutput, Settings};
-use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
+use crate::state::{self, Intent, Lane, OpenedPane, Phase};
 use crate::watch::hosted::{self, Launch, PaneKind};
 
 pub(super) mod gate;
@@ -298,7 +300,7 @@ fn standing_handoff(run: &Run, item: &str) -> Result<Option<Relaunch>> {
     let Some(snapshot) = super::snapshot(&path)? else {
         return Ok(None);
     };
-    let Some(handoff) = state::field::<Value>(&path, &snapshot.doc, "handoff")? else {
+    let Some(handoff) = record::field::<Value>(&path, &snapshot.doc, "handoff")? else {
         return Ok(None);
     };
     if handoff.get("resumed_at").is_some_and(|v| !v.is_null()) {
@@ -376,7 +378,7 @@ fn prepare_launch(
         r.model.as_deref(),
         kept.as_ref(),
         &cwd,
-        agent_runtime::launch::full_bypass(harness, settings.permission.get()?, &permission),
+        agent_runtime::launch::full_bypass(harness, settings.engine.permission.get()?, &permission),
     )?;
     let floor = match (route, &homes.sessions) {
         (Route::Resume { session_id, .. }, _) => SessionFloor::Fixed(session_id.clone()),
@@ -419,7 +421,7 @@ fn prepare_launch(
     let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
-        target: Target::new(&settings.harness_binaries, harness)?,
+        target: Target::new(&settings.engine.harness_binaries, harness)?,
         home: homes.sessions,
         home_implicit: homes.cleared,
         server: fleet.server,
@@ -1190,7 +1192,7 @@ fn hosted_launch(
     if let Err(e) = check_program(&command) {
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
-    let target = Target::new(&run.settings.harness_binaries, harness)?;
+    let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
@@ -1358,7 +1360,7 @@ fn hosted_command(
             "-o".to_owned(),
             "BatchMode=yes".to_owned(),
             "-o".to_owned(),
-            format!("ConnectTimeout={}", settings.verify.get()?.as_secs()),
+            format!("ConnectTimeout={}", settings.engine.verify.get()?.as_secs()),
             "--".to_owned(),
             created.target.clone(),
             line,
@@ -2053,7 +2055,7 @@ fn judge_opened(
             json!({"reconcile": "launch", "observed": "present", "cause": "harness-unknown"}),
         ));
     };
-    let target = Target::new(&run.settings.harness_binaries, harness)?;
+    let target = Target::new(&run.settings.engine.harness_binaries, harness)?;
     let hosted = matches!(surface_of(lane.host.as_deref()), Surface::Hosted(_));
     let owns = |name: &str| (hosted && name == "ssh") || target.owns(name);
     let (foreground, state) =

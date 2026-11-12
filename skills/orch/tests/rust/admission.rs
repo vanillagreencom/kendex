@@ -112,7 +112,7 @@ impl Fleet {
                 "TMUX",
                 format!("{},0,0", self.dir.path().join("no-such.sock").display()),
             )
-            .env("ORCH_TMUX_SESSION", "fleet")
+            .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
             .env("ORCH_OVERSEER_LANES", "4")
             .env(
                 "OVERSEE_WATCH_TRACKER",
@@ -132,10 +132,6 @@ impl Fleet {
             .env(
                 "LANE_MAIL_CLI",
                 fixtures().join("lane-mail-quiet/lane-mail"),
-            )
-            .env(
-                "DEV_VALIDATE_CLI",
-                fixtures().join("dev-validate-quiet/dev-validate-run"),
             )
             // No project settings or private env reach the test's own tree.
             .current_dir(self.state_dir());

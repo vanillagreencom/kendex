@@ -7,9 +7,11 @@
 //! its intent and policy inputs and consumes typed results.
 
 pub mod clock;
+pub mod controller;
 pub mod error;
 pub mod harness;
 pub mod host;
+pub mod intent;
 pub mod launch;
 pub mod observe;
 pub mod process;
@@ -18,6 +20,7 @@ pub mod reading;
 pub mod record;
 pub mod rows;
 pub mod session;
+pub mod settings;
 pub mod trust;
 
 pub use error::{Error, Result};

@@ -3,32 +3,10 @@
 //! and the diagnostic line opens with `key()`. A field value never carries
 //! a serializer's or parser's own message: that text is the human line.
 
+use agent_runtime::intent::Owner;
 use std::path::PathBuf;
 
-use agent_runtime::protocol::Outcome;
-
-use crate::state::{EffectOp, Kind, LaneStatus, Owner};
-
-/// Why a field of a record is not the shape the operations read. The word
-/// is the `reason=` value of a `record-shape` line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ShapeReason {
-    NotObject,
-    NotArray,
-    /// The value parsed, but not as the type the field carries.
-    TypeMismatch,
-}
-
-impl ShapeReason {
-    /// The stable word a diagnostic carries.
-    pub fn word(self) -> &'static str {
-        match self {
-            ShapeReason::NotObject => "not-object",
-            ShapeReason::NotArray => "not-array",
-            ShapeReason::TypeMismatch => "type-mismatch",
-        }
-    }
-}
+use crate::state::{Kind, LaneStatus};
 
 /// The window a walled account was judged on: the
 /// projected window where one was projected, else the reading's wall.
@@ -56,18 +34,6 @@ pub enum Error {
     /// A record, lock, process or protocol failure agent-runtime reported.
     #[error(transparent)]
     Runtime(#[from] agent_runtime::Error),
-    #[error("{path}: no state file")]
-    RecordMissing { path: PathBuf },
-    /// A field of the record is not the shape an operation reads; `field`
-    /// is the top-level key, with `/<index>` for an array element, and the
-    /// empty field is the record itself.
-    #[error("{path}: field {field:?} {}: {cause}", reason.word())]
-    Shape {
-        path: PathBuf,
-        field: String,
-        reason: ShapeReason,
-        cause: String,
-    },
     /// The request's operation belongs to the other kind of state file.
     #[error("{op} applies to the {wanted:?} state, {path} is the {kind:?} state")]
     OpKind {
@@ -104,14 +70,6 @@ pub enum Error {
     /// cannot run; refused before any intent persists.
     #[error("a {kind:?} {surface:?} lane is not a local tmux window")]
     HostUnsupported { kind: String, surface: String },
-    /// Another operation's intent on the target has not ended; the request
-    /// waits for its outcome instead of racing it.
-    #[error("intent {intent} ({}) is open on {target}", op.word())]
-    IntentOpen {
-        intent: String,
-        op: EffectOp,
-        target: String,
-    },
     #[error("no round stage carries {round_id}")]
     RoundUnknown { round_id: String },
     /// No validation stage of the round names the run directory.
@@ -136,26 +94,6 @@ pub enum Error {
     /// start keeps a record only where it names that pane on that server.
     #[error("intent {intent}: the transfer confirmation names no {field}")]
     LaunchMissing { intent: String, field: &'static str },
-    #[error("no intent carries the id {id}")]
-    IntentUnknown { id: String },
-    /// An intent with this id already stands. The id carries the stamp the
-    /// caller minted for the call, so this is a replayed stamp, a programming
-    /// error; the standing intent is never written over.
-    #[error("an intent already carries the id {id}")]
-    IntentDuplicate { id: String },
-    #[error("intent {id} already ended as {outcome:?}")]
-    IntentComplete { id: String, outcome: Outcome },
-    /// A progress write names the obligation set at a revision the record no
-    /// longer holds: another handle or process replaced the set since the
-    /// writer read it, so the writer's view is stale and it acts on nothing.
-    #[error(
-        "intent {id}: the obligation set was replaced (revision {expected} written, {found} recorded)"
-    )]
-    SetReplaced {
-        id: String,
-        expected: u64,
-        found: u64,
-    },
     /// A launcher-side write found the intent under another owner: the store
     /// yielded the write to that claimant and the handle acts on nothing;
     /// its caller hands the claimant's state back
@@ -167,20 +105,11 @@ pub enum Error {
     /// no handle opens on it; the record is closed by hand.
     #[error("intent {id}: an obligation is recorded without a role")]
     RoleMissing { id: String },
-    /// `not-started` is the state an intent is created in, never an outcome
-    /// an effect reports.
-    #[error("{outcome:?} is not an outcome an effect can report")]
-    OutcomeInvalid { outcome: Outcome },
     /// The word is none a verification record carries (`pass`, `fail`,
     /// `none`). `pending` is a wait that ended without a result,
     /// no verdict about the head, so it is refused rather than recorded.
     #[error("{verdict:?} is not a verification verdict")]
     VerdictInvalid { verdict: String },
-    /// The operation persists an intent, and the process asking has no
-    /// readable identity to own it with. A contender could not
-    /// tell such an intent's live effect from a dead one, so none is written.
-    #[error("{op}: no readable process identity to own the intent")]
-    OwnerUnreadable { op: &'static str },
     // The session send's refusals.
     /// A directive send on a lane whose channel is a mailbox, not a cloud
     /// session: the mailbox send is the mailbox's own.
@@ -228,7 +157,7 @@ pub enum Error {
     HandoffWrittenAtInvalid { written_at: String },
     #[error("handoff written_at {written_at} is later than the clock at {now}")]
     HandoffWrittenAtFuture { written_at: String, now: String },
-    /// `ORCH_OVERSEER_SUCCESSION=off`: no succession is asked for and no
+    /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`: no succession is asked for and no
     /// intent persists.
     #[error("succession is off, so no transfer is requested")]
     SuccessionOff,
@@ -621,21 +550,12 @@ impl WatchError {
     }
 }
 
-fn word(outcome: Outcome) -> String {
-    serde_json::to_value(outcome)
-        .ok()
-        .and_then(|v| v.as_str().map(str::to_owned))
-        .unwrap_or_default()
-}
-
 impl Error {
     /// The stable key a diagnostic line opens with.
     pub fn key(&self) -> &'static str {
         match self {
             Error::Artifact { key, .. } => key,
             Error::Runtime(e) => e.key(),
-            Error::RecordMissing { .. } => "record-missing",
-            Error::Shape { .. } => "record-shape",
             Error::OpKind { .. } => "op-kind",
             Error::Request { .. } => "request-invalid",
             Error::OpNotTransition { .. } => "op-not-transition",
@@ -645,7 +565,6 @@ impl Error {
             Error::LaneLive { .. } => "lane-live",
             Error::LaneDone { .. } => "lane-done",
             Error::HostUnsupported { .. } => "host-unsupported",
-            Error::IntentOpen { .. } => "intent-open",
             Error::RoundUnknown { .. } => "round-unknown",
             Error::RunUnknown { .. } => "run-unknown",
             Error::RoundSuperseded { .. } => "round-superseded",
@@ -653,15 +572,9 @@ impl Error {
             Error::OverseerChanged { .. } => "overseer-changed",
             Error::PendingMissing { .. } => "pending-missing",
             Error::LaunchMissing { .. } => "launch-missing",
-            Error::IntentUnknown { .. } => "intent-unknown",
-            Error::IntentDuplicate { .. } => "intent-duplicate",
-            Error::IntentComplete { .. } => "intent-complete",
-            Error::SetReplaced { .. } => "set-replaced",
             Error::Yielded { .. } => "intent-yielded",
             Error::RoleMissing { .. } => "role-missing",
-            Error::OutcomeInvalid { .. } => "outcome-invalid",
             Error::VerdictInvalid { .. } => "verdict-invalid",
-            Error::OwnerUnreadable { .. } => "owner-unreadable",
             Error::LaneChannel { .. } => "lane-channel",
             Error::DirectiveSendOwed { .. } => "directive-send-owed",
             Error::DirectiveSendUnowed { .. } => "directive-send-unowed",
@@ -735,20 +648,9 @@ impl Error {
         match self {
             Error::Artifact { cause, .. } => vec![pair("cause", cause.clone())],
             Error::Runtime(e) => agent_runtime::protocol::Refusal::from(e).fields,
-            Error::RecordMissing { path }
-            | Error::Request { path, .. }
+            Error::Request { path, .. }
             | Error::OverseerMissing { path }
             | Error::PendingMissing { path } => vec![pair("path", path.display().to_string())],
-            Error::Shape {
-                path,
-                field,
-                reason,
-                ..
-            } => vec![
-                pair("path", path.display().to_string()),
-                pair("field", field.clone()),
-                pair("reason", reason.word().to_owned()),
-            ],
             Error::OpKind {
                 op,
                 path,
@@ -770,11 +672,6 @@ impl Error {
                 pair("item", item.clone()),
                 pair("status", status.word().to_owned()),
             ],
-            Error::IntentOpen { intent, op, target } => vec![
-                pair("intent", intent.clone()),
-                pair("op", op.word().to_owned()),
-                pair("target", target.clone()),
-            ],
             Error::LaunchMissing { intent, field } => vec![
                 pair("intent_id", intent.clone()),
                 pair("field", (*field).to_owned()),
@@ -790,31 +687,14 @@ impl Error {
                 pair("path", path.display().to_string()),
                 pair("fields", fields.join(",")),
             ],
-            Error::IntentUnknown { id } | Error::IntentDuplicate { id } => {
-                vec![pair("intent_id", id.clone())]
-            }
-            Error::IntentComplete { id, outcome } => vec![
-                pair("intent_id", id.clone()),
-                pair("outcome", word(*outcome)),
-            ],
-            Error::SetReplaced {
-                id,
-                expected,
-                found,
-            } => vec![
-                pair("intent_id", id.clone()),
-                pair("expected", expected.to_string()),
-                pair("found", found.to_string()),
-            ],
             Error::Yielded { id, owner } => vec![
                 pair("intent_id", id.clone()),
                 pair("owner_pid", owner.pid.to_string()),
                 pair("owner_start", owner.start.clone()),
             ],
             Error::RoleMissing { id } => vec![pair("intent_id", id.clone())],
-            Error::OutcomeInvalid { outcome } => vec![pair("outcome", word(*outcome))],
             Error::VerdictInvalid { verdict } => vec![pair("verdict", verdict.clone())],
-            Error::OwnerUnreadable { op } | Error::OpNotTransition { op } => {
+            Error::OpNotTransition { op } => {
                 vec![pair("op", (*op).to_owned())]
             }
             Error::VerifyRequestInvalid { field, .. } => vec![pair("field", (*field).to_owned())],
@@ -855,7 +735,10 @@ impl Error {
                 pair("written_at", written_at.clone()),
                 pair("now", now.clone()),
             ],
-            Error::SuccessionOff => vec![pair("ORCH_OVERSEER_SUCCESSION", "off".to_owned())],
+            Error::SuccessionOff => vec![pair(
+                "AGENT_RUNTIME_CONTROLLER_SUCCESSION",
+                "off".to_owned(),
+            )],
             Error::ControllerOff { path, generation } => vec![
                 pair("path", path.display().to_string()),
                 pair("generation", generation.to_string()),

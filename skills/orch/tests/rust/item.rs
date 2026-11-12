@@ -10,6 +10,7 @@
     reason = "the process tests hold owned children and wait on real time for them"
 )]
 
+use agent_runtime::record::{Document, Locking};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 mod support;
@@ -24,7 +25,7 @@ use orch_runtime::ops::{
     RecordHandoff, RecordValidationAdmission, RecordVerification, Relaunch, Report, Request,
     ResumeHandoff, RoundKind, RunCause, RunState, apply,
 };
-use orch_runtime::state::{Document, ItemState, Locking, Record, Stage, StageKind, StageOutcome};
+use orch_runtime::state::{ItemState, Record, Stage, StageKind, StageOutcome};
 use serde_json::{Value, json};
 
 const ITEM: &str = include_str!("fixtures/workflow-state-KEN-4687.json");
@@ -203,8 +204,9 @@ fn validate_stages(path: &Path) -> Vec<Stage> {
 
 mod dev_artifacts {
     use super::*;
+    use agent_runtime::settings::Roots;
     use orch_runtime::ops::artifact::{self as receipt, CheckReturn};
-    use orch_runtime::settings::{self, Flags, Roots};
+    use orch_runtime::settings::{self, Flags};
     use std::sync::Arc;
     use std::time::SystemTime;
     use support::{fixtures, program, stderr};
@@ -250,6 +252,7 @@ mod dev_artifacts {
             git(&wt, &["add", ".gitignore", "app.txt"]);
             git(&wt, &["commit", "-qm", "base"]);
             git(&wt, &["switch", "-qc", "work"]);
+            support::install_orch_scripts(&wt);
             let w = Self {
                 _dir: dir,
                 root,
@@ -277,7 +280,6 @@ mod dev_artifacts {
                 .arg("--state-dir")
                 .arg(&self.state)
                 .current_dir(&self.wt)
-                .env("DEV_VALIDATE_CLI", scripts().join("dev-validate-run"))
                 .env(
                     "DEV_VALIDATE_CMD",
                     "printf 'validate: lanes=unit selection=battery\\n'",
@@ -288,9 +290,7 @@ mod dev_artifacts {
                 .env(
                     "CHANGE_SCOPE_PATHS_CLI",
                     scripts().join("../../change-scope/scripts/harness-only"),
-                )
-                .env("ORCH_JOB_UNIT", fixtures().join("job-unit-real/job-unit"))
-                .env("JOB_UNIT_REAL", scripts().join("lib/job-unit.sh"));
+                );
             command
         }
         fn run(&self, args: &[&str]) -> Output {

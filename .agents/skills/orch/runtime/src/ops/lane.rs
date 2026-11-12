@@ -5,6 +5,8 @@
 //! effect's phase written onto its open intent, and the arms of
 //! `record-outcome` that move a lane when its launch or close ends.
 
+use agent_runtime::intent::LaunchIdentity;
+use agent_runtime::record::{self, Document};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,8 +38,8 @@ use super::{
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, Document, EffectOp, Intent, Lane, LaneStatus, LaunchIdentity, Phase,
-    PrincipalKeys, Reservation, Role, Selection, TerminalVerdict,
+    self, CloseGround, EffectOp, Intent, Lane, LaneStatus, Phase, PrincipalKeys, Reservation, Role,
+    Selection, TerminalVerdict,
 };
 
 /// Open a lane for an item: judge the fleet cap, write its record as
@@ -668,22 +670,22 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
     let parked = match lane.get("parked") {
         None => return Ok(()),
         Some(Value::Null) => {
-            state::delete(lane, "parked");
+            record::delete(lane, "parked");
             return Ok(());
         }
         Some(Value::Object(parked)) => parked.clone(),
         Some(other) => {
-            return Err(Error::Shape {
+            return Err(Error::Runtime(agent_runtime::Error::RecordShape {
                 path: path.to_path_buf(),
                 field: format!("lanes/{index}/parked"),
-                reason: crate::error::ShapeReason::NotObject,
+                reason: agent_runtime::error::ShapeReason::NotObject,
                 cause: format!("found {other}"),
-            });
+            }));
         }
     };
     if parked.get("at").is_some_and(|v| !v.is_null()) {
         let pause = json!({"from": parked["at"], "to": at, "cause": "parked"});
-        state::array_mut(path, lane, "pauses")?.push(pause);
+        record::array_mut(path, lane, "pauses")?.push(pause);
     }
     let mut pending = Map::new();
     for key in ["pr", "repo", "head"] {
@@ -697,8 +699,8 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
             pending.insert(key.to_owned(), value.clone());
         }
     }
-    state::set(lane, "pending_pr", Value::Object(pending));
-    state::delete(lane, "parked");
+    record::set(lane, "pending_pr", Value::Object(pending));
+    record::delete(lane, "parked");
     Ok(())
 }
 
@@ -1092,7 +1094,11 @@ pub(super) fn launch_lane(
     // What the launch states of the lane beyond its selection: the Copilot
     // grant its line carries and the tier its brief names, as the record
     // reads them.
-    let allow_all = r.allow_all(host.accounts.map(|s| s.permission.get()).transpose()?);
+    let allow_all = r.allow_all(
+        host.accounts
+            .map(|s| s.engine.permission.get())
+            .transpose()?,
+    );
     let brief = match &r.brief_file {
         Some(file) => fs::read_to_string(file).map_err(|e| {
             Error::from(agent_runtime::Error::refused(
@@ -1125,34 +1131,34 @@ pub(super) fn launch_lane(
             if let Some(row) = cloud_close_row(&previous, &r.item, &at)
                 && !cloud_close_logged(doc, &r.item, &previous)
             {
-                state::array_mut(path, doc, "fleet_log")?.push(row);
+                record::array_mut(path, doc, "fleet_log")?.push(row);
             }
             let lane = lane_doc_mut(path, doc, index)?;
-            state::set(lane, "mail_root", r.mail_root.as_str());
+            record::set(lane, "mail_root", r.mail_root.as_str());
             for (key, value) in r.prepared() {
                 if let Some(value) = value {
-                    state::set(lane, key, value.as_str());
+                    record::set(lane, key, value.as_str());
                 }
             }
             // The lane runs where this launch opens it, a request naming no
             // host in a window here, whatever host the record named before.
-            state::set(lane, "host", r.host().map_or(Value::Null, Value::from));
-            state::set(lane, "kind", kind);
+            record::set(lane, "host", r.host().map_or(Value::Null, Value::from));
+            record::set(lane, "kind", kind);
             // A hosted lane's root moves to its host once the host answers;
             // the checkout the launch ran from is where a relaunch runs again.
             if r.host().is_some() {
-                state::set(lane, "checkout", r.mail_root.as_str());
+                record::set(lane, "checkout", r.mail_root.as_str());
             } else {
-                state::delete(lane, "checkout");
+                record::delete(lane, "checkout");
             }
             if r.refresh {
-                state::set(lane, "refresh", true);
+                record::set(lane, "refresh", true);
             } else {
-                state::delete(lane, "refresh");
+                record::delete(lane, "refresh");
             }
-            state::set(lane, "session_since", at.as_str());
-            state::set(lane, "running_at", Value::Null);
-            state::set(lane, "status", LaneStatus::Preparing.word());
+            record::set(lane, "session_since", at.as_str());
+            record::set(lane, "running_at", Value::Null);
+            record::set(lane, "status", LaneStatus::Preparing.word());
             // What this launch states of the lane, over what the record
             // keeps: a permission choice and a grant judged now, and the
             // lineage where the record binds none. A relaunch keeps the
@@ -1160,22 +1166,22 @@ pub(super) fn launch_lane(
             // `start` whatever tier the item runs at; a launch over a `done`
             // record opens the item's next phase, whose brief states its own.
             if let Value::String(permission) = r.permission_recorded() {
-                state::set(lane, "permission", permission.as_str());
+                record::set(lane, "permission", permission.as_str());
             }
             if allow_all.is_some() {
-                state::set(lane, "allow_all", allow_all);
+                record::set(lane, "allow_all", allow_all);
             }
             if let Some(obligation) = &obligation {
-                state::set(lane, "obligation", obligation.clone());
+                record::set(lane, "obligation", obligation.clone());
             }
             if relaunch.is_none() {
-                state::set(lane, "tier", tier.tier);
-                state::set(lane, "tier_inputs", tier.inputs());
+                record::set(lane, "tier", tier.tier);
+                record::set(lane, "tier_inputs", tier.inputs());
             }
-            state::set(lane, "launch", Value::Null);
-            state::delete(lane, "prepare");
-            state::delete(lane, "live_display");
-            state::delete(lane, "reservation");
+            record::set(lane, "launch", Value::Null);
+            record::delete(lane, "prepare");
+            record::delete(lane, "live_display");
+            record::delete(lane, "reservation");
             unpark(path, lane, index, &at)?;
             if let Some(judged) = &judged {
                 admission::record(path, doc, index, judged)?;
@@ -1183,7 +1189,7 @@ pub(super) fn launch_lane(
             index
         }
         None => {
-            let rows = state::array_mut(path, doc, "lanes")?;
+            let rows = record::array_mut(path, doc, "lanes")?;
             let mut record = new_lane_record(r, &at, allow_all, &tier);
             if r.refresh {
                 record["refresh"] = Value::Bool(true);
@@ -1276,18 +1282,18 @@ pub(super) fn adopt_session(
             }
             let at = env.iso();
             let lane = lane_doc_mut(path, doc, index)?;
-            state::set(lane, "session_id", r.session_id.as_str());
+            record::set(lane, "session_id", r.session_id.as_str());
             if let Some(harness) = &r.harness {
-                state::set(lane, "harness", harness.as_str());
+                record::set(lane, "harness", harness.as_str());
             }
             if let Some(launch) = &r.launch {
-                state::set(lane, "launch", serde_json::to_value(launch)?);
+                record::set(lane, "launch", serde_json::to_value(launch)?);
             }
-            state::set(lane, "status", LaneStatus::Running.word());
-            state::set(lane, "running_at", at.as_str());
+            record::set(lane, "status", LaneStatus::Running.word());
+            record::set(lane, "running_at", at.as_str());
             // The harness charges the slot from here; a hold over the gap
             // before it is spent.
-            state::delete(lane, "reservation");
+            record::delete(lane, "reservation");
             unpark(path, lane, index, &at)?;
             Ok(LaneAdopted {
                 lane: lane_at(path, doc, index)?,
@@ -1437,7 +1443,7 @@ fn fill_identity(
         })?;
     let record = lane_doc_mut(path, doc, index)?;
     for (field, value) in fills {
-        state::set(record, field, Value::from(value));
+        record::set(record, field, Value::from(value));
     }
     lane_at(path, doc, index)
 }
@@ -1553,11 +1559,11 @@ pub(super) fn park_lane(
                 parked.insert("until_repo".to_owned(), Value::from(until_repo.as_str()));
             }
             let lane = lane_doc_mut(path, doc, index)?;
-            state::set(lane, "status", LaneStatus::Parked.word());
-            state::set(lane, "parked", Value::Object(parked));
-            state::delete(lane, "pending_pr");
+            record::set(lane, "status", LaneStatus::Parked.word());
+            record::set(lane, "parked", Value::Object(parked));
+            record::delete(lane, "pending_pr");
             if let Some(reservation) = &r.reservation {
-                state::set(lane, "reservation", serde_json::to_value(reservation)?);
+                record::set(lane, "reservation", serde_json::to_value(reservation)?);
             }
             Ok(LaneParked {
                 lane: lane_at(path, doc, index)?,
@@ -1591,7 +1597,7 @@ pub(super) fn reserve_lane(
     };
     check_reservation(&r.item, &reservation, env)?;
     let lane = lane_doc_mut(path, doc, index)?;
-    state::set(lane, "reservation", serde_json::to_value(&reservation)?);
+    record::set(lane, "reservation", serde_json::to_value(&reservation)?);
     Ok(LaneReserved {
         lane: lane_at(path, doc, index)?,
     })
@@ -1619,7 +1625,7 @@ pub(super) fn release_lane(
         });
     }
     let lane = lane_doc_mut(path, doc, index)?;
-    let released_now = state::delete(lane, "reservation");
+    let released_now = record::delete(lane, "reservation");
     Ok(LaneReleased {
         lane: lane_at(path, doc, index)?,
         released_now,
@@ -1683,12 +1689,12 @@ pub(super) fn intent_lane(
 /// first launch's `.tmux.session //= $s`.
 fn record_tmux_session(path: &Path, doc: &mut Document, session: &str) -> Result<()> {
     if matches!(doc.get("tmux"), None | Some(Value::Null)) {
-        state::set(doc, "tmux", json!({"session": session}));
+        record::set(doc, "tmux", json!({"session": session}));
         return Ok(());
     }
-    let tmux = state::object_mut(path, doc, "tmux")?;
+    let tmux = record::object_mut(path, doc, "tmux")?;
     if matches!(tmux.get("session"), None | Some(Value::Null)) {
-        state::set(tmux, "session", session);
+        record::set(tmux, "session", session);
     }
     Ok(())
 }
@@ -1704,20 +1710,22 @@ pub(super) fn record_phase(
     let index = intents
         .iter()
         .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: r.intent_id.clone(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: r.intent_id.clone(),
+            })
         })?;
     let mut intent = intents[index].clone();
     if !intent.open() {
-        return Err(Error::IntentComplete {
+        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
-        });
+        }));
     }
     intent.phase = Some(r.phase.clone());
-    let rows = state::array_mut(path, doc, "intents")?;
-    let row = state::element_mut(path, rows, index, "intents")?;
-    state::set(row, "phase", serde_json::to_value(&r.phase)?);
+    let rows = record::array_mut(path, doc, "intents")?;
+    let row = record::element_mut(path, rows, index, "intents")?;
+    record::set(row, "phase", serde_json::to_value(&r.phase)?);
     Ok(PhaseRecorded { intent })
 }
 
@@ -1744,42 +1752,42 @@ pub(super) fn record_launch_outcome(
             // session that runs is this request's, so no account, model or
             // effort of the earlier session survives into its record.
             if let Some(selection) = &intent.selection {
-                state::set(lane, "harness", selection.harness.as_str());
+                record::set(lane, "harness", selection.harness.as_str());
                 for (key, value) in [
                     ("account", &selection.account),
                     ("model", &selection.model),
                     ("effort", &selection.effort),
                 ] {
-                    state::set(lane, key, string_or_null(value));
+                    record::set(lane, key, string_or_null(value));
                 }
             }
             if let Some(window) = &r.window {
-                state::set(lane, "window", window.as_str());
+                record::set(lane, "window", window.as_str());
             }
             // The root a hosted or cloud lane's files are read under is
             // known only once its host answered.
             if let Some(mail_root) = &r.mail_root {
-                state::set(lane, "mail_root", mail_root.as_str());
+                record::set(lane, "mail_root", mail_root.as_str());
             }
-            state::set(lane, "status", LaneStatus::Running.word());
-            state::set(lane, "running_at", at);
-            state::set(lane, "launch", serde_json::to_value(&r.launch)?);
-            state::set(lane, "session_id", string_or_null(&r.session_id));
+            record::set(lane, "status", LaneStatus::Running.word());
+            record::set(lane, "running_at", at);
+            record::set(lane, "launch", serde_json::to_value(&r.launch)?);
+            record::set(lane, "session_id", string_or_null(&r.session_id));
             // The home a local launch read its sessions under, which a
             // relaunch reads the bound session from, and whether it named it.
             if let Some(home) = &r.home {
-                state::set(lane, "home", home.as_str());
+                record::set(lane, "home", home.as_str());
                 if r.home_implicit {
-                    state::set(lane, "home_implicit", true);
+                    record::set(lane, "home_implicit", true);
                 } else {
-                    state::delete(lane, "home_implicit");
+                    record::delete(lane, "home_implicit");
                 }
             }
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed => {
             let lane = lane_doc_mut(path, doc, index)?;
-            state::set(lane, "status", LaneStatus::Stopped.word());
+            record::set(lane, "status", LaneStatus::Stopped.word());
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Unconfirmed => {
@@ -1790,7 +1798,7 @@ pub(super) fn record_launch_outcome(
             // names a pane.
             if r.launch.is_some() {
                 let lane = lane_doc_mut(path, doc, index)?;
-                state::set(lane, "launch", serde_json::to_value(&r.launch)?);
+                record::set(lane, "launch", serde_json::to_value(&r.launch)?);
                 recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
             }
         }
@@ -1900,7 +1908,7 @@ pub(super) fn record_close_outcome(
             let lane = lane_doc_mut(path, doc, index)?;
             match &intent.close {
                 Some(CloseGround::NoLanding { reason, source, .. }) => {
-                    state::set(lane, "status", LaneStatus::Stopped.word());
+                    record::set(lane, "status", LaneStatus::Stopped.word());
                     row["text"] =
                         json!(format!("attempt retired, no landing; intent {}", intent.id));
                     row["disposition"] = json!("no-landing");
@@ -1911,26 +1919,26 @@ pub(super) fn record_close_outcome(
                     CloseGround::Exited | CloseGround::Terminal { .. } | CloseGround::Ended { .. },
                 )
                 | None => {
-                    state::set(lane, "status", LaneStatus::Done.word());
-                    state::delete(lane, "pending_pr");
-                    state::delete(lane, "parked");
-                    state::delete(lane, "reservation");
+                    record::set(lane, "status", LaneStatus::Done.word());
+                    record::delete(lane, "pending_pr");
+                    record::delete(lane, "parked");
+                    record::delete(lane, "reservation");
                     // This close is the one writer of both: an earlier
                     // close's reason, which a relaunch keeps, never outlives
                     // a release.
-                    state::delete(lane, "kept");
-                    state::delete(lane, "kept_mail");
+                    record::delete(lane, "kept");
+                    record::delete(lane, "kept_mail");
                     let owed = LaneObligationRecord::of(path, intent)?;
                     if let Some(reason) =
                         owed.as_ref().and_then(LaneObligationRecord::worktree_kept)
                     {
-                        state::set(lane, "kept", reason);
+                        record::set(lane, "kept", reason);
                     }
                     if let Some(mail) = owed
                         .as_ref()
                         .and_then(LaneObligationRecord::worktree_mail_kept)
                     {
-                        state::set(lane, "kept_mail", mail);
+                        record::set(lane, "kept_mail", mail);
                     }
                     row["text"] = json!(format!("lane closed; intent {}", intent.id));
                     match &intent.close {
@@ -1949,9 +1957,9 @@ pub(super) fn record_close_outcome(
             let cloud = cloud_close_row(lane, &intent.target, at);
             let cycle = intent.cycle.as_ref().map(|c| c.rows(&intent.target, at));
             if let Some(cycle_row) = &intent.cycle {
-                state::set(lane, "cycle", cycle_row.cycle.clone());
+                record::set(lane, "cycle", cycle_row.cycle.clone());
             }
-            let log = state::array_mut(path, doc, "fleet_log")?;
+            let log = record::array_mut(path, doc, "fleet_log")?;
             log.push(row);
             log.extend(cloud);
             log.extend(cycle.into_iter().flatten());
@@ -2032,7 +2040,7 @@ pub(crate) fn record_surface_lane(
             if lane_index(doc, &read.item).is_some() {
                 return Err(surface_refused("lane-standing", &[("item", &read.item)]));
             }
-            let rows = state::array_mut(path, doc, "lanes")?;
+            let rows = record::array_mut(path, doc, "lanes")?;
             rows.push(lane.clone());
             let pointer = format!("/lanes/{}", rows.len() - 1);
             Ok(json!({"step": "create", "pointer": pointer, "value": lane}))
@@ -2119,8 +2127,8 @@ mod tests {
     use crate::error::Error;
     use crate::ops::occupancy::{ChargeReason, ChargeSource};
     use crate::ops::{Effect, Report, Request, apply_on};
-    use crate::settings::Judged;
     use crate::state::{self, EffectOp, LaneStatus, Phase, fixtures};
+    use agent_runtime::settings::Judged;
 
     #[test]
     fn launch_lane_writes_the_released_record_and_the_intent_then_reconciles() {
@@ -2459,8 +2467,8 @@ mod tests {
     /// The production host: the kernel's own reader.
     fn kernel(cap: u32) -> Host<'static> {
         Host {
-            lane_cap: Some(Judged::valid(cap)),
-            cloud_lane_cap: Some(Judged::valid(cap)),
+            lane_cap: Some(Judged { read: Ok(cap) }),
+            cloud_lane_cap: Some(Judged { read: Ok(cap) }),
             still_runs: &process::still_runs,
             admission: Some(no_reads()),
             accounts: None,
@@ -2681,7 +2689,7 @@ mod tests {
             cause: "stat-unreadable",
         };
         let host = Host {
-            lane_cap: Some(Judged::valid(1)),
+            lane_cap: Some(Judged { read: Ok(1) }),
             cloud_lane_cap: None,
             admission: Some(no_reads()),
             still_runs: &unread,
@@ -3319,7 +3327,13 @@ mod tests {
         assert_eq!(row["server_process_start"], json!("ticks:7"));
         run(&path, &outcome(&id, Outcome::Failed)).unwrap();
         let err = run(&path, &phase(Phase::WindowOpened { opened })).unwrap_err();
-        assert!(matches!(err, Error::IntentComplete { .. }), "{err:?}");
+        assert!(
+            matches!(
+                err,
+                Error::Runtime(agent_runtime::Error::IntentComplete { .. })
+            ),
+            "{err:?}"
+        );
     }
 
     /// A close asked for on a lane whose harness read gone persists its

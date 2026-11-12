@@ -4,6 +4,7 @@ pub mod entry;
 pub mod files;
 pub mod run;
 
+use agent_runtime::record::{self, Locking};
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind;
@@ -23,8 +24,7 @@ use crate::ops::validate::{
 use crate::ops::{self, Env, Report, Request};
 use crate::settings::Settings;
 use crate::state::{
-    self, ItemState, Locking, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob,
-    ValidateMode,
+    self, ItemState, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob, ValidateMode,
 };
 use crate::verify::Gh;
 
@@ -291,13 +291,9 @@ impl Drop for Scratch {
     }
 }
 
-/// The sibling script `name` beside the configured executor.
+/// The script `name`, relative to the orch scripts directory.
 fn sibling(settings: &Settings, name: &str) -> PathBuf {
-    settings
-        .dev_validate_cli
-        .parent()
-        .map(|d| d.join(name))
-        .unwrap_or_else(|| PathBuf::from(name))
+    crate::watch::overseer::scripts_dir(&settings.roots.project).join(name)
 }
 
 fn group_leader(settings: &Settings) -> PathBuf {
@@ -924,10 +920,10 @@ fn timeout_secs(settings: &crate::settings::ValidateSettings) -> Result<u64> {
     };
     match text.parse::<u64>() {
         Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
-        Ok(_) | Err(_) => Err(crate::settings::value_refusal(
+        Ok(_) | Err(_) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
             crate::settings::DEV_VALIDATE_TIMEOUT_SECS_KEY,
             text,
-        )),
+        ))),
     }
 }
 
@@ -944,10 +940,10 @@ fn delivery(settings: &crate::settings::ValidateSettings) -> Result<Delivery> {
     match settings.delivery.as_deref() {
         None | Some("pr") => Ok(Delivery::Pr),
         Some("push-base") => Ok(Delivery::PushBase),
-        Some(other) => Err(crate::settings::value_refusal(
+        Some(other) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
             crate::settings::DELIVERY_KEY,
             other,
-        )),
+        ))),
     }
 }
 
@@ -1588,7 +1584,7 @@ fn write_run_dir(
             resolved.orphaned.as_deref(),
         ),
     )?;
-    state::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
+    record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let mut names = Vec::new();
         for entry in
             fs::read_dir(worktree.join("tmp")).map_err(|e| files::unreadable("run-index", e))?
@@ -1749,7 +1745,7 @@ fn ask_launcher(
         &args,
         Some(&run_dir.join("job.err")),
         bounds,
-        &crate::schedule::SystemClock,
+        &agent_runtime::clock::SystemClock,
     );
     answer.answer()
 }
@@ -1815,8 +1811,10 @@ pub fn start(
         }
     };
     let path = state::item_path(&settings.state_dir, &item);
-    let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
-    let worktree: Option<String> = state::field(&path, &snapshot.doc, "worktree")?;
+    let snapshot = load(&path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+    })?;
+    let worktree: Option<String> = record::field(&path, &snapshot.doc, "worktree")?;
     let worktree = worktree
         .filter(|w| !w.is_empty())
         .ok_or_else(|| Error::WorktreeUnrecorded { path: path.clone() })?;
@@ -1826,8 +1824,10 @@ pub fn start(
     })?;
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
     let memory = memory_max(&settings.validate)?;
-    state::locked(&worktree.join("tmp/validation-start"), locking, || {
-        let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
+    record::locked(&worktree.join("tmp/validation-start"), locking, || {
+        let snapshot = load(&path)?.ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+        })?;
         let stages = snapshot.view::<ItemState>(&path)?.stages;
         if let Some((dir, _)) = files::live(&worktree)? {
             return Err(Error::RunLive {

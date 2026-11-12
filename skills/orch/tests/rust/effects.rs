@@ -6,7 +6,7 @@
 //! claude`: each is named for the harness it stands in for and run by bash
 //! directly, so the kernel records the harness's process name for the pane's
 //! foreground process, which the judge requires before it reads the pane
-//! idle. They are selected through the `ORCH_HARNESS_BINARIES`
+//! idle. They are selected through the `AGENT_RUNTIME_HARNESS_BINARIES`
 //! product setting for a custom install path. The tmux server each test
 //! makes lives on its own socket under a `TempDir`, reads no configuration
 //! file and runs a named pane shell; the test ends it with
@@ -382,7 +382,7 @@ fn a_launch_with_no_tmux_session_records_failed() {
     runner.init_fleet();
     let out = runner.op_fleet_env(
         &launch_request("KEN-10", runner.state_dir()),
-        &[("ORCH_TMUX_SESSION", "nosuch")],
+        &[("AGENT_RUNTIME_TMUX_SESSION", "nosuch")],
     );
     let report = effect_report(&out);
     assert_eq!(report["intent"]["outcome"], "failed");
@@ -6643,7 +6643,7 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
     );
     let home_word = home.display().to_string();
     let env = [
-        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
         ("HOME", home_word.as_str()),
     ];
     let answer = |stdout: &str| json!({"stdout": stdout});
@@ -6813,7 +6813,7 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
     );
     let home_word = home.display().to_string();
     let env = [
-        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
         ("HOME", home_word.as_str()),
     ];
     for (item, permission, allow_all, grant) in [
@@ -6983,7 +6983,7 @@ fn a_launch_binds_the_session_its_harness_writes_after_its_composer_is_up() {
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!(
             "codex={},copilot={}",
             late.join("codex").display(),
@@ -7277,7 +7277,7 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     let home = home.display().to_string();
     let binaries = format!("pi={}", fixtures().join("stub-record").join("pi").display());
     let env = [
-        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
         ("HOME", home.as_str()),
     ];
     let mut request = launch_request("KEN-PI0", runner.state_dir());
@@ -7414,7 +7414,7 @@ fn a_pi_root_the_private_env_file_names_is_the_root_a_seat_lane_is_judged_and_ru
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("pi={}", fixtures().join("stub-record/pi").display()),
     ));
     let work = runner.state_dir().to_path_buf();
@@ -7482,7 +7482,7 @@ fn a_codex_lane_with_no_account_runs_on_the_codex_home_the_fleet_server_hands_it
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("codex={}", fixtures().join("stub-record/codex").display()),
     ));
     let work = runner.state_dir().to_path_buf();
@@ -7538,7 +7538,7 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
         "#!/bin/bash\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
     );
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("pi={}", pi.display()),
     ));
     runner
@@ -7735,7 +7735,7 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             .env
             .push(("HOME".to_owned(), home.display().to_string()));
         runner.env.push((
-            "ORCH_HARNESS_BINARIES".to_owned(),
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!(
                 "{harness}={}",
                 fixtures().join("stub-record").join(harness).display()
@@ -7906,7 +7906,7 @@ fn an_accountless_launch_whose_inherited_home_does_not_stand_refuses_before_any_
             ));
         }
         runner.env.push((
-            "ORCH_HARNESS_BINARIES".to_owned(),
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!(
                 "{harness}={}",
                 fixtures().join("stub-record").join(harness).display()
@@ -7959,7 +7959,7 @@ fn a_seated_pi_lane_with_no_pi_root_refuses_home_missing_before_the_gate() {
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("pi={}", fixtures().join("stub-record/pi").display()),
     ));
     let mut request = launch_request("KEN-PS", runner.state_dir());
@@ -8594,7 +8594,7 @@ fn every_lane_brief_states_its_resolved_lane_output_once() {
             .env
             .push(("HOME".to_owned(), home.display().to_string()));
         runner.env.push((
-            "ORCH_HARNESS_BINARIES".to_owned(),
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!(
                 "{harness}={}",
                 fixtures().join("stub-record").join(harness).display()
@@ -8764,7 +8764,7 @@ fn a_lane_output_outside_its_words_refuses_the_launch_before_any_record() {
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!(
             "claude={}",
             fixtures().join("stub-record").join("claude").display()

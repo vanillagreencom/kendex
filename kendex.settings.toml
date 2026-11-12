@@ -85,7 +85,7 @@ ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_ME
 # Seconds the runtime's launch waits for a harness to come up in its window
 # before it records the launch unconfirmed; its other confirmation reads share
 # the bound.
-ORCH_TMUX_VERIFY_SECS = "15"
+AGENT_RUNTIME_TMUX_VERIFY_SECS = "15"
 
 # Long provider processes lane-host runs at once, per home: every overseer and
 # checkout on the machine shares the count.
@@ -130,16 +130,16 @@ ORCH_WAKE_START = ""
 # The orch account judge refuses an account at or above 95 percent used on the
 # window that binds the lane: with --native-model the fullest of the plan
 # windows and that model's own window, else the account's binding bucket.
-ORCH_LANE_MAX_PCT = "95"
+AGENT_RUNTIME_ACCOUNT_MAX_PCT = "95"
 
-ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
+AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "0"
 
 # The overseer moves before its account walls when its current binding bucket
 # reaches 5 percent headroom or its projected wall is within 20 minutes. A
 # seat account (one an overseer or Jarvis session runs on) keeps this headroom
 # for its session; skills/orch/references/settings.md states how a worker's
 # pick and the lanes on it keep it.
-ORCH_OVERSEER_HEADROOM_PCT = "5"
+AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
 
 # A lane whose account reaches 97 percent used is marked for handoff, which

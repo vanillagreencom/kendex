@@ -17,6 +17,8 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::controller::TransferCause;
+use agent_runtime::record::{self, Locking};
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -28,14 +30,15 @@ use agent_runtime::observe::{self, ProcessReading};
 use agent_runtime::process::{Identity, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
+use agent_runtime::settings::{Roots, Succession};
 use jiff::tz::TimeZone;
 use orch_runtime::effects;
 use orch_runtime::ops::accounts::Roster;
 use orch_runtime::ops::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
 use orch_runtime::ops::{self, DeathCause, RequestTransfer};
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
-use orch_runtime::state::{self, FleetState, Locking, Record, TransferCause};
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
+use orch_runtime::state::{self, FleetState, Record};
 use orch_runtime::watch::context;
 use orch_runtime::watch::hosted;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
@@ -60,10 +63,18 @@ fn settings_with(dir: &Path, extra: &[(&str, &str)]) -> Settings {
         project: dir.to_path_buf(),
         common: dir.to_path_buf(),
     };
-    let environment: Vec<(OsString, OsString)> = extra
-        .iter()
-        .map(|(k, v)| (OsString::from(k), OsString::from(v)))
-        .collect();
+    let accounts = dir.join("tmp/oversee-watch");
+    let environment: Vec<(OsString, OsString)> = [(
+        OsString::from("AGENT_RUNTIME_ACCOUNT_STATE_DIR"),
+        accounts.into_os_string(),
+    )]
+    .into_iter()
+    .chain(
+        extra
+            .iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v))),
+    )
+    .collect();
     settings::load(
         &roots,
         &environment,
@@ -181,7 +192,7 @@ impl Fleet {
     }
 
     fn path(&self) -> PathBuf {
-        self.runner.state_dir().join(state::FLEET_FILE_NAME)
+        self.runner.state_dir().join(record::FLEET_FILE_NAME)
     }
 
     fn set_lanes(&self, lanes: Vec<Value>) {
@@ -293,6 +304,7 @@ impl LaneDriver<'_> {
             own_panes: &["%0".to_owned()],
             state_dir: &self.state_dir,
             claim_store: &self.settings.claim_store,
+            account_state: &self.settings.account_state,
             scripts: &self.scripts,
             route: &route,
             wall_pauses: &wall_pauses,
@@ -577,7 +589,7 @@ fn a_usage_limit_screen_is_reported_once_and_an_older_screen_is_not_a_wall() {
 /// (`lib/account-wall.sh`, `account_wall_record`): `walls/<cksum>.json`
 /// beside the claim store, or none.
 fn wall_record(settings: &Settings) -> Option<AccountWall> {
-    let path = wall::account_wall_path(&settings.claim_store, "/home/me/.eclaude");
+    let path = wall::account_wall_path(&settings.account_state.get().unwrap(), "/home/me/.eclaude");
     let text = std::fs::read_to_string(path).ok()?;
     Some(serde_json::from_str(&text).unwrap())
 }
@@ -636,7 +648,7 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
     // The same banner first seen before this process started: an earlier
     // process's screen, judged under its identity.
     std::fs::remove_file(wall::account_wall_path(
-        &driver.settings.claim_store,
+        &driver.settings.account_state.get().unwrap(),
         "/home/me/.eclaude",
     ))
     .unwrap();
@@ -699,7 +711,7 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     let quiet = driver.pass(&state);
     assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
     std::fs::remove_file(wall::account_wall_path(
-        &driver.settings.claim_store,
+        &driver.settings.account_state.get().unwrap(),
         "/home/me/.eclaude",
     ))
     .unwrap();
@@ -1009,11 +1021,10 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         "effort": "high",
         "permission": "--permission-mode dontAsk",
     });
-    let report = effect_report(
-        &fleet
-            .runner
-            .op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", binaries.as_str())]),
-    );
+    let report = effect_report(&fleet.runner.op_fleet_env(
+        &request,
+        &[("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str())],
+    ));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     let runtime = fleet.runner.fleet()["lanes"][0].clone();
     let walled = runtime["launch"]["pane"].as_str().unwrap();
@@ -1487,7 +1498,7 @@ struct OverseerDriver<'a> {
     context_record: Option<PathBuf>,
     /// The owner's alert for a standing gap or a death, by notice file.
     alert: &'a dyn Fn(&str, &str) -> Result<(), String>,
-    /// `ORCH_OVERSEER_SUCCESSION`, on unless a row turns it off.
+    /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION`, on unless a row turns it off.
     succession: Succession,
 }
 
@@ -1508,8 +1519,9 @@ impl OverseerDriver<'_> {
                 succession: self.succession,
                 preference: self
                     .settings
-                    .overseer_preference_set
-                    .then_some(self.settings.overseer_preference.as_str()),
+                    .engine
+                    .controller_preference_set
+                    .then_some(self.settings.engine.controller_preference.as_str()),
                 now: self.now,
                 transfer: &transfer,
                 context_record: self.context_record.as_deref(),
@@ -1721,7 +1733,7 @@ fn window_of(server: &Server, pane: &str) -> String {
 /// launch fields as the successor, and nothing more is asked after. The one verdict of each
 /// pass is what the slot holds, so the mail gate reads the same source and
 /// closes while it is down. An unreadable pane counts nothing on any pass.
-/// Under `ORCH_OVERSEER_SUCCESSION=off` the line says `succession=off`
+/// Under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` the line says `succession=off`
 /// and no transfer is asked.
 #[test]
 fn a_dead_overseer_is_said_and_transferred_once_with_cause_dead() {
@@ -2593,7 +2605,7 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
 
 /// The first crossing of a headroom mark on a live overseer carries the
 /// succession's sentence under the line: the judge's path and
-/// `ORCH_OVERSEER_PREFERENCE` as set, the default where unset; with
+/// `AGENT_RUNTIME_CONTROLLER_PREFERENCE` as set, the default where unset; with
 /// succession off, the handoff sentence; the next pass repeats neither.
 #[test]
 fn the_mark_line_carries_the_succession_s_handling_under_it() {
@@ -2626,7 +2638,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
                 dir.path(),
                 &pane,
                 "headroom",
-                "ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high"
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:standard:high,codex:standard:high"
             ),
         ]
     );
@@ -2641,8 +2653,8 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     overseer_driver!(
         server, fleet, reached, no_walk, readers2, transfers2, chosen
     );
-    chosen.settings.overseer_preference = "claude:fable:high".to_owned();
-    chosen.settings.overseer_preference_set = true;
+    chosen.settings.engine.controller_preference = "claude:fable:high".to_owned();
+    chosen.settings.engine.controller_preference_set = true;
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
@@ -2651,7 +2663,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
                 dir.path(),
                 &pane,
                 "headroom",
-                "ORCH_OVERSEER_PREFERENCE=claude:fable:high"
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:fable:high"
             )
             .as_str()
         ),
@@ -2672,7 +2684,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         lines(&off_line),
         vec![
             format!("EVENT overseer-mark {pane} kind=headroom value=50 mark=5 succession=off"),
-            "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
+            "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
         ]
     );
     assert!(transfers3.borrow().is_empty());
@@ -2699,7 +2711,7 @@ fn reached_context_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
 }
 
 /// A live controller whose record names its succession command is handed
-/// that command under the mark line under either `ORCH_OVERSEER_SUCCESSION`
+/// that command under the mark line under either `AGENT_RUNTIME_CONTROLLER_SUCCESSION`
 /// value, with no successor walk, no transfer and no run of the command by
 /// the watch; the same record without the field keeps the setting's own
 /// line.
@@ -2732,9 +2744,9 @@ fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_
         dir.path(),
         &pane,
         "context",
-        "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account",
+        "this session's own entry alone, AGENT_RUNTIME_CONTROLLER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:standard:high,codex:standard:high without that account",
     );
-    let off = "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned();
+    let off = "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned();
     type Judge = dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
     // The judge, the setting it reports, the fleet as read, the line under
     // the mark.
@@ -2872,7 +2884,7 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
                 dir.path(),
                 &pane,
                 "context",
-                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account"
+                "this session's own entry alone, AGENT_RUNTIME_CONTROLLER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:standard:high,codex:standard:high without that account"
             ),
         ]
     );
@@ -4867,7 +4879,7 @@ fn run_relaunch(fleet: &Fleet, relaunch: &Relaunch) -> std::process::Output {
     command
         .args(&relaunch.args[1..])
         .current_dir(&relaunch.cwd)
-        .env("ORCH_TMUX_SESSION", &relaunch.session);
+        .env("AGENT_RUNTIME_TMUX_SESSION", &relaunch.session);
     fleet.runner.apply_env(&mut command);
     command.output().unwrap()
 }
@@ -6000,7 +6012,7 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
     let binaries = format!("copilot={}", copilot_stub(&root).display());
     let home_word = home.display().to_string();
     let env = [
-        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", binaries.as_str()),
         ("HOME", home_word.as_str()),
     ];
     let launch = |item: &str, account: Option<&Path>| -> Value {

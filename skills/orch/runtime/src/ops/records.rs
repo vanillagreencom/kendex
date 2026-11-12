@@ -6,6 +6,7 @@
 //! a pointer write into an owned field is held to its owner's check through
 //! [`check_owned`].
 
+use agent_runtime::record::{self, Document, Locking};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -17,10 +18,10 @@ use super::lane::{self, RecordSurfaceLane};
 use super::ledger::{self, RecordOverseerLedger};
 use super::progress::{self, RecordDevReturn, RecordPrProgress, RecordRoute};
 use super::reviewers::{self, PanelKind, RecordAgents, RecordPanel};
-use super::{Env, item, loaded, qa, reread, store};
+use super::{Env, item, loaded, qa, store};
 use crate::error::{Error, Result};
 use crate::settings::StoreSettings;
-use crate::state::{self, Document, Kind, Locking};
+use crate::state::Kind;
 
 /// One named record write, tagged by `op`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -127,26 +128,35 @@ pub fn apply_record(
         | Record::RecordSurfaceLane(_)
         | Record::RecordOverseerLedger(_) => None,
     };
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let report = match record {
-            Record::RecordRound(r) => item::record_round(path, &mut doc, r, env, head.as_deref())?,
-            Record::RecordPanel(r) => reviewers::record_panel(path, &mut doc, store, r)?,
-            Record::RecordAgents(r) => reviewers::record_agents(path, &mut doc, r)?,
-            Record::RecordDisposition(r) => findings::record_disposition(path, &mut doc, r)?,
-            Record::RecordCommentLedger(r) => findings::record_comment_ledger(path, &mut doc, r)?,
-            Record::RecordRoute(r) => progress::record_route(&mut doc, r)?,
-            Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
-            Record::RecordPrProgress(r) => progress::record_pr_progress(path, &mut doc, env, r)?,
-            Record::RecordSurfaceLane(r) => lane::record_surface_lane(path, &mut doc, r)?,
-            Record::RecordOverseerLedger(r) => {
-                ledger::record_overseer_ledger(path, &mut doc, env, r)?
-            }
-        };
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(report)
-    })
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let report = match record {
+                Record::RecordRound(r) => {
+                    item::record_round(path, &mut doc, r, env, head.as_deref())?
+                }
+                Record::RecordPanel(r) => reviewers::record_panel(path, &mut doc, store, r)?,
+                Record::RecordAgents(r) => reviewers::record_agents(path, &mut doc, r)?,
+                Record::RecordDisposition(r) => findings::record_disposition(path, &mut doc, r)?,
+                Record::RecordCommentLedger(r) => {
+                    findings::record_comment_ledger(path, &mut doc, r)?
+                }
+                Record::RecordRoute(r) => progress::record_route(&mut doc, r)?,
+                Record::RecordDevReturn(r) => progress::record_dev_return(&mut doc, r)?,
+                Record::RecordPrProgress(r) => {
+                    progress::record_pr_progress(path, &mut doc, env, r)?
+                }
+                Record::RecordSurfaceLane(r) => lane::record_surface_lane(path, &mut doc, r)?,
+                Record::RecordOverseerLedger(r) => {
+                    ledger::record_overseer_ledger(path, &mut doc, env, r)?
+                }
+            };
+            record::store(path, &snapshot.doc, &doc, locking)?;
+            Ok(report)
+        },
+        Error::key,
+    )
 }
 
 /// A field's check over its value before (`None` where absent) and after a

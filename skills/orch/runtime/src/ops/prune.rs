@@ -9,6 +9,7 @@
 //! one function, which the duty also reads before the transition to archive
 //! what it will drop.
 
+use agent_runtime::record::{self, Document};
 use std::path::Path;
 
 use agent_runtime::clock;
@@ -17,7 +18,6 @@ use serde_json::Value;
 
 use super::Env;
 use crate::error::Result;
-use crate::state::{self, Document};
 
 fn field<'a>(record: &'a Value, key: &str) -> Option<&'a str> {
     record.get(key).and_then(Value::as_str)
@@ -103,7 +103,7 @@ fn row_leaves(row: &Value, r: &PruneRecords) -> bool {
 /// The selection, each array read as the record holds it.
 pub fn dropped(path: &Path, doc: &Document, r: &PruneRecords) -> Result<Dropped> {
     let mut out = Dropped::default();
-    if let Some(lanes) = state::field::<Vec<Value>>(path, doc, "lanes")? {
+    if let Some(lanes) = record::field::<Vec<Value>>(path, doc, "lanes")? {
         let confirmed = confirmed(&lanes, r);
         out.lanes = lanes
             .iter()
@@ -112,7 +112,7 @@ pub fn dropped(path: &Path, doc: &Document, r: &PruneRecords) -> Result<Dropped>
             .map(|(_, lane)| lane.clone())
             .collect();
     }
-    if let Some(rows) = state::field::<Vec<Value>>(path, doc, "fleet_log")? {
+    if let Some(rows) = record::field::<Vec<Value>>(path, doc, "fleet_log")? {
         out.fleet_log = rows.into_iter().filter(|row| row_leaves(row, r)).collect();
     }
     Ok(out)
@@ -129,7 +129,7 @@ pub fn prune_records(
     r: &PruneRecords,
     _env: &Env,
 ) -> Result<RecordsPruned> {
-    let lanes = state::field::<Vec<Value>>(path, doc, "lanes")?.unwrap_or_default();
+    let lanes = record::field::<Vec<Value>>(path, doc, "lanes")?.unwrap_or_default();
     let confirmed = confirmed(&lanes, r);
     let mut pruned = RecordsPruned {
         lanes: Vec::new(),
@@ -147,14 +147,14 @@ pub fn prune_records(
         }
     }
     if !pruned.lanes.is_empty() {
-        state::set(doc, "lanes", kept);
+        record::set(doc, "lanes", kept);
     }
-    if let Some(rows) = state::field::<Vec<Value>>(path, doc, "fleet_log")? {
+    if let Some(rows) = record::field::<Vec<Value>>(path, doc, "fleet_log")? {
         let before = rows.len();
         let kept: Vec<Value> = rows.into_iter().filter(|row| !row_leaves(row, r)).collect();
         pruned.fleet_log = before - kept.len();
         if pruned.fleet_log > 0 {
-            state::set(doc, "fleet_log", kept);
+            record::set(doc, "fleet_log", kept);
         }
     }
     Ok(pruned)

@@ -1201,8 +1201,8 @@ class SessionContract(unittest.TestCase):
                 self.wait("stopped", persisted_stop=True)
 
     def test_manager_policy_reaches_native_and_source_failure_keeps_owner(self):
-        policy = {"ORCH_LANE_EXCLUDE": "3claude", "ORCH_LANE_RETIRE": "retired=2000-01-01",
-                  "ORCH_LANE_ALIASES": "work=2claude", "FLEET_USER": "user 'quoted' $literal\\slash\tline\nend\r\n",
+        policy = {"AGENT_RUNTIME_ACCOUNT_EXCLUDE": "3claude", "AGENT_RUNTIME_ACCOUNT_RETIRE": "retired=2000-01-01",
+                  "AGENT_RUNTIME_ACCOUNT_ALIASES": "work=2claude", "FLEET_USER": "user 'quoted' $literal\\slash\tline\nend\r\n",
                   "AGENT_TMPDIR": str(self.root / "agent tmp"), "CLAUDE_CODE_TMPDIR": str(self.root / "agent tmp")}
         config = self.home / ".fixture.json"
         proxy = "https://fixture-user:fixture-private-value@proxy.invalid:8443"
@@ -1327,8 +1327,8 @@ class SessionContract(unittest.TestCase):
             + " print('account='+account+'\\tharness=claude\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Sonnet')\n")
         meter.chmod(0o755)
         (self.home / "kendex.settings.toml").write_text('[env]\nORCH_LANE_HOST = ' + json.dumps(str(meter))
-            + '\nORCH_OVERSEER_PREFERENCE = "claude:standard:high"\n')
-        self.manager.write_text('{"ORCH_LANE_EXCLUDE":"3claude"}')
+            + '\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:high"\n')
+        self.manager.write_text('{"AGENT_RUNTIME_ACCOUNT_EXCLUDE":"3claude"}')
         self.call("start")
         self.wait()
         (self.home / "state").mkdir(exist_ok=True)

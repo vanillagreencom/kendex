@@ -10,6 +10,7 @@
 //! workload and baseline; without them it is recorded advisory, so it is
 //! never dropped unseen and never delegated to a review that cannot give a
 //! verdict.
+use agent_runtime::record::{self, Locking};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -17,10 +18,9 @@ use agent_runtime::host::{self, Place};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::{loaded, reread};
+use super::loaded;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
-use crate::state::{self, Locking};
 
 const TAG: &str = "qa";
 const READ: Duration = Duration::from_secs(120);
@@ -409,13 +409,16 @@ fn update<T>(
     locking: Locking,
     f: impl Fn(&mut Map<String, Value>) -> Result<T>,
 ) -> Result<T> {
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let answer = f(&mut doc)?;
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(answer)
-    })
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let answer = f(&mut doc)?;
+            record::store(path, &snapshot.doc, &doc, locking)?;
+            Ok(answer)
+        },
+        Error::key,
+    )
 }
 
 /// Run `r` against the item record at `path`.
@@ -432,12 +435,12 @@ pub fn run(
             judgments,
         } => update(path, locking, |doc| {
             let decision = scan(settings, doc, worktree, base, judgments)?;
-            state::set(doc, "qa_decision", decision.clone());
+            record::set(doc, "qa_decision", decision.clone());
             Ok(decision)
         }),
         RecordQaDecision::Skip {} => update(path, locking, |doc| {
             let decision = json!({"signals": [], "agents": {}, "rationale": SKIP_RATIONALE});
-            state::set(doc, "qa_decision", decision.clone());
+            record::set(doc, "qa_decision", decision.clone());
             Ok(decision)
         }),
     }

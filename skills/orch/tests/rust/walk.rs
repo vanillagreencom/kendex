@@ -12,17 +12,18 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::FLEET_FILE_NAME;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use agent_runtime::settings::Roots;
 use orch_runtime::ops::Host;
 use orch_runtime::ops::accounts::{PickRequest, pick_fleet};
 use orch_runtime::protocol::Reply;
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::FLEET_FILE_NAME;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
 use support::*;
 
@@ -66,7 +67,7 @@ const PICK_NOW: u64 = 1_769_700_000;
 /// window, every reset far off, no burn, every usage sampled at that
 /// second.
 fn walk_suite_world() -> World {
-    let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50")]);
     let far = "2099-08-01T06:00:00Z";
     let codex = |alias: &str, used: u64| {
         json!({"alias": alias, "harness": "codex", "config_dir": format!("/home/me/.{alias}"),
@@ -170,19 +171,20 @@ impl World {
         ] {
             std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
         }
+        install_lane_host(dir.path(), dir.path());
         let base = [
             ("HOME", dir.path().join("home").display().to_string()),
             ("OVERSEE_WATCH_STATE_DIR", dir.path().display().to_string()),
-            ("ORCH_STATE_DIR", dir.path().display().to_string()),
             (
-                "OVERSEE_WATCH_LANES",
-                dir.path().join("lanes").display().to_string(),
+                "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
+                dir.path().display().to_string(),
             ),
+            ("ORCH_STATE_DIR", dir.path().display().to_string()),
             (
                 "USAGE_FIXTURE_DIR",
                 dir.path().join("fixtures").display().to_string(),
             ),
-            ("ORCH_LANE_BURN_PCT_PER_HOUR", "0".to_owned()),
+            ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "0".to_owned()),
         ];
         let mut env: Vec<(String, String)> = base
             .iter()
@@ -494,7 +496,7 @@ fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full
             "claude:fable:high:last,codex:gpt-6.1-sol:high",
         ),
         (
-            "ORCH_OVERSEER_PREFERENCE",
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
             "claude:standard:high,codex:standard:high:last",
         ),
     ]);
@@ -599,7 +601,7 @@ fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
 
 #[test]
 fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() {
-    let mut world = World::new(&[("ORCH_OVERSEER_PREFERENCE", "claude:1:high")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "claude:1:high")]);
     world.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
     let result = world.answered(&[
         "--overseer",
@@ -632,7 +634,7 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
         calls[0]
     );
     // An old exact id names no class: the conversion names no replacement.
-    let mut old = World::new(&[("ORCH_OVERSEER_PREFERENCE", "claude:1:high")]);
+    let mut old = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "claude:1:high")]);
     old.plant_listing(&[measured("aclaude", 20, 5)]);
     let result = old.answered(&[
         "--overseer",
@@ -650,7 +652,7 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
         json!([{"entry": "claude:1:high", "form": "harness:model:effort", "replacement": null, "model": "claude-opus-5-5"}])
     );
     // No caller model: the harness's default entry's class.
-    let mut defaulted = World::new(&[("ORCH_OVERSEER_PREFERENCE", "claude:1:high")]);
+    let mut defaulted = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "claude:1:high")]);
     defaulted.plant_listing(&[measured("aclaude", 20, 5)]);
     let result = defaulted.answered(&[
         "--overseer",
@@ -668,7 +670,7 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
     // A numeric entry of another harness than the caller's is skipped
     // before any pick, naming the caller's model; the caller's own entry
     // then sweeps its harness.
-    let mut crossed = World::new(&[("ORCH_OVERSEER_PREFERENCE", "codex:2:high")]);
+    let mut crossed = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "codex:2:high")]);
     crossed.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
     let result = crossed.answered(&[
         "--overseer",
@@ -707,7 +709,10 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
 #[test]
 fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_reads_it_unmeasured()
  {
-    let mut world = World::new(&[("ORCH_OVERSEER_PREFERENCE", "claude:standard:high")]);
+    let mut world = World::new(&[(
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "claude:standard:high",
+    )]);
     world.plant_listing(&[unreachable("aclaude")]);
     let lane = world.dir("aclaude");
     let args = [
@@ -745,8 +750,11 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
     // The caller's account retired: the judge's word refuses it, and no
     // unmeasured record admits it.
     let mut retired = World::new(&[
-        ("ORCH_OVERSEER_PREFERENCE", "claude:standard:high"),
-        ("ORCH_LANE_RETIRE", "aclaude=2020-01-01"),
+        (
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+            "claude:standard:high",
+        ),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2020-01-01"),
     ]);
     retired.plant_listing(&[unreachable("aclaude")]);
     let lane = retired.dir("aclaude");
@@ -766,7 +774,7 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
 #[test]
 fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_refused() {
     let mut world = World::new(&[(
-        "ORCH_OVERSEER_PREFERENCE",
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
         "claude:standard:high,codex:standard:high",
     )]);
     world.plant_listing(&[
@@ -818,14 +826,14 @@ fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_
 fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
     let mut world = World::new(&[
         (
-            "ORCH_OVERSEER_PREFERENCE",
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
             "claude:standard:high,codex:standard:high",
         ),
         (
             "ORCH_LANE_PREFERENCE",
             "claude:fable:high,codex:gpt-6.1-sol:high",
         ),
-        ("ORCH_OVERSEER_HEADROOM_PCT", "50"),
+        ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50"),
     ]);
     world.plant_listing(&[measured("aclaude", 85, 5), codex("codex", 20)]);
     world.write_fleet(Some(&world.dir("aclaude")));
@@ -887,7 +895,7 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
             "ORCH_LANE_PREFERENCE",
             "codex:gpt-6.1-sol:high,claude:fable:high",
         ),
-        ("ORCH_LANE_COPILOT_POOL", "/home/me/.pi=10/100"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/home/me/.pi=10/100"),
     ]);
     world.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
     for (flags, chosen) in [
@@ -929,7 +937,7 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
             "ORCH_LANE_PREFERENCE",
             "pi:github-copilot/gpt-6.1-sol:high,claude:fable:high",
         ),
-        ("ORCH_LANE_COPILOT_POOL", "/home/me/.pi=10/100"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/home/me/.pi=10/100"),
     ]);
     pi.plant_listing(&[measured("aclaude", 20, 5)]);
     let result = pi.answered(&["--source-harness", "claude", "--source-flags", BYPASS]);
@@ -951,7 +959,7 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     );
     // A first launch writes the target's own word: a Pi entry has none.
     let mut first = World::new(&[(
-        "ORCH_OVERSEER_PREFERENCE",
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
         "pi:github-copilot/gpt-6.1-sol:high,claude:standard:high",
     )]);
     first.plant_listing(&[measured("aclaude", 20, 5)]);
@@ -967,7 +975,7 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     );
     // A judgement handed no words asks the source harness's row alone: a
     // Claude source writes a full bypass, a Pi source none.
-    let mut rows = World::new(&[("ORCH_OVERSEER_PREFERENCE", "codex:standard:high")]);
+    let mut rows = World::new(&[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "codex:standard:high")]);
     rows.plant_listing(&[codex("codex", 20)]);
     let result = rows.answered(&["--overseer", "--source-harness", "claude"]);
     assert_eq!(
@@ -1043,7 +1051,10 @@ fn a_cloud_session_entry_is_skipped_for_a_relaunch_and_a_cloud_task_host_always(
 
 #[test]
 fn an_overseer_entry_spending_no_account_the_judge_measures_is_chosen_unpicked() {
-    let mut pi = World::new(&[("ORCH_OVERSEER_PREFERENCE", "pi:openai/gpt-5:high")]);
+    let mut pi = World::new(&[(
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+        "pi:openai/gpt-5:high",
+    )]);
     pi.plant_listing(&[codex("codex", 20)]);
     let result = pi.answered(&["--overseer", "--source-harness", "pi"]);
     assert_eq!(
@@ -1099,7 +1110,7 @@ fn a_named_lane_walk_skips_the_entries_the_judge_refuses_by_word() {
             "ORCH_LANE_PREFERENCE",
             "claude:fable:high,codex:gpt-6.1-sol:high",
         ),
-        ("ORCH_LANE_RETIRE", "aclaude=2020-01-01"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2020-01-01"),
     ]);
     world.plant_listing(&[measured("aclaude", 20, 5), codex("codex", 20)]);
     let args = [

@@ -18,7 +18,7 @@ use serde::Serialize;
 
 use crate::error::{Result, WatchError};
 use crate::schedule::Duty;
-use crate::settings::Succession;
+use agent_runtime::settings::Succession;
 
 /// Why a runner took a standing claim over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

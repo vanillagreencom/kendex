@@ -21,6 +21,7 @@
 //! `container-close`, never the close's condition. A failed list creates
 //! nothing: whether a comment exists is then not known, and the next
 //! acceptance asks again.
+use agent_runtime::record::Locking;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -31,7 +32,7 @@ use serde_json::Value;
 use super::item::AcceptResult;
 use super::{Applied, Env, Report, Request, apply};
 use crate::error::Result;
-use crate::state::{self, Attachment, Locking, SummaryComment};
+use crate::state::{self, Attachment, SummaryComment};
 
 /// How long one tracker call may take.
 const POST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -659,7 +660,7 @@ fn main_root(checkout: &Path) -> Closing<PathBuf> {
             &[("arg1", &checkout.display().to_string())],
         )
     })?;
-    let roots = crate::settings::roots(&checkout).map_err(|_| {
+    let roots = agent_runtime::settings::roots(&checkout).map_err(|_| {
         ContainerRefused::new(
             "root-unresolved",
             &[("repository-checkout", &checkout.display().to_string())],

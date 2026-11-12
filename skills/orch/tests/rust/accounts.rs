@@ -27,17 +27,18 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::FLEET_FILE_NAME;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use agent_runtime::settings::Roots;
 use orch_runtime::ops::accounts::{
     self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
 };
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::FLEET_FILE_NAME;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
 use support::*;
 
@@ -88,17 +89,18 @@ impl World {
         ] {
             std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
         }
+        install_lane_host(dir.path(), dir.path());
         let roots = Roots {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),
         };
         let base = [
-            (
-                "OVERSEE_WATCH_LANES",
-                dir.path().join("lanes").display().to_string(),
-            ),
             ("HOME", dir.path().join("home").display().to_string()),
             ("OVERSEE_WATCH_STATE_DIR", dir.path().display().to_string()),
+            (
+                "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
+                dir.path().display().to_string(),
+            ),
             ("ORCH_STATE_DIR", dir.path().display().to_string()),
             (
                 "USAGE_FIXTURE_DIR",
@@ -553,7 +555,7 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     let today = accounts::today(now());
     let tomorrow = accounts::today(now() + 86_400);
     let mut world = World::new(&[(
-        "ORCH_LANE_RETIRE",
+        "AGENT_RUNTIME_ACCOUNT_RETIRE",
         &format!("4claude={today},6claude={tomorrow}"),
     )]);
     // The row with the most room is 4claude, retired today; 6claude
@@ -600,7 +602,7 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
                 "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
             ),
             format!(
-                "account-end-contradicted 4claude config_dir={d4} ends={today} source=ORCH_LANE_RETIRE status=ok"
+                "account-end-contradicted 4claude config_dir={d4} ends={today} source=AGENT_RUNTIME_ACCOUNT_RETIRE status=ok"
             ),
         ])
     );
@@ -836,8 +838,8 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
     drop(child);
 }
 
-/// The seat's limit, `min(ORCH_LANE_MAX_PCT, 100 -
-/// ORCH_OVERSEER_HEADROOM_PCT)` over the room left once the overseer's own
+/// The seat's limit, `min(AGENT_RUNTIME_ACCOUNT_MAX_PCT, 100 -
+/// AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)` over the room left once the overseer's own
 /// spend to the reset is charged, and `pick-seat-omitted` naming `need=`.
 /// The fleet record's `overseer.account` is a seat: returned last, held to
 /// its overseer's need beside the lane limit (`seat-reserve` under it, the
@@ -846,7 +848,7 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
 /// the overseer asks.
 #[test]
 fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_last() {
-    let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "50")]);
     world.plant_listing(&[measured("seat", 10, 5), measured("worker", 60, 5)]);
     let seat_dir = world.dir("seat");
     world.write_fleet(Vec::new(), Some(&seat_dir));
@@ -1061,7 +1063,7 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     // need, never spent by a worker.
     let mut tight = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
-        ("ORCH_OVERSEER_HEADROOM_PCT", "40"),
+        ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "40"),
     ]);
     tight.write_fleet(Vec::new(), None);
     tight.plant_capabilities("fleet-vm", SSH_LINE);
@@ -1984,8 +1986,8 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     let pool = format!("{root}=100000/1000000,{cli}=1/10,{excluded}=1/10");
     let mut world = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
-        ("ORCH_LANE_COPILOT_POOL", &pool),
-        ("ORCH_LANE_EXCLUDE", "pi2"),
+        ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi2"),
     ]);
     world.write_fleet(Vec::new(), None);
     world.plant_capabilities("fleet-vm", SSH_LINE);
@@ -2322,7 +2324,7 @@ fn the_pick_verb_answers_the_judgement_with_the_released_exit_by_number() {
     // The roster verb: the rows with their words and the lines.
     let mut roster = world.command();
     roster
-        .env("ORCH_LANE_RETIRE", "aclaude=2026-01-01")
+        .env("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2026-01-01")
         .args(["accounts", "roster"]);
     let out = roster.output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
@@ -2352,7 +2354,7 @@ fn the_pick_verb_answers_the_judgement_with_the_released_exit_by_number() {
 fn a_named_reserved_or_retired_account_is_refused_by_its_word_not_the_walls_figures() {
     let today = accounts::today(now());
     let mut world = World::new(&[
-        ("ORCH_LANE_RETIRE", &format!("oclaude={today}")),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", &format!("oclaude={today}")),
         ("ORCH_LANE_HOST", "fleet-vm"),
     ]);
     world.write_fleet(Vec::new(), None);
@@ -2374,7 +2376,7 @@ fn a_named_reserved_or_retired_account_is_refused_by_its_word_not_the_walls_figu
 }
 
 /// The provider's `plan_ends` is held to a calendar day, as the machine's
-/// own `ORCH_LANE_RETIRE` is: a value that names no calendar day reads as
+/// own `AGENT_RUNTIME_ACCOUNT_RETIRE` is: a value that names no calendar day reads as
 /// invalid, not absent: the row keeps its figures, is never picked (named
 /// among the exclusions, and a named pick of it unjudged with the cause: an
 /// end nobody can read admits nothing), and is one
@@ -2458,26 +2460,26 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
 #[test]
 fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     for (key, value) in [
-        ("ORCH_LANE_RETIRE", "4claude"),
-        ("ORCH_LANE_RETIRE", "4claude=2026-02-30"),
-        ("ORCH_LANE_RETIRE", "=2026-10-20"),
-        ("ORCH_LANE_RETIRE", "a/b=2026-10-20"),
-        ("ORCH_LANE_MAX_PCT", "101"),
-        ("ORCH_OVERSEER_HEADROOM_PCT", "-1"),
-        ("ORCH_LANE_BURN_PCT_PER_HOUR", "five"),
-        ("ORCH_LANE_CODEX_CREDIT_FLOOR", "1.5"),
-        ("ORCH_LANE_CLOUD_CREDIT_FLOOR", "ten"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "4claude"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "4claude=2026-02-30"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "=2026-10-20"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "a/b=2026-10-20"),
+        ("AGENT_RUNTIME_ACCOUNT_MAX_PCT", "101"),
+        ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "-1"),
+        ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "five"),
+        ("AGENT_RUNTIME_CODEX_CREDIT_FLOOR", "1.5"),
+        ("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "ten"),
         ("ORCH_LANE_CLOUD_REPOS", "aclaude"),
         ("ORCH_LANE_CLOUD_REPOS", "aclaude=repo"),
         ("ORCH_LANE_CLOUD_REPOS", "=owner/repo"),
-        ("ORCH_LANE_COPILOT_POOL", "pi1=1/10"),
-        ("ORCH_LANE_COPILOT_POOL", "/h/.pi1=1"),
-        ("ORCH_LANE_COPILOT_POOL", "/h/.pi1=1/0"),
-        ("ORCH_LANE_COPILOT_POOL", "/h/.pi1=one/10"),
-        ("ORCH_LANE_COPILOT_POOL", "/h/.pi1=1/10,/h/.pi1/=2/10"),
-        ("ORCH_LANE_EXCLUDE", "/h/.pi1"),
-        ("ORCH_LANE_EXCLUDE", "~pi1"),
-        ("ORCH_LANE_RETIRE", "~pi1=2026-10-20"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "pi1=1/10"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/h/.pi1=1"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/h/.pi1=1/0"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/h/.pi1=one/10"),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/h/.pi1=1/10,/h/.pi1/=2/10"),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "/h/.pi1"),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "~pi1"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "~pi1=2026-10-20"),
         ("ORCH_LANE_CLOUD_REPOS", "a~b=owner/repo"),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -2501,25 +2503,30 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     }
     let world = World::new(&[
         (
-            "ORCH_LANE_RETIRE",
+            "AGENT_RUNTIME_ACCOUNT_RETIRE",
             " 4claude = 2026-10-20 , ,6claude=2026-10-21",
         ),
-        ("ORCH_LANE_MAX_PCT", "80"),
+        ("AGENT_RUNTIME_ACCOUNT_MAX_PCT", "80"),
         ("ORCH_OVERSEER_SEAT_RESERVE_PCT", "not-a-setting"),
         ("ORCH_LANE_CLOUD_REPOS", "aclaude=owner/repo, b=o/r.git"),
         (
-            "ORCH_LANE_COPILOT_POOL",
+            "AGENT_RUNTIME_COPILOT_POOL",
             "/h/.pi1=100000/1000000, /h/.pi2=10/10",
         ),
-        ("ORCH_LANE_EXCLUDE", "sclaude, pi2"),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "sclaude, pi2"),
         (
-            "ORCH_LANE_ALIASES",
+            "AGENT_RUNTIME_ACCOUNT_ALIASES",
             " pi1 = work ,bare,=nameless,empty=, .pi2=second",
         ),
     ]);
     assert_eq!(world.settings.accounts.get().unwrap().max_pct, 80);
     assert_eq!(
-        world.settings.accounts.get().unwrap().overseer_headroom_pct,
+        world
+            .settings
+            .accounts
+            .get()
+            .unwrap()
+            .controller_headroom_pct,
         5
     );
     assert_eq!(
@@ -2537,7 +2544,7 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     assert_eq!(
         world
             .settings
-            .accounts
+            .provider
             .get()
             .unwrap()
             .cloud_repos
@@ -2588,7 +2595,6 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
 /// own. The runtime is asked through the boundary.
 struct Producer {
     dir: tempfile::TempDir,
-    lanes: PathBuf,
     provider: PathBuf,
 }
 
@@ -2621,9 +2627,11 @@ impl Producer {
             .output()
             .unwrap();
         assert!(git.status.success(), "{}", stderr(&git));
+        let install = root.join("project/.agents/skills/orch");
+        std::fs::create_dir_all(&install).unwrap();
+        std::os::unix::fs::symlink(orch.join("scripts"), install.join("scripts")).unwrap();
         let producer = Producer {
             dir,
-            lanes: orch.join("scripts/lanes"),
             provider: orch.join("tests/fixtures/lane-host"),
         };
         producer.plant_lane();
@@ -2650,7 +2658,7 @@ impl Producer {
     }
 
     /// The Codex lane's config dir, listed only where an arm names it in
-    /// `ORCH_LANE_DIRS`.
+    /// `AGENT_RUNTIME_ACCOUNT_DIRS`.
     fn codex(&self) -> String {
         self.home().join(".acodex").display().to_string()
     }
@@ -2734,7 +2742,7 @@ impl Producer {
         let root = self.path();
         let mut env: Vec<(String, String)> = [
             ("HOME", self.home().display().to_string()),
-            ("ORCH_LANE_DIRS", self.claude()),
+            ("AGENT_RUNTIME_ACCOUNT_DIRS", self.claude()),
             (
                 "USAGE_FIXTURE_DIR",
                 root.join("fixtures").display().to_string(),
@@ -2744,9 +2752,12 @@ impl Producer {
                 "OVERSEE_WATCH_STATE_DIR",
                 root.join("claims").display().to_string(),
             ),
-            ("OVERSEE_WATCH_LANES", self.lanes.display().to_string()),
-            ("ORCH_LANES_USAGE_TTL", "0".to_owned()),
-            ("ORCH_LANES_USAGE_MAX_AGE", "0".to_owned()),
+            (
+                "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
+                root.join("claims").display().to_string(),
+            ),
+            ("AGENT_RUNTIME_USAGE_TTL", "0".to_owned()),
+            ("AGENT_RUNTIME_USAGE_MAX_AGE", "0".to_owned()),
             (
                 "LANE_HOST_STUB_LOG",
                 root.join("provider.log").display().to_string(),
@@ -2907,7 +2918,6 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
     let codex_dir = producer.codex();
     let pi_dir = producer.pi();
     let other_pi = producer.other_pi();
-    let no_lanes = producer.path().join("no-such-lanes").display().to_string();
     let pool = format!("{pi_dir}=100000/1000000");
     let spent_pool = format!("{pi_dir}=960000/1000000");
     let other_pool = format!("{other_pi}=100000/1000000");
@@ -3230,7 +3240,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a Pi launch on a model naming no provider, or on a provider nothing bills, is refused before any row is read, local",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_COPILOT_POOL", &pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &pool)],
             asks: vec![
                 ask(
                     named_launch("other/model", &pi_dir),
@@ -3266,7 +3276,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "the same under a provider host",
             usage: fresh.clone(),
             provider: Some(String::new()),
-            env: vec![("ORCH_LANE_COPILOT_POOL", &pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &pool)],
             asks: vec![
                 ask(
                     named_launch("other/model", &pi_dir),
@@ -3302,7 +3312,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "the owner's stated pool with no provider",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_COPILOT_POOL", &pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &pool)],
             asks: vec![
                 ask(pi_chooser(), "lane", 0, Some(0), lane("stated", 10)),
                 ask(pi_named(), "lane", 0, Some(0), lane("stated", 10)),
@@ -3312,7 +3322,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "the owner's stated pool at the bound is walled by the named form",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_COPILOT_POOL", &spent_pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &spent_pool)],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(3), none(1, 0)),
                 ask(
@@ -3334,7 +3344,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             provider: Some(pi_row(
                 "\tmonthly-pct=60\tmonthly-resets=2026-12-01T00:00:00Z",
             )),
-            env: vec![("ORCH_LANE_COPILOT_POOL", &pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &pool)],
             asks: vec![
                 ask(
                     pi_chooser(),
@@ -3355,7 +3365,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a provider pool row with no reading leaves the statement",
             usage: fresh.clone(),
             provider: Some(pi_row("\tstatus=no_usage_data")),
-            env: vec![("ORCH_LANE_COPILOT_POOL", &pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &pool)],
             asks: vec![
                 ask(pi_chooser(), "lane", 0, Some(0), lane("stated", 10)),
                 ask(pi_named(), "lane", 0, Some(0), lane("stated", 10)),
@@ -3460,7 +3470,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a named Pi root with the pool stated for another root",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_COPILOT_POOL", &other_pool)],
+            env: vec![("AGENT_RUNTIME_COPILOT_POOL", &other_pool)],
             asks: vec![ask(
                 named_launch(pi_model, &pi_dir),
                 "unmeasured",
@@ -3637,9 +3647,9 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: None,
             env: vec![
-                ("ORCH_LANE_COPILOT_POOL", &pool),
-                ("ORCH_LANE_ALIASES", "pi1=work"),
-                ("ORCH_LANE_EXCLUDE", "work"),
+                ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+                ("AGENT_RUNTIME_ACCOUNT_ALIASES", "pi1=work"),
+                ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "work"),
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(3), none(0, 0)),
@@ -3657,8 +3667,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: None,
             env: vec![
-                ("ORCH_LANE_COPILOT_POOL", &pool),
-                ("ORCH_LANE_EXCLUDE", "pi1"),
+                ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+                ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1"),
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(3), none(0, 0)),
@@ -3676,9 +3686,9 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: None,
             env: vec![
-                ("ORCH_LANE_COPILOT_POOL", &pool),
-                ("ORCH_LANE_ALIASES", "pi1=work"),
-                ("ORCH_LANE_RETIRE", "work=2026-01-01"),
+                ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+                ("AGENT_RUNTIME_ACCOUNT_ALIASES", "pi1=work"),
+                ("AGENT_RUNTIME_ACCOUNT_RETIRE", "work=2026-01-01"),
             ],
             asks: vec![
                 ask(
@@ -3707,7 +3717,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired local kind is refused by its word where the retained pick measured it unmeasured",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_RETIRE", "aclaude=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2026-01-01")],
             asks: vec![
                 ask(
                     claude_chooser(),
@@ -3877,17 +3887,17 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a Codex seat whose plan windows are spent spends its credits: room on the credits bucket, named and chosen",
             usage: fresh.clone(),
             provider: Some(codex_row("\tseat=1")),
-            env: vec![("ORCH_LANE_DIRS", &codex_dir)],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_DIRS", &codex_dir)],
             asks: vec![
                 ask(codex_chooser(), "lane", 0, Some(0), credits()),
                 ask(codex_named(), "lane", 0, Some(0), credits()),
             ],
         },
         Arm {
-            name: "the API grant whose root ORCH_LANE_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained named pick judged no row, and is the overseer walk's to read",
+            name: "the API grant whose root AGENT_RUNTIME_ACCOUNT_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained named pick judged no row, and is the overseer walk's to read",
             usage: fresh.clone(),
             provider: Some(grant_row(150)),
-            env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1")],
             asks: vec![
                 ask(api_chooser(), "none", 3, Some(3), none(0, 0)),
                 ask(
@@ -3915,8 +3925,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: Some(grant_row(150)),
             env: vec![
-                ("ORCH_LANE_ALIASES", "pi1=work"),
-                ("ORCH_LANE_EXCLUDE", "work"),
+                ("AGENT_RUNTIME_ACCOUNT_ALIASES", "pi1=work"),
+                ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "work"),
             ],
             asks: vec![
                 ask(api_chooser(), "none", 3, Some(3), none(0, 0)),
@@ -3933,7 +3943,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired API grant root is refused by its word where the retained pick admitted the grant",
             usage: fresh.clone(),
             provider: Some(grant_row(150)),
-            env: vec![("ORCH_LANE_RETIRE", "pi1=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "pi1=2026-01-01")],
             asks: vec![
                 ask(
                     api_chooser(),
@@ -3960,10 +3970,10 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "a local kind ORCH_LANE_EXCLUDE names is refused by its word in the named form, where the retained pick found no record, and no candidate to the chooser, the provider holding a row for it",
+            name: "a local kind AGENT_RUNTIME_ACCOUNT_EXCLUDE names is refused by its word in the named form, where the retained pick found no record, and no candidate to the chooser, the provider holding a row for it",
             usage: fresh.clone(),
             provider: Some(claude_row("\tsession-5h-pct=10\tweekly-pct=10")),
-            env: vec![("ORCH_LANE_EXCLUDE", "aclaude")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "aclaude")],
             asks: vec![
                 ask(claude_chooser(), "none", 3, Some(3), none(0, 0)),
                 ask(
@@ -3979,7 +3989,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired local kind the provider holds a row for is refused by its word where the retained pick measured it unmeasured",
             usage: fresh.clone(),
             provider: Some(claude_row("\tsession-5h-pct=10\tweekly-pct=10")),
-            env: vec![("ORCH_LANE_RETIRE", "aclaude=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2026-01-01")],
             asks: vec![
                 ask(
                     claude_chooser(),
@@ -4007,7 +4017,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a Pi launch on a model nothing bills is refused before the listing is read, the reader unreadable",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("OVERSEE_WATCH_LANES", &no_lanes)],
+            env: vec![],
             asks: vec![
                 ask(
                     named_launch("sonnet:high", &pi_dir),
@@ -4043,10 +4053,10 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "a provider-only Copilot root ORCH_LANE_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained pick found the pool unstated, and is the overseer walk's to read",
+            name: "a provider-only Copilot root AGENT_RUNTIME_ACCOUNT_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained pick found the pool unstated, and is the overseer walk's to read",
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
-            env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1")],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
                 ask(
@@ -4077,8 +4087,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
             env: vec![
-                ("ORCH_LANE_ALIASES", "pi1=work"),
-                ("ORCH_LANE_EXCLUDE", "work"),
+                ("AGENT_RUNTIME_ACCOUNT_ALIASES", "pi1=work"),
+                ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "work"),
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
@@ -4109,7 +4119,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "an excluded provider-only Copilot root whose row read nothing, refused by its word where the retained pick found the pool unstated, and the pool nobody measured to the overseer walk",
             usage: fresh.clone(),
             provider: Some(pi_row("\tstatus=no_usage_data")),
-            env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1")],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
                 ask(
@@ -4139,7 +4149,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired provider-only Copilot root is refused by its word where the retained pick found the pool unstated",
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
-            env: vec![("ORCH_LANE_RETIRE", "pi1=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "pi1=2026-01-01")],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), retired_root(&pi_dir)),
                 ask(
@@ -4163,7 +4173,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "an excluded Copilot root nobody measured, this machine's read, is a pool nobody measured to the chooser and refused by its word in the named form, where the retained pick found no reading",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1")],
             asks: vec![
                 ask(
                     pi_chooser(),
@@ -4185,7 +4195,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired Copilot root nobody measured, this machine's read, is refused by its word where the retained pick found no reading",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_RETIRE", "pi1=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "pi1=2026-01-01")],
             asks: vec![
                 ask(
                     pi_chooser(),
@@ -4207,7 +4217,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "an excluded API grant root, this machine's read, is a grant nobody measured to the chooser and refused by its word in the named form, where the retained pick found no grant row",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1")],
             asks: vec![
                 ask(
                     api_chooser(),
@@ -4233,7 +4243,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "a retired API grant root, this machine's read, is refused by its word where the retained pick found no grant row",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_RETIRE", "pi1=2026-01-01")],
+            env: vec![("AGENT_RUNTIME_ACCOUNT_RETIRE", "pi1=2026-01-01")],
             asks: vec![
                 ask(
                     api_chooser(),
@@ -4256,8 +4266,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
             env: vec![
-                ("ORCH_LANE_COPILOT_POOL", &pool),
-                ("ORCH_LANE_EXCLUDE", "pi1"),
+                ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+                ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "pi1"),
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(3), none(0, 0)),
@@ -4279,8 +4289,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
             env: vec![
-                ("ORCH_LANE_COPILOT_POOL", &pool),
-                ("ORCH_LANE_RETIRE", "pi1=2026-01-01"),
+                ("AGENT_RUNTIME_COPILOT_POOL", &pool),
+                ("AGENT_RUNTIME_ACCOUNT_RETIRE", "pi1=2026-01-01"),
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), retired_root(&pi_dir)),
@@ -4303,7 +4313,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             provider: Some(String::new()),
             env: vec![
                 ("LANE_HOST_STUB_CAPABILITIES", cloud_line),
-                ("ORCH_LANE_RETIRE", "aclaude=2026-01-01"),
+                ("AGENT_RUNTIME_ACCOUNT_RETIRE", "aclaude=2026-01-01"),
             ],
             asks: vec![
                 ask(
@@ -4335,21 +4345,21 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "the API grant's credit floor at 0 admits a grant with 100 dollars left, as the retained pick did",
             usage: fresh.clone(),
             provider: Some(grant_row(100)),
-            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "0")],
+            env: vec![("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "0")],
             asks: floor_room(),
         },
         Arm {
             name: "the API grant's credit floor at 10 admits a grant with 100 dollars left, as the retained pick did",
             usage: fresh.clone(),
             provider: Some(grant_row(100)),
-            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "10")],
+            env: vec![("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "10")],
             asks: floor_room(),
         },
         Arm {
             name: "the API grant's credit floor at 100 walls a grant with 100 dollars left, as the retained pick did",
             usage: fresh.clone(),
             provider: Some(grant_row(100)),
-            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "100")],
+            env: vec![("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "100")],
             asks: vec![
                 ask(
                     api_chooser(),
@@ -4381,7 +4391,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             name: "the API grant's credit floor at 0 admits no grant this machine's read cannot measure, as the retained pick answered",
             usage: fresh.clone(),
             provider: None,
-            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "0")],
+            env: vec![("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "0")],
             asks: vec![
                 ask(
                     api_chooser(),
@@ -4440,8 +4450,8 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
     let cached = producer.env(
         false,
         &[
-            ("ORCH_LANES_USAGE_TTL", "300"),
-            ("ORCH_LANES_USAGE_MAX_AGE", ""),
+            ("AGENT_RUNTIME_USAGE_TTL", "300"),
+            ("AGENT_RUNTIME_USAGE_MAX_AGE", ""),
         ],
     );
     let week = |pct: u64| usage_body((0, at + 1800), (pct, at + 3360), &[("Opus", 0, at + 3360)]);
@@ -4705,7 +4715,7 @@ fn an_unreadable_percentage_reads_unmeasured_never_zero() {
 
 #[test]
 fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothing() {
-    let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
     world.write_fleet(Vec::new(), None);
     world.plant_listing(&[measured("aclaude", 20, 10)]);
     world.plant_answer(
@@ -4783,7 +4793,10 @@ fn weekly_body(pct: u64, reset: u64) -> Value {
 /// The account wall the watch records for `dir`, resetting with the walled
 /// week and naming `seen_at` as the banner's first sighting.
 fn plant_wall(world: &World, dir: &str, seen_at: Option<u64>) {
-    let path = orch_runtime::ops::wall::account_wall_path(&world.settings.claim_store, dir);
+    let path = orch_runtime::ops::wall::account_wall_path(
+        &world.settings.account_state.get().unwrap(),
+        dir,
+    );
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut record = json!({
         "config_dir": orch_runtime::ops::wall::canon(dir),
@@ -4815,7 +4828,7 @@ fn plant_figure(world: &World, alias: &str, pct: u64, at: u64, reset: u64) {
 #[test]
 fn an_early_reset_that_keeps_its_reset_time_frees_the_account_once_its_figure_falls_after_the_wall()
 {
-    let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
     world.write_fleet(Vec::new(), None);
     world.plant_listing(&[measured("aclaude", 100, 0), measured("bclaude", 50, 0)]);
     let dir = world.dir("aclaude");
@@ -4897,7 +4910,7 @@ fn a_reading_with_room_holds_the_wall_unless_its_figure_fell_after_the_sighting_
         ("no sighting", 100, now() - 600, walled_week(), None, 0),
     ];
     for (case, pct, at, reset, seen_at, answer) in cases {
-        let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+        let mut world = World::new(&[("AGENT_RUNTIME_USAGE_TTL", "0")]);
         world.write_fleet(Vec::new(), None);
         world.plant_listing(&[measured("aclaude", pct, 0), measured("bclaude", 50, 0)]);
         plant_wall(&world, &world.dir("aclaude"), seen_at);
@@ -5189,10 +5202,12 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
     let dirs = ["acopilot", "kcopilot", "tcopilot", "scopilot"]
         .map(|n| world.dir(n))
         .join(":");
-    world.env.retain(|(k, _)| k != "ORCH_LANE_DIRS");
-    world.env.push(("ORCH_LANE_DIRS".to_owned(), dirs));
+    world.env.retain(|(k, _)| k != "AGENT_RUNTIME_ACCOUNT_DIRS");
+    world
+        .env
+        .push(("AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(), dirs));
     world.env.push((
-        "ORCH_LANE_COPILOT_POOL".to_owned(),
+        "AGENT_RUNTIME_COPILOT_POOL".to_owned(),
         format!("{}=250/1000", world.dir("scopilot")),
     ));
     let secret_tool = world.path().join("bin/secret-tool");
@@ -5259,8 +5274,8 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
 fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refused_by_name() {
     let today = accounts::today(now());
     let mut world = World::new(&[
-        ("ORCH_LANE_EXCLUDE", "xclaude"),
-        ("ORCH_LANE_RETIRE", &format!("rclaude={today}")),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "xclaude"),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", &format!("rclaude={today}")),
     ]);
     world.write_fleet(Vec::new(), None);
     world.plant_listing(&[
@@ -5467,7 +5482,7 @@ fn listed_row(world: &World, alias: &str) -> Value {
 /// ago, its refresh token `refresh-aclaude`, no usage record (so a renewed
 /// login fetches its usage) and the client id configured.
 fn expired_claude_world() -> World {
-    let mut world = World::new(&[("ORCH_LANES_CLAUDE_CLIENT_ID", "client-1")]);
+    let mut world = World::new(&[("AGENT_RUNTIME_CLAUDE_CLIENT_ID", "client-1")]);
     world.write_fleet(Vec::new(), None);
     world.plant_listing(&[measured("aclaude", 20, 5)]);
     std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
@@ -5603,7 +5618,7 @@ fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing()
         row["detail"]
             .as_str()
             .unwrap()
-            .contains("ORCH_LANES_CLAUDE_CLIENT_ID"),
+            .contains("AGENT_RUNTIME_CLAUDE_CLIENT_ID"),
         "{row}"
     );
     assert_eq!(
@@ -6121,7 +6136,7 @@ fn a_private_file_setting_reaches_the_account_readers_as_it_reached_the_released
     world.plant_listing(&[measured("aclaude", 20, 5)]);
     std::fs::write(
         world.path().join(".env.local"),
-        "ORCH_LANE_EXCLUDE=aclaude\n",
+        "AGENT_RUNTIME_ACCOUNT_EXCLUDE=aclaude\n",
     )
     .unwrap();
     let pick = private_run(
@@ -6140,11 +6155,11 @@ fn a_private_file_setting_reaches_the_account_readers_as_it_reached_the_released
     let mut world = expired_claude_world();
     world
         .env
-        .retain(|(key, _)| key != "ORCH_LANES_CLAUDE_CLIENT_ID");
+        .retain(|(key, _)| key != "AGENT_RUNTIME_CLAUDE_CLIENT_ID");
     plant_renewal(&world, None);
     std::fs::write(
         world.path().join(".env.local"),
-        "ORCH_LANES_CLAUDE_CLIENT_ID=client-1\n",
+        "AGENT_RUNTIME_CLAUDE_CLIENT_ID=client-1\n",
     )
     .unwrap();
     let roster = private_run(&world, &["accounts", "roster"]);
@@ -6178,7 +6193,7 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
     let env: Vec<(String, String)> = producer
         .env(false, &[])
         .into_iter()
-        .filter(|(key, _)| key != "ORCH_LANE_DIRS")
+        .filter(|(key, _)| key != "AGENT_RUNTIME_ACCOUNT_DIRS")
         .collect();
     let run = |args: &[&str]| {
         let mut command = program(binary());
@@ -6193,18 +6208,22 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
     let at = |name: &str, status: &str| (home.join(name).display().to_string(), status.to_owned());
     for (line, mut want, skipped) in [
         (
-            "ORCH_LANE_DIRS=$HOME/lane-a\n",
+            "AGENT_RUNTIME_ACCOUNT_DIRS=$HOME/lane-a\n",
             vec![at("lane-a", "ok")],
             None,
         ),
         (
-            "ORCH_LANE_DIRS=\"$HOME/lane-a\"\n",
+            "AGENT_RUNTIME_ACCOUNT_DIRS=\"$HOME/lane-a\"\n",
             vec![at("lane-a", "ok")],
             None,
         ),
-        ("ORCH_LANE_DIRS=~/lane-a\n", vec![at("lane-a", "ok")], None),
         (
-            "ORCH_LANE_DIRS=${HOME}/lane-a:~/.aclaude # both\n",
+            "AGENT_RUNTIME_ACCOUNT_DIRS=~/lane-a\n",
+            vec![at("lane-a", "ok")],
+            None,
+        ),
+        (
+            "AGENT_RUNTIME_ACCOUNT_DIRS=${HOME}/lane-a:~/.aclaude # both\n",
             vec![at("lane-a", "ok"), at(".aclaude", "ok")],
             None,
         ),
@@ -6214,9 +6233,9 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
             None,
         ),
         (
-            "ORCH_LANE_DIRS=$(dirname ~/lane-a/x)\n",
+            "AGENT_RUNTIME_ACCOUNT_DIRS=$(dirname ~/lane-a/x)\n",
             vec![],
-            Some("ORCH_LANE_DIRS"),
+            Some("AGENT_RUNTIME_ACCOUNT_DIRS"),
         ),
     ] {
         std::fs::write(producer.path().join("project/.env.local"), line).unwrap();
@@ -6258,7 +6277,7 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
 }
 
 /// The candidates are the accounts the owner configures, never a login
-/// folder found by looking: an `ORCH_LANE_DIRS` entry relative to the home
+/// folder found by looking: an `AGENT_RUNTIME_ACCOUNT_DIRS` entry relative to the home
 /// lists that home's directory, while the bare `~/.copilot` beside it,
 /// signed in, is no row; named by `COPILOT_HOME` it is measured and a named
 /// pick judges it, while the chooser still leaves it out; with the setting
@@ -6296,7 +6315,7 @@ fn the_candidates_are_the_configured_accounts_alone_never_a_login_folder_found_i
             .map(|r| r["config_dir"].as_str().unwrap().to_owned())
             .collect()
     };
-    set(&mut world, "ORCH_LANE_DIRS", Some(".2claude"));
+    set(&mut world, "AGENT_RUNTIME_ACCOUNT_DIRS", Some(".2claude"));
     assert_eq!(listed(&world), vec![world.dir("2claude")]);
     let copilot_dir = copilot.display().to_string();
     set(&mut world, "COPILOT_HOME", Some(&copilot_dir));
@@ -6324,14 +6343,13 @@ fn the_candidates_are_the_configured_accounts_alone_never_a_login_folder_found_i
         "{named}"
     );
     set(&mut world, "COPILOT_HOME", None);
-    set(&mut world, "ORCH_LANE_DIRS", None);
+    set(&mut world, "AGENT_RUNTIME_ACCOUNT_DIRS", None);
     let roster = world.roster();
     assert_eq!(roster["accounts"], json!(0), "{roster}");
     assert!(
-        roster["lines"]
-            .as_array()
-            .unwrap()
-            .contains(&json!("accounts-unconfigured key=ORCH_LANE_DIRS")),
+        roster["lines"].as_array().unwrap().contains(&json!(
+            "accounts-unconfigured key=AGENT_RUNTIME_ACCOUNT_DIRS"
+        )),
         "{roster}"
     );
 }

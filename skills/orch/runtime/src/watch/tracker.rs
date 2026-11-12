@@ -27,6 +27,8 @@
 //! handed over through `Shared`, written once per pass; those duties make
 //! no second read.
 
+use agent_runtime::intent::Owner;
+use agent_runtime::record::Locking;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -42,7 +44,7 @@ use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, Replied, Resolved};
 use crate::ops::{self, CloseOwnedResources, Delivery, Env, Request, Terminal};
 use crate::settings::Settings;
-use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, Locking, Owner, TerminalVerdict};
+use crate::state::{self, CycleRow, FleetState, Lane, LaneStatus, TerminalVerdict};
 use crate::verify::wire::Nullable;
 use crate::watch::{Body, Change, Event, Produced, Tick};
 
@@ -709,8 +711,10 @@ pub fn register(
 )]
 fn load_fleet(path: &Path) -> Result<FleetState> {
     state::load(path)?
-        .ok_or_else(|| Error::RecordMissing {
-            path: path.to_path_buf(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::RecordMissing {
+                path: path.to_path_buf(),
+            })
         })?
         .view::<FleetState>(path)
 }

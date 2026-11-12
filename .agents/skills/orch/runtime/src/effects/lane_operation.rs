@@ -37,7 +37,9 @@ use crate::ops::{
     Report, Request,
 };
 use crate::settings::Settings;
-use crate::state::{EffectOp, Intent, Lane, Locking, Owner, PrincipalKeys, Role};
+use crate::state::{EffectOp, Intent, Lane, PrincipalKeys, Role};
+use agent_runtime::intent::Owner;
+use agent_runtime::record::Locking;
 
 pub(super) use worktree::WorktreeRelease;
 

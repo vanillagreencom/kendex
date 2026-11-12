@@ -88,15 +88,11 @@ impl Fleet {
                 "TMUX",
                 format!("{},0,0", self.state_dir().join("no-such.sock").display()),
             )
-            .env("ORCH_TMUX_SESSION", "fleet")
+            .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
             .env("ORCH_OVERSEER_LANES", self.cap.to_string())
             .env(
                 "LANE_MAIL_CLI",
                 fixtures().join("lane-mail-quiet/lane-mail"),
-            )
-            .env(
-                "DEV_VALIDATE_CLI",
-                fixtures().join("dev-validate-quiet/dev-validate-run"),
             )
             .current_dir(self.state_dir());
         for (name, value) in &self.env {
@@ -935,10 +931,10 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
     // reads, and the cap its admission judges; so is a lane close's grace
     // before the close reads anything; `state path` answers under each.
     for (key, value, request) in [
-        ("ORCH_TMUX_VERIFY_SECS", "0", "launch"),
+        ("AGENT_RUNTIME_TMUX_VERIFY_SECS", "0", "launch"),
         ("ORCH_LANE_CLOSE_SECS", "x", "launch"),
-        ("ORCH_LAUNCH_PERMISSION", "yes", "launch"),
-        ("ORCH_HARNESS_BINARIES", "claude", "launch"),
+        ("AGENT_RUNTIME_LAUNCH_PERMISSION", "yes", "launch"),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", "claude", "launch"),
         ("ORCH_OVERSEER_LANES", "03", "launch"),
         ("ORCH_OVERSEER_CLOUD_LANES", "0", "cloud"),
         ("ORCH_LANE_CLOSE_SECS", "0", "close"),
@@ -1612,15 +1608,11 @@ fn spawn_op(
             "TMUX",
             format!("{},0,0", fleet.state_dir().join("no-such.sock").display()),
         )
-        .env("ORCH_TMUX_SESSION", "fleet")
+        .env("AGENT_RUNTIME_TMUX_SESSION", "fleet")
         .env("ORCH_OVERSEER_LANES", fleet.cap.to_string())
         .env(
             "LANE_MAIL_CLI",
             fixtures().join("lane-mail-quiet/lane-mail"),
-        )
-        .env(
-            "DEV_VALIDATE_CLI",
-            fixtures().join("dev-validate-quiet/dev-validate-run"),
         )
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

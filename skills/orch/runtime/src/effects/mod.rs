@@ -92,13 +92,14 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::ops::{self, AdoptController, Applied, Effect, Env, OutcomeRecorded, Report, Request};
-use crate::schedule::Clock;
 use crate::settings::Settings;
-use crate::state::{self, EffectOp, Intent, Lane, Locking};
+use crate::state::{self, EffectOp, Intent, Lane};
+use agent_runtime::clock::Clock;
+use agent_runtime::record::Locking;
 
 use operation::{
-    Claimant, Companion, EffectOutcome, EngineSettings, Identity, ProcessReading, State, Target,
-    job, overseer_target_of, read_intent, read_overseer, refused,
+    Claimant, Companion, EffectOutcome, Identity, ProcessReading, State, Target, job,
+    overseer_target_of, read_intent, read_overseer, refused,
 };
 
 /// What one effect run or reconcile acts with: the engine's run, which
@@ -138,18 +139,19 @@ impl<'a> Run<'a> {
 }
 
 /// The engine's run over the record at `path`, filled from orch's settings:
-/// the engine's own keys, and orch's state directory, close grace, mailbox
-/// program and main checkout as the arguments the engine takes.
+/// the engine's own keys as the one load read them, and orch's state
+/// directory, close grace, mailbox program and main checkout as the
+/// arguments the engine takes.
 fn engine_run<'a>(
     path: &'a Path,
-    settings: &Settings,
+    settings: &'a Settings,
     env: &'a Env,
     locking: Locking,
     clock: &'a dyn Clock,
 ) -> operation::Run<'a> {
     operation::Run {
         path,
-        settings: engine_settings(settings),
+        settings: &settings.engine,
         state_dir: settings.state_dir.clone(),
         close_grace: settings.close_grace.clone(),
         mail_program: settings.lane_mail_cli.clone(),
@@ -158,16 +160,6 @@ fn engine_run<'a>(
         locking,
         clock,
         outcome_arm: ops::outcome_arm,
-    }
-}
-
-/// The engine's own keys as orch's settings read them.
-fn engine_settings(settings: &Settings) -> EngineSettings {
-    EngineSettings {
-        verify: settings.verify.clone(),
-        claim: settings.claim.clone(),
-        tmux_session: settings.tmux_session.clone(),
-        harness_binaries: settings.harness_binaries.clone(),
     }
 }
 
@@ -512,7 +504,7 @@ pub fn run_job(
 /// and the controller operation it runs. The effect the job then runs is
 /// its operation's own, after the claim.
 fn read_job(run: &Run, intent_id: &str) -> Result<(Request, job::Op)> {
-    let request_path = state::job_request_path(&run.settings.state_dir, intent_id);
+    let request_path = agent_runtime::record::job_request_path(&run.settings.state_dir, intent_id);
     let bytes = std::fs::read(&request_path).map_err(|e| {
         Error::Runtime(agent_runtime::Error::io(
             "read-job-request",
@@ -620,7 +612,7 @@ pub fn adopt_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Applied> {
-    operation::adopt_controller(path, r, &engine_settings(settings), locking)
+    operation::adopt_controller(path, r, &settings.engine, locking)
 }
 
 /// Register the controller a person opened by hand in the caller's own
@@ -635,7 +627,7 @@ pub fn register_controller(
     let (mut reply, harness) = operation::register_controller(
         path,
         account,
-        &engine_settings(settings),
+        &settings.engine,
         &settings.roots.common,
         locking,
     )?;
@@ -715,11 +707,11 @@ fn supersede_launch(
     };
     if launch.intent.open() {
         if reconciled.deferred {
-            return Err(Error::IntentOpen {
+            return Err(Error::Runtime(agent_runtime::Error::IntentOpen {
                 intent: launch.intent.id.clone(),
-                op: launch.intent.op,
+                op: launch.intent.op.word(),
                 target: launch.intent.target.clone(),
-            });
+            }));
         }
         let present = launch
             .intent
@@ -743,11 +735,11 @@ fn supersede_launch(
             None
         };
         if !present && cloud.is_none() && preparing.is_none() {
-            return Err(Error::IntentOpen {
+            return Err(Error::Runtime(agent_runtime::Error::IntentOpen {
                 intent: launch.intent.id.clone(),
-                op: launch.intent.op,
+                op: launch.intent.op.word(),
                 target: launch.intent.target.clone(),
-            });
+            }));
         }
         let pane = launch
             .intent
@@ -836,7 +828,7 @@ fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> 
 fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, LaunchCommand)> {
     let permission = spec
         .permission
-        .map_or_else(|| settings.permission.get(), Ok)?;
+        .map_or_else(|| settings.engine.permission.get(), Ok)?;
     if permission == Permission::Native
         && let Some(word) = spec.harness.bypass_word_in(spec.extra_args)
     {
@@ -870,7 +862,11 @@ fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, Launc
         env: Default::default(),
         env_remove: Vec::new(),
         extra_args: spec.extra_args.to_vec(),
-        program: settings.harness_binaries.get()?.remove(&spec.harness),
+        program: settings
+            .engine
+            .harness_binaries
+            .get()?
+            .remove(&spec.harness),
     };
     let command = agent_runtime::launch::build(&intent)?;
     Ok((intent, command))
@@ -983,7 +979,7 @@ pub fn reconcile(
     // its receipt kept beside the state; it is stamped here, never sent
     // again.
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
-    let controller = match operation::heal_controller(path, &engine_settings(settings), locking) {
+    let controller = match operation::heal_controller(path, &settings.engine, locking) {
         Ok(None) => None,
         Ok(Some(applied)) => {
             let Report::AdoptController(adopted) = applied.report else {
@@ -1044,7 +1040,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
             return deferred(
                 run,
                 intent,
-                json!({"note": state::OWNER_LIVE, "owner": "live"}),
+                json!({"note": agent_runtime::intent::OWNER_LIVE, "owner": "live"}),
             )
             .map(|applied| Reconciled {
                 applied,
@@ -1056,7 +1052,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
             return deferred(
                 run,
                 intent,
-                json!({"note": state::OWNER_UNREAD, "owner": "unreadable", "cause": cause}),
+                json!({"note": agent_runtime::intent::OWNER_UNREAD, "owner": "unreadable", "cause": cause}),
             )
             .map(|applied| Reconciled {
                 applied,
@@ -1115,8 +1111,10 @@ fn snapshot(path: &Path) -> Result<Option<state::Snapshot>> {
 }
 
 fn load(path: &Path) -> Result<state::Snapshot> {
-    snapshot(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    snapshot(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })
 }
 
@@ -1152,8 +1150,10 @@ fn lane_for_intent(path: &Path, intent_id: &str) -> Result<(Lane, String)> {
         .intents
         .iter()
         .find(|i| i.id == intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: intent_id.to_owned(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: intent_id.to_owned(),
+            })
         })?;
     let item = intent.target.clone();
     let lane = body

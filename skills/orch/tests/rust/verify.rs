@@ -18,6 +18,7 @@
     reason = "the process tests run the built binary against a fake gh on PATH"
 )]
 
+use agent_runtime::record::Locking;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -27,7 +28,6 @@ use std::process::Output;
 
 use orch_runtime::error::Error;
 use orch_runtime::ops::{Env, Request, VerifyHead, VerifyPr, apply};
-use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
 
@@ -5651,7 +5651,7 @@ struct Stepped {
     between: Between,
 }
 
-impl orch_runtime::schedule::Clock for Stepped {
+impl agent_runtime::clock::Clock for Stepped {
     fn now(&self) -> std::time::Instant {
         self.now.lock().unwrap().0
     }

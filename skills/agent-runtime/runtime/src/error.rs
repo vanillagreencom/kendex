@@ -3,6 +3,29 @@
 
 use std::path::PathBuf;
 
+use crate::protocol::Outcome;
+
+/// Why a field of a record is not the shape its reader reads. The word
+/// is the `reason=` value of a `record-shape` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeReason {
+    NotObject,
+    NotArray,
+    /// The value parsed, but not as the type the field carries.
+    TypeMismatch,
+}
+
+impl ShapeReason {
+    /// The stable word a diagnostic carries.
+    pub fn word(self) -> &'static str {
+        match self {
+            ShapeReason::NotObject => "not-object",
+            ShapeReason::NotArray => "not-array",
+            ShapeReason::TypeMismatch => "type-mismatch",
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{operation} on {path}: {source}")]
@@ -32,8 +55,55 @@ pub enum Error {
         expected: u64,
         found: u64,
     },
-    #[error("{path}: {reason}")]
-    RecordShape { path: PathBuf, reason: String },
+    /// A field of a record is not the shape its reader reads; `field`
+    /// is the top-level key, with `/<index>` for an array element, and the
+    /// empty field is the record itself.
+    #[error("{path}: field {field:?} {}: {cause}", reason.word())]
+    RecordShape {
+        path: PathBuf,
+        field: String,
+        reason: ShapeReason,
+        cause: String,
+    },
+    #[error("{path}: no state file")]
+    RecordMissing { path: PathBuf },
+    /// Another operation's intent on the target has not ended; the request
+    /// waits for its outcome instead of racing it.
+    #[error("intent {intent} ({op}) is open on {target}")]
+    IntentOpen {
+        intent: String,
+        op: &'static str,
+        target: String,
+    },
+    #[error("no intent carries the id {id}")]
+    IntentUnknown { id: String },
+    /// An intent with this id already stands. The id carries the stamp the
+    /// caller minted for the call, so this is a replayed stamp, a programming
+    /// error; the standing intent is never written over.
+    #[error("an intent already carries the id {id}")]
+    IntentDuplicate { id: String },
+    #[error("intent {id} already ended as {outcome:?}")]
+    IntentComplete { id: String, outcome: Outcome },
+    /// A progress write names the obligation set at a revision the record no
+    /// longer holds: another handle or process replaced the set since the
+    /// writer read it, so the writer's view is stale and it acts on nothing.
+    #[error(
+        "intent {id}: the obligation set was replaced (revision {expected} written, {found} recorded)"
+    )]
+    SetReplaced {
+        id: String,
+        expected: u64,
+        found: u64,
+    },
+    /// `not-started` is the state an intent is created in, never an outcome
+    /// an effect reports.
+    #[error("{outcome:?} is not an outcome an effect can report")]
+    OutcomeInvalid { outcome: Outcome },
+    /// The operation persists an intent, and the process asking has no
+    /// readable identity to own it with. A contender could not
+    /// tell such an intent's live effect from a dead one, so none is written.
+    #[error("{op}: no readable process identity to own the intent")]
+    OwnerUnreadable { op: &'static str },
     /// A process operation could not be performed or could not be judged.
     #[error("process {operation} pid={pid}: {cause}")]
     Process {
@@ -102,6 +172,14 @@ impl Error {
             Error::RecordVersion { .. } => "record-version",
             Error::RevisionMismatch { .. } => "revision-mismatch",
             Error::RecordShape { .. } => "record-shape",
+            Error::RecordMissing { .. } => "record-missing",
+            Error::IntentOpen { .. } => "intent-open",
+            Error::IntentUnknown { .. } => "intent-unknown",
+            Error::IntentDuplicate { .. } => "intent-duplicate",
+            Error::IntentComplete { .. } => "intent-complete",
+            Error::SetReplaced { .. } => "set-replaced",
+            Error::OutcomeInvalid { .. } => "outcome-invalid",
+            Error::OwnerUnreadable { .. } => "owner-unreadable",
             Error::Process { .. } => "process-failed",
             Error::External { .. } => "external-failed",
             Error::NotStarted { .. } => "not-started",

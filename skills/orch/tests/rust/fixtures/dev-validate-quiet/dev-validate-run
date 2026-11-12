@@ -1,7 +1,0 @@
-#!/bin/bash
-# The validation runner as the orch-runtime evidence tests see it: `--stop`
-# ends nothing and answers with $DEV_VALIDATE_STATUS (0 when unset), so a
-# close runs its validation stop without a worktree's runs. Every call is
-# appended to $DEV_VALIDATE_LOG when set.
-[ -z "${DEV_VALIDATE_LOG:-}" ] || printf '%s\n' "$*" >> "$DEV_VALIDATE_LOG"
-exit "${DEV_VALIDATE_STATUS:-0}"

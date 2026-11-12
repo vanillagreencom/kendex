@@ -1819,7 +1819,7 @@ fn an_unreadable_declined_state_refuses_before_any_artifact() {
             "an unrelated invalid setting refuses nothing",
             vec![
                 ("ORCH_STATE_DIR", state_text.as_str()),
-                ("ORCH_LANE_MAX_PCT", "not-a-number"),
+                ("AGENT_RUNTIME_ACCOUNT_MAX_PCT", "not-a-number"),
             ],
             false,
         ),

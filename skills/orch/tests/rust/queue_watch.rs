@@ -8,6 +8,7 @@
     reason = "the rows run the library on the fake clock, read the record they wrote and run the built binary"
 )]
 
+use agent_runtime::record::Locking;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
@@ -15,10 +16,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 mod support;
 
+use agent_runtime::clock::Clock;
 use orch_runtime::ops::Env;
 use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
-use orch_runtime::schedule::Clock;
-use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
 use support::{FakeClock, fixtures, tool_path, write_executable};
 
@@ -2023,6 +2023,7 @@ impl World {
         git(&["init", "-q", "-b", "main"]);
         git(&["config", "gc.auto", "0"]);
         git(&["config", "maintenance.auto", "false"]);
+        support::install_orch_scripts(&worktree);
         fs::write(worktree.join(".gitignore"), "tmp\n").unwrap();
         fs::write(
             worktree.join("kendex.settings.toml"),
@@ -2050,7 +2051,6 @@ impl World {
             .args(["validate", "start", "--item", ITEM_ID, "--round", ROUND])
             .args(["--poll", "1", "--foreground"])
             .current_dir(&worktree)
-            .env("DEV_VALIDATE_CLI", orch.join("scripts/dev-validate-run"))
             .env(
                 "CHANGE_SCOPE_PATHS_CLI",
                 orch.join("../change-scope/scripts/harness-only"),

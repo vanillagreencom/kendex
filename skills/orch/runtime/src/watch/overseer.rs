@@ -39,6 +39,7 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
+use agent_runtime::controller::{Pending, TransferCause};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -64,8 +65,10 @@ use crate::effects::overseer_socket;
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::walk::{self, WalkRequest};
 use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
-use crate::settings::{Settings, Succession, WatchSettings};
-use crate::state::{FleetState, Pending, TransferCause};
+use agent_runtime::settings::Succession;
+
+use crate::settings::{Settings, WatchSettings};
+use crate::state::FleetState;
 
 /// The gap alert's notice file under the state directory.
 const GAP_ALERT_FILE: &str = "overseer-context-gap.txt";
@@ -552,7 +555,7 @@ impl Caller {
         now: u64,
     ) -> crate::error::Result<(AccountState, Option<MarkKind>)> {
         let wall_minutes = settings.marks.wall_minutes.get()?;
-        let trigger = settings.accounts.get()?.overseer_headroom_pct;
+        let trigger = settings.accounts.get()?.controller_headroom_pct;
         let read = self.own_account(harness, settings, fleet_path, host, trigger, now);
         let reached = read.reached(wall_minutes);
         Ok((read.state, reached))
@@ -731,8 +734,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let context_pct = settings.marks.context_pct.get()?;
     let wall_minutes = settings.marks.wall_minutes.get()?;
     let memory_pct = settings.marks.memory_pct.get()?;
-    let succession = settings.succession.get()?;
-    let trigger = settings.accounts.get()?.overseer_headroom_pct;
+    let succession = settings.engine.succession.get()?;
+    let trigger = settings.accounts.get()?.controller_headroom_pct;
     let context = match ask.context {
         Some(text) => Some(parse_context(text).ok_or_else(|| {
             crate::error::Error::from(agent_runtime::Error::refused(
@@ -1015,7 +1018,7 @@ pub fn relaunch_exit_path(marker: &Path) -> PathBuf {
 /// The shell line the relaunch runs under: the launcher in the recovered
 /// checkout with the recovered session, its output appended to the log,
 /// its exit status written beside the marker.
-const RELAUNCH_WRAPPER: &str = "log=\"$1\"; exit_file=\"$2\"; launch_cwd=\"$3\"; export ORCH_TMUX_SESSION=\"$4\"; shift 4; exec >>\"$log\" 2>&1; rc=0; (cd -- \"$launch_cwd\" && \"$@\") || rc=$?; printf \"%s\\n\" \"$rc\" > \"$exit_file\"";
+const RELAUNCH_WRAPPER: &str = "log=\"$1\"; exit_file=\"$2\"; launch_cwd=\"$3\"; export AGENT_RUNTIME_TMUX_SESSION=\"$4\"; shift 4; exec >>\"$log\" 2>&1; rc=0; (cd -- \"$launch_cwd\" && \"$@\") || rc=$?; printf \"%s\\n\" \"$rc\" > \"$exit_file\"";
 
 /// The scripts directory under the project's orch install.
 pub fn scripts_dir(project: &Path) -> PathBuf {
@@ -1068,7 +1071,7 @@ pub fn succeed_through_runner(words: &[String]) -> Result<SuccessionAnswer, Stri
 fn relaunch_through_runtime(
     r: &Relaunch,
     now: u64,
-    clock: &dyn crate::schedule::Clock,
+    clock: &dyn agent_runtime::clock::Clock,
 ) -> Result<(), String> {
     let (name, record) = relaunch_record(r);
     let log = r.log.display().to_string();
@@ -1263,7 +1266,7 @@ pub struct Pass<'a> {
     pub baseline: &'a Baseline,
     pub settings: &'a WatchSettings,
     pub succession: Succession,
-    /// `ORCH_OVERSEER_PREFERENCE`, which the mark line's payload names;
+    /// `AGENT_RUNTIME_CONTROLLER_PREFERENCE`, which the mark line's payload names;
     /// `None` where the setting names none.
     pub preference: Option<&'a str>,
     pub now: u64,
@@ -2489,13 +2492,13 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
         // account, which the watch does not, and walks as that mark.
         let walks = match (marks.key, pass.preference) {
             (MarkKey::Reached(MarkKind::Context), None) => format!(
-                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE={} without that account",
-                crate::settings::DEFAULT_OVERSEER_PREFERENCE
+                "this session's own entry alone, AGENT_RUNTIME_CONTROLLER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, AGENT_RUNTIME_CONTROLLER_PREFERENCE={} without that account",
+                agent_runtime::settings::DEFAULT_CONTROLLER_PREFERENCE
             ),
-            (_, Some("")) => "ORCH_OVERSEER_PREFERENCE=empty".to_owned(),
+            (_, Some("")) => "AGENT_RUNTIME_CONTROLLER_PREFERENCE=empty".to_owned(),
             (_, preference) => format!(
-                "ORCH_OVERSEER_PREFERENCE={}",
-                preference.unwrap_or(crate::settings::DEFAULT_OVERSEER_PREFERENCE)
+                "AGENT_RUNTIME_CONTROLLER_PREFERENCE={}",
+                preference.unwrap_or(agent_runtime::settings::DEFAULT_CONTROLLER_PREFERENCE)
             ),
         };
         // A controller another lifecycle replaces is handed over by that
@@ -2506,7 +2509,7 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
                 "Hand this session over at the next safe point through the succession owner its record names: run {} and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.",
                 words.join(" ")
             ),
-            (None, Succession::Off) => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
+            (None, Succession::Off) => "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
             (None, Succession::On) => format!(
                 "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks {walks}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
                 text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
@@ -2583,8 +2586,8 @@ pub fn run_transfer(
     path: &Path,
     settings: &Settings,
     env: &crate::ops::Env,
-    locking: crate::state::Locking,
-    clock: &dyn crate::schedule::Clock,
+    locking: agent_runtime::record::Locking,
+    clock: &dyn agent_runtime::clock::Clock,
     mut request: RequestTransfer,
 ) -> crate::error::Result<String> {
     crate::ops::successor::posture(&mut request.successor, settings)?;
@@ -2622,7 +2625,7 @@ pub fn register(
     path: &Path,
     settings: &Settings,
     env: &crate::ops::Env,
-    locking: crate::state::Locking,
+    locking: agent_runtime::record::Locking,
     slot: Slot,
 ) {
     let ctx = Observation {
@@ -2644,8 +2647,8 @@ struct Observation {
     path: PathBuf,
     settings: Settings,
     nonce: u32,
-    owner: Option<crate::state::Owner>,
-    locking: crate::state::Locking,
+    owner: Option<agent_runtime::intent::Owner>,
+    locking: agent_runtime::record::Locking,
     slot: Slot,
     /// The runner's own pane, never a stray.
     own_pane: Option<String>,
@@ -2666,7 +2669,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         let fleet =
             <crate::state::FleetState as crate::state::Record>::view(&ctx.path, &snapshot.doc)?;
         let watch = ctx.settings.watch.get()?;
-        let succession = ctx.settings.succession.get()?;
+        let succession = ctx.settings.engine.succession.get()?;
         let readers = LaneReaders::kernel();
         // The accounts judge over the fleet's own state and the kernel's
         // identity reader: the marks, the overseer walk and the wall
@@ -2763,8 +2766,9 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 succession,
                 preference: ctx
                     .settings
-                    .overseer_preference_set
-                    .then_some(ctx.settings.overseer_preference.as_str()),
+                    .engine
+                    .controller_preference_set
+                    .then_some(ctx.settings.engine.controller_preference.as_str()),
                 now: tick.wall,
                 transfer: &transfer,
                 context_record: Some(&context_record),
@@ -2822,10 +2826,11 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 baseline: tick.baseline,
                 settings: &watch,
                 now: tick.wall,
-                session: ctx.settings.tmux_session.as_deref(),
+                session: ctx.settings.engine.tmux_session.as_deref(),
                 own_panes: &own,
                 state_dir: &ctx.settings.state_dir,
                 claim_store: &ctx.settings.claim_store,
+                account_state: &ctx.settings.account_state,
                 scripts: &judges.scripts,
                 route: &route,
                 wall_pauses: &wall_pauses,

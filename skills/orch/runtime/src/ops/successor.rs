@@ -8,6 +8,7 @@
 //! Nothing is written: the request that carries the answer records it. The
 //! brief a controller opens on is [`brief`]'s, for every launch of one.
 
+use agent_runtime::controller::Pending;
 use std::path::Path;
 
 use agent_runtime::harness::Harness;
@@ -16,8 +17,9 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::ops::walk::{self, Preference, Scope, Source, WalkAnswer, WalkRequest};
-use crate::settings::{OVERSEER_PREFERENCE_KEY, Settings};
-use crate::state::Pending;
+use agent_runtime::settings::CONTROLLER_PREFERENCE_KEY;
+
+use crate::settings::Settings;
 use crate::watch::overseer::{AccountState, Caller, MarkKind, Record};
 
 /// The handoff a controller is pointed at where its launch names no other.
@@ -42,7 +44,7 @@ pub fn brief(harness: Harness, handoff: &str) -> String {
 /// settings', so its record names the posture the next walk reads.
 pub fn posture(pending: &mut Pending, settings: &Settings) -> Result<()> {
     if pending.permission.is_none() {
-        pending.permission = Some(settings.permission.get()?);
+        pending.permission = Some(settings.engine.permission.get()?);
     }
     Ok(())
 }
@@ -104,7 +106,7 @@ fn walk_request(
         MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
         MarkKind::Context => (
             Vec::new(),
-            (!settings.overseer_preference_set).then(String::new),
+            (!settings.engine.controller_preference_set).then(String::new),
         ),
         MarkKind::Memory => (Vec::new(), None),
     };
@@ -148,12 +150,12 @@ pub fn successor(
     // that found no room: no wait for headroom could open anything. A mark's
     // succession still walks the caller's own entry.
     if mark.is_none()
-        && Preference::parse(&settings.overseer_preference, Scope::Overseer)
+        && Preference::parse(&settings.engine.controller_preference, Scope::Overseer)
             .is_ok_and(|preference| preference.entries.is_empty())
     {
         return Err(refused(
             "preference-empty",
-            &[("setting", OVERSEER_PREFERENCE_KEY)],
+            &[("setting", CONTROLLER_PREFERENCE_KEY)],
         ));
     }
     let recorded = match predecessor {
@@ -210,7 +212,7 @@ pub fn successor(
             let mut pending = match &recorded {
                 None => {
                     let mut pending = Caller::default().successor_of(chosen);
-                    pending.permission = Some(settings.permission.get()?);
+                    pending.permission = Some(settings.engine.permission.get()?);
                     pending
                 }
                 Some((caller, _, _)) => {

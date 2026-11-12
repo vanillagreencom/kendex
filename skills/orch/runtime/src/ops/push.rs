@@ -11,6 +11,7 @@
 //! (its bound passed, a signal ended it) may have landed, so its
 //! `push_attempt`, written before the start, stays `attempted` and the next
 //! call settles it from the remote before it pushes again.
+use agent_runtime::record::{self, Document, Locking};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -21,10 +22,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::proof::{self, Hop};
-use super::{Env, findings, loaded, reread};
+use super::{Env, findings, loaded};
 use crate::error::{Error, Result};
 use crate::settings::{self, Settings};
-use crate::state::{self, Document, Locking};
+use crate::state;
 use crate::validate::files::RunFile;
 
 /// The bound on the push and on the publication's validation: a pre-push
@@ -368,12 +369,12 @@ fn apply_hops(doc: &mut Document, hops: &[Hop], key: &'static str) -> Vec<Reconc
                 .any(|(old, new)| seen.get(old).and_then(Value::as_str) != Some(new.as_str()))
         {
             let count = doc.get("restacks").and_then(Value::as_u64).unwrap_or(0);
-            state::set(doc, "restacks", count + 1);
+            record::set(doc, "restacks", count + 1);
         }
         for (old, new) in hop {
             seen.insert(old.clone(), json!(new));
         }
-        state::set(doc, "rebase_map", Value::Object(seen));
+        record::set(doc, "rebase_map", Value::Object(seen));
         let (fixed_items, pr_fixes) = findings::remap_commits(doc, hop);
         reports.push(Reconciled {
             key,
@@ -429,32 +430,35 @@ fn consume(
         )
     })?;
     let state_file = path.display().to_string();
-    let reports = reread(|| {
-        let Some(snapshot) = state::load(path)? else {
-            return Err(refuse(
-                "restack-map-nostate",
-                &[("issue", item), ("state", &state_file), ("file", &file)],
-            ));
-        };
-        let mut doc = snapshot.doc.clone();
-        let reports = apply_hops(&mut doc, &hops, key);
-        state::store(path, &snapshot, &doc, locking).map_err(|e| {
-            if e.key() == "record-changed" {
-                e
-            } else {
-                refuse(
-                    "restack-map-write",
-                    &[
-                        ("issue", item),
-                        ("state", &state_file),
-                        ("file", &file),
-                        ("cause", &e.to_string()),
-                    ],
-                )
-            }
-        })?;
-        Ok(reports)
-    })?;
+    let reports = record::reread(
+        || {
+            let Some(snapshot) = state::load(path)? else {
+                return Err(refuse(
+                    "restack-map-nostate",
+                    &[("issue", item), ("state", &state_file), ("file", &file)],
+                ));
+            };
+            let mut doc = snapshot.doc.clone();
+            let reports = apply_hops(&mut doc, &hops, key);
+            record::store(path, &snapshot.doc, &doc, locking).map_err(|e| {
+                if e.key() == "record-changed" {
+                    e.into()
+                } else {
+                    refuse(
+                        "restack-map-write",
+                        &[
+                            ("issue", item),
+                            ("state", &state_file),
+                            ("file", &file),
+                            ("cause", &e.to_string()),
+                        ],
+                    )
+                }
+            })?;
+            Ok(reports)
+        },
+        Error::key,
+    )?;
     before();
     fs::remove_file(map).map_err(|e| {
         refuse(
@@ -558,20 +562,23 @@ fn record_stage(
     if line.contains_key("selection") {
         row["selection"] = json!(word("selection"));
     }
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let stages = state::array_mut(path, &mut doc, "stages")?;
-        if stages
-            .iter()
-            .any(|s| s.get("run_dir").and_then(Value::as_str) == Some(run_dir.as_str()))
-        {
-            return Ok(());
-        }
-        stages.push(stage.clone());
-        state::array_mut(path, &mut doc, "validate_rounds")?.push(row.clone());
-        state::store(path, &snapshot, &doc, locking)
-    })
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let stages = record::array_mut(path, &mut doc, "stages")?;
+            if stages
+                .iter()
+                .any(|s| s.get("run_dir").and_then(Value::as_str) == Some(run_dir.as_str()))
+            {
+                return Ok(());
+            }
+            stages.push(stage.clone());
+            record::array_mut(path, &mut doc, "validate_rounds")?.push(row.clone());
+            Ok(record::store(path, &snapshot.doc, &doc, locking)?)
+        },
+        Error::key,
+    )
     .map_err(|e| e.to_string())?;
     Ok(Some(run_dir))
 }
@@ -679,17 +686,20 @@ fn mark_attempt(path: &Path, value: Option<Value>, locking: Locking) -> Result<(
     if state::load(path)?.is_none() {
         return Ok(());
     }
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        match &value {
-            Some(v) => state::set(&mut doc, "push_attempt", v.clone()),
-            None => {
-                state::delete(&mut doc, "push_attempt");
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            match &value {
+                Some(v) => record::set(&mut doc, "push_attempt", v.clone()),
+                None => {
+                    record::delete(&mut doc, "push_attempt");
+                }
             }
-        }
-        state::store(path, &snapshot, &doc, locking)
-    })
+            Ok(record::store(path, &snapshot.doc, &doc, locking)?)
+        },
+        Error::key,
+    )
 }
 
 /// A push an earlier call left `attempted` is settled before a second one:

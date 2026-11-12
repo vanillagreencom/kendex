@@ -20,9 +20,9 @@ use serde_json::{Value, json};
 use super::artifact::Answer;
 use super::store;
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
 use crate::settings;
 use crate::state;
+use agent_runtime::clock::Clock;
 
 #[derive(Debug, Subcommand)]
 pub enum ReviewArtifact {
@@ -145,14 +145,14 @@ pub fn state_dir(
     flag: Option<&Path>,
     caller: Option<&str>,
 ) -> Result<PathBuf> {
-    let roots = settings::roots(worktree).map_err(|_| unread_state(issue))?;
+    let roots = agent_runtime::settings::roots(worktree).map_err(|_| unread_state(issue))?;
     let dir = match (flag, caller.filter(|v| !v.is_empty())) {
         (Some(dir), _) => dir.to_path_buf(),
         (None, Some(dir)) => PathBuf::from(dir),
-        (None, None) => {
-            settings::state_dir_named(&roots.project, &|p: &Path| settings::read_text(p))
-                .map_err(|_| unread_state(issue))?
-        }
+        (None, None) => settings::state_dir_named(&roots.project, &|p: &Path| {
+            agent_runtime::settings::read_text(p)
+        })
+        .map_err(|_| unread_state(issue))?,
     };
     Ok(if dir.is_absolute() {
         dir

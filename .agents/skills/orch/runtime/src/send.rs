@@ -11,6 +11,7 @@
 //! The mailbox writes no orch state; this
 //! module and that mark are the record's writers.
 
+use agent_runtime::record::Locking;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use crate::ops::mail::{
 };
 use crate::ops::{self, Env, Report, Request};
 use crate::settings::Settings;
-use crate::state::{self, Locking};
+use crate::state;
 
 /// The directory under the state directory where a send keeps its receipt
 /// between the program's answer and the mark.
@@ -356,8 +357,10 @@ fn apply(
 )]
 fn fleet(path: &Path) -> Result<state::FleetState> {
     use state::Record;
-    let snapshot = state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    let snapshot = state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     state::FleetState::view(path, &snapshot.doc)
 }

@@ -4,6 +4,7 @@
 //! replies are read and the attempt is claimed. A request's `comment_file`
 //! is posted on the pull request as the app, once per head, before the
 //! attempt is claimed: a comment that did not land approves nothing.
+use agent_runtime::record::{self, Document, Locking};
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -13,14 +14,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::copilot_wait::{self, CopilotWait};
-use super::{loaded, reread};
+use super::loaded;
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
 use crate::settings::Settings;
-use crate::state::{self, Document, Locking};
 use crate::verify::review::{self, Flight};
 use crate::verify::wire::{IssueComment, Nullable};
 use crate::verify::{Answer, Gh, Unreadable, Unrun};
+use agent_runtime::clock::Clock;
 
 const APPROVALS: &str = "head_approvals";
 const BOUND: Duration = Duration::from_secs(60);
@@ -150,38 +150,40 @@ fn update<T>(
     locking: Locking,
     f: impl Fn(&mut Entry) -> Result<T>,
 ) -> Result<T> {
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let records = entries(&mut doc, r)?;
-        let mut entry: Entry = match records.get(head) {
-            Some(value) => {
-                serde_json::from_value(value.clone()).map_err(|_| refuse("approval-record", &[]))?
-            }
-            None => Entry {
-                login: login.into(),
-                attempt: None,
-                comment: None,
-            },
-        };
-        // An entry that holds no act binds no login: the configured one
-        // replaces it, so a login corrected after a refused POST approves. A
-        // confirmed approval stands whoever the setting names; an act still
-        // unsettled was read back under its own login alone.
-        if entry.login != login {
-            match (&entry.attempt, &entry.comment) {
-                (Some(Attempt::Confirmed { .. }), _) => {}
-                (None, None) => entry.login = login.into(),
-                (Some(Attempt::Attempted), _) | (None, Some(_)) => {
-                    return Err(login_changed(&entry.login, login));
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let records = entries(&mut doc, r)?;
+            let mut entry: Entry = match records.get(head) {
+                Some(value) => serde_json::from_value(value.clone())
+                    .map_err(|_| refuse("approval-record", &[]))?,
+                None => Entry {
+                    login: login.into(),
+                    attempt: None,
+                    comment: None,
+                },
+            };
+            // An entry that holds no act binds no login: the configured one
+            // replaces it, so a login corrected after a refused POST approves. A
+            // confirmed approval stands whoever the setting names; an act still
+            // unsettled was read back under its own login alone.
+            if entry.login != login {
+                match (&entry.attempt, &entry.comment) {
+                    (Some(Attempt::Confirmed { .. }), _) => {}
+                    (None, None) => entry.login = login.into(),
+                    (Some(Attempt::Attempted), _) | (None, Some(_)) => {
+                        return Err(login_changed(&entry.login, login));
+                    }
                 }
             }
-        }
-        let answer = f(&mut entry)?;
-        records.insert(head.into(), serde_json::to_value(entry)?);
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(answer)
-    })
+            let answer = f(&mut entry)?;
+            records.insert(head.into(), serde_json::to_value(entry)?);
+            record::store(path, &snapshot.doc, &doc, locking)?;
+            Ok(answer)
+        },
+        Error::key,
+    )
 }
 
 /// The app's file credential outranks any reader credential the caller's

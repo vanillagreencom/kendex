@@ -39,7 +39,7 @@ fn suite_runner(server: &Server, stub: &str) -> Runner {
         tempfile::tempdir_in(server.socket.parent().expect("the server's folder")).unwrap();
     runner.verify = None;
     runner.env.push((
-        "ORCH_JOB_CLAIM_SECS".to_owned(),
+        "AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(),
         SETTLE.as_secs().to_string(),
     ));
     runner
@@ -634,7 +634,10 @@ fn a_succession_whose_preconditions_fail_never_retires() {
     let rows = [
         Row {
             name: "missing binary",
-            env: &[("ORCH_HARNESS_BINARIES", "claude=/nonexistent/bin/claude")],
+            env: &[(
+                "AGENT_RUNTIME_HARNESS_BINARIES",
+                "claude=/nonexistent/bin/claude",
+            )],
             brief: None,
             cwd: None,
             note: "harness-binary-missing",
@@ -655,7 +658,7 @@ fn a_succession_whose_preconditions_fail_never_retires() {
         },
         Row {
             name: "never-drawing successor",
-            env: &[("ORCH_HARNESS_BINARIES", "claude=STUB_UNCONFIRMED")],
+            env: &[("AGENT_RUNTIME_HARNESS_BINARIES", "claude=STUB_UNCONFIRMED")],
             brief: None,
             cwd: None,
             note: "successor-not-ready",
@@ -1218,7 +1221,7 @@ fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// `ORCH_OVERSEER_SUCCESSION=off` refuses a transfer before any transition,
+/// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` refuses a transfer before any transition,
 /// so the record and the intents directory are as they were; a stop under
 /// the same setting is admitted.
 #[test]
@@ -1233,7 +1236,7 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
     let before = std::fs::read_to_string(&path).unwrap();
     let out = runner.op_fleet_env(
         &transfer_request(&server, runner.state_dir()),
-        &[("ORCH_OVERSEER_SUCCESSION", "off")],
+        &[("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off")],
     );
     assert_eq!(refusal_key(&out), "succession-off");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
@@ -1246,13 +1249,13 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
     // transfer the same way before any transition; `state path`, which
     // reads none, answers under it.
     for (key, value) in [
-        ("ORCH_OVERSEER_SUCCESSION", "maybe"),
-        ("ORCH_QUESTION_TOOL", "lane"),
-        ("ORCH_JOB_CLAIM_SECS", "0"),
-        ("ORCH_TMUX_VERIFY_SECS", "1.5"),
+        ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "maybe"),
+        ("AGENT_RUNTIME_QUESTION_TOOL", "lane"),
+        ("AGENT_RUNTIME_JOB_CLAIM_SECS", "0"),
+        ("AGENT_RUNTIME_TMUX_VERIFY_SECS", "1.5"),
         ("ORCH_LANE_CLOSE_SECS", "-1"),
-        ("ORCH_LAUNCH_PERMISSION", "yes"),
-        ("ORCH_HARNESS_BINARIES", "claude=bin/claude"),
+        ("AGENT_RUNTIME_LAUNCH_PERMISSION", "yes"),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", "claude=bin/claude"),
     ] {
         let env = [(key, value)];
         let out = runner.op_fleet_env(&transfer_request(&server, runner.state_dir()), &env);
@@ -1273,7 +1276,7 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
     }
     let started = reply(&runner.op_fleet_env(
         &json!({"op": "stop-controller"}),
-        &[("ORCH_OVERSEER_SUCCESSION", "off")],
+        &[("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off")],
     ));
     assert_eq!(
         started["result"]["effect"]["started"], "stop-started",
@@ -1341,7 +1344,7 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     runner.tools = Some(bin);
     runner
         .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+        .push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     runner
         .env
         .push(("SETSID_LOG".to_owned(), log.display().to_string()));
@@ -1358,13 +1361,13 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     let intent = before["intents"][0]["id"].as_str().unwrap().to_owned();
     let refused = runner.run_env(
         &["job", "--fleet", "--intent", &intent],
-        &[("ORCH_JOB_CLAIM_SECS", "0")],
+        &[("AGENT_RUNTIME_JOB_CLAIM_SECS", "0")],
     );
     let refusal = &reply(&refused)["refusal"];
     assert_eq!(refusal["key"], "setting-invalid", "{}", stderr(&refused));
     assert_eq!(
         refusal["fields"],
-        json!([["key", "ORCH_JOB_CLAIM_SECS"], ["value", "0"]])
+        json!([["key", "AGENT_RUNTIME_JOB_CLAIM_SECS"], ["value", "0"]])
     );
     assert_eq!(runner.fleet(), before, "the refused job claimed nothing");
     // The repeated stop reconciles the standing job and starts no second one.
@@ -2100,7 +2103,7 @@ fn a_hand_started_session_records_its_command_line_and_its_next_hand_over_launch
     plant_credential(&seat);
     let pi = fixtures().join("stub-record/pi");
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("pi={}", pi.display()),
     ));
     let pane = server.open_window(
@@ -3165,7 +3168,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
         stub("stub-record").display(),
         fixtures().join("stub-record/pi").display()
     );
-    runner.transfer_started_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]);
+    runner.transfer_started_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "successor-not-ready");
@@ -3281,7 +3284,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
         stub("stub-record").display(),
         fixtures().join("stub-record/copilot").display()
     );
-    runner.transfer_started_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]);
+    runner.transfer_started_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "successor-not-ready");
@@ -3681,7 +3684,7 @@ fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     runner.tools = Some(bin);
     runner
         .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+        .push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     runner
         .env
         .push(("SETSID_LOG".to_owned(), log.display().to_string()));
@@ -3731,7 +3734,7 @@ fn a_job_is_a_setsid_group_where_no_manager_lingers_and_a_job_that_exits_before_
     runner.tools = Some(bin);
     runner
         .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+        .push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     runner
         .env
         .push(("SETSID_LOG".to_owned(), log.display().to_string()));
@@ -3808,7 +3811,7 @@ fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
     runner.tools = Some(bin.clone());
     runner
         .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+        .push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let report = effect_report(&runner.op_fleet_env(
         &json!({
@@ -4077,7 +4080,7 @@ fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtim
     runner.env.extend(env);
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let scripts = runner.state_dir().join("scripts");
     std::fs::create_dir_all(&scripts).unwrap();
     std::os::unix::fs::symlink(shipped_scripts().join("lib"), scripts.join("lib")).unwrap();
@@ -4189,7 +4192,7 @@ fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime
     ));
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let entry = scripts.join("oversee-watch");
     write_executable(
         &entry,
@@ -4312,7 +4315,7 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
     let mut fleet = runner.fleet();
     fleet["overseer"] = record;
     runner.write_fleet(&fleet);
-    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
     let err = work.join("watch.err");
     let mut watch = isolated();
@@ -4571,7 +4574,7 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     fleet["overseer"]["server"] = json!(predecessor.pid().to_string());
     runner.write_fleet(&fleet);
     // The watch's heartbeat sends it once more, and marks it.
-    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let mut watch = isolated();
     watch
         .args(["--state-dir", &work.display().to_string()])
@@ -4622,7 +4625,7 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     runner.env.extend(env);
     runner
         .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+        .push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     let pane = server.open_window("overseer", &work, "bash --norc --noprofile");
     let agent_runtime::reading::Reading::Live(fields) = agent_runtime::host::tmux::pane_fields(
         &agent_runtime::host::tmux::server(&server.socket).unwrap(),
@@ -4640,7 +4643,7 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     let mut fleet = runner.fleet();
     fleet["overseer"] = record;
     runner.write_fleet(&fleet);
-    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let mut watch = isolated();
     watch
         .args(["--state-dir", &work.display().to_string()])
@@ -4843,7 +4846,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
         stub("stub-record").display(),
         fixtures().join("stub-record/copilot").display()
     );
-    runner.transfer_started_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]);
+    runner.transfer_started_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "successor-not-ready");
@@ -5009,7 +5012,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
             fixtures().join("stub-record/codex").display(),
             fixtures().join("stub-record/copilot").display()
         );
-        runner.transfer_started_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]);
+        runner.transfer_started_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]);
         let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
         let launched = if started {
             launch_record(runner.state_dir())
@@ -5315,7 +5318,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     runner.tools = Some(bin.clone());
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     let report = effect_report(&runner.op_fleet_env(
         &json!({
@@ -5358,7 +5361,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     runner.init_fleet();
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let bin = runner.state_dir().join("no-linger-bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::os::unix::fs::symlink(
@@ -5489,7 +5492,7 @@ fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch
     }
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let log = runner.state_dir().join("setsid.log");
     let once = runner.state_dir().join("setsid.crashed");
     let real_setsid = {
@@ -5684,9 +5687,16 @@ fn launcher_checkout(
     };
     std::fs::write(account.join(file), credential.to_string()).unwrap();
     std::fs::write(usage.join("token-fixture.usage.json"), body.to_string()).unwrap();
-    env.push(("ORCH_LANE_DIRS".to_owned(), account.display().to_string()));
+    env.push((
+        "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
+        account.display().to_string(),
+    ));
     env.push((
         "OVERSEE_WATCH_STATE_DIR".to_owned(),
+        dir.join("watch-state").display().to_string(),
+    ));
+    env.push((
+        "AGENT_RUNTIME_ACCOUNT_STATE_DIR".to_owned(),
         dir.join("watch-state").display().to_string(),
     ));
     scripts
@@ -5718,17 +5728,20 @@ fn workflow_launch(
             "TMUX".to_owned(),
             format!("{},0,0", runner.server_socket.display()),
         ),
-        ("ORCH_TMUX_SESSION".to_owned(), runner.session.clone()),
         (
-            "ORCH_OVERSEER_PREFERENCE".to_owned(),
+            "AGENT_RUNTIME_TMUX_SESSION".to_owned(),
+            runner.session.clone(),
+        ),
+        (
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
             format!("{harness}:{model}:high"),
         ),
         (
-            "ORCH_HARNESS_BINARIES".to_owned(),
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
             format!("{harness}={}", program_path.display()),
         ),
         (
-            "ORCH_JOB_CLAIM_SECS".to_owned(),
+            "AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(),
             SETTLE.as_secs().to_string(),
         ),
         (
@@ -5738,20 +5751,13 @@ fn workflow_launch(
                 .display()
                 .to_string(),
         ),
-        (
-            "DEV_VALIDATE_CLI".to_owned(),
-            fixtures()
-                .join("dev-validate-quiet/dev-validate-run")
-                .display()
-                .to_string(),
-        ),
     ];
     world.extend(env.iter().cloned());
     Launch {
         runtime: scripts.join("orch-runtime"),
         state: runner
             .state_dir()
-            .join(orch_runtime::state::FLEET_FILE_NAME),
+            .join(agent_runtime::record::FLEET_FILE_NAME),
         work: work.to_owned(),
         env: world,
         predecessor: None,
@@ -5903,7 +5909,7 @@ impl Launch {
         args.extend(["--request", &file]);
         let op = self
             .runtime(&args)
-            .env("ORCH_TMUX_VERIFY_SECS", self.wait_secs.to_string())
+            .env("AGENT_RUNTIME_TMUX_VERIFY_SECS", self.wait_secs.to_string())
             .output()
             .unwrap();
         Launched { verb, op: Some(op) }
@@ -6038,7 +6044,7 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
         runner.tools = Some(bin.clone());
         let state = runner
             .state_dir()
-            .join(orch_runtime::state::FLEET_FILE_NAME);
+            .join(agent_runtime::record::FLEET_FILE_NAME);
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         let report = effect_report(&runner.op_fleet_env(
             &json!({
@@ -6156,7 +6162,7 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
         runner_world.tools = Some(bin.clone());
         let state = runner_world
             .state_dir()
-            .join(orch_runtime::state::FLEET_FILE_NAME);
+            .join(agent_runtime::record::FLEET_FILE_NAME);
         let mut env: Vec<(&str, &str)> =
             env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
         env.push(extra);
@@ -6215,7 +6221,7 @@ fn a_unit_launch_hands_the_jobs_variables_to_the_unit_and_no_value_to_the_client
     runner.tools = Some(bin.clone());
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let token = "ghp_value_never_on_a_command_line";
     let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
     env.push(("ORCH_PROBE_TOKEN", token));
@@ -6388,7 +6394,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     runner.tools = Some(bin.clone());
     runner.env.extend(env.iter().cloned());
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("codex={}", codex.display()),
     ));
     let report = runner.reconcile_one();
@@ -6414,7 +6420,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(units_started(&bin), 1, "the controller's one watch");
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     stop_live_watch(&runner, &state);
 }
 
@@ -6482,7 +6488,7 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     );
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     stop_live_watch(&runner, &state);
 }
 
@@ -6684,11 +6690,11 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     let mut failing: Vec<(String, String)> = launch
         .env
         .iter()
-        .filter(|(name, _)| name != "ORCH_HARNESS_BINARIES")
+        .filter(|(name, _)| name != "AGENT_RUNTIME_HARNESS_BINARIES")
         .cloned()
         .collect();
     failing.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!("claude={}", stub("stub-fail").display()),
     ));
     let home = controller["home"]
@@ -6715,7 +6721,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     );
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     stop_live_watch(&runner, &state);
 }
 
@@ -6760,14 +6766,14 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
     let mut unclaimed: Vec<(String, String)> = launch
         .env
         .iter()
-        .filter(|(name, _)| name != "PATH" && name != "ORCH_JOB_CLAIM_SECS")
+        .filter(|(name, _)| name != "PATH" && name != "AGENT_RUNTIME_JOB_CLAIM_SECS")
         .cloned()
         .collect();
     unclaimed.push((
         "PATH".to_owned(),
         tool_path(&[sleepers.as_path(), bin.as_path()]),
     ));
-    unclaimed.push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    unclaimed.push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     unclaimed.push(("SETSID_LOG".to_owned(), log.display().to_string()));
     let (out, _) = model_switch(&runner, &scripts, &unclaimed, &account, &work, &overseer);
     let intent = runner.fleet()["intents"]
@@ -6810,7 +6816,7 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
     );
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     stop_live_watch(&runner, &state);
 }
 
@@ -6864,7 +6870,7 @@ fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_e
     // process group of its own the row ends.
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let claim =
         orch_runtime::watch::claim::read(&orch_runtime::watch::claim::Paths::of(&state).unwrap())
             .unwrap()
@@ -7065,7 +7071,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
         );
         let report = effect_report(&runner.op_fleet_env(
             &resume_request(&cwd, harness, &home, id),
-            &[("ORCH_HARNESS_BINARIES", &binaries)],
+            &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)],
         ));
         assert_eq!(report["intent"]["outcome"], "failed", "{harness}: {report}");
         assert_eq!(
@@ -7209,8 +7215,9 @@ fn a_controller_with_no_account_runs_under_the_one_home_its_session_is_proved_an
             "{harness}={}",
             fixtures().join(stub_name).join(harness).display()
         );
-        let report =
-            effect_report(&runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]));
+        let report = effect_report(
+            &runner.op_fleet_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]),
+        );
         // A home is its session store: a private Codex launch home links the
         // account's.
         let store_of = |path: &Path| {
@@ -7287,8 +7294,9 @@ fn an_accountless_pi_successor_with_no_root_kept_refuses_home_missing_before_any
     request["brief_file"] = json!(brief.display().to_string());
     let binaries = format!("pi={}", fixtures().join("stub-record/pi").display());
     let panes = server.panes().len();
-    let report =
-        effect_report(&runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]));
+    let report = effect_report(
+        &runner.op_fleet_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]),
+    );
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["note"], "home-missing",
@@ -7483,7 +7491,7 @@ fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previou
     });
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let bytes = std::fs::read(&state).unwrap();
     let out = runner.run(&["reconcile", "--fleet"]);
     let answer = reply(&out);
@@ -7532,6 +7540,7 @@ impl MarksWorld {
         ] {
             std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
         }
+        install_lane_host(dir.path(), dir.path());
         let root = dir.path().display().to_string();
         let env = vec![
             (
@@ -7539,16 +7548,16 @@ impl MarksWorld {
                 dir.path().join("home").display().to_string(),
             ),
             ("OVERSEE_WATCH_STATE_DIR".to_owned(), root.clone()),
+            ("AGENT_RUNTIME_ACCOUNT_STATE_DIR".to_owned(), root.clone()),
             ("ORCH_STATE_DIR".to_owned(), root.clone()),
-            (
-                "OVERSEE_WATCH_LANES".to_owned(),
-                dir.path().join("lanes").display().to_string(),
-            ),
             (
                 "USAGE_FIXTURE_DIR".to_owned(),
                 dir.path().join("fixtures").display().to_string(),
             ),
-            ("ORCH_LANE_BURN_PCT_PER_HOUR".to_owned(), "0".to_owned()),
+            (
+                "AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR".to_owned(),
+                "0".to_owned(),
+            ),
         ];
         MarksWorld { dir, env }
     }
@@ -7591,7 +7600,7 @@ impl MarksWorld {
             },
         });
         std::fs::write(
-            self.path().join(orch_runtime::state::FLEET_FILE_NAME),
+            self.path().join(agent_runtime::record::FLEET_FILE_NAME),
             serde_json::to_string(&fleet).unwrap(),
         )
         .unwrap();
@@ -7792,7 +7801,7 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
         "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1"},
     });
     std::fs::write(
-        world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+        world.path().join(agent_runtime::record::FLEET_FILE_NAME),
         serde_json::to_string(&fleet).unwrap(),
     )
     .unwrap();
@@ -7942,7 +7951,7 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
         .unwrap()
         .remove("generation");
     std::fs::write(
-        world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+        world.path().join(agent_runtime::record::FLEET_FILE_NAME),
         serde_json::to_string(&stale).unwrap(),
     )
     .unwrap();
@@ -7969,7 +7978,7 @@ fn a_live_succession_is_admitted_only_on_its_generations_snapshot() {
         "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": [],
         "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1", "cwd": root},
     });
-    let state = world.path().join(orch_runtime::state::FLEET_FILE_NAME);
+    let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
     std::fs::write(&state, serde_json::to_string(&fleet).unwrap()).unwrap();
     let handoff = world.path().join("tmp/handoffs/OVERSEER-HANDOFF.md");
     let body = world.path().join("body.md");
@@ -8100,7 +8109,7 @@ fn the_hook_suites_plant_the_marks_verbs_own_replies() {
                 world.marks(&args, &env)
             }
             Some(memory) => {
-                let roots = orch_runtime::settings::Roots {
+                let roots = agent_runtime::settings::Roots {
                     project: world.path().to_path_buf(),
                     common: world.path().to_path_buf(),
                 };
@@ -8136,7 +8145,7 @@ fn the_hook_suites_plant_the_marks_verbs_own_replies() {
                 };
                 judge_marks(&MarksAsk {
                     settings: &settings,
-                    fleet_path: &world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+                    fleet_path: &world.path().join(agent_runtime::record::FLEET_FILE_NAME),
                     host: &host,
                     caller: &caller,
                     context: None,
@@ -8158,7 +8167,7 @@ fn the_hook_suites_plant_the_marks_verbs_own_replies() {
     );
 }
 
-/// An account the owner's `ORCH_LANE_EXCLUDE` names is kept from every
+/// An account the owner's `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names is kept from every
 /// lane, never from its overseer: the real `marks` verb reads the excluded
 /// home's figures for the controller seated on it, and the real `accounts
 /// pick --lane` refuses the same home to a lane by its word, with the
@@ -8169,7 +8178,7 @@ fn an_excluded_home_is_measured_for_its_overseers_marks_and_refused_to_a_lane_pi
     world.plant(None, &[measured_account("eclaude", 20)]);
     let home = world.dir("eclaude");
     world.write_fleet(&home);
-    let exclude = [("ORCH_LANE_EXCLUDE", "eclaude")];
+    let exclude = [("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "eclaude")];
     let marks = world.marks(&["--context", "100000:1000000"], &exclude);
     assert_eq!(marks["key"], json!("below-mark"), "{marks}");
     assert_eq!(
@@ -8242,7 +8251,7 @@ fn the_hook_suites_plant_the_account_judges_own_replies() {
 #[test]
 fn a_memory_mark_set_to_zero_is_no_mark_rather_than_one_every_pass_crosses() {
     let dir = tempfile::tempdir().unwrap();
-    let roots = orch_runtime::settings::Roots {
+    let roots = agent_runtime::settings::Roots {
         project: dir.path().to_path_buf(),
         common: dir.path().to_path_buf(),
     };
@@ -8476,18 +8485,18 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
         ("ORCH_OVERSEER_WALL_MINUTES", "-5", false),
         ("ORCH_OVERSEER_MEMORY_PCT", "101", false),
         ("ORCH_HANDOFF_CONTEXT_PCT", "0", false),
-        ("ORCH_OVERSEER_SUCCESSION", "maybe", false),
-        ("ORCH_LANE_RETIRE", "a=2027-02-30", true),
+        ("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "maybe", false),
+        ("AGENT_RUNTIME_ACCOUNT_RETIRE", "a=2027-02-30", true),
         ("ORCH_LANE_CLOUD_REPOS", "a=repo", true),
-        ("ORCH_LANE_COPILOT_POOL", "/p=1/0", true),
-        ("ORCH_LANE_EXCLUDE", "~/x", true),
-        ("ORCH_LANE_MAX_PCT", "101", true),
-        ("ORCH_LANE_BURN_PCT_PER_HOUR", "five", true),
-        ("ORCH_OVERSEER_HEADROOM_PCT", "-1", true),
-        ("ORCH_LANE_CODEX_CREDIT_FLOOR", "1.5", true),
-        ("ORCH_LANE_CLOUD_CREDIT_FLOOR", "x", true),
-        ("ORCH_LANES_USAGE_TTL", "5m", true),
-        ("ORCH_LANES_USAGE_MAX_AGE", "+1", true),
+        ("AGENT_RUNTIME_COPILOT_POOL", "/p=1/0", true),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "~/x", true),
+        ("AGENT_RUNTIME_ACCOUNT_MAX_PCT", "101", true),
+        ("AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR", "five", true),
+        ("AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT", "-1", true),
+        ("AGENT_RUNTIME_CODEX_CREDIT_FLOOR", "1.5", true),
+        ("AGENT_RUNTIME_CLOUD_CREDIT_FLOOR", "x", true),
+        ("AGENT_RUNTIME_USAGE_TTL", "5m", true),
+        ("AGENT_RUNTIME_USAGE_MAX_AGE", "+1", true),
         ("ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S", "-30", true),
     ] {
         let env = [(key, value)];
@@ -8601,7 +8610,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     assert_eq!(memory_of(&proc_root, &cgroup, 4242), Reading::Live(None));
     assert_eq!(memory_of(&proc_root, &cgroup, 9999), Reading::Gone);
     let settings = |extra: &[(&str, &str)]| {
-        let roots = orch_runtime::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: world.path().to_path_buf(),
             common: world.path().to_path_buf(),
         };
@@ -8617,7 +8626,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
         )
         .unwrap()
     };
-    let fleet_path = world.path().join(orch_runtime::state::FLEET_FILE_NAME);
+    let fleet_path = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
     let caller = Caller {
         harness: Some(agent_runtime::harness::Harness::Claude),
         account: Some(world.dir("eclaude")),
@@ -8698,7 +8707,7 @@ fn a_stale_start_less_claim_is_taken_over_by_the_starts_watch_with_one_line() {
     runner.tools = Some(bin);
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
     std::fs::write(
         &paths.pid,
@@ -8831,7 +8840,13 @@ fn walk_world_on(
         rows,
         now_secs(),
     ));
-    env.push(("ORCH_LANE_BURN_PCT_PER_HOUR".to_owned(), "0".to_owned()));
+    if host.is_some() {
+        install_lane_host(runner.state_dir(), &runner.state_dir().join("accounts"));
+    }
+    env.push((
+        "AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR".to_owned(),
+        "0".to_owned(),
+    ));
     (scripts, bin, env, work)
 }
 
@@ -8899,7 +8914,7 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
             "fable",
             &stub("stub-confirm"),
         )
-        .env("ORCH_OVERSEER_PREFERENCE", preference)
+        .env("AGENT_RUNTIME_CONTROLLER_PREFERENCE", preference)
         .run()
     };
     let none = launch("codex:gpt-6.1-sol:high");
@@ -8945,7 +8960,7 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
         &runner,
         &runner
             .state_dir()
-            .join(orch_runtime::state::FLEET_FILE_NAME),
+            .join(agent_runtime::record::FLEET_FILE_NAME),
     );
 }
 
@@ -8971,7 +8986,7 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
     );
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let snapshot = runner.state_dir().join("at-stop.json");
     let predecessor = Stopped::start(&state, &snapshot);
     let words = ["--permission-mode", "dontAsk"];
@@ -9163,7 +9178,7 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     // A settings notice ahead of the refusal: the state directory's private
     // settings file carries an account key in a form only a shell reads (a
     // user's tilde), which the runtime passes over with a notice on stderr
@@ -9171,7 +9186,7 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     // file.
     std::fs::write(
         runner.state_dir().join(".env.local"),
-        "ORCH_LANE_DIRS=~orch-no-such-user/accounts\n",
+        "AGENT_RUNTIME_ACCOUNT_DIRS=~orch-no-such-user/accounts\n",
     )
     .unwrap();
     let private = runner.state_dir().join("orch-runtime-private");
@@ -9259,7 +9274,7 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
     let before = recorded_on(
         &runner,
@@ -9314,7 +9329,7 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
     runner.init_fleet();
     let report = effect_report(&runner.op_fleet_env(
         &json!({"op": "start-controller", "controller": pending(runner.state_dir())}),
-        &[("ORCH_TMUX_SESSION", "nosuch")],
+        &[("AGENT_RUNTIME_TMUX_SESSION", "nosuch")],
     ));
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
     assert_eq!(
@@ -9348,7 +9363,7 @@ fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
     use orch_runtime::watch::overseer::{Caller, Record};
     let path = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let snapshot = orch_runtime::state::load(&path).unwrap().unwrap();
     let fleet = FleetState::view(&path, &snapshot.doc).unwrap();
     let record = Record::read(&fleet).expect("the recorded controller");
@@ -9416,7 +9431,7 @@ fn walled_transfer(runner: &Runner, spent: &Path, successor: &Value) -> (Value, 
             "expected": expected_of(&before),
             "successor": successor,
         }),
-        &[("ORCH_HARNESS_BINARIES", &binaries)],
+        &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)],
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     let launched = launch_record(runner.state_dir());
@@ -9513,7 +9528,7 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
             "successor": successor,
         }),
         &[(
-            "ORCH_HARNESS_BINARIES",
+            "AGENT_RUNTIME_HARNESS_BINARIES",
             &format!("pi={}", fixtures().join("stub-record/pi").display()),
         )],
     );
@@ -9694,7 +9709,7 @@ fn pi_root_marked(root: &Path) {
 /// that fails before the stop kills it before its world is removed.
 fn watched_transfer(runner: &Runner) -> Value {
     let work = runner.state_dir();
-    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let state = work.join(agent_runtime::record::FLEET_FILE_NAME);
     let mut watch = isolated();
     watch
         .args(["--state-dir", &work.display().to_string()])
@@ -9742,11 +9757,11 @@ fn a_walled_bypass_controllers_watch_walk_crosses_harness_and_its_successor_runs
     runner.tools = Some(bin);
     runner.env.extend(env);
     runner.env.push((
-        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
         "claude:fable:high,codex:gpt-6.1-sol:high".to_owned(),
     ));
     runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
+        "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
         format!(
             "claude={},codex={}",
             stub("stub-confirm").display(),
@@ -9804,12 +9819,12 @@ fn an_empty_overseer_preference_is_refused_before_any_walk() {
             "--cwd",
             &runner.state_dir().display().to_string(),
         ],
-        &[("ORCH_OVERSEER_PREFERENCE", "")],
+        &[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "")],
     );
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert_eq!(refusal_key(&out), "preference-empty", "{}", stderr(&out));
     assert!(
-        stderr(&out).contains("setting=ORCH_OVERSEER_PREFERENCE"),
+        stderr(&out).contains("setting=AGENT_RUNTIME_CONTROLLER_PREFERENCE"),
         "{}",
         stderr(&out)
     );
@@ -9876,7 +9891,7 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
     runner.tools = Some(bin);
     runner.env.extend(env);
     runner.env.push((
-        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
         "claude:fable:high".to_owned(),
     ));
     let handoff = "tmp/handoffs/FLEET-B.md";
@@ -9908,8 +9923,8 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
     // The posture the successor launches under and the account judge's
     // settings, outside their form, refuse the verb by key and value.
     for (key, value) in [
-        ("ORCH_LAUNCH_PERMISSION", "yes"),
-        ("ORCH_LANE_MAX_PCT", "101"),
+        ("AGENT_RUNTIME_LAUNCH_PERMISSION", "yes"),
+        ("AGENT_RUNTIME_ACCOUNT_MAX_PCT", "101"),
     ] {
         let refused = runner.run_env(
             &[
@@ -9982,7 +9997,7 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
     runner.tools = Some(bin);
     runner.env.extend(env);
     runner.env.push((
-        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
         "claude:fable:high".to_owned(),
     ));
     let report = effect_report(
@@ -10058,7 +10073,7 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
         .env
         .push(("HOME".to_owned(), home.display().to_string()));
     runner.env.push((
-        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
         "pi:openrouter/anthropic/claude-fable-5-1:high".to_owned(),
     ));
     let predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
@@ -10086,7 +10101,7 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
             "successor": result["successor"],
         }),
         &[(
-            "ORCH_HARNESS_BINARIES",
+            "AGENT_RUNTIME_HARNESS_BINARIES",
             &format!("pi={}", fixtures().join("stub-record/pi").display()),
         )],
     );
@@ -10118,7 +10133,7 @@ fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() 
         if harness == "copilot" {
             copilot_gate_passed(&mut runner, &account);
             runner.env.push((
-                "ORCH_HARNESS_BINARIES".to_owned(),
+                "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
                 format!("copilot={}", stub("stub-confirm").display()),
             ));
         }
@@ -10245,7 +10260,7 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
         world.write_fleet(&world.dir("eclaude"));
         let mut extra = vec![("ORCH_OVERSEER_WALL_MINUTES", "30")];
         if let Some(preference) = preference {
-            extra.push(("ORCH_OVERSEER_PREFERENCE", preference));
+            extra.push(("AGENT_RUNTIME_CONTROLLER_PREFERENCE", preference));
         }
         let reached = world.marks(&["--context", context], &extra);
         let kind = reached["kind"].as_str().unwrap_or_default().to_owned();
@@ -10305,12 +10320,12 @@ fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv
         "fable",
         &stub("stub-record"),
     )
-    .env("ORCH_LAUNCH_PERMISSION", "native")
+    .env("AGENT_RUNTIME_LAUNCH_PERMISSION", "native")
     .words(&["--permission-mode", "dontAsk"])
     .run();
     let state = runner
         .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
+        .join(agent_runtime::record::FLEET_FILE_NAME);
     let started = opened.started();
     if started["outcome"] == "confirmed" {
         stop_live_watch(&runner, &state);

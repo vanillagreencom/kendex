@@ -30,6 +30,8 @@
 //! statement, so a retired account keeps its figures in the roster and a
 //! stated end its credential contradicts is a line under it.
 
+use agent_runtime::intent::Owner;
+use agent_runtime::record::Locking;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -44,7 +46,6 @@ use crate::ops::accounts::{
 };
 use crate::ops::{Env, Host};
 use crate::settings::Settings;
-use crate::state::{Locking, Owner};
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -386,7 +387,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             Vec::new(),
             Some(format!(
                 "account-unread path={} {cause}",
-                ctx.settings.lanes_cli.display()
+                crate::watch::overseer::scripts_dir(&ctx.settings.roots.project).display()
             )),
         ),
     };
@@ -419,10 +420,10 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // cause; the fleet's own host then names that unread entry.
     let roster_host = ctx
         .settings
-        .accounts
+        .provider
         .get()
         .ok()
-        .and_then(|accounts| accounts.host)
+        .and_then(|provider| provider.host)
         .unwrap_or_else(|| LOCAL.to_owned());
     listings.insert(roster_host, roster.ok());
     for line in ctx

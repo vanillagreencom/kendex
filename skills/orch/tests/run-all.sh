@@ -196,9 +196,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../github/scripts/lib/group-leader.sh"
   { echo "run-all.sh: group-leader-missing" >&2; exit 1; }
 
 # Lane launch settings must not override the suites' own fixture settings.
-unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
+unset ORCH_STATE_DIR ORCH_LANE_HOST AGENT_RUNTIME_TMUX_SESSION \
   ORCH_USER_MODE ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY \
-  ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
+  ORCH_LANE_OUTPUT AGENT_RUNTIME_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_TEST_DIR="$TEST_DIR"

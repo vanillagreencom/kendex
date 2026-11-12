@@ -188,7 +188,7 @@ fn credit_row(dir: &Path, (remaining, locked): Credit) -> Value {
 }
 
 impl World {
-    /// The account the world's own `ORCH_LANE_DIRS` names: the lanes'
+    /// The account the world's own `AGENT_RUNTIME_ACCOUNT_DIRS` names: the lanes'
     /// account is not among them, so a credit the send reads is the one it
     /// asked for by the record's account.
     fn other_account(&self) -> PathBuf {
@@ -246,7 +246,8 @@ impl World {
             .env("CLAUDE_CLOUD_LOG", &self.claude_log)
             .env("HOME", self.accounts.join("home"))
             .env("OVERSEE_WATCH_STATE_DIR", &self.accounts)
-            .env("ORCH_LANE_DIRS", self.other_account())
+            .env("AGENT_RUNTIME_ACCOUNT_STATE_DIR", &self.accounts)
+            .env("AGENT_RUNTIME_ACCOUNT_DIRS", self.other_account())
             .env("USAGE_FIXTURE_DIR", self.accounts.join("usage-answers"))
             .current_dir(&self.root);
         for (name, value) in extra {
@@ -717,6 +718,7 @@ fn validation_world() -> (World, PathBuf) {
     .unwrap();
     git(&w.root, &["add", "a.txt", ".gitignore"]);
     git(&w.root, &["commit", "-q", "-m", "base"]);
+    install_orch_scripts(&w.root);
     let mut item: Value =
         serde_json::from_str(include_str!("fixtures/workflow-state-KEN-4687.json")).unwrap();
     item["worktree"] = json!(w.root.display().to_string());
@@ -733,7 +735,7 @@ impl World {
             .arg("--state-dir")
             .arg(&self.root)
             .args(args)
-            .env("DEV_VALIDATE_CLI", scripts.join("dev-validate-run"))
+            .current_dir(&self.root)
             .env(
                 "CHANGE_SCOPE_PATHS_CLI",
                 scripts.join("../../change-scope/scripts/harness-only"),

@@ -5,6 +5,7 @@
 //! stderr, and the `send` verb (`crate::send`) applies
 //! [`record_directive_send`] before and after the one irreversible send.
 
+use agent_runtime::record::{self, Document};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::ops::Env;
-use crate::state::{self, Document, Lane};
+use crate::state::Lane;
 
 /// The one word a credit reads as when the account's credit could not be
 /// read or carried no credit body.
@@ -212,7 +213,7 @@ pub fn record_directive_send(
     r: &RecordDirectiveSend,
     env: &Env,
 ) -> Result<DirectiveSendRecorded> {
-    let lanes = state::array_mut(path, doc, "lanes")?;
+    let lanes = record::array_mut(path, doc, "lanes")?;
     let index = lanes
         .iter()
         .position(|lane| lane.get("item").and_then(Value::as_str) == Some(r.item.as_str()))
@@ -220,15 +221,17 @@ pub fn record_directive_send(
             item: r.item.clone(),
         })?;
     let field = format!("lanes/{index}");
-    let lane = state::element_mut(path, lanes, index, "lanes")?;
+    let lane = record::element_mut(path, lanes, index, "lanes")?;
     let directive_send = match &r.write {
         DirectiveWrite::Owed { text, key } => {
             let record: Lane =
-                serde_json::from_value(Value::Object(lane.clone())).map_err(|e| Error::Shape {
-                    path: path.to_path_buf(),
-                    field,
-                    reason: crate::error::ShapeReason::TypeMismatch,
-                    cause: e.to_string(),
+                serde_json::from_value(Value::Object(lane.clone())).map_err(|e| {
+                    Error::Runtime(agent_runtime::Error::RecordShape {
+                        path: path.to_path_buf(),
+                        field,
+                        reason: agent_runtime::error::ShapeReason::TypeMismatch,
+                        cause: e.to_string(),
+                    })
                 })?;
             if !record.session_channel() {
                 return Err(Error::LaneChannel {
@@ -289,7 +292,7 @@ pub fn record_directive_send(
             )
         }
     };
-    state::set(lane, "directive_send", directive_send.clone());
+    record::set(lane, "directive_send", directive_send.clone());
     Ok(DirectiveSendRecorded {
         item: r.item.clone(),
         directive_send,

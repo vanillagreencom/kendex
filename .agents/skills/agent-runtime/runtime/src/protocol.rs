@@ -22,6 +22,18 @@ pub enum Outcome {
     Unconfirmed,
 }
 
+impl Outcome {
+    /// The outcome's word, as a record and a refusal's `outcome=` carry it.
+    pub fn word(self) -> &'static str {
+        match self {
+            Outcome::NotStarted => "not-started",
+            Outcome::Confirmed => "confirmed",
+            Outcome::Failed => "failed",
+            Outcome::Unconfirmed => "unconfirmed",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Refusal {
     pub key: String,
@@ -42,7 +54,9 @@ impl From<&Error> for Refusal {
                 pair("operation", (*operation).to_owned()),
                 pair("path", path.display().to_string()),
             ],
-            Error::Json { path, .. } => vec![pair("path", path.display().to_string())],
+            Error::Json { path, .. } | Error::RecordMissing { path } => {
+                vec![pair("path", path.display().to_string())]
+            }
             Error::RecordVersion {
                 path,
                 found,
@@ -65,10 +79,39 @@ impl From<&Error> for Refusal {
                 pair("expected", expected.to_string()),
                 pair("found", found.to_string()),
             ],
-            Error::RecordShape { path, reason } => vec![
+            Error::RecordShape {
+                path,
+                field,
+                reason,
+                ..
+            } => vec![
                 pair("path", path.display().to_string()),
-                pair("reason", reason.clone()),
+                pair("field", field.clone()),
+                pair("reason", reason.word().to_owned()),
             ],
+            Error::IntentOpen { intent, op, target } => vec![
+                pair("intent", intent.clone()),
+                pair("op", (*op).to_owned()),
+                pair("target", target.clone()),
+            ],
+            Error::IntentUnknown { id } | Error::IntentDuplicate { id } => {
+                vec![pair("intent_id", id.clone())]
+            }
+            Error::IntentComplete { id, outcome } => vec![
+                pair("intent_id", id.clone()),
+                pair("outcome", outcome.word().to_owned()),
+            ],
+            Error::SetReplaced {
+                id,
+                expected,
+                found,
+            } => vec![
+                pair("intent_id", id.clone()),
+                pair("expected", expected.to_string()),
+                pair("found", found.to_string()),
+            ],
+            Error::OutcomeInvalid { outcome } => vec![pair("outcome", outcome.word().to_owned())],
+            Error::OwnerUnreadable { op } => vec![pair("op", (*op).to_owned())],
             Error::Process { pid, operation, .. } => vec![
                 pair("pid", pid.to_string()),
                 pair("operation", (*operation).to_owned()),
@@ -146,6 +189,7 @@ pub fn diagnostic_line(error: &Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ShapeReason;
 
     #[test]
     fn a_refusal_opens_with_its_key_and_fields() {
@@ -189,9 +233,15 @@ mod tests {
             (
                 Error::RecordShape {
                     path: "/r/s.json".into(),
-                    reason: "no numeric revision".into(),
+                    field: "revision".into(),
+                    reason: ShapeReason::TypeMismatch,
+                    cause: "absent".into(),
                 },
-                &[("path", "/r/s.json"), ("reason", "no numeric revision")],
+                &[
+                    ("path", "/r/s.json"),
+                    ("field", "revision"),
+                    ("reason", "type-mismatch"),
+                ],
             ),
         ];
         for (error, expected) in &rows {

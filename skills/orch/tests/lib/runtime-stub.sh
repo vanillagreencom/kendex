@@ -13,11 +13,11 @@
 # confirmed arm records it (runtime/src/ops/controller.rs §
 # record_transfer_outcome, effects/transfer.rs § succeed) through the
 # launcher's own adapter call and record writer: the request's controller
-# opened as a window of the fleet session (ORCH_TMUX_SESSION, the launcher's
+# opened as a window of the fleet session (AGENT_RUNTIME_TMUX_SESSION, the launcher's
 # export) in its cwd on its own line, the record written through
 # lib/overseer-launch.sh's ol_record_write (the identity, the line, the next
 # generation), the pane awaited until its foreground process is the harness
-# (bounded by ORCH_TMUX_VERIFY_SECS, as the runtime's wait for the runner's
+# (bounded by AGENT_RUNTIME_TMUX_VERIFY_SECS, as the runtime's wait for the runner's
 # composer is), and the reply carrying the recorded outcome `confirmed` in
 # the shape the launcher reads. It judges no screen and launches no watch:
 # the runtime's rows hold those (tests/rust/controller.rs). The libs are the
@@ -47,7 +47,7 @@ line="$(jq -r '.controller.launch_line' "$request")"
 identity="$(jq -c '.controller | {harness, account, home: (.home // .account), model, effort, cwd}
   + (if .class == null then {} else {class} end)' "$request")"
 ol_record_read || OL_PRIOR=""
-opened="$("$SCRIPT_DIR/overseer-host" create --cwd "$cwd" --name overseer --session "${ORCH_TMUX_SESSION:?}" \
+opened="$("$SCRIPT_DIR/overseer-host" create --cwd "$cwd" --name overseer --session "${AGENT_RUNTIME_TMUX_SESSION:?}" \
   --line "$line" 2>"$DEP_ERR")" \
   || { cat -- "$DEP_ERR" >&2; printf 'orch-runtime: fixture-create-failed\n' >&2; exit 1; }
 session="" window="" server=""
@@ -60,7 +60,7 @@ for word in $opened; do
 done
 ol_record_write tmux "$session" "$window" "$server" "$identity" "$line" \
   || { cat -- "$DEP_ERR" >&2; printf 'orch-runtime: fixture-record-unwritten\n' >&2; exit 1; }
-deadline=$((SECONDS + ${ORCH_TMUX_VERIFY_SECS:-20}))
+deadline=$((SECONDS + ${AGENT_RUNTIME_TMUX_VERIFY_SECS:-20}))
 while (( SECONDS < deadline )); do
   running="$(tmux display-message -p -t "$session" '#{pane_current_command}' 2>/dev/null || true)"
   case "$running" in "" | sh | bash | dash) sleep 0.2 ;; *) break ;; esac
@@ -143,7 +143,7 @@ source "$SCRIPT_DIR/lib/overseer-launch.sh"
 ol_preference_entries "$(ol_preference)" \
   || { printf 'orch-runtime: preference-invalid entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
 rc=0
-ol_walk "${ORCH_OVERSEER_HEADROOM_PCT:-5}" "" "${OL_ENTRIES[@]}" 2>/dev/null || rc=$?
+ol_walk "${AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT:-5}" "" "${OL_ENTRIES[@]}" 2>/dev/null || rc=$?
 case "$rc" in
   0) ol_brief "$OL_HARNESS" "$handoff"
      jq -cn --arg harness "$OL_HARNESS" --arg account "$OL_LANE_DIR" --arg model "$OL_MODEL" \

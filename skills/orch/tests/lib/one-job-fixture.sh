@@ -48,7 +48,7 @@ one_job_server() { # DIR SESSION
 # one_job_consumer ROOT STUB — the consumer checkout at ROOT/main on branch
 # main, pushed to the bare ROOT/origin.git, with the job's settings committed
 # and the skill links under .agents/skills. STUB is the harness executable
-# ORCH_HARNESS_BINARIES names as claude. Sets ONE_JOB_MAIN, ONE_JOB_ORIGIN
+# AGENT_RUNTIME_HARNESS_BINARIES names as claude. Sets ONE_JOB_MAIN, ONE_JOB_ORIGIN
 # and ONE_JOB_BASE, the base commit every job starts from.
 one_job_consumer() { # ROOT STUB
   local root="$1" stub="$2" main skill
@@ -122,9 +122,9 @@ ORCH_DELIVERY = "push-base"
 ORCH_PR_ORDER = "review-first"
 DEV_VALIDATE_CMD = "bash tools/validate"
 DEV_VALIDATE_TIMEOUT_SECS = "120"
-ORCH_TMUX_SESSION = "fleet"
-ORCH_TMUX_VERIFY_SECS = "20"
-ORCH_HARNESS_BINARIES = "claude=$stub"
+AGENT_RUNTIME_TMUX_SESSION = "fleet"
+AGENT_RUNTIME_TMUX_VERIFY_SECS = "20"
+AGENT_RUNTIME_HARNESS_BINARIES = "claude=$stub"
 TOML
   git -C "$main" add .
   git -C "$main" commit -qm 'chore: consumer base'

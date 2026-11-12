@@ -30,6 +30,7 @@
 //! terminal signal ends the process at its default disposition and leaves
 //! the claim, which the next runner reads gone and takes over.
 
+use agent_runtime::record::FLEET_FILE_NAME;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -39,8 +40,7 @@ use agent_runtime::reading::Reading;
 use serde::Serialize;
 
 use crate::error::{Result, WatchError};
-use crate::schedule::Clock;
-use crate::state::FLEET_FILE_NAME;
+use agent_runtime::clock::Clock;
 
 /// The claim record.
 pub const PID_FILE: &str = "oversee-watch.pid";

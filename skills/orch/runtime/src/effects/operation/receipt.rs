@@ -164,7 +164,7 @@ mod tests {
     const ID: &str = "launch-lane:KEN-1:1769600000123456789-1837";
 
     fn write(dir: &Path, text: &str) -> std::path::PathBuf {
-        let path = crate::state::receipt_path(dir, ID);
+        let path = agent_runtime::record::receipt_path(dir, ID);
         arm(&path).unwrap();
         fs::write(&path, text).unwrap();
         path
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn the_launch_line_writes_the_receipt_then_execs_the_harness_under_the_same_pid() {
         let dir = tempfile::tempdir().unwrap();
-        let path = crate::state::receipt_path(dir.path(), ID);
+        let path = agent_runtime::record::receipt_path(dir.path(), ID);
         arm(&path).unwrap();
         let command = LaunchCommand {
             program: "true".to_owned(),

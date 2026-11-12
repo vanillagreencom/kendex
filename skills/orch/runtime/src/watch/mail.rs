@@ -361,8 +361,10 @@ fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
     reason = "the mail duty's one read of the fleet record it serves: which lanes have a mailbox to read, judged on a snapshot and acted on nowhere"
 )]
 fn fleet(path: &Path) -> Result<FleetState> {
-    let snapshot = state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    let snapshot = state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     FleetState::view(path, &snapshot.doc)
 }

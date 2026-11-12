@@ -29,7 +29,7 @@ use serde_json::{Value, json};
 use super::TAG;
 use super::listing::CLAUDE_OAUTH_BETA;
 use super::usage::{self, Credential};
-use crate::settings::AccountSettings;
+use agent_runtime::settings::AccountSettings;
 
 /// The token endpoint answers HTTP 429 to a POST carrying no User-Agent,
 /// whatever the rate; it matches the `claude-cli/` prefix and reads no
@@ -187,7 +187,7 @@ fn renew_here(step: &Step) -> Result<String, Refused> {
     let deadline = record::Wait {
         limit: LOCK_WAIT,
         poll: Duration::from_millis(100),
-        timer: &record::SystemTimer,
+        timer: &agent_runtime::clock::SystemClock,
     }
     .start();
     let mutex = !record::flock_on_path(std::env::var_os("PATH").as_deref());
@@ -251,7 +251,7 @@ fn claude(step: &Step) -> Result<String, Refused> {
         .ok_or_else(|| {
             Refused::own(
                 "error",
-                "no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)".to_owned(),
+                "no OAuth client id is configured (AGENT_RUNTIME_CLAUDE_CLIENT_ID)".to_owned(),
             )
         })?;
     let path = usage::credential_path("claude", dir);

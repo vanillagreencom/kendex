@@ -4,6 +4,7 @@
 //! nothing. The one process it may start is `git rev-parse` in the item's
 //! recorded worktree, for the committed tree of a base a row chains
 //! through; a tree that cannot be read is never coverage.
+use agent_runtime::record;
 use std::path::Path;
 use std::time::Duration;
 
@@ -21,12 +22,13 @@ const READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// Read the proof of `item` for `request`.
 pub fn run(settings: &Settings, item: &str, request: &ReadProof) -> Result<ProofRead> {
     let path = state::item_path(&settings.state_dir, item);
-    let snapshot =
-        validate::load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
+    let snapshot = validate::load(&path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing { path: path.clone() })
+    })?;
     let stages = snapshot.view::<ItemState>(&path)?.stages;
     let skips: Vec<RestackSkip> =
-        state::field(&path, &snapshot.doc, "restack_skips")?.unwrap_or_default();
-    let worktree: Option<String> = state::field(&path, &snapshot.doc, "worktree")?;
+        record::field(&path, &snapshot.doc, "restack_skips")?.unwrap_or_default();
+    let worktree: Option<String> = record::field(&path, &snapshot.doc, "worktree")?;
     let worktree = worktree.filter(|w| !w.is_empty());
     let declaration = Declaration::of(&settings.validate);
     let mut tree_of = |commit: &str| {

@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::super::controller::{Progress, ProgressRecorded, yielded_to};
 use super::super::intents;
 use crate::error::{Error, Result};
-use crate::state::{self, Document, Intent, Owner};
+use crate::state::Intent;
+use agent_runtime::intent::Owner;
+use agent_runtime::record::{self, Document};
 
 /// The intent member the lane set is recorded under.
 pub const LANE_OBLIGATIONS: &str = "lane_obligations";
@@ -69,7 +71,7 @@ impl LaneObligationRecord {
     /// The lane set `intent` records, `None` where it records none; a member
     /// that is not a lane set refuses `record-shape` naming it.
     pub fn of(path: &Path, intent: &Intent) -> Result<Option<LaneObligationRecord>> {
-        state::field(path, &intent.extra, LANE_OBLIGATIONS)
+        Ok(record::field(path, &intent.extra, LANE_OBLIGATIONS)?)
     }
 
     /// Whether the two records hold the same set: everything but the
@@ -129,8 +131,10 @@ pub(in crate::ops) fn record_lane_progress(
     let index = intents
         .iter()
         .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: r.intent_id.clone(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: r.intent_id.clone(),
+            })
         })?;
     let mut intent = intents[index].clone();
     if let Some(owner) = yielded_to(&intent, r.while_owner.as_ref()) {
@@ -140,21 +144,21 @@ pub(in crate::ops) fn record_lane_progress(
         });
     }
     if !intent.open() {
-        return Err(Error::IntentComplete {
+        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
-        });
+        }));
     }
     let current = LaneObligationRecord::of(path, &intent)?;
     let mut next = r.lane_obligations.clone();
     if let Some(current) = &current
         && current.revision != next.revision
     {
-        return Err(Error::SetReplaced {
+        return Err(Error::Runtime(agent_runtime::Error::SetReplaced {
             id: intent.id.clone(),
             expected: next.revision,
             found: current.revision,
-        });
+        }));
     }
     next.revision = match &current {
         Some(current) if current.same_set(&next) => current.revision,
@@ -166,10 +170,10 @@ pub(in crate::ops) fn record_lane_progress(
     intent
         .extra
         .insert(LANE_OBLIGATIONS.to_owned(), value.clone());
-    let rows = state::array_mut(path, doc, "intents")?;
-    let row = state::element_mut(path, rows, index, "intents")?;
-    state::set(row, LANE_OBLIGATIONS, value);
-    let progress = if state::same_document(path, doc, &before)? {
+    let rows = record::array_mut(path, doc, "intents")?;
+    let row = record::element_mut(path, rows, index, "intents")?;
+    record::set(row, LANE_OBLIGATIONS, value);
+    let progress = if record::same_document(path, doc, &before)? {
         Progress::Unchanged
     } else {
         Progress::Recorded

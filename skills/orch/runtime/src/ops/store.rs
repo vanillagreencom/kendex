@@ -6,6 +6,7 @@
 //! it. The verbs take their inputs from argv or a file and run no effect, so
 //! none is a `Request`.
 
+use agent_runtime::record::{self, Document, Locking};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,10 +14,12 @@ use agent_runtime::clock;
 use agent_runtime::host;
 use serde_json::{Map, Value, json};
 
-use super::{Env, findings, ledger, loaded, progress, reread, reviewers};
-use crate::error::{Error, Result, ShapeReason};
+use super::{Env, findings, ledger, loaded, progress, reviewers};
+use agent_runtime::error::ShapeReason;
+
+use crate::error::{Error, Result};
 use crate::settings::StoreSettings;
-use crate::state::{self, Document, Kind, Locking};
+use crate::state::{self, Kind};
 use crate::watch::lanes::{HandoffReading, handoff_places, handoff_read};
 
 const GIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -26,12 +29,12 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
 }
 
 fn shape(path: &Path, field: &str, reason: ShapeReason, cause: impl Into<String>) -> Error {
-    Error::Shape {
+    Error::Runtime(agent_runtime::Error::RecordShape {
         path: path.to_path_buf(),
         field: field.to_owned(),
         reason,
         cause: cause.into(),
-    }
+    })
 }
 
 fn json_type(value: &Value) -> &'static str {
@@ -533,14 +536,17 @@ pub fn run_write(
     env: &Env,
     write: &Write,
 ) -> Result<Value> {
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let report = transition(path, &mut doc, store, env, write)?;
-        super::records::check_owned(&snapshot.doc, &doc)?;
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(report)
-    })
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let report = transition(path, &mut doc, store, env, write)?;
+            super::records::check_owned(&snapshot.doc, &doc)?;
+            record::store(path, &snapshot.doc, &doc, locking)?;
+            Ok(report)
+        },
+        Error::key,
+    )
 }
 
 fn transition(
@@ -796,13 +802,13 @@ fn post_pr_stop_record(
         return json!({"result": "kept", "stop": current});
     }
     let stop = json!({"name": name, "gate": gate, "remaining": [remaining]});
-    state::set(doc, "post_pr_stop", stop.clone());
+    record::set(doc, "post_pr_stop", stop.clone());
     json!({"result": "recorded", "stop": stop})
 }
 
 fn post_pr_stop_clear(doc: &mut Document) -> Value {
     let standing = doc.get("post_pr_stop").is_some_and(|stop| !stop.is_null());
-    state::set(doc, "post_pr_stop", Value::Null);
+    record::set(doc, "post_pr_stop", Value::Null);
     json!({"result": if standing { "cleared" } else { "none" }})
 }
 
@@ -941,7 +947,7 @@ fn log_append(
         ));
     }
     let row = Value::Object(row);
-    state::array_mut(path, doc, "fleet_log")?.push(row.clone());
+    record::array_mut(path, doc, "fleet_log")?.push(row.clone());
     Ok(json!({"row": row}))
 }
 
@@ -964,7 +970,7 @@ fn standing_add(
         "standing-at-future",
     )?;
     let row = Value::Object(row);
-    state::array_mut(path, doc, "standing")?.push(row.clone());
+    record::array_mut(path, doc, "standing")?.push(row.clone());
     Ok(json!({"row": row}))
 }
 
@@ -987,7 +993,7 @@ fn standing_lift(
             .map(|id| id.as_str().map_or_else(|| id.to_string(), str::to_owned))
             .collect()
     };
-    let before = ids(state::array_mut(path, doc, "standing")?);
+    let before = ids(record::array_mut(path, doc, "standing")?);
     let after = ids(&rows);
     let mut lifted: Vec<String> = Vec::new();
     for id in before {
@@ -1001,8 +1007,8 @@ fn standing_lift(
         format!("standing lifted: {}", lifted.join(", "))
     };
     let ruling = json!({"at": env.iso(), "kind": "ruling", "item": "overseer", "text": text});
-    state::set(doc, "standing", Value::Array(rows.clone()));
-    state::array_mut(path, doc, "fleet_log")?.push(ruling.clone());
+    record::set(doc, "standing", Value::Array(rows.clone()));
+    record::array_mut(path, doc, "fleet_log")?.push(ruling.clone());
     Ok(json!({"standing": rows, "lifted": lifted, "ruling": ruling}))
 }
 
@@ -1020,8 +1026,10 @@ pub fn read_if_standing(path: &Path) -> Result<Option<Document>> {
 
 /// The record at `path`, refusing `record-missing` where none stands.
 pub fn read(path: &Path) -> Result<Document> {
-    read_if_standing(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    read_if_standing(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })
 }
 
@@ -1402,7 +1410,7 @@ fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -
         "launched={} observed={}",
         check.launched, check.observed
     ));
-    let log = state::array_mut(path, doc, "fleet_log")?;
+    let log = record::array_mut(path, doc, "fleet_log")?;
     let own = log.iter().rposition(|r| {
         r.get("kind") == Some(&row["kind"])
             && r.get("item") == Some(&row["item"])
@@ -1537,7 +1545,7 @@ fn model_reset(
     row["kind"] = json!("model-recovery-reset");
     row["item"] = json!(lane);
     row["text"] = json!("first-turn-complete");
-    state::array_mut(path, doc, "fleet_log")?.push(row);
+    record::array_mut(path, doc, "fleet_log")?.push(row);
     Ok(json!({"reset": true}))
 }
 
@@ -1828,7 +1836,7 @@ pub(super) fn findings_record_batch(
         history.insert("records".to_owned(), Value::Array(known));
     }
     let prior = history.get("prior").cloned().unwrap_or(Value::Null);
-    state::set(doc, "finding_occurrences", Value::Object(history));
+    record::set(doc, "finding_occurrences", Value::Object(history));
     Ok(json!({"recorded": recorded, "prior": prior, "conflict": conflict}))
 }
 

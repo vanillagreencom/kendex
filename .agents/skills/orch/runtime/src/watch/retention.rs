@@ -26,6 +26,7 @@
 //! skill's own `lane-mail compact`; its refusal is the pass's failure, and
 //! the prune still runs.
 
+use agent_runtime::record::{self, Document, Locking};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -42,7 +43,7 @@ use crate::ops::WORKTREE_KEPT;
 use crate::ops::prune::{Dropped, PlannedRows, PruneRecords};
 use crate::ops::{Env, Report, Request};
 use crate::settings::Settings;
-use crate::state::{self, Document, Locking};
+use crate::state;
 use crate::watch::{Body, Paths, Produced, Runner, Tick, events};
 
 /// Every status word a lane record reads as ended under: `done`, which a
@@ -403,9 +404,9 @@ fn laneless_records(
 /// them: a reconcile writes it again for a closed intent that still owes
 /// it.
 const INTENT_FILES: &[fn(&Path, &str) -> PathBuf] = &[
-    state::receipt_path,
-    state::job_request_path,
-    state::job_record_path,
+    record::receipt_path,
+    record::job_request_path,
+    record::job_record_path,
 ];
 
 /// The [`INTENT_FILES`] of every closed intent whose recorded end and the
@@ -941,7 +942,7 @@ mod tests {
         let mut environment = vec![("FLEET_DIR".into(), root.join("fleet").into_os_string())];
         environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
         crate::settings::load(
-            &crate::settings::Roots {
+            &agent_runtime::settings::Roots {
                 project: root.to_path_buf(),
                 common: root.to_path_buf(),
             },
@@ -987,7 +988,7 @@ mod tests {
     fn a_directive_receipt_and_a_wall_relaunch_log_written_after_the_fleet_commit_stand() {
         let world = tempfile::tempdir().unwrap();
         let root = world.path().canonicalize().unwrap();
-        let fleet = root.join(state::FLEET_FILE_NAME);
+        let fleet = root.join(record::FLEET_FILE_NAME);
         let old = clock::iso_utc(NOW - 10 * SECS_PER_DAY);
         std::fs::write(
             &fleet,
@@ -1046,7 +1047,7 @@ mod tests {
     fn a_closed_intents_notice_written_after_the_fleet_commit_reaches_its_owner() {
         let world = tempfile::tempdir().unwrap();
         let root = world.path().canonicalize().unwrap();
-        let fleet = root.join(state::FLEET_FILE_NAME);
+        let fleet = root.join(record::FLEET_FILE_NAME);
         let old = clock::iso_utc(NOW - 10 * SECS_PER_DAY);
         let id = "request-transfer:overseer:3:1-1";
         std::fs::write(
@@ -1097,7 +1098,7 @@ mod tests {
                             &settings,
                             &env(),
                             Locking::FLOCK,
-                            &crate::schedule::SystemClock,
+                            &agent_runtime::clock::SystemClock,
                         )
                     }));
                     let deadline = Instant::now() + Duration::from_secs(30);

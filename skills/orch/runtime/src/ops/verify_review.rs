@@ -16,6 +16,8 @@
 //! so a call that finds it owed sends it. The workflow repeats the call
 //! under its own budget: `pending` and `unreadable` are results, never
 //! verdicts, as `verify-pr` answers them.
+use agent_runtime::intent::Notice;
+use agent_runtime::record::{self, Document, Locking};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -24,12 +26,14 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::{Env, loaded, reread};
-use crate::error::{Error, Result, ShapeReason};
+use super::{Env, loaded};
+use agent_runtime::error::ShapeReason;
+
+use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Noticed};
 use crate::marker;
 use crate::settings::{self, ReviewSettings, Settings};
-use crate::state::{self, Document, Locking, Notice};
+use crate::state;
 use crate::verify::review::{self, Acted, CopilotReviews, GateMode, View, Work};
 use crate::verify::wire::{Nullable, Optional, Pull, PullRequestState};
 use crate::verify::{self, Gh, Status, Unreadable};
@@ -214,7 +218,7 @@ struct Review {
 fn review_settings(settings: &ReviewSettings) -> Result<Review> {
     let secs = |key: &'static str, text: &str| -> Result<u64> {
         text.parse::<u64>()
-            .map_err(|_| settings::value_refusal(key, text))
+            .map_err(|_| crate::Error::from(agent_runtime::settings::value_refusal(key, text)))
     };
     Ok(Review {
         copilot_hold: super::copilot_wait::bound(settings)?.as_secs(),
@@ -223,20 +227,20 @@ fn review_settings(settings: &ReviewSettings) -> Result<Review> {
             "proceed" => OnTimeout::Proceed,
             "block" => OnTimeout::Block,
             other => {
-                return Err(settings::value_refusal(
+                return Err(crate::Error::from(agent_runtime::settings::value_refusal(
                     settings::REVIEW_ON_TIMEOUT_KEY,
                     other,
-                ));
+                )));
             }
         },
         copilot_requests: match settings.copilot_requests.as_str() {
             "on" => true,
             "off" => false,
             other => {
-                return Err(settings::value_refusal(
+                return Err(crate::Error::from(agent_runtime::settings::value_refusal(
                     settings::COPILOT_REQUESTS_KEY,
                     other,
-                ));
+                )));
             }
         },
     })
@@ -661,7 +665,13 @@ impl Gate<'_> {
         let mode = match policy.get(GATE_MODE_KEY).map(String::as_str) {
             None | Some("enforce") => review::gate_mode(&self.gh, &self.r.repo, &self.view.base)?,
             Some("off") => GateMode::Off,
-            Some(other) => return Err(settings::value_refusal(GATE_MODE_KEY, other).into()),
+            Some(other) => {
+                return Err(crate::Error::from(agent_runtime::settings::value_refusal(
+                    GATE_MODE_KEY,
+                    other,
+                ))
+                .into());
+            }
         };
         let (path, base, at) = (self.path, &self.view.base, &self.stamp);
         Ok(write(path, self.locking, |doc| {
@@ -970,7 +980,9 @@ impl Gate<'_> {
                         .get(key)
                         .filter(|v| !v.is_empty())
                         .cloned()
-                        .ok_or_else(|| settings::value_refusal(key, ""))
+                        .ok_or_else(|| {
+                            crate::Error::from(agent_runtime::settings::value_refusal(key, ""))
+                        })
                 };
                 let (branch, author) =
                     (declared(REFRESH_BRANCH_KEY)?, declared(REFRESH_AUTHOR_KEY)?);
@@ -981,7 +993,13 @@ impl Gate<'_> {
                     Nullable::Absent | Nullable::Null => false,
                 }
             }
-            Some(other) => return Err(settings::value_refusal(REFRESH_REVIEW_KEY, other).into()),
+            Some(other) => {
+                return Err(crate::Error::from(agent_runtime::settings::value_refusal(
+                    REFRESH_REVIEW_KEY,
+                    other,
+                ))
+                .into());
+            }
         };
         let judged = if refresh {
             Some("refresh")
@@ -1380,7 +1398,7 @@ impl Gate<'_> {
             key: NOTICE_KEY.to_owned(),
             text,
             to: self.item.clone(),
-            owner: state::NOTICE_OWED.to_owned(),
+            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
         })
     }
 
@@ -1437,7 +1455,9 @@ impl Gate<'_> {
                     continue;
                 }
             };
-            let mark = if notice.unanswered() && mark.starts_with(state::NOTICE_UNANSWERED) {
+            let mark = if notice.unanswered()
+                && mark.starts_with(agent_runtime::intent::NOTICE_UNANSWERED)
+            {
                 format!("unsent:{mark}")
             } else {
                 mark
@@ -1500,7 +1520,7 @@ impl Gate<'_> {
         let mark = match self.mail.notice(item, root, &file, Some(&notice.text)) {
             Ok(Noticed::Sent { .. } | Noticed::Repeated { .. }) => "sent".to_owned(),
             Err(refusal) if refusal.wrote_nothing() => format!("unsent:{refusal}"),
-            Err(refusal) => format!("{}{refusal}", state::NOTICE_UNANSWERED),
+            Err(refusal) => format!("{}{refusal}", agent_runtime::intent::NOTICE_UNANSWERED),
         };
         let _ = std::fs::remove_file(&file);
         mark
@@ -1553,29 +1573,32 @@ impl Gate<'_> {
     reason = "the review gate's record writes: the item read and stored under the state module's write check"
 )]
 fn write<R>(path: &Path, locking: Locking, f: impl Fn(&mut Document) -> Result<R>) -> Result<R> {
-    reread(|| {
-        let snapshot = loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let out = f(&mut doc)?;
-        state::store(path, &snapshot, &doc, locking)?;
-        Ok(out)
-    })
+    record::reread(
+        || {
+            let snapshot = loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let out = f(&mut doc)?;
+            record::store(path, &snapshot.doc, &doc, locking)?;
+            Ok(out)
+        },
+        Error::key,
+    )
 }
 
 fn shape(path: &Path, field: &str) -> Error {
-    Error::Shape {
+    Error::Runtime(agent_runtime::Error::RecordShape {
         path: path.to_path_buf(),
         field: format!("{REVIEW_KEY}/{field}"),
         reason: ShapeReason::TypeMismatch,
         cause: "not the review record's shape".into(),
-    }
+    })
 }
 
 fn review_mut<'a>(path: &Path, doc: &'a mut Document) -> Result<&'a mut Document> {
     if matches!(doc.get(REVIEW_KEY), None | Some(Value::Null)) {
         doc.insert(REVIEW_KEY.into(), Value::Object(Map::new()));
     }
-    state::object_mut(path, doc, REVIEW_KEY)
+    Ok(record::object_mut(path, doc, REVIEW_KEY)?)
 }
 
 fn heads_mut<'a>(path: &Path, doc: &'a mut Document) -> Result<&'a mut Document> {
@@ -1635,11 +1658,13 @@ fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<Retr
         None | Some(Value::Null) => return Ok(None),
         Some(entry) => entry,
     };
-    let refused = |cause: &str| Error::Shape {
-        path: path.to_path_buf(),
-        field: "pr_approval/copilot_error_retries".into(),
-        reason: ShapeReason::TypeMismatch,
-        cause: cause.into(),
+    let refused = |cause: &str| {
+        Error::Runtime(agent_runtime::Error::RecordShape {
+            path: path.to_path_buf(),
+            field: "pr_approval/copilot_error_retries".into(),
+            reason: ShapeReason::TypeMismatch,
+            cause: cause.into(),
+        })
     };
     let outcome = match entry.get("outcome").and_then(Value::as_str) {
         Some(word @ (REQUESTED | FALLBACK)) => word,
@@ -1658,7 +1683,7 @@ fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<Retr
 /// on `escalated_items`: one a fix has not cleared and the review did not
 /// skip.
 fn regression_blocker(path: &Path, doc: &Document) -> Result<Option<String>> {
-    let items: Vec<Value> = state::field(path, doc, "escalated_items")?.unwrap_or_default();
+    let items: Vec<Value> = record::field(path, doc, "escalated_items")?.unwrap_or_default();
     for item in items {
         let kind = item.get("kind").and_then(Value::as_str);
         let skipped = item.get("outcome").and_then(Value::as_str) == Some("skipped");
@@ -1679,12 +1704,16 @@ fn regression_blocker(path: &Path, doc: &Document) -> Result<Option<String>> {
 /// it, since the policy is the consumer's, never the caller's.
 fn policy(base: &Path) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
-    for name in settings::SETTINGS_FILES {
-        for (key, value) in settings::settings_file(&base.join(name))? {
+    for name in agent_runtime::settings::SETTINGS_FILES {
+        for (key, value) in agent_runtime::settings::settings_file(&base.join(name))? {
             values.insert(key, value);
         }
     }
-    let private = settings::private_env_file(&base.join(settings::DEFAULT_ENV_FILE), None)?;
+    let private = agent_runtime::settings::private_env_file(
+        &base.join(agent_runtime::settings::DEFAULT_ENV_FILE),
+        None,
+        &settings::KEYS,
+    )?;
     values.extend(private.values);
     Ok(values)
 }

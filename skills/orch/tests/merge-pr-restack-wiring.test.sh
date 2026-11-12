@@ -31,7 +31,7 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "merge-pr-restack-wiring: sc
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 RUNTIME="$REPO_ROOT/skills/orch/scripts/orch-runtime"
-INSTALL=(DEV_VALIDATE_CLI="$REPO_ROOT/skills/orch/scripts/dev-validate-run" CHANGE_SCOPE_PATHS_CLI="$REPO_ROOT/skills/change-scope/scripts/harness-only")
+INSTALL=(CHANGE_SCOPE_PATHS_CLI="$REPO_ROOT/skills/change-scope/scripts/harness-only")
 LIVE_ROUND='orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-live-round-[ISSUE].json'
 RESTACK='worktree create [ISSUE] --restack'
 BASE_READ='resolve-base-branch [WT_PATH]'
@@ -119,6 +119,18 @@ echo "=== the live commands execute: the range run passes and step 3's head read
 # A worktree whose base branch origin/main sits one commit behind HEAD, with a
 # full battery and a range command that each write their own marker outside
 # the worktree.
+# install_skills WT — link the skills the runtime's validation reads from the
+# project's install (`.agents/skills/<name>`) to this checkout's own, kept out
+# of git's view of the worktree.
+install_skills() {
+  local name
+  mkdir -p "$1/.agents/skills"
+  for name in orch github change-scope harness-ci; do
+    [[ ! -d "$REPO_ROOT/skills/$name" ]] || ln -s "$REPO_ROOT/skills/$name" "$1/.agents/skills/$name"
+  done
+  printf '.agents/\n' >> "$(git -C "$1" rev-parse --path-format=absolute --git-path info/exclude)"
+}
+
 make_worktree() { # NAME
   local wt="$TMP_ROOT/$1"
   git init -q -b ken-1 "$wt"
@@ -134,16 +146,17 @@ make_worktree() { # NAME
     printf 'DEV_VALIDATE_RANGE_CMD = "printf %%s $DEV_VALIDATE_BASE > %s"\n' "$TMP_ROOT/$1-range-ran"
   } > "$wt/kendex.settings.toml"
   printf 'kendex.settings.toml\ntmp/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
+  install_skills "$wt"
   printf '%s\n' "$wt"
 }
 
 # live DOC NEEDLE WT BASE_BRANCH RUN_DIR — run the document's command with its
 # placeholders filled, under an environment carrying none of the caller's
 # DEV_VALIDATE_* settings, the worktree skill's push stood in by
-# $NETWORK_PUSH. The fixture repository has no installed skills, so the two
-# programs an install's settings name are named here from this checkout. The
-# range run polls every second rather than the default, which changes when
-# its wait notices the end and nothing it runs.
+# $NETWORK_PUSH. The fixture repository links this checkout's skills where an
+# install puts them, and the program an install's settings name is named
+# here from this checkout. The range run polls every second rather than the
+# default, which changes when its wait notices the end and nothing it runs.
 live() {
   local line
   line="$(command_at "$1" "$2")"
@@ -508,6 +521,7 @@ git -C "$PROOF_WT" -c user.name=t -c user.email=t@example.com commit -q -m branc
 # records both a pass and a later failure.
 printf '[env]\nDEV_VALIDATE_CMD = "test ! -e %s"\nDEV_VALIDATE_TIMEOUT_SECS = "20"\n' "$TMP_ROOT/proof-fail" > "$PROOF_WT/kendex.settings.toml"
 printf 'kendex.settings.toml\ntmp/\n' >> "$(git -C "$PROOF_WT" rev-parse --path-format=absolute --git-path info/exclude)"
+install_skills "$PROOF_WT"
 "$RUNTIME" --state-dir "$PROOF_WT/tmp" state init --item KEN-1 --worktree "$PROOF_WT" >/dev/null || fixture_failed proof-state
 OUT="$(cd "$PROOF_WT" && env -u DEV_VALIDATE_CI_CONTEXT -u ORCH_PR_ORDER "${INSTALL[@]}" "$RUNTIME" validate entry --worktree "$PROOF_WT" --poll 1)" || fixture_failed proof-pass
 VALIDATED_DIR="$(sed -n 's/^state=started run-dir=\([^ ]*\).*/\1/p' <<<"$OUT")"

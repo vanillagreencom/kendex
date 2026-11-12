@@ -15,6 +15,7 @@
 //! on only through its own recorded set. Also the close cells of the
 //! reconcile matrix.
 
+use agent_runtime::controller::Overseer;
 use agent_runtime::harness::Harness;
 use serde_json::{Value, json};
 
@@ -25,7 +26,7 @@ use super::operation::{
 };
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Intent, Lane, Overseer, TerminalVerdict};
+use crate::state::{CloseGround, Intent, Lane, TerminalVerdict};
 use crate::watch::hosted::{Asked, HostClosed};
 
 /// `stale` is what the reconcile of the same request already read stale,
@@ -45,7 +46,7 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         item: &item,
         lane: &lane,
         target: harness
-            .map(|h| Target::new(&run.settings.harness_binaries, h))
+            .map(|h| Target::new(&run.settings.engine.harness_binaries, h))
             .transpose()?,
         ground: intent.close.as_ref(),
         cycle: intent.cycle.as_ref().map(|row| &row.cycle),
@@ -605,7 +606,7 @@ fn moved_lane(
     let target = operation
         .engine_ref()
         .recorded_harness()
-        .map(|h| Target::new(&run.settings.harness_binaries, h))
+        .map(|h| Target::new(&run.settings.engine.harness_binaries, h))
         .transpose()?;
     let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
     operation.engine().read_standing(overseer)?;

@@ -1,5 +1,6 @@
 //! Validation execution, stage completion and completion notices.
 
+use agent_runtime::record::{self, Locking};
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -17,8 +18,7 @@ use crate::ops::{self, Env, ReconcileRound, Request, job_ended};
 use crate::send::Keyed;
 use crate::settings::Settings;
 use crate::state::{
-    self, FleetState, ItemState, Lane, Locking, Record, Stage, StageKind, StageOutcome, Stop,
-    ValidateJob,
+    self, FleetState, ItemState, Lane, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob,
 };
 
 /// How long the mailbox program is given to take the notice.
@@ -76,8 +76,10 @@ fn env_now(env: &Env) -> Env {
 
 /// The run's stage under `run_dir`, with the item's stages.
 fn stage_of(path: &Path, run_dir: &str) -> Result<(Vec<Stage>, usize)> {
-    let snapshot = load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    let snapshot = load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     let stages = snapshot.view::<ItemState>(path)?.stages;
     let index = stages
@@ -103,7 +105,7 @@ fn start_field(run_dir: &Path, key: &str) -> Option<String> {
 )]
 pub fn execute(
     run_dir: &Path,
-    clock: &dyn crate::schedule::Clock,
+    clock: &dyn agent_runtime::clock::Clock,
     group_leader: &Path,
 ) -> Result<()> {
     use std::io::Write;
@@ -662,7 +664,7 @@ fn send_notice(
     reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner"
 )]
 fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane>> {
-    let fleet = state::fleet_path(&settings.state_dir);
+    let fleet = record::fleet_path(&settings.state_dir);
     let Some(snapshot) = state::load(&fleet)? else {
         return Ok(None);
     };
@@ -726,7 +728,7 @@ fn send_session(
     env: &Env,
     locking: Locking,
 ) -> NoticeSend {
-    let fleet = state::fleet_path(&settings.state_dir);
+    let fleet = record::fleet_path(&settings.state_dir);
     match crate::send::run_keyed(&fleet, &lane.item, file, settings, env, locking, key) {
         Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
         Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
@@ -761,7 +763,7 @@ fn send_and_mark(
     let to = notice.to.as_deref().unwrap_or(item);
     let mark = match send_notice(settings, to, &notice.key, &notice.text, env, locking) {
         NoticeSend::Marked(mark) => mark,
-        NoticeSend::Held => return Ok(state::NOTICE_OWED.to_owned()),
+        NoticeSend::Held => return Ok(agent_runtime::intent::NOTICE_OWED.to_owned()),
     };
     let marked = apply(
         path,
@@ -823,7 +825,7 @@ pub fn run(
     let _ = (worktree, proof);
     execute(
         &run_dir_path,
-        &crate::schedule::SystemClock,
+        &agent_runtime::clock::SystemClock,
         &super::group_leader(settings),
     )?;
     // The close's own clock: the child ran for up to the run's bound.
@@ -895,7 +897,9 @@ pub fn deliver_owed(settings: &Settings, path: &Path, env: &Env, locking: Lockin
     for stage in stages.iter().filter(|s| {
         s.kind == StageKind::Validate
             && s.end.is_some()
-            && s.notice.as_ref().is_some_and(state::Notice::owed)
+            && s.notice
+                .as_ref()
+                .is_some_and(agent_runtime::intent::Notice::owed)
     }) {
         if let Err(e) = send_and_mark(path, settings, &item, stage, env, locking) {
             // The store refused the mark: the notice stays owed for the
@@ -1395,7 +1399,8 @@ mod tests {
             .unwrap();
             let notice = end_notice("x", &run_dir, outcome).text;
             let (done, _) =
-                super::super::files::wait(run.path(), 1, &crate::schedule::SystemClock).unwrap();
+                super::super::files::wait(run.path(), 1, &agent_runtime::clock::SystemClock)
+                    .unwrap();
             for (reader, text, mark) in [
                 ("notice", &notice, " state=fail "),
                 ("done", &done, " validate=FAILING "),

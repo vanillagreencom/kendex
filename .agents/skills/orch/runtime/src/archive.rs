@@ -9,6 +9,7 @@
 //! value that is not absolute refuses here, at the write, so a verb that
 //! archives nothing still runs.
 
+use agent_runtime::record::{self, Locking};
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 use std::os::unix::fs::PermissionsExt;
@@ -19,8 +20,10 @@ use agent_runtime::host;
 use serde_json::Value;
 
 use crate::error::Result;
-use crate::settings::{ARCHIVE_ROOT_KEY, value_refusal};
-use crate::state::{self, Locking};
+use agent_runtime::settings::value_refusal;
+
+use crate::settings::ARCHIVE_ROOT_KEY;
+use crate::state;
 use crate::watch::Paths;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,7 +154,9 @@ fn judged(root: &ArchiveRoot, suffix: &Path, project: &Path, removed: &[&Path]) 
             check_root(configured, &configured.join(suffix), project, removed)?;
             Ok(configured.clone())
         }
-        ArchiveRoot::Invalid(value) => Err(value_refusal(ARCHIVE_ROOT_KEY, value)),
+        ArchiveRoot::Invalid(value) => {
+            Err(crate::Error::from(value_refusal(ARCHIVE_ROOT_KEY, value)))
+        }
     }
 }
 
@@ -490,7 +495,7 @@ pub fn records_locked<'a, R>(
         };
         let body = std::cell::Cell::new(Some(f));
         let carried = std::cell::Cell::new(Some(unlocked));
-        let held = state::locked(first, locking, || match (body.take(), carried.take()) {
+        let held = record::locked(first, locking, || match (body.take(), carried.take()) {
             (Some(f), Some(unlocked)) => hold(rest, locking, unlocked, f),
             _ => unreachable!("the lock runs its body once"),
         });
@@ -596,7 +601,7 @@ fn close_out_held(
     let mut targets = Vec::new();
     let mut own = Vec::new();
     if stands(state_dir)? {
-        let paths = Paths::of(&state::fleet_path(state_dir))?;
+        let paths = Paths::of(&record::fleet_path(state_dir))?;
         own.push(paths.dir.join(name_of(record)));
         for path in without_record_locks(lane_paths(&paths, item)?, &own) {
             targets.push(path.clone());

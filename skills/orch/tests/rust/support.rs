@@ -20,9 +20,9 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tempfile::TempDir;
 
+use agent_runtime::clock::Clock;
 use agent_runtime::process::Identity;
 use orch_runtime::error::Error;
-use orch_runtime::schedule::Clock;
 use orch_runtime::watch;
 
 /// The one injected clock as a test drives it: time
@@ -908,12 +908,15 @@ impl Runner {
     /// stub and the bound, the same the runner sets on its own runs.
     pub fn env_words(&self) -> Vec<String> {
         let mut words = vec![
-            format!("ORCH_TMUX_SESSION={}", self.session),
-            format!("ORCH_HARNESS_BINARIES=claude={}", self.stub.display()),
+            format!("AGENT_RUNTIME_TMUX_SESSION={}", self.session),
+            format!(
+                "AGENT_RUNTIME_HARNESS_BINARIES=claude={}",
+                self.stub.display()
+            ),
             "ORCH_STATE_DIR=".to_owned(),
         ];
         if let Some(verify) = self.verify {
-            words.push(format!("ORCH_TMUX_VERIFY_SECS={verify}"));
+            words.push(format!("AGENT_RUNTIME_TMUX_VERIFY_SECS={verify}"));
         }
         for (name, value) in &self.env {
             words.push(format!("{name}={value}"));
@@ -1009,9 +1012,9 @@ impl Runner {
     pub fn apply_env(&self, command: &mut Command) {
         command
             .env("TMUX", format!("{},0,0", self.server_socket.display()))
-            .env("ORCH_TMUX_SESSION", &self.session)
+            .env("AGENT_RUNTIME_TMUX_SESSION", &self.session)
             .env(
-                "ORCH_HARNESS_BINARIES",
+                "AGENT_RUNTIME_HARNESS_BINARIES",
                 format!("claude={}", self.stub.display()),
             )
             .env(
@@ -1019,11 +1022,11 @@ impl Runner {
                 fixtures().join("lane-mail-quiet/lane-mail"),
             )
             .env(
-                "DEV_VALIDATE_CLI",
-                fixtures().join("dev-validate-quiet/dev-validate-run"),
+                "AGENT_RUNTIME_ACCOUNT_STATE_DIR",
+                self.state_dir().join("tmp/oversee-watch"),
             );
         if let Some(verify) = self.verify {
-            command.env("ORCH_TMUX_VERIFY_SECS", verify.to_string());
+            command.env("AGENT_RUNTIME_TMUX_VERIFY_SECS", verify.to_string());
         }
         if let Some(tools) = &self.tools {
             command.env("PATH", tool_path(&[tools.as_path()]));
@@ -1051,9 +1054,9 @@ impl Runner {
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(["op", "--fleet", "--request", &path.display().to_string()])
             .env("TMUX", format!("{},0,0", self.server_socket.display()))
-            .env("ORCH_TMUX_SESSION", &self.session)
+            .env("AGENT_RUNTIME_TMUX_SESSION", &self.session)
             .env(
-                "ORCH_HARNESS_BINARIES",
+                "AGENT_RUNTIME_HARNESS_BINARIES",
                 format!("claude={}", self.stub.display()),
             )
             // The mailbox and validation runner a close asks, as stubs that
@@ -1063,16 +1066,12 @@ impl Runner {
                 "LANE_MAIL_CLI",
                 fixtures().join("lane-mail-quiet/lane-mail"),
             )
-            .env(
-                "DEV_VALIDATE_CLI",
-                fixtures().join("dev-validate-quiet/dev-validate-run"),
-            )
             .env("PATH", combined)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .current_dir(self.state_dir());
         if let Some(verify) = self.verify {
-            command.env("ORCH_TMUX_VERIFY_SECS", verify.to_string());
+            command.env("AGENT_RUNTIME_TMUX_VERIFY_SECS", verify.to_string());
         }
         for (name, value) in extra {
             command.env(name, value);
@@ -1788,6 +1787,65 @@ fn copilot_body(row: &Value) -> Value {
 /// home, the state directory, the provider, and the planted directories as
 /// the configured ones, since a planted name need not carry its harness's
 /// word.
+/// Installs orch where the runtime finds its scripts, under the checkout
+/// `project`'s `.agents/skills`, with the skills its scripts reach by
+/// path beside it (orch's required skills and `harness-ci`'s classifier),
+/// one link per skill as a package install places them; the checkout's git
+/// excludes each link, so its tree reads as the row made it.
+pub fn install_orch_scripts(project: &Path) {
+    let skills = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let install = project.join(".agents/skills");
+    std::fs::create_dir_all(&install).unwrap();
+    let mut exclude = String::new();
+    for name in [
+        "orch",
+        "communication",
+        "mailbox",
+        "github",
+        "worktree",
+        "dev",
+        "decider",
+        "reviewer",
+        "change-scope",
+        "agent-runtime",
+        "harness-ci",
+    ] {
+        std::os::unix::fs::symlink(skills.join(name), install.join(name)).unwrap();
+        exclude.push_str(&format!("/.agents/skills/{name}\n"));
+    }
+    if project.join(".git").is_dir() {
+        let path = project.join(".git/info/exclude");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+        text.push_str(&exclude);
+        std::fs::write(&path, text).unwrap();
+    }
+}
+
+/// Installs the `lane-host` planted at `planted` where the runtime runs
+/// it, the orch scripts directory under the `project`: the fixture
+/// answers from and logs to the files beside the path it runs as, so those
+/// are linked to `planted` too.
+pub fn install_lane_host(project: &Path, planted: &Path) {
+    let orch = project.join(".agents/skills/orch");
+    assert!(
+        !std::fs::symlink_metadata(&orch).is_ok_and(|m| m.file_type().is_symlink()),
+        "{} links the repository's own orch: a fixture planted there would land in it",
+        orch.display()
+    );
+    let scripts = orch.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    for name in ["lane-host", "lane-host.json", "lane-host.log"] {
+        let link = scripts.join(name);
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::os::unix::fs::symlink(planted.join(name), link).unwrap();
+        }
+    }
+}
+
 pub fn plant_accounts(
     root: &Path,
     state: &Path,
@@ -1803,17 +1861,18 @@ pub fn plant_accounts(
             "OVERSEE_WATCH_STATE_DIR".to_owned(),
             state.display().to_string(),
         ),
+        (
+            "AGENT_RUNTIME_ACCOUNT_STATE_DIR".to_owned(),
+            state.display().to_string(),
+        ),
     ];
     if let Some(host) = host {
         env.push(("ORCH_LANE_HOST".to_owned(), host.to_owned()));
-        env.push((
-            "OVERSEE_WATCH_LANES".to_owned(),
-            root.join("lanes").display().to_string(),
-        ));
         let link = root.join("lane-host");
         if std::fs::symlink_metadata(&link).is_err() {
             std::os::unix::fs::symlink(fixtures().join("lane-host/lane-host"), &link).unwrap();
         }
+        install_lane_host(root, root);
     }
     let mut provider_lines = Vec::new();
     let mut local_dirs: Vec<PathBuf> = Vec::new();
@@ -1840,7 +1899,7 @@ pub fn plant_accounts(
         }
     }
     env.push((
-        "ORCH_LANE_DIRS".to_owned(),
+        "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
         local_dirs
             .iter()
             .map(|d| d.display().to_string())

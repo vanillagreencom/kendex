@@ -2,9 +2,10 @@
 use super::{StartRequest, files, run};
 use crate::error::{Error, Result};
 use crate::ops::Env;
-use crate::schedule::SystemClock;
 use crate::settings::{self, Settings};
-use crate::state::{Locking, ValidateMode};
+use crate::state::ValidateMode;
+use agent_runtime::clock::SystemClock;
+use agent_runtime::record::Locking;
 use clap::Args as ClapArgs;
 use std::fs;
 use std::io::Write;
@@ -88,7 +89,7 @@ impl TextReply {
 
 pub fn resolve_at(worktree: &Path, flags: &settings::Flags) -> Result<Settings> {
     settings::load(
-        &settings::roots(worktree)?,
+        &agent_runtime::settings::roots(worktree)?,
         &std::env::vars_os().collect::<Vec<_>>(),
         flags,
     )
@@ -413,85 +414,86 @@ fn entry(
     }
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
     let memory = super::memory_max(&settings.validate)?;
-    let run_dir = crate::state::locked(&worktree.join("tmp/validation-start"), locking, || {
-        if let Some((dir, pid)) = files::live(&worktree)? {
-            return Err(Error::Runtime(agent_runtime::Error::refused(
-                "run-live",
-                &[
-                    ("run-dir", &dir.display().to_string()),
-                    ("pid", &pid.to_string()),
-                ],
-            )));
-        }
-        let scratch = super::Scratch::new(env)?;
-        let stages = files::stages(&worktree)?;
-        let resolved = super::resolve(&settings, &scratch, &worktree, &stages, &req, env)?;
-        let id = format!(
-            "{}-{}-{}",
-            env.iso().replace(['-', ':'], ""),
-            std::process::id(),
-            env.nonce
-        );
-        let run_dir = worktree.join("tmp").join(format!("dev-validate-{id}"));
-        super::write_run_dir(&worktree, &run_dir, &resolved, env.now_secs, locking)
-            .map_err(|e| files::unreadable("run-dir", e))?;
-        if resolved.ran_nothing.is_none() && !req.foreground {
-            let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
-            let exe = exe.display().to_string();
-            let rd = run_dir.display().to_string();
-            let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
-            let launch = crate::effects::launch_recorded(
-                "validate",
-                &id,
-                &run_dir.join("runner"),
-                &argv,
-                Some(&run_dir.join("job.err")),
-                crate::effects::Bounds {
-                    runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
-                    memory,
-                },
-                &SystemClock,
+    let run_dir =
+        agent_runtime::record::locked(&worktree.join("tmp/validation-start"), locking, || {
+            if let Some((dir, pid)) = files::live(&worktree)? {
+                return Err(Error::Runtime(agent_runtime::Error::refused(
+                    "run-live",
+                    &[
+                        ("run-dir", &dir.display().to_string()),
+                        ("pid", &pid.to_string()),
+                    ],
+                )));
+            }
+            let scratch = super::Scratch::new(env)?;
+            let stages = files::stages(&worktree)?;
+            let resolved = super::resolve(&settings, &scratch, &worktree, &stages, &req, env)?;
+            let id = format!(
+                "{}-{}-{}",
+                env.iso().replace(['-', ':'], ""),
+                std::process::id(),
+                env.nonce
             );
-            match launch.answer() {
-                crate::effects::Launch::Started { .. } => {}
-                crate::effects::Launch::Refused { cause } => {
-                    return Err(files::unreadable("launch-failed", cause));
-                }
-                crate::effects::Launch::Unanswered { cause } => {
-                    return Err(files::unreadable(
-                        "launch-unanswered",
-                        format!("run-dir={} {cause}", run_dir.display()),
-                    ));
+            let run_dir = worktree.join("tmp").join(format!("dev-validate-{id}"));
+            super::write_run_dir(&worktree, &run_dir, &resolved, env.now_secs, locking)
+                .map_err(|e| files::unreadable("run-dir", e))?;
+            if resolved.ran_nothing.is_none() && !req.foreground {
+                let exe = std::env::current_exe().map_err(|e| files::unreadable("exe", e))?;
+                let exe = exe.display().to_string();
+                let rd = run_dir.display().to_string();
+                let argv = [&*exe, "validate", "entry", "--child", "--run-dir", &rd];
+                let launch = crate::effects::launch_recorded(
+                    "validate",
+                    &id,
+                    &run_dir.join("runner"),
+                    &argv,
+                    Some(&run_dir.join("job.err")),
+                    crate::effects::Bounds {
+                        runtime: Some(Duration::from_secs(resolved.proof.cap_secs)),
+                        memory,
+                    },
+                    &SystemClock,
+                );
+                match launch.answer() {
+                    crate::effects::Launch::Started { .. } => {}
+                    crate::effects::Launch::Refused { cause } => {
+                        return Err(files::unreadable("launch-failed", cause));
+                    }
+                    crate::effects::Launch::Unanswered { cause } => {
+                        return Err(files::unreadable(
+                            "launch-unanswered",
+                            format!("run-dir={} {cause}", run_dir.display()),
+                        ));
+                    }
                 }
             }
-        }
-        if req.foreground {
-            fs::write(
-                run_dir.join("runner"),
-                format!(
-                    "runner=attached\npid={}\nstart={}\nline={}\n",
-                    env.owner
-                        .as_ref()
-                        .ok_or_else(|| files::unreadable("owner", "absent"))?
-                        .pid,
-                    env.owner.as_ref().unwrap().start,
-                    super::attached_line(memory)
-                ),
+            if req.foreground {
+                fs::write(
+                    run_dir.join("runner"),
+                    format!(
+                        "runner=attached\npid={}\nstart={}\nline={}\n",
+                        env.owner
+                            .as_ref()
+                            .ok_or_else(|| files::unreadable("owner", "absent"))?
+                            .pid,
+                        env.owner.as_ref().unwrap().start,
+                        super::attached_line(memory)
+                    ),
+                )
+                .map_err(|e| files::unreadable("runner", e))?;
+            }
+            writeln!(
+                std::io::stdout(),
+                "{}",
+                super::started_line(&run_dir, &resolved.proof)
             )
-            .map_err(|e| files::unreadable("runner", e))?;
-        }
-        writeln!(
-            std::io::stdout(),
-            "{}",
-            super::started_line(&run_dir, &resolved.proof)
-        )
-        .map_err(|e| files::unreadable("stdout", e))?;
-        Ok((
-            run_dir,
-            resolved.proof.cap_secs,
-            resolved.ran_nothing.is_none(),
-        ))
-    })?;
+            .map_err(|e| files::unreadable("stdout", e))?;
+            Ok((
+                run_dir,
+                resolved.proof.cap_secs,
+                resolved.ran_nothing.is_none(),
+            ))
+        })?;
     let follow = if req.foreground {
         if run_dir.2 {
             run::execute(&run_dir.0, &SystemClock, &super::group_leader(&settings))?;

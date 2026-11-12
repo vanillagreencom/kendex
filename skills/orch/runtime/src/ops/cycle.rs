@@ -14,6 +14,7 @@
 //! fleet log's `cycle` row, byte for byte, and the third counting miss on
 //! one phase among the fleet's records adds the `repeat-miss` line.
 
+use agent_runtime::record;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -1557,7 +1558,7 @@ pub fn rollup(fleet: &Path, with_stages: bool) -> Result<Vec<String>> {
 )]
 pub fn rollup_logged(
     fleet: &Path,
-    locking: state::Locking,
+    locking: record::Locking,
     store: &crate::settings::StoreSettings,
     env: &super::Env,
 ) -> Result<Vec<String>> {

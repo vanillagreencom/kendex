@@ -165,7 +165,7 @@ mutant() {
 # The credit is the built runtime's roster reading the record's account: its
 # usage endpoint is the runtime's measured `curl` fixture, answering from
 # USAGE_FIXTURE_DIR by the token the account's credentials hold, and logging
-# each request there. The caller's own ORCH_LANE_DIRS names another account,
+# each request there. The caller's own AGENT_RUNTIME_ACCOUNT_DIRS names another account,
 # whose token has no answer, so a read not narrowed to the record's account
 # shows in that log.
 ACCOUNT="$TMP_ROOT/.eclaude"
@@ -189,8 +189,8 @@ usage_answer() {
     + if $credit == "none" then {} else {iguana_necktie: ({limit_dollars: 50, used_dollars: 20,
         resets_at: "2099-08-01T06:00:00Z"} + ($credit | fromjson))} end' > "$USAGE/token-eclaude.usage.json"
 }
-CREDIT_ENV=(ORCH_LANE_DIRS="$OTHER_ACCOUNT" USAGE_FIXTURE_DIR="$USAGE" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims"
-  ORCH_LANES_USAGE_TTL=0 ORCH_LANES_USAGE_MAX_AGE=0)
+CREDIT_ENV=(AGENT_RUNTIME_ACCOUNT_DIRS="$OTHER_ACCOUNT" USAGE_FIXTURE_DIR="$USAGE" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims"
+  AGENT_RUNTIME_ACCOUNT_STATE_DIR="$TMP_ROOT/claims" AGENT_RUNTIME_USAGE_TTL=0 AGENT_RUNTIME_USAGE_MAX_AGE=0)
 # The send's receipt, the keyed line it prints on stderr whatever its
 # outcome for orch's `send` verb: its result, its credit, and whether its
 # text carries the CLI's words; `none` where no line was printed.
@@ -237,7 +237,7 @@ lm STUB_CLAUDE_OUT="$ARCHIVED" "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "is archived")" "receipt=none" \
   "control: a send that prints no receipt fails the receipt rows"
 # shellcheck disable=SC2016
-mutant credit-any-account 'ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime"' '"$ORCH_SCRIPTS/orch-runtime"'
+mutant credit-any-account 'AGENT_RUNTIME_ACCOUNT_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime"' '"$ORCH_SCRIPTS/orch-runtime"'
 usage_answer "$OPEN_CREDIT"
 lm "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "") log=$(sort -u "$USAGE/curl.log" | paste -sd, -)" \

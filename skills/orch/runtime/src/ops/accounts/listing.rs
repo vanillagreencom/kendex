@@ -27,7 +27,9 @@ use super::renewal;
 use super::usage::{self, CopilotLogin, Credential, FIVE_HOURS_S, Rounding};
 use super::{AccountRow, TAG, WINDOWS, credit_room, grant, wall_verdict};
 use crate::ops::wall;
-use crate::settings::{AccountSettings, CopilotPool, Settings};
+use crate::settings::{ProviderSettings, Settings};
+use crate::watch::overseer::scripts_dir;
+use agent_runtime::settings::{AccountSettings, CopilotPool};
 
 const COPILOT_CREDITS_URL: &str = "https://api.github.com/copilot_internal/user";
 pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -53,6 +55,9 @@ pub struct Listing {
 struct Ctx<'a> {
     settings: &'a Settings,
     accounts: &'a AccountSettings,
+    provider: ProviderSettings,
+    /// The account records' root; the usage cache is `usage/` under it.
+    account_state: PathBuf,
     usage_dir: PathBuf,
     /// The age a cached figure is served within: the TTL, or the caller's
     /// own pass interval where that is longer; 0 declines every cached
@@ -76,11 +81,9 @@ pub fn list(
     now: u64,
 ) -> Result<Listing, String> {
     let accounts = &settings.accounts.get().map_err(|e| e.to_string())?;
-    let usage_dir = settings
-        .claim_store
-        .parent()
-        .unwrap_or(&settings.claim_store)
-        .join("usage");
+    let provider = settings.provider.get().map_err(|e| e.to_string())?;
+    let account_state = settings.account_state.get().map_err(|e| e.to_string())?;
+    let usage_dir = account_state.join("usage");
     let serve_max_age = if accounts.usage_ttl == 0 {
         0
     } else {
@@ -89,6 +92,8 @@ pub fn list(
     let mut ctx = Ctx {
         settings,
         accounts,
+        provider,
+        account_state,
         usage_dir,
         serve_max_age,
         now,
@@ -139,7 +144,7 @@ pub fn list(
     })
 }
 
-/// Whether `ORCH_LANE_EXCLUDE` names the account: by its alias, or by its
+/// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: by its alias, or by its
 /// directory name with or without the leading dot. The one rule; the
 /// judge refuses by it.
 pub fn excluded(settings: &AccountSettings, alias: &str, config_dir: &str) -> bool {
@@ -149,7 +154,7 @@ pub fn excluded(settings: &AccountSettings, alias: &str, config_dir: &str) -> bo
         .any(|name| super::names(alias, config_dir, name))
 }
 
-/// The `ORCH_LANE_RETIRE` date the account is stated to end on, matched
+/// The `AGENT_RUNTIME_ACCOUNT_RETIRE` date the account is stated to end on, matched
 /// as the exclusion is.
 pub fn retire_date(settings: &AccountSettings, alias: &str, config_dir: &str) -> Option<String> {
     settings
@@ -160,7 +165,7 @@ pub fn retire_date(settings: &AccountSettings, alias: &str, config_dir: &str) ->
 }
 
 /// The directory's own name without its leading dot, overlaid by the
-/// owner's `ORCH_LANE_ALIASES` entry whose key names the directory. A
+/// owner's `AGENT_RUNTIME_ACCOUNT_ALIASES` entry whose key names the directory. A
 /// label only: launching names the directory, never the alias.
 pub fn alias(settings: &AccountSettings, config_dir: &str) -> String {
     settings
@@ -184,7 +189,7 @@ struct Found {
 const HARNESSES: [&str; 3] = ["claude", "codex", "copilot"];
 
 /// The accounts this machine lists, the owner's statement and nothing
-/// found by looking: each `ORCH_LANE_DIRS` entry, absolute or relative to
+/// found by looking: each `AGENT_RUNTIME_ACCOUNT_DIRS` entry, absolute or relative to
 /// `HOME` (so one tracked line names the same accounts on every machine),
 /// an account of the harness its files name; beside them, measured but no
 /// candidate, the account a set `CODEX_HOME` names, a set `COPILOT_HOME`,
@@ -194,13 +199,13 @@ const HARNESSES: [&str; 3] = ["claude", "codex", "copilot"];
 fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, String> {
     let accounts = ctx.accounts;
     let mut configured: Vec<Found> = Vec::new();
-    if accounts.lane_dirs.is_empty() {
+    if accounts.account_dirs.is_empty() {
         ctx.notes.push(format!(
             "accounts-unconfigured key={}",
-            crate::settings::LANE_DIRS_KEY
+            agent_runtime::settings::ACCOUNT_DIRS_KEY
         ));
     }
-    for entry in &accounts.lane_dirs {
+    for entry in &accounts.account_dirs {
         let relative = entry.strip_prefix("~/").unwrap_or(entry);
         let dir = match (entry.starts_with('/'), &ctx.settings.home) {
             (true, _) => entry.clone(),
@@ -300,7 +305,7 @@ fn host_pool(ctx: &Ctx, host: &str) -> Result<String, String> {
     let out = host::run_tagged_in(
         TAG,
         "lane-host",
-        &scripts(ctx.settings).join("lane-host"),
+        &scripts_dir(&ctx.settings.roots.project).join("lane-host"),
         "capabilities",
         &["capabilities"],
         Place {
@@ -323,14 +328,6 @@ fn host_pool(ctx: &Ctx, host: &str) -> Result<String, String> {
         .find_map(|field| field.strip_prefix("pool="))
         .ok_or_else(|| unread("no pool= field".to_owned()))?;
     Ok(pool.to_owned())
-}
-
-fn scripts(settings: &Settings) -> PathBuf {
-    settings
-        .lanes_cli
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default()
 }
 
 // --- one account measured ---------------------------------------------------------------------
@@ -376,7 +373,7 @@ impl Reading {
         Reading {
             status: "ok".to_owned(),
             detail: format!(
-                "Copilot pool: {} of {} credits used, as ORCH_LANE_COPILOT_POOL states; {why}",
+                "Copilot pool: {} of {} credits used, as AGENT_RUNTIME_COPILOT_POOL states; {why}",
                 entry.used, entry.granted
             ),
             plan: String::new(),
@@ -426,7 +423,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
                     None => Reading::refused(
                         "no_credentials",
                         format!(
-                            "copilot login unread: {why}, and ORCH_LANE_COPILOT_POOL states no reading for this account"
+                            "copilot login unread: {why}, and AGENT_RUNTIME_COPILOT_POOL states no reading for this account"
                         ),
                     ),
                 };
@@ -1046,13 +1043,13 @@ fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, Opt
                 if let Some(answer) = cached(ctx) {
                     return Ok(answer);
                 }
-                let timeout = ctx.accounts.accounts_timeout;
+                let timeout = ctx.provider.accounts_timeout;
                 let bound = match timeout {
                     0 => Duration::from_secs(u64::from(u32::MAX)),
                     secs => Duration::from_secs(secs),
                 };
                 let busy_wait = ctx
-                    .accounts
+                    .provider
                     .host_busy_wait
                     .clone()
                     .unwrap_or_else(|| "30".to_owned());
@@ -1063,7 +1060,7 @@ fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, Opt
                 let out = host::run_tagged_in(
                     TAG,
                     "lane-host",
-                    &scripts(ctx.settings).join("lane-host"),
+                    &scripts_dir(&ctx.settings.roots.project).join("lane-host"),
                     "accounts",
                     &["accounts"],
                     Place {
@@ -1511,7 +1508,7 @@ fn wall_overlay(
     fall: Option<&cache::Fall>,
     buckets: &mut Value,
 ) -> Result<(), String> {
-    let path = wall::account_wall_path(&ctx.settings.claim_store, dir);
+    let path = wall::account_wall_path(&ctx.account_state, dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -1654,7 +1651,7 @@ fn same_reset(a: &Value, b: &Value) -> bool {
 }
 
 /// The row's verdict and pool: its binding window judged against
-/// `ORCH_LANE_MAX_PCT`, a Codex balance above the floor lifting a window
+/// `AGENT_RUNTIME_ACCOUNT_MAX_PCT`, a Codex balance above the floor lifting a window
 /// wall, an ended plan a full wall, and a grant pool judged on the grant
 /// by the expires-first rule, so the listing and the judge cannot disagree
 /// about a grant at the floor.
@@ -1705,7 +1702,7 @@ mod tests {
     fn world() -> (tempfile::TempDir, Settings) {
         let dir = tempfile::tempdir().unwrap();
         let settings = crate::settings::load(
-            &crate::settings::Roots {
+            &agent_runtime::settings::Roots {
                 project: dir.path().to_path_buf(),
                 common: dir.path().to_path_buf(),
             },
@@ -1726,6 +1723,8 @@ mod tests {
         let mut ctx = Ctx {
             settings: &settings,
             accounts: &accounts,
+            provider: settings.provider.get().unwrap(),
+            account_state: dir.path().to_path_buf(),
             usage_dir: dir.path().join("usage"),
             serve_max_age: 300,
             now: 1_800_000_000,
@@ -1773,6 +1772,8 @@ mod tests {
         let ctx = Ctx {
             settings: &settings,
             accounts: &accounts,
+            provider: settings.provider.get().unwrap(),
+            account_state: PathBuf::new(),
             usage_dir: PathBuf::new(),
             serve_max_age: 300,
             now: 1_800_000_000,

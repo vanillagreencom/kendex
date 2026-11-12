@@ -112,8 +112,8 @@ set -euo pipefail
 "${0%/*}/claude-response" | jq --arg account "$CLAUDE_CONFIG_DIR" '.qa_metadata.account = $account'
 SH
   chmod +x "$ROW/bin/lane-claude"
-  W_ENV+=("ORCH_LANE_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
-    "OVERSEE_WATCH_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
+    "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   room_cmd="$CLAUDE_ROOM_CMD"
   [[ "$checked" != no ]] || room_cmd=""
   W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
@@ -143,7 +143,7 @@ SH
 done <<<"$CLAUDE_ROWS"
 
 # The stock Copilot entries' default room check with the real chooser, from a
-# Claude session on a consumer roster naming them: the pool ORCH_LANE_COPILOT_POOL states
+# Claude session on a consumer roster naming them: the pool AGENT_RUNTIME_COPILOT_POOL states
 # for a Pi root is what pick judges, and the root it picks is the Pi
 # configuration the stock pi command runs on. Only pi is a fixture.
 # label|pool used/granted|reviewer|Pi root the reviewer ran on
@@ -161,7 +161,7 @@ while IFS='|' read -r label pool reviewer root; do
   ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
   printf '{}\n' > "$H/.pi-copilot/settings.json"
   printf '{}\n' > "$H/.pi-copilot/auth.json"
-  W_ENV+=("ORCH_LANE_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  W_ENV+=("AGENT_RUNTIME_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
   assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"

@@ -43,6 +43,7 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
+use agent_runtime::record::Document;
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -72,7 +73,7 @@ use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
-use crate::state::{self, Document, FleetState, Lane, LaneStatus, Phase};
+use crate::state::{self, FleetState, Lane, LaneStatus, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
@@ -498,9 +499,11 @@ pub struct Pass<'a> {
     /// The state directory the receipts are read under, the item states
     /// stand in and a relaunch logs to.
     pub state_dir: &'a Path,
-    /// The claim store, beside which the account wall records and the relaunch
-    /// markers live (`lib/lane-claims.sh`, `lane_claims_dir`).
+    /// The claim store, beside which the relaunch markers live
+    /// (`lib/lane-claims.sh`, `lane_claims_dir`).
     pub claim_store: &'a Path,
+    /// The account records' root the wall records are written under.
+    pub account_state: &'a agent_runtime::settings::Judged<std::path::PathBuf>,
     /// The scripts directory: the relaunch's `orch-runtime` entry and the
     /// provider calls.
     pub scripts: &'a Path,
@@ -1660,22 +1663,28 @@ fn wall(
     // The account wall is recorded on every walled pass, the quiet ones
     // included, so a record a write failed to land lands later.
     let account = obs.lane.account.clone().unwrap_or_default();
-    let unwritten = wall::record_account_wall(
-        pass.claim_store,
-        &AccountWallWrite {
-            config_dir: account.clone(),
-            reset: reset_at,
-            now: pass.now,
-            first_seen,
-            banner: text.clone(),
-            channel: match source {
-                WallSource::Pane => WallChannel::Pane,
-                WallSource::Rows => WallChannel::Row,
-            },
-        },
-    )
-    .err()
-    .map(|e| e.to_string());
+    let unwritten = pass
+        .account_state
+        .get()
+        .map_err(crate::Error::from)
+        .and_then(|root| {
+            wall::record_account_wall(
+                &root,
+                &AccountWallWrite {
+                    config_dir: account.clone(),
+                    reset: reset_at,
+                    now: pass.now,
+                    first_seen,
+                    banner: text.clone(),
+                    channel: match source {
+                        WallSource::Pane => WallChannel::Pane,
+                        WallSource::Rows => WallChannel::Row,
+                    },
+                },
+            )
+        })
+        .err()
+        .map(|e| e.to_string());
     if quiet {
         return (walled, observed);
     }
@@ -2476,7 +2485,7 @@ fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
         Err(e) => return Err(unread(format!("cause={:?}", e.kind()))),
     };
-    let read = |path: &Path| settings::read_text(path);
+    let read = |path: &Path| agent_runtime::settings::read_text(path);
     let dir = settings::state_dir_named(root, &read).map_err(|e| e.to_string())?;
     Ok(if dir.is_absolute() {
         dir

@@ -23,18 +23,22 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::{FLEET_FILE_NAME, Locking};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use agent_runtime::clock::Clock;
+use agent_runtime::clock::SystemClock;
 use agent_runtime::process::Identity;
-use agent_runtime::record::{SystemTimer, Wait};
+use agent_runtime::record::Wait;
+use agent_runtime::settings::Roots;
 use orch_runtime::error::Error;
 use orch_runtime::ops::Env;
 use orch_runtime::ops::prune::{PlannedRows, PruneRecords, RecordsPruned, prune_records};
-use orch_runtime::schedule::{Clock, Duty};
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::{self, FLEET_FILE_NAME, InitFields, Locking};
+use orch_runtime::schedule::Duty;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
+use orch_runtime::state::{self, InitFields};
 use orch_runtime::watch::github;
 use orch_runtime::watch::heartbeat;
 use orch_runtime::watch::pr_watch;
@@ -118,6 +122,7 @@ impl World {
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
+        install_lane_host(dir.path(), dir.path());
         let mail = real_mail(dir.path());
         let at = |name: &str| dir.path().join(name).display().to_string();
         // The accounts the listing lists are planted under `home` with
@@ -128,18 +133,18 @@ impl World {
             ("ORCH_WATCH_MAIL_INTERVAL", "5".to_owned()),
             ("FLEET_DIR", at("fleet")),
             ("OVERSEE_WATCH_TRACKER", at("linear")),
-            ("OVERSEE_WATCH_LANES", at("lanes")),
             ("OVERSEE_WATCH_REPORT", at("oversee-report")),
             ("LANE_MAIL_CLI", mail.display().to_string()),
             ("HOME", at("home")),
             ("OVERSEE_WATCH_STATE_DIR", at("")),
-            ("ORCH_LANES_USAGE_TTL", "86400".to_owned()),
+            ("AGENT_RUNTIME_ACCOUNT_STATE_DIR", at("")),
+            ("AGENT_RUNTIME_USAGE_TTL", "86400".to_owned()),
             (
-                "ORCH_LANES_CLAUDE_USAGE_URL",
+                "AGENT_RUNTIME_CLAUDE_USAGE_URL",
                 "file:///nonexistent/usage".to_owned(),
             ),
             (
-                "ORCH_LANES_CODEX_USAGE_URL",
+                "AGENT_RUNTIME_CODEX_USAGE_URL",
                 "file:///nonexistent/usage".to_owned(),
             ),
         ]
@@ -1104,7 +1109,7 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
             "EVENT heartbeat loops=25 interval=240s since=none".to_owned(),
             "owner/repo\topen-prs unread".to_owned(),
             "account-roster accounts=0".to_owned(),
-            "accounts-unconfigured key=ORCH_LANE_DIRS".to_owned(),
+            "accounts-unconfigured key=AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
             "owed unread".to_owned(),
             "open-unblocked count=unread items=-".to_owned(),
         ]
@@ -2502,7 +2507,7 @@ fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
                 wait: Wait {
                     limit: Duration::from_millis(200),
                     poll: Duration::from_millis(20),
-                    timer: &SystemTimer,
+                    timer: &SystemClock,
                 },
                 mkdir_mutex: true,
             },
@@ -3885,7 +3890,7 @@ fn report_blocked_reads_none_only_when_every_active_lane_was_read() {
     let judged = running("KEN-2", json!({"pane":pane,"server":server.pid}));
     let tmux = [
         ("TMUX", format!("{},0,0", server.socket.display())),
-        ("ORCH_TMUX_SESSION", server.session.clone()),
+        ("AGENT_RUNTIME_TMUX_SESSION", server.session.clone()),
     ];
     let tracker = world.path().join("linear");
     world.write_fleet(&json!({"issue_id":"oversee","lanes":[judged.clone()]}));

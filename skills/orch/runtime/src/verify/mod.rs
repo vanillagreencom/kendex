@@ -45,6 +45,7 @@ pub mod review;
 mod selection;
 pub mod wire;
 
+use agent_runtime::record::Locking;
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -54,8 +55,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ops::{self, Applied, Env, RecordVerification, Request, Verdict, VerifyHead};
-use crate::schedule::Clock;
-use crate::state::{self, Locking};
+use crate::state;
+use agent_runtime::clock::Clock;
 
 pub(crate) use evidence::required_contexts;
 use judge::Judgement;
@@ -208,8 +209,10 @@ pub(crate) fn run_with(
     validate(r)?;
     // The record is read before GitHub so a missing file refuses before any
     // network read, as `apply` would have refused after them.
-    state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     let reply = |status, verdict: Option<Verdict>, reason, detail, checks, recorded| Verified {
         status,

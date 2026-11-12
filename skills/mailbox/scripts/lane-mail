@@ -1056,7 +1056,7 @@ trap lm_cleanup EXIT
 # the lane; the mailbox writes no fleet record.
 lm_send_record() { # RESULT CAUSE
   local credit
-  credit="$(ORCH_LANE_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime" accounts roster --host local 2>/dev/null |
+  credit="$(AGENT_RUNTIME_ACCOUNT_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime" accounts roster --host local 2>/dev/null |
     jq -c --arg dir "$account" '[.result.rows[]? | select(.harness == "claude" and .config_dir == $dir)
       | .record.credits | objects | {remaining_dollars, locked_reason}] | first // "unread"')" ||
     credit='"unread"'

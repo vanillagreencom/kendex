@@ -404,7 +404,7 @@ if [ "$3" = present ]; then
   source "$2/.agents/skills/orch/scripts/lib/overseer-launch.sh"
   KENDEX_ENV_FILE="$(rg_setting KENDEX_ENV_FILE "" "")"
   kendex_private_env_file private_file "$2"
-  preference="$(rg_setting ORCH_OVERSEER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$private_file")"
+  preference="$(rg_setting AGENT_RUNTIME_CONTROLLER_PREFERENCE "$OL_DEFAULT_PREFERENCE" "$private_file")"
   parse_status=0
   ol_preference_entries "$preference" || parse_status=$?
   [ "$parse_status" -le 1 ] || exit "$parse_status"

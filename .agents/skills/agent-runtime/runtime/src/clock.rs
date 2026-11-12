@@ -1,8 +1,53 @@
-//! ISO 8601 UTC stamps with second precision, `YYYY-MM-DDTHH:MM:SSZ`: the
-//! one form every record this crate writes and every shell workflow stamp
-//! carries, computed without a date crate.
+//! The one injected clock, and ISO 8601 UTC stamps with second precision,
+//! `YYYY-MM-DDTHH:MM:SSZ`: the one form every record this crate writes and
+//! every shell workflow stamp carries, computed without a date crate.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// The one clock every wait and every wall-clock moment reads: a program
+/// builds it once and hands it down, so a test supplies the instants it
+/// wants and a bound can be waited without real time passing. `Sync`,
+/// since a runner's threads share one.
+pub trait Clock: Sync {
+    fn now(&self) -> Instant;
+    /// The wall-clock time, for a moment a record carries (the instant a
+    /// window was asked for, which a session file's appearance is read
+    /// against; the epoch second a baseline row holds).
+    fn wall(&self) -> SystemTime;
+    /// Wait `d` on this clock. The system clock sleeps; a fake clock passes
+    /// the time it wants.
+    fn sleep(&self, d: Duration);
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemClock;
+
+/// The system clock's own reads and its sleep, each behind the one injected
+/// clock: the allowance sits on each method alone, so a method added to the
+/// trait and this impl needs its own registered site.
+impl Clock for SystemClock {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's monotonic read, behind the one injected clock"
+    )]
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's wall read, behind the one injected clock"
+    )]
+    fn wall(&self) -> SystemTime {
+        SystemTime::now()
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the system clock's sleep, behind the one injected clock"
+    )]
+    fn sleep(&self, d: Duration) {
+        std::thread::sleep(d);
+    }
+}
 
 /// The current time as an ISO 8601 UTC stamp. A clock set before the epoch
 /// reads as the epoch.

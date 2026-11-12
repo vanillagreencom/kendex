@@ -5,12 +5,12 @@
 //!
 //! The logic reads no clock of its own. The runner (`watch`) passes the
 //! instant it is acting at, so a test drives a schedule with instants it
-//! chooses and asserts ordering without waiting. [`Clock`] is the one clock
-//! every wait and every wall-clock moment of the runtime reads:
-//! `main.rs` builds it and hands it to the operation handle and
-//! the runner alike, so a test supplies one fake and drives both.
+//! chooses and asserts ordering without waiting. agent-runtime's
+//! `clock::Clock` is the one clock every wait and every wall-clock moment
+//! of the runtime reads: `main.rs` builds it and hands it to the operation
+//! handle and the runner alike, so a test supplies one fake and drives both.
 
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -142,52 +142,6 @@ impl Cadences {
             Duty::GitHub => self.long,
             Duty::Retention => self.long,
         }
-    }
-}
-
-/// The one clock the scheduler and every effect wait read: `main.rs`
-/// builds it and hands it down, so a test supplies the
-/// instants it wants and a bound can be waited without real time passing.
-/// The effects reach it only through the operation handle.
-/// `Sync`, since the runner's two duty threads share one.
-pub trait Clock: Sync {
-    fn now(&self) -> Instant;
-    /// The wall-clock time, for a moment a record carries (the instant a
-    /// window was asked for, which a session file's appearance is read
-    /// against; the epoch second a baseline row holds).
-    fn wall(&self) -> SystemTime;
-    /// Wait `d` on this clock. The system clock sleeps; a fake clock passes
-    /// the time it wants.
-    fn sleep(&self, d: Duration);
-}
-
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SystemClock;
-
-/// The system clock's own reads and its sleep, each behind the one injected
-/// clock: the allowance sits on each method alone, so a method added to the
-/// trait and this impl needs its own registered site.
-impl Clock for SystemClock {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the system clock's monotonic read, behind the one injected clock"
-    )]
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the system clock's wall read, behind the one injected clock"
-    )]
-    fn wall(&self) -> SystemTime {
-        SystemTime::now()
-    }
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the system clock's sleep, behind the one injected clock"
-    )]
-    fn sleep(&self, d: Duration) {
-        std::thread::sleep(d);
     }
 }
 

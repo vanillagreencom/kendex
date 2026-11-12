@@ -256,7 +256,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 calls = self.root / ("picks-" + state + "-" + start + "-" + target)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": target, "account": str(account), "calls": str(calls), "headroom": headroom,
                                                                           "shared": True}))
-                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n'
+                (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:high,codex:standard:high,copilot:standard:high"\n'
                                                                 'JARVIS_UNATTENDED_HARNESSES = "' + unattended + '"\n')
                 self.model_classes()
                 if state == "app-missing":
@@ -408,7 +408,7 @@ set-hook -g after-new-window "rename-window user-hook"
                 calls.unlink(missing_ok=True)
                 (self.home / ".lane-fixture.json").write_text(json.dumps({
                     "harness": target, "account": str(picked), "calls": str(calls), "headroom": 20, "read_rc": reading}))
-                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "codex:standard:high,claude:standard:high"\n')
+                (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "codex:standard:high,claude:standard:high"\n')
                 answer, code = self.call("succeed", account_walled=True)
                 self.assertEqual(code, 0 if succeeds else 1, self.stderr)
                 queries = [json.loads(line) for line in calls.read_text().splitlines()]
@@ -429,7 +429,7 @@ set-hook -g after-new-window "rename-window user-hook"
                     # Completed A-to-B exclusion expires. Ordinary B keeps its
                     # choice, and a new explicit wall binds B rather than A.
                     if reading == 0:
-                        (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = ""\n')
+                        (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = ""\n')
                         self.call("succeed")
                         self.wait()
                         ordinary = json.loads(self.record.read_text())
@@ -460,7 +460,7 @@ set-hook -g after-new-window "rename-window user-hook"
                     self.call("start", harness="pi", mode="new", **choice)
                     self.wait()
                     self.handoff()
-                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = ""\n')
+                    (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = ""\n')
                     self.call("succeed")
                     self.assertEqual(self.wait()["account"], str(self.account))
                     original = self.record.read_bytes()
@@ -470,7 +470,7 @@ set-hook -g after-new-window "rename-window user-hook"
                     (self.home / ".lane-fixture.json").write_text(json.dumps({
                         "harness": "pi" if eligible else "none", "account": str(alternative),
                         "calls": str(calls), "headroom": 20}))
-                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "pi:github-copilot/gpt-5.5:high,pi:openai/gpt-5.5:high"\n')
+                    (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "pi:github-copilot/gpt-5.5:high,pi:openai/gpt-5.5:high"\n')
                     self.assertEqual(self.call("succeed", account_walled=True)[1], 0 if eligible else 1, self.stderr)
                     if eligible:
                         current = self.wait()
@@ -515,7 +515,7 @@ set-hook -g after-new-window "rename-window user-hook"
                         trust.write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
                     fixture = {"harness": target, "account": str(alternative), "calls": str(calls), "headroom": 20, "read_rc": 0}
                     (self.home / ".lane-fixture.json").write_text(json.dumps(fixture))
-                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "' + target + ':standard:high"\n')
+                    (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "' + target + ':standard:high"\n')
                     identity, request = self.paused([str(script), "succeed", "--home", str(self.home), "--account-walled"],
                                                     pause, phase, "after", self.env)
                     with request:
@@ -625,7 +625,7 @@ set-hook -g after-new-window "rename-window user-hook"
                     (self.home / ".lane-fixture.json").write_text(json.dumps({
                         "harness": "codex", "account": str(alternative), "calls": str(calls),
                         "headroom": 20, "read_rc": 0}))
-                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "codex:standard:high"\n')
+                    (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "codex:standard:high"\n')
                     if adopted:
                         consumer = self.unmanaged("claude")
                         argv = [str(script), "start", "--home", str(self.home), "--harness", "codex",
@@ -684,7 +684,7 @@ set-hook -g after-new-window "rename-window user-hook"
         claude.mkdir()
         calls = self.root / "picks"
         (self.home / ".lane-fixture.json").write_text(json.dumps({"harness": "claude", "account": str(claude), "calls": str(calls), "headroom": 20}))
-        (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "pi:pi-claude/claude-sonnet-4-5:high"\n')
+        (self.home / "kendex.settings.toml").write_text('[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "pi:pi-claude/claude-sonnet-4-5:high"\n')
         self.call("succeed")
         current = self.wait()
         self.assertEqual((current["harness"], current["account"]), ("pi", str(self.account)))

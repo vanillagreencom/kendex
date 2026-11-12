@@ -5,6 +5,7 @@
 //! and then recorded by the `verify` module), the handoff record a
 //! session leaves for the one that continues its round, and the round's
 //! Cargo prune with its record.
+use agent_runtime::record::{self, Document};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ use super::Env;
 use crate::effects::{self, JobHandle, SidecarRead};
 use crate::error::{Error, Result};
 use crate::state::{
-    self, Authorization, AuthorizedBy, Document, ItemState, Record, Stage, StageKind, StageOutcome,
+    self, Authorization, AuthorizedBy, ItemState, Record, Stage, StageKind, StageOutcome,
     SummaryComment, ValidateJob,
 };
 
@@ -534,7 +535,7 @@ pub(super) fn begin_round(
     let round_id = env.round_id();
     let now = env.now_secs;
     let Some(kind) = r.kind.stage() else {
-        state::set(doc, r.kind.field(), round_id.clone());
+        record::set(doc, r.kind.field(), round_id.clone());
         return Ok(RoundBegun {
             kind: r.kind,
             round_id,
@@ -556,14 +557,14 @@ pub(super) fn begin_round(
         (Some(now), Some(before)) => now > before,
         (_, _) => false,
     };
-    state::set(doc, r.kind.field(), round_id.clone());
-    let rows = state::array_mut(path, doc, "stages")?;
+    record::set(doc, r.kind.field(), round_id.clone());
+    let rows = record::array_mut(path, doc, "stages")?;
     let mut superseded = Vec::new();
     for (index, stage) in stages.iter().enumerate() {
         if stage.kind == kind && stage.end.is_none() {
-            let row = state::element_mut(path, rows, index, "stages")?;
-            state::set(row, "end", now);
-            state::set(row, "superseded", true);
+            let row = record::element_mut(path, rows, index, "stages")?;
+            record::set(row, "end", now);
+            record::set(row, "superseded", true);
             superseded.push(stage.round_id.clone());
         }
     }
@@ -633,9 +634,9 @@ pub(crate) fn record_round(
             let Some(head) = head else {
                 unreachable!("a base step reads its head before the transition")
             };
-            state::set(doc, "pre_delegate_sha", head);
+            record::set(doc, "pre_delegate_sha", head);
             if *review_fix {
-                state::set(doc, "review_fix_round", true);
+                record::set(doc, "review_fix_round", true);
             }
             Ok(json!({"step": "base", "pre_delegate_sha": head, "review_fix_round": review_fix}))
         }
@@ -656,7 +657,7 @@ pub(crate) fn record_round(
                 RoundKind::Dev | RoundKind::Ci => "dev_delegated_at",
                 RoundKind::Review => "review_delegated_at",
             };
-            state::set(doc, field, env.now_secs);
+            record::set(doc, field, env.now_secs);
             Ok(json!({"step": "delegated", "field": field, "value": env.now_secs}))
         }
         RecordRound::Counted { counter } => {
@@ -723,7 +724,7 @@ pub(super) fn record_validation_admission(
                     admitted_now: false,
                 });
             }
-            let worktree: Option<String> = state::field(path, doc, "worktree")?;
+            let worktree: Option<String> = record::field(path, doc, "worktree")?;
             let worktree =
                 worktree
                     .filter(|w| !w.is_empty())
@@ -735,7 +736,7 @@ pub(super) fn record_validation_admission(
             (run_id, run_dir, true)
         }
     };
-    state::array_mut(path, doc, "stages")?.push(json!({
+    record::array_mut(path, doc, "stages")?.push(json!({
         "kind": StageKind::Validate.word(),
         "round_id": r.round_id,
         "start": env.now_secs,
@@ -830,9 +831,9 @@ pub(super) fn accept_result_at(
     let closed = close_stage(path, doc, index, stage, end, r.outcome, env)?;
     let authorization = match (closed.closed_now, &r.authorization) {
         (true, Some(given)) => {
-            let rows = state::array_mut(path, doc, "stages")?;
-            let row = state::element_mut(path, rows, index, "stages")?;
-            state::set(row, "authorization", serde_json::to_value(given)?);
+            let rows = record::array_mut(path, doc, "stages")?;
+            let row = record::element_mut(path, rows, index, "stages")?;
+            record::set(row, "authorization", serde_json::to_value(given)?);
             Some(given.clone())
         }
         (true, None) => None,
@@ -865,7 +866,7 @@ fn record_summary_comment(
     doc: &mut Document,
     given: Option<&SummaryComment>,
 ) -> Result<Option<SummaryComment>> {
-    let recorded: Option<SummaryComment> = state::field(path, doc, SUMMARY_COMMENT_KEY)?;
+    let recorded: Option<SummaryComment> = record::field(path, doc, SUMMARY_COMMENT_KEY)?;
     let Some(given) = given else {
         return Ok(recorded);
     };
@@ -878,7 +879,7 @@ fn record_summary_comment(
             given: given.id.clone(),
         });
     }
-    state::set(doc, SUMMARY_COMMENT_KEY, serde_json::to_value(given)?);
+    record::set(doc, SUMMARY_COMMENT_KEY, serde_json::to_value(given)?);
     Ok(Some(given.clone()))
 }
 
@@ -939,10 +940,10 @@ pub(super) fn close_stage(
             closed_now: false,
         },
         None => {
-            let rows = state::array_mut(path, doc, "stages")?;
-            let row = state::element_mut(path, rows, index, "stages")?;
-            state::set(row, "end", end);
-            state::set(row, "outcome", outcome.word());
+            let rows = record::array_mut(path, doc, "stages")?;
+            let row = record::element_mut(path, rows, index, "stages")?;
+            record::set(row, "end", end);
+            record::set(row, "outcome", outcome.word());
             Closed {
                 end,
                 outcome: Some(outcome),
@@ -1368,16 +1369,16 @@ pub(super) fn reconcile_round(
             .is_some_and(|j| j.runner.as_deref() != Some("none"))
         {
             let notice = super::validate::end_notice(&run_id_of(&run_dir), &run_dir, outcome);
-            let rows = state::array_mut(path, doc, "stages")?;
-            let row = state::element_mut(path, rows, index, "stages")?;
-            state::set(
+            let rows = record::array_mut(path, doc, "stages")?;
+            let row = record::element_mut(path, rows, index, "stages")?;
+            record::set(
                 row,
                 "notice",
-                serde_json::to_value(state::Notice {
+                serde_json::to_value(agent_runtime::intent::Notice {
                     key: notice.key,
                     text: notice.text,
                     to: Some(item.clone()),
-                    owner: state::NOTICE_OWED.to_owned(),
+                    owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
                 })?,
             );
         }
@@ -1419,7 +1420,7 @@ pub(super) fn record_verification(
     }
     let replaced = !matches!(doc.get(VERIFICATION_KEY), None | Some(Value::Null));
     let at = env.iso();
-    state::set(
+    record::set(
         doc,
         VERIFICATION_KEY,
         json!({
@@ -1487,7 +1488,7 @@ pub(super) fn record_handoff(
         ("context", r.context.clone()),
         ("relaunch", json!(r.relaunch)),
     ] {
-        state::set(&mut record, key, value);
+        record::set(&mut record, key, value);
     }
     for (key, value) in [
         ("session_id", &r.session_id),
@@ -1496,12 +1497,12 @@ pub(super) fn record_handoff(
         ("model", &r.model),
     ] {
         if let Some(value) = value {
-            state::set(&mut record, key, value.clone());
+            record::set(&mut record, key, value.clone());
         }
     }
     let standing = match doc.get(HANDOFF_KEY) {
         None | Some(Value::Null) => None,
-        Some(_) => Some(state::object_mut(path, doc, HANDOFF_KEY)?),
+        Some(_) => Some(record::object_mut(path, doc, HANDOFF_KEY)?),
     };
     let replaced = standing.is_some();
     // Every standing reader reads a record carrying `resumed_at` as none, so
@@ -1535,8 +1536,8 @@ pub(super) fn record_handoff(
             });
         }
     }
-    state::set(&mut record, "written_at", written_at.clone());
-    state::set(doc, HANDOFF_KEY, record);
+    record::set(&mut record, "written_at", written_at.clone());
+    record::set(doc, HANDOFF_KEY, record);
     Ok(HandoffRecorded {
         round_id: r.round_id.clone(),
         written_at,
@@ -1552,7 +1553,7 @@ pub(super) fn resume_handoff(
     env: &Env,
 ) -> Result<HandoffResumed> {
     let record: HandoffRecord =
-        state::field(path, doc, HANDOFF_KEY)?.ok_or_else(|| Error::HandoffNone {
+        record::field(path, doc, HANDOFF_KEY)?.ok_or_else(|| Error::HandoffNone {
             path: path.to_path_buf(),
         })?;
     // The runs the continuation reads: the round's validation stages whose
@@ -1591,8 +1592,8 @@ pub(super) fn resume_handoff(
     let (resumed_at, resumed_now) = match record.resumed_at {
         Some(stamped) => (stamped, false),
         None => {
-            let handoff = state::object_mut(path, doc, HANDOFF_KEY)?;
-            state::set(handoff, "resumed_at", env.now_secs);
+            let handoff = record::object_mut(path, doc, HANDOFF_KEY)?;
+            record::set(handoff, "resumed_at", env.now_secs);
             (env.now_secs, true)
         }
     };
@@ -1883,18 +1884,21 @@ fn cleanup(cli: &Path, tree: &Path, owner: &str) -> (&'static str, u64, Value) {
     clippy::disallowed_methods,
     reason = "the prune's record committed under the item's write check, before the cleanup and after its answer"
 )]
-fn record_prune(path: &Path, round: &str, record: Value, locking: state::Locking) -> Result<()> {
-    super::reread(|| {
-        let snapshot = super::loaded(path)?;
-        let mut doc = snapshot.doc.clone();
-        let mut prunes = match doc.get("round_prunes") {
-            Some(Value::Object(map)) => map.clone(),
-            _ => serde_json::Map::new(),
-        };
-        prunes.insert(round.to_owned(), record.clone());
-        state::set(&mut doc, "round_prunes", Value::Object(prunes));
-        state::store(path, &snapshot, &doc, locking)
-    })
+fn record_prune(path: &Path, round: &str, record: Value, locking: record::Locking) -> Result<()> {
+    record::reread(
+        || {
+            let snapshot = super::loaded(path)?;
+            let mut doc = snapshot.doc.clone();
+            let mut prunes = match doc.get("round_prunes") {
+                Some(Value::Object(map)) => map.clone(),
+                _ => serde_json::Map::new(),
+            };
+            prunes.insert(round.to_owned(), record.clone());
+            record::set(&mut doc, "round_prunes", Value::Object(prunes));
+            Ok(record::store(path, &snapshot.doc, &doc, locking)?)
+        },
+        Error::key,
+    )
 }
 
 /// The prune of the round under `r.field`.
@@ -1906,7 +1910,7 @@ pub fn prune_round(
     path: &Path,
     r: &PruneRound,
     settings: &crate::settings::Settings,
-    locking: state::Locking,
+    locking: record::Locking,
 ) -> Result<RoundPruned> {
     let field = r.field.key();
     let missing = |what: &str| prune_refused("state-missing", &[("field", what)]);
@@ -1945,7 +1949,10 @@ pub fn prune_round(
                     && (1..=100).contains(m)
             })
             .ok_or_else(|| {
-                crate::settings::value_refusal(crate::settings::ROUND_PRUNE_KEY, value)
+                crate::Error::from(agent_runtime::settings::value_refusal(
+                    crate::settings::ROUND_PRUNE_KEY,
+                    value,
+                ))
             })?,
     };
     let mut answer = RoundPruned {

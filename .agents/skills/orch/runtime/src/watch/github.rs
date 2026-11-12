@@ -794,8 +794,10 @@ pub fn register(
     reason = "the GitHub duty's one read of the fleet record per pass: the lanes its inventories are about and the alert verdicts, which it judges and never writes"
 )]
 fn load_fleet(path: &Path) -> Result<(FleetState, Vec<Value>)> {
-    let snapshot = state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    let snapshot = state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     let fleet = snapshot.view::<FleetState>(path)?;
     let verdicts = match snapshot.doc.get("alerts_triaged") {

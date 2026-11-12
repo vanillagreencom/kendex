@@ -5,6 +5,7 @@
 //! is the one writer of every later value of those and of the other fields
 //! below, and the pointer verbs reach them only through the checks at its end.
 
+use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -15,7 +16,6 @@ use super::findings::added_entries;
 use super::records::some_commit;
 use super::store::{array_at, one_value};
 use crate::error::{Error, Result};
-use crate::state::{self, Document};
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -115,7 +115,7 @@ pub(crate) fn record_route(doc: &mut Document, r: &RecordRoute) -> Result<Value>
         return Err(refused("route-empty", &[]));
     }
     for (field, value) in &route {
-        state::set(doc, field, value.clone());
+        record::set(doc, field, value.clone());
     }
     Ok(json!({"route": route}))
 }
@@ -153,7 +153,7 @@ pub(crate) fn record_dev_return(doc: &mut Document, r: &RecordDevReturn) -> Resu
         return Err(refused("dev-return-empty", &[]));
     }
     for (field, value) in &written {
-        state::set(doc, field, value.clone());
+        record::set(doc, field, value.clone());
     }
     Ok(json!({"written": written}))
 }
@@ -242,7 +242,7 @@ pub(crate) fn record_pr_progress(
             let value = json!(order);
             word_in(&PR_ORDERS, &value)
                 .map_err(|_| refused("pr-order-value", &[("order", order)]))?;
-            state::set(doc, "pr_order", value.clone());
+            record::set(doc, "pr_order", value.clone());
             Ok(json!({"pointer": "/pr_order", "value": value}))
         }
         RecordPrProgress::Forced {} => flag(doc, "/pr_approval/forced"),
@@ -251,7 +251,7 @@ pub(crate) fn record_pr_progress(
         RecordPrProgress::CiRerun { head } => {
             head_named(head)?;
             let rerun = json!({"head": head, "run": Value::Null, "at": env.iso()});
-            state::set(doc, "ci_rerun", rerun.clone());
+            record::set(doc, "ci_rerun", rerun.clone());
             Ok(json!({"pointer": "/ci_rerun", "value": rerun}))
         }
         RecordPrProgress::CiRerunRun { head, run } => {

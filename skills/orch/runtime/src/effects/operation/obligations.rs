@@ -15,6 +15,8 @@
 //! standing. [`EffectOutcome`] is what every effect returns; `apply_outcome`
 //! is the one place it becomes the wire record.
 
+use agent_runtime::controller::{Overseer, WatchJob};
+use agent_runtime::intent::{LaunchIdentity, Owner};
 use std::path::Path;
 
 use agent_runtime::harness::Harness;
@@ -24,10 +26,7 @@ use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::state::{
-    self, EffectOp, Intent, LaunchIdentity, Obligation, ObligationRecord, OpenedPane, Overseer,
-    Owner, Phase, Role, WatchJob,
-};
+use crate::state::{self, EffectOp, Intent, Obligation, ObligationRecord, OpenedPane, Phase, Role};
 
 use super::{pid_value, predecessor_identity};
 

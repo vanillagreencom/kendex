@@ -10,6 +10,7 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::FLEET_FILE_NAME;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -17,10 +18,10 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant, SystemTime};
 
 use agent_runtime::process::Identity;
+use agent_runtime::settings::{Roots, Succession};
 use orch_runtime::error::Error;
 use orch_runtime::schedule::Duty;
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
-use orch_runtime::state::FLEET_FILE_NAME;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::events::OverseerCase;
 use orch_runtime::watch::{self, Change, Event, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
@@ -642,9 +643,9 @@ fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
         Duty::Tracker,
         tracker.body_result(move |_| {
             if failing.fetch_add(1, Ordering::SeqCst) < 2 {
-                return Err(Error::RecordMissing {
+                return Err(Error::Runtime(agent_runtime::Error::RecordMissing {
                     path: PathBuf::from("/x/tracker"),
-                });
+                }));
             }
             Ok(Produced {
                 events: vec![Event::Handoff {
@@ -717,9 +718,9 @@ fn a_standing_failure_repeats_its_line_on_the_mark_repeat_rule() {
     runner.register(
         Duty::Tracker,
         tracker.body_result(|_| {
-            Err(Error::RecordMissing {
+            Err(Error::Runtime(agent_runtime::Error::RecordMissing {
                 path: PathBuf::from("/x/tracker"),
-            })
+            }))
         }),
     );
     let partial = Arc::new(AtomicUsize::new(0));

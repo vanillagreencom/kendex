@@ -10,6 +10,12 @@
 //! restore the pending a failed request overwrote, keep a waiting runner, or
 //! record `off`.
 
+use agent_runtime::controller::{
+    OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending, SUCCESSOR_BINDING_KEYS,
+    SUCCESSOR_IDENTITY_KEYS, TransferCause,
+};
+use agent_runtime::intent::{Notice, Owner};
+use agent_runtime::record::{self, Document, Locking};
 use std::path::{Path, PathBuf};
 
 use agent_runtime::launch::Permission;
@@ -24,12 +30,10 @@ use super::{
 };
 use crate::effects::Recorded;
 use crate::error::{Error, Result};
-use crate::settings::{Settings, Succession};
-use crate::state::{
-    self, Document, EffectOp, Intent, Locking, Notice, OVERSEER_COMPARE_KEYS, ObligationRecord,
-    Overseer, Owner, PREDECESSOR_SESSION_KEYS, Pending, Phase, SUCCESSOR_BINDING_KEYS,
-    SUCCESSOR_IDENTITY_KEYS, TransferCause,
-};
+use agent_runtime::settings::Succession;
+
+use crate::settings::Settings;
+use crate::state::{self, EffectOp, Intent, ObligationRecord, Phase};
 
 /// The overseer record the requester saw: the succession compare-and-swap
 /// set. A key left out compares as `null`, which is what
@@ -370,13 +374,13 @@ pub enum Progress {
 
 /// What the settings admit before any transition runs: the keys the
 /// request's live effect reads ([`judge_effect_settings`]); a
-/// `request-transfer` under `ORCH_OVERSEER_SUCCESSION=off` refuses
+/// `request-transfer` under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` refuses
 /// `succession-off` and persists nothing; a live one also needs its
 /// predecessor's current snapshot ([`handoff_current`]).
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     judge_effect_settings(request, settings)?;
     if let Request::RequestTransfer(_) = request
-        && settings.succession.get()? == Succession::Off
+        && settings.engine.succession.get()? == Succession::Off
     {
         return Err(Error::SuccessionOff);
     }
@@ -396,28 +400,32 @@ pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
 /// reads none of them.
 pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
     let effect = |controller_launch: bool, job: bool| -> Result<()> {
-        settings.verify.get()?;
+        settings.engine.verify.get()?;
         settings.close_grace.get()?;
-        settings.permission.get()?;
-        settings.harness_binaries.get()?;
+        settings.engine.permission.get()?;
+        settings.engine.harness_binaries.get()?;
         if controller_launch {
-            settings.question_tool.get()?;
+            settings.engine.question_tool.get()?;
         }
         if job {
-            settings.claim.get()?;
+            settings.engine.claim.get()?;
         }
         Ok(())
     };
     match request {
         Request::LaunchLane(_) => {
             effect(false, false)?;
-            settings.lane_output.get().map(drop)
+            settings.lane_output.get()?;
+            Ok(())
         }
         Request::CloseOwnedResources(_) => effect(false, false),
         Request::RequestTransfer(_) => effect(true, true),
         Request::StartController(_) => effect(true, false),
         Request::StopController(_) => effect(false, true),
-        Request::CloseLane(_) => settings.close_grace.get().map(|_| ()),
+        Request::CloseLane(_) => {
+            settings.close_grace.get()?;
+            Ok(())
+        }
         Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
@@ -468,7 +476,7 @@ fn successor_binding<'a>(intent: &str, r: &'a RecordOutcome) -> Result<(&'a str,
 
 /// The overseer view and its document, or `overseer-missing`.
 pub(super) fn overseer(path: &Path, doc: &Document) -> Result<Overseer> {
-    state::field::<Overseer>(path, doc, "overseer")?.ok_or_else(|| Error::OverseerMissing {
+    record::field::<Overseer>(path, doc, "overseer")?.ok_or_else(|| Error::OverseerMissing {
         path: path.to_path_buf(),
     })
 }
@@ -482,11 +490,11 @@ fn no_other_controller_intent(intents: &[Intent], op: EffectOp, target: &str) ->
         .iter()
         .find(|i| i.open() && i.op.on_controller() && (i.op != op || i.target != target))
     {
-        Some(intent) => Err(Error::IntentOpen {
+        Some(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
             intent: intent.id.clone(),
-            op: intent.op,
+            op: intent.op.word(),
             target: intent.target.clone(),
-        }),
+        })),
         None => Ok(()),
     }
 }
@@ -676,7 +684,7 @@ pub(super) fn request_transfer(
     // A model recovery's binding, judged in the same transition that
     // installs the pending, so a recovery whose authorization no longer
     // holds writes nothing.
-    let record = state::object_mut(path, doc, "overseer")?;
+    let record = record::object_mut(path, doc, "overseer")?;
     if let Some(recovery) = &r.recovery
         && let Err(cause) = recovery_bound(record, recovery)
     {
@@ -709,7 +717,7 @@ pub(super) fn request_transfer(
             fields: changed,
         });
     }
-    state::set(record, "pending", serde_json::to_value(&r.successor)?);
+    record::set(record, "pending", serde_json::to_value(&r.successor)?);
     let mut intent = new_intent(EffectOp::RequestTransfer, &target, env)?;
     intent.original_pending = Some(standing).filter(|v| !v.is_null());
     intent.cause = Some(r.cause);
@@ -728,7 +736,7 @@ pub(super) fn start_controller(
     env: &Env,
 ) -> Result<ControllerStarted> {
     pending_harness(&r.controller)?;
-    let current: Option<Overseer> = state::field(path, doc, "overseer")?;
+    let current: Option<Overseer> = record::field(path, doc, "overseer")?;
     let generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let target = overseer_target(generation);
     let intents = intents(path, doc)?;
@@ -742,11 +750,11 @@ pub(super) fn start_controller(
     // A fleet that never recorded a controller gets the object the first
     // launch publishes into; the confirmation writes generation 1.
     if matches!(doc.get("overseer"), None | Some(Value::Null)) {
-        state::set(doc, "overseer", json!({}));
+        record::set(doc, "overseer", json!({}));
     }
-    let record = state::object_mut(path, doc, "overseer")?;
+    let record = record::object_mut(path, doc, "overseer")?;
     let standing = record.get("pending").cloned().unwrap_or(Value::Null);
-    state::set(record, "pending", serde_json::to_value(&r.controller)?);
+    record::set(record, "pending", serde_json::to_value(&r.controller)?);
     let mut intent = new_intent(EffectOp::StartController, &target, env)?;
     intent.original_pending = Some(standing).filter(|v| !v.is_null());
     intent.watch = r.watch.clone();
@@ -796,20 +804,24 @@ pub(super) fn claim_intent(
     let owner = env
         .owner
         .clone()
-        .ok_or(Error::OwnerUnreadable { op: "claim-intent" })?;
+        .ok_or(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
+            op: "claim-intent",
+        }))?;
     let intents = intents(path, doc)?;
     let index = intents
         .iter()
         .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: r.intent_id.clone(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: r.intent_id.clone(),
+            })
         })?;
     let mut intent = intents[index].clone();
     if !intent.open() {
-        return Err(Error::IntentComplete {
+        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
-        });
+        }));
     }
     if intent.phase.is_some() {
         return Err(Error::IntentStarted {
@@ -827,14 +839,14 @@ pub(super) fn claim_intent(
     {
         obligations.revision += 1;
     }
-    let rows = state::array_mut(path, doc, "intents")?;
-    let row = state::element_mut(path, rows, index, "intents")?;
-    state::set(row, "owner", serde_json::to_value(&owner)?);
+    let rows = record::array_mut(path, doc, "intents")?;
+    let row = record::element_mut(path, rows, index, "intents")?;
+    record::set(row, "owner", serde_json::to_value(&owner)?);
     if let Some(handed_from) = &intent.handed_from {
-        state::set(row, "handed_from", serde_json::to_value(handed_from)?);
+        record::set(row, "handed_from", serde_json::to_value(handed_from)?);
     }
     if let Some(obligations) = &intent.obligations {
-        state::set(row, "obligations", serde_json::to_value(obligations)?);
+        record::set(row, "obligations", serde_json::to_value(obligations)?);
     }
     Ok(IntentClaimed { intent })
 }
@@ -866,8 +878,10 @@ pub(super) fn record_progress(
     let index = intents
         .iter()
         .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: r.intent_id.clone(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: r.intent_id.clone(),
+            })
         })?;
     let mut intent = intents[index].clone();
     if let Some(owner) = yielded_to(&intent, r.while_owner.as_ref()) {
@@ -881,10 +895,10 @@ pub(super) fn record_progress(
     // content comparison still holds the mark.
     let continuation = r.phase.is_none() && r.obligations.is_none();
     if !continuation && !intent.open() {
-        return Err(Error::IntentComplete {
+        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
             id: intent.id.clone(),
             outcome: intent.outcome,
-        });
+        }));
     }
     let before = doc.clone();
     // The notice the outcome's write recorded `owed`, or one whose send got
@@ -899,16 +913,16 @@ pub(super) fn record_progress(
     {
         intent.notice = Some(notice.clone());
     }
-    let rows = state::array_mut(path, doc, "intents")?;
-    let row = state::element_mut(path, rows, index, "intents")?;
+    let rows = record::array_mut(path, doc, "intents")?;
+    let row = record::element_mut(path, rows, index, "intents")?;
     if let Some(notice) = &intent.notice
         && r.notice.is_some()
     {
-        state::set(row, "notice", serde_json::to_value(notice)?);
+        record::set(row, "notice", serde_json::to_value(notice)?);
     }
     if let Some(phase) = &r.phase {
         intent.phase = Some(phase.clone());
-        state::set(row, "phase", serde_json::to_value(phase)?);
+        record::set(row, "phase", serde_json::to_value(phase)?);
     }
     if let Some(obligations) = &r.obligations {
         // The compare-and-swap on the set: the write
@@ -921,11 +935,11 @@ pub(super) fn record_progress(
         if let Some(current) = &intent.obligations
             && current.revision != next.revision
         {
-            return Err(Error::SetReplaced {
+            return Err(Error::Runtime(agent_runtime::Error::SetReplaced {
                 id: intent.id.clone(),
                 expected: next.revision,
                 found: current.revision,
-            });
+            }));
         }
         next.revision = match &intent.obligations {
             Some(current) if current.same_set(&next) => current.revision,
@@ -933,9 +947,9 @@ pub(super) fn record_progress(
             None => 1,
         };
         intent.obligations = Some(next.clone());
-        state::set(row, "obligations", serde_json::to_value(&next)?);
+        record::set(row, "obligations", serde_json::to_value(&next)?);
     }
-    if state::same_document(path, doc, &before)? {
+    if record::same_document(path, doc, &before)? {
         return Ok(ProgressRecorded {
             intent,
             progress: Progress::Unchanged,
@@ -967,7 +981,7 @@ pub(crate) fn apply_adoption(
     let snapshot = super::loaded(path)?;
     let mut doc = snapshot.doc.clone();
     let adopted = adopt_controller(path, &mut doc, r, read.evidence())?;
-    state::store(path, &snapshot, &doc, locking)?;
+    record::store(path, &snapshot.doc, &doc, locking)?;
     Ok(Applied {
         kind,
         report: Report::AdoptController(Box::new(adopted)),
@@ -991,23 +1005,23 @@ fn adopt_controller(
 ) -> Result<ControllerAdopted> {
     let intents = intents(path, doc)?;
     if let Some(intent) = intents.iter().find(|i| i.open() && i.op.on_controller()) {
-        return Err(Error::IntentOpen {
+        return Err(Error::Runtime(agent_runtime::Error::IntentOpen {
             intent: intent.id.clone(),
-            op: intent.op,
+            op: intent.op.word(),
             target: intent.target.clone(),
-        });
+        }));
     }
-    let current: Option<Overseer> = state::field(path, doc, "overseer")?;
+    let current: Option<Overseer> = record::field(path, doc, "overseer")?;
     let prior_generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let home = r.home.clone().or_else(|| r.account.clone());
     let rows = r.session_rows.as_ref().map(|p| p.display().to_string());
     if read.same {
-        let record = state::object_mut(path, doc, "overseer")?;
+        let record = record::object_mut(path, doc, "overseer")?;
         let generation = prior_generation.max(1);
-        state::set(record, "generation", generation);
-        state::set(record, "server_start", read.server_start);
-        state::set(record, "server_socket", read.socket.as_str());
-        state::set(record, "harness", r.harness.as_str());
+        record::set(record, "generation", generation);
+        record::set(record, "server_start", read.server_start);
+        record::set(record, "server_socket", read.socket.as_str());
+        record::set(record, "harness", r.harness.as_str());
         for (key, value) in [
             ("account", &r.account),
             ("home", &home),
@@ -1017,20 +1031,20 @@ fn adopt_controller(
             ("session_rows", &rows),
         ] {
             if let Some(value) = value {
-                state::set(record, key, value.as_str());
+                record::set(record, key, value.as_str());
             }
         }
-        state::set(record, "session_id", string_or_null(&r.session_id));
-        state::set(record, "harness_pid", read.identity.pid);
-        state::set(record, "harness_start", read.identity.start.as_str());
+        record::set(record, "session_id", string_or_null(&r.session_id));
+        record::set(record, "harness_pid", read.identity.pid);
+        record::set(record, "harness_start", read.identity.start.as_str());
         if let Some(command) = &r.succession {
-            state::set(record, "succession", json!(command));
+            record::set(record, "succession", json!(command));
         }
         for (key, value) in adopted_posture(r)? {
-            state::set(record, key, value);
+            record::set(record, key, value);
         }
         for key in ["pending", "exit", "off"] {
-            state::delete(record, key);
+            record::delete(record, key);
         }
         return Ok(ControllerAdopted {
             generation,
@@ -1063,7 +1077,7 @@ fn adopt_controller(
     for (key, value) in adopted_posture(r)? {
         record[key] = value;
     }
-    state::set(doc, "overseer", record);
+    record::set(doc, "overseer", record);
     Ok(ControllerAdopted {
         generation,
         healed: false,
@@ -1120,8 +1134,8 @@ pub(super) fn record_controller_outcome(
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
             match r.outcome {
                 Outcome::Confirmed => {
-                    let record = state::object_mut(path, doc, "overseer")?;
-                    state::set(record, "off", json!({"at": at, "generation": generation}));
+                    let record = record::object_mut(path, doc, "overseer")?;
+                    record::set(record, "off", json!({"at": at, "generation": generation}));
                     recorded.generation = Some(generation);
                 }
                 Outcome::Failed | Outcome::Unconfirmed | Outcome::NotStarted => {}
@@ -1149,7 +1163,7 @@ fn record_transfer_outcome(
         Outcome::Confirmed => {
             let (pane, server) = successor_binding(&intent.id, r)?;
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
-            let record = state::object_mut(path, doc, "overseer")?;
+            let record = record::object_mut(path, doc, "overseer")?;
             let Some(Value::Object(pending)) = record.get("pending").cloned() else {
                 return Err(Error::PendingMissing {
                     path: path.to_path_buf(),
@@ -1164,7 +1178,7 @@ fn record_transfer_outcome(
             // carries it, and the fields of the session that ended dropped.
             // Every other key keeps its value and place.
             for key in SUCCESSOR_IDENTITY_KEYS {
-                state::set(
+                record::set(
                     record,
                     key,
                     pending.get(*key).cloned().unwrap_or(Value::Null),
@@ -1173,7 +1187,7 @@ fn record_transfer_outcome(
             // The home the successor's launch prepared, which the request
             // never decides.
             if let Some(home) = &r.home {
-                state::set(record, "home", home.as_str());
+                record::set(record, "home", home.as_str());
             }
             // The handoff the successor's brief names, the default where the
             // request named none, which the watch's recoveries name again.
@@ -1182,11 +1196,11 @@ fn record_transfer_outcome(
                 .and_then(Value::as_str)
                 .unwrap_or(crate::ops::successor::HANDOFF)
                 .to_owned();
-            state::set(record, "handoff", handoff);
+            record::set(record, "handoff", handoff);
             // The watch a start launched or found claimed; a succession
             // carries none and the field stands as it was.
             if let Some(watch) = &r.watch {
-                state::set(record, "watch", serde_json::to_value(watch)?);
+                record::set(record, "watch", serde_json::to_value(watch)?);
             }
             // The class and the posture the successor launched under, its
             // permission and its own words, and the `scope: unread` of an
@@ -1195,43 +1209,43 @@ fn record_transfer_outcome(
             // and a session inherits none of another's.
             for key in ["class", "permission", "extra_args", "scope"] {
                 match pending.get(key).filter(|v| !v.is_null()) {
-                    Some(value) => state::set(record, key, value.clone()),
+                    Some(value) => record::set(record, key, value.clone()),
                     None => {
-                        state::delete(record, key);
+                        record::delete(record, key);
                     }
                 }
             }
-            state::set(record, "generation", generation + 1);
+            record::set(record, "generation", generation + 1);
             // The server as a string, the form the record carries and
             // `ol_owns` compares; a lane's `launch.server` is a number, so
             // the identity carries one.
-            state::set(record, "pane", pane);
-            state::set(record, "server", server.to_string());
+            record::set(record, "pane", pane);
+            record::set(record, "server", server.to_string());
             match r.server_start {
-                Some(start) => state::set(record, "server_start", start),
+                Some(start) => record::set(record, "server_start", start),
                 None => null_held(record, "server_start"),
             }
             if let Some(socket) = &r.server_socket {
-                state::set(record, "server_socket", socket.as_str());
+                record::set(record, "server_socket", socket.as_str());
             }
             for key in SUCCESSOR_BINDING_KEYS {
                 match (*key, &r.window) {
-                    ("window", Some(window)) => state::set(record, key, window.as_str()),
+                    ("window", Some(window)) => record::set(record, key, window.as_str()),
                     (_, _) => null_held(record, key),
                 }
             }
             for key in PREDECESSOR_SESSION_KEYS {
-                state::delete(record, key);
+                record::delete(record, key);
             }
             // The successor's own native session, where the confirmation
             // bound it: written as the heal appends it, so the turn-end hook
             // finds the binding rather than filling it later.
             if let Some(id) = &r.session_id {
-                state::set(record, "session_id", id.as_str());
+                record::set(record, "session_id", id.as_str());
             }
             // A controller that runs is not off: the start after an
             // explicit stop clears the mark.
-            state::delete(record, "off");
+            record::delete(record, "off");
             // The runtime launched the successor and read its process
             // identity, so it writes `harness_pid`/`harness_start` now,
             // appended after the keys the record holds. The next
@@ -1242,8 +1256,8 @@ fn record_transfer_outcome(
                 r.launch.as_ref().and_then(|l| l.pid),
                 r.launch.as_ref().and_then(|l| l.start.clone()),
             ) {
-                state::set(record, "harness_pid", pid);
-                state::set(record, "harness_start", start.as_str());
+                record::set(record, "harness_pid", pid);
+                record::set(record, "harness_start", start.as_str());
             }
             recorded.generation = Some(generation + 1);
         }
@@ -1257,11 +1271,11 @@ fn record_transfer_outcome(
             // Read retirement from this outcome's observation, not the
             // intent's stored one, which a reconcile overwrites.
             if !retired(r.observation.as_ref()) {
-                let record = state::object_mut(path, doc, "overseer")?;
+                let record = record::object_mut(path, doc, "overseer")?;
                 match &intent.original_pending {
-                    Some(original) => state::set(record, "pending", original.clone()),
+                    Some(original) => record::set(record, "pending", original.clone()),
                     None => {
-                        state::delete(record, "pending");
+                        record::delete(record, "pending");
                     }
                 }
             }
@@ -1276,7 +1290,7 @@ fn record_transfer_outcome(
             if retired(r.observation.as_ref())
                 && let Some(runner) = &r.launch
             {
-                let record = state::object_mut(path, doc, "overseer")?;
+                let record = record::object_mut(path, doc, "overseer")?;
                 if let Some(Value::Object(pending)) = record.get_mut("pending") {
                     let mut runner_obj = serde_json::Map::new();
                     runner_obj.insert("pane".to_owned(), string_or_null(&runner.pane));
@@ -1310,6 +1324,7 @@ fn record_transfer_outcome(
     reason = "the rows drive the store through its entry points"
 )]
 mod tests {
+    use agent_runtime::intent::{LaunchIdentity, Notice};
     use std::fs;
 
     use agent_runtime::protocol::Outcome;
@@ -1319,7 +1334,7 @@ mod tests {
     use super::*;
     use crate::error::Error;
     use crate::ops::{Effect, Report, Request};
-    use crate::state::{LaunchIdentity, Notice, fixtures};
+    use crate::state::fixtures;
 
     /// The compare-and-swap judges the recorded identity set, and a standing
     /// `pending` the requester names is overwritten and kept for restore.
@@ -1569,13 +1584,13 @@ mod tests {
         }
     }
 
-    /// At the transition, `ORCH_OVERSEER_SUCCESSION=off`
+    /// At the transition, `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`
     /// refuses a transfer before any transition and admits every other
     /// request.
     #[test]
     fn succession_off_admits_everything_but_a_transfer() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),
         };
@@ -1585,7 +1600,7 @@ mod tests {
         };
         let off = crate::settings::load(
             &roots,
-            &[("ORCH_OVERSEER_SUCCESSION".into(), "off".into())],
+            &[("AGENT_RUNTIME_CONTROLLER_SUCCESSION".into(), "off".into())],
             &flags,
         )
         .unwrap();
@@ -1758,7 +1773,7 @@ mod tests {
         let id = intend(&path, &transfer(expected()));
         assert_eq!(fleet(&path).intents[0].owner, Some(owner()));
         let job = Env {
-            owner: Some(state::Owner {
+            owner: Some(agent_runtime::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -1849,7 +1864,7 @@ mod tests {
             revision,
             ..Default::default()
         };
-        let write = |set: ObligationRecord, while_owner: Option<state::Owner>| {
+        let write = |set: ObligationRecord, while_owner: Option<agent_runtime::intent::Owner>| {
             Request::RecordProgress(Box::new(RecordProgress {
                 intent_id: id.clone(),
                 phase: None,
@@ -1875,7 +1890,7 @@ mod tests {
             Progress::Unchanged,
             "the same set under the recorded owner is accepted without a write"
         );
-        let other = state::Owner {
+        let other = agent_runtime::intent::Owner {
             pid: 999,
             start: "ticks:999".into(),
         };
@@ -1901,7 +1916,7 @@ mod tests {
         let id = intend(&path, &transfer(expected()));
         // The job claims: the owner moves from the launcher's to the job's.
         let job = Env {
-            owner: Some(state::Owner {
+            owner: Some(agent_runtime::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -2039,7 +2054,7 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let claimant = Env {
-            owner: Some(state::Owner {
+            owner: Some(agent_runtime::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -2108,7 +2123,7 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let job = Env {
-            owner: Some(state::Owner {
+            owner: Some(agent_runtime::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -2673,7 +2688,7 @@ mod tests {
             key: "successor-not-ready".to_owned(),
             text: text.clone(),
             to: None,
-            owner: state::NOTICE_OWED.to_owned(),
+            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
         };
         let sent = Notice {
             owner: "sent".to_owned(),

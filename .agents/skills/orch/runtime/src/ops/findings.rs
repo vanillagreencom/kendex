@@ -6,6 +6,7 @@
 //! their `commit`, and the pointer verbs reach them only through the checks
 //! below.
 
+use agent_runtime::record::{self, Document};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -16,7 +17,6 @@ use serde_json::{Map, Value, json};
 use super::proof::{self, Hop};
 use super::store::{array_at, one_value};
 use crate::error::{Error, Result};
-use crate::state::{self, Document};
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -322,7 +322,7 @@ pub(crate) fn record_comment_ledger(
         ),
         RecordCommentLedger::Baseline(baseline) => {
             let value = serde_json::to_value(baseline)?;
-            state::set(doc, "pr_review_baseline", value.clone());
+            record::set(doc, "pr_review_baseline", value.clone());
             return Ok(
                 json!({"entry": "baseline", "pointer": "/pr_review_baseline", "value": value}),
             );
@@ -373,9 +373,9 @@ pub(crate) fn remap_commits(doc: &mut Document, hop: &Hop) -> (usize, usize) {
         _ => Vec::new(),
     };
     let moved = (remap(&mut fixed), remap(&mut fixes));
-    state::set(doc, "fixed_items", Value::Array(fixed));
+    record::set(doc, "fixed_items", Value::Array(fixed));
     review.insert("fixes".into(), Value::Array(fixes));
-    state::set(doc, "pr_comment_review", Value::Object(review));
+    record::set(doc, "pr_comment_review", Value::Object(review));
     moved
 }
 

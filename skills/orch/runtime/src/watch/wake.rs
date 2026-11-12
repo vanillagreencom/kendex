@@ -31,6 +31,7 @@
 //! on the next, once per unread state, the turn's word kept in the mark
 //! beside the outcome. A lane's limit is the overseer's to handle.
 
+use agent_runtime::controller::Overseer;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -48,7 +49,7 @@ pub use crate::ops::wake::OVERSEER_TARGET;
 use crate::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
 use crate::schedule::Duty;
 use crate::settings::Settings;
-use crate::state::{self, FleetState, Lane, LaneStatus, Overseer, Record};
+use crate::state::{self, FleetState, Lane, LaneStatus, Record};
 
 /// The baseline row kind the mail duty signals unread mail with.
 pub const UNREAD_KIND: &str = "unread";
@@ -572,12 +573,18 @@ impl Wake {
             "--cwd".to_owned(),
             target.cwd.display().to_string(),
             "--bound-secs".to_owned(),
-            self.settings.verify.get()?.as_secs().to_string(),
+            self.settings.engine.verify.get()?.as_secs().to_string(),
         ];
         if let Some(start) = target.server_start {
             args.extend(["--server-start".to_owned(), start.to_string()]);
         }
-        if let Some(program) = self.settings.harness_binaries.get()?.get(&target.harness) {
+        if let Some(program) = self
+            .settings
+            .engine
+            .harness_binaries
+            .get()?
+            .get(&target.harness)
+        {
             args.extend(["--program".to_owned(), program.display().to_string()]);
         }
         if let Some((pid, start)) = &target.identity {
@@ -612,7 +619,7 @@ impl Wake {
             &self.settings.agent_runtime,
             "deliver",
             &args,
-            self.settings.verify.get()? + ANSWER_MARGIN,
+            self.settings.engine.verify.get()? + ANSWER_MARGIN,
         )?;
         let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
             Error::Runtime(agent_runtime::Error::External {

@@ -32,6 +32,7 @@
 //! charges derived from those are left out of its count; a charge its wake
 //! identity derives is owned execution the relaunch does not replace, and
 //! the relaunch is refused beside it (`retained_charge`).
+use agent_runtime::intent::LaunchIdentity;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -41,8 +42,10 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 
 use super::admission::{AdmissionReads, Clis};
-use crate::settings::{Judged, Settings};
-use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
+use agent_runtime::settings::Judged;
+
+use crate::settings::Settings;
+use crate::state::{EffectOp, Intent, Lane, LaneStatus};
 
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
 /// item's worktree on this machine. The cloud cap counts it, not the lane

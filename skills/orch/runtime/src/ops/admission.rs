@@ -66,6 +66,7 @@
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
 
+use agent_runtime::record::{self, Document};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -78,7 +79,7 @@ use super::occupancy::{self, ChargeReason, Host};
 use super::{Env, intents, lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::Settings;
-use crate::state::{self, Document, Intent, Lane, LaneStatus, RebaseObligation};
+use crate::state::{self, Intent, Lane, LaneStatus, RebaseObligation};
 use crate::verify::wire::{Nullable, Optional, Pull, PullFile};
 use crate::verify::{Answer, Gh};
 
@@ -919,12 +920,12 @@ fn union(a: &[String], b: &[String]) -> Vec<String> {
 /// Write a judgement onto the lane record at `index`.
 pub(super) fn record(path: &Path, doc: &mut Document, index: usize, judged: &Judged) -> Result<()> {
     let lane = lane_doc_mut(path, doc, index)?;
-    state::set(lane, "touched", serde_json::to_value(&judged.touched)?);
-    state::set(lane, "in_scope", serde_json::to_value(&judged.in_scope)?);
+    record::set(lane, "touched", serde_json::to_value(&judged.touched)?);
+    record::set(lane, "in_scope", serde_json::to_value(&judged.in_scope)?);
     if judged.rebase.is_empty() {
-        state::delete(lane, "rebase");
+        record::delete(lane, "rebase");
     } else {
-        state::set(lane, "rebase", serde_json::to_value(&judged.rebase)?);
+        record::set(lane, "rebase", serde_json::to_value(&judged.rebase)?);
     }
     Ok(())
 }
@@ -1494,7 +1495,7 @@ mod tests {
     impl Planted {
         fn host<'a>(&'a self, still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>) -> Host<'a> {
             Host {
-                lane_cap: Some(crate::settings::Judged::valid(4)),
+                lane_cap: Some(agent_runtime::settings::Judged { read: Ok(4) }),
                 cloud_lane_cap: None,
                 still_runs,
                 accounts: None,

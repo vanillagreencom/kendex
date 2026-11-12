@@ -13,13 +13,14 @@
 //! repeats the call, and the queue watch's probe hands one call the budget
 //! its wait has left (`run_with`); no mail nap is here, since the lane's
 //! mail reaches it through the wake duty.
+use agent_runtime::record::Locking;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
 use super::{Applied, Env, VerifyHead};
 use crate::error::{Error, Result};
-use crate::state::{self, Locking};
+use crate::state;
 use crate::verify::wire::PullRequestState;
 use crate::verify::{self, Caller, CheckReport, Gh, Status};
 
@@ -97,8 +98,10 @@ pub(crate) fn run_with(
             value: r.pr.to_string(),
         });
     }
-    state::load(path)?.ok_or_else(|| Error::RecordMissing {
-        path: path.to_path_buf(),
+    state::load(path)?.ok_or_else(|| {
+        Error::Runtime(agent_runtime::Error::RecordMissing {
+            path: path.to_path_buf(),
+        })
     })?;
     let pull = match verify::pull_request(gh, &r.repo, r.pr) {
         Ok(pull) => pull,

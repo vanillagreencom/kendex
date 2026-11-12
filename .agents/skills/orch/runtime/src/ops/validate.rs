@@ -11,6 +11,8 @@
 //! The reuse judge over the stages, [`reuse`], is the start's own reading of
 //! the proof rows already on the item: the proof reader's `round` need
 //! (`ops::proof`) for the pass, and the bound-ended run beside it.
+use agent_runtime::intent::Notice;
+use agent_runtime::record::{self, Document};
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -24,8 +26,7 @@ use super::proof;
 use crate::effects::Launch;
 use crate::error::{Error, Result};
 use crate::state::{
-    self, Document, ItemState, Notice, Proof, Record, Stage, StageKind, StageOutcome, Stop,
-    ValidateJob, ValidateMode,
+    ItemState, Proof, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob, ValidateMode,
 };
 
 /// The validation run's steps, tagged by `step`.
@@ -311,10 +312,10 @@ fn start(path: &Path, doc: &mut Document, r: &RecordStart, env: &Env) -> Result<
     )?;
     let after = stages(path, doc)?;
     let index = stage_index(&after, &r.round_id, &admitted.run_dir)?;
-    let rows = state::array_mut(path, doc, "stages")?;
-    let row = state::element_mut(path, rows, index, "stages")?;
-    state::set(row, "proof", serde_json::to_value(&r.proof)?);
-    state::set(
+    let rows = record::array_mut(path, doc, "stages")?;
+    let row = record::element_mut(path, rows, index, "stages")?;
+    record::set(row, "proof", serde_json::to_value(&r.proof)?);
+    record::set(
         row,
         "job",
         serde_json::to_value(ValidateJob {
@@ -374,9 +375,9 @@ fn launch(path: &Path, doc: &mut Document, r: &RecordLaunch, env: &Env) -> Resul
     if let Some(outcome) = outcome {
         item::close_stage(path, doc, index, stage, env.now_secs, outcome, env)?;
     }
-    let rows = state::array_mut(path, doc, "stages")?;
-    let row = state::element_mut(path, rows, index, "stages")?;
-    state::set(row, "job", serde_json::to_value(job)?);
+    let rows = record::array_mut(path, doc, "stages")?;
+    let row = record::element_mut(path, rows, index, "stages")?;
+    record::set(row, "job", serde_json::to_value(job)?);
     Ok(Launched {
         round_id: r.round_id.clone(),
         run_dir: r.run_dir.clone(),
@@ -428,12 +429,12 @@ fn end(path: &Path, doc: &mut Document, r: &RecordEnd, env: &Env) -> Result<Ende
         key: n.key.clone(),
         text: n.text.clone(),
         to: Some(item_of(path)),
-        owner: state::NOTICE_OWED.to_owned(),
+        owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
     });
-    let rows = state::array_mut(path, doc, "stages")?;
-    let row = state::element_mut(path, rows, index, "stages")?;
+    let rows = record::array_mut(path, doc, "stages")?;
+    let row = record::element_mut(path, rows, index, "stages")?;
     if let Some(notice) = &notice {
-        state::set(row, "notice", serde_json::to_value(notice)?);
+        record::set(row, "notice", serde_json::to_value(notice)?);
     }
     if let Some(selection) = &r.selection
         && let Some(proof) = row.get_mut("proof").and_then(|p| p.as_object_mut())
@@ -478,9 +479,9 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
         });
     }
     let stop = Stop { at: env.now_secs };
-    let rows = state::array_mut(path, doc, "stages")?;
-    let row = state::element_mut(path, rows, index, "stages")?;
-    state::set(row, "stop", serde_json::to_value(&stop)?);
+    let rows = record::array_mut(path, doc, "stages")?;
+    let row = record::element_mut(path, rows, index, "stages")?;
+    record::set(row, "stop", serde_json::to_value(&stop)?);
     Ok(Stopped {
         round_id: r.round_id.clone(),
         run_dir: r.run_dir.clone(),
@@ -536,9 +537,9 @@ fn mark(path: &Path, doc: &mut Document, r: &MarkNotice) -> Result<Marked> {
         owner: r.owner.clone(),
         ..notice.clone()
     };
-    let rows = state::array_mut(path, doc, "stages")?;
-    let row = state::element_mut(path, rows, index, "stages")?;
-    state::set(row, "notice", serde_json::to_value(&marked)?);
+    let rows = record::array_mut(path, doc, "stages")?;
+    let row = record::element_mut(path, rows, index, "stages")?;
+    record::set(row, "notice", serde_json::to_value(&marked)?);
     Ok(Marked {
         round_id: r.round_id.clone(),
         run_dir: r.run_dir.clone(),

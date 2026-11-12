@@ -967,7 +967,7 @@ for row in \
   IFS='|' read -r committed private status entry private_path <<<"$row"
   private_path="${private_path:-.env.local}"
   reset_default
-  printf '[env]\nORCH_OVERSEER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
+  printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
   if [ "$private_path" != .env.local ]; then
     printf 'KENDEX_ENV_FILE = "%s"\n' "$private_path" >>"$repo/kendex.settings.toml"
   fi
@@ -976,13 +976,13 @@ for row in \
   git -C "$repo" push -q origin main
   rm -f -- "$repo/.env.local" "$repo/private.env"
   if [ -n "$private" ]; then
-    printf 'ORCH_OVERSEER_PREFERENCE=%s\n' "$private" >"$repo/$private_path"
+    printf 'AGENT_RUNTIME_CONTROLLER_PREFERENCE=%s\n' "$private" >"$repo/$private_path"
   fi
   run_refresh stale pass render
   if [ "$status" = clean ]; then
     if [ "$RC" -eq 0 ] && cmp -s "$TMP/clean-body" "$TMP/state/body"; then ok 'clean preference leaves the whole body unchanged'; else bad 'clean preference body' "$OUT"; fi
   elif [ "$RC" -eq 0 ] && grep -qxF '## Settings' "$TMP/state/body" &&
-    grep -qF "ORCH_OVERSEER_PREFERENCE: $status entry <code>$entry</code>; use \`harness:model:effort\`." "$TMP/state/body"; then
+    grep -qF "AGENT_RUNTIME_CONTROLLER_PREFERENCE: $status entry <code>$entry</code>; use \`harness:model:effort\`." "$TMP/state/body"; then
     ok "$status effective preference appears in Settings"
   else bad "$status effective preference report" "$OUT"; fi
   if [ "$status" = refused ]; then
@@ -1013,7 +1013,7 @@ cp "$TMP/settings-lib" "$repo/.agents/skills/review-gate/scripts/lib/settings.sh
 # Removing the Settings append from a private runner must make the same
 # deprecated-entry assertion red without changing the parser or formatter.
 reset_default
-printf '[env]\nORCH_OVERSEER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
+printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
 rm -f -- "$repo/.env.local"
 cp "$runner" "$TMP/settings-runner"
 python3 - "$runner" <<'PY'
@@ -1043,7 +1043,7 @@ for mode in render current control; do
   cp "$TMP/models-runner" "$runner"
   cat >"$repo/kendex.settings.toml" <<'TOML'
 [env]
-ORCH_OVERSEER_PREFERENCE = "claude:opus:high"
+AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:opus:high"
 # SECOND_OPINION_CODEX_MODEL = "gpt-6-astra"
 SECOND_OPINION_CODEX_CMD = "codex exec -m GpT-6-AsTrA" # pinned
 SECOND_OPINION_CLAUDE_MODEL = "claude-opus-5-5"
@@ -1107,7 +1107,7 @@ PY_MODELS
       [ "$mode" != current ] || report="$TMP/state/summary"
       if [ "$RC" -eq 0 ] && ! grep -qF '<code>' "$report" &&
           jq -e 'keys == ["committed", "deprecated", "refused"] and
-            .committed == {"ORCH_OVERSEER_PREFERENCE":"claude:opus:high",
+            .committed == {"AGENT_RUNTIME_CONTROLLER_PREFERENCE":"claude:opus:high",
               "SECOND_OPINION_CODEX_CMD":"codex exec -m GpT-6-AsTrA",
               "SECOND_OPINION_CLAUDE_MODEL":"claude-opus-5-5", "REVIEW_MODEL":"FaBlE"}' "$TMP/state/settings.json" >/dev/null &&
           { if [ "$mode" = current ]; then grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT";
@@ -1862,7 +1862,7 @@ if [ "$RC" -eq 0 ] && [ "$(wc -l <"$TMP/state/creates" | tr -d ' ')" -gt "$creat
 # install orch for the first time, replace its parser, or remove it entirely.
 reset_default
 cp "$TMP/class-runner" "$runner"
-printf '[env]\nORCH_OVERSEER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
+printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:1:high"\n' >"$repo/kendex.settings.toml"
 commit "$repo"
 git -C "$repo" push -q origin main
 git -C "$repo" worktree add --detach "$TMP/settings-trusted" HEAD
@@ -2055,7 +2055,7 @@ for command in tail sed; do
 #!/usr/bin/env bash
 set -euo pipefail
 input="\$(cat)" || exit 1
-if [[ "\$input" == *ORCH_OVERSEER_PREFERENCE* ]]; then exit 7; fi
+if [[ "\$input" == *AGENT_RUNTIME_CONTROLLER_PREFERENCE* ]]; then exit 7; fi
 exec "$real_command" "\$@" <<<"\$input"
 SH
   chmod +x "$TMP/bin/$command"
@@ -2064,12 +2064,12 @@ SH
   source_path=kendex.settings.toml
   committed=claude:1:high
   [ "$command" != tail ] || committed=claude:opus:high
-  printf '[env]\nORCH_OVERSEER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
+  printf '[env]\nAGENT_RUNTIME_CONTROLLER_PREFERENCE = "%s"\n' "$committed" >"$repo/kendex.settings.toml"
   commit "$repo"
   git -C "$repo" push -q origin main
   if [ "$command" = tail ]; then
     source_path="$repo/.env.local"
-    printf 'ORCH_OVERSEER_PREFERENCE=claude:1:high\n' >"$source_path"
+    printf 'AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:1:high\n' >"$source_path"
   fi
   before="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || exit 1
   : >"$TMP/state/calls"

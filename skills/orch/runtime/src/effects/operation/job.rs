@@ -44,7 +44,10 @@ use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Bootstrap, Operation, POLL, Reading, Run, Word, fleet_view, read_intent};
 use crate::error::{Error, Result};
 use crate::ops::{self, ClaimIntent, RecordProgress};
-use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
+use crate::state::{EffectOp, Intent, Obligation, Role};
+use agent_runtime::controller::WatchJob;
+use agent_runtime::intent::{Notice, Owner};
+use agent_runtime::record;
 
 /// What the caller of a transfer or a stop gets back at once: the effect
 /// runs in a detached job that took the intent's owner lease, so retiring
@@ -329,7 +332,7 @@ impl Launched {
 }
 
 pub(super) struct Launcher<'a> {
-    clock: &'a dyn crate::schedule::Clock,
+    clock: &'a dyn agent_runtime::clock::Clock,
 }
 
 impl Launcher<'_> {
@@ -787,7 +790,7 @@ pub fn launch_recorded(
     argv: &[&str],
     stderr: Option<&Path>,
     bounds: Bounds,
-    clock: &dyn crate::schedule::Clock,
+    clock: &dyn agent_runtime::clock::Clock,
 ) -> Launched {
     let launcher = Launcher { clock };
     let runner = match probe_manager() {
@@ -818,7 +821,7 @@ pub fn launch_command(name: &str, record: &Path, argv: &[&str], stderr: Option<&
         argv,
         stderr,
         Bounds::default(),
-        &crate::schedule::SystemClock,
+        &agent_runtime::clock::SystemClock,
     )
     .answer()
 }
@@ -953,10 +956,13 @@ pub fn start(
     let Some(op) = Op::of_intent(intent.op) else {
         unreachable!("only a transfer or a stop is handed to the job")
     };
-    let handed_from = intent
-        .owner
-        .clone()
-        .ok_or(Error::OwnerUnreadable { op: op.word() })?;
+    let handed_from =
+        intent
+            .owner
+            .clone()
+            .ok_or(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
+                op: op.word(),
+            }))?;
     // The launcher owns the intent until the job claims it: the handle
     // writes under that owner, so every write yields once the job's claim
     // moved it, a job that claimed keeps its own set, and the handle stops
@@ -995,8 +1001,8 @@ fn launch_job(
     start: Start,
 ) -> Result<JobStarted> {
     let id = intent.id.as_str();
-    let request_path = state::job_request_path(&run.state_dir, id);
-    let record_path = state::job_record_path(&run.state_dir, id);
+    let request_path = agent_runtime::record::job_request_path(&run.state_dir, id);
+    let record_path = agent_runtime::record::job_record_path(&run.state_dir, id);
     if start == Start::Repeat {
         operation.write()?;
         remove_files(&run.state_dir, id);
@@ -2009,8 +2015,8 @@ fn write_request(path: &Path, request: &impl Serialize) -> std::io::Result<()> {
 /// repeat replaces them. Best effort, as the receipt's removal is: nothing
 /// reads either past the outcome, and a repeat writes its own.
 pub(super) fn remove_files(state_dir: &Path, intent_id: &str) {
-    let _ = std::fs::remove_file(state::job_request_path(state_dir, intent_id));
-    let _ = std::fs::remove_file(state::job_record_path(state_dir, intent_id));
+    let _ = std::fs::remove_file(record::job_request_path(state_dir, intent_id));
+    let _ = std::fs::remove_file(record::job_record_path(state_dir, intent_id));
 }
 
 /// Claim the intent for this job. A claim that refuses (the intent ended,
@@ -2084,7 +2090,7 @@ pub(super) fn owed_notice(
         key,
         text,
         to: None,
-        owner: state::NOTICE_OWED.to_owned(),
+        owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
     })
 }
 
@@ -2181,7 +2187,7 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
             continue;
         };
         let mut mark = send_owner_notice(run, &intent.id, &notice.text);
-        if last && mark.starts_with(state::NOTICE_UNANSWERED) {
+        if last && mark.starts_with(agent_runtime::intent::NOTICE_UNANSWERED) {
             mark = format!("unsent:{mark}");
         }
         if let Err(e) = mark_notice(run, &intent, notice, mark.clone(), None) {
@@ -2253,7 +2259,7 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
     ) {
         Ok(output) => output,
         Err(e @ agent_runtime::Error::NotStarted { .. }) => return format!("unsent:{VERB}: {e}"),
-        Err(e) => return format!("{}{VERB}: {e}", state::NOTICE_UNANSWERED),
+        Err(e) => return format!("{}{VERB}: {e}", agent_runtime::intent::NOTICE_UNANSWERED),
     };
     let stderr = host::stderr_text(&output);
     let keyed = stderr.lines().find_map(|l| l.strip_prefix(NOTICE_KEYED));
@@ -2268,7 +2274,7 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
     let mark = if status.is_some() && keyed.is_some() {
         "unsent:"
     } else {
-        state::NOTICE_UNANSWERED
+        agent_runtime::intent::NOTICE_UNANSWERED
     };
     let status = status.map_or_else(|| "signal".to_owned(), |code| code.to_string());
     let detail = keyed.map_or_else(|| stderr.trim().to_owned(), str::to_owned);
@@ -2463,7 +2469,7 @@ mod tests {
     #[test]
     fn an_unwound_failed_group_is_read_by_pgid_until_it_empties() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -2511,7 +2517,7 @@ mod tests {
             Reading::Gone | Reading::Unreadable { .. } => panic!("the leader's identity"),
         };
         let id = "stop-controller:overseer:3:1-1";
-        let record = state::job_record_path(dir.path(), id);
+        let record = record::job_record_path(dir.path(), id);
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
         std::fs::write(
             &record,
@@ -2521,7 +2527,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": id, "op": "stop-controller", "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
@@ -2529,15 +2535,15 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let run = crate::effects::engine_run(
             &path,
             &settings,
             &env,
-            state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let group = Obligation::JobGroup(leader_identity.clone());
         // The leader lives: the record names the group, which stands.
@@ -2672,7 +2678,7 @@ mod tests {
     /// A clock whose waits pass no real time: each sleep moves it on.
     struct Stepping(std::sync::Mutex<std::time::Instant>);
 
-    impl crate::schedule::Clock for Stepping {
+    impl agent_runtime::clock::Clock for Stepping {
         fn now(&self) -> std::time::Instant {
             *self.0.lock().unwrap()
         }
@@ -2693,7 +2699,7 @@ mod tests {
     #[test]
     fn a_child_its_launch_cannot_end_is_never_waited_for_and_holds_the_job_until_it_ends() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -2713,9 +2719,9 @@ mod tests {
             owner: None,
         };
         let id = "stop-controller:overseer:3:1-1";
-        let record = state::job_record_path(dir.path(), id);
+        let record = record::job_record_path(dir.path(), id);
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": id, "op": "stop-controller", "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
@@ -2723,11 +2729,17 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let clock = Stepping(std::sync::Mutex::new(std::time::Instant::now()));
-        let run = crate::effects::engine_run(&path, &settings, &env, state::Locking::FLOCK, &clock);
+        let run = crate::effects::engine_run(
+            &path,
+            &settings,
+            &env,
+            agent_runtime::record::Locking::FLOCK,
+            &clock,
+        );
         let mut operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
         let mut child = host::start_detached(
@@ -2806,7 +2818,7 @@ mod tests {
     #[test]
     fn an_unwound_failed_record_with_the_group_key_alone_is_read_by_pgid_until_it_empties() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -2851,7 +2863,7 @@ mod tests {
         };
         let _ = leader.wait();
         let id = "stop-controller:overseer:3:1-1";
-        let record = state::job_record_path(dir.path(), id);
+        let record = record::job_record_path(dir.path(), id);
         std::fs::create_dir_all(record.parent().unwrap()).unwrap();
         std::fs::write(
             &record,
@@ -2860,7 +2872,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": id, "op": "stop-controller", "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
@@ -2868,15 +2880,15 @@ mod tests {
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let run = crate::effects::engine_run(
             &path,
             &settings,
             &env,
-            state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let group = Obligation::JobPgid { pgid };
         // The record names the group by its key; the member runs: standing.
@@ -2931,7 +2943,7 @@ mod tests {
     #[test]
     fn an_outcome_committed_without_its_send_owes_a_notice_the_next_outcome_sends_once() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -2964,7 +2976,7 @@ mod tests {
             nonce: 77,
             owner: Some(owner.clone()),
         };
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": "request-transfer:overseer:3:1-1", "op": "request-transfer",
             "target": "overseer:3",
@@ -2972,7 +2984,7 @@ mod tests {
             "obligations": {"standing": [], "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let rows_before = fleet["fleet_log"].as_array().map_or(0, Vec::len);
@@ -2980,8 +2992,8 @@ mod tests {
             &path,
             &settings,
             &env,
-            state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let sent_calls = || {
             std::fs::read_to_string(&calls)
@@ -3004,7 +3016,7 @@ mod tests {
             &path,
             &Request::RecordOutcome(Box::new(request)),
             &env,
-            state::Locking::FLOCK,
+            record::Locking::FLOCK,
         )
         .unwrap();
         assert!(matches!(committed.report, ops::Report::RecordOutcome(ref r) if r.recorded_now));
@@ -3056,7 +3068,7 @@ mod tests {
     #[test]
     fn a_claimed_repeat_keeps_the_claimants_files() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -3084,24 +3096,24 @@ mod tests {
             nonce: 77,
             owner: Some(owner.clone()),
         };
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": "stop-controller:overseer:3:1-1", "op": "stop-controller",
             "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started", "owner": owner,
-            "obligations": {"standing": [{"kind": "job-sidecar", "record": state::job_record_path(dir.path(), "stop-controller:overseer:3:1-1").display().to_string(), "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": record::job_record_path(dir.path(), "stop-controller:overseer:3:1-1").display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let run = crate::effects::engine_run(
             &path,
             &settings,
             &env,
-            state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
@@ -3115,11 +3127,11 @@ mod tests {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },
-            state::Locking::FLOCK,
+            record::Locking::FLOCK,
         )
         .unwrap();
-        let request_path = state::job_request_path(&settings.state_dir, &intent.id);
-        let record_path = state::job_record_path(&settings.state_dir, &intent.id);
+        let request_path = record::job_request_path(&settings.state_dir, &intent.id);
+        let record_path = record::job_record_path(&settings.state_dir, &intent.id);
         std::fs::create_dir_all(request_path.parent().unwrap()).unwrap();
         std::fs::write(&request_path, "claimant-request").unwrap();
         std::fs::write(&record_path, "claimant-record").unwrap();
@@ -3162,7 +3174,7 @@ mod tests {
     #[test]
     fn a_claimed_deadline_announces_nothing() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.path().into(),
             common: dir.path().into(),
         };
@@ -3196,24 +3208,24 @@ mod tests {
             nonce: 77,
             owner: Some(owner.clone()),
         };
-        let path = dir.path().join(state::FLEET_FILE_NAME);
+        let path = dir.path().join(record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": "request-transfer:overseer:3:1-1", "op": "request-transfer",
             "target": "overseer:3",
             "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started", "owner": owner,
-            "obligations": {"standing": [{"kind": "job-sidecar", "record": state::job_record_path(dir.path(), "request-transfer:overseer:3:1-1").display().to_string(), "role": "job"}],
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": record::job_record_path(dir.path(), "request-transfer:overseer:3:1-1").display().to_string(), "role": "job"}],
                 "discharged": [], "signalled": false}
         }))
         .unwrap();
-        let mut fleet: Value = serde_json::from_str(state::fixtures::FLEET).unwrap();
+        let mut fleet: Value = serde_json::from_str(crate::state::fixtures::FLEET).unwrap();
         fleet["intents"] = json!([intent]);
         std::fs::write(&path, serde_json::to_vec(&fleet).unwrap()).unwrap();
         let run = crate::effects::engine_run(
             &path,
             &settings,
             &env,
-            state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
@@ -3227,7 +3239,7 @@ mod tests {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },
-            state::Locking::FLOCK,
+            record::Locking::FLOCK,
         )
         .unwrap();
         let answer = fail(

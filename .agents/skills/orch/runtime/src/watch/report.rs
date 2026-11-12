@@ -1,6 +1,7 @@
 //! The report cadence and owner report share one snapshot window. Files
 //! advance cadence; only mailbox attachment receipts advance the owner window.
 
+use agent_runtime::record::Document;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::mailbox::{Envelope, Mailbox, Refusal};
 use crate::settings::Settings;
-use crate::state::{self, Document, Lane, LaneStatus};
+use crate::state::{self, Lane, LaneStatus};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
 pub const DUE_ROW: &str = "report-due";
@@ -192,8 +193,10 @@ fn unjudged(fields: &[(&str, &str)]) -> Error {
 )]
 fn load_fleet(path: &Path) -> Result<Document> {
     Ok(state::load(path)?
-        .ok_or_else(|| Error::RecordMissing {
-            path: path.to_path_buf(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::RecordMissing {
+                path: path.to_path_buf(),
+            })
         })?
         .doc)
 }
@@ -468,7 +471,7 @@ pub fn cadence(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Cad
             fleet: Some(path), ..
         }) => match load_fleet(path) {
             Ok(doc) => doc,
-            Err(Error::RecordMissing { .. }) => Document::new(),
+            Err(Error::Runtime(agent_runtime::Error::RecordMissing { .. })) => Document::new(),
             Err(e) => return Err(e),
         },
         None => load_fleet(&ctx.fleet)?,

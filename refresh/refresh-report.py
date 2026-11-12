@@ -83,7 +83,7 @@ def settings_report():
         return f"<code>{text}</code>"
 
     sections = []
-    rows = [f"- ORCH_OVERSEER_PREFERENCE: {status} entry {code(entry)}; use `harness:model:effort`."
+    rows = [f"- AGENT_RUNTIME_CONTROLLER_PREFERENCE: {status} entry {code(entry)}; use `harness:model:effort`."
             for status in ("refused", "deprecated") for entry in entries[status]]
     if rows:
         sections.append("## Settings\n\n" + "\n".join(rows) + "\n\n"

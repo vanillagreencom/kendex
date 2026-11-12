@@ -10,10 +10,10 @@ use std::time::Duration;
 use serde::Serialize;
 
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
 use crate::settings::{self, ReviewSettings};
 use crate::verify::review::{self, Flight};
 use crate::verify::{self, Gh, Unreadable};
+use agent_runtime::clock::Clock;
 
 /// How long the wait sleeps between reads of Copilot's work.
 pub const POLL: Duration = Duration::from_secs(10);
@@ -63,10 +63,10 @@ pub fn bound(settings: &ReviewSettings) -> Result<Duration> {
         && text.bytes().all(|b| b.is_ascii_digit());
     match text.parse::<u64>() {
         Ok(secs) if plain => Ok(Duration::from_secs(secs)),
-        Ok(_) | Err(_) => Err(settings::value_refusal(
+        Ok(_) | Err(_) => Err(crate::Error::from(agent_runtime::settings::value_refusal(
             settings::COPILOT_HOLD_SECS_KEY,
             text,
-        )),
+        ))),
     }
 }
 

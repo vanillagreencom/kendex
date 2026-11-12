@@ -1,7 +1,7 @@
 #!/bin/bash
 # The stub harness the one-job suite launches in place of a model. Its `#!`
 # line names bash directly rather than `env`, so the kernel records this
-# script's own name, the basename of the program ORCH_HARNESS_BINARIES
+# script's own name, the basename of the program AGENT_RUNTIME_HARNESS_BINARIES
 # configures, for the pane's foreground process; the runtime's judge reads
 # the pane idle only when that process is the harness's. It
 # ignores every launch flag, draws Claude Code's composer marker, then

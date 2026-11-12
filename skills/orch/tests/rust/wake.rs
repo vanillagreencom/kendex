@@ -19,18 +19,20 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::FLEET_FILE_NAME;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use agent_runtime::clock::Clock;
 use agent_runtime::process::Identity;
+use agent_runtime::settings::Roots;
 use orch_runtime::error::Error;
 use orch_runtime::ops::wake::{WakeMark, WakeOutcome, WakeRecord};
-use orch_runtime::schedule::{Clock, Duty};
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::FLEET_FILE_NAME;
+use orch_runtime::schedule::Duty;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::wake::{self, OVERSEER_TARGET, UNREAD_KIND};
 use orch_runtime::watch::{self, Baseline, Change, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
@@ -99,7 +101,7 @@ fn settings_with(dir: &Path, agent_runtime: &Path, extra: &[(&str, &str)]) -> Se
             "ORCH_AGENT_RUNTIME".into(),
             agent_runtime.as_os_str().into(),
         ),
-        ("ORCH_HARNESS_BINARIES".into(), binaries.into()),
+        ("AGENT_RUNTIME_HARNESS_BINARIES".into(), binaries.into()),
         (
             "LANE_MAIL_CLI".into(),
             dir.join("lane-mail").as_os_str().into(),
@@ -939,8 +941,8 @@ fn a_lane_the_wake_may_not_type_into_is_never_typed_into_and_leaves_no_mark() {
     // The delivery's bound or the harness programs outside their form fail
     // the pass by key and value before any mark or keystroke.
     for (key, value) in [
-        ("ORCH_TMUX_VERIFY_SECS", "0"),
-        ("ORCH_HARNESS_BINARIES", "claude=bin/claude"),
+        ("AGENT_RUNTIME_TMUX_VERIFY_SECS", "0"),
+        ("AGENT_RUNTIME_HARNESS_BINARIES", "claude=bin/claude"),
     ] {
         let settings = settings_with(&fleet.root, agent_runtime(), &[(key, value)]);
         let mut judged = wake::body(&fleet.fleet_file(), &settings);

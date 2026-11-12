@@ -3,6 +3,7 @@
 //! overseer's own handoff. `record-overseer-ledger` is the one writer of
 //! each; the pointer verbs reach them only through the checks below.
 
+use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
@@ -13,7 +14,7 @@ use super::Env;
 use super::findings::added_entries;
 use super::store::{array_at, one_value, stamp};
 use crate::error::{Error, Result};
-use crate::state::{self, Document};
+use crate::state;
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -164,7 +165,7 @@ pub(crate) fn handoff(doc: &mut Document, env: &Env, mut value: Value) -> Result
         "handoff-written-at-invalid",
         "handoff-written-at-future",
     )?;
-    state::set(doc, "handoff", value.clone());
+    record::set(doc, "handoff", value.clone());
     Ok(json!({"entry": "handoff", "pointer": "/handoff", "value": value}))
 }
 
@@ -178,14 +179,14 @@ pub(crate) fn record_overseer_ledger(
     let (pointer, value) = match r {
         RecordOverseerLedger::BacklogAudit { backlog } => {
             let audit = json!({"at": env.iso(), "backlog": backlog});
-            state::set(doc, "last_backlog_audit", audit.clone());
+            record::set(doc, "last_backlog_audit", audit.clone());
             ("/last_backlog_audit", audit)
         }
         RecordOverseerLedger::LaunchQueue { items } => {
             if let Some(item) = queue_fault(items) {
                 return Err(refused("launch-queue-entry", &[("item", item)]));
             }
-            state::set(doc, "launch_queue", json!(items));
+            record::set(doc, "launch_queue", json!(items));
             ("/launch_queue", json!(items))
         }
         RecordOverseerLedger::Triage { file } => {

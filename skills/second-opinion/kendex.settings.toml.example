@@ -57,7 +57,7 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # an entry's _CMD replaces all four with that entry's own settings; setting
 # its _ROOM_CMD empty drops the check. Each target remains subject to
 # session-model exclusion.
-# The Copilot check reads ORCH_LANE_COPILOT_POOL from the settings in the
+# The Copilot check reads AGENT_RUNTIME_COPILOT_POOL from the settings in the
 # lane's own tree; a hosted lane states it in .env.local until its provider
 # forwards it, and one without it records the check's refusal. Each check pins
 # ORCH_LANE_HOST=local through env, since the command runs without a shell: the

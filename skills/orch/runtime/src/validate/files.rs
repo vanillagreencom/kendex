@@ -1,7 +1,7 @@
 //! Run-file reads for validation, proof and the catalog entry.
 use crate::error::{Error, Result};
-use crate::schedule::Clock;
 use crate::state::{Proof, Reused, Stage, StageOutcome, ValidateMode};
+use agent_runtime::clock::Clock;
 use agent_runtime::{host, process, reading::Reading};
 use serde_json::json;
 use std::collections::BTreeMap;

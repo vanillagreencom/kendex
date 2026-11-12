@@ -66,6 +66,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
+use agent_runtime::intent::Owner;
 use agent_runtime::protocol::Outcome;
 use serde_json::{Value, json};
 
@@ -90,12 +91,12 @@ use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
 use crate::error::{Error, Result};
 use crate::ops::{self, Applied, Env, OutcomeArm, Progress, RecordOutcome, RecordProgress, Report};
-use crate::schedule::Clock;
-use crate::settings::Judged;
-use crate::state::{
-    self, EffectOp, Intent, LaunchIdentity, Locking, Obligation, OpenedPane, Overseer, Owner,
-    Phase, Role,
-};
+use crate::state::{self, EffectOp, Intent, Obligation, OpenedPane, Phase, Role};
+use agent_runtime::clock::Clock;
+use agent_runtime::controller::Overseer;
+use agent_runtime::intent::LaunchIdentity;
+use agent_runtime::record::Locking;
+use agent_runtime::settings::{EngineSettings, Judged};
 
 /// How often a poll re-reads the record, a process or a pane within its
 /// bound.
@@ -110,7 +111,7 @@ const POLL: Duration = Duration::from_millis(200);
 /// target record the intent names.
 pub struct Run<'a> {
     pub path: &'a Path,
-    pub settings: EngineSettings,
+    pub settings: &'a EngineSettings,
     pub state_dir: PathBuf,
     pub close_grace: Judged<Duration>,
     pub mail_program: PathBuf,
@@ -124,20 +125,8 @@ pub struct Run<'a> {
 impl Run<'_> {
     /// Where the pane of `intent_id` registers itself.
     fn receipt_path(&self, intent_id: &str) -> PathBuf {
-        state::receipt_path(&self.state_dir, intent_id)
+        agent_runtime::record::receipt_path(&self.state_dir, intent_id)
     }
-}
-
-/// The engine's own settings, each judged where it is read, so a value
-/// outside its form refuses the act that reads it and no other: the bound
-/// a pane's harness is confirmed within, the bound a job is given to claim
-/// its intent, the session a fleet window opens in, and the executable
-/// configured for each harness.
-pub struct EngineSettings {
-    pub verify: Judged<Duration>,
-    pub claim: Judged<Duration>,
-    pub tmux_session: Option<String>,
-    pub harness_binaries: Judged<BTreeMap<Harness, PathBuf>>,
 }
 
 /// The harness a pane runs and the executable configured for it: together
@@ -182,13 +171,15 @@ pub struct FleetView {
 /// file refuses `record-missing`.
 pub fn fleet_view(path: &Path) -> Result<FleetView> {
     let doc = state::load(path)?
-        .ok_or_else(|| Error::RecordMissing {
-            path: path.to_path_buf(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::RecordMissing {
+                path: path.to_path_buf(),
+            })
         })?
         .doc;
     Ok(FleetView {
-        intents: state::field(path, &doc, "intents")?.unwrap_or_default(),
-        overseer: state::field(path, &doc, "overseer")?,
+        intents: agent_runtime::record::field(path, &doc, "intents")?.unwrap_or_default(),
+        overseer: agent_runtime::record::field(path, &doc, "overseer")?,
     })
 }
 
@@ -207,8 +198,10 @@ pub fn read_intent(path: &Path, intent_id: &str) -> Result<Intent> {
         .intents
         .into_iter()
         .find(|i| i.id == intent_id)
-        .ok_or_else(|| Error::IntentUnknown {
-            id: intent_id.to_owned(),
+        .ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::IntentUnknown {
+                id: intent_id.to_owned(),
+            })
         })
 }
 
@@ -899,7 +892,7 @@ mod tests {
         dir: &Path,
         standing: Value,
     ) -> (crate::settings::Settings, ops::Env, PathBuf, Intent) {
-        let roots = crate::settings::Roots {
+        let roots = agent_runtime::settings::Roots {
             project: dir.into(),
             common: dir.into(),
         };
@@ -918,7 +911,7 @@ mod tests {
             nonce: 77,
             owner: None,
         };
-        let path = dir.join(crate::state::FLEET_FILE_NAME);
+        let path = dir.join(agent_runtime::record::FLEET_FILE_NAME);
         let intent: Intent = serde_json::from_value(json!({
             "id": "close-owned-resources:KEN-T:1-1", "op": "close-owned-resources",
             "target": "KEN-T", "revision": 0, "created_at": "2026-01-29T15:20:00Z",
@@ -954,8 +947,8 @@ mod tests {
             &path,
             &settings,
             &env,
-            crate::state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let refused = Operation::open(
             &run,
@@ -1025,8 +1018,8 @@ mod tests {
                 &path,
                 &settings,
                 &env,
-                crate::state::Locking::FLOCK,
-                &crate::schedule::SystemClock,
+                agent_runtime::record::Locking::FLOCK,
+                &agent_runtime::clock::SystemClock,
             );
             let mut operation = Operation::open(
                 &run,
@@ -1086,8 +1079,8 @@ mod tests {
             &path,
             &settings,
             &env,
-            crate::state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let holder = Operation::open(
             &run,
@@ -1143,8 +1136,8 @@ mod tests {
             &path,
             &settings,
             &env,
-            crate::state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let mut handle = Operation::open(
             &run,
@@ -1173,7 +1166,7 @@ mod tests {
                 notice: None,
             })),
             &env,
-            crate::state::Locking::FLOCK,
+            agent_runtime::record::Locking::FLOCK,
         )
         .unwrap();
         let refused = handle.stop_process(token, &|_| false);
@@ -1222,8 +1215,8 @@ mod tests {
             &path,
             &settings,
             &env,
-            crate::state::Locking::FLOCK,
-            &crate::schedule::SystemClock,
+            agent_runtime::record::Locking::FLOCK,
+            &agent_runtime::clock::SystemClock,
         );
         let mut handle = Operation::open(
             &run,
@@ -1246,7 +1239,7 @@ mod tests {
                 intent_id: intent.id.clone(),
             }),
             &claimant,
-            crate::state::Locking::FLOCK,
+            agent_runtime::record::Locking::FLOCK,
         )
         .unwrap();
         let mut replacement = read_intent(&path, &intent.id)
@@ -1264,7 +1257,7 @@ mod tests {
                 notice: None,
             })),
             &claimant,
-            crate::state::Locking::FLOCK,
+            agent_runtime::record::Locking::FLOCK,
         )
         .unwrap();
         let before = read_intent(&path, &intent.id).unwrap();

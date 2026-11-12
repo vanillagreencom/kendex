@@ -4,6 +4,7 @@
 //! prints `orch-runtime: usage` and clap's message on stderr and exits 2,
 //! clap's own convention and agent-runtime's, with no reply: there was no
 //! request to answer.
+use agent_runtime::record::{self, Locking};
 use std::collections::hash_map::RandomState;
 use std::ffi::{OsStr, OsString};
 use std::hash::{BuildHasher, Hasher};
@@ -14,13 +15,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
+use agent_runtime::clock::SystemClock;
 use orch_runtime::effects;
 use orch_runtime::error::{Error, Result};
 use orch_runtime::ops::{self, Env, Request};
 use orch_runtime::protocol::{self, Reply};
 use orch_runtime::schedule;
 use orch_runtime::settings::{self, Flags, Settings};
-use orch_runtime::state::{self, Locking};
+use orch_runtime::state;
 use orch_runtime::verify;
 use orch_runtime::watch;
 
@@ -575,7 +577,7 @@ enum AccountsOp {
         /// Judge the named account on the projection.
         #[arg(long)]
         projected: bool,
-        /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
+        /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
         /// The headroom the caller's own judgement triggers at: the same bound
@@ -594,7 +596,7 @@ enum AccountsOp {
         env: bool,
     },
     /// The preference walk: `ORCH_LANE_PREFERENCE`'s entries for a lane, or
-    /// `ORCH_OVERSEER_PREFERENCE`'s for an overseer's session, in order,
+    /// `AGENT_RUNTIME_CONTROLLER_PREFERENCE`'s for an overseer's session, in order,
     /// each classified through `kendex tier-model` and judged by `pick`'s
     /// rule; the reply names the entry taken and every entry skipped with
     /// the judge's word.
@@ -617,11 +619,11 @@ enum AccountsOp {
         /// out, and no cloud session is taken.
         #[arg(long)]
         replaces: Option<String>,
-        /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
+        /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
         /// The headroom the caller's own judgement triggers at;
-        /// `ORCH_OVERSEER_HEADROOM_PCT` for an overseer where unset.
+        /// `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` for an overseer where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
         min_headroom_pct: Option<u32>,
         /// The harness of the session the walk is asked for, whose
@@ -1225,7 +1227,7 @@ fn system_env() -> Result<Env> {
     let nonce = (RandomState::new().build_hasher().finish() % 32_768) as u32;
     let pid = std::process::id();
     let owner = match agent_runtime::process::identity(pid) {
-        agent_runtime::reading::Reading::Live(id) => Some(orch_runtime::state::Owner {
+        agent_runtime::reading::Reading::Live(id) => Some(agent_runtime::intent::Owner {
             pid: id.pid as u64,
             start: id.start,
         }),
@@ -1251,7 +1253,7 @@ fn system_env() -> Result<Env> {
 fn resolve_settings(flags: &Flags) -> Result<Settings> {
     let cwd = std::env::current_dir()
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e)))?;
-    let roots = settings::roots(&cwd)?;
+    let roots = agent_runtime::settings::roots(&cwd)?;
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     settings::load(&roots, &environment, flags)
 }
@@ -1264,7 +1266,11 @@ fn artifact_settings(flags: &Flags, worktree: Option<&Path>) -> Result<Settings>
     match worktree.filter(|w| w.is_dir()) {
         Some(worktree) => {
             let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-            settings::load(&settings::roots(worktree)?, &environment, flags)
+            settings::load(
+                &agent_runtime::settings::roots(worktree)?,
+                &environment,
+                flags,
+            )
         }
         None => resolve_settings(flags),
     }
@@ -1312,7 +1318,7 @@ fn target_path(target: &Target, settings: &Settings) -> PathBuf {
         return file.clone();
     }
     if target.fleet {
-        return state::fleet_path(&settings.state_dir);
+        return record::fleet_path(&settings.state_dir);
     }
     state::item_path(
         &settings.state_dir,
@@ -1417,7 +1423,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 start,
                 fleet: state.clone(),
             });
-            let fleet = state.unwrap_or_else(|| state::fleet_path(&settings.state_dir));
+            let fleet = state.unwrap_or_else(|| record::fleet_path(&settings.state_dir));
             let ctx = watch::report::Context::new(fleet, &settings, repo, Default::default());
             // The credential is selected where GitHub is first read: before a
             // render, and before a due's landed-item count, never before the
@@ -1492,7 +1498,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // reach GitHub for a target it could never record on.
             ops::target_kind(&path, &request)?;
             // What the settings refuse before any transition: a succession
-            // under `ORCH_OVERSEER_SUCCESSION=off`.
+            // under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
             let env = system_env()?;
             // A push, a round's prune and a QA decision run their effects
@@ -1531,7 +1537,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     r,
                     &settings,
                     locking,
-                    &schedule::SystemClock,
+                    &SystemClock,
                 )?)?);
             }
             // The review gate reads the pull request first, makes the one
@@ -1551,7 +1557,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &settings,
                     &env,
                     locking,
-                    &schedule::SystemClock,
+                    &SystemClock,
                 )?)?);
             }
             // An adoption reads the pane first and makes its one transition
@@ -1576,7 +1582,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 &env,
                 locking,
-                &schedule::SystemClock,
+                &SystemClock,
             )?;
             // An acceptance makes its close, posts the round's summary through
             // the tracker CLI and records the comment's id; its reply is the
@@ -1612,7 +1618,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         &settings,
                         &env,
                         locking,
-                        &schedule::SystemClock,
+                        &SystemClock,
                     )? {
                         Some(outcome) => {
                             // An admitted request is not its effect: a caller that
@@ -1629,8 +1635,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                                         Settled::Job(effects::await_job(
                                             &path,
                                             &started.intent,
-                                            settings.verify.get()? * 2 + JOB_ANSWER_MARGIN,
-                                            &schedule::SystemClock,
+                                            settings.engine.verify.get()? * 2 + JOB_ANSWER_MARGIN,
+                                            &SystemClock,
                                         )?)
                                     }
                                 })
@@ -1680,7 +1686,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 &env,
                 locking,
-                &schedule::SystemClock,
+                &SystemClock,
             )?)?
         }
         Verb::Job { target, intent } => {
@@ -1693,7 +1699,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 &env,
                 locking,
-                &schedule::SystemClock,
+                &SystemClock,
             )?)?
         }
         Verb::LaunchJob {
@@ -1750,7 +1756,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let result = artifact_settings(&flags, worktree).and_then(|settings| match op {
                 ops::artifact::DevReturn::Write(r) => ops::artifact::write(&settings, &r),
                 ops::artifact::DevReturn::Check(r) => {
-                    ops::artifact::check(&settings, &r, &schedule::SystemClock)
+                    ops::artifact::check(&settings, &r, &SystemClock)
                 }
             });
             artifact_reply(result, text, entry)
@@ -1777,7 +1783,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::ReviewArtifact { op, text } => {
             use ops::review_artifact::{self as review, ReviewArtifact};
             let result = match op {
-                ReviewArtifact::Path(r) => review::path(&r, &schedule::SystemClock),
+                ReviewArtifact::Path(r) => review::path(&r, &SystemClock),
                 ReviewArtifact::Check(r) => r
                     .issue
                     .as_deref()
@@ -1794,7 +1800,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     .transpose()
                     .and_then(|state| {
                         let state = state.as_ref().map(|(issue, dir)| (*issue, dir.as_path()));
-                        review::check_review(&r, state, &schedule::SystemClock)
+                        review::check_review(&r, state, &SystemClock)
                     }),
             };
             artifact_reply(result, text, "review-artifact-check")
@@ -1803,7 +1809,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             op: LaneOp::Status { item },
         } => {
             let settings = resolve_settings(&flags)?;
-            watch::lanes::status(&settings, &state::fleet_path(&settings.state_dir), &item)?
+            watch::lanes::status(&settings, &record::fleet_path(&settings.state_dir), &item)?
         }
         Verb::ContainerClose { checkout, parent } => {
             let settings = resolve_settings(&flags)?;
@@ -1857,7 +1863,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::Cycle { op } => {
             let settings = resolve_settings(&flags)?;
-            let fleet = state::fleet_path(&settings.state_dir);
+            let fleet = record::fleet_path(&settings.state_dir);
             let lines = match &op {
                 CycleOp::Report => ops::cycle::rollup(&fleet, true)?,
                 CycleOp::Rollup => {
@@ -2094,7 +2100,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             serde_json::to_value(orch_runtime::ops::copilot_wait::run(
                 &request,
                 Path::new("gh"),
-                &schedule::SystemClock,
+                &SystemClock,
             )?)?
         }
         Verb::QueueWatch {
@@ -2128,14 +2134,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &request,
                 &programs,
                 &settings.roots.project,
-                &schedule::SystemClock,
+                &SystemClock,
                 &env,
                 locking,
             )?)?
         }
         Verb::Send { item, file } => {
             let settings = resolve_settings(&flags)?;
-            let path = state::fleet_path(&settings.state_dir);
+            let path = record::fleet_path(&settings.state_dir);
             let env = system_env()?;
             serde_json::to_value(orch_runtime::send::run(
                 &path, &item, &file, &settings, &env, locking,
@@ -2195,7 +2201,7 @@ fn reexec_with_github_auth(settings: &Settings) -> Error {
 /// every open intent on the long cadence and the duties under `watch/`.
 fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
-    let clock = schedule::SystemClock;
+    let clock = SystemClock;
     match op {
         WatchOp::Run {
             target,
@@ -2638,7 +2644,7 @@ fn remove_item(
     // The retention pass this verb runs where no fleet state stands reads
     // its days before anything is removed: a refusal after the removal
     // would answer refused over files already gone.
-    if std::fs::metadata(state::fleet_path(&settings.state_dir)).is_err() {
+    if std::fs::metadata(record::fleet_path(&settings.state_dir)).is_err() {
         settings.retention_days.get()?;
     }
     let closed = orch_runtime::archive::close_out(
@@ -2650,7 +2656,7 @@ fn remove_item(
         locking,
         now,
     )?;
-    let fleet = state::fleet_path(&settings.state_dir);
+    let fleet = record::fleet_path(&settings.state_dir);
     let fleet_stands = match std::fs::metadata(&fleet) {
         Ok(_) => true,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,

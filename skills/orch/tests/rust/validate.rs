@@ -85,6 +85,7 @@ impl World {
         git(&worktree, &["init", "-q", "-b", "main"]);
         git(&worktree, &["config", "gc.auto", "0"]);
         git(&worktree, &["config", "maintenance.auto", "false"]);
+        support::install_orch_scripts(&worktree);
         fs::write(worktree.join("a.txt"), "a\n").unwrap();
         fs::write(worktree.join(".gitignore"), "tmp\n").unwrap();
         fs::write(worktree.join("kendex.settings.toml"), "[env]\nHARNESS_CI_PER_PUSH_REASON = \"fixture exercises per-push coverage\"\nHARNESS_CI_QUEUE_PATHS = \"queue.rs\"\n").unwrap();
@@ -135,10 +136,6 @@ impl World {
             .join("scripts");
         let scope = scripts.join("../../change-scope/scripts/harness-only");
         vec![
-            (
-                "DEV_VALIDATE_CLI".into(),
-                scripts.join("dev-validate-run").display().to_string(),
-            ),
             ("CHANGE_SCOPE_PATHS_CLI".into(), scope.display().to_string()),
             ("DEV_VALIDATE_CMD".into(), "echo full".into()),
             ("DEV_VALIDATE_TIMEOUT_SECS".into(), "20".into()),
@@ -1603,7 +1600,7 @@ fn a_sentinel_the_device_refuses_fails_the_executor_and_the_run_reads_failing() 
     std::os::unix::fs::symlink("/dev/full", dir.join("exit.part")).unwrap();
     let answer = orch_runtime::validate::run::execute(
         &dir,
-        &orch_runtime::schedule::SystemClock,
+        &agent_runtime::clock::SystemClock,
         &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/group-leader.sh"),
     );
     assert!(answer.is_err(), "{answer:?}");
@@ -2680,7 +2677,7 @@ fn the_catalog_shim_consumes_the_real_admission_and_waits_for_its_runtime_run() 
         "1",
     ]);
     for (k, v) in w.env() {
-        if k != "DEV_VALIDATE_CLI" && k != "CHANGE_SCOPE_PATHS_CLI" {
+        if k != "CHANGE_SCOPE_PATHS_CLI" {
             command.env(k, v);
         }
     }
@@ -4130,12 +4127,9 @@ fn a_spawn_refusal_records_never_started_and_a_missing_answer_keeps_the_real_att
     fs::write(refused.join("start"), start).unwrap();
     let prefix =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/group-leader.sh");
-    let error = orch_runtime::validate::run::execute(
-        &refused,
-        &orch_runtime::schedule::SystemClock,
-        &prefix,
-    )
-    .unwrap_err();
+    let error =
+        orch_runtime::validate::run::execute(&refused, &agent_runtime::clock::SystemClock, &prefix)
+            .unwrap_err();
     assert!(matches!(
         error,
         orch_runtime::Error::ValidateUnreadable {
@@ -4225,6 +4219,7 @@ fn a_classifier_refusal_keeps_the_local_command_and_explicit_fallback() {
     let unborn = w.root.join("unborn");
     fs::create_dir(&unborn).unwrap();
     git(&unborn, &["init", "-q"]);
+    support::install_orch_scripts(&unborn);
     let unborn_text = unborn.display().to_string();
     let out = w.entry(
         &["--worktree", &unborn_text, "--foreground", "--poll", "1"],
@@ -4235,6 +4230,7 @@ fn a_classifier_refusal_keeps_the_local_command_and_explicit_fallback() {
     // A worktree outside any repository has no base branch to read.
     let plain = w.root.join("plain");
     fs::create_dir(&plain).unwrap();
+    support::install_orch_scripts(&plain);
     let plain_text = plain.display().to_string();
     let out = w.entry(
         &["--worktree", &plain_text, "--foreground", "--poll", "1"],
@@ -4330,7 +4326,7 @@ fn an_unwritable_output_stream_cannot_report_a_successful_start() {
 
 #[test]
 fn a_wait_holds_the_real_executor_after_its_command_exits_until_the_sentinel_stands() {
-    use orch_runtime::schedule::{Clock, SystemClock};
+    use agent_runtime::clock::{Clock, SystemClock};
     use std::sync::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},

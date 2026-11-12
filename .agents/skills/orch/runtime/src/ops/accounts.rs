@@ -19,9 +19,9 @@
 //! The status words, one per account: `pick`; `reserve`, never picked and
 //! still measured, the provider's `reserved=1`; `retired <date>`, picked
 //! until that UTC day and measured after it, from the machine's own
-//! `ORCH_LANE_RETIRE` or the provider's `plan-ends`: a stated end that a
+//! `AGENT_RUNTIME_ACCOUNT_RETIRE` or the provider's `plan-ends`: a stated end that a
 //! live reading contradicts (a credential that answers after its end) is a
-//! reported line, never a silent absence. An account `ORCH_LANE_EXCLUDE`
+//! reported line, never a silent absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
 //! names is measured like any other and refused by that word for every
 //! lane pick and launch, from this machine's listing, a provider's rows or
 //! the owner's statement; an overseer's own pick reads its figures.
@@ -47,7 +47,7 @@
 //! first), and a `cloud-session` host admits an account only where
 //! `ORCH_LANE_CLOUD_REPOS` gives it this checkout's repository. A Pi launch
 //! on a `github-copilot/` model spends a Copilot pool: the provider's
-//! `harness=pi` rows and the owner's stated `ORCH_LANE_COPILOT_POOL` for a
+//! `harness=pi` rows and the owner's stated `AGENT_RUNTIME_COPILOT_POOL` for a
 //! root no provider row reads are rows of the listing like any other.
 
 use std::collections::BTreeMap;
@@ -61,7 +61,9 @@ use serde_json::{Map, Value, json};
 
 use super::occupancy::{self, ChargeSource, Host};
 use super::wall;
-use crate::settings::{AccountSettings, Settings};
+use agent_runtime::settings::AccountSettings;
+
+use crate::settings::{ProviderSettings, Settings};
 use crate::state::{FleetState, Record};
 use crate::watch::hosted::{self, Launch};
 
@@ -85,7 +87,7 @@ pub const LOCAL: &str = "local";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum EndSource {
-    /// The machine's own `ORCH_LANE_RETIRE`.
+    /// The machine's own `AGENT_RUNTIME_ACCOUNT_RETIRE`.
     Setting,
     /// The provider's account row.
     Provider,
@@ -96,7 +98,7 @@ impl EndSource {
     /// it.
     pub fn stated_by(self) -> &'static str {
         match self {
-            EndSource::Setting => "ORCH_LANE_RETIRE",
+            EndSource::Setting => "AGENT_RUNTIME_ACCOUNT_RETIRE",
             EndSource::Provider => "provider",
         }
     }
@@ -198,10 +200,10 @@ pub struct AccountRow {
     pub seat: bool,
     /// The machine's own stated end for this account.
     pub retire: Option<String>,
-    /// Whether `ORCH_LANE_EXCLUDE` names the account: the judge refuses it
+    /// Whether `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names the account: the judge refuses it
     /// by that word in every form.
     pub excluded: bool,
-    /// Whether the owner configured the account (`ORCH_LANE_DIRS`, a
+    /// Whether the owner configured the account (`AGENT_RUNTIME_ACCOUNT_DIRS`, a
     /// provider's row, a stated pool): the chooser picks among these alone,
     /// and a named pick judges any.
     pub configured: bool,
@@ -318,7 +320,9 @@ impl AccountRow {
             pool: string(raw, "pool").unwrap_or_else(|| "plan".to_owned()),
             plan_ends: match string(raw, "plan_ends").or_else(|| string(raw, "plan-ends")) {
                 None => PlanEnd::None,
-                Some(day) if crate::settings::calendar_date_valid(&day) => PlanEnd::Day(day),
+                Some(day) if agent_runtime::settings::calendar_date_valid(&day) => {
+                    PlanEnd::Day(day)
+                }
                 Some(value) => PlanEnd::Invalid(value),
             },
             reserved: flag(raw, "reserved"),
@@ -543,8 +547,9 @@ fn roster_naming(
     now: u64,
 ) -> std::result::Result<Roster, String> {
     let accounts = settings.accounts.get().map_err(|e| e.to_string())?;
+    let provider = settings.provider.get().map_err(|e| e.to_string())?;
     let host = host
-        .or(accounts.host.as_deref())
+        .or(provider.host.as_deref())
         .filter(|h| *h != LOCAL && !h.is_empty());
     let host_word = host.unwrap_or(LOCAL);
     let listing = listing::list(settings, host, named, now)
@@ -680,7 +685,7 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
     } else {
         (
             "stated",
-            "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for this account",
+            "no lane host row and no AGENT_RUNTIME_COPILOT_POOL entry reads a Copilot pool for this account",
         )
     };
     let raw = json!({
@@ -998,7 +1003,7 @@ fn window_hours(bucket: &str) -> f64 {
 /// the account's measured rate, the whole account's delta, shared among
 /// the lanes live at the sample (`sampled`; a model window's rate is one
 /// lane's, since no lane on another model spends it); else
-/// `ORCH_LANE_BURN_PCT_PER_HOUR`, a lane's hourly spend in points of five
+/// `AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR`, a lane's hourly spend in points of five
 /// hours, scaled to the window's length. The divisor is the sample's own
 /// occupancy, never the lanes live now: the charged lanes whose current
 /// session on the account began at or before the sample (`session_since`,
@@ -1395,7 +1400,7 @@ pub enum PickAnswer {
         ends: String,
         source: EndSource,
     },
-    /// Exit 3 of `--lane`: `ORCH_LANE_EXCLUDE` or `--exclude-lane` names
+    /// Exit 3 of `--lane`: `AGENT_RUNTIME_ACCOUNT_EXCLUDE` or `--exclude-lane` names
     /// the account. Its word refuses it, whatever its room, as a retired
     /// one is refused; the record's `verdict` is `excluded`.
     Excluded(Judged),
@@ -1515,7 +1520,7 @@ pub struct FleetFacts {
 /// `seat=1` row holds, keeps what its overseer needs to the reset: the
 /// room left once the overseer's spend to the reset is charged beside the
 /// lanes ([`Projection`]'s `kept`) is held to
-/// `min(bound, 100 - ORCH_OVERSEER_HEADROOM_PCT)`, so a worker never spends
+/// `min(bound, 100 - AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT)`, so a worker never spends
 /// the room the overseer runs on or hands off at, unless the overseer
 /// itself asks (`for_overseer`).
 fn judge(
@@ -1567,7 +1572,7 @@ fn judge(
     };
     let kept = projection.as_ref().map_or(0.0, |p| p.kept);
     let limit = if seat {
-        max.min(100.0 - f64::from(settings.overseer_headroom_pct))
+        max.min(100.0 - f64::from(settings.controller_headroom_pct))
     } else {
         max
     };
@@ -1632,7 +1637,7 @@ fn judge(
 
 /// The pick over `rows`: the candidates are the configured rows billed
 /// under the launch's harness and spending its pool, the directories
-/// `--exclude-lane` names and the accounts `ORCH_LANE_EXCLUDE` names left
+/// `--exclude-lane` names and the accounts `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names left
 /// out; each is judged on its projected wall; the room rows are ordered a
 /// seat last, then by tier (a grant first, plan windows, Codex credits
 /// last), the grant's end, the score, fewer claims, more projected room
@@ -1857,15 +1862,11 @@ pub fn fleet_facts(
 )]
 fn cloud_repo(
     settings: &Settings,
-    accounts: &AccountSettings,
+    provider: &ProviderSettings,
     host: &str,
     rows: &[AccountRow],
 ) -> std::result::Result<Option<Vec<String>>, String> {
-    let scripts = settings
-        .lanes_cli
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+    let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
     if hosted::capabilities(&scripts, host)?.launch != Some(Launch::CloudSession) {
         return Ok(None);
     }
@@ -1891,7 +1892,7 @@ fn cloud_repo(
     let admitted = rows
         .iter()
         .filter(|row| {
-            accounts.cloud_repos.iter().any(|entry| {
+            provider.cloud_repos.iter().any(|entry| {
                 names(&row.alias, &row.config_dir, &entry.name)
                     && entry.repo.eq_ignore_ascii_case(&origin)
             })
@@ -1920,16 +1921,16 @@ pub fn pick_fleet(
     if let Some(answer) = unbilled(req) {
         return answer;
     }
-    let accounts = match settings.accounts.get() {
-        Ok(accounts) => accounts,
-        Err(e) => {
+    let (accounts, provider) = match (settings.accounts.get(), settings.provider.get()) {
+        (Ok(accounts), Ok(provider)) => (accounts, provider),
+        (Err(e), _) | (_, Err(e)) => {
             return PickAnswer::Unjudged {
                 cause: e.to_string(),
             };
         }
     };
     let req = &PickRequest {
-        host: req.host.clone().or_else(|| accounts.host.clone()),
+        host: req.host.clone().or_else(|| provider.host.clone()),
         ..req.clone()
     };
     let lane_host = req.host.as_deref().filter(|h| *h != LOCAL && !h.is_empty());
@@ -1975,7 +1976,7 @@ pub fn pick_fleet(
         }
     };
     if let Some(lane_host) = lane_host {
-        facts.cloud_repo = match cloud_repo(settings, &accounts, lane_host, &rows) {
+        facts.cloud_repo = match cloud_repo(settings, &provider, lane_host, &rows) {
             Ok(admitted) => admitted,
             Err(cause) => return PickAnswer::Unjudged { cause },
         };
@@ -1986,7 +1987,7 @@ pub fn pick_fleet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::Retirement;
+    use agent_runtime::settings::Retirement;
 
     fn settings() -> AccountSettings {
         AccountSettings {
@@ -1996,20 +1997,16 @@ mod tests {
             }],
             max_pct: 95,
             burn_pct_per_hour: 5,
-            overseer_headroom_pct: 5,
+            controller_headroom_pct: 5,
             codex_credit_floor: 5000,
             cloud_credit_floor: 10,
-            cloud_repos: Vec::new(),
             copilot_pool: Vec::new(),
             exclude: Vec::new(),
             aliases: Vec::new(),
-            host: None,
-            lane_dirs: Vec::new(),
+            account_dirs: Vec::new(),
             codex_home: None,
             usage_ttl: 300,
             usage_max_age: 0,
-            accounts_timeout: 30,
-            host_busy_wait: None,
             claude_usage_url: String::new(),
             codex_usage_url: String::new(),
             claude_token_url: String::new(),
@@ -2088,7 +2085,7 @@ mod tests {
         assert_eq!(
             lines.last().map(String::as_str),
             Some(
-                "account-end-contradicted oldclaude config_dir=/h/.oldclaude ends=2026-10-20 source=ORCH_LANE_RETIRE status=ok"
+                "account-end-contradicted oldclaude config_dir=/h/.oldclaude ends=2026-10-20 source=AGENT_RUNTIME_ACCOUNT_RETIRE status=ok"
             )
         );
         assert!(names("x", "/h/.oldclaude", "oldclaude"));
@@ -2155,7 +2152,7 @@ mod tests {
     #[test]
     fn a_stated_end_names_a_real_calendar_day() {
         for ok in ["2026-10-20", "2024-02-29", "2026-12-31"] {
-            assert!(crate::settings::calendar_date_valid(ok), "{ok}");
+            assert!(agent_runtime::settings::calendar_date_valid(ok), "{ok}");
         }
         for bad in [
             "2026-13-01",
@@ -2165,7 +2162,7 @@ mod tests {
             "2026-10-2",
             "x",
         ] {
-            assert!(!crate::settings::calendar_date_valid(bad), "{bad}");
+            assert!(!agent_runtime::settings::calendar_date_valid(bad), "{bad}");
         }
     }
 }

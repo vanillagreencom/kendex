@@ -19,6 +19,7 @@
 #[path = "support.rs"]
 mod support;
 
+use agent_runtime::record::{FLEET_FILE_NAME, Locking};
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -26,11 +27,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use agent_runtime::clock::Clock;
 use agent_runtime::process::Identity;
+use agent_runtime::settings::Roots;
 use orch_runtime::error::Error;
-use orch_runtime::schedule::{Clock, Duty};
-use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::{FLEET_FILE_NAME, Locking};
+use orch_runtime::schedule::Duty;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::watch::github;
 use orch_runtime::watch::tracker::{self, Context, OwedState, Shared, TerminalState};
 use orch_runtime::watch::verifying;
@@ -183,10 +185,6 @@ impl World {
                 "LANE_MAIL_CLI".into(),
                 fix.join("lane-mail-quiet/lane-mail").into(),
             ),
-            (
-                "DEV_VALIDATE_CLI".into(),
-                fix.join("dev-validate-quiet/dev-validate-run").into(),
-            ),
             ("LINEAR_TEAM".into(), "kendex".into()),
             ("ORCH_SECURITY_ALERTS".into(), "off".into()),
         ];
@@ -213,7 +211,7 @@ impl World {
             repos: Vec::new(),
             locking: Locking::FLOCK,
             nonce: 7,
-            owner: Some(orch_runtime::state::Owner {
+            owner: Some(agent_runtime::intent::Owner {
                 pid: u64::from(std::process::id()),
                 start: start_of(std::process::id()),
             }),

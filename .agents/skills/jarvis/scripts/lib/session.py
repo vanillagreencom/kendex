@@ -133,7 +133,7 @@ def environment(harness=None, *, policy=False):
     if policy:
         # Published user-manager policy only; shell-only exports are outside
         # this contract. Extend this one list through a package change.
-        names = ("ORCH_LANE_EXCLUDE", "ORCH_LANE_RETIRE", "ORCH_LANE_ALIASES",
+        names = ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "AGENT_RUNTIME_ACCOUNT_RETIRE", "AGENT_RUNTIME_ACCOUNT_ALIASES",
                  "FLEET_USER", "AGENT_TMPDIR", "CLAUDE_CODE_TMPDIR")
         deadline = time.monotonic() + 10
         def read(argv):

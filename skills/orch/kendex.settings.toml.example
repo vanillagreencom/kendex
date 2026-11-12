@@ -33,32 +33,28 @@ ORCH_STATE_DIR = "tmp"
 # the overseer owns that record.
 OVERSEE_WATCH_STATE_DIR = ""
 
+# Where every reader on this machine keeps each account's usage cache and
+# wall record: an absolute or ~/ path. Unset, the state home's
+# kendex/agent-runtime/accounts.
+# AGENT_RUNTIME_ACCOUNT_STATE_DIR = ""
+
 # The worktree program the orch runtime drives. Empty finds the installed
 # worktree package.
 WORKTREE_CLI = ""
 
 # The programs the orch runtime runs, each empty for the installed package's
-# own: the agent-runtime wrapper the wake delivers through; the job-unit
-# launcher the watch's wall relaunch is detached through; the mailbox
-# program; the validation entry a close stops a worktree's runs through; the
-# change-scope path reader the launch admission and the validation start
-# read a range's changed paths through; the tracker program the watch's
-# tracker duties read through; the github skill's reducer the watch's GitHub
-# duty and a park read; and the gh program orch-runtime reconcile-items
-# runs, "gh" when empty.
+# own: the agent-runtime wrapper the wake delivers through; the mailbox
+# program; the change-scope path reader the launch admission and the
+# validation start read a range's changed paths through; the tracker program
+# the watch's tracker duties read through; the github skill's reducer the
+# watch's GitHub duty and a park read; and the gh program orch-runtime
+# reconcile-items runs, "gh" when empty.
 # ORCH_AGENT_RUNTIME = ""
-# ORCH_JOB_UNIT = ""
 # LANE_MAIL_CLI = ""
-# DEV_VALIDATE_CLI = ""
 # CHANGE_SCOPE_PATHS_CLI = ""
 # OVERSEE_WATCH_TRACKER = ""
 # OVERSEE_WATCH_PR_WATCH = ""
 # RECONCILE_GH_CLI = ""
-
-# The orch package's lanes script: the account judge runs the lane host
-# from the scripts directory that holds it, and the heartbeat's
-# account-unread line names it. Empty finds the installed orch package's own.
-# OVERSEE_WATCH_LANES = ""
 
 # Where lanes run. "local" runs them on this machine. "claude-cloud" runs
 # them in Claude Code's own cloud sessions. A path to a script runs them
@@ -73,14 +69,14 @@ ORCH_LANE_HOST = "local"
 # unattended fleet is never wedged at a dialog nobody answers; set "native"
 # to turn it off for this repository.
 # values: bypass | native
-# ORCH_LAUNCH_PERMISSION = "bypass"
+# AGENT_RUNTIME_LAUNCH_PERMISSION = "bypass"
 
 # Where a harness executable is installed when it is not on PATH, as
 # harness=/absolute/path pairs separated by commas, the harness one of
 # claude, codex, copilot or pi. A launch of a named harness runs its path in
 # place of the name on PATH; an unnamed harness runs the name. Each path is
 # absolute, and a harness is named at most once.
-# ORCH_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
+# AGENT_RUNTIME_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
 
 # The provider overseer-host resolves for Jarvis's session backend, which
 # reads a recorded overseer session through it: "tmux", the included
@@ -249,7 +245,7 @@ REVIEWER_SLOT_BUDGET = "0"
 # without it. "overseer": the overseer keeps it. Where each question for you
 # goes instead: references/skill-rules.md § Question tools.
 # values: off | overseer
-ORCH_QUESTION_TOOL = "off"
+AGENT_RUNTIME_QUESTION_TOOL = "off"
 
 # How long a question for you waits, in minutes, before its deadline;
 # `lane-mail --help` states what the deadline does for each form of
@@ -320,11 +316,11 @@ ORCH_VERIFY_SCHEDULE = ""
 # hosted launch's ssh dial (ConnectTimeout). Twice it, plus a margin, is how
 # long op --effect-exit waits for a detached job's answer. A request whose
 # effect reads it refuses another value before its intent is recorded.
-ORCH_TMUX_VERIFY_SECS = "15"
+AGENT_RUNTIME_TMUX_VERIFY_SECS = "15"
 
 # Seconds a transfer's or a stop's caller waits for its detached job to claim
 # the intent, in whole seconds above zero.
-# ORCH_JOB_CLAIM_SECS = "15"
+# AGENT_RUNTIME_JOB_CLAIM_SECS = "15"
 
 # Seconds the orch-runtime stop waits after SIGTERM before SIGKILL when it
 # ends a lane's recorded process tree, applied again after SIGKILL, so a stop
@@ -339,7 +335,7 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # with this unset, and its refusals: references/lane-directive.md § Tmux session.
 # With it set, the orch runtime needs no $TMUX: run from outside tmux, it
 # reaches that session on your own tmux server.
-# ORCH_TMUX_SESSION = "kendex"
+# AGENT_RUNTIME_TMUX_SESSION = "kendex"
 
 # Long provider processes lane-host runs at once, per home: every overseer and
 # checkout on the machine shares the count.
@@ -366,9 +362,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # absolute or relative to HOME, so one line names the same accounts on every
 # machine. The account judge chooses among these alone; unset, no local
 # account is a candidate and the roster says
-# accounts-unconfigured key=ORCH_LANE_DIRS. How an entry's harness is read:
+# accounts-unconfigured key=AGENT_RUNTIME_ACCOUNT_DIRS. How an entry's harness is read:
 # references/settings.md.
-# ORCH_LANE_DIRS = ".claude:.codex"
+# AGENT_RUNTIME_ACCOUNT_DIRS = ".claude:.codex"
 
 # CODEX_HOME and COPILOT_HOME, where the harness reads them, are measured as
 # accounts and never chosen; PI_CODING_AGENT_DIR is the Pi root a Pi launch
@@ -378,21 +374,21 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Friendlier names for the accounts the listing lists, as name=alias pairs,
 # the name a directory's name. An alias is a label: a launch names the
 # directory.
-# ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
+# AGENT_RUNTIME_ACCOUNT_ALIASES = "eclaude=work,mclaude=overflow"
 
 # Accounts excluded, and accounts retired from a date, each named by its own
 # name or its alias, never by a path. The runtime's judge never picks an
 # excluded account, and picks a retired one until that UTC day and measures it
 # after, saying in the roster where its credential still answers. What the
 # judge reads and refuses for each: references/settings.md.
-# ORCH_LANE_EXCLUDE = "sclaude"
-# ORCH_LANE_RETIRE = "oldclaude=YYYY-MM-DD"
+# AGENT_RUNTIME_ACCOUNT_EXCLUDE = "sclaude"
+# AGENT_RUNTIME_ACCOUNT_RETIRE = "oldclaude=YYYY-MM-DD"
 
 # The Copilot pool a Pi root spends on a github-copilot/ model, as
 # pi-root=credits-used/credits-granted pairs, the root an absolute path,
 # read for a root no provider row reads. Its form and the pick's refusal with
 # neither: references/settings.md.
-# ORCH_LANE_COPILOT_POOL = "/home/me/.1pi=250000/1000000"
+# AGENT_RUNTIME_COPILOT_POOL = "/home/me/.1pi=250000/1000000"
 
 # The repository each account was given access to, as name=owner/repo
 # pairs: a cloud-session pick admits an account only on its own
@@ -406,44 +402,44 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # refresh-token grant to and the OAuth client id it posts with, for a host
 # that reaches them through another address. With no client id every expired
 # Claude account reads error, naming the key.
-# ORCH_LANES_CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
-# ORCH_LANES_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
-# ORCH_LANES_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
-# ORCH_LANES_CLAUDE_CLIENT_ID = ""
+# AGENT_RUNTIME_CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+# AGENT_RUNTIME_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+# AGENT_RUNTIME_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+# AGENT_RUNTIME_CLAUDE_CLIENT_ID = ""
 
 # Seconds a lane's usage figure is reused before it is fetched again. 0
 # fetches it every time. Keep it at or above the longest watch interval on
 # this machine, or every watch pass fetches the figure again.
-# ORCH_LANES_USAGE_TTL = "300"
+# AGENT_RUNTIME_USAGE_TTL = "300"
 
 # The calling pass's own interval in seconds, which widens the age a cached
 # usage figure is served within and never narrows it. 0 leaves the TTL alone,
 # and a TTL of 0 is never widened.
-# ORCH_LANES_USAGE_MAX_AGE = "0"
+# AGENT_RUNTIME_USAGE_MAX_AGE = "0"
 
 # The usage share at which an account stops being offered for new work, read
 # on the window that binds the lane: the fullest of the account's weekly and
 # monthly plan windows and the window of the model the lane runs. The
 # projection and which credit stays offered past it: references/settings.md.
-# ORCH_LANE_MAX_PCT = "95"
+# AGENT_RUNTIME_ACCOUNT_MAX_PCT = "95"
 
 # A running lane's expected spend in an hour, in points of five hours' room,
 # charged for each live lane wherever the account measured no rate on that
 # window; references/settings.md states which windows and for how long. 0
 # turns the charge off.
-# ORCH_LANE_BURN_PCT_PER_HOUR = "5"
+# AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR = "5"
 
 # The dollars a Claude cloud or Pi Anthropic API grant must hold more than to
 # stay offered; how a grant pool is judged: references/settings.md.
-# ORCH_LANE_CLOUD_CREDIT_FLOOR = "10"
+# AGENT_RUNTIME_CLOUD_CREDIT_FLOOR = "10"
 
-# The credits a Codex account past ORCH_LANE_MAX_PCT must hold more than to
+# The credits a Codex account past AGENT_RUNTIME_ACCOUNT_MAX_PCT must hold more than to
 # stay offered on its credit balance; where such an account ranks:
 # references/lane-directive.md § Lane preference. 5000 is provisional, about
 # a twelfth of the lowest balance seen, 59.3k: one measured lane-day of spend
 # replaces it, the balance difference between two reads on an account running
 # one lane, times 24 over the hours between the reads.
-# ORCH_LANE_CODEX_CREDIT_FLOOR = "5000"
+# AGENT_RUNTIME_CODEX_CREDIT_FLOOR = "5000"
 
 # The allowance left on an account at which a running lane is marked for
 # handover. Who judges the mark on each kind of lane, and the lane's handoff:
@@ -537,7 +533,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # overseer under each value, a controller whose record names its own
 # succession command included: workflows/oversee.md § Succession. The
 # watch's recovery: references/overseer-session-events.md.
-# ORCH_OVERSEER_SUCCESSION = "on"
+# AGENT_RUNTIME_CONTROLLER_SUCCESSION = "on"
 
 # The models a new or replacement overseer tries, in order. Each entry is
 # harness:model:effort, separated by commas. The harness is claude, codex,
@@ -582,7 +578,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # skips, with the judge's word, in its reply's .result.walk.skipped
 # (workflows/oversee.md § Controller start and adoption). Classes and harness
 # defaults need no edit when model versions change. An empty setting names no entries.
-# ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
+# AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry. Overseer preferences keep the
@@ -617,7 +613,7 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # replacement is started on an account at or below it. An overseer's seat
 # keeps this room for it; references/settings.md states how a worker's pick
 # and a lane on a seat keep it.
-# ORCH_OVERSEER_HEADROOM_PCT = "5"
+# AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT = "5"
 
 # The percent of its cgroup's memory cap at which the overseer's harness
 # process hands over. Unset or 0 sets no memory mark.

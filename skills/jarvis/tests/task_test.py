@@ -56,6 +56,7 @@ class TaskContract(unittest.TestCase):
         meter.chmod(0o755)
         settings = {"ORCH_LANE_HOST": str(meter), "LANES_HOME": str(self.root / "empty-home"),
                     "OVERSEE_WATCH_STATE_DIR": str(self.root / "meter-state"),
+                    "AGENT_RUNTIME_ACCOUNT_STATE_DIR": str(self.root / "meter-state"),
                     "ORCH_STATE_DIR": str(self.root / "orch-state")}
         (self.home / "kendex.settings.toml").write_text("[env]\n" + "".join(
             key + " = " + json.dumps(value) + "\n" for key, value in settings.items()))
@@ -922,8 +923,9 @@ unittest.TextTestRunner(stream=io.StringIO()).run(suite)
         self.home.joinpath("kendex.settings.toml").write_text("[env]\n" + "".join(
             key + " = " + json.dumps(value) + "\n" for key, value in {
                 "ORCH_LANE_HOST": "local", "LANES_HOME": str(isolated),
-                "ORCH_LANE_DIRS": str(self.account), "ORCH_LANES_FETCH_CMD": str(fetch),
-                "OVERSEE_WATCH_STATE_DIR": str(self.root / "claude-meter")}.items()))
+                "AGENT_RUNTIME_ACCOUNT_DIRS": str(self.account), "ORCH_LANES_FETCH_CMD": str(fetch),
+                "OVERSEE_WATCH_STATE_DIR": str(self.root / "claude-meter"),
+                "AGENT_RUNTIME_ACCOUNT_STATE_DIR": str(self.root / "claude-meter")}.items()))
         record = self.launch("claude")
         self.assertEqual(record["model"], "haiku")
         observed = self.acknowledgement(record)

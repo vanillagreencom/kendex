@@ -23,7 +23,7 @@ real_cli = sys.argv[3]
 # Refresh-consumer owns the parse. This mode only formats its diagnostics.
 reporter = skill / 'refresh-report.py'
 astra = 'SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6-astra"'
-fable = 'ORCH_OVERSEER_PREFERENCE = "claude:Fable:high"'
+fable = 'AGENT_RUNTIME_CONTROLLER_PREFERENCE = "claude:Fable:high"'
 def settings_run(entries, script=reporter):
  return subprocess.run(['python3', str(script), '--settings'], input=json.dumps(entries),
                        text=True, capture_output=True, env={'PATH':'/usr/bin:/bin'})
@@ -39,7 +39,7 @@ for refused, deprecated, present in [
 ]:
  out = settings(refused, deprecated)
  assert ('## Settings' in out) == present
- assert out.count('ORCH_OVERSEER_PREFERENCE:') == len(refused) + len(deprecated)
+ assert out.count('AGENT_RUNTIME_CONTROLLER_PREFERENCE:') == len(refused) + len(deprecated)
  assert not present or 'harness:model:effort' in out
  assert '<script>' not in out and '`bad' not in out
  assert '## Deprecated models' not in out
@@ -59,7 +59,7 @@ mutants.mkdir(parents=True)
 two_keys = dict(refused=[], deprecated=['claude:1:high'])
 legacy = settings_run(two_keys)
 assert legacy.returncode == 0, legacy.stderr
-assert legacy.stdout.count('ORCH_OVERSEER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
+assert legacy.stdout.count('AGENT_RUNTIME_CONTROLLER_PREFERENCE:') == 1 and '## Deprecated models' not in legacy.stdout
 needle = '    retired = json.loads(RETIRED.read_text())\n'
 assert source.count(needle) == 1
 restored = mutants / 'model-report.py'
