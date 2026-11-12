@@ -140,9 +140,9 @@ orch_env_value() { # NAME DEFAULT: settings already loaded by the caller.
 # Sourced callers reuse the same value resolution after their settings load.
 [[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
 
-# Help is answered before any project configuration is read: .env.local is
-# sourced as shell, so a help form that reaches the loader runs whatever the
-# checkout put there. Position 1 only — the second operand is the DEFAULT
+# Help is answered before any project configuration is read: a help form
+# that reaches the loader takes whatever values the checkout put in
+# .env.local, and stops on a line the loader refuses. Position 1 only — the second operand is the DEFAULT
 # VALUE, and a flag-shaped value stays data.
 case "${1:-}" in
 help | --help | -h)

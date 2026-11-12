@@ -95,7 +95,7 @@ assert_eq "$s3_code" "0" "scenario 3 loads without error"
 assert_eq "$s3_out" 'CC-[0-9]+' "scenario 3: parent GH_ISSUE_PATTERN wins over conflicting settings"
 
 # Scenario 4: standalone-call safety. kendex_load_settings_file must work in a
-# fresh subshell with no _KENDEX_PARENT_ENV snapshot, without erroring under
+# fresh subshell with no parent-env snapshot, without erroring under
 # set -u, and still set a fresh key.
 STANDALONE="$TMP_ROOT/standalone.toml"
 cat > "$STANDALONE" <<'TOML'
@@ -126,9 +126,9 @@ printf '[env]\nNESTED_PARENT = "nested-file"\nNESTED_FILE = "nested-value"\n' > 
 printf 'PRIVATE_PARENT=private-file\nPRIVATE_FILE=private-value\n' > "$TRACE_PROJ/.env.local"
 LINEAR_SCRIPTS="$(mutant_scripts linear-parent-check lib/kendex-env.sh)" || exit 1
 mutate_file "$LINEAR_SCRIPTS/lib/kendex-env.sh" \
-  '  [[ "${_KENDEX_PARENT_ENV_NAME_SET-}" == *" $1 "* ]]' \
+  '  [[ "${_kendex_parent_env_name_set-}" == *" $1 "* ]]' \
   '  local name="$1" snapshot_name
-  for snapshot_name in ${_KENDEX_PARENT_ENV_NAMES[@]+"${_KENDEX_PARENT_ENV_NAMES[@]}"}; do
+  for snapshot_name in ${_kendex_parent_env_names[@]+"${_kendex_parent_env_names[@]}"}; do
     [[ "$snapshot_name" == "$name" ]] && return 0
   done
   return 1'
@@ -506,8 +506,8 @@ assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE o
 # A refusal is `refused lineno=N`, the keyed line the loader prints.
 RUNS_FILE_SCRIPTS="$(mutant_scripts runs-private-file lib/kendex-env.sh)" || exit 1
 mutate_file "$RUNS_FILE_SCRIPTS/lib/kendex-env.sh" \
-  '  kendex_read_env_file "$project_root/$_kendex_private_file" || return 1' \
-  '  source "$project_root/$_kendex_private_file" >&2 || return 1'
+  '  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" || return 1' \
+  '  source "$_kendex_project_root/$_kendex_private_file" >&2 || return 1'
 mutate_file "$RUNS_FILE_SCRIPTS/lib/kendex-env.sh" '  kendex_assign_env_file || return 1' '  :'
 S10_MARK="$TMP_ROOT/private-file-ran"
 S10_ROWS='a single-quoted value keeps every byte|S10_VALUE='\''a b"c#d $e'\''|value=a b"c#d $e exported=no ran=no|value=a b"c#d $e exported=no ran=no
@@ -526,8 +526,7 @@ an assignment prefixing a command|S10_VALUE=ok touch MARK|refused lineno=1 ran=n
 an empty assignment prefixing a command|S10_VALUE= touch MARK|refused lineno=1 ran=no|value=unset exported=no ran=yes
 a comment touching the closing quote|S10_VALUE='\''v'\''#c|refused lineno=1 ran=no|value=v#c exported=no ran=no
 two assignments on one export|export S10_VALUE=1 S10_OTHER=2|refused lineno=1 ran=no|value=1 exported=yes ran=no
-a value over two lines|S10_VALUE='\''first\nsecond'\''|refused lineno=1 ran=no|value=first<LF>second exported=no ran=no
-a name the loader expands after the file loads|_KENDEX_PARENT_ENV_NAMES='\''a[$(touch MARK)]'\''|value=unset exported=no ran=no|value=unset exported=no ran=yes'
+a value over two lines|S10_VALUE='\''first\nsecond'\''|refused lineno=1 ran=no|value=first<LF>second exported=no ran=no'
 
 s10_private() { # LIB BODY — the load's observed result
   (
@@ -647,6 +646,75 @@ for variant in production runs-file; do
   assert_eq "$(cat "$PROJ11/value")" "$expected_value" "$variant: orch-env result"
   assert_eq "$(cat "$PROJ11/lanes")" "$expected_lanes" "$variant: lanes result"
 done
+
+# Scenario 12: a key in either project file never reaches a variable the
+# loader keeps its own state in, so a value Bash evaluates as an expression
+# runs nothing. A row is label|file|body|production|control|control result:
+# file is settings or private, body is printf %b input with MARK the path a
+# run creates, and the row runs again against the named control loader. The
+# subscript names a set array, so the expression runs under set -u.
+# outside-prefix keeps one settings-reader variable outside the reserved
+# prefix, as the loader once kept all of them; prefix-open does not refuse
+# the prefix.
+OUTSIDE_PREFIX_SCRIPTS="$(mutant_scripts outside-prefix lib/kendex-env.sh)" || exit 1
+mutate_file "$OUTSIDE_PREFIX_SCRIPTS/lib/kendex-env.sh" \
+  '    _kendex_lineno=$((_kendex_lineno + 1))' \
+  '    _kendex_lineno=$((_kendex_lineno + 1)) lineno=$((lineno + 1))'
+mutate_file "$OUTSIDE_PREFIX_SCRIPTS/lib/kendex-env.sh" \
+  ' _kendex_seen=" " _kendex_lineno=0' \
+  ' _kendex_seen=" " _kendex_lineno=0 lineno=0'
+PREFIX_OPEN_SCRIPTS="$(mutant_scripts prefix-open lib/kendex-env.sh)" || exit 1
+mutate_file "$PREFIX_OPEN_SCRIPTS/lib/kendex-env.sh" \
+  '  [[ "$2" != _kendex_* ]] && return 0' \
+  '  return 0'
+S12_MARK="$TMP_ROOT/loader-variable-ran"
+S12_ROWS='a settings key named like a loader counter|settings|lineno = '\''BASH_VERSINFO[$(touch MARK)]'\''\nS12_AFTER = "1"|loaded ran=no|outside-prefix|loaded ran=yes
+a settings key in the reserved prefix|settings|_kendex_lineno = '\''BASH_VERSINFO[$(touch MARK)]'\''\nS12_AFTER = "1"|reserved kendex.settings.toml _kendex_lineno ran=no|prefix-open|loaded ran=yes
+a private key in the reserved prefix|private|_kendex_parent_env_names='\''a[$(touch MARK)]'\''|reserved .env.local _kendex_parent_env_names ran=no|prefix-open|loaded ran=no'
+
+s12_load() { # LIB PROJECT FILE BODY — the load's observed result
+  (
+    unset -v KENDEX_ENV_FILE
+    rm -f -- "${S12_MARK:?}"
+    mkdir "$2"
+    if [[ "$3" == settings ]]; then
+      printf '[env]\n%b\n' "${4//MARK/$S12_MARK}" > "$2/kendex.settings.toml"
+    else
+      printf '%b\n' "${4//MARK/$S12_MARK}" > "$2/.env.local"
+    fi
+    # shellcheck source=/dev/null
+    source "$1"
+    rc=0
+    kendex_load_project_env "$2" >/dev/null 2> "$2.err" || rc=$?
+    ran=no
+    [[ ! -e "$S12_MARK" ]] || ran=yes
+    if [[ "$rc" -ne 0 ]]; then
+      first=""
+      IFS= read -r first < "$2.err" || :
+      printf '%s ran=%s\n' "$first" "$ran"
+    else
+      printf 'loaded ran=%s\n' "$ran"
+    fi
+  )
+}
+
+s12_row=0
+while IFS='|' read -r s12_label s12_file s12_body s12_want s12_control s12_control_want; do
+  s12_row=$((s12_row + 1))
+  s12_project="$TMP_ROOT/proj12-$s12_row"
+  if [[ "$s12_want" == reserved\ * ]]; then
+    read -r _ s12_where s12_key s12_ran <<<"$s12_want"
+    s12_want="kendex-env: reserved-key file=$s12_project/$s12_where key=$s12_key $s12_ran"
+  fi
+  case "$s12_control" in
+    outside-prefix) s12_control_lib="$OUTSIDE_PREFIX_SCRIPTS/lib/kendex-env.sh" ;;
+    prefix-open) s12_control_lib="$PREFIX_OPEN_SCRIPTS/lib/kendex-env.sh" ;;
+    *) fail "scenario 12: $s12_label names a control" "control=$s12_control"; continue ;;
+  esac
+  assert_eq "$(s12_load "$LIB" "$s12_project" "$s12_file" "$s12_body")" "$s12_want" "scenario 12: $s12_label"
+  assert_eq "$(s12_load "$s12_control_lib" "$s12_project-control" "$s12_file" "$s12_body")" "$s12_control_want" \
+    "control: the $s12_control loader gives $s12_label its old meaning"
+done <<<"$S12_ROWS"
 
 echo
 # Prefix probes and physical path checks retain the loader's output and cwd.

@@ -95,7 +95,7 @@ pub fn destination(root: &Path, settings: Option<&str>, want: Option<&str>) -> D
 ///
 /// The loaders read `kendex.settings.toml`, then `.kendex/settings.toml`,
 /// and the later assignment wins. Reading only the first would show and
-/// write one private file while the installed packages source another, so
+/// write one private file while the installed packages read another, so
 /// the layers are read here the way they are read there.
 pub fn destination_layered(
     root: &Path,
@@ -149,8 +149,8 @@ pub fn destination_layered(
     }
 }
 
-/// The private file the shipped loaders source for this project, given
-/// every settings layer lowest precedence first, or why they source none.
+/// The private file the shipped loaders read for this project, given
+/// every settings layer lowest precedence first, or why they read none.
 ///
 /// The read half of [`destination_layered`]: the same selector walk, the
 /// same spelling check and the same containment of the directory the file

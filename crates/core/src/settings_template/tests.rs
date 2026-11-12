@@ -282,6 +282,28 @@ fn a_key_no_shell_can_export_is_located() {
     }
 }
 
+/// `kendex-env.sh` refuses a key in its own variables' prefix, under either
+/// table's destination, so the check refuses the declaration and offers no
+/// row. Its spelling is case-sensitive, as a shell name is.
+#[test]
+fn a_key_in_the_loader_prefix_is_located_and_offers_no_row() {
+    for (table, key, refused) in [
+        ("env", "_kendex_lineno", true),
+        ("secrets", "_kendex_token", true),
+        ("env", "_KENDEX_LINENO", false),
+        ("env", "MY_kendex_LINENO", false),
+    ] {
+        let value = if table == "env" { "\"1\"" } else { "\"\"" };
+        let read = read(&format!("[{table}]\n# Why.\n{key} = {value}\n"));
+        let lines: Vec<u32> = read.findings.iter().map(|finding| finding.line).collect();
+        let rows = read.entries.len() + read.secrets.len();
+        match refused {
+            true => assert_eq!((lines, rows), (vec![3], 0), "{key}"),
+            false => assert_eq!((lines, rows), (vec![], 1), "{key}"),
+        }
+    }
+}
+
 #[test]
 fn a_toml_error_in_column_one_reports_its_own_line() {
     // An assignment with no key is one the line scan reads past, so TOML is

@@ -7,9 +7,9 @@
 # them, so the rows below pin the whole protocol a caller parses.
 #
 # A status is never a verdict, and that is what the rows hold: every orch
-# script sources `.env.local` as shell before its dispatch is reached, and bash
-# 3.2 kills the script on a file it cannot parse with a status this verb would
-# otherwise have published for a state file it could not read. An install older
+# script loads `.env.local` before its dispatch is reached, and a file the
+# loader refuses stops the script with a status this verb would otherwise have
+# published for a state file it could not read. An install older
 # than the verb answers 1 from its unknown-command arm, and a caller reading
 # either as "none stands" would tell a lane that has already written its record
 # to write it again at every turn end.
@@ -77,11 +77,11 @@ assert_eq "$("$WS" --state-dir "$STATE" no-such-verb KEN-1 >/dev/null 2>&1; echo
 assert_eq "$([ -s "$TMP_ROOT/err" ] && echo said || echo silent)" "said" \
   "that failure carries the reader's own words on stderr"
 
-# The class the verdict line closes. Every orch script sources the project's
-# `.env.local` as shell before its dispatch is reached, so a file the loader
-# cannot parse kills the script with a status this verb would otherwise have
-# published for a state file it could not read — and on bash 3.2 it kills the
-# shell outright. A run that never reached the verb writes no verdict, which is
+# The class the verdict line closes. Every orch script loads the project's
+# `.env.local` before its dispatch is reached, so a file the loader refuses
+# stops the script with a status this verb would otherwise have published for
+# a state file it could not read. A run that never reached the verb writes no
+# verdict, which is
 # what lets a caller tell the two apart at all.
 PROJECT="$TMP_ROOT/project"
 mkdir -p "$PROJECT"

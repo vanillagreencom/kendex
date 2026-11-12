@@ -37,6 +37,14 @@
 # ignorable line. A file that begins with a UTF-8 byte-order mark is
 # refused the same way: the BOM is neither whitespace nor `[` nor a key
 # character, so the first header or assignment would silently misclassify.
+#
+# Every variable the loader keeps its state in, its locals and the parent
+# snapshot alike, starts with `_kendex_`, and a key in either file that
+# starts with it fails the load. A key is assigned with `printf -v` while
+# the loader is still running, so a key naming one of its variables would
+# overwrite the loader's own state: `lineno = 'a[$(cmd)]'` runs cmd at the
+# next `$((lineno + 1))`. One prefix keeps that true for a variable added
+# later.
 
 # Parent-process env snapshot (name/value pairs). Bash 3.2 (macOS system
 # bash) has no associative arrays, so the snapshot is a pair of parallel
@@ -45,11 +53,10 @@
 # Populated only by kendex_load_project_env; an absent name string keeps
 # standalone kendex_load_settings_file calls working under set -u.
 
-# Callers preserve positional values for this diagnostic catalog.
-kendex_env_message() {
-  local _message_key="$1"
+kendex_env_message() { # KEY ARG...
+  local _kendex_message_key="$1"
   shift
-  case "$_message_key" in
+  case "$_kendex_message_key" in
     byte-order-mark)
       printf 'kendex-env: byte-order-mark arg1=%s\n' "$1"
       printf '%s\n' "::error::$1: file starts with a UTF-8 byte-order mark; remove it (the first header or assignment would otherwise be misread)"
@@ -67,12 +74,12 @@ kendex_env_message() {
       printf '%s\n' "::error::$1: source exists but is not a regular file (directory, FIFO, socket or device); a source is skipped only when it is absent"
       ;;
     table-header)
-      printf 'kendex-env: table-header file=%s lineno=%s\n' "$file" "$lineno"
-      printf '%s\n' "::error::$file:$lineno: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)"
+      printf 'kendex-env: table-header file=%s lineno=%s\n' "$1" "$2"
+      printf '%s\n' "::error::$1:$2: unsupported table header shape (a header is a lone [name] on its own line, with no comment and no second bracket)"
       ;;
     duplicate-key)
-      printf 'kendex-env: duplicate-key file=%s key=%s\n' "$file" "$key"
-      printf '%s\n' "::error::$file: $key is assigned more than once in [env] (each key must be unique in the table)"
+      printf 'kendex-env: duplicate-key file=%s key=%s\n' "$1" "$2"
+      printf '%s\n' "::error::$1: $2 is assigned more than once in [env] (each key must be unique in the table)"
       ;;
     private-env-path)
       printf 'kendex-env: private-env-path arg1=%s\n' "$1"
@@ -94,15 +101,25 @@ kendex_env_message() {
       printf 'kendex-env: private-env-line file=%s lineno=%s\n' "$1" "$2"
       printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word of letters, digits and _ . / : @ % + , = -, optionally followed by a space and a # comment"
       ;;
+    reserved-key)
+      printf 'kendex-env: reserved-key file=%s key=%s\n' "$1" "$2"
+      printf '%s\n' "::error::$1: $2 starts with _kendex_, the prefix this loader keeps for its own variables; rename the key"
+      ;;
     value-syntax)
-      printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
-      printf '%s\n' "::error::$file: unsupported syntax for $key (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)"
+      printf 'kendex-env: value-syntax file=%s key=%s\n' "$1" "$2"
+      printf '%s\n' "::error::$1: unsupported syntax for $2 (expected a single-line basic string with no '\"' or '\\', or a literal string with no apostrophe inside)"
       ;;
   esac
 }
 
 kendex_parent_env_has() {
-  [[ "${_KENDEX_PARENT_ENV_NAME_SET-}" == *" $1 "* ]]
+  [[ "${_kendex_parent_env_name_set-}" == *" $1 "* ]]
+}
+
+kendex_key_usable() { # FILE KEY — 0 = KEY is outside the loader's prefix; 1 + ::error otherwise
+  [[ "$2" != _kendex_* ]] && return 0
+  kendex_env_message reserved-key "$1" "$2" >&2
+  return 1
 }
 
 # A UTF-8 byte-order mark is neither whitespace nor `[` nor a key character
@@ -174,58 +191,59 @@ kendex_decode_value() { # OUT_VAR RAW — decoded value assigned to OUT_VAR; 1 =
 }
 
 kendex_load_settings_file() {
-  local file="$1"
-  kendex_source_usable "$file" || return 1
-  [[ -f "$file" ]] || return 0
-  kendex_bom_guard "$file" || return 1
+  local _kendex_file="$1"
+  kendex_source_usable "$_kendex_file" || return 1
+  [[ -f "$_kendex_file" ]] || return 0
+  kendex_bom_guard "$_kendex_file" || return 1
 
-  local section="" line key value seen=" " lineno=0
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    lineno=$((lineno + 1))
-    line="${line%$'\r'}"
-    kendex_trim line "$line"
-    [[ -z "$line" || "$line" == \#* ]] && continue
+  local _kendex_section="" _kendex_line _kendex_key _kendex_value _kendex_seen=" " _kendex_lineno=0
+  while IFS= read -r _kendex_line || [[ -n "$_kendex_line" ]]; do
+    _kendex_lineno=$((_kendex_lineno + 1))
+    _kendex_line="${_kendex_line%$'\r'}"
+    kendex_trim _kendex_line "$_kendex_line"
+    [[ -z "$_kendex_line" || "$_kendex_line" == \#* ]] && continue
 
     # A `[`-leading line is a header or an error, never content: `[env] # c`
     # would hide the whole table behind silent defaults, and a quoted or
     # doubled header after [env] would leave foreign keys loading as [env]
     # keys.
-    if [[ "$line" == \[* ]]; then
-      if [[ "$line" =~ ^\[([A-Za-z0-9_.-]+)\]$ ]]; then
-        section="${BASH_REMATCH[1]}"
+    if [[ "$_kendex_line" == \[* ]]; then
+      if [[ "$_kendex_line" =~ ^\[([A-Za-z0-9_.-]+)\]$ ]]; then
+        _kendex_section="${BASH_REMATCH[1]}"
         continue
       fi
-      kendex_env_message table-header "$@" >&2
+      kendex_env_message table-header "$_kendex_file" "$_kendex_lineno" >&2
       return 1
     fi
 
-    [[ "$section" == "env" && "$line" == *=* ]] || continue
-    kendex_trim key "${line%%=*}"
-    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ "$_kendex_section" == "env" && "$_kendex_line" == *=* ]] || continue
+    kendex_trim _kendex_key "${_kendex_line%%=*}"
+    [[ "$_kendex_key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    kendex_key_usable "$_kendex_file" "$_kendex_key" || return 1
     # Which duplicate wins would be an accident of read order, so a re-assigned
     # key is a configuration error — the same ambiguity guard the settings.sh
     # resolver family applies. Checked before the parent-env skip: a malformed
     # file must fail identically whatever this session exports.
-    if [[ "$seen" == *" $key "* ]]; then
-      kendex_env_message duplicate-key "$@" >&2
+    if [[ "$_kendex_seen" == *" $_kendex_key "* ]]; then
+      kendex_env_message duplicate-key "$_kendex_file" "$_kendex_key" >&2
       return 1
     fi
-    seen="$seen$key "
-    if ! kendex_decode_value value "${line#*=}"; then
-      kendex_env_message value-syntax "$@" >&2
+    _kendex_seen="$_kendex_seen$_kendex_key "
+    if ! kendex_decode_value _kendex_value "${_kendex_line#*=}"; then
+      kendex_env_message value-syntax "$_kendex_file" "$_kendex_key" >&2
       return 1
     fi
 
     # Parent-process values win over project [env] tables. The snapshot is
     # only populated when called via kendex_load_project_env; standalone calls
     # see an empty snapshot and load every key.
-    if kendex_parent_env_has "$key"; then
+    if kendex_parent_env_has "$_kendex_key"; then
       continue
     fi
 
-    printf -v "$key" '%s' "$value"
-    export "$key"
-  done < "$file"
+    printf -v "$_kendex_key" '%s' "$_kendex_value"
+    export "$_kendex_key"
+  done < "$_kendex_file"
 }
 
 # The private env file is data: it sits in the project checkout, so running
@@ -265,13 +283,13 @@ kendex_env_line_value() { # OUT_VAR RAW — value assigned to OUT_VAR; 1 = outsi
   printf -v "$1" '%s' "$_kendex_line_decoded"
 }
 
-# Reads FILE into _KENDEX_PRIVATE_VALUES, three entries per assignment: the
+# Reads FILE into _kendex_private_values, three entries per assignment: the
 # key, the value, and `export` or `plain`. A key the parent snapshot holds is
 # left out, as kendex_load_settings_file leaves it out.
 kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::error otherwise
   local _kendex_env_line _kendex_env_lineno=0 _kendex_env_key _kendex_env_value _kendex_env_form LC_ALL=C
   local _kendex_env_assignment='^([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
-  _KENDEX_PRIVATE_VALUES=()
+  _kendex_private_values=()
   kendex_source_usable "$1" || return 1
   [[ -f "$1" ]] || return 0
   kendex_bom_guard "$1" || return 1
@@ -294,8 +312,9 @@ kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::err
       kendex_env_message private-env-line "$1" "$_kendex_env_lineno" >&2
       return 1
     fi
+    kendex_key_usable "$1" "$_kendex_env_key" || return 1
     kendex_parent_env_has "$_kendex_env_key" ||
-      _KENDEX_PRIVATE_VALUES+=("$_kendex_env_key" "$_kendex_env_value" "$_kendex_env_form")
+      _kendex_private_values+=("$_kendex_env_key" "$_kendex_env_value" "$_kendex_env_form")
   done < "$1"
 }
 
@@ -304,8 +323,8 @@ kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::err
 # exported only when it already was or the caller runs under `set -a`. It
 # keeps no variable of its own for a line to overwrite.
 kendex_assign_env_file() {
-  set -- ${_KENDEX_PRIVATE_VALUES[@]+"${_KENDEX_PRIVATE_VALUES[@]}"}
-  unset _KENDEX_PRIVATE_VALUES
+  set -- ${_kendex_private_values[@]+"${_kendex_private_values[@]}"}
+  unset _kendex_private_values
   while (($# >= 3)); do
     printf -v "$1" '%s' "$2" || return 1
     [[ "$3" != export ]] || export "$1"
@@ -408,15 +427,15 @@ kendex_project_env_supports() { # CAPABILITY
 }
 
 kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional output is the selected project-relative path
-  local project_root="$1"
-  [[ -n "$project_root" ]] || return 0
+  local _kendex_project_root="$1"
+  [[ -n "$_kendex_project_root" ]] || return 0
   local _kendex_empty_private
-  if [[ ! -f "$project_root/kendex.settings.toml" && ! -f "$project_root/.kendex/settings.toml" ]]; then
-    kendex_source_usable "$project_root/kendex.settings.toml" || return 1
-    kendex_source_usable "$project_root/.kendex/settings.toml" || return 1
-    kendex_private_env_file _kendex_empty_private "$project_root" || return 1
-    kendex_source_usable "$project_root/$_kendex_empty_private" || return 1
-    if [[ ! -f "$project_root/$_kendex_empty_private" ]]; then
+  if [[ ! -f "$_kendex_project_root/kendex.settings.toml" && ! -f "$_kendex_project_root/.kendex/settings.toml" ]]; then
+    kendex_source_usable "$_kendex_project_root/kendex.settings.toml" || return 1
+    kendex_source_usable "$_kendex_project_root/.kendex/settings.toml" || return 1
+    kendex_private_env_file _kendex_empty_private "$_kendex_project_root" || return 1
+    kendex_source_usable "$_kendex_project_root/$_kendex_empty_private" || return 1
+    if [[ ! -f "$_kendex_project_root/$_kendex_empty_private" ]]; then
       [[ -z "${2:-}" ]] || printf -v "$2" '%s' "$_kendex_empty_private"
       return 0
     fi
@@ -429,14 +448,14 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   # it holds parent env only — not values set by the project files below. The
   # stored value re-asserts parent precedence after loading. Assigning
   # without `local` makes the snapshot arrays global from inside this function.
-  _KENDEX_PARENT_ENV_NAMES=()
-  _KENDEX_PARENT_ENV_VALUES=()
-  _KENDEX_PARENT_ENV_NAME_SET=" "
+  _kendex_parent_env_names=()
+  _kendex_parent_env_values=()
+  _kendex_parent_env_name_set=" "
   local _kendex_name
   while IFS= read -r _kendex_name; do
-    _KENDEX_PARENT_ENV_NAMES+=("$_kendex_name")
-    _KENDEX_PARENT_ENV_VALUES+=("${!_kendex_name-}")
-    _KENDEX_PARENT_ENV_NAME_SET+="$_kendex_name "
+    _kendex_parent_env_names+=("$_kendex_name")
+    _kendex_parent_env_values+=("${!_kendex_name-}")
+    _kendex_parent_env_name_set+="$_kendex_name "
   done < <(compgen -e)
 
   # Load order (lowest to highest among project files): settings, then the
@@ -445,25 +464,25 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   # private path outside the project, a private line outside its grammar, or
   # a BOM-prefixed file — fails the whole call: resolving on a partial or
   # silently reinterpreted file would be worse than stopping.
-  kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
-  kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
+  kendex_load_settings_file "$_kendex_project_root/kendex.settings.toml" || return 1
+  kendex_load_settings_file "$_kendex_project_root/.kendex/settings.toml" || return 1
   local _kendex_private_file
-  kendex_private_env_file _kendex_private_file "$project_root" || return 1
-  kendex_read_env_file "$project_root/$_kendex_private_file" || return 1
+  kendex_private_env_file _kendex_private_file "$_kendex_project_root" || return 1
+  kendex_read_env_file "$_kendex_project_root/$_kendex_private_file" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.
   # Only changed keys are rewritten; a readonly var can never differ from its
   # snapshot, so this never attempts to assign one.
   local _kendex_i
-  for ((_kendex_i = 0; _kendex_i < ${#_KENDEX_PARENT_ENV_NAMES[@]}; _kendex_i++)); do
-    _kendex_name="${_KENDEX_PARENT_ENV_NAMES[$_kendex_i]}"
-    if [[ "${!_kendex_name-}" != "${_KENDEX_PARENT_ENV_VALUES[$_kendex_i]}" ]]; then
-      export "$_kendex_name=${_KENDEX_PARENT_ENV_VALUES[$_kendex_i]}"
+  for ((_kendex_i = 0; _kendex_i < ${#_kendex_parent_env_names[@]}; _kendex_i++)); do
+    _kendex_name="${_kendex_parent_env_names[$_kendex_i]}"
+    if [[ "${!_kendex_name-}" != "${_kendex_parent_env_values[$_kendex_i]}" ]]; then
+      export "$_kendex_name=${_kendex_parent_env_values[$_kendex_i]}"
     fi
   done
 
-  unset _KENDEX_PARENT_ENV_NAMES _KENDEX_PARENT_ENV_VALUES _KENDEX_PARENT_ENV_NAME_SET
+  unset _kendex_parent_env_names _kendex_parent_env_values _kendex_parent_env_name_set
   # The private values land only once the snapshot the loop above expands is gone.
   kendex_assign_env_file || return 1
   if [[ -n "${2:-}" ]]; then

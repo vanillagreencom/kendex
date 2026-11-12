@@ -20,7 +20,10 @@ cp -R "$ROOT/skills/orch" "$FIXTURE/.agents/skills/orch"
 cp -R "$ROOT/skills/second-opinion" "$FIXTURE/.agents/skills/second-opinion"
 cp -R "$ROOT/skills/worktree" "$FIXTURE/.agents/skills/worktree"
 git -C "$FIXTURE" init -q
+# A loader that sources the file runs the line and leaves the marker; the
+# shipped loader reads it as data and refuses it with a keyed line.
 printf 'touch "%s"\n' "$MARKER" >"$FIXTURE/.env.local"
+ENV_REFUSAL="kendex-env: private-env-line file=$FIXTURE/.env.local lineno=1"
 printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s %s\n" "$0" "$*" >>"${HELP_INERT_CALLS:?}"' \
@@ -36,6 +39,12 @@ printf '%s\n' \
     'printf "environment control\n"' \
     >"$FIXTURE/.agents/skills/control/scripts/environment-load"
 printf '%s\n' \
+    '#!/usr/bin/env bash' \
+    '. "$PWD/.agents/skills/orch/scripts/lib/kendex-env.sh"' \
+    'kendex_load_project_env "$PWD"' \
+    'printf "loader control\n"' \
+    >"$FIXTURE/.agents/skills/control/scripts/environment-read"
+printf '%s\n' \
     '#!/bin/sh' \
     ':' \
     >"$FIXTURE/.agents/skills/control/scripts/command-swallow"
@@ -45,6 +54,7 @@ cp "$FIXTURE/bin/blocked" "$FIXTURE/bin/curl"
 chmod +x "$FIXTURE/bin/blocked" "$FIXTURE/bin/gh" "$FIXTURE/bin/codex" \
     "$FIXTURE/bin/curl" "$FIXTURE/.agents/skills/control/scripts/dependency-call" \
     "$FIXTURE/.agents/skills/control/scripts/environment-load" \
+    "$FIXTURE/.agents/skills/control/scripts/environment-read" \
     "$FIXTURE/.agents/skills/control/scripts/command-swallow"
 export HELP_INERT_CALLS="$CALLS"
 
@@ -78,7 +88,9 @@ while IFS=$'\t' read -r skill script args expected; do
     if [ "$status" -ne 0 ] || [ -z "$output" ]; then
         observed="command"
     fi
-    [ ! -e "$MARKER" ] || observed="${observed:+$observed,}environment"
+    if [ -e "$MARKER" ] || [[ "$output" == *"$ENV_REFUSAL"* ]]; then
+        observed="${observed:+$observed,}environment"
+    fi
     [ ! -s "$CALLS" ] || observed="${observed:+$observed,}dependency"
     observed="${observed:-clean}"
     if [ "$observed" = "$expected" ]; then
@@ -96,6 +108,7 @@ while IFS=$'\t' read -r skill script args expected; do
 done <<'ROWS'
 control	scripts/dependency-call	--help	dependency
 control	scripts/environment-load	--help	environment
+control	scripts/environment-read	--help	environment
 control	scripts/command-swallow	--help	command
 decider	scripts/decisions	-
 decider	scripts/decisions	help

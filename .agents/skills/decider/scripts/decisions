@@ -26,8 +26,8 @@ emit_notice() { # KEY FIELD=VALUE EXPLANATION
   printf '%s\n' "$*" >&2
 }
 
-# Help is answered before project configuration is read: sourcing a repo's
-# .env.local under --help would execute repository-controlled shell code.
+# Help is answered before project configuration is read: loading a repo's
+# settings and .env.local under --help would take repository-controlled values.
 show_help() {
   cat << 'EOF'
 Decision Lookup Tool

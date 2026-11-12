@@ -1092,12 +1092,12 @@ cmd_exists() {
 # belongs to an earlier life of the item and is not one.
 #
 # The verdict is the word this verb prints, never a status it exits with, and
-# the verb exits 0 for every verdict. Every orch script sources the project's
-# `.env.local` as shell before its dispatch is reached, and bash 3.2 kills the
-# shell on a file it cannot parse — 2 for a syntax error, 1 for one it cannot
-# read — where bash 5 carries on. A status-only contract would therefore spell
-# "this state could not be read" and "this script died in its settings loader
-# before the verb ran" with the same 2, and send an operator to the item's
+# the verb exits 0 for every verdict. Every orch script loads the project's
+# `.env.local` before its dispatch is reached, and a file the loader refuses
+# stops the script before the verb runs, with a status of its own. A
+# status-only contract would therefore spell "this state could not be read"
+# and "this script died in its settings loader before the verb ran" with
+# statuses a caller cannot tell apart, and send an operator to the item's
 # state file over a fault in `.env.local`. Only a run that reached the verb
 # writes a verdict line, so the word carries what no status can:
 #   workflow-state: handoff-standing=stands file=F      the record follows, one JSON line
@@ -1952,7 +1952,8 @@ UNITS=()
 # shellcheck source=lib/state-archive.sh
 . "$SCRIPT_DIR/lib/state-archive.sh"
 
-# `.env.local` is sourced as shell, so help is answered before the loader runs:
+# The loader assigns any name `.env.local` holds, so help is answered before
+# the loader runs:
 # the dry run is the real parser in a subshell, so no value parsed from the
 # command line exists for the loader's generic [env] handling to clobber, and
 # 9 and 8 are the only statuses meaning it reached the end, 8 where
@@ -1973,9 +1974,9 @@ source "$SCRIPT_DIR/lib/session-rows.sh"
 source "$SCRIPT_DIR/lib/watch-pid.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
-# --no-private-env is for a caller reading another checkout's state: the
-# private env file, which is sourced as shell, would run that checkout's code
-# in the caller, and so would any other [env] key it sets, PATH or a loader
+# --no-private-env is for a caller reading another checkout's state: a key
+# that checkout's private env file sets would run its code in the caller, and
+# so would any other [env] key it sets, PATH or a loader
 # variable reaching the jq every verb runs. So each settings file is loaded in
 # a subshell of its own, whose loop runs builtins alone once a key is set,
 # and ORCH_STATE_DIR is the one value that leaves it: `=VALUE` where the file
