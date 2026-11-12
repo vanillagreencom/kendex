@@ -13,8 +13,6 @@
 # narrow class. Call it before the narrow or launch phase.
 # change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
 # GLOBS is newline-separated, with bash patterns matching the whole path.
-# unread_list_match PATH GLOBS matches the same way with extglob on, whatever
-# the caller's shell sets.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
 
 # The adopted caller can lack an inventory entry when adoption preserves its
@@ -53,17 +51,6 @@ change_class_path_match() { # PATH GLOBS
     esac
   done <<<"$2"
   return 1
-}
-
-# The unread rule's queue list and globs take the list grammar, extglob on,
-# for this match alone: the change-class action sources this file with it
-# off. The caller's setting is restored.
-unread_list_match() { # PATH GLOBS
-  local extglob=true status=0
-  shopt -q extglob || { extglob=false; shopt -s extglob; }
-  change_class_path_match "$1" "$2" || status=$?
-  [ "$extglob" = true ] || shopt -u extglob
-  return "$status"
 }
 
 change_class_list_globs() { # CONF KEYWORD
@@ -153,6 +140,17 @@ opencode.jsonc'
       CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
     fi
   fi
+}
+
+# The unread rule's queue list and globs take the list grammar, extglob on,
+# for this match alone: the change-class action sources this file with it
+# off. The caller's setting is restored.
+unread_list_match() { # PATH GLOBS
+  local extglob=true status=0
+  shopt -q extglob || { extglob=false; shopt -s extglob; }
+  change_class_path_match "$1" "$2" || status=$?
+  [ "$extglob" = true ] || shopt -u extglob
+  return "$status"
 }
 
 # Lane decisions shared by the installed command and the action. The caller

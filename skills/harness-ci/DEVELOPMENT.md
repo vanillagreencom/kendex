@@ -29,6 +29,8 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 - The queue selector is the one command `change-class` runs out of a repository, and it runs the base commit's copy in a private checkout of that commit, made as the render proof's checkout is, never the judged tree's: the branch under judgement can neither name the command nor change what it runs, while a change to the selector itself is judged by the copy it replaces. It is asked only on `pull_request` and `merge_group`, the events whose merge route it decides, and only where every path rule read `queue_only=false`, at the verdict, because the jobs a merge group runs can depend on the class: kendex's own selection, `tools/ci-job-set`, runs no shell shard on a `render` change, and on a `trivial` one only where a path the Rust source reads gives it a measured class's row.
 - A glob list is split with pathname expansion off. Splitting it under the default would replace a glob naming a real directory with the files under the caller's working directory, and the list would no longer be the list.
 
+`HARNESS_CI_DOCS_PATHS` and `HARNESS_CI_UNREAD_PATHS` are base-only keys too: `change-class` drops them from its environment and reads them from the `[env]` tables of the commit `--base` names alone.
+
 ## Tests
 
 `tests/` runs in kendex CI on every change to this repository; run one locally with `bash skills/harness-ci/tests/path-set.test.sh`.
@@ -56,5 +58,3 @@ The `change-class` suite's last section installs and refreshes a real consumer w
 `tests/lib/workflow.sh` reads a workflow's job conditions, needs, names and triggers, plants a defect in a copy, and runs `tests/lib/gh-eval.py`, which evaluates the conditions, through `gh_eval`, which turns a refusal into an answer no row expects; kendex's `tools/tests/ci-aggregate.test.sh` reads its own `skill-tests.yml` with the same two files.
 
 `tools/bash32-lint` checks the shipped script for Bash 4+ syntax, because consumer runners include macOS system Bash 3.2.
-
-`HARNESS_CI_DOCS_PATHS` and `HARNESS_CI_UNREAD_PATHS` are base-only keys too: `change-class` drops them from its environment and reads them from the `[env]` tables of the commit `--base` names alone.
