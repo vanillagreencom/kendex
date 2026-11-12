@@ -46,11 +46,13 @@ pub fn ceilings(root: &Path) -> std::ffi::OsString {
 /// the locale, the temporary root, a scratch home under that root (a tool
 /// that reads a home, `gh` or `git`, finds nothing of the operator there),
 /// a fixed git identity (a fixture commit needs one, and the operator's
-/// is in the configuration no child reads) and git's ceiling at the root,
+/// is in the configuration no child reads), git's ceiling at the root,
 /// so no checkout above a test directory is a project root
-/// (`settings::roots` then reads the working directory). A row adds what
-/// it needs after. [`program`] applies it to a program a row starts,
-/// [`isolated`] to the binary, and the private tmux server to every pane.
+/// (`settings::roots` then reads the working directory), and tmux's
+/// default socket directory under the root, so a child that names no
+/// server finds none of the operator's. A row adds what it needs after.
+/// [`program`] applies it to a program a row starts, [`isolated`] to the
+/// binary, and the private tmux server to every pane.
 pub fn isolation_env(command: &mut Command) -> &mut Command {
     let root = std::env::temp_dir();
     let home = root.join("isolated-home");
@@ -63,6 +65,7 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
             std::env::var_os("LANG").unwrap_or_else(|| "C.UTF-8".into()),
         )
         .env("TMPDIR", &root)
+        .env("TMUX_TMPDIR", &root)
         .env("HOME", &home)
         .env("GIT_CEILING_DIRECTORIES", ceilings(&root));
     for (name, value) in [

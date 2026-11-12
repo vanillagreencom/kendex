@@ -19,9 +19,11 @@ use serde_json::Map;
 
 use agent_runtime::accounts::{self, walk};
 use agent_runtime::clock;
+use agent_runtime::controller::{self, views::MarkKind};
 use agent_runtime::error::{Error, Result};
 use agent_runtime::harness::{self, Harness};
 use agent_runtime::host::tmux::{self, Close, PaneFields};
+use agent_runtime::journal::Env;
 use agent_runtime::launch::{self, LaunchIntent};
 use agent_runtime::observe::{self, ProcessReading, State};
 use agent_runtime::process::{self, Identity};
@@ -185,6 +187,203 @@ enum Verb {
         #[command(subcommand)]
         op: AccountsOp,
     },
+    /// The controller's hand-over over the record `--record` names: the
+    /// successor's choice, its start, transfer, adoption and stop, the
+    /// reconcile of its open intents, and the job a transfer or a stop runs
+    /// in.
+    Controller {
+        #[command(subcommand)]
+        op: ControllerOp,
+    },
+}
+
+/// The hand-over's verbs, each over the controller record `--record` names.
+#[derive(Subcommand)]
+enum ControllerOp {
+    /// The controller walk's choice: the pending a start or transfer request
+    /// carries, for a first controller in `--cwd`, or for the successor of
+    /// the recorded controller whose pane `--predecessor` names, walked as
+    /// its `--mark` decides; `--recover` replays its own launch.
+    Successor {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        predecessor: Option<String>,
+        #[arg(long, requires = "predecessor", conflicts_with = "recover", value_parser = mark_kind)]
+        mark: Option<MarkKind>,
+        #[arg(long, requires = "predecessor")]
+        recover: bool,
+        /// The handoff the pending names; the recorded controller's own
+        /// where left out.
+        #[arg(long)]
+        handoff: Option<String>,
+    },
+    /// Open a controller where none runs, on the request file's
+    /// `{controller, brief_file, session?, watch?}`.
+    Start {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+        /// Exit by the effect's outcome: 0 confirmed, 3 failed, 75 unknown.
+        #[arg(long)]
+        effect_exit: bool,
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+    /// Ask for a succession on the request file's `{expected, successor,
+    /// brief_file, cause, ...}`, run by its detached job.
+    Transfer {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        request: PathBuf,
+        /// Exit by the effect's outcome: 0 confirmed or the runner up, 3
+        /// failed, 75 unknown.
+        #[arg(long)]
+        effect_exit: bool,
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+    /// Record the controller a person opened by hand in the caller's own
+    /// pane, or with `--request` the pane an adoption request names.
+    Adopt {
+        #[arg(long)]
+        record: PathBuf,
+        /// The account the session spends, where its rows and its
+        /// environment do not say.
+        #[arg(long, conflicts_with = "request")]
+        account: Option<String>,
+        #[arg(long)]
+        request: Option<PathBuf>,
+    },
+    /// Retire the recorded controller exactly and record `off`, run by its
+    /// detached job.
+    Stop {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        effect_exit: bool,
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+    /// The recorded controller, whether it still runs, the open controller
+    /// intents and, with `--server`, how the record stands to the caller's
+    /// own pane: `binding`, `native_match` and `model_launch`.
+    Status {
+        #[arg(long)]
+        record: PathBuf,
+        /// The caller's tmux server pid.
+        #[arg(long, requires = "pane")]
+        server: Option<String>,
+        /// The socket the caller's server answers on; the record's where
+        /// left out.
+        #[arg(long, requires = "server")]
+        socket: Option<PathBuf>,
+        #[arg(long, requires = "server")]
+        pane: Option<String>,
+        #[arg(long, requires = "server", default_value = "")]
+        harness: String,
+        /// The caller's launch home, empty where it could not be read.
+        #[arg(long, requires = "server", default_value = "")]
+        home: String,
+        /// The caller's native session id.
+        #[arg(long, requires = "server", default_value = "")]
+        session: String,
+    },
+    /// Complete or mark every open controller intent from its recorded
+    /// phase, send the notices closed ones owe, and heal the record from its
+    /// pane.
+    Reconcile {
+        #[arg(long)]
+        record: PathBuf,
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+    /// Write the handoff's snapshot at `--handoff` under its generation
+    /// header, the record's controller generation, over the prepared body at
+    /// `--body`; `--keep-prior` keeps the installed snapshot's content ahead
+    /// of the body.
+    Handoff {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        body: PathBuf,
+        #[arg(long)]
+        handoff: PathBuf,
+        #[arg(long)]
+        keep_prior: bool,
+    },
+    /// The detached job a transfer or a stop runs in.
+    #[command(hide = true)]
+    Job {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        intent: String,
+        #[command(flatten)]
+        reach: ReachArgs,
+    },
+}
+
+/// The mailbox and the tmux server a verb that runs an effect reaches, each
+/// named by the caller: nothing is found from the directory the command
+/// runs in, which a detached job inherits from whatever started it.
+#[derive(clap::Args)]
+struct ReachArgs {
+    /// The mailbox program an owner notice runs.
+    #[arg(long)]
+    mail_program: Option<PathBuf>,
+    /// The mailbox root an owner notice is delivered under.
+    #[arg(long)]
+    mail_root: Option<PathBuf>,
+    /// The tmux server a window opens on and a pane is read on; the record's
+    /// recorded server where left out.
+    #[arg(long)]
+    socket: Option<PathBuf>,
+}
+
+impl ReachArgs {
+    /// The reach the caller named for the record at `path`, refused before
+    /// any intent, job or server: `mailbox-unnamed` naming the missing flag,
+    /// `tmux-server-unnamed` where neither the call nor the record names a
+    /// server.
+    fn named(self, path: &Path) -> Result<agent_runtime::effects::Reach> {
+        let missing = |field: &str| Error::refused("mailbox-unnamed", &[("field", field)]);
+        let mail_program = self.mail_program.ok_or_else(|| missing("mail_program"))?;
+        let mail_root = self.mail_root.ok_or_else(|| missing("mail_root"))?;
+        let socket = match self.socket {
+            Some(socket) => socket,
+            None => {
+                recorded_socket(path)?.ok_or_else(|| Error::refused("tmux-server-unnamed", &[]))?
+            }
+        };
+        Ok(agent_runtime::effects::Reach {
+            mail_program,
+            mail_root,
+            socket: Some(socket),
+        })
+    }
+}
+
+/// The server the controller record at `path` names, where it names one.
+fn recorded_socket(path: &Path) -> Result<Option<PathBuf>> {
+    let Some(doc) = record::read_document(path)? else {
+        return Ok(None);
+    };
+    Ok(
+        record::field::<controller::Overseer>(path, &doc, controller::MEMBER)?
+            .as_ref()
+            .and_then(agent_runtime::effects::overseer_socket),
+    )
+}
+
+/// A mark word as the choice takes it.
+fn mark_kind(word: &str) -> std::result::Result<MarkKind, String> {
+    MarkKind::parse(word)
+        .ok_or_else(|| format!("{word} is none of context, headroom, rate, memory"))
 }
 
 /// The account reading's verbs.
@@ -1485,6 +1684,352 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             .unwrap_or_default()),
         },
         Verb::Accounts { op } => accounts_verb(op),
+        Verb::Controller { op } => controller_verb(op),
+    }
+}
+
+/// What the hand-over's verbs read: the engine's, the launch's and the
+/// hand-over's keys, the account keys the choice judges with, the homes an
+/// accountless launch inherits, and the checkout the command runs in.
+struct HandOverSettings {
+    roots: settings::Roots,
+    engine: settings::EngineSettings,
+    launch: settings::LaunchSettings,
+    controller: settings::ControllerSettings,
+    accounts: AccountSettings,
+    copilot_home: Option<String>,
+    pi_root: Option<String>,
+}
+
+/// The Pi root an accountless Pi launch runs under.
+const PI_ROOT_KEY: &str = "PI_CODING_AGENT_DIR";
+
+impl HandOverSettings {
+    fn load() -> Result<HandOverSettings> {
+        let accounts = AccountSettings::load()?;
+        let cwd = std::env::current_dir().map_err(|e| Error::io("read", ".", e))?;
+        let roots = settings::roots(&cwd)?;
+        let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+            std::env::vars_os().collect();
+        let keys = settings::Keys {
+            read: &[settings::ENGINE_KEYS, &[COPILOT_HOME_KEY, PI_ROOT_KEY]],
+            load: &[],
+        };
+        let values = settings::layered(&roots.project, &environment, true, &keys)?;
+        Ok(HandOverSettings {
+            engine: settings::EngineSettings::read(&values),
+            launch: settings::LaunchSettings::read(&values),
+            controller: settings::ControllerSettings::read(&values),
+            copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
+            pi_root: values.get(PI_ROOT_KEY).map(str::to_owned),
+            accounts,
+            roots,
+        })
+    }
+
+    fn effect_settings(&self) -> controller::effect::Settings<'_> {
+        controller::effect::Settings {
+            engine: &self.engine,
+            launch: &self.launch,
+            controller: &self.controller,
+            // A controller that is not orch's runs no other package's setup.
+            inherited: agent_runtime::effects::prepare::Inherited {
+                copilot_home: self.copilot_home.as_deref(),
+                pi_root: self.pi_root.as_deref(),
+                setups: &[],
+            },
+        }
+    }
+}
+
+/// A controller start launches no companion of agent-runtime's own: a
+/// request naming one is the opener's, and refuses here.
+fn no_companion(path: &Path) -> Result<controller::effect::CompanionFiles> {
+    Err(Error::refused(
+        "companion-unsupported",
+        &[("record", &path.display().to_string())],
+    ))
+}
+
+/// The hand-over's run over the record at `path`: its files beside the
+/// record, its owner notice and its server as `reach` names them, its
+/// outcomes through the controller's arm, its jobs through `controller job`.
+fn hand_over_run<'a>(
+    path: &'a Path,
+    reach: agent_runtime::effects::Reach,
+    loaded: &'a HandOverSettings,
+    settings: &'a controller::effect::Settings<'a>,
+    env: &'a Env,
+) -> controller::effect::Run<'a> {
+    controller::effect::Run {
+        engine: agent_runtime::effects::Run {
+            speaker: "agent-runtime",
+            path,
+            settings: &loaded.engine,
+            state_dir: path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+            close_grace: settings::Judged::of(
+                "close-grace",
+                Ok(std::time::Duration::from_secs(HAND_OVER_CLOSE_SECS)),
+            ),
+            reach,
+            env,
+            locking: record::Locking::FLOCK,
+            clock: &clock::SystemClock,
+            outcome_arm: controller::transition::outcome_arm,
+            job_words: controller::run::job_words,
+        },
+        settings,
+        companion: no_companion,
+    }
+}
+
+/// No controller effect closes a lane; the engine's close grace is a
+/// lane's, held at its default.
+const HAND_OVER_CLOSE_SECS: u64 = 15;
+
+/// A request file's body, or `request-invalid` naming the file and why.
+fn request_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    let bytes = std::fs::read(path).map_err(|e| Error::io("read-request", path, e))?;
+    serde_json::from_slice(&bytes).map_err(|e| {
+        Error::refused(
+            "request-invalid",
+            &[
+                ("path", &path.display().to_string()),
+                ("cause", &e.to_string()),
+            ],
+        )
+    })
+}
+
+/// Print `value` as the reply and exit by `status`, the effect's own.
+fn replied(value: serde_json::Value, status: i32) -> ! {
+    let _ = writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        serde_json::to_string(&Reply::ok(value)).unwrap_or_default()
+    );
+    std::process::exit(status);
+}
+
+/// One controller request answered, with `--effect-exit` exiting by the
+/// effect's outcome.
+fn hand_over(
+    run: &controller::effect::Run,
+    request: &controller::transition::Request,
+    effect_exit: bool,
+) -> Result<serde_json::Value> {
+    let answered = controller::run::request(run, request)?;
+    let mut reply = serde_json::to_value(&answered).map_err(|source| Error::Json {
+        path: run.engine.path.to_path_buf(),
+        source,
+    })?;
+    if effect_exit && let Some(effected) = &answered.effect {
+        let settled = controller::run::settle(
+            run.engine.path,
+            effected,
+            controller::run::job_bound(run.settings.engine)?,
+            &clock::SystemClock,
+        )?;
+        reply["settled"] = serde_json::to_value(settled.intent()).unwrap_or_default();
+        let status = settled.status();
+        if status != 0 {
+            replied(reply, status);
+        }
+    }
+    Ok(reply)
+}
+
+fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
+    use controller::transition::Request;
+    let loaded = HandOverSettings::load()?;
+    let env = Env::system()?;
+    let effect_settings = loaded.effect_settings();
+    match op {
+        ControllerOp::Successor {
+            record,
+            cwd,
+            predecessor,
+            mark,
+            recover,
+            handoff,
+        } => {
+            if recover {
+                let pane = predecessor.as_deref().unwrap_or_default();
+                return controller::successor::recovery(&loaded.launch, &record, pane);
+            }
+            let now = clock::Clock::wall(&clock::SystemClock)
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let accounts_env = loaded.accounts.env();
+            // The choice judges no rate mark of its own: the marks are the
+            // opener's, so the wall a rate projects is never reached here.
+            let no_wall = settings::Judged::of("wall-minutes", Ok(0));
+            let choosing = controller::successor::Choosing {
+                accounts: loaded.accounts.env(),
+                launch: &loaded.launch,
+                controller: &loaded.controller,
+                wall_minutes: &no_wall,
+            };
+            let project = loaded.accounts.project.clone();
+            let mut walk = |request: &accounts::walk::WalkRequest| {
+                accounts::here::walk(&accounts_env, &project, Some(&record), request, now)
+            };
+            let pick_env = loaded.accounts.env();
+            let mut pick =
+                |request: &accounts::PickRequest, _: Option<&str>| match accounts::here::pick(
+                    &pick_env,
+                    &project,
+                    Some(&record),
+                    request,
+                    now,
+                ) {
+                    Ok(answer) => answer,
+                    Err(e) => accounts::PickAnswer::Unjudged {
+                        cause: e.to_string(),
+                    },
+                };
+            controller::successor::successor(
+                &choosing,
+                &record,
+                predecessor.as_deref(),
+                mark,
+                &cwd,
+                handoff.as_deref(),
+                controller::successor::Ground {
+                    walk: &mut walk,
+                    pick: &mut pick,
+                },
+                now,
+            )
+        }
+        ControllerOp::Start {
+            record,
+            request,
+            effect_exit,
+            reach,
+        } => {
+            let reach = reach.named(&record)?;
+            let r = Request::StartController(Box::new(request_file(&request)?));
+            let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
+            hand_over(&run, &r, effect_exit)
+        }
+        ControllerOp::Transfer {
+            record,
+            request,
+            effect_exit,
+            reach,
+        } => {
+            let reach = reach.named(&record)?;
+            let r = Request::RequestTransfer(Box::new(request_file(&request)?));
+            let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
+            hand_over(&run, &r, effect_exit)
+        }
+        ControllerOp::Stop {
+            record,
+            effect_exit,
+            reach,
+        } => {
+            let reach = reach.named(&record)?;
+            let r = Request::StopController(controller::transition::StopController {});
+            let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
+            hand_over(&run, &r, effect_exit)
+        }
+        ControllerOp::Adopt {
+            record,
+            account,
+            request,
+        } => match request {
+            Some(request) => {
+                let r: controller::AdoptController = request_file(&request)?;
+                let adopted = agent_runtime::effects::adopt_controller(
+                    &record,
+                    &r,
+                    &loaded.engine,
+                    record::Locking::FLOCK,
+                )?;
+                serde_json::to_value(adopted).map_err(|source| Error::Json {
+                    path: record.clone(),
+                    source,
+                })
+            }
+            None => Ok(agent_runtime::effects::register_controller(
+                &record,
+                account.as_deref(),
+                &loaded.engine,
+                &loaded.roots.common,
+                record::Locking::FLOCK,
+            )?
+            .0),
+        },
+        ControllerOp::Status {
+            record,
+            server,
+            socket,
+            pane,
+            harness,
+            home,
+            session,
+        } => {
+            let caller = server
+                .as_deref()
+                .map(|server| controller::status::CallerKey {
+                    server,
+                    socket: socket.as_deref(),
+                    pane: pane.as_deref().unwrap_or_default(),
+                    harness: &harness,
+                    home: &home,
+                    session: &session,
+                });
+            let status = controller::status::status(&record, &loaded.engine, caller.as_ref())?;
+            serde_json::to_value(status).map_err(|source| Error::Json {
+                path: record.clone(),
+                source,
+            })
+        }
+        ControllerOp::Reconcile { record, reach } => {
+            let reach = reach.named(&record)?;
+            let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
+            let reconciled = controller::run::reconcile(&run)?;
+            serde_json::to_value(reconciled).map_err(|source| Error::Json {
+                path: record.clone(),
+                source,
+            })
+        }
+        ControllerOp::Handoff {
+            record,
+            body,
+            handoff,
+            keep_prior,
+        } => {
+            let written = controller::handoff::write(
+                &record,
+                &body,
+                &handoff,
+                keep_prior,
+                &controller::handoff::Opener {
+                    misplaced: &|_| None,
+                    amend: &|text| Ok(text.to_owned()),
+                },
+                &env,
+            )?;
+            serde_json::to_value(written).map_err(|source| Error::Json {
+                path: record.clone(),
+                source,
+            })
+        }
+        ControllerOp::Job {
+            record,
+            intent,
+            reach,
+        } => {
+            let reach = reach.named(&record)?;
+            let run = hand_over_run(&record, reach, &loaded, &effect_settings, &env);
+            let recorded = controller::run::run_job(&run, &intent)?;
+            serde_json::to_value(recorded).map_err(|source| Error::Json {
+                path: record.clone(),
+                source,
+            })
+        }
     }
 }
 

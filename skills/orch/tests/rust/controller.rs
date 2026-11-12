@@ -1359,8 +1359,19 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     // caller's, unclaimed.
     let before = runner.fleet();
     let intent = before["intents"][0]["id"].as_str().unwrap().to_owned();
+    let mail_program = fixtures().join("lane-mail-quiet/lane-mail");
+    let mail_root = runner.state_dir().display().to_string();
     let refused = runner.run_env(
-        &["job", "--fleet", "--intent", &intent],
+        &[
+            "job",
+            "--fleet",
+            "--intent",
+            &intent,
+            "--mail-program",
+            mail_program.to_str().unwrap(),
+            "--mail-root",
+            &mail_root,
+        ],
         &[("AGENT_RUNTIME_JOB_CLAIM_SECS", "0")],
     );
     let refusal = &reply(&refused)["refusal"];
@@ -3849,10 +3860,18 @@ fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
 }
 
 /// `orch-runtime launch-job` and `stop-job` in `dir` with `path` as `PATH`
-/// where a row names one.
+/// where a row names one, the mailbox and a tmux socket no server holds
+/// planted in `dir`.
 fn job_verb(dir: &Path, path: Option<&Path>, args: &[&str]) -> std::process::Output {
     let mut command = isolated();
-    command.args(args).current_dir(dir);
+    command
+        .args(args)
+        .current_dir(dir)
+        .env(
+            "LANE_MAIL_CLI",
+            fixtures().join("lane-mail-quiet/lane-mail"),
+        )
+        .env("TMUX", format!("{},0,0", dir.join("tmux.sock").display()));
     if let Some(path) = path {
         command.env("PATH", path);
     }
@@ -7466,6 +7485,19 @@ impl MarksWorld {
             (
                 "AGENT_RUNTIME_ACCOUNT_BURN_PCT_PER_HOUR".to_owned(),
                 "0".to_owned(),
+            ),
+            // The world's own mailbox and a tmux socket no server holds, so
+            // a notice or a server read stays inside it.
+            (
+                "LANE_MAIL_CLI".to_owned(),
+                fixtures()
+                    .join("lane-mail-quiet/lane-mail")
+                    .display()
+                    .to_string(),
+            ),
+            (
+                "TMUX".to_owned(),
+                format!("{},0,0", dir.path().join("tmux.sock").display()),
             ),
         ];
         MarksWorld { dir, env }

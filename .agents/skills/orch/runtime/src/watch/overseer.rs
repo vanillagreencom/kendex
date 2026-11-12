@@ -1748,7 +1748,7 @@ pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchP
 }
 
 /// The launch a relaunch's chain asked, the one whose status was
-/// [`crate::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-session`
+/// [`agent_runtime::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-session`
 /// intent, since the chain's status is its launch's and no other launch of
 /// the item runs while the marker stands.
 fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a agent_runtime::intent::Intent> {
@@ -1765,7 +1765,7 @@ fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a agent_runtime
 /// and its status leave; a marker with no status `prepare` past its start
 /// is `lane-prepare-stuck ... reason=relaunch-pending` once per start (the
 /// `wall-relaunch` row keyed `<since>|stuck`, cleared when the status
-/// lands). A status of [`crate::effects::UNCONFIRMED_EXIT`] is no outcome
+/// lands). A status of [`agent_runtime::effects::UNCONFIRMED_EXIT`] is no outcome
 /// yet: the marker stands, read against the item's launch intent, until the
 /// intent's reconcile settles it, a failure said once as
 /// `lane-prepare-failed ... reason=relaunch-failed log=` and a confirmation
@@ -1828,19 +1828,21 @@ pub fn relaunch_outcomes(
         let ended = match status {
             None => None,
             Some(text) => match text.trim_end_matches('\n').parse::<i32>() {
-                Ok(crate::effects::UNCONFIRMED_EXIT) => match relaunched(fleet, &fields.item) {
-                    Some(intent) if intent.open() => None,
-                    Some(intent)
-                        if intent.outcome == agent_runtime::protocol::Outcome::Confirmed =>
-                    {
-                        Some(Some(0))
+                Ok(agent_runtime::effects::UNCONFIRMED_EXIT) => {
+                    match relaunched(fleet, &fields.item) {
+                        Some(intent) if intent.open() => None,
+                        Some(intent)
+                            if intent.outcome == agent_runtime::protocol::Outcome::Confirmed =>
+                        {
+                            Some(Some(0))
+                        }
+                        Some(_) => Some(None),
+                        None => {
+                            failed(&mut out, "read", &exit, "launch-intent-absent".to_owned());
+                            continue;
+                        }
                     }
-                    Some(_) => Some(None),
-                    None => {
-                        failed(&mut out, "read", &exit, "launch-intent-absent".to_owned());
-                        continue;
-                    }
-                },
+                }
                 Ok(rc) => Some(Some(rc)),
                 Err(_) => {
                     failed(&mut out, "read", &exit, format!("no exit status: {text:?}"));

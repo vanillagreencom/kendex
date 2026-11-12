@@ -42,7 +42,7 @@ fn no_target(
 }
 
 /// The engine's run over the record at `path`, its files under `dir`, the
-/// owner notice run by `mail_program`.
+/// owner notice run by `mail_program` under `dir`, no tmux server named.
 pub(super) fn run<'a>(
     path: &'a Path,
     settings: &'a EngineSettings,
@@ -57,12 +57,16 @@ pub(super) fn run<'a>(
         settings,
         state_dir: dir.to_path_buf(),
         close_grace: Judged::of("close-grace", Ok(Duration::from_secs(15))),
-        mail_program,
-        root: dir.to_path_buf(),
+        reach: super::Reach {
+            mail_program,
+            mail_root: dir.to_path_buf(),
+            socket: None,
+        },
         env,
         locking: Locking::FLOCK,
         clock,
         outcome_arm: no_target,
+        job_words: crate::controller::run::job_words,
     }
 }
 

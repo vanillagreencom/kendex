@@ -65,7 +65,6 @@ mod stop;
 pub use close::{Closed, Word as CloseWord, close_lane};
 
 use std::path::Path;
-use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Outcome;
@@ -132,8 +131,8 @@ impl<'a> Run<'a> {
 
 /// The engine's run over the record at `path`, filled from orch's settings:
 /// the engine's own keys as the one load read them, and orch's state
-/// directory, close grace, mailbox program and main checkout as the
-/// arguments the engine takes.
+/// directory, close grace and the fleet's reach as the arguments the engine
+/// takes.
 fn engine_run<'a>(
     path: &'a Path,
     settings: &'a Settings,
@@ -147,13 +146,41 @@ fn engine_run<'a>(
         settings: &settings.engine,
         state_dir: settings.state_dir.clone(),
         close_grace: settings.close_grace.clone(),
-        mail_program: settings.lane_mail_cli.clone(),
-        root: settings.roots.common.clone(),
+        reach: fleet_reach(settings),
         env,
         locking,
         clock,
         outcome_arm: ops::engine_outcome_arm,
+        job_words,
     }
+}
+
+/// The fleet's own mailbox and tmux server: the mailbox program and main
+/// checkout of the checkout the fleet's record stands in, and the server
+/// the overseer's own `$TMUX` names, else the user's default.
+fn fleet_reach(settings: &Settings) -> agent_runtime::effects::Reach {
+    agent_runtime::effects::Reach {
+        mail_program: settings.lane_mail_cli.clone(),
+        mail_root: settings.roots.common.clone(),
+        socket: agent_runtime::host::tmux::ambient_socket().ok(),
+    }
+}
+
+/// orch's own `job` command for an intent's detached job, after the
+/// executable: the job reaches the mailbox and the server its launcher was
+/// given, named on its own command line.
+fn job_words(run: &agent_runtime::effects::Run, intent: &str) -> Vec<String> {
+    let mut words = vec![
+        "--state-dir".to_owned(),
+        run.state_dir.display().to_string(),
+        "job".to_owned(),
+        "--file".to_owned(),
+        run.path.display().to_string(),
+        "--intent".to_owned(),
+        intent.to_owned(),
+    ];
+    words.extend(agent_runtime::controller::run::reach_words(&run.reach));
+    words
 }
 
 /// How far a request's live effect got in this process: its outcome
@@ -339,19 +366,29 @@ fn live_effect(report: &Report) -> Option<&Effect> {
 
 /// The live effect `effect` names, run and recorded, or handed to its job.
 fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected> {
+    if let Some(hand_over) = hand_over_request(request) {
+        return with_controller(run, |ctl| {
+            agent_runtime::controller::run::live_effect(ctl, &hand_over, effect)
+        })
+        .map(|effected| match effected {
+            agent_runtime::controller::run::Effected::Recorded(r) => {
+                Effected::Recorded(recorded(*r))
+            }
+            agent_runtime::controller::run::Effected::Started(started) => {
+                Effected::Started(started)
+            }
+        });
+    }
     let intent = match effect {
         // A repeated request found an open intent: reconcile it rather than
         // start a second effect.
         Effect::Reconciled { intent } => {
             let Reconciled { applied, stale, .. } = reconcile_intent(run, &intent.id)?;
-            // A close or a controller stop whose reconcile still reads a
-            // stop to run, the recorded identity live and unchanged or a
-            // recorded pane present, is a stop never completed. The request
-            // asked for that stop, and the stop is exact on the identity it
-            // reads, so the repeat runs it rather than leaving the target
-            // with no route. A controller stop runs again
-            // in a detached job, as its first run did:
-            // the reconcile read the prior job's owner dead.
+            // A close whose reconcile still reads a stop to run, the
+            // recorded identity live and unchanged or a recorded pane
+            // present, is a stop never completed. The request asked for that
+            // stop, and the stop is exact on the identity it reads, so the
+            // repeat runs it rather than leaving the target with no route.
             if stop_route_open(&applied) {
                 let outcome = match request {
                     // The stop this request reruns takes the reconcile's stale
@@ -359,15 +396,12 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     Request::CloseOwnedResources(_) => {
                         Some(stop::stop_effect(run, &intent.id, &stale)?)
                     }
-                    Request::StopController(_) => {
-                        let current = read_intent(run.engine.path, &intent.id)?;
-                        return job::start(&run.engine, &current, request, job::Start::Repeat)
-                            .map(Effected::Started)
-                            .map_err(Error::from);
+                    Request::LaunchLane(_) => None,
+                    Request::RequestTransfer(_)
+                    | Request::StartController(_)
+                    | Request::StopController(_) => {
+                        unreachable!("a controller request's effect is the hand-over's")
                     }
-                    Request::LaunchLane(_)
-                    | Request::RequestTransfer(_)
-                    | Request::StartController(_) => None,
                     Request::AdoptSession(_)
                     | Request::BeginRound(_)
                     | Request::RecordValidationAdmission(_)
@@ -420,17 +454,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
     let outcome = match request {
         Request::LaunchLane(r) => launch::launch_effect(run, &intent, r),
         Request::CloseOwnedResources(_) => stop::stop_effect(run, &intent.id, &[]),
-        // A transfer's or a stop's effect ends the controller's pane, this
-        // process's own as often as not: each runs in a detached job that
-        // takes the intent's lease. A start retires
-        // nothing and stays here.
-        Request::RequestTransfer(_) | Request::StopController(_) => {
-            return job::start(&run.engine, &intent, request, job::Start::First)
-                .map(Effected::Started)
-                .map_err(Error::from);
-        }
-        Request::StartController(r) => {
-            with_controller(run, |ctl| controller::start_effect(ctl, &intent.id, r))
+        Request::RequestTransfer(_) | Request::StartController(_) | Request::StopController(_) => {
+            unreachable!("a controller request's effect is the hand-over's")
         }
         Request::AdoptSession(_)
         | Request::BeginRound(_)
@@ -470,137 +495,24 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
     Ok(Effected::Recorded(applied))
 }
 
-/// The job's side of a transfer or a stop: claim the
-/// intent `intent_id` and run its effect from the request the caller wrote
-/// beside the record, recording the outcome as any effect does.
+/// The job's side of a transfer or a stop, the hand-over's own: the intent
+/// claimed and its effect run from the request the caller wrote beside the
+/// record, reaching the mailbox and the server its launcher named.
 pub fn run_job(
     path: &Path,
     intent_id: &str,
+    reach: agent_runtime::effects::Reach,
     settings: &Settings,
     env: &Env,
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Applied> {
-    let run = Run::new(path, settings, env, locking, clock);
-    let (request, op) = read_job(&run, intent_id)?;
-    // The job's own settings may differ from its caller's: a value its
-    // effect would refuse leaves the intent unclaimed.
-    ops::judge_effect_settings(&request, settings)?;
-    job::claim(&run.engine, intent_id)?;
-    let outcome = match (&request, op) {
-        (Request::RequestTransfer(r), job::Op::Transfer) => {
-            with_controller(&run, |ctl| controller::transfer_effect(ctl, intent_id, r))?
-        }
-        (_, job::Op::Stop) => with_controller(&run, |ctl| {
-            controller::stop_controller_effect(ctl, intent_id)
-        })?,
-        (_, job::Op::Transfer) => unreachable!("a transfer job reads a transfer request"),
-    };
-    run.apply_outcome(outcome)
-}
-
-/// The job's side, first: the request the caller wrote beside the record
-/// and the controller operation it runs. The effect the job then runs is
-/// its operation's own, after the claim.
-fn read_job(run: &Run, intent_id: &str) -> Result<(Request, job::Op)> {
-    let request_path = agent_runtime::record::job_request_path(&run.settings.state_dir, intent_id);
-    let bytes = std::fs::read(&request_path).map_err(|e| {
-        Error::Runtime(agent_runtime::Error::io(
-            "read-job-request",
-            &request_path,
-            e,
-        ))
-    })?;
-    let request: Request = serde_json::from_slice(&bytes).map_err(|e| Error::Request {
-        path: request_path.clone(),
-        cause: e.to_string(),
-    })?;
-    let op = match &request {
-        Request::RequestTransfer(_) => Some(job::Op::Transfer),
-        Request::StopController(_) => Some(job::Op::Stop),
-        Request::LaunchLane(_)
-        | Request::CloseOwnedResources(_)
-        | Request::StartController(_)
-        | Request::AdoptSession(_)
-        | Request::BeginRound(_)
-        | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
-        | Request::ClaimIntent(_)
-        | Request::AcceptResult(_)
-        | Request::RecordVerification(_)
-        | Request::VerifyHead(_)
-        | Request::VerifyPr(_)
-        | Request::VerifyReview(_)
-        | Request::ApproveHead(_)
-        | Request::CloseLane(_)
-        | Request::ReconcileRound(_)
-        | Request::RecordHandoff(_)
-        | Request::ResumeHandoff(_)
-        | Request::ParkLane(_)
-        | Request::ReserveLane(_)
-        | Request::ReleaseLane(_)
-        | Request::RecordOutcome(_)
-        | Request::RecordPhase(_)
-        | Request::RecordProgress(_)
-        | Request::RecordLaneProgress(_)
-        | Request::RecordDirectiveSend(_)
-        | Request::RecordWallPauses(_)
-        | Request::AdmitPaths(_)
-        | Request::PruneRecords(_)
-        | Request::Validate(_)
-        | Request::RecordQueueWatch(_)
-        | Request::RecordPush(_)
-        | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => None,
-    };
-    let Some(op) = op else {
-        return Err(Error::Request {
-            path: request_path,
-            cause: format!("{} is not a job's operation", request.name()),
-        });
-    };
-    Ok((request, op))
-}
-
-/// The status `op --effect-exit` answers for an effect whose outcome is
-/// still open, its intent left for its reconcile.
-pub const UNCONFIRMED_EXIT: i32 = 75;
-
-/// The intent of a job this process started, read until its outcome
-/// settles, or until its runner's identity is recorded, or until `bound`
-/// passes. A transfer's job records the runner it opened and then waits for
-/// the process that handed it the intent to exit before it retires the
-/// predecessor, so the caller waits no longer than that: the rest of the
-/// outcome is the job's, which owes the owner a notice where it fails.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the caller's one bounded wait on the injected clock for the job it handed its intent to"
-)]
-pub fn await_job(
-    path: &Path,
-    intent_id: &str,
-    bound: Duration,
-    clock: &dyn Clock,
-) -> Result<Intent> {
-    const POLL: Duration = Duration::from_millis(200);
-    let deadline = clock.now() + bound;
-    loop {
-        let intent = read_intent(path, intent_id)?;
-        if !intent.open() || runner_recorded(&intent) || clock.now() >= deadline {
-            return Ok(intent);
-        }
-        clock.sleep(POLL);
-    }
-}
-
-/// Whether an open intent records the runner its effect opened, under the
-/// identity read once that runner stood at its composer.
-pub fn runner_recorded(intent: &Intent) -> bool {
-    intent
-        .phase
-        .as_ref()
-        .and_then(agent_runtime::intent::Phase::opened)
-        .is_some_and(|opened| opened.identity.is_some())
+    let mut run = Run::new(path, settings, env, locking, clock);
+    run.engine.reach = reach;
+    with_controller(&run, |ctl| {
+        agent_runtime::controller::run::run_job(ctl, intent_id)
+    })
+    .map(recorded)
 }
 
 /// Read the pane an adoption names and record the controller in it: the
@@ -807,7 +719,7 @@ fn with_controller<T>(
         controller: &run.settings.controller,
         inherited: run.settings.inherited(),
     };
-    let ctl = controller::Run {
+    let mut ctl = controller::Run {
         engine: engine_run(
             run.engine.path,
             run.settings,
@@ -818,7 +730,66 @@ fn with_controller<T>(
         settings: &settings,
         companion: watch_files,
     };
+    ctl.engine.reach = run.engine.reach.clone();
     act(&ctl).map_err(Error::from)
+}
+
+/// orch's controller request as the hand-over's own, its body unchanged; a
+/// lane's or an item's is none.
+fn hand_over_request(request: &Request) -> Option<agent_runtime::controller::transition::Request> {
+    use agent_runtime::controller::transition::Request as HandOver;
+    match request {
+        Request::RequestTransfer(r) => Some(HandOver::RequestTransfer(r.clone())),
+        Request::StartController(r) => Some(HandOver::StartController(r.clone())),
+        Request::StopController(r) => Some(HandOver::StopController(r.clone())),
+        Request::LaunchLane(_)
+        | Request::CloseOwnedResources(_)
+        | Request::AdoptSession(_)
+        | Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::AdoptController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::RecordVerification(_)
+        | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::CloseLane(_)
+        | Request::ReconcileRound(_)
+        | Request::RecordHandoff(_)
+        | Request::ResumeHandoff(_)
+        | Request::ParkLane(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::RecordOutcome(_)
+        | Request::RecordPhase(_)
+        | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_)
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => None,
+    }
+}
+
+/// The hand-over's outcome as orch's `record-outcome` report.
+fn recorded(r: agent_runtime::controller::transition::OutcomeRecorded) -> Applied {
+    Applied {
+        kind: state::Kind::Fleet,
+        report: Report::RecordOutcome(Box::new(OutcomeRecorded {
+            intent: r.intent,
+            recorded_now: r.recorded_now,
+            lane: None,
+            generation: r.generation,
+            reconciled: r.reconciled,
+        })),
+    }
 }
 
 /// Re-observe every open intent on `path` by its recorded phase and
@@ -858,8 +829,12 @@ pub fn reconcile(
     // its receipt kept beside the state; it is stamped here, never sent
     // again.
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
-    let controller = match agent_runtime::effects::heal_controller(path, &settings.engine, locking)
-    {
+    let controller = match agent_runtime::effects::heal_controller(
+        path,
+        &settings.engine,
+        run.engine.reach.socket.as_deref(),
+        locking,
+    ) {
         Ok(None) => None,
         Ok(Some(adopted)) => Some(ControllerHeal::Healed(adopted)),
         Err(e) => Some(ControllerHeal::Refused {
@@ -899,6 +874,16 @@ struct Reconciled {
 
 fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     let intent = read_intent(run.engine.path, intent_id)?;
+    if intent.op.on_controller() {
+        return with_controller(run, |ctl| {
+            agent_runtime::controller::run::reconcile_intent(ctl, intent_id)
+        })
+        .map(|r| Reconciled {
+            applied: recorded(r),
+            stale: Vec::new(),
+            deferred: false,
+        });
+    }
     // The owner the intent recorded at persist: a reconcile
     // that finds that process still live defers to it and records only the
     // observation, so a contender racing the owner before its first phase
@@ -941,11 +926,9 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
         agent_runtime::intent::EffectOp::LaunchSession => launch::reconcile_launch(run, &intent)?,
         agent_runtime::intent::EffectOp::CloseResources => stop::reconcile_close(run, &intent)?,
         agent_runtime::intent::EffectOp::RequestTransfer
-        | agent_runtime::intent::EffectOp::StartController => {
-            with_controller(run, |ctl| controller::reconcile_transfer(ctl, &intent))?
-        }
-        agent_runtime::intent::EffectOp::StopController => {
-            with_controller(run, |ctl| controller::reconcile_stop(ctl, &intent))?
+        | agent_runtime::intent::EffectOp::StartController
+        | agent_runtime::intent::EffectOp::StopController => {
+            unreachable!("a controller intent's reconcile is the hand-over's")
         }
     };
     let stale = outcome.stale_read();

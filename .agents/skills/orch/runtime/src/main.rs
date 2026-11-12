@@ -5,17 +5,15 @@
 //! clap's own convention and agent-runtime's, with no reply: there was no
 //! request to answer.
 use agent_runtime::record::{self, Locking};
-use std::collections::hash_map::RandomState;
 use std::ffi::{OsStr, OsString};
-use std::hash::{BuildHasher, Hasher};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 use agent_runtime::clock::SystemClock;
+use agent_runtime::controller::run as controller_run;
 use agent_runtime::journal::Env;
 use orch_runtime::effects;
 use orch_runtime::error::{Error, Result};
@@ -131,6 +129,15 @@ enum Verb {
         target: Target,
         #[arg(long)]
         intent: String,
+        /// The mailbox program the launcher named for the owner notice.
+        #[arg(long)]
+        mail_program: Option<PathBuf>,
+        /// The mailbox root the launcher named.
+        #[arg(long)]
+        mail_root: Option<PathBuf>,
+        /// The tmux server the launcher named.
+        #[arg(long)]
+        socket: Option<PathBuf>,
     },
     /// Start a command detached as a recorded job: a transient user unit
     /// where the user manager lingers, else a `setsid` group, the record
@@ -1190,44 +1197,6 @@ enum FindingsOp {
     },
 }
 
-/// The clock, nonce and owner this process stamps with. The nonce comes from
-/// the hasher's random seed, the one source of randomness std provides; the
-/// owner is this process's identity through agent-runtime's one reader. A
-/// failed identity read refuses the verb with its cause; a reader that answers
-/// with no process for this pid leaves the owner unset, and the library then
-/// refuses to persist an intent without one.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the command reads the wall clock and its own identity for the stamp and the owner it writes with; no effect runs here"
-)]
-fn system_env() -> Result<Env> {
-    let since_epoch = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let nonce = (RandomState::new().build_hasher().finish() % 32_768) as u32;
-    let pid = std::process::id();
-    let owner = match agent_runtime::process::identity(pid) {
-        agent_runtime::reading::Reading::Live(id) => Some(agent_runtime::intent::Owner {
-            pid: id.pid as u64,
-            start: id.start,
-        }),
-        agent_runtime::reading::Reading::Gone => None,
-        agent_runtime::reading::Reading::Unreadable { cause } => {
-            return Err(Error::Runtime(agent_runtime::Error::Process {
-                operation: "owner-identity",
-                pid,
-                cause: cause.to_owned(),
-            }));
-        }
-    };
-    Ok(Env {
-        now_secs: since_epoch.as_secs(),
-        now_nanos: since_epoch.as_nanos(),
-        nonce,
-        owner,
-    })
-}
-
 /// The checkout the runtime runs in and the settings it acts on, resolved once
 /// per process from the command line, the project files and the environment.
 fn resolve_settings(flags: &Flags) -> Result<Settings> {
@@ -1398,7 +1367,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 .into());
             }
             let settings = resolve_settings(&flags)?;
-            let now = system_env()?.now_secs;
+            let now = Env::system()?.now_secs;
             let session = session_start.map(|start| watch::report::Session {
                 start,
                 fleet: state.clone(),
@@ -1468,7 +1437,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &path,
                     &record,
                     &settings.store,
-                    &system_env()?,
+                    &Env::system()?,
                     locking,
                 );
             }
@@ -1483,7 +1452,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // What the settings refuse before any transition: a succession
             // under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             // A push, a round's prune and a QA decision run their effects
             // between their own writes; a push or a prune answers with its
             // reply and the exit its outcome names.
@@ -1615,13 +1584,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                                         let ops::Report::RecordOutcome(r) = &applied.report else {
                                             unreachable!("record-outcome returns its own report")
                                         };
-                                        Settled::Recorded(r.intent.clone())
+                                        controller_run::Settled::Recorded(r.intent.clone())
                                     }
                                     effects::Effected::Started(started) => {
-                                        Settled::Job(effects::await_job(
+                                        controller_run::Settled::Job(controller_run::await_job(
                                             &path,
                                             &started.intent,
-                                            settings.engine.verify.get()? * 2 + JOB_ANSWER_MARGIN,
+                                            controller_run::job_bound(&settings.engine)?,
                                             &SystemClock,
                                         )?)
                                     }
@@ -1666,7 +1635,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Reconcile { target } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(effects::reconcile(
                 &path,
                 &settings,
@@ -1675,13 +1644,33 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &SystemClock,
             )?)?
         }
-        Verb::Job { target, intent } => {
+        Verb::Job {
+            target,
+            intent,
+            mail_program,
+            mail_root,
+            socket,
+        } => {
+            // The job reaches only what its launcher named: a mailbox found
+            // from the directory it inherited may be another checkout's.
+            let missing = |field: &str| {
+                Error::Runtime(agent_runtime::Error::refused(
+                    "mailbox-unnamed",
+                    &[("field", field)],
+                ))
+            };
+            let reach = agent_runtime::effects::Reach {
+                mail_program: mail_program.ok_or_else(|| missing("mail_program"))?,
+                mail_root: mail_root.ok_or_else(|| missing("mail_root"))?,
+                socket,
+            };
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(effects::run_job(
                 &path,
                 &intent,
+                reach,
                 &settings,
                 &env,
                 locking,
@@ -1703,7 +1692,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             );
             let status = match &launch {
                 agent_runtime::effects::job::Launch::Started { .. } => 0,
-                agent_runtime::effects::job::Launch::Unanswered { .. } => effects::UNCONFIRMED_EXIT,
+                agent_runtime::effects::job::Launch::Unanswered { .. } => {
+                    agent_runtime::effects::UNCONFIRMED_EXIT
+                }
                 agent_runtime::effects::job::Launch::Refused { cause } => {
                     return Err(agent_runtime::Error::refused(
                         "job-launch-failed",
@@ -1730,7 +1721,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 stale_hours,
                 &merged,
                 None,
-                system_env()?.now_secs,
+                Env::system()?.now_secs,
             )?)?
         }
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
@@ -1761,7 +1752,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 ops::artifact::Round::Stamp(_) | ops::artifact::Round::Cut(_) => "dev-round-write",
             };
             let result = artifact_settings(&flags, Some(worktree)).and_then(|settings| {
-                let env = system_env()?;
+                let env = Env::system()?;
                 match op {
                     ops::artifact::Round::Stamp(r) => ops::artifact::stamp(&r, false, &env),
                     ops::artifact::Round::Cut(r) => ops::artifact::stamp(&r, true, &env),
@@ -1855,7 +1846,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let lines = match &op {
                 CycleOp::Report => ops::cycle::rollup(&fleet, true)?,
                 CycleOp::Rollup => {
-                    ops::cycle::rollup_logged(&fleet, locking, &settings.store, &system_env()?)?
+                    ops::cycle::rollup_logged(&fleet, locking, &settings.store, &Env::system()?)?
                 }
                 CycleOp::Stages { item } => ops::cycle::stages(&settings, &fleet, item)?,
             };
@@ -1885,7 +1876,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 return watch::overseer::lane_marks(&settings, context, agent_reserve);
             }
             let path = target_path(&target, &settings);
-            let now = system_env()?.now_secs;
+            let now = Env::system()?.now_secs;
             watch::overseer::marks_verb(
                 &settings,
                 &path,
@@ -1908,7 +1899,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             if let (true, Some(pane)) = (recover, predecessor.as_deref()) {
                 ops::successor::recovery(&settings, &path, pane)?
             } else {
-                let now = system_env()?.now_secs;
+                let now = Env::system()?.now_secs;
                 ops::successor::successor(
                     &settings,
                     &path,
@@ -1936,7 +1927,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &body,
                     &handoff,
                     keep_prior,
-                    &system_env()?,
+                    &Env::system()?,
                 )?,
                 None => serde_json::json!({"asks": ops::successor::open_asks(&settings, &path)?}),
             }
@@ -1964,7 +1955,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
             let request: ops::AdmitPaths = read_request(&request)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(admit(&path, &request, &env, locking, &settings)?)?
         }
         Verb::Validate {
@@ -1973,7 +1964,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             std::process::exit(orch_runtime::validate::entry::dispatch(
                 &args,
                 &flags,
-                &system_env()?,
+                &Env::system()?,
                 locking,
             ));
         }
@@ -1982,7 +1973,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let settings = orch_runtime::validate::entry::resolve_at(&worktree, &flags)?;
             let mode =
-                orch_runtime::validate::entry::mode(&settings, &worktree, base, &system_env()?)?;
+                orch_runtime::validate::entry::mode(&settings, &worktree, base, &Env::system()?)?;
             serde_json::json!({"mode": mode})
         }
         Verb::Validate {
@@ -2003,7 +1994,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 },
         } => {
             let settings = resolve_settings(&flags)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             let request = orch_runtime::validate::StartRequest {
                 item,
                 round,
@@ -2042,7 +2033,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 },
         } => {
             let settings = resolve_settings(&flags)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(orch_runtime::validate::run::run(
                 &settings, &item, &round, &run_dir, &env, locking,
             )?)?
@@ -2051,7 +2042,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             op: ValidateOp::Stop { item, run_dir },
         } => {
             let settings = resolve_settings(&flags)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(orch_runtime::validate::run::stop(
                 &settings,
                 item.as_deref(),
@@ -2107,7 +2098,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         } => {
             let settings = resolve_settings(&flags)?;
             let path = state::item_path(&settings.state_dir, &item);
-            let env = system_env()?;
+            let env = Env::system()?;
             let request = orch_runtime::ops::queue_watch::QueueWatch {
                 repo,
                 pr,
@@ -2135,7 +2126,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         Verb::Send { item, file } => {
             let settings = resolve_settings(&flags)?;
             let path = record::fleet_path(&settings.state_dir);
-            let env = system_env()?;
+            let env = Env::system()?;
             serde_json::to_value(orch_runtime::send::run(
                 &path, &item, &file, &settings, &env, locking,
             )?)?
@@ -2211,7 +2202,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             watch::github::install_sign_in(&settings.roots.project);
             let path = target_path(&target, &settings);
             let paths = watch::Paths::of(&path)?;
-            let env = system_env()?;
+            let env = Env::system()?;
             let Some(owner) = env.owner.clone() else {
                 return Err(orch_runtime::error::WatchError::IdentityUnreadable.into());
             };
@@ -2330,7 +2321,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
 )]
 fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
-    let now = system_env()?.now_secs;
+    let now = Env::system()?.now_secs;
     let host = ops::Host::kernel();
     match op {
         LaneOp::Status { item } => Ok(watch::lanes::status(
@@ -2467,49 +2458,6 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
                 now,
             )?
             .reply())
-        }
-    }
-}
-
-/// The part of `--effect-exit`'s wait on a job beyond twice the verify
-/// bound: the job's start, its launch gate and its window.
-const JOB_ANSWER_MARGIN: std::time::Duration = std::time::Duration::from_secs(60);
-
-/// The intent an `--effect-exit` call reads its status from: the outcome
-/// its effect recorded here, or its job's as last read.
-enum Settled {
-    Recorded(agent_runtime::intent::Intent),
-    Job(agent_runtime::intent::Intent),
-}
-
-impl Settled {
-    fn intent(&self) -> &agent_runtime::intent::Intent {
-        match self {
-            Settled::Recorded(intent) | Settled::Job(intent) => intent,
-        }
-    }
-
-    /// 0 confirmed, or a job's runner up and waiting for this caller's exit;
-    /// 3 failed; 75 open with its outcome unknown, the intent's reconcile its
-    /// owner.
-    fn status(&self) -> i32 {
-        const FAILED: i32 = 3;
-        let (intent, job) = match self {
-            Settled::Recorded(intent) => (intent, false),
-            Settled::Job(intent) => (intent, true),
-        };
-        if intent.open() {
-            return if job && effects::runner_recorded(intent) {
-                0
-            } else {
-                effects::UNCONFIRMED_EXIT
-            };
-        }
-        match intent.outcome {
-            agent_runtime::protocol::Outcome::Confirmed => 0,
-            agent_runtime::protocol::Outcome::Failed
-            | agent_runtime::protocol::Outcome::Unconfirmed
-            | agent_runtime::protocol::Outcome::NotStarted => FAILED,
         }
     }
 }
@@ -2679,7 +2627,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
     let store_settings = &settings.store;
     let path_of = |target: &Target| target_path(target, &settings);
     let write = |target: &Target, write: Write| -> Result<serde_json::Value> {
-        let env = system_env()?;
+        let env = Env::system()?;
         store::run_write(&path_of(target), locking, store_settings, &env, &write)
     };
     let item_target = |item: String| Target {
@@ -2885,7 +2833,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
         } => write(&target, Write::LaneMerge { lane, file: source }),
         StateOp::Increment { target, pointer } => write(&target, Write::Increment { pointer }),
         StateOp::SetNow { target, pointer } => {
-            let now = system_env()?.now_secs;
+            let now = Env::system()?.now_secs;
             write(
                 &target,
                 Write::Set {
@@ -2937,7 +2885,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     return write(&item_target(item), Write::PostPrStopClear);
                 }
             };
-            let env = system_env()?;
+            let env = Env::system()?;
             let path = state::item_path(&settings.state_dir, &fields.item);
             let write = Write::PostPrStop {
                 mode,
@@ -2976,15 +2924,15 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             }
         },
         StateOp::Remove { item, archive } => {
-            let env = system_env()?;
+            let env = Env::system()?;
             remove_item(&settings, &item, &archive, locking, env.now_secs)
         }
         StateOp::NewLocalKey => {
-            let key = store::local_key(&system_env()?, std::process::id());
+            let key = store::local_key(&Env::system()?, std::process::id());
             Ok(serde_json::json!({"key": key}))
         }
         StateOp::NewRoundId { target, pointer } => {
-            let token = system_env()?.round_id();
+            let token = Env::system()?.round_id();
             write(
                 &target,
                 Write::Set {
@@ -2994,7 +2942,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             )
         }
         StateOp::ProgressReportPath { succession } => {
-            let now = system_env()?.now_secs;
+            let now = Env::system()?.now_secs;
             let path =
                 store::progress_report_path(&store_settings.progress_report_dir, now, succession)?;
             Ok(serde_json::json!({"path": path.display().to_string()}))
@@ -3016,7 +2964,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
         StateOp::Findings {
             op: FindingsOp::Record { item, file },
         } => {
-            let env = system_env()?;
+            let env = Env::system()?;
             let path = state::item_path(&settings.state_dir, &item);
             store::findings_record(&path, locking, store_settings, &env, &file)
         }
@@ -3099,7 +3047,7 @@ fn handoff_resume(
     for place in handoff_places(&settings.state_dir, item, root.as_deref()) {
         match handoff_read(&place) {
             HandoffReading::Stands { .. } => {
-                let env = system_env()?;
+                let env = Env::system()?;
                 // The fleet record's handoff is the overseer's own, outside
                 // the item transitions; its stamp is the pointer write.
                 let resumed_at = if state::Kind::of_path(&place) == state::Kind::Fleet {

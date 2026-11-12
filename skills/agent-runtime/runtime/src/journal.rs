@@ -37,6 +37,44 @@ pub struct Env {
 }
 
 impl Env {
+    /// The clock, nonce and owner this process stamps with. The nonce comes
+    /// from the hasher's random seed, the one source of randomness std
+    /// provides; the owner is this process's identity through the one
+    /// reader. A failed identity read refuses with its cause; a reader that
+    /// answers with no process for this pid leaves the owner unset, and an
+    /// intent is then refused persisting without one.
+    pub fn system() -> Result<Env> {
+        use std::hash::{BuildHasher, Hasher};
+        let since_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let nonce = (std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+            % 32_768) as u32;
+        let pid = std::process::id();
+        let owner = match crate::process::identity(pid) {
+            crate::reading::Reading::Live(id) => Some(Owner {
+                pid: id.pid as u64,
+                start: id.start,
+            }),
+            crate::reading::Reading::Gone => None,
+            crate::reading::Reading::Unreadable { cause } => {
+                return Err(Error::Process {
+                    operation: "owner-identity",
+                    pid,
+                    cause: cause.to_owned(),
+                });
+            }
+        };
+        Ok(Env {
+            now_secs: since_epoch.as_secs(),
+            now_nanos: since_epoch.as_nanos(),
+            nonce,
+            owner,
+        })
+    }
+
     /// The stamp the call mints: `<nanoseconds since the epoch>-<random>`.
     /// An intent id ends in it.
     pub fn round_id(&self) -> String {

@@ -83,7 +83,7 @@ pub use host::{
     Binding, Delivery, Foreground, ProcessRead, Proof, SessionFloor, WindowClose, adopt_controller,
     default_home, fixed_file, fixed_id_file, heal_controller, owner,
 };
-pub use host::{Observed, fleet_sockets, overseer_socket, server_at};
+pub use host::{Observed, fleet_sockets, overseer_socket, proof_of, server_at};
 pub use host::{SignIn, process_var, register_controller};
 pub use host::{poll_until, server_home, session_owner};
 pub use job::{Claimant, Companion};
@@ -110,24 +110,56 @@ const POLL: Duration = Duration::from_millis(200);
 /// What one run of the engine acts with, as its opener passes it: the
 /// record, the engine's own settings, the directory its job, receipt,
 /// brief and notice files live in, the grace a stop leaves between its
-/// signals, the mailbox program the owner notice runs and the main checkout
-/// it runs at, the writer's stamp and lock policy, the one clock every wait
-/// reads, the opener's part of an outcome's transition, which moves the
-/// target record the intent names, and the program name the owner notice
-/// opens with, which is the opener's.
+/// signals, the mailbox and the tmux server it reaches, the writer's stamp
+/// and lock policy, the one clock every wait reads, the opener's part of an
+/// outcome's transition, which moves the target record the intent names,
+/// and the program name the owner notice opens with, which is the opener's.
 pub struct Run<'a> {
     pub speaker: &'static str,
     pub path: &'a Path,
     pub settings: &'a EngineSettings,
     pub state_dir: PathBuf,
     pub close_grace: Judged<Duration>,
-    pub mail_program: PathBuf,
-    pub root: PathBuf,
+    pub reach: Reach,
     pub env: &'a Env,
     pub locking: Locking,
     pub clock: &'a dyn Clock,
     pub outcome_arm: OutcomeArm<Error>,
+    /// The opener's own command line, after its executable, that runs the
+    /// detached job of the intent it is given: the job re-enters through
+    /// the opener's command, never through another program's.
+    pub job_words: fn(&Run, &str) -> Vec<String>,
 }
+
+/// The mailbox a run's owner notices go to and the tmux server it asks,
+/// each the opener's, named by its request or its record. No run finds them
+/// from the directory its process stands in or from an ambient socket: a
+/// detached job inherits that directory and environment from whatever
+/// started it, which may stand in another checkout.
+#[derive(Debug, Clone)]
+pub struct Reach {
+    /// The mailbox program the owner notice runs.
+    pub mail_program: PathBuf,
+    /// The mailbox root the notice is delivered under.
+    pub mail_root: PathBuf,
+    /// The server a window opens on and a pane is read on where the record
+    /// names none; a run given none refuses before it asks any server.
+    pub socket: Option<PathBuf>,
+}
+
+impl Reach {
+    /// The server the run asks where the record names none, or
+    /// `tmux-server-unnamed` before any server is asked.
+    pub fn socket(&self) -> Result<&Path> {
+        self.socket
+            .as_deref()
+            .ok_or_else(|| Error::refused("tmux-server-unnamed", &[]))
+    }
+}
+
+/// The status a caller that waits on an effect answers for one whose
+/// outcome is still open, its intent left for its reconcile.
+pub const UNCONFIRMED_EXIT: i32 = 75;
 
 impl Run<'_> {
     /// Where the pane of `intent_id` registers itself.

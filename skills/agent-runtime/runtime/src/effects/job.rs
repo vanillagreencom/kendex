@@ -1019,18 +1019,10 @@ fn launch_job(
         }
     };
     let exe = exe.display().to_string();
-    let state_dir = run.state_dir.display().to_string();
-    let file = run.path.display().to_string();
-    let argv = [
-        exe.as_str(),
-        "--state-dir",
-        &state_dir,
-        "job",
-        "--file",
-        &file,
-        "--intent",
-        id,
-    ];
+    let words = (run.job_words)(run, id);
+    let argv: Vec<&str> = std::iter::once(exe.as_str())
+        .chain(words.iter().map(String::as_str))
+        .collect();
     let launched = operation.launch(op.job_name(), &record_path, &argv, None)?;
     // The job's identity is read into the set before the claim wait begins,
     // so a contender and a reconcile find the job by its own identity, not
@@ -2206,7 +2198,7 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     if let Err(e) = std::fs::write(&path, format!("{text}\n")) {
         return format!("unsent:notice-write:{e}");
     }
-    let mark = owner_notice(&run.mail_program, &run.root, &path);
+    let mark = owner_notice(&run.reach.mail_program, &run.reach.mail_root, &path);
     let _ = std::fs::remove_file(&path);
     mark
 }

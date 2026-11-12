@@ -341,10 +341,12 @@ pub fn overseer_socket(overseer: &Overseer) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// The socket the controller record names, else the ambient one, which an
-/// unread uid refuses.
-fn controller_socket(overseer: &Overseer) -> crate::Result<PathBuf> {
-    overseer_socket(overseer).map_or_else(tmux::ambient_socket, Ok)
+/// The socket the controller record names, else the one the run's opener
+/// names, else `tmux-server-unnamed` before any server is asked.
+fn controller_socket(overseer: &Overseer, named: Option<&Path>) -> crate::Result<PathBuf> {
+    overseer_socket(overseer)
+        .or_else(|| named.map(Path::to_path_buf))
+        .ok_or_else(|| Error::refused("tmux-server-unnamed", &[]))
 }
 
 /// The proof for a predecessor whose record carries no identity:
@@ -355,7 +357,9 @@ fn controller_socket(overseer: &Overseer) -> crate::Result<PathBuf> {
 /// the recorded harness. Another server on that socket, no server, or a
 /// record naming no server, start or pane proves nothing; with no recorded
 /// harness a listed pane stands, since nothing names what would run in it.
-pub(super) fn proof_of(overseer: &Overseer, target: Option<&Target>) -> Proof {
+/// `named` is the server the opener names, asked where the record names
+/// none.
+pub fn proof_of(overseer: &Overseer, target: Option<&Target>, named: Option<&Path>) -> Proof {
     let generation = overseer.generation.unwrap_or(0);
     let exited = overseer
         .extra
@@ -379,7 +383,7 @@ pub(super) fn proof_of(overseer: &Overseer, target: Option<&Target>) -> Proof {
             cause: "server-start-unrecorded",
         };
     };
-    match controller_socket(overseer).and_then(|socket| tmux::server(&socket)) {
+    match controller_socket(overseer, named).and_then(|socket| tmux::server(&socket)) {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
             match tmux::pane_state(&answering, &pane) {
                 Reading::Live(tmux::PaneState::Running(fields)) => match target {
@@ -515,10 +519,10 @@ impl Operation<'_> {
         session_of(named, self.run.settings.tmux_session.as_deref(), fallback)
     }
 
-    /// The session the pane `id` stands in on the server the runtime's own
-    /// socket names; none where that pane or server cannot be read.
+    /// The session the pane `id` stands in on the server the opener names;
+    /// none where none is named or that pane or server cannot be read.
     pub fn pane_session(&self, id: &str) -> Option<String> {
-        let server = tmux::server(&tmux::ambient_socket().ok()?).ok()?;
+        let server = tmux::server(self.run.reach.socket.as_deref()?).ok()?;
         match tmux::pane_state(&server, id) {
             crate::reading::Reading::Live(tmux::PaneState::Running(fields)) => {
                 Some(fields.pane.session)
@@ -529,16 +533,15 @@ impl Operation<'_> {
     }
 
     /// The tmux server a window opens on and the session it opens in: the
-    /// socket the runtime's own `$TMUX` names or the user's default, as
-    /// `lib/tmux-server.sh` resolves it, and the session [`fleet_session`]
-    /// resolves, which must stand: kendex creates no session.
+    /// socket the opener names, and the session [`fleet_session`] resolves,
+    /// which must stand: kendex creates no session.
     pub fn fleet_server(
         &self,
         named: Option<&str>,
         fallback: Option<&str>,
     ) -> Result<(Server, String)> {
+        let socket = self.run.reach.socket()?.to_path_buf();
         let session = self.fleet_session(named, fallback)?;
-        let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
         if !tmux::session_present(&server, &session)? {
             return Err(crate::Error::refused(
@@ -781,7 +784,7 @@ impl Operation<'_> {
     }
 
     /// The sockets a standing pane or window key may answer on: the phase's,
-    /// the overseer record's and the caller's ambient one, each once.
+    /// the overseer record's and the one the opener names, each once.
     fn sockets(&self, overseer: Option<&Overseer>) -> Vec<PathBuf> {
         let mut sockets: Vec<PathBuf> = Vec::new();
         let mut push = |socket: PathBuf| {
@@ -806,7 +809,7 @@ impl Operation<'_> {
         // answers for is read by its server's pid.
         for socket in fleet_sockets(
             overseer.and_then(overseer_socket),
-            tmux::ambient_socket().ok(),
+            self.run.reach.socket.clone(),
         ) {
             push(socket);
         }
@@ -1168,7 +1171,8 @@ impl Operation<'_> {
                 cause: "server-start-unrecorded",
             });
         };
-        let observed = match controller_socket(overseer).and_then(|socket| tmux::server(&socket)) {
+        let named = self.run.reach.socket.as_deref();
+        let observed = match controller_socket(overseer, named).and_then(|s| tmux::server(&s)) {
             Ok(server) if server.pid as u64 == key.server && server.start == server_start => {
                 observe_fields(&server, &key.pane)
             }
@@ -1230,7 +1234,7 @@ impl Operation<'_> {
     /// where the set holds it.
     pub fn terminal_proof(&mut self, overseer: &Overseer) -> Result<Proof> {
         let target = overseer_target_of(&self.run.settings.harness_binaries, overseer)?;
-        let proof = proof_of(overseer, target.as_ref());
+        let proof = proof_of(overseer, target.as_ref(), self.run.reach.socket.as_deref());
         if let Proof::Proven { by: "pane-gone" } = &proof
             && let Some(key) = self.overseer_pane_key(overseer)
         {
@@ -1565,6 +1569,7 @@ pub fn adopt_controller(
             None => match proof_of(
                 recorded,
                 overseer_target_of(&settings.harness_binaries, recorded)?.as_ref(),
+                Some(&socket),
             ) {
                 Proof::Standing { pid } => return Err(live(pid as u64)),
                 Proof::Unreadable { cause } => return Err(unreadable(cause)),
@@ -1612,10 +1617,12 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
 /// never bound here: a session file found beside the process does not say
 /// which session the process runs, since an older session in the same
 /// directory reads the same. The adoption that names the id, or the
-/// turn-end hook reading its own session's id, binds it.
+/// turn-end hook reading its own session's id, binds it. The pane is read
+/// on the server the record names, else on `named`, the opener's.
 pub fn heal_controller(
     path: &Path,
     settings: &EngineSettings,
+    named: Option<&Path>,
     locking: Locking,
 ) -> Result<Option<ControllerAdopted>> {
     let body = fleet_view(path)?;
@@ -1649,7 +1656,7 @@ pub fn heal_controller(
     if Harness::parse(&harness_word).is_none() {
         return Ok(None);
     }
-    let socket = controller_socket(&overseer)?;
+    let socket = controller_socket(&overseer, named)?;
     let server = tmux::server(&socket)?;
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);

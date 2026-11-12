@@ -5453,7 +5453,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         let code = out.status.code().unwrap();
         assert_eq!(
             code,
-            orch_runtime::effects::UNCONFIRMED_EXIT,
+            agent_runtime::effects::UNCONFIRMED_EXIT,
             "confirms={confirms}: the chain answers its launch's open outcome: {}",
             stderr(&out)
         );

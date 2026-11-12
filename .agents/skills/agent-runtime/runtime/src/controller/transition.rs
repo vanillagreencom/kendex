@@ -19,6 +19,7 @@ use super::{
     MEMBER, OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending,
     SUCCESSOR_BINDING_KEYS, SUCCESSOR_IDENTITY_KEYS, TransferCause,
 };
+use crate::accounts::wall::canon;
 use crate::error::{Error, Result};
 use crate::intent::{EffectOp, Intent, Reconciled};
 use crate::journal::{
@@ -350,22 +351,6 @@ fn refuse_off(path: &Path, current: &Overseer) -> Result<()> {
     Ok(())
 }
 
-/// An account directory as `lane_claims_canon` compares two: resolved
-/// through the filesystem where it exists, else the spelling with its
-/// trailing slashes dropped.
-fn canonical_account(account: &str) -> String {
-    match std::fs::canonicalize(account) {
-        Ok(path) => path.display().to_string(),
-        Err(_) => {
-            let mut text = account;
-            while text.len() > 1 && text.ends_with('/') {
-                text = &text[..text.len() - 1];
-            }
-            text.to_owned()
-        }
-    }
-}
-
 /// A live succession hands over on a snapshot its predecessor wrote for
 /// this generation: the handoff the successor's brief names carries
 /// exactly one `Start here:` line and its `generation=` is that of the
@@ -440,7 +425,7 @@ fn check_cause(r: &RequestTransfer, current: &Overseer) -> Result<()> {
                 .as_deref()
                 .or(r.successor.home.as_deref())
                 .unwrap_or_default();
-            if canonical_account(account) == canonical_account(spent) {
+            if canon(account) == canon(spent) {
                 return Err(Error::SuccessorAccountSpent {
                     account: account.to_owned(),
                 });
