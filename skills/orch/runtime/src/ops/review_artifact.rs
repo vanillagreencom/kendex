@@ -373,7 +373,8 @@ fn gates(artifact: Value, worktree: &Path) -> Read {
         .map(|d| finding("moving_tree", d))
         .or_else(|| no_review(&artifact).map(|d| finding("no_review", d)))
         .or_else(|| finding_arrays(&artifact).map(|d| finding("incomplete", d)))
-        .or_else(|| finding_item(&artifact).map(|d| finding("incomplete", d)));
+        .or_else(|| finding_item(&artifact).map(|d| finding("incomplete", d)))
+        .or_else(|| test_cost(&artifact).map(|d| finding("incomplete", d)));
     if let Some(rejected) = rejected {
         return Read::Rejected(rejected);
     }
@@ -542,6 +543,41 @@ fn finding_item(artifact: &Value) -> Option<String> {
                 invalid.join(",")
             ))
         })
+    })
+}
+
+const TEST_FORM: &str = "Every tests[] entry names its test and a verdict of keep, add or remove; a kept or added test also states in cost what each run of it costs.";
+
+/// The first `tests[]` entry that keeps or adds a test without its cost.
+/// An artifact that lists no test is not judged: only the reviewer can name
+/// the tests it kept, so a verdict outside the three is refused rather than
+/// read as one that needs no cost.
+fn test_cost(artifact: &Value) -> Option<String> {
+    let entries = match artifact.get("tests") {
+        None | Some(Value::Null) => return None,
+        Some(Value::Array(entries)) => entries,
+        Some(other) => {
+            return Some(format!(
+                "review-artifact-check: test_cost field=tests type={}\n{TEST_FORM}",
+                type_word(other)
+            ));
+        }
+    };
+    entries.iter().enumerate().find_map(|(i, entry)| {
+        let costed = entry
+            .get("cost")
+            .and_then(Value::as_str)
+            .is_some_and(|s| s.chars().any(|c| !c.is_whitespace()));
+        let problem = match entry.get("verdict").and_then(Value::as_str) {
+            Some("remove") => None,
+            Some("keep" | "add") if !costed => Some("missing=cost"),
+            Some("keep" | "add") => None,
+            _ => Some("invalid=verdict"),
+        }?;
+        Some(format!(
+            "review-artifact-check: test_cost path=tests[{i}] test={} {problem}\n{TEST_FORM}",
+            json_word(entry.get("test"))
+        ))
     })
 }
 

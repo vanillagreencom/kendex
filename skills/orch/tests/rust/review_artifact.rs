@@ -1011,6 +1011,77 @@ fn every_finding_item_carries_the_schema_fields_and_the_first_offender_is_named(
 }
 
 #[test]
+fn a_test_review_names_the_cost_of_every_test_it_keeps_or_adds() {
+    let w = World::new();
+    let cost = |at: &str| format!("review-artifact-check: test_cost {at}");
+    let with = |tests: &str| {
+        format!(
+            r#"{{"agent":"reviewer-test","verdict":"pass","blockers":[],"suggestions":[],"qa_metadata":{{}}{tests}}}"#
+        )
+    };
+    let kept =
+        r#"{"test":"tests/a.rs::kept","verdict":"keep","cost":"one in-process parse, no clock"}"#;
+    let added = r#"{"test":"tests/a.rs::added","verdict":"add","cost":"spawns the binary once"}"#;
+    let removed = r#"{"test":"tests/a.rs::gone","verdict":"remove"}"#;
+    let rows: Vec<(&str, String, i32, &str, String)> = vec![
+        (
+            "every kept and added test names its cost, a removed one needs none",
+            with(&format!(r#","tests":[{kept},{added},{removed}]"#)),
+            0,
+            "valid",
+            "-".into(),
+        ),
+        (
+            "a kept test with no cost",
+            with(r#","tests":[{"test":"tests/a.rs::kept","verdict":"keep"}]"#),
+            1,
+            "incomplete",
+            cost(r#"path=tests[0] test="tests/a.rs::kept" missing=cost"#),
+        ),
+        (
+            "an added test with a blank cost, behind a costed one",
+            with(&format!(
+                r#","tests":[{kept},{{"test":"tests/a.rs::added","verdict":"add","cost":"  "}}]"#
+            )),
+            1,
+            "incomplete",
+            cost(r#"path=tests[1] test="tests/a.rs::added" missing=cost"#),
+        ),
+        (
+            "a verdict outside keep, add and remove",
+            with(r#","tests":[{"test":"tests/a.rs::kept","verdict":"kept"}]"#),
+            1,
+            "incomplete",
+            cost(r#"path=tests[0] test="tests/a.rs::kept" invalid=verdict"#),
+        ),
+        (
+            "tests that is no array",
+            with(r#","tests":{"tests/a.rs::kept":"keep"}"#),
+            1,
+            "incomplete",
+            cost("field=tests type=object"),
+        ),
+        (
+            "a test review that lists no test",
+            with(""),
+            0,
+            "valid",
+            "-".into(),
+        ),
+        (
+            "an empty test list",
+            with(r#","tests":[]"#),
+            0,
+            "valid",
+            "-".into(),
+        ),
+    ];
+    for (label, body, code, reason, first) in rows {
+        table(&w, &[(label, &body, code, reason, &first)]);
+    }
+}
+
+#[test]
 fn a_zero_sample_citation_is_refused_and_a_zero_result_is_not() {
     let w = World::new();
     let mutation = "review-artifact-check: zero_sample measurement=mutation samples=0";
