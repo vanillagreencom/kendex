@@ -83,7 +83,17 @@ fn drawn(style: &Style) -> Vec<(&'static str, Vec<String>)> {
         vec!["commit-guards".to_owned(), "0.9".to_owned()],
     ];
     vec![
-        ("header", style.header("check", "/home/me/dev/app, global")),
+        (
+            "header",
+            style.header(
+                "check",
+                &[
+                    Span::Command("/home/me/dev/app"),
+                    Span::Prose(", "),
+                    Span::Command("global"),
+                ],
+            ),
+        ),
         ("section", style.section("stale", 2, Status::Decision)),
         (
             "row",
@@ -348,7 +358,7 @@ fn a_hostile_value_is_escaped_by_every_component() {
     let rows = [vec![hostile.to_owned()]];
     for style in [rich(100), plain()] {
         let drawn = [
-            style.header(hostile, hostile),
+            style.header(hostile, &[Span::Prose(hostile), Span::Command(hostile)]),
             style.section(hostile, 1, Status::Notice),
             style.row(
                 Status::Notice,
@@ -398,7 +408,7 @@ fn a_rich_line_wraps_inside_its_width() {
     let long = "unmanaged copy of skill 'commit-guards' at ~/app/skills/commit-guards differs from the package in 2 files";
     let style = rich(40);
     let drawn = [
-        style.header("check", long),
+        style.header("check", &[Span::Prose(long)]),
         style.row(
             Status::Decision,
             &[Span::Prose(long)],
@@ -670,4 +680,29 @@ fn a_table_never_breaks_a_word_or_a_copied_run() {
     for (case, drawn, want) in cases {
         assert_eq!(tagged(&drawn), want, "{case}");
     }
+}
+
+/// A header's place, a command span, stays whole: one wider than any line
+/// is a line of its own under the title rather than one more cell run on
+/// the title's line, which the terminal would break mid-segment. A prose
+/// target, a report's title, still wraps between words.
+#[test]
+fn a_header_keeps_its_place_whole_and_wraps_its_prose() {
+    let root = "/private/var/folders/xy/abcdefghijk0000gn/T/.tmpAbCdEf/home/dev/6b32008b-c5c0-4327-9a3e-1234567890ab";
+    assert_eq!(
+        tagged(&rich(80).header("add", &[Span::Command(root)])),
+        [
+            "<1;34>kendex add</>  ".to_owned(),
+            format!("  <90>{root}</>"),
+        ]
+    );
+    let title = "the header splits a long project folder in the middle of a folder name";
+    assert_eq!(
+        tagged(&rich(40).header("report", &[Span::Prose(title)])),
+        [
+            "<1;34>kendex report</>  <90>the header splits a long</>",
+            "  <90>project folder in the middle of a</>",
+            "  <90>folder name</>",
+        ]
+    );
 }

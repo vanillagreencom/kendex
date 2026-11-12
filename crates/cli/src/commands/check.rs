@@ -106,8 +106,8 @@ pub fn run(
 /// so it goes to stdout; the header and the verdict are about the run, and
 /// go to stderr.
 fn draw(style: &Style, checked: &CheckReport, scopes: &[Scope], verbosity: Verbosity) {
-    let target: Vec<String> = scopes.iter().map(Scope::label).collect();
-    let screen = screen(style, checked, &target.join(", "), verbosity);
+    let labels: Vec<String> = scopes.iter().map(Scope::label).collect();
+    let screen = screen(style, checked, &super::scope_target(&labels), verbosity);
     ui::stderr(&screen.head);
     ui::stdout(&screen.report);
     ui::stderr(&screen.verdict);
@@ -123,7 +123,12 @@ struct Screen {
 /// The explicit check from the components: a header naming what was
 /// checked, one section per kind of finding with a row per item, the
 /// evaluation age and the next step, and the verdict.
-fn screen(style: &Style, checked: &CheckReport, target: &str, verbosity: Verbosity) -> Screen {
+fn screen(
+    style: &Style,
+    checked: &CheckReport,
+    target: &[Span<'_>],
+    verbosity: Verbosity,
+) -> Screen {
     let page = report::page(checked, verbosity);
     let mut report = Vec::new();
     for section in &page.sections {

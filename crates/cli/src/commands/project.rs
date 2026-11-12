@@ -93,7 +93,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             throwaway,
         } => {
             let style = ui::style();
-            ui::stderr(&style.header("project add", &path.display().to_string()));
+            ui::stderr(&style.header("project add", &[Span::Command(&path.display().to_string())]));
             // With a template, registering and filling the project is
             // one path — the template lands before the hook offer rather
             // than as a second command somebody has to know about — and
@@ -136,7 +136,10 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         }
         ProjectCommand::Remove { path } => {
             let style = ui::style();
-            ui::stderr(&style.header("project remove", &path.display().to_string()));
+            ui::stderr(&style.header(
+                "project remove",
+                &[Span::Command(&path.display().to_string())],
+            ));
             settings::unregister_project(env, &path)?;
             ui::stdout(&folder_line(&style, Status::Done, "removed ", &path, ""));
         }
@@ -146,7 +149,10 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             consolidate,
         } => {
             let style = ui::style();
-            ui::stderr(&style.header("project reconnect", &from.display().to_string()));
+            ui::stderr(&style.header(
+                "project reconnect",
+                &[Span::Command(&from.display().to_string())],
+            ));
             let (plan, _, _) = settings::relocate_project(env, &from, &to, consolidate)?;
             ui::stdout(&reconnected(&style, &plan));
         }
@@ -158,7 +164,10 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             throwaway,
         } => {
             let style = ui::style();
-            ui::stderr(&style.header("project discover", &root.display().to_string()));
+            ui::stderr(&style.header(
+                "project discover",
+                &[Span::Command(&root.display().to_string())],
+            ));
             let found_projects = discover::discover_projects(&root)?;
             // Every folder is judged before the first is registered, so a
             // refusal registers nothing rather than the ones sorted ahead
@@ -277,7 +286,10 @@ fn list(env: &Env, json: bool) -> CliResult {
     let count = projects.len();
     ui::stderr(&style.header(
         "project list",
-        &format!("{count} project{}", if count == 1 { "" } else { "s" }),
+        &[Span::Prose(&format!(
+            "{count} project{}",
+            if count == 1 { "" } else { "s" }
+        ))],
     ));
     for project in projects {
         let state = match kendex_core::scan::missing_why(&project) {
@@ -387,7 +399,10 @@ fn compare_settings(env: &Env) -> CliResult {
     let count = compared.projects.len();
     ui::stderr(&style.header(
         "project settings",
-        &format!("{count} project{}", if count == 1 { "" } else { "s" }),
+        &[Span::Prose(&format!(
+            "{count} project{}",
+            if count == 1 { "" } else { "s" }
+        ))],
     ));
     ui::stderr(&style.note(&[Span::Prose(
         "This report does not include values from the environment of this command.",

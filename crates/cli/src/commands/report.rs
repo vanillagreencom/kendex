@@ -119,7 +119,7 @@ fn append_routing_warnings(body: &mut String, resolved: &kendex_core::report::Re
 
 pub fn run(env: &Env, args: ReportArgs) -> CliResult {
     let style = ui::style();
-    ui::stderr(&style.header("report", &args.title));
+    ui::stderr(&style.header("report", &[Span::Prose(&args.title)]));
     let Inputs {
         selector,
         body,

@@ -54,7 +54,7 @@ pub fn run(env: &Env, args: DiffArgs) -> CliResult {
         env, &scope, kind, &args.name, &from, &to, harness,
     )?;
     let style = ui::style();
-    ui::stderr(&style.header("diff", &args.name));
+    ui::stderr(&style.header("diff", &[Span::Prose(&args.name)]));
     ui::stderr(&screen(&style, &diff));
     Ok(())
 }

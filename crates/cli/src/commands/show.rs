@@ -40,7 +40,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
     let style = ui::style();
     if args.files {
         let files = detail::package_files(env, &scope, kind, &args.name)?;
-        ui::stderr(&style.header("show", &args.name));
+        ui::stderr(&style.header("show", &[Span::Prose(&args.name)]));
         ui::stderr(&file_list(&style, &files));
         return Ok(());
     }
@@ -63,7 +63,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         return Ok(());
     }
     let meta = detail::package_meta(env, &scope, kind, &args.name)?;
-    ui::stderr(&style.header("show", &args.name));
+    ui::stderr(&style.header("show", &[Span::Prose(&args.name)]));
     ui::stderr(&metadata(&style, &meta));
     Ok(())
 }

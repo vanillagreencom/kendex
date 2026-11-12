@@ -43,12 +43,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         .collect();
 
     let style = ui::style();
-    let target = scopes
-        .iter()
-        .map(Scope::label)
-        .collect::<Vec<_>>()
-        .join(", ");
-    ui::stderr(&style.header("list", &target));
+    super::header("list", &scopes);
     ui::stderr(&listing(&style, &rows));
     for warning in &result.warnings {
         let text = warning.to_string();

@@ -257,16 +257,7 @@ pub fn run(
             return Err(error.into());
         }
     }
-    ui::stderr(
-        &style.header(
-            "verify",
-            &scopes
-                .iter()
-                .map(Scope::label)
-                .collect::<Vec<_>>()
-                .join(", "),
-        ),
-    );
+    super::header("verify", &scopes);
     let base_owned = base_owned(&scopes, output.base.as_deref());
     let mut tally = Tally::default();
     for scope in scopes {
