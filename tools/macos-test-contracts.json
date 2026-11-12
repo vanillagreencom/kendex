@@ -123,6 +123,7 @@
     "skills/github/tests/edit-comment.test.sh": "linux-duplicate",
     "skills/github/tests/env-first-auth.sh": "linux-duplicate",
     "skills/github/tests/find-comment.test.sh": "linux-duplicate",
+    "skills/github/tests/gh-auth-failure-record.test.sh": "linux-duplicate",
     "skills/github/tests/gh-stub-restage.test.sh": "linux-duplicate",
     "skills/github/tests/git-diff-summary-default-base.test.sh": "linux-duplicate",
     "skills/github/tests/git-diff-summary.test.sh": "native",
