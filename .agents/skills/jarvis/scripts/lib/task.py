@@ -228,12 +228,15 @@ class Task(Session):
     def close_window(self, record, *, allow_unmarked=False):
         terminal = record["terminal"]
         allow_unmarked = allow_unmarked or not terminal.get("marked", True)
+        front = self.in_front(record)
         self.backend("task-close", terminal["server"], record["server_pid"], record["server_started_at"],
                      terminal["pane"], terminal["window"], self.path.stem, str(allow_unmarked).lower())
         # A closed current window leaves tmux to pick the next one, which can
         # be another task's: the live controller's window takes the front.
         # Focus is presentation, so an unread controller record closes the
         # task all the same and selects nothing.
+        if not front:
+            return
         try:
             controller = Session(self.home).read()
         except Refusal:

@@ -230,6 +230,18 @@ class Session:
         target = ["-S", socket] if socket else ["-L", self.label]
         return self.run(["tmux", *target, *map(str, args)], check=check, launcher=launcher)
 
+    def in_front(self, record):
+        """Whether RECORD's window is the current window of its tmux session."""
+        # Only a closed current window leaves tmux to pick the next one; any
+        # other the owner chose stays. Focus is presentation, so an unread
+        # answer moves nothing.
+        terminal = (record or {}).get("terminal")
+        if not terminal:
+            return False
+        shown = self.tmux("display-message", "-p", "-t", terminal["pane"], "#{window_active}",
+                          socket=terminal["server"], check=False)
+        return shown.returncode == 0 and shown.stdout.strip() == "1"
+
     def server_scope(self):
         # The tmux server keeps the cgroup of the client that forks it, so a
         # server a user-manager unit starts (the watch loop's service, a boot
@@ -1288,9 +1300,11 @@ os.execvpe(argv[0],argv,env)
                 self.tmux("set-option", "-p", "-t", pane, "@jarvis-generation", generation)
                 if succeeding:
                     # The successor opened behind the predecessor, whose end
-                    # leaves tmux to pick the next window, a task's among them.
-                    # Focus is presentation: a failed select fails no transfer.
-                    self.tmux("select-window", "-t", window, check=False)
+                    # in front leaves tmux to pick the next window, a task's
+                    # among them. Focus is presentation: a failed select
+                    # fails no transfer.
+                    if self.in_front(record.get("predecessor")):
+                        self.tmux("select-window", "-t", window, check=False)
                     self.end_owned(record.get("predecessor"), window=True)
                     record["transfer"]["phase"] = "predecessor-ended"
                     record.update(state="starting", reason="launching")

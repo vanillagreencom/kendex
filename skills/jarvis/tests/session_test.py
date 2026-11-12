@@ -1431,26 +1431,31 @@ class SessionContract(unittest.TestCase):
         self.assertEqual(pane, [str(record["process"]["pid"])])
 
     def test_live_window_stays_in_front_through_handover(self):
-        # A task window opens behind the controller in its session. Each
-        # succession ends the window in front, which leaves tmux to pick
-        # another; after the second, its own pick is the task's window.
+        # A task window opens behind the controller in its session. A
+        # succession that ends the window in front leaves tmux to pick
+        # another; after the second, its own pick is the task's window. With
+        # the owner reading the task, the end of the predecessor behind it
+        # leaves the task in front.
         tmux = ["tmux", "-L", self.label]
         (self.home / "state/handoff.md").write_text("handoff\n")
         controllers = []
-        for verb in ("start", "succeed", "succeed"):
-            with self.subTest(verb=verb):
+        helper = None
+        for verb, shown in (("start", "live"), ("succeed", "live"), ("succeed", "live"), ("succeed", "helper")):
+            with self.subTest(verb=verb, shown=shown, step=len(controllers)):
+                if shown == "helper":
+                    subprocess.run([*tmux, "select-window", "-t", helper], check=True, env=self.env)
                 self.call(verb)
                 live = self.wait()["terminal"]
                 self.assertNotIn(live["window"], controllers)
                 controllers.append(live["window"])
                 if verb == "start":
-                    task = subprocess.run([*tmux, "new-window", "-d", "-t", "=jarvis:", "-n", "helper", "-P", "-F", "#{pane_id}",
-                                           self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
-                                          check=True, capture_output=True, text=True, env=self.env).stdout.strip()
+                    helper, task = subprocess.run([*tmux, "new-window", "-d", "-t", "=jarvis:", "-n", "helper", "-P", "-F",
+                                                   "#{window_id}\t#{pane_id}", self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                                  check=True, capture_output=True, text=True, env=self.env).stdout.strip().split("\t")
                     subprocess.run([*tmux, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"], check=True, env=self.env)
                 front = subprocess.run([*tmux, "display-message", "-p", "-t", "=jarvis:", "#{window_id}\t#{window_name}"],
                                        check=True, capture_output=True, text=True, env=self.env).stdout.strip()
-                self.assertEqual(front, live["window"] + "\tjarvis")
+                self.assertEqual(front, live["window"] + "\tjarvis" if shown == "live" else helper + "\thelper")
 
     def test_server_outlives_the_unit_that_started_it(self):
         # A Start from a user service, as the watch loop's restart runs it.

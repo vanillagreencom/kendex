@@ -195,17 +195,24 @@ class TaskContract(unittest.TestCase):
     def front_window(self):
         return self.tmux("display-message", "-p", "-t", "=jarvis:", "#{window_id}").stdout.strip()
 
-    def test_cleanup_puts_the_live_window_in_front(self):
-        # Each task window in front in turn, as a person reads them: closing
-        # the one in front leaves tmux to pick the other task's.
-        tasks = [self.launch("claude"), self.launch("codex")]
-        for task in tasks:
-            self.acknowledgement(task)
-            self.tmux("select-window", "-t", task["terminal"]["window"])
-        Path(tasks[-1]["result_path"]).write_text("Output: checked\n")
-        self.call("complete", "--id", tasks[-1]["id"], "--outcome", "succeeded")
-        self.assertEqual(self.call("cleanup", "--id", tasks[-1]["id"])["cleanup"]["state"], "done")
-        self.assertEqual(self.front_window(), self.terminal["window"])
+    def test_cleanup_front_window(self):
+        # The owner reads the other task, then the shown one. Closing the
+        # window in front leaves tmux to pick its last one, the other task's;
+        # closing one behind it leaves the owner's choice in front.
+        for shown, front in (("cleaned", "controller"), ("other", "other")):
+            with self.subTest(shown=shown):
+                tasks = {"other": self.launch("claude", "-" + shown), "cleaned": self.launch("codex", "-" + shown)}
+                windows = {"controller": self.terminal["window"], "other": tasks["other"]["terminal"]["window"]}
+                for task in tasks.values():
+                    self.acknowledgement(task)
+                for name in sorted(tasks, key=lambda name: name == shown):
+                    self.tmux("select-window", "-t", tasks[name]["terminal"]["window"])
+                for name in ("cleaned", "other"):
+                    Path(tasks[name]["result_path"]).write_text("Output: checked\n")
+                    self.call("complete", "--id", tasks[name]["id"], "--outcome", "succeeded")
+                    self.assertEqual(self.call("cleanup", "--id", tasks[name]["id"])["cleanup"]["state"], "done")
+                    if name == "cleaned":
+                        self.assertEqual(self.front_window(), windows[front])
 
     def test_no_task_window_takes_the_live_window_name(self):
         # tmux expands formats in a window name, so a name spelling the
@@ -1141,6 +1148,11 @@ while True: signal.pause()
             ("created-pane", "task.py", (('self.tmux("wait-for", "-S", channel, socket=terminal["server"])',
                 'self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_literal(cwd), *launch, socket=terminal["server"])'),),
              "test_launch_runs_in_its_created_pane"),
+            ("live-front", "task.py", (('            self.tmux("select-window", "-t", live["window"], socket=terminal["server"], check=False)',
+                '            pass'),), "test_cleanup_front_window"),
+            ("front-only", "task.py", (("        if not front:", "        if False:"),), "test_cleanup_front_window"),
+            ("reserved-name", "task.py", (("if args.name.casefold() == CONTROLLER_WINDOW:", "if False:"),),
+             "test_no_task_window_takes_the_live_window_name"),
         )
         self.regression_controls(rows)
 
