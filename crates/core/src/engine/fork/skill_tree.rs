@@ -51,15 +51,18 @@ pub(crate) fn skill_content_path(
                 // content, and reading (then trashing) it would expose and
                 // move whatever it happens to point at.
                 if resolved.is_dir() && managed_skill_tree(env, scope, name, &resolved) {
-                    return Some(resolved);
+                    return crate::paths::canonical(&resolved).ok();
                 }
             }
         } else if native.is_dir() {
-            return Some(native);
+            return crate::paths::canonical(&native).ok();
         }
     }
     let canonical = skill_canonical(env, scope, name);
-    canonical.is_dir().then_some(canonical)
+    canonical
+        .is_dir()
+        .then(|| crate::paths::canonical(&canonical).ok())
+        .flatten()
 }
 
 /// Whether `path` is a skill tree kendex manages for `name`: the scope's

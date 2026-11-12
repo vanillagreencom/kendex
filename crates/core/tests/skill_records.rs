@@ -402,11 +402,16 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
     use kendex_core::author::import::{CandidateGroup, inventory};
     use kendex_core::engine::fork;
     use kendex_core::model::{HarnessId, ItemKind};
-    for beside in [false, true] {
+    for (harness, method, beside) in [
+        (HarnessId::Codex, "copy", false),
+        (HarnessId::Codex, "copy", true),
+        (HarnessId::Claude, "symlink", true),
+    ] {
         let f = fixture();
         let catalog = f.project.join("vendor/catalog");
-        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n";
+        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n[guide](guide.md)\n";
         put(&catalog.join("skills/ship/SKILL.md"), authored);
+        put(&catalog.join("skills/ship/guide.md"), "Original guide.\n");
         put(
             &catalog.join("skills/other/SKILL.md"),
             "---\nname: other\ndescription: other\n---\n",
@@ -417,7 +422,21 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
             &f.project.join("kendex.toml"),
             "schema = 7\n[sources.cat]\npath = 'vendor/catalog'\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n[skills.ship]\nsource = 'cat'\n[skills.other]\nsource = 'cat'\n[skill-instructions]\nship = '[direct](../../../docs/guide.md) {{shared-text:guide}}'\n[shared-text]\nguide = '[shared](../../../docs/guide.md)'\n",
         );
+        let manifest_path = f.project.join("kendex.toml");
+        let manifest = fs::read_to_string(&manifest_path).unwrap();
+        put(
+            &manifest_path,
+            &manifest
+                .replace("['codex']", &format!("['{}']", harness.name()))
+                .replace("'copy'", &format!("'{method}'")),
+        );
         apply_now(&f);
+        if harness == HarnessId::Claude {
+            assert_eq!(
+                fs::read_link(f.project.join(".claude/skills/ship")).unwrap(),
+                PathBuf::from("../../.agents/skills/ship")
+            );
+        }
         let installed = f.project.join(".agents/skills/ship/SKILL.md");
         let text = fs::read_to_string(&installed).unwrap();
         assert!(text.contains("[direct](../../../docs/guide.md) [shared](../../../docs/guide.md)"));
@@ -435,29 +454,35 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
                 .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
         );
         fs::write(&installed, format!("{text}User edit.\n")).unwrap();
-        let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
-        assert!(
-            candidates
-                .iter()
-                .find(|c| c.name == "ship")
-                .unwrap()
-                .origins
-                .iter()
-                .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
+        put(
+            &installed.parent().unwrap().join("guide.md"),
+            "Edited guide.\n",
         );
+        if method == "copy" {
+            let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
+            assert!(
+                candidates
+                    .iter()
+                    .find(|c| c.name == "ship")
+                    .unwrap()
+                    .origins
+                    .iter()
+                    .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
+            );
+        }
         let plan = if beside {
             fork::fork_beside(
                 &f.env,
                 &f.scope,
                 ItemKind::Skill,
                 "ship",
-                HarnessId::Codex,
+                harness,
                 "my-ship",
                 None,
             )
             .unwrap()
         } else {
-            fork::fork(&f.env, &f.scope, ItemKind::Skill, "ship", HarnessId::Codex).unwrap()
+            fork::fork(&f.env, &f.scope, ItemKind::Skill, "ship", harness).unwrap()
         };
         apply::execute(&f.env, &plan).unwrap();
         apply_now(&f);
@@ -465,6 +490,17 @@ fn captured_skills_keep_installed_targets_and_consumer_instructions() {
         let directory = f.project.join(".agents/skills").join(name);
         let text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
         assert!(text.contains("User edit."));
+        assert!(text.contains("[guide](guide.md)"));
+        assert_eq!(
+            fs::read_to_string(directory.join("guide.md")).unwrap(),
+            "Edited guide.\n"
+        );
+        if beside {
+            assert_eq!(
+                fs::read_to_string(f.project.join(".agents/skills/ship/guide.md")).unwrap(),
+                "Original guide.\n"
+            );
+        }
         assert!(text.contains("[sibling](../../../.agents/skills/other/SKILL.md)"));
         assert_eq!(
             fs::canonicalize(directory.join("../other/SKILL.md")).unwrap(),
