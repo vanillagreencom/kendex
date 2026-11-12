@@ -1051,6 +1051,11 @@ mod tests {
             root: root.join(".pi"),
             ..plan(Vec::new(), Vec::new())
         };
+        // The join takes the platform's separator, which the drawn place
+        // keeps.
+        let place = project.root.display();
+        let project_plain = format!("err|{} ({place})", root.display());
+        let project_rich = format!("err|    <90>{place}</>");
         let rows: [(&ScopePlan, &[&str], &[&str]); 3] = [
             (
                 &full,
@@ -1099,14 +1104,11 @@ mod tests {
             ),
             (
                 &project,
-                &[
-                    "err|/home/a/dev/a-project-whose-folder-name-is-long (/home/a/dev/a-project-whose-folder-name-is-long/.pi)",
-                    "err|  no pi packages installed",
-                ],
+                &[&project_plain, "err|  no pi packages installed"],
                 &[
                     "err|",
                     "err|<1;36>project</>  <90>0</>",
-                    "err|    <90>/home/a/dev/a-project-whose-folder-name-is-long/.pi</>",
+                    &project_rich,
                     "err|    <90>no pi packages installed</>",
                 ],
             ),

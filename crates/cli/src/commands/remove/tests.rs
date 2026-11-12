@@ -113,10 +113,13 @@ fn a_removal_says_what_it_drops_takes_and_keeps_then_what_it_wrote() {
 #[test]
 fn a_written_op_keeps_its_path_whole() {
     let root = std::path::Path::new("/home/a/My Projects/app/.claude/skills");
+    // The join takes the platform's separator, which the drawn path keeps.
+    let path = root.join("alpha");
+    let shown = path.display().to_string();
     let op = PlannedOp {
         description: Description::around("Trash skill alpha's files at ", ""),
         op: Op::Trash {
-            path: root.join("alpha"),
+            path,
             pre: Pre::Absent,
             absent_is_done: false,
         },
@@ -124,17 +127,17 @@ fn a_written_op_keeps_its_path_whole() {
     assert_eq!(
         changes_lines(&plain(), std::slice::from_ref(&op)),
         [
-            "changes:",
-            "  - Trash skill alpha's files at /home/a/My Projects/app/.claude/skills/alpha",
+            "changes:".to_owned(),
+            format!("  - Trash skill alpha's files at {shown}"),
         ]
     );
     assert_eq!(
         tagged(&changes_lines(&rich(60), &[op])),
         [
-            "",
-            "<1;32>changes</>  <90>1</>",
-            "  <32>✓</> Trash skill alpha's files at",
-            "    /home/a/My Projects/app/.claude/skills/alpha",
+            String::new(),
+            "<1;32>changes</>  <90>1</>".to_owned(),
+            "  <32>✓</> Trash skill alpha's files at".to_owned(),
+            format!("    {shown}"),
         ]
     );
 }
