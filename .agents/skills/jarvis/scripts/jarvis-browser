@@ -17,6 +17,10 @@ from urllib.parse import urlsplit
 import uuid
 
 
+class ProcessProbeError(Exception):
+    pass
+
+
 def profile_port(profile, child=None):
     # A recycled port must not make another profile look ready. The launch PID
     # must still name this profile; after discovery, pin its browser target too.
@@ -27,7 +31,7 @@ def profile_port(profile, child=None):
         try:
             record = json.loads((profile / "JarvisDebuggingPort").read_text())
             port, target = record["port"], record["target"]
-            if record["pid"] not in (profile_processes(profile) or []):
+            if record["pid"] not in profile_processes(profile):
                 raise ValueError("profile process")
             if not 0 < int(port) < 65536:
                 raise ValueError("profile port")
@@ -92,34 +96,38 @@ def profile_processes(profile):
     try:
         listed = subprocess.run(["ps", "-A", "-ww", "-o", "pid=", "-o", "args="], stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, errors="replace", timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
+    except subprocess.TimeoutExpired as failure:
+        raise ProcessProbeError("cause=timeout") from failure
+    except OSError as failure:
+        raise ProcessProbeError("cause=unavailable errno=" + str(failure.errno)) from failure
     if listed.returncode:
-        return None
+        raise ProcessProbeError("cause=exit status=" + str(listed.returncode))
     return [int(row.split(None, 1)[0]) for row in listed.stdout.splitlines()
             if argument in " " + row.strip() + " "]
 
 
 def stop_profile(profile):
     """Stop every process running on PROFILE; return the failure's cause, or None once none runs."""
-    pids = profile_processes(profile)
-    # SIGTERM lets Chromium shut down cleanly; SIGKILL ends one that does not.
-    for signum in (signal.SIGTERM, signal.SIGKILL):
-        if pids is None:
-            return "process-unread"
-        if not pids:
-            return None
-        for pid in pids:
-            try:
-                os.kill(pid, signum)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                return "signal-refused"
-        deadline = time.monotonic() + 1
-        while (pids := profile_processes(profile)) and time.monotonic() < deadline:
-            time.sleep(0.05)
-    return "process-unread" if pids is None else "still-running" if pids else None
+    try:
+        pids = profile_processes(profile)
+        # SIGTERM lets Chromium shut down cleanly; SIGKILL ends one that does not.
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            if not pids:
+                return None
+            for pid in pids:
+                try:
+                    os.kill(pid, signum)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    return "signal-refused"
+            deadline = time.monotonic() + 1
+            while (pids := profile_processes(profile)) and time.monotonic() < deadline:
+                time.sleep(0.05)
+        return "still-running" if pids else None
+
+    except ProcessProbeError:
+        return "process-unread"
 
 
 def main():
@@ -194,16 +202,18 @@ def main():
     browser = next((found for name in candidates if (found := shutil.which(name))), None)
     if browser is None:
         parser.exit(2, "jarvis-browser: dependency=chromium-browser\nSet JARVIS_BROWSER_COMMAND to an installed Chromium-based browser.\n")
+    allocated = port == "0"
+    if allocated:
+        owners = profile_processes(profile)
     if downloads:
         set_downloads(profile, Path(downloads))
-    allocated = port == "0"
     if allocated:
         profile.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
             record = json.loads((profile / "JarvisDebuggingPort").read_text())
         except FileNotFoundError:
             record = None
-        if record and record["pid"] in (profile_processes(profile) or []):
+        if record and record["pid"] in owners:
             port = str(record["port"])
         else:
             # Chromium marks port 0 as automated. Reserve a free loopback port
@@ -228,7 +238,7 @@ def main():
                     record["pid"] = child.pid
                     write_json(profile / "JarvisDebuggingPort", record)
                 profile_port(profile, child)
-            except OSError:
+            except (OSError, ProcessProbeError) as failure:
                 if child.poll() is None:
                     child.terminate()
                     try:
@@ -236,6 +246,8 @@ def main():
                     except subprocess.TimeoutExpired:
                         child.kill()
                         child.wait(timeout=2)
+                if isinstance(failure, ProcessProbeError):
+                    raise
                 parser.exit(2, "jarvis-browser: endpoint=unavailable\n")
         return
     if allocated and record["pid"] is None:
@@ -247,5 +259,8 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except ProcessProbeError as failure:
+        print("jarvis-browser: process-probe=failed command=ps " + str(failure), file=sys.stderr)
+        sys.exit(2)
     except (OSError, ValueError):
         sys.exit("jarvis-browser: launch=failed")
