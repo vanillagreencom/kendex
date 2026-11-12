@@ -88,6 +88,15 @@ impl Fleet {
         };
         std::fs::create_dir_all(fleet.items_dir()).unwrap();
         std::fs::create_dir_all(fleet.state_dir().join("state")).unwrap();
+        // The project the binary runs in installs the github package, whose
+        // resolver names a checkout's repository.
+        let skills = fleet.state_dir().join(".agents/skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github"),
+            skills.join("github"),
+        )
+        .unwrap();
         fleet
     }
 
@@ -1092,11 +1101,16 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
     );
     assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
     // The origin names github.com, gh still naming none: #7 holds src/a.sh.
+    // A repository the environment names for other commands is not the
+    // checkout's.
     git(
         &repo,
         &["remote", "add", "origin", "git@github.com:O/r.git"],
     );
-    let out = fleet.op(&launch_l);
+    let out = fleet.op_with(
+        &launch_l,
+        &[("GH_REPO", "o/other"), ("GITHUB_REPOSITORY", "o/other")],
+    );
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
     let rebase = fleet.lane("KEN-L")["rebase"].clone();
     assert_eq!(rebase.as_array().map(Vec::len), Some(1), "{rebase:?}");

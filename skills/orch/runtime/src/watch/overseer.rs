@@ -2244,14 +2244,15 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             };
             // The hosted arms' reads: `gh` as the GitHub duty names it, the
             // account roster for a draft pull request's credit, and the
-            // connected repositories for a record naming no repository of
-            // its own.
+            // fleet's checkout and settings for a record naming no
+            // repository of its own.
             let gh = std::path::PathBuf::from("gh");
             let roster = || accounts::roster(&ctx.settings, None, tick.wall);
             let hosted_reads = super::hosted::Reads {
                 gh: &gh,
                 roster: &roster,
-                repos: &ctx.settings.reads.connected_repos,
+                project: &ctx.settings.roots.project,
+                reads: &ctx.settings.reads,
             };
             let copilot_home = super::lanes::copilot_home(&ctx.settings);
             let lanes = super::lanes::observe(&super::lanes::Pass {

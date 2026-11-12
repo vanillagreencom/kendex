@@ -261,21 +261,9 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, Unread> {
         60,
     )
     .map_err(|_| Unread::Log(base.clone()))?;
-    let resolver = root.join(".agents/skills/github/scripts/lib/gh-repo.sh");
-    let repo = command(
-        root,
-        Path::new("/bin/bash"),
-        &[
-            "-c",
-            "source \"$1\" && kendex_github_resolve_gh_repo \"$2\"",
-            "report-repository",
-            &resolver.display().to_string(),
-            &root.display().to_string(),
-        ],
-        60,
-    )
-    .map_err(|_| Unread::Repository)?;
-    let repo = repo.trim();
+    let repo =
+        crate::repo::of(&crate::repo::resolver(root), root).map_err(|_| Unread::Repository)?;
+    let repo = repo.as_str();
     let tracker = &ctx.settings.reads.tracker_cli;
     let labels = command(
         root,

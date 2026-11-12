@@ -102,16 +102,6 @@ fn full_sha(text: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-fn repo_form(repo: &str) -> bool {
-    let word = |part: &str| {
-        !part.is_empty()
-            && part
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'-'))
-    };
-    matches!(repo.split_once('/'), Some((owner, name)) if word(owner) && word(name))
-}
-
 /// The class `merge` (whose first parent must be `base`) was measured at by
 /// kendex's merge-group run in `repo`, read from the checkout's objects and
 /// the run's own log through `gh` in the checkout.
@@ -125,7 +115,7 @@ pub fn merged_class(
     let gh = crate::watch::github::handle(gh)
         .in_dir(checkout)
         .bounded(BOUND);
-    if !full_sha(base) || !full_sha(merge) || !repo_form(repo) {
+    if !full_sha(base) || !full_sha(merge) || super::validate_repo(repo).is_err() {
         return Err(Refusal::ProofMissing);
     }
     let parent = git_proof(
@@ -238,7 +228,7 @@ fn refresh_proof(
     head: &str,
     repo: &str,
 ) -> Proved<RenderProof> {
-    if pr == 0 || !full_sha(head) || !repo_form(repo) {
+    if pr == 0 || !full_sha(head) || super::validate_repo(repo).is_err() {
         return Err(Refusal::ProofMissing);
     }
     let caller = refresh_caller(&skills.join("harness-ci/scripts/lib/change-class.sh"))?;

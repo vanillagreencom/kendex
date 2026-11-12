@@ -797,3 +797,45 @@ fn a_refresh_proof_is_read_from_the_consumer_pull_requests_own_run_alone() {
         );
     }
 }
+
+/// A repository GitHub never issues names no proof: the verb refuses
+/// `ci-proof-missing` at exit 1 before any read, for a login holding an
+/// underscore and a name of dots alone.
+#[test]
+fn a_repository_github_never_issues_is_refused_before_any_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("gh.log");
+    std::fs::write(dir.path().join("gh.json"), "{}").unwrap();
+    // The packages the proof reads before GitHub, installed as a world's
+    // are, so a repository the check let through would reach gh.
+    let catalog = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let skills = dir.path().join(".agents/skills");
+    std::fs::create_dir_all(skills.join("harness-ci/scripts/lib")).unwrap();
+    for package in ["change-scope", "github"] {
+        std::os::unix::fs::symlink(catalog.join(package), skills.join(package)).unwrap();
+    }
+    for file in ["scripts/harness-only", "scripts/lib/change-class.sh"] {
+        std::fs::copy(
+            catalog.join("harness-ci").join(file),
+            skills.join("harness-ci").join(file),
+        )
+        .unwrap();
+    }
+    let head = "0".repeat(40);
+    for repo in ["own_er/r", "o/.."] {
+        let out = isolated()
+            .args(["ci-proof", "42", &head, "--repo", repo])
+            .current_dir(dir.path())
+            .env("PATH", tool_path(&[&fixtures().join("gh")]))
+            .env("GH_FAKE_LOG", &log)
+            .env("GH_FAKE_REPLIES", dir.path().join("gh.json"))
+            .output()
+            .unwrap();
+        assert_eq!(
+            (out.status.code(), stderr(&out)),
+            (Some(1), "ci-proof: cause=ci-proof-missing\n".to_owned()),
+            "{repo}"
+        );
+        assert!(!log.exists(), "{repo}: gh was asked");
+    }
+}

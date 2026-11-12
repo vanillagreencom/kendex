@@ -1200,11 +1200,20 @@ fn cloud_launch(
             );
         }
     }
-    let origin = git_line(&claim_root, "origin-url", &["remote", "get-url", "origin"])
-        .ok()
-        .and_then(|url| crate::ops::origin_slug(&url));
-    let Some(origin) = origin else {
-        return failed(operation, "cloud-bundle-risk cause=remote");
+    let origin = match crate::repo::origin(
+        &crate::repo::resolver(&run.settings.roots.project),
+        &claim_root,
+    ) {
+        Ok(origin) => origin,
+        Err(crate::repo::Unread::Unresolved) => {
+            return failed(operation, "cloud-bundle-risk cause=remote");
+        }
+        Err(unread) => {
+            return failed(
+                operation,
+                &format!("cloud-bundle-risk cause=remote-unread detail={unread}"),
+            );
+        }
     };
     let worktree = run.settings.worktree_cli.clone();
     operation.record_phase(Phase::Preparing {
@@ -1298,18 +1307,16 @@ fn cloud_launch(
             })));
         }
     };
-    let mut repositories: BTreeSet<String> = BTreeSet::new();
-    repositories.insert(origin.to_ascii_lowercase());
-    if let Some(repo) = r.repo.as_deref() {
-        repositories.insert(repo.to_ascii_lowercase());
-    }
-    repositories.extend(
-        run.settings
-            .reads
-            .connected_repos
-            .iter()
-            .map(|r| r.to_ascii_lowercase()),
-    );
+    let repositories: BTreeSet<String> = run
+        .settings
+        .reads
+        .watched(
+            [Some(origin.as_str()), r.repo.as_deref()]
+                .into_iter()
+                .flatten(),
+        )
+        .into_iter()
+        .collect();
     let url = format!("https://claude.ai/code/{session}");
     let outcome = operation.settle(
         Word::Confirmed,

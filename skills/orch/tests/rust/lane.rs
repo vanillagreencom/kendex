@@ -1069,6 +1069,29 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
     }
 }
 
+/// Through the executable: a launch whose repository is no `owner/name`
+/// GitHub issues is refused `repo-invalid` naming it, and nothing is
+/// written; one GitHub issues, in any case, is admitted.
+#[test]
+fn a_launch_naming_a_repository_github_never_issues_is_refused_before_any_record() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let before = fleet.fleet();
+    for repo in ["o/..", "own_er/r", "o/r/x", "o"] {
+        let mut request = launch("KEN-A", fleet.state_dir());
+        request["repo"] = json!(repo);
+        let answer = reply(&fleet.op(&request));
+        assert_eq!(answer["refusal"]["key"], "repo-invalid", "{repo}: {answer}");
+        assert_eq!(refusal_fields(&answer)["repo"], repo, "{repo}");
+        assert_eq!(fleet.fleet(), before, "{repo}: a refusal writes nothing");
+    }
+    let mut request = launch("KEN-A", fleet.state_dir());
+    request["repo"] = json!("O/r.x_y-z");
+    let answer = reply(&fleet.op(&request));
+    assert_ne!(answer["refusal"]["key"], "repo-invalid", "{answer}");
+    assert_eq!(fleet.lane("KEN-A")["repo"], "O/r.x_y-z", "{answer}");
+}
+
 /// orch starts, records and watches lanes and controllers on the four
 /// harnesses alone. Through the executable, every verb that takes a
 /// caller's harness word refuses OpenCode's `harness-unknown` naming it and
@@ -2679,6 +2702,16 @@ fn a_close_fills_an_empty_identity_and_refuses_one_the_record_contradicts() {
         (lane["tracker"].as_str(), lane["repo"].as_str()),
         (Some("linear"), Some("o/r"))
     );
+
+    // GitHub reads a repository's name without case: a record naming `O/R`
+    // closes under a request naming `o/r`, its own spelling kept.
+    let mut fleet = Fleet::hosted(4);
+    fleet.answer("HARNESS_STATE", "exited");
+    fleet.write_lanes(vec![with("repo", json!("O/R"))]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "repo": "o/r"}));
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["repo"], "O/R");
 }
 
 /// A weekly-limit banner dated ahead of every clock these rows run under,
@@ -3551,6 +3584,53 @@ fn a_park_is_judged_before_anything_is_signalled() {
             }
         }
     }
+}
+
+/// A park of a record that names no repository is judged in the fleet's
+/// own: with gh naming none in the project, a project whose origin names no
+/// GitHub repository refuses `repo-unresolved` and signals nothing, and one
+/// whose origin names `o/r` on github.com parks against `o/r`.
+#[test]
+fn a_park_of_a_record_naming_no_repository_reads_the_fleets_own() {
+    let fleet = Fleet::park_world();
+    let project = fleet.state_dir();
+    let git = |args: &[&str]| {
+        let out = program("git")
+            .arg("-C")
+            .arg(project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    };
+    git(&["init", "-q", "-b", "main", "."]);
+    git(&["remote", "add", "origin", "https://gitlab.example/g/r"]);
+    std::os::unix::fs::symlink(
+        orch_package().parent().unwrap().join("github"),
+        project.join(".agents/skills/github"),
+    )
+    .unwrap();
+    fleet.write_lanes(vec![{
+        let mut lane = hosted_lane("KEN-1");
+        lane.as_object_mut().unwrap().remove("repo");
+        lane
+    }]);
+    fleet.plant_tracker("KEN-1", "started");
+    let park = json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": {"pr": 7}}});
+    let answer = fleet.close(park.clone());
+    assert_eq!(answer["refusal"]["key"], "park-refused", "{answer}");
+    assert_eq!(
+        refusal_fields(&answer)["reason"],
+        "repo-unresolved",
+        "{answer}"
+    );
+    let calls = fleet.provider_calls();
+    assert!(!calls.iter().any(|c| c.starts_with("stop ")), "{calls:?}");
+    assert_eq!(fleet.lane("KEN-1")["status"], "running");
+    git(&["remote", "set-url", "origin", "git@github.com:o/r.git"]);
+    let answer = fleet.close(park);
+    assert_eq!(answer["result"]["word"], "parked", "{answer}");
+    assert_eq!(fleet.lane("KEN-1")["parked"]["repo"], "o/r");
 }
 
 /// A park of a record already stopped is judged again from the record
@@ -4691,6 +4771,59 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             }
         }
     }
+}
+
+/// A closed hosted lane's merged class is read in the fleet's checkout only
+/// where that checkout is of the repository the pull request was merged in:
+/// with gh naming none, a checkout whose origin names another repository on
+/// github.com leaves the class unread as `checkout-other-repo`.
+#[test]
+fn a_closed_lanes_class_is_unread_in_a_checkout_of_another_repository() {
+    let mut fleet = Fleet::hosted(4);
+    let project = fleet.state_dir().to_path_buf();
+    let catalog = orch_package().parent().unwrap().to_path_buf();
+    std::os::unix::fs::symlink(
+        catalog.join("github"),
+        project.join(".agents/skills/github"),
+    )
+    .unwrap();
+    let bin = project.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+    std::fs::write(
+        bin.join("gh.json"),
+        json!({"graphql number=7 cursor=": merged_timeline()}).to_string(),
+    )
+    .unwrap();
+    fleet.env.extend([
+        ("PATH".to_owned(), tool_path(&[bin.as_path()])),
+        ("GH_TOKEN".to_owned(), "fixture-token".to_owned()),
+        // No fetch this row's checkout runs may leave the machine.
+        ("GIT_ALLOW_PROTOCOL".to_owned(), "file".to_owned()),
+    ]);
+    let git = |args: &[&str]| {
+        let out = program("git")
+            .arg("-C")
+            .arg(&project)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    };
+    git(&["init", "-q", "-b", "main", "."]);
+    git(&["remote", "add", "origin", "git@github.com:o/other.git"]);
+    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let answer = fleet.close(
+        json!({"op": "close-lane", "item": "KEN-1", "delivery": {"pr": {"pr": 7, "repo": "o/r"}}}),
+    );
+    assert_eq!(answer["result"]["word"], "closed", "{answer}");
+    let cycle = fleet.lane("KEN-1")["cycle"].clone();
+    assert_eq!(
+        (cycle["class"].clone(), cycle["class_cause"].clone()),
+        (Value::Null, json!("checkout-other-repo")),
+        "{cycle}"
+    );
 }
 
 /// A hosted lane's validation runs are its host's: its close stops none

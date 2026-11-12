@@ -820,6 +820,10 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
         ("T-1=owner#7", "merged-invalid", "T-1=owner#7"),
         ("=owner/repo#7", "merged-invalid", "=owner/repo#7"),
         ("T-1=owner/repo#0", "merged-invalid", "T-1=owner/repo#0"),
+        // Names GitHub never issues: a login holds no underscore, and a
+        // repository's name is never dots alone.
+        ("T-1=own_er/repo#7", "merged-invalid", "T-1=own_er/repo#7"),
+        ("T-1=owner/..#7", "merged-invalid", "T-1=owner/..#7"),
         ("T-9=owner/repo#7", "merged-unjudged", "T-9"),
         ("T-2=owner/repo#7", "merged-unjudged", "T-2"),
     ] {

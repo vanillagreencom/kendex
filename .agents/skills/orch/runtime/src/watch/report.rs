@@ -294,17 +294,6 @@ fn window(ctx: &Context, doc: &Document, session_start: Option<u64>) -> Result<W
     })
 }
 
-fn repos(ctx: &Context) -> Vec<String> {
-    let mut repos = Vec::new();
-    for name in ctx.repos.iter().chain(&ctx.settings.reads.connected_repos) {
-        let name = name.to_ascii_lowercase();
-        if !repos.contains(&name) {
-            repos.push(name);
-        }
-    }
-    repos
-}
-
 fn completions(
     ctx: &Context,
     doc: &Document,
@@ -312,7 +301,11 @@ fn completions(
     now: u64,
 ) -> Result<Vec<super::github::Completion>> {
     let gh = super::github::handle(&ctx.gh);
-    let mut rows = super::github::report_merges(&gh, &repos(ctx), &lanes(doc)?, since, now)?;
+    let repos = ctx
+        .settings
+        .reads
+        .watched(ctx.repos.iter().map(String::as_str));
+    let mut rows = super::github::report_merges(&gh, &repos, &lanes(doc)?, since, now)?;
     for row in doc
         .get("fleet_log")
         .and_then(Value::as_array)

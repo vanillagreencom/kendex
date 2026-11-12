@@ -256,8 +256,6 @@ struct LaneDriver<'a> {
     /// The account roster a draft pull request's credit is read from;
     /// `None` is a roster that could not be read.
     roster: Option<Roster>,
-    /// The fleet's repositories for a record naming none.
-    repos: Vec<String>,
     /// The account a Copilot record naming none runs on.
     copilot_home: Option<PathBuf>,
 }
@@ -282,7 +280,8 @@ impl LaneDriver<'_> {
         let reads = hosted::Reads {
             gh: &self.gh,
             roster: &roster,
-            repos: &self.repos,
+            project: &self.settings.roots.project,
+            reads: &self.settings.reads,
         };
         let env = agent_runtime::journal::Env {
             now_secs: self.now,
@@ -354,7 +353,6 @@ macro_rules! lane_driver {
             scripts: PathBuf::from("/nonexistent"),
             gh: PathBuf::from("/nonexistent/gh"),
             roster: None,
-            repos: Vec::new(),
             copilot_home: None,
         };
     };
@@ -973,8 +971,11 @@ fn init_checkout(fleet: &Fleet, path: &Path) {
 
 /// The fleet's origin on `checkout` and on the fleet's own checkout, under
 /// the row's own isolation: the lane's checkout is then a clone of the
-/// fleet's repository, which a launch or relaunch is bound to.
+/// fleet's repository, which a launch or relaunch is bound to. A relaunch
+/// runs its launch from the lane's checkout, which installs the github
+/// package whose resolver names both repositories.
 fn fleet_origin(fleet: &Fleet, checkout: &Path) {
+    github_skill_under(checkout);
     for repository in [checkout, fleet.runner.state_dir()] {
         let out = program("git")
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -3633,6 +3634,103 @@ fn stalled_lines(produced: &Produced) -> Vec<String> {
         .into_iter()
         .filter(|l| l.starts_with("EVENT lane-stalled ") || l.starts_with("EVENT start-stalled "))
         .collect()
+}
+
+/// A cloud lane whose record names no repository is read in the fleet's
+/// own repository first, as the fleet checkout's origin names it on
+/// github.com with gh naming none: its ready pull request there is
+/// `state=finished`.
+#[test]
+fn a_cloud_lane_naming_no_repository_is_read_in_the_fleets_own() {
+    if !isolated_row("a_cloud_lane_naming_no_repository_is_read_in_the_fleets_own") {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let out = program("git")
+        .arg("-C")
+        .arg(fleet.runner.state_dir())
+        .args(["config", "remote.origin.url", "git@github.com:o/r.git"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let now = 1_800_000_000;
+    let mut lane = cloud_lane("CC-1", "/a", now);
+    lane.as_object_mut().unwrap().remove("repo");
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_gh(json!({
+        "repos/o/r/pulls?head=o:cc-1&state=open": open_pull("aaa111", "", Some(false)),
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let produced = driver.pass(&state);
+    assert_eq!(
+        stalled_lines(&produced),
+        vec!["EVENT lane-stalled CC-1 age=0 state=finished"],
+        "{:?}",
+        lines(&produced)
+    );
+    assert_eq!(produced.failed, None);
+}
+
+/// A cloud lane whose record names no repository is never read in the
+/// connected repositories alone: where the fleet checkout names no GitHub
+/// repository, the read fails naming that cause, though a connected
+/// repository holds an open pull request on the lane's branch.
+#[test]
+fn a_cloud_lane_naming_no_repository_is_unread_where_the_fleets_own_is_unnamed() {
+    if !isolated_row("a_cloud_lane_naming_no_repository_is_unread_where_the_fleets_own_is_unnamed")
+    {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let out = program("git")
+        .arg("-C")
+        .arg(fleet.runner.state_dir())
+        .args([
+            "config",
+            "remote.origin.url",
+            "https://gitlab.example/g/r.git",
+        ])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let now = 1_800_000_000;
+    let mut lane = cloud_lane("CC-1", "/a", now);
+    lane.as_object_mut().unwrap().remove("repo");
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_gh(json!({
+        "repos/o/r/pulls?head=o:cc-1&state=open": open_pull("aaa111", "", Some(false)),
+    }));
+    lane_driver!(
+        server,
+        fleet,
+        readers,
+        driver,
+        &[("ORCH_CONNECTED_REPOS", "o/r")]
+    );
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let produced = driver.pass(&state);
+    assert_eq!(
+        produced.failed.as_deref(),
+        Some("lane-stall-unread item=CC-1 repo-unresolved cause=unresolved"),
+        "{:?}",
+        lines(&produced)
+    );
+    assert!(
+        stalled_lines(&produced).is_empty(),
+        "{:?}",
+        lines(&produced)
+    );
 }
 
 /// No pane shows a cloud session, so its pull request is what the watch

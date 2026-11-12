@@ -31,7 +31,6 @@ use crate::state::{FleetState, Record};
 use crate::watch::hosted::{self, Capabilities, Launch};
 use crate::watch::overseer::scripts_dir;
 
-const BOUND: Duration = Duration::from_secs(60);
 /// A request's own bound; the runner's covers the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
 
@@ -472,15 +471,11 @@ pub fn fleet_facts(
 /// The accounts a `cloud-session` host may launch on (`lane_tier_inputs`,
 /// `lib/lane-usage.sh`): where `host`'s capability line declares
 /// `launch=cloud-session`, the rows whose `ORCH_LANE_CLOUD_REPOS` entry
-/// names the `owner/repo` of this checkout's github.com origin, compared
-/// as GitHub reads names, without case; an origin nobody can read admits
-/// none. `None` for any other host: the rule does not apply. A capability
-/// line that cannot be read is the cause, never a judgement off the local
-/// kind.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the accounts judge's read of this checkout's origin, `git remote get-url origin`, through the one runner under its tag; it acts on nothing"
-)]
+/// names the `owner/repo` of this checkout's github.com origin
+/// ([`crate::repo::origin`]), compared as GitHub reads names, without case;
+/// an origin nobody can read admits none. `None` for any other host: the
+/// rule does not apply. A capability line that cannot be read is the cause,
+/// never a judgement off the local kind.
 fn cloud_repo(
     settings: &Settings,
     provider: &ProviderSettings,
@@ -491,23 +486,8 @@ fn cloud_repo(
     if hosted::capabilities(&scripts, host)?.launch != Some(Launch::CloudSession) {
         return Ok(None);
     }
-    let project = settings.roots.project.display().to_string();
-    let origin = host::run_tagged_in(
-        TAG,
-        "git",
-        Path::new("git"),
-        "origin-url",
-        &["-C", &project, "remote", "get-url", "origin"],
-        Place {
-            cwd: None,
-            env: &[],
-        },
-        BOUND,
-    )
-    .ok()
-    .filter(|out| out.status.success())
-    .and_then(|out| super::admission::origin_slug(&host::stdout_text(&out)));
-    let Some(origin) = origin else {
+    let project = &settings.roots.project;
+    let Ok(origin) = crate::repo::origin(&crate::repo::resolver(project), project) else {
         return Ok(Some(Vec::new()));
     };
     let admitted = rows

@@ -94,6 +94,12 @@ impl World {
             std::os::unix::fs::symlink(base.join(fixture), dir.path().join(name)).unwrap();
         }
         install_lane_host(dir.path(), dir.path());
+        // The github package's resolver names the checkout's origin.
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github"),
+            dir.path().join(".agents/skills/github"),
+        )
+        .unwrap();
         let roots = Roots {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),

@@ -3085,10 +3085,10 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     if case == "rules-second-page" {
         pages.insert(0, json!(vec![json!({"type":"deletion"}); 100]));
     }
-    let rules_page = |base: &str, n: usize| {
-        format!("repos/{{owner}}/{{repo}}/rules/branches/{base}?per_page=100&page={n}")
-    };
-    let mut replies = json!({"pr view --json":{"body":view},"repos/{owner}/{repo}/branches/main":{"body":protection}});
+    let rules_page =
+        |base: &str, n: usize| format!("repos/o/r/rules/branches/{base}?per_page=100&page={n}");
+    // The worktree's repository as gh names it there.
+    let mut replies = json!({"repo view":{"text":"o/r\n"},"pr view --json":{"body":view},"repos/o/r/branches/main":{"body":protection}});
     for (n, page) in pages.into_iter().enumerate() {
         replies[rules_page("main", n + 1)] = json!({ "body": page });
     }
@@ -3100,7 +3100,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     if case == "stacked" {
         replies[rules_page("feature%2Fparent", 1)] = json!({"body":[]});
-        replies["repos/{owner}/{repo}/branches/feature%2Fparent"] = json!({"body":{"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
+        replies["repos/o/r/branches/feature%2Fparent"] = json!({"body":{"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
     }
     // gh's answer for a branch with no pull request, which push-first
     // reads as its resolved base.

@@ -98,16 +98,17 @@ const MERGED_ROW: &str = super::github::MERGED_ROW;
 
 /// The reads the hosted arms take beyond the scripts directory, injected
 /// so a row plants them: `gh` as the GitHub duty resolves it, the account
-/// roster for a draft pull request's credit, and the repositories a lane
-/// naming none is read in.
+/// roster for a draft pull request's credit, and the fleet's checkout and
+/// settings, whose repositories a lane naming none is read in.
 pub struct Reads<'a> {
     pub gh: &'a Path,
     /// `lanes list --json` (`accounts::roster`), read once per pass and
     /// only for a cloud lane whose pull request is a draft.
     pub roster: &'a dyn Fn() -> Result<Roster, String>,
-    /// The fleet's repositories, in order; the first with an open pull
-    /// request on the lane's branch answers.
-    pub repos: &'a [String],
+    /// The fleet's checkout, whose own repository comes first.
+    pub project: &'a Path,
+    /// The connected repositories, after the fleet's own.
+    pub reads: &'a crate::settings::ReadSettings,
 }
 
 /// A provider's answer about a file or a process on its host:
@@ -1545,12 +1546,16 @@ pub enum PullRead {
 }
 
 /// The repositories a lane is read in: the one its record names, else the
-/// fleet's in order.
-fn repos_of<'a>(pass: &'a Pass, lane: &'a Lane) -> Vec<&'a str> {
-    match lane.repo.as_deref().filter(|r| !r.is_empty()) {
-        Some(repo) => vec![repo],
-        None => pass.hosted.repos.iter().map(String::as_str).collect(),
+/// fleet's own and then the connected ones, in order. A fleet repository
+/// that cannot be named is the cause, never a search of the rest alone.
+fn repos_of(pass: &Pass, lane: &Lane) -> Result<Vec<String>, String> {
+    if let Some(repo) = lane.repo.as_deref().filter(|r| !r.is_empty()) {
+        return Ok(vec![repo.to_owned()]);
     }
+    let project = pass.hosted.project;
+    let own = crate::repo::of(&crate::repo::resolver(project), project)
+        .map_err(|unread| format!("repo-unresolved cause={unread}"))?;
+    Ok(pass.hosted.reads.watched([own.as_str()]))
 }
 
 /// The open pull request on the item's branch in the first repository that
@@ -1565,7 +1570,11 @@ pub fn open_pr(pass: &Pass, lane: &Lane) -> PullRead {
     let gh = super::github::handle(pass.hosted.gh);
     let branch = lane.item.to_ascii_lowercase();
     let mut branches = Branches::default();
-    for repo in repos_of(pass, lane) {
+    let repos = match repos_of(pass, lane) {
+        Ok(repos) => repos,
+        Err(cause) => return PullRead::Failed(cause),
+    };
+    for repo in repos.iter().map(String::as_str) {
         let owner = repo.split('/').next().unwrap_or(repo);
         let path = format!("repos/{repo}/pulls?head={owner}:{branch}&state=open");
         let pulls = match gh.object::<Vec<Pull>>("lane-pr", &path) {

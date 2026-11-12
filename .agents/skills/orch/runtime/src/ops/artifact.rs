@@ -1236,6 +1236,7 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
         tracker: settings.reads.tracker_cli.clone(),
         gh: PathBuf::from("gh"),
         scope_paths: settings.scope_paths_cli.clone(),
+        resolver: crate::repo::resolver(&settings.roots.project),
     };
     let item = super::admission::read_item(&clis, "linear", issue, None)
         .map_err(|cause| refuse("item-unread", format!("cause={cause}")))?;

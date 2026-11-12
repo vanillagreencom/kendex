@@ -79,6 +79,7 @@ pub(super) fn no_clis() -> Clis {
         tracker: PathBuf::from("/nonexistent/linear.sh"),
         gh: PathBuf::from("/nonexistent/gh"),
         scope_paths: PathBuf::from("/nonexistent/harness-only"),
+        resolver: PathBuf::from("/nonexistent/gh-repo.sh"),
     }
 }
 
@@ -96,7 +97,7 @@ pub(super) fn no_reads() -> AdmissionReads<'static> {
         }),
         range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
-        checkout: Box::new(|_: &Path| Ok(None)),
+        checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
         team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
         tier: as_requested(),
     }

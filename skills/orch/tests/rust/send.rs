@@ -1123,6 +1123,11 @@ fn cloud_world(dir: &Path) -> CloudWorld {
     let scripts = root.join(".agents").join("skills").join("orch");
     std::fs::create_dir_all(&scripts).unwrap();
     std::os::unix::fs::symlink(orch_scripts(), scripts.join("scripts")).unwrap();
+    std::os::unix::fs::symlink(
+        orch_scripts().join("../../github"),
+        root.join(".agents/skills/github"),
+    )
+    .unwrap();
     let account = root.join(".eclaude");
     std::fs::create_dir_all(&account).unwrap();
     let brief = root.join("brief.md");
@@ -1399,6 +1404,36 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         "{launch}"
     );
     assert_ne!(world.lane("CC-10")["status"], "preparing");
+}
+
+/// A cloud session clones its branch from the checkout's GitHub origin: a
+/// checkout whose origin names no GitHub repository fails the launch
+/// `cloud-bundle-risk cause=remote` before any worktree is made.
+#[test]
+fn a_cloud_launch_from_a_checkout_whose_origin_is_off_github_makes_no_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    git(
+        &world.root,
+        &[
+            "remote",
+            "set-url",
+            "origin",
+            "https://gitlab.example/group/github.com/Owner/Repo.git",
+        ],
+    );
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let report = effect_report(&world.launch("CC-12", &[]));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"], "cloud-bundle-risk cause=remote",
+        "{report}"
+    );
+    assert!(
+        !world.worktree_log.exists(),
+        "no worktree is made for a session that could clone nothing"
+    );
 }
 
 #[test]

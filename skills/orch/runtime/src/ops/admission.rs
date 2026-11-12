@@ -122,6 +122,8 @@ pub struct Clis {
     pub gh: PathBuf,
     /// The change-scope package's path reader, `harness-only`.
     pub scope_paths: PathBuf,
+    /// The github package's repository resolver ([`crate::repo::resolver`]).
+    pub resolver: PathBuf,
 }
 
 /// Why a read answered nothing: the cause the refusal carries.
@@ -183,7 +185,7 @@ pub(super) struct Repository {
 
 /// The repository of a directory, `None` for one in no checkout.
 pub(super) type CheckoutReader<'a> =
-    Box<dyn Fn(&Path) -> std::result::Result<Option<Repository>, ReadFailure> + 'a>;
+    Box<dyn Fn(&Clis, &Path) -> std::result::Result<Option<Repository>, ReadFailure> + 'a>;
 
 /// The key of the Linear team a key or name names, through the tracker.
 pub(super) type TeamReader<'a> =
@@ -662,11 +664,12 @@ fn bind(
     settings: Option<&Settings>,
 ) -> Result<()> {
     let fleet_dir = path.parent().unwrap_or(Path::new("/"));
-    let fleet = (reads.checkout)(fleet_dir).map_err(|_| unjudged("overseer-root", fleet_dir))?;
+    let fleet = (reads.checkout)(&reads.clis, fleet_dir)
+        .map_err(|_| unjudged("overseer-root", fleet_dir))?;
     let binding = match fleet {
         None => Binding::Own,
         Some(fleet) => {
-            let launch = (reads.checkout)(checkout)
+            let launch = (reads.checkout)(&reads.clis, checkout)
                 .ok()
                 .flatten()
                 .ok_or_else(|| unjudged("checkout-root", checkout))?;
@@ -708,7 +711,7 @@ fn bind(
     };
     match (a.tracker, a.repo) {
         (Some("github"), Some(repo)) => {
-            let own = checkout_slug(&reads.clis, checkout)
+            let own = crate::repo::of(&reads.clis.resolver, checkout)
                 .map_err(|_| unresolved(&[("tracker", "github")]))?;
             if !own.eq_ignore_ascii_case(repo) {
                 return Err(item_foreign(repo));
@@ -1289,124 +1292,17 @@ pub(super) fn read_range_paths(
 /// The label the pull-request reads carry in a `gh` refusal.
 const PULLS_READ: &str = "pr-holders";
 
-/// The `owner/name` GitHub issues, the shared resolver's classes
-/// (`github/scripts/lib/gh-repo.sh`): one slash, an owner of alphanumerics
-/// and hyphens, a name of alphanumerics, dots, underscores and hyphens
-/// that is not dots alone; anything else reaches no `repos/<slug>/` path.
-fn checked_slug(text: &str) -> Option<String> {
-    let (owner, name) = text.split_once('/')?;
-    let owner_ok = !owner.is_empty()
-        && owner
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-');
-    let name_ok = !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-        && !name.bytes().all(|b| b == b'.');
-    (owner_ok && name_ok).then(|| text.to_owned())
-}
-
-/// The `owner/name` an origin URL names on github.com, as the shared
-/// resolver's `kendex_github_origin_slug` reads it: github.com where a
-/// hostname sits, after an optional scheme and userinfo holding no `/`,
-/// then the two segments less a trailing `.git`; a URL mentioning
-/// github.com on another host names none.
-pub(crate) fn origin_slug(url: &str) -> Option<String> {
-    let mut rest = url.trim();
-    if let Some((scheme, after)) = rest.split_once("://") {
-        let mut chars = scheme.chars();
-        let well_formed = chars.next().is_some_and(|c| c.is_ascii_alphabetic())
-            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'));
-        if !well_formed {
-            return None;
-        }
-        rest = after;
-    }
-    if let Some((user, after)) = rest.split_once('@')
-        && !user.contains('/')
-    {
-        rest = after;
-    }
-    let rest = rest.strip_prefix("github.com")?;
-    if !rest.starts_with([':', '/']) {
-        return None;
-    }
-    let (owner, name) = rest.trim_start_matches([':', '/']).split_once('/')?;
-    let name = name.strip_suffix(".git").unwrap_or(name);
-    if owner.is_empty() || name.is_empty() || name.contains('/') {
-        return None;
-    }
-    Some(format!("{owner}/{name}"))
-}
-
-/// What `gh repo view --json nameWithOwner -q .nameWithOwner` answers in
-/// `dir`; `None` for a call that fails or prints nothing, which the origin
-/// remote then answers.
-fn viewed_repo(clis: &Clis, dir: &Path) -> Option<String> {
-    let answer = Gh::new(&clis.gh)
-        .tagged(TAG)
-        .in_dir(dir)
-        .run(
-            "repo-view",
-            &[
-                "repo",
-                "view",
-                "--json",
-                "nameWithOwner",
-                "-q",
-                ".nameWithOwner",
-            ],
-            None,
-        )
-        .ok()?;
-    let Answer::Printed { stdout, .. } = answer else {
-        return None;
-    };
-    let text = String::from_utf8_lossy(&stdout)
-        .trim_end_matches('\n')
-        .to_owned();
-    (!text.is_empty()).then_some(text)
-}
-
-/// The GitHub repository of the checkout at `dir`: what `gh repo view`
-/// answers in it, else the
-/// `owner/name` its `origin` remote names on github.com, judged by the
-/// resolver's classes; neither is the failure, `read=repo`.
-fn checkout_slug(clis: &Clis, dir: &Path) -> std::result::Result<String, PullsFailure> {
-    let place = dir.display().to_string();
-    let failed = |cause: String| PullsFailure {
-        read: "repo",
-        repo: place.clone(),
-        cause,
-    };
-    let candidate = match viewed_repo(clis, dir) {
-        Some(viewed) => viewed,
-        None => {
-            let url = read_stdout(
-                "git",
-                Path::new("git"),
-                "origin-url",
-                &["-C", &place, "remote", "get-url", "origin"],
-            )
-            .map(|out| String::from_utf8_lossy(&out).trim().to_owned())
-            .map_err(&failed)?;
-            origin_slug(&url).ok_or_else(|| failed(format!("origin-not-github: {url}")))?
-        }
-    };
-    checked_slug(&candidate).ok_or_else(|| failed(format!("slug-form: {candidate}")))
-}
-
 /// The production checkout read: git's common directory for `dir`,
-/// resolved, and the `owner/name` its `origin` names, `None` where it has
-/// no origin or one off github.com; `None` for a directory git reads as in
-/// no repository, and any other failure of git (a directory that does not
-/// stand, a repository git cannot read) the cause.
+/// resolved, and the `owner/name` its `origin` names ([`crate::repo::origin`]),
+/// `None` where it has no origin or one off github.com; `None` for a
+/// directory git reads as in no repository, and any other failure of git (a
+/// directory that does not stand, a repository git cannot read) or of the
+/// resolver the cause.
 #[allow(
     clippy::disallowed_methods,
     reason = "the admission's reads of a checkout's repository through the one runner; they act on nothing"
 )]
-fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFailure> {
+fn read_checkout(clis: &Clis, dir: &Path) -> std::result::Result<Option<Repository>, ReadFailure> {
     let place = dir.display().to_string();
     // git's "not a git repository" is read by its words, which a translated
     // git words otherwise: the C locale outranks `LANGUAGE` too.
@@ -1442,14 +1338,11 @@ fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFail
     }
     let common = host::stdout_text(&output);
     let root = std::fs::canonicalize(&common).map_err(|e| format!("common-dir {common}: {e}"))?;
-    let slug = read_stdout(
-        "git",
-        Path::new("git"),
-        "origin-url",
-        &["-C", &place, "remote", "get-url", "origin"],
-    )
-    .ok()
-    .and_then(|out| origin_slug(String::from_utf8_lossy(&out).trim()));
+    let slug = match crate::repo::origin(&clis.resolver, dir) {
+        Ok(slug) => Some(slug),
+        Err(crate::repo::Unread::Unresolved) => None,
+        Err(unread) => return Err(format!("origin {unread}")),
+    };
     Ok(Some(Repository { root, slug }))
 }
 
@@ -1479,7 +1372,7 @@ fn read_team_key(clis: &Clis, team: &str) -> std::result::Result<String, ReadFai
 
 /// The production pull-request read: the open same-repository pull
 /// requests of the repository the request names, else of the checkout it
-/// names ([`checkout_slug`]), `None` where it names neither; their files
+/// names ([`crate::repo::of`]), `None` where it names neither; their files
 /// through the one `gh api` transport: the open list paged to a short
 /// page, each pull request read by number for its state, head and
 /// `changed_files`, and an open one's files paged to a short page and held
@@ -1495,12 +1388,21 @@ fn read_open_pulls(
     repo_dir: Option<&Path>,
 ) -> std::result::Result<Option<OpenPulls>, PullsFailure> {
     let slug = match (repo, repo_dir) {
-        (Some(named), _) => checked_slug(named).ok_or_else(|| PullsFailure {
-            read: "repo",
-            repo: named.to_owned(),
-            cause: format!("slug-form: {named}"),
-        })?,
-        (None, Some(dir)) => checkout_slug(clis, dir)?,
+        (Some(named), _) => {
+            crate::verify::validate_repo(named).map_err(|_| PullsFailure {
+                read: "repo",
+                repo: named.to_owned(),
+                cause: format!("slug-form: {named}"),
+            })?;
+            named.to_owned()
+        }
+        (None, Some(dir)) => {
+            crate::repo::of(&clis.resolver, dir).map_err(|unread| PullsFailure {
+                read: "repo",
+                repo: dir.display().to_string(),
+                cause: unread.to_string(),
+            })?
+        }
         (None, None) => return Ok(None),
     };
     let failed = |read: &'static str, cause: String| PullsFailure {
@@ -1610,7 +1512,7 @@ mod tests {
                     // No pull request: the process rows read them through
                     // the gh fixture.
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
-                    checkout: Box::new(|_: &Path| Ok(None)),
+                    checkout: Box::new(|_: &Clis, _: &Path| Ok(None)),
                     team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
                     tier: as_requested(),
                 }),
@@ -1759,46 +1661,6 @@ mod tests {
                 expected,
                 "{touched:?} {held:?}"
             );
-        }
-    }
-
-    /// The repository the pull requests are read from, as the shared
-    /// resolver (`gh-repo.sh`) reads an origin and judges a slug: github.com
-    /// where a hostname sits, the two segments less `.git`; a URL naming
-    /// github.com on another host, a third segment or a segment GitHub
-    /// never issues names none, so nothing unchecked reaches the
-    /// `repos/<slug>/` path.
-    #[test]
-    fn the_repository_slug_is_read_as_the_shared_resolver_reads_it() {
-        let origins = [
-            ("git@github.com:o/r.git", Some("o/r")),
-            ("https://github.com/o/r", Some("o/r")),
-            ("https://github.com/o/r.git\n", Some("o/r")),
-            ("ssh://git@github.com/o/r.git", Some("o/r")),
-            ("https://user:tok@github.com/O/r-x", Some("O/r-x")),
-            ("https://gitlab.example/group/github.com/o/r", None),
-            ("https://github.com/o/r/extra", None),
-            ("https://github.com/o/.git", None),
-            ("github.com-mirror/o/r", None),
-            ("/srv/origin.git", None),
-            ("", None),
-        ];
-        for (url, expected) in origins {
-            assert_eq!(origin_slug(url).as_deref(), expected, "{url:?}");
-        }
-        let slugs = [
-            ("o/r", true),
-            ("O/r.x_y-z", true),
-            ("./repo", false),
-            ("o/..", false),
-            ("o/r/s", false),
-            ("o r/x", false),
-            ("o/", false),
-            ("/r", false),
-            ("o", false),
-        ];
-        for (text, ok) in slugs {
-            assert_eq!(checked_slug(text).is_some(), ok, "{text:?}");
         }
     }
 

@@ -1016,6 +1016,16 @@ pub(super) fn launch_lane(
         )));
     }
     choice_named(r, harness)?;
+    // The repository a lane records reaches `repos/<repo>/` paths and a
+    // provider's clone: one GitHub never issues is refused before any intent.
+    if let Some(repo) = r.repo.as_deref()
+        && crate::verify::validate_repo(repo).is_err()
+    {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "repo-invalid",
+            &[("repo", repo)],
+        )));
+    }
     let cloud = kind == CLOUD_KIND;
     // The cap the request's kind is bounded by: a cloud session the cloud
     // cap, every other lane the lane cap, judged here before the transition
@@ -1568,13 +1578,18 @@ pub fn identity_fills(
         ),
         ("repo", lane.repo.as_deref(), identity.repo.as_deref()),
     ];
+    // GitHub reads a repository's name without case.
+    let same = |field: &str, recorded: &str, option: &str| match field {
+        "repo" => recorded.eq_ignore_ascii_case(option),
+        _ => recorded == option,
+    };
     let mut fills = Vec::new();
     for (field, recorded, option) in fields {
         match (
             recorded.filter(|v| !v.is_empty()),
             option.filter(|v| !v.is_empty()),
         ) {
-            (Some(recorded), Some(option)) if recorded != option => {
+            (Some(recorded), Some(option)) if !same(field, recorded, option) => {
                 return Err(agent_runtime::Error::refused(
                     "record-invalid",
                     &[

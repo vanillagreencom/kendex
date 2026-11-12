@@ -758,7 +758,14 @@ fn required_contexts_under_ladder(
         .tagged("validate")
         .in_dir(worktree)
         .bounded(READ_TIMEOUT);
-    match crate::verify::required_contexts(&gh, "{owner}/{repo}", base) {
+    let repo = match crate::repo::of(&crate::repo::resolver(&settings.roots.project), worktree) {
+        Ok(repo) => repo,
+        Err(unread) => {
+            log.push_str(&format!("repo-unresolved {unread}\n"));
+            return None;
+        }
+    };
+    match crate::verify::required_contexts(&gh, &repo, base) {
         Ok(read) => Some(read),
         Err(unread) => {
             log.push_str(&unread.reason);

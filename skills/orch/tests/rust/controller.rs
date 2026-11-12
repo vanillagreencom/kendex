@@ -5264,23 +5264,6 @@ fn a_test_child_with_no_planted_answer_runs_the_refusing_provider_programs() {
     }
 }
 
-/// The github skill linked under `root`'s install layout,
-/// `.agents/skills/github`, where `watch run` finds its credential ladder.
-fn github_skill_under(root: &Path) {
-    let skills = root.join(".agents/skills");
-    std::fs::create_dir_all(&skills).unwrap();
-    std::os::unix::fs::symlink(
-        shipped_scripts()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("github"),
-        skills.join("github"),
-    )
-    .unwrap();
-}
-
 /// The watch words a `start-controller` request carries for the fleet
 /// state `state`: the runtime wrapper beside it, `watch run --file` the
 /// state and the flags the workflow's launch composes. `--repo` is left out: the

@@ -1281,17 +1281,11 @@ impl Close<'_> {
         let gh = crate::watch::github::handle(Path::new("gh"));
         let repo = match &self.who.repo {
             Some(repo) => repo.clone(),
-            None => self.checkout_repo(&gh)?,
+            None => self.fleet_repo()?,
         };
         let until_repo = wait.until_repo.as_ref().map(|r| r.to_ascii_lowercase());
         if let Some(until) = &until_repo
-            && *until != repo.to_ascii_lowercase()
-            && !self
-                .settings
-                .reads
-                .connected_repos
-                .iter()
-                .any(|c| c.to_ascii_lowercase() == *until)
+            && !self.settings.reads.watched([repo.as_str()]).contains(until)
         {
             return Err(self.park_refused("repo-unwatched", &[("repo", until)]));
         }
@@ -1388,33 +1382,14 @@ impl Close<'_> {
         })
     }
 
-    /// The checkout's own repository through gh, for a record naming none.
-    fn checkout_repo(&self, gh: &crate::verify::Gh) -> Result<String> {
-        let gh = gh
-            .adding_env(Vec::new())
-            .in_dir(&self.settings.roots.project);
-        match gh.run(
-            "park-repo",
-            &[
-                "repo",
-                "view",
-                "--json",
-                "nameWithOwner",
-                "--jq",
-                ".nameWithOwner",
-            ],
-            None,
-        ) {
-            Ok(Answer::Printed { stdout, .. }) => {
-                let repo = String::from_utf8_lossy(&stdout).trim().to_owned();
-                if repo.contains('/') {
-                    Ok(repo)
-                } else {
-                    Err(self.park_refused("repo-unresolved", &[]))
-                }
-            }
-            Ok(Answer::Failed(_)) | Err(_) => Err(self.park_refused("repo-unresolved", &[])),
-        }
+    /// The fleet's own repository, for a record naming none: a lane that
+    /// parks is hosted, its worktree on the provider's disk, and a hosted
+    /// launch records the repository it names.
+    fn fleet_repo(&self) -> Result<String> {
+        let project = &self.settings.roots.project;
+        crate::repo::of(&crate::repo::resolver(project), project).map_err(|unread| {
+            self.park_refused("repo-unresolved", &[("cause", &unread.to_string())])
+        })
     }
 
     /// The pull request's state, head, arm, merge state and queue

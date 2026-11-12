@@ -3512,7 +3512,16 @@ esac
         json!({"id":"1790000000-1-a","kind":"answer","at":"2026-09-21T13:30:00Z","from":"owner","re":"1790000000-0-e","by":"text","closes":false,"text":"wait"}).to_string() + "\n",
     )
     .unwrap();
-    let render = |cwd: &Path, gh_repo: bool| {
+    // `named`: gh names the checkout's repository there, or names none. The
+    // environment's GH_REPO names one either way, for other commands, and
+    // is never the checkout's.
+    let render = |cwd: &Path, named: bool| {
+        let view = if named {
+            json!({"repo view": {"text": "owner/repo\n"}})
+        } else {
+            json!({})
+        };
+        world.plant("gh.json", &view);
         let mut cmd = isolated();
         cmd.current_dir(cwd)
             .arg("--state-dir")
@@ -3533,9 +3542,7 @@ esac
             .env("GH_FAKE_LOG", world.path().join("gh.args"))
             .env("OVERSEE_WATCH_TRACKER", &linear)
             .env("LANE_MAIL_CLI", world.real_report_mail());
-        if gh_repo {
-            cmd.env("GH_REPO", "owner/repo");
-        }
+        cmd.env("GH_REPO", "owner/repo");
         let output = cmd.output().unwrap();
         assert!(
             output.status.success(),

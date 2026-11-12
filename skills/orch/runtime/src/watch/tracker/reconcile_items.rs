@@ -190,11 +190,10 @@ fn named_merges(merged: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
     for value in merged {
         let parsed = value.split_once('=').and_then(|(item, key)| {
             let (repo, number) = key.split_once('#')?;
-            let (owner, name) = repo.split_once('/')?;
             let digits = !number.is_empty()
                 && !number.starts_with('0')
                 && number.bytes().all(|b| b.is_ascii_digit());
-            (is_word(item) && is_word(owner) && is_word(name) && digits)
+            (is_word(item) && crate::verify::validate_repo(repo).is_ok() && digits)
                 .then(|| (item.to_owned(), key.to_owned()))
         });
         let Some((item, key)) = parsed else {

@@ -796,6 +796,7 @@
   ".agents/skills/orch/runtime/src/ops/wall.rs",
   ".agents/skills/orch/runtime/src/proof.rs",
   ".agents/skills/orch/runtime/src/protocol.rs",
+  ".agents/skills/orch/runtime/src/repo.rs",
   ".agents/skills/orch/runtime/src/schedule.rs",
   ".agents/skills/orch/runtime/src/send.rs",
   ".agents/skills/orch/runtime/src/settings.rs",

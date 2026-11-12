@@ -27,7 +27,7 @@ use super::Delivery;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, CycleRow, FleetState, Lane};
-use crate::verify::{Answer, ci_proof};
+use crate::verify::ci_proof;
 use crate::watch::hosted::{self, Answer as HostAnswer};
 
 /// The class bases, lane-controlled seconds; only the recorded waits, a
@@ -693,32 +693,6 @@ impl Class {
     }
 }
 
-/// The checkout's repository: gh's answer for the checkout, else its origin
-/// remote's github.com slug.
-fn checkout_repo(gh: &Path, checkout: &Path) -> Option<String> {
-    let gh = crate::watch::github::handle(gh).in_dir(checkout);
-    if let Ok(Answer::Printed { stdout, .. }) = gh.run(
-        "cycle-repo",
-        &[
-            "repo",
-            "view",
-            "--json",
-            "nameWithOwner",
-            "-q",
-            ".nameWithOwner",
-        ],
-        None,
-    ) {
-        let repo = String::from_utf8_lossy(&stdout).trim().to_owned();
-        if !repo.is_empty() {
-            return Some(repo);
-        }
-    }
-    git(checkout, &["remote", "get-url", "origin"])
-        .ok()
-        .and_then(|url| super::origin_slug(&url))
-}
-
 #[allow(
     clippy::disallowed_methods,
     reason = "the cycle record's read of whether a local lane's recorded root stands as a directory, which decides whose origin the checkout is judged against"
@@ -727,6 +701,8 @@ fn classify(gh: &Path, lane: &Lane, checkout: &Path, repo: Option<&str>, merge: 
     if git(checkout, &["rev-parse", "--show-toplevel"]).is_err() {
         return Class::unread("checkout-absent");
     }
+    // The checkout is the project, which installs the github package.
+    let mine = crate::repo::of(&crate::repo::resolver(checkout), checkout).ok();
     // A checkout provably not of the lane's repository: a local lane's
     // worktree names another origin, or the repository the timeline was
     // read from is not the checkout's.
@@ -742,7 +718,7 @@ fn classify(gh: &Path, lane: &Lane, checkout: &Path, repo: Option<&str>, merge: 
             (Ok(mine), Ok(theirs)) => mine.trim() != theirs.trim(),
             _ => false,
         },
-        None => match (repo, checkout_repo(gh, checkout)) {
+        None => match (repo, &mine) {
             (Some(repo), Some(mine)) => !mine.eq_ignore_ascii_case(repo),
             _ => false,
         },
@@ -760,7 +736,7 @@ fn classify(gh: &Path, lane: &Lane, checkout: &Path, repo: Option<&str>, merge: 
             Err(_) => return Class::unread("merge-commit-absent"),
         },
     };
-    let Some(evidence_repo) = checkout_repo(gh, checkout) else {
+    let Some(evidence_repo) = mine else {
         return Class::unread("repo-unresolved");
     };
     class_of(ci_proof::merged_class(
@@ -807,7 +783,8 @@ fn push_time(
 ) -> std::result::Result<String, &'static str> {
     let repo = match repo {
         Some(repo) => repo.to_owned(),
-        None => checkout_repo(gh, checkout).ok_or("repo-unresolved")?,
+        None => crate::repo::of(&crate::repo::resolver(checkout), checkout)
+            .map_err(|_| "repo-unresolved")?,
     };
     let resolver =
         crate::watch::overseer::scripts_dir(&settings.roots.project).join("resolve-base-branch");

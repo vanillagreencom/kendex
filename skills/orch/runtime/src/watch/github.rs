@@ -666,60 +666,30 @@ fn merge_items(lanes: &[Lane]) -> Vec<MergeItem> {
 /// The repositories the lane inventories read: the caller's, the lanes'
 /// and the connected ones, lowercased, in that order, once each.
 fn repositories(inputs: &Inputs) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
     let named = inputs
         .repos
         .iter()
         .map(String::as_str)
-        .chain(inputs.lanes.iter().filter_map(|l| l.repo.as_deref()))
-        .chain(
-            inputs
-                .settings
-                .reads
-                .connected_repos
-                .iter()
-                .map(String::as_str),
-        );
-    for repo in named {
-        let repo = repo.to_ascii_lowercase();
-        if repo.contains('/') && !out.contains(&repo) {
-            out.push(repo);
-        }
-    }
+        .chain(inputs.lanes.iter().filter_map(|l| l.repo.as_deref()));
+    let mut out = inputs.settings.reads.watched(named);
+    out.retain(|repo| repo.contains('/'));
     out
 }
 
 /// The repositories the audits read: the `--repo` names, then the
-/// connected ones,
-/// lowercased, once each; the first `--repo` is the first repository,
-/// whose issues the outside check reads and whose reducer line the pass
-/// opens with.
+/// connected ones, lowercased, once each; the first `--repo` is the first
+/// repository, whose issues the outside check reads and whose reducer line
+/// the pass opens with.
 pub(super) fn audit_repositories(repos: &[String], settings: &Settings) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for repo in repos.iter().chain(settings.reads.connected_repos.iter()) {
-        let repo = repo.to_ascii_lowercase();
-        if !out.contains(&repo) {
-            out.push(repo);
-        }
-    }
-    out
+    settings.reads.watched(repos.iter().map(String::as_str))
 }
 
-/// The reducer's repositories: the first
-/// `--repo` and every connected repository, once each.
+/// The reducer's repositories: the first `--repo` and every connected
+/// repository, once each.
 pub(super) fn reducer_repositories(repos: &[String], settings: &Settings) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for repo in repos
-        .iter()
-        .take(1)
-        .chain(settings.reads.connected_repos.iter())
-    {
-        let repo = repo.to_ascii_lowercase();
-        if !out.contains(&repo) {
-            out.push(repo);
-        }
-    }
-    out
+    settings
+        .reads
+        .watched(repos.iter().take(1).map(String::as_str))
 }
 
 // --- the duty ----------------------------------------------------------------------------

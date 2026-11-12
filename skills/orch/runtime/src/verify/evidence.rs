@@ -885,8 +885,7 @@ fn run_level(url: &str) -> bool {
 
 /// The contexts `base` requires, each once, and whether a merge-queue
 /// rule stands, read as the verification reads them (`base_requirement`).
-/// `repo` is `owner/name`, or gh's `{owner}/{repo}` where the handle runs
-/// in a checkout of the repository.
+/// `repo` is `owner/name`.
 pub(crate) fn required_contexts(
     gh: &Gh<'_>,
     repo: &str,

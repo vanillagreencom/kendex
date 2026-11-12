@@ -435,6 +435,22 @@ pub struct ReadSettings {
     pub owner_tracker: Option<OwnerTracker>,
 }
 
+impl ReadSettings {
+    /// The repositories the fleet watches: `named` first, then the
+    /// connected ones, lowercased, once each, since GitHub reads a
+    /// repository's name without case.
+    pub fn watched<'a>(&self, named: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let named = named.into_iter().map(str::to_ascii_lowercase);
+        for repo in named.chain(self.connected_repos.iter().map(|r| r.to_ascii_lowercase())) {
+            if !out.contains(&repo) {
+                out.push(repo);
+            }
+        }
+        out
+    }
+}
+
 /// The project's validation declaration, the one source `validate
 /// start` resolves a run's mode from: the whole battery,
 /// the range command where declared, the CI context where declared, the
@@ -891,18 +907,8 @@ pub fn load(
             if let Some(text) = get(LANE_CLOUD_REPOS_KEY) {
                 for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
                     let valid = item.split_once('=').filter(|(name, repo)| {
-                        let name = name.trim();
-                        let repo = repo.trim();
-                        let (owner, project) = repo.split_once('/').unwrap_or(("", ""));
-                        shared::account_name_valid(name)
-                            && !owner.is_empty()
-                            && owner
-                                .bytes()
-                                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                            && !project.is_empty()
-                            && project.bytes().all(|b| {
-                                b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-')
-                            })
+                        shared::account_name_valid(name.trim())
+                            && crate::verify::validate_repo(repo.trim()).is_ok()
                     });
                     let Some((name, repo)) = valid else {
                         return Err((LANE_CLOUD_REPOS_KEY, item.to_owned()));
@@ -1427,6 +1433,7 @@ mod tests {
             (ACCOUNT_RETIRE_KEY, "/a/b=2027-01-01"),
             (ACCOUNT_RETIRE_KEY, "a=2027-02-30"),
             (LANE_CLOUD_REPOS_KEY, "a=repo"),
+            (LANE_CLOUD_REPOS_KEY, "a=o/.."),
             (COPILOT_POOL_KEY, "/p=1/0"),
             (ACCOUNT_EXCLUDE_KEY, "~/x"),
             (ACCOUNT_MAX_PCT_KEY, "101"),

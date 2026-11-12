@@ -1003,6 +1003,14 @@ impl Runner {
             .output()
             .expect("git");
         assert!(out.status.success(), "git init: {}", stderr(&out));
+        // The checkout installs the github package, whose resolver names its
+        // repository; git excludes the link, so its tree reads as made.
+        github_skill_under(self.state_dir());
+        std::fs::write(
+            self.state_dir().join(".git/info/exclude"),
+            "/.agents/skills/github\n",
+        )
+        .unwrap();
         let out = self.run(&["state", "init", "--fleet"]);
         assert!(out.status.success(), "init: {}", stderr(&out));
         // The account `pending` names is the state directory: signed in.
@@ -1616,6 +1624,22 @@ pub fn install_orch_scripts(project: &Path) {
         let mut text = std::fs::read_to_string(&path).unwrap_or_default();
         text.push_str(&exclude);
         std::fs::write(&path, text).unwrap();
+    }
+}
+
+/// The github package linked under `root`'s install layout,
+/// `.agents/skills/github`, where the runtime finds its repository resolver
+/// and its credential ladder; a root that already links it keeps its link.
+pub fn github_skill_under(root: &Path) {
+    let skills = root.join(".agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    let link = skills.join("github");
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../github"),
+            link,
+        )
+        .unwrap();
     }
 }
 

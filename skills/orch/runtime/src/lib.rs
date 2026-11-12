@@ -30,6 +30,7 @@ pub mod marker;
 pub mod ops;
 pub mod proof;
 pub mod protocol;
+pub mod repo;
 pub mod schedule;
 pub mod send;
 pub mod settings;

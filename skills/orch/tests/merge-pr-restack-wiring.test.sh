@@ -363,13 +363,16 @@ mkdir -p "$TMP_ROOT/ci-bin"
 cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+case "$1:$2" in
+  repo:view) printf 'o/r\n'; exit 0 ;;
+esac
 case "$2" in
   status) exit 0 ;;
   user) printf '{"login":"fixture"}\n' ;;
   view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
-  'repos/{owner}/{repo}/rules/branches/main?per_page=100&page=1')
+  'repos/o/r/rules/branches/main?per_page=100&page=1')
     printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"CI"}]}},{"type":"merge_queue"}]\n' ;;
-  'repos/{owner}/{repo}/branches/main') printf '{"name":"main","commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}},"protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}\n' ;;
+  'repos/o/r/branches/main') printf '{"name":"main","commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}},"protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}\n' ;;
   *) exit 9 ;;
 esac
 SH

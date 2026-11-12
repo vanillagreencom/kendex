@@ -3196,6 +3196,7 @@ fn kernel_host(settings: &Settings) -> ops::Host<'_> {
             tracker: settings.reads.tracker_cli.clone(),
             gh: PathBuf::from("gh"),
             scope_paths: settings.scope_paths_cli.clone(),
+            resolver: orch_runtime::repo::resolver(&settings.roots.project),
         })
         .judging(settings)
 }
