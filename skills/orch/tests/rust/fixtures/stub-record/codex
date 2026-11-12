@@ -4,14 +4,28 @@
 # launched as into `launch-record.json` in its working directory (its argv
 # and the account variables of its environment) and then stands, drawing no
 # composer, so a succession that opened it abandons it as `successor-not-ready`
-# once the record is written and the row reads the record.
+# once the record is written and the row reads the record. `opened` holds the
+# variables the opener hands the session, each null where the line left it
+# unset.
+opened() {
+  local name out="" sep=""
+  for name in SECOND_OPINION_CURRENT_MODEL ORCH_MODEL_LINES_HELD ORCH_COMPACTION_OVERRIDES; do
+    if [ -n "${!name+x}" ]; then
+      out="$out$sep\"$name\":\"$(printf '%s' "${!name}" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+    else
+      out="$out$sep\"$name\":null"
+    fi
+    sep=","
+  done
+  printf '{%s}' "$out"
+}
 argv="" first=1
 for arg in "$@"; do
   [ "$first" = 1 ] || argv="$argv,"
   first=0
   argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'NR > 1 { printf "%s", "\\n" } { printf "%s", $0 }')\""
 done
-printf '{"program":"%s","argv":[%s],"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","COPILOT_ALLOW_ALL":"%s"}}\n' \
-  "$0" "$argv" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" "${COPILOT_ALLOW_ALL-}" > launch-record.json
+printf '{"program":"%s","argv":[%s],"opened":%s,"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s","COPILOT_ALLOW_ALL":"%s"}}\n' \
+  "$0" "$argv" "$(opened)" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" "${COPILOT_ALLOW_ALL-}" > launch-record.json
 printf 'codex starting, no composer\n'
 while IFS= read -r _line; do :; done

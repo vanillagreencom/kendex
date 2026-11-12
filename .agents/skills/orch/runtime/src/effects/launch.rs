@@ -430,6 +430,7 @@ fn prepare_launch(
                 Route::Resume { .. } | Route::Refuse { .. } => None,
             },
             extra_args: &permission,
+            opener: &super::opener_env(harness, r.model.as_deref()),
         },
     )?;
     lane_words(&mut intent, &cwd);
@@ -1113,6 +1114,7 @@ fn hosted_command(
             compaction: lane_compaction(harness),
             session_id: None,
             extra_args: &permission,
+            opener: &super::opener_env(harness, r.model.as_deref()),
         },
     )?;
     intent.program = None;
@@ -1304,6 +1306,7 @@ fn cloud_launch(
             compaction: Compaction::Native,
             session_id: None,
             extra_args: &[],
+            opener: &super::opener_env(Harness::Claude, r.model.as_deref()),
         },
     )?;
     let answer_by = operation.stamp_after(CLOUD_BOUND);
@@ -2327,6 +2330,7 @@ mod tests {
                 session_id: None,
                 env: Default::default(),
                 env_remove: Vec::new(),
+                compaction_env: None,
                 extra_args: Vec::new(),
                 program: None,
             };

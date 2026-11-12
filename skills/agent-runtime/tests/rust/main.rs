@@ -156,6 +156,7 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
         session_id: None,
         env: Default::default(),
         env_remove: Vec::new(),
+        compaction_env: None,
         extra_args: Vec::new(),
         program: None,
     };

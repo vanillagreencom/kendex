@@ -96,12 +96,22 @@ pub struct LaunchIntent {
     /// not, since the caller then binds the session file by appearance.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// Environment the child must see beyond the inherited one.
+    /// Environment the child must see beyond the inherited one: the
+    /// opener's own variables, which this builder names none of. A name
+    /// also listed in `env_remove` is cleared, then set, so the child never
+    /// sees an inherited value under it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
     /// Environment names the child must not inherit.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub env_remove: Vec<String>,
+    /// The variable the opener reads a Codex session's compaction settings
+    /// from: the launch writes there the settings its own command carries
+    /// (`codex_compaction_overrides`), empty for a command carrying none,
+    /// which also clears an inherited value. The opener names it, since the
+    /// reader is the opener's; a launch naming none writes nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_env: Option<String>,
     /// Extra words appended as given, for a caller that knows the harness.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
@@ -137,14 +147,14 @@ pub struct LaunchCommand {
 /// tmux window takes the server's environment, so the scrub rides in the
 /// rendered line and not in the launcher's process. Claude Code's nested
 /// marker, session ids and project root; Codex's thread and sandbox
-/// markers; Pi's subagent role and parent session; the model a Pi lane
-/// declares to second-opinion (set again below for a Pi launch); the
-/// Jarvis runtime record; the desktop session's display names, through
-/// which a key, pointer or capture tool would find the owner's screen; the
-/// model-line hold a launcher exports to its own children. Account and
-/// home variables are not listed: the launch sets the child's own after
-/// the scrub.
-pub const LAUNCH_SCRUB: [&str; 17] = [
+/// markers; Pi's subagent role and parent session; the Jarvis runtime
+/// record; the desktop session's display names, through which a key,
+/// pointer or capture tool would find the owner's screen. Account and home
+/// variables are not listed: the launch sets the child's own after the
+/// scrub. A variable of the opener's own, such as the model a session
+/// declares to its review, is the opener's to clear or set
+/// (`LaunchIntent::env_remove`, `LaunchIntent::env`).
+pub const LAUNCH_SCRUB: [&str; 15] = [
     "CLAUDECODE",
     "CLAUDE_CODE_SESSION_ID",
     "CLAUDE_SESSION_ID",
@@ -155,13 +165,11 @@ pub const LAUNCH_SCRUB: [&str; 17] = [
     "PI_SUBAGENT_CHILD_AGENT",
     "PI_SUBAGENT_PARENT_SESSION_ID",
     "PI_BRIDGE_PARENT_SESSION_ID",
-    "SECOND_OPINION_CURRENT_MODEL",
     "JARVIS_RECORD",
     "JARVIS_GENERATION",
     "WAYLAND_DISPLAY",
     "DISPLAY",
     "HYPRLAND_INSTANCE_SIGNATURE",
-    "ORCH_MODEL_LINES_HELD",
 ];
 
 /// Claude's prompt switches a full-bypass launch sets to `1` in the
@@ -176,12 +184,6 @@ pub const CLAUDE_BYPASS_ENV: [&str; 3] = [
     "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT",
     "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS",
 ];
-
-/// The variable a Codex launch hands the hook's context reader: the
-/// compaction settings the command itself carries, as JSON, so the reader
-/// judges the window the session runs under and never a stored default.
-/// Empty for a command carrying none, which also clears an inherited value.
-pub const CODEX_COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
 
 /// The Codex config keys the context reader judges compaction by.
 const CODEX_COMPACTION_KEYS: [&str; 3] = [
@@ -298,15 +300,7 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
             env.entry("COPILOT_SKILLS_DIRS".to_owned())
                 .or_insert_with(|| COPILOT_SKILLS_DIRS.to_owned());
         }
-        Harness::Pi => {
-            // Pi fronts a selectable model that second-opinion cannot
-            // detect, so a Pi lane declares it; the scrub above cleared the
-            // launching session's own declaration.
-            if let Some(model) = &intent.model {
-                env.insert("SECOND_OPINION_CURRENT_MODEL".to_owned(), model.clone());
-            }
-        }
-        Harness::Codex => {}
+        Harness::Pi | Harness::Codex => {}
     }
     match intent.question_tool {
         QuestionTool::Off => args.extend(h.question_off_words().into_iter().map(str::to_owned)),
@@ -355,11 +349,10 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         }
     }
     args.extend(intent.extra_args.iter().cloned());
-    if h == Harness::Codex {
-        env.insert(
-            CODEX_COMPACTION_OVERRIDES.to_owned(),
-            codex_compaction_overrides(&args),
-        );
+    if h == Harness::Codex
+        && let Some(name) = &intent.compaction_env
+    {
+        env.insert(name.clone(), codex_compaction_overrides(&args));
     }
     let mut brief_arg = None;
     let mut brief_path = None;
@@ -555,6 +548,7 @@ mod tests {
             session_id: None,
             env: BTreeMap::new(),
             env_remove: Vec::new(),
+            compaction_env: None,
             extra_args: Vec::new(),
             program: None,
         }
@@ -570,8 +564,9 @@ mod tests {
 
     /// The environment a child of the rendered line sees: the line is run
     /// by `sh` in `dir` with a recorder as the harness, every scrubbed name,
-    /// a Copilot token and `HOME` set on the child shell; the recorder
-    /// prints its environment one `NAME=VALUE` a line.
+    /// every name the intent removes, a Copilot token and `HOME` set on the
+    /// child shell; the recorder prints its environment one `NAME=VALUE` a
+    /// line.
     fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
         let recorder = dir.join("show-env");
         crate::host::write_executable(&recorder, "#!/bin/sh\nexec env\n");
@@ -583,7 +578,11 @@ mod tests {
             .env_clear()
             .env("HOME", dir)
             .env("COPILOT_GITHUB_TOKEN", "ghp_placeholder");
-        for name in LAUNCH_SCRUB {
+        for name in LAUNCH_SCRUB
+            .iter()
+            .copied()
+            .chain(i.env_remove.iter().map(String::as_str))
+        {
             sh.env(name, "parent");
         }
         let out = sh.output().unwrap();
@@ -744,9 +743,11 @@ mod tests {
         }
     }
 
-    /// The line is run with every scrubbed name set on the child shell: a
-    /// tmux window takes the server's environment, so the builder's map
-    /// proves nothing and the child's own environment is the reading.
+    /// The line is run with every scrubbed name, and every name the opener
+    /// clears, set on the child shell: a tmux window takes the server's
+    /// environment, so the builder's map proves nothing and the child's own
+    /// environment is the reading. A name the opener both clears and sets
+    /// reaches the child as the opener's value, never the inherited one.
     #[test]
     fn every_launch_clears_the_launching_session_s_identity() {
         let dir = tempfile::tempdir().unwrap();
@@ -755,20 +756,20 @@ mod tests {
             i.home = Some(dir.path().join(format!(".1{h}")));
             i.model = Some("pi-claude/claude-fable-5-1".into());
             i.effort = None;
+            i.env_remove = vec!["OPENER_DECLARED".into(), "OPENER_CLEARED".into()];
+            i.env
+                .insert("OPENER_DECLARED".into(), "the opener's".into());
             let env = child_env(dir.path(), i);
             for name in LAUNCH_SCRUB {
                 let left = env.get(name);
-                assert!(
-                    left.is_none() || (h == Harness::Pi && name == "SECOND_OPINION_CURRENT_MODEL"),
-                    "{h}: {name} reached the child as {left:?}"
-                );
+                assert!(left.is_none(), "{h}: {name} reached the child as {left:?}");
             }
-            if h == Harness::Pi {
-                assert_eq!(
-                    env.get("SECOND_OPINION_CURRENT_MODEL").map(String::as_str),
-                    Some("pi-claude/claude-fable-5-1")
-                );
-            }
+            assert_eq!(
+                env.get("OPENER_DECLARED").map(String::as_str),
+                Some("the opener's"),
+                "{h}"
+            );
+            assert!(!env.contains_key("OPENER_CLEARED"), "{h}");
         }
     }
 
@@ -813,20 +814,23 @@ mod tests {
     }
 
     /// The JSON is pinned as the hook's reader parses it, keys sorted, the
-    /// caller's own `-c` spellings included.
+    /// caller's own `-c` spellings included, under the variable the opener
+    /// names; an opener naming none gets nothing written.
     #[test]
     fn a_codex_launch_hands_its_compaction_overrides_to_the_hook_s_reader() {
-        let mut off = bare(Harness::Codex);
+        const NAMED: &str = "OPENER_COMPACTION";
+        let named = |h: Harness| {
+            let mut i = bare(h);
+            i.compaction_env = Some(NAMED.to_owned());
+            i
+        };
+        let mut off = named(Harness::Codex);
         off.compaction = Compaction::Off;
         assert_eq!(
-            build(&off)
-                .unwrap()
-                .env
-                .get(CODEX_COMPACTION_OVERRIDES)
-                .unwrap(),
+            build(&off).unwrap().env.get(NAMED).unwrap(),
             r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#
         );
-        let mut own = bare(Harness::Codex);
+        let mut own = named(Harness::Codex);
         own.extra_args = vec![
             "--config=model_post_turn_compact_threshold_percent= 5 ".into(),
             "-cmodel_auto_compact_token_limit=\"300000\"".into(),
@@ -835,31 +839,28 @@ mod tests {
             "model_auto_compact_token_limit_scope=body_after_prefix".into(),
         ];
         assert_eq!(
-            build(&own)
-                .unwrap()
-                .env
-                .get(CODEX_COMPACTION_OVERRIDES)
-                .unwrap(),
+            build(&own).unwrap().env.get(NAMED).unwrap(),
             r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"300000","model_post_turn_compact_threshold_percent":"5"}}"#
         );
         assert_eq!(
-            build(&bare(Harness::Codex))
+            build(&named(Harness::Codex))
                 .unwrap()
                 .env
-                .get(CODEX_COMPACTION_OVERRIDES)
+                .get(NAMED)
                 .unwrap(),
             ""
         );
+        let mut unnamed = bare(Harness::Codex);
+        unnamed.compaction = Compaction::Off;
+        assert_eq!(
+            build(&unnamed).unwrap().env.keys().collect::<Vec<_>>(),
+            ["CODEX_HOME"],
+            "the home alone"
+        );
         for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
-            let mut i = bare(h);
+            let mut i = named(h);
             i.compaction = Compaction::Native;
-            assert!(
-                !build(&i)
-                    .unwrap()
-                    .env
-                    .contains_key(CODEX_COMPACTION_OVERRIDES),
-                "{h}"
-            );
+            assert!(!build(&i).unwrap().env.contains_key(NAMED), "{h}");
         }
     }
 

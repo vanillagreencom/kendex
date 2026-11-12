@@ -8913,6 +8913,101 @@ fn a_lane_output_outside_its_words_refuses_the_launch_before_any_record() {
     );
 }
 
+/// The review inside a lane judges independence by the model the lane
+/// declares: a Copilot CLI or Pi session has no other identity it can read,
+/// and a Claude Code or Codex session is detected by the review itself.
+/// Through the real `launch-lane`, on a fleet server whose environment
+/// carries an opener's own declaration, model-line hold and Codex
+/// compaction reading: a Copilot CLI or Pi session sees the model its launch
+/// pinned, a Claude Code or Codex session and a launch pinning none declare
+/// nothing, and none of the three reaches a session from its opener.
+#[test]
+fn a_lane_declares_its_pinned_model_to_the_review_and_never_its_openers() {
+    let cases: [(&str, Option<&str>, Option<&str>); 5] = [
+        ("claude", Some("claude-fable-5-1"), None),
+        ("codex", Some("gpt-5.5"), None),
+        ("copilot", Some("claude-opus-5"), Some("claude-opus-5")),
+        ("pi", Some("claude-fable-5-1"), Some("claude-fable-5-1")),
+        ("pi", None, None),
+    ];
+    for (harness, model, declared) in cases {
+        let case = format!("{harness} {model:?}");
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        for (name, value) in [
+            ("SECOND_OPINION_CURRENT_MODEL", "the opener's model"),
+            ("ORCH_MODEL_LINES_HELD", "1"),
+            ("ORCH_COMPACTION_OVERRIDES", "the opener's reading"),
+        ] {
+            let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
+            assert!(out.status.success(), "{case}: {}", stderr(&out));
+        }
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        runner.env.push((
+            "AGENT_RUNTIME_HARNESS_BINARIES".to_owned(),
+            format!(
+                "{harness}={}",
+                fixtures().join("stub-record").join(harness).display()
+            ),
+        ));
+        let work = runner.state_dir().to_path_buf();
+        let mut request = launch_request("KEN-R", &work);
+        request["harness"] = json!(harness);
+        match harness {
+            "copilot" => {
+                let tools = dir.path().join("tools");
+                std::fs::create_dir_all(&tools).unwrap();
+                runner.tools = Some(tools.clone());
+                plant_copilot_hooks(&work.join(".github/hooks"));
+                plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+                let copilot_home = dir.path().join("copilot");
+                std::fs::create_dir_all(&copilot_home).unwrap();
+                request["account"] = json!(copilot_home.display().to_string());
+            }
+            "pi" => {
+                pi_root_ready(&home.join(".pi/agent"));
+                request.as_object_mut().unwrap().remove("account");
+            }
+            _ => {
+                request.as_object_mut().unwrap().remove("account");
+            }
+        }
+        match model {
+            Some(model) => request["model"] = json!(model),
+            None => {
+                request.as_object_mut().unwrap().remove("model");
+            }
+        }
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        let opened = &launch_record_of(&work)["opened"];
+        assert_eq!(
+            opened["SECOND_OPINION_CURRENT_MODEL"],
+            declared.map_or(Value::Null, |m| json!(m)),
+            "{case}: the model the session declares: {opened}"
+        );
+        assert_eq!(
+            opened["ORCH_MODEL_LINES_HELD"],
+            Value::Null,
+            "{case}: the opener's hold: {opened}"
+        );
+        if harness == "codex" {
+            let reading = opened["ORCH_COMPACTION_OVERRIDES"].as_str().unwrap_or("");
+            let reading: Value = serde_json::from_str(reading)
+                .unwrap_or_else(|e| panic!("{case}: the line's own reading {reading:?}: {e}"));
+            assert_eq!(reading["harness"], "codex", "{case}: {opened}");
+        }
+    }
+}
+
 /// The launch record the record stubs write in `cwd`, read once it stands:
 /// the stub writes it from its own process after the launch answers.
 fn launch_record_of(cwd: &Path) -> Value {

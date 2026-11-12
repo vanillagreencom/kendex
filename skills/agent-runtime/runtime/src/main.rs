@@ -1790,6 +1790,7 @@ impl HandOverSettings {
                 pi_root: self.pi_root.as_deref(),
                 setups: &[],
             },
+            opener: |_, _| agent_runtime::effects::prepare::OpenerEnv::default(),
         }
     }
 }

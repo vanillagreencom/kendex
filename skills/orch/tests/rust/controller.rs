@@ -7181,6 +7181,82 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
     }
 }
 
+/// An overseer's start through orch hands its session what a lane's launch
+/// does. On a fleet server whose environment carries an opener's own
+/// declaration, model-line hold and Codex compaction reading, a Copilot CLI
+/// controller declares the model its pending pins, a Codex controller
+/// declares nothing and sees its own line's compaction reading, and the
+/// opener's hold reaches neither. Both stubs draw no composer, so each start
+/// is abandoned once the stub has written what it was opened with.
+#[test]
+fn an_overseer_s_start_declares_its_pinned_model_to_the_review_as_a_lane_does() {
+    for (harness, model, declared) in [
+        ("copilot", "claude-opus-5", Some("claude-opus-5")),
+        ("codex", "gpt-5.5", None),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        for (name, value) in [
+            ("SECOND_OPINION_CURRENT_MODEL", "the opener's model"),
+            ("ORCH_MODEL_LINES_HELD", "1"),
+            ("ORCH_COMPACTION_OVERRIDES", "the opener's reading"),
+        ] {
+            let out = tmux(&server.socket, &["set-environment", "-g", name, value]);
+            assert!(
+                out.status.success(),
+                "{harness}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let mut runner = suite_runner(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let cwd = runner.state_dir().to_path_buf();
+        let home = dir.path().join(format!("{harness}-home"));
+        std::fs::create_dir_all(&home).unwrap();
+        if harness == "codex" {
+            plant_codex_credential(&home);
+        } else {
+            copilot_gate_passed(&mut runner, &home);
+        }
+        let mut controller = pending(&cwd);
+        controller["harness"] = json!(harness);
+        controller["home"] = json!(home.display().to_string());
+        controller["account"] = json!(home.display().to_string());
+        controller["model"] = json!(model);
+        let binaries = format!(
+            "claude={},{harness}={}",
+            stub("stub-record").display(),
+            fixtures().join("stub-record").join(harness).display()
+        );
+        let report = effect_report(&runner.op_fleet_env(
+            &json!({"op": "start-controller", "controller": controller}),
+            &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)],
+        ));
+        assert_eq!(
+            report["intent"]["observation"]["note"], "successor-not-ready",
+            "{harness}: {report}"
+        );
+        let opened = &launch_record(&cwd)["opened"];
+        assert_eq!(
+            opened["SECOND_OPINION_CURRENT_MODEL"],
+            declared.map_or(Value::Null, |m| json!(m)),
+            "{harness}: the model the controller declares: {opened}"
+        );
+        assert_eq!(
+            opened["ORCH_MODEL_LINES_HELD"],
+            Value::Null,
+            "{harness}: the opener's hold: {opened}"
+        );
+        if harness == "codex" {
+            let reading = opened["ORCH_COMPACTION_OVERRIDES"].as_str().unwrap_or("");
+            let reading: Value = serde_json::from_str(reading)
+                .unwrap_or_else(|e| panic!("the line's own reading {reading:?}: {e}"));
+            assert_eq!(reading["harness"], "codex", "{opened}");
+        }
+    }
+}
+
 /// An accountless start resuming the session its pending names under a home
 /// resumes it there, the home named as the pending names it (the resume
 /// stub refuses a file its config dir lacks, so a confirmed start is the

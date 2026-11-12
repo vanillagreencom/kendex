@@ -41,12 +41,15 @@ use crate::settings::{ControllerSettings, EngineSettings, LaunchSettings};
 
 /// What a controller effect reads beside the engine's run: the engine's,
 /// the launch's and the hand-over's settings as the opener's load read
-/// them, and the homes an accountless launch inherits.
+/// them, the homes an accountless launch inherits, and the opener's
+/// environment for the launch the effect makes, asked with the harness and
+/// the model that launch pins.
 pub struct Settings<'a> {
     pub engine: &'a EngineSettings,
     pub launch: &'a LaunchSettings,
     pub controller: &'a ControllerSettings,
     pub inherited: Inherited<'a>,
+    pub opener: fn(Harness, Option<&str>) -> crate::effects::prepare::OpenerEnv,
 }
 
 impl Settings<'_> {
@@ -547,6 +550,7 @@ impl Successor {
                     None => session_id,
                 },
                 extra_args: &self.extra_args,
+                opener: &(settings.opener)(self.harness, self.model.as_deref()),
             },
         )?;
         if self.resume.is_none() && !self.cleared {

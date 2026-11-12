@@ -3,6 +3,7 @@
 //! directory preflights, the home it runs under with its trust record and
 //! harness gate ([`gate`]), and the runtimes of its install built.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -36,12 +37,24 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     Error::refused(key, fields)
 }
 
+/// What the opener hands its session beside the builder's words, as the
+/// intent's members of the same names: the variables it sets, the ones it
+/// clears, and the variable a Codex session's compaction reading is written
+/// under. The variables are the opener's own, so the builder copies them and
+/// names none; an opener with none of its own passes the default.
+#[derive(Debug, Clone, Default)]
+pub struct OpenerEnv {
+    pub env: BTreeMap<String, String>,
+    pub env_remove: Vec<String>,
+    pub compaction_env: Option<String>,
+}
+
 /// What one launch runs: the harness, its home and the account it spends,
 /// model, effort, working directory, opening brief, the permission posture
-/// and question-tool posture, its own compaction and the caller's own words,
-/// as a launch or a succession resolved them. The command is spelled from
-/// these by agent-runtime's one builder; no recorded line
-/// is executed.
+/// and question-tool posture, its own compaction, the caller's own words and
+/// the opener's environment, as a launch or a succession resolved them. The
+/// command is spelled from these by agent-runtime's one builder; no recorded
+/// line is executed.
 pub struct Spec<'a> {
     pub harness: Harness,
     /// The harness's own home, where its native sessions are read.
@@ -60,6 +73,7 @@ pub struct Spec<'a> {
     pub session_id: Option<&'a str>,
     /// The caller's own words, appended as given.
     pub extra_args: &'a [String],
+    pub opener: &'a OpenerEnv,
 }
 
 /// The intent the harness launches under, built from a spec and the settings
@@ -108,8 +122,9 @@ pub fn build_launch(
         },
         resume: None,
         session_id: spec.session_id.map(str::to_owned),
-        env: Default::default(),
-        env_remove: Vec::new(),
+        env: spec.opener.env.clone(),
+        env_remove: spec.opener.env_remove.clone(),
+        compaction_env: spec.opener.compaction_env.clone(),
         extra_args: spec.extra_args.to_vec(),
         program: engine.harness_binaries.get()?.remove(&spec.harness),
     };

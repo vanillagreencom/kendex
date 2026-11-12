@@ -85,6 +85,7 @@ use agent_runtime::journal::Effect;
 use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 
+use agent_runtime::effects::prepare::OpenerEnv;
 use agent_runtime::effects::{Claimant, EffectOutcome, Identity, Target, job, read_intent};
 
 /// The refusal `key` with its fields, as orch's error.
@@ -760,6 +761,43 @@ pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()>
     Ok(())
 }
 
+/// The model a session declares to second-opinion's review, which judges
+/// independence by it: a harness that fronts a selectable model (Copilot
+/// CLI, Pi) has no other identity the review can read.
+const REVIEW_MODEL: &str = "SECOND_OPINION_CURRENT_MODEL";
+
+/// The hold an orch launcher exports to its own children, under which a
+/// `lanes` read prints neither once-per-launch model line; a launched
+/// session prints its own launches' lines.
+const MODEL_LINES_HELD: &str = "ORCH_MODEL_LINES_HELD";
+
+/// The variable a Codex session's turn-end context reader takes the
+/// compaction settings of its own command from (`lib/adapters/codex.sh`).
+const COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
+
+/// What every orch launch hands its session beside the builder's words:
+/// the opener's own declaration and model-line hold cleared, so a session
+/// never answers as its opener, and the model the launch pins declared to
+/// the review where the review cannot detect the harness itself. Claude
+/// Code and Codex it detects, and a declaration there could only add a
+/// refusal on an alias it does not fold to its harness. A launch pinning no
+/// model declares none, and the review names that rather than guess.
+fn opener_env(harness: Harness, model: Option<&str>) -> OpenerEnv {
+    let mut opener = OpenerEnv {
+        env: Default::default(),
+        env_remove: [REVIEW_MODEL, MODEL_LINES_HELD].map(str::to_owned).to_vec(),
+        compaction_env: Some(COMPACTION_OVERRIDES.to_owned()),
+    };
+    let review_detects = match harness {
+        Harness::Claude | Harness::Codex => true,
+        Harness::Copilot | Harness::Pi => false,
+    };
+    if !review_detects && let Some(model) = model.filter(|m| !m.is_empty()) {
+        opener.env.insert(REVIEW_MODEL.to_owned(), model.to_owned());
+    }
+    opener
+}
+
 /// `act` run over the hand-over's run on the same record: orch's settings
 /// as the hand-over reads them, and the fleet watch as a start's companion.
 fn with_controller<T>(
@@ -771,6 +809,7 @@ fn with_controller<T>(
         launch: &run.settings.launch,
         controller: &run.settings.controller,
         inherited: run.settings.inherited(),
+        opener: opener_env,
     };
     let ctl = controller::Run {
         engine: engine_run(
