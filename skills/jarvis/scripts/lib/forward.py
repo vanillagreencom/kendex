@@ -218,6 +218,24 @@ def replaced(state, first):
     return False
 
 
+def host_call(role, deadline, script, args, data=None):
+    """Synchronous SSH call shared by forwards and the main-owned ask operations."""
+    remaining = deadline - time.monotonic()
+    if remaining < 1:
+        return UNREACHABLE, "budget-spent"
+    command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=%d" % CONNECT_SECONDS, role.dest,
+               "bash -c " + shlex.quote(script) + " forward " + " ".join(map(shlex.quote, [role.home, *args]))]
+    try:
+        result = watch.run(command, data=data, operation="forward-host", timeout=remaining)
+    except watch.Failure as error:
+        if error.record["key"][1] == "timeout":
+            return UNREACHABLE, "timeout"
+        return "send-failed", error.record["detail"]
+    if result.returncode == 255:
+        return UNREACHABLE, result.stderr.strip().split("\n", 1)[0]
+    return "ok", result
+
+
 class Forwarder:
     def __init__(self, bash, home, directory):
         self.bash, self.home = bash, home
@@ -232,20 +250,7 @@ class Forwarder:
 
     def host(self, script, args, data=None):
         """One call on the main: ("ok", result), or (cause, first diagnostic line)."""
-        remaining = self.deadline - time.monotonic()
-        if remaining < 1:
-            return UNREACHABLE, "budget-spent"
-        command = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=%d" % CONNECT_SECONDS, self.role.dest,
-                   "bash -c " + shlex.quote(script) + " forward " + " ".join(map(shlex.quote, [self.role.home, *args]))]
-        try:
-            result = watch.run(command, data=data, operation="forward-host", timeout=remaining)
-        except watch.Failure as error:
-            if error.record["key"][1] == "timeout":
-                return UNREACHABLE, "timeout"
-            return "send-failed", error.record["detail"]
-        if result.returncode == 255:
-            return UNREACHABLE, result.stderr.strip().split("\n", 1)[0]
-        return "ok", result
+        return host_call(self.role, self.deadline, script, args, data)
 
     @staticmethod
     def refusal(result, fallback):
@@ -295,7 +300,7 @@ class Forwarder:
             self.record(queued, *stopped)
             return
         for entry in queued:
-            outcome, result = self.host(owner_note.HOST_SEND, ["--delivery-id", entry["key"]], entry["text"])
+            outcome, result = self.host(owner_note.HOST_SEND, ["--directive", "--delivery-id", entry["key"]], entry["text"])
             self.probe(outcome)
             if outcome != "ok":
                 self.record([entry], outcome, result)

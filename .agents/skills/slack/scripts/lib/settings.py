@@ -46,10 +46,11 @@ set -euo pipefail
 source "$1/scripts/lib/kendex-env.sh"
 kendex_project_env_supports selected-private-path || exit 1
 kendex_load_project_env "$2" _slack_private_file || exit 1
-reader=$3
-shift 3
+reader=("$3" -c)
+if [ -n "$4" ]; then reader=("$4" caller-code ""); fi
+shift 4
 export "$@"
-exec "$reader" -c 'import json, os, sys; print(json.dumps(dict({name: os.environ[name] for name in sys.argv[2:] if name in os.environ}, private_file=sys.argv[1])))' "$_slack_private_file" "$@"
+exec "${reader[@]}" 'import json, os, sys; print(json.dumps(dict({name: os.environ[name] for name in sys.argv[2:] if name in os.environ}, private_file=sys.argv[1])))' "$_slack_private_file" "$@"
 '''
 
 
@@ -150,6 +151,7 @@ def load_presence(root: Path) -> Presence:
     try:
         proc = subprocess.run(
             ["bash", "-c", ROOT_ENV, "slack-root-settings", orch, str(root), sys.executable,
+             CALLER_ENV.get("_KENDEX_JARVIS_PYTHON", ""),
              *PRESENCE_ALIASES, *PRESENCE_ALIASES.values()],
             cwd=str(root), env=CALLER_ENV, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, check=False,

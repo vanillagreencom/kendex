@@ -15,6 +15,7 @@ Usage: comments.sh <action> [options]
 Actions:
   list       List comments on an issue
   bulk-list  List the comments of several issues in one read
+  owner-requests  Complete owner-mentioned requests in the assigned, labelled view
   create     Create a new comment
   update  Update an existing comment
   delete  Delete a comment
@@ -33,6 +34,16 @@ Bulk List:
                         read with a `missing` list; a lookup that fails any
                         other way (a quota, a 5xx) fails it with no
                         `missing`. --stdin reads one identifier per line.
+
+Owner Requests:
+  comments.sh owner-requests --email EMAIL --label LABEL
+                        Jarvis's canonical request projection. Uses the
+                        exact-email resolver, existing issues filters and
+                        complete comment reader. Preserves every distinct
+                        request mentioning that user's canonical profile URL.
+                        Includes full comment evidence for delivery recovery.
+                        A successful complete read defines current view
+                        membership; failed reads publish no partial result.
 
 Create Options:
   --body <text>         Comment body (required unless --body-file or --attach is set)
@@ -72,7 +83,18 @@ read_body_file() {
         echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
         return 1
     fi
-    body=$(<"$body_file")
+    body=$(cat -- "$body_file" && printf '.') || return 1
+    body="${body%.}"
+}
+
+comment_body_json() {
+    # Recovery compares unmodified file bodies byte for byte. Inline and
+    # generated attachment bodies retain their final-newline contract.
+    if [[ -n "$2" && "${3:-0}" == 0 ]]; then
+        cat -- "$2"
+    else
+        printf '%s\n' "$1"
+    fi | jq -Rs '.'
 }
 
 list_comments() {
@@ -105,6 +127,9 @@ list_comments() {
                     createdAt
                     updatedAt
                     user { name email }
+                    user { id url }
+                    parent { id }
+                    url
                 }
             }
         }
@@ -176,6 +201,9 @@ bulk_list_comments() {
                         createdAt
                         updatedAt
                         user { name email }
+                        user { id url }
+                        parent { id }
+                        url
                     }
                 }'
     local result
@@ -186,6 +214,39 @@ bulk_list_comments() {
         | (.[1].nodes | map({key: .identifier, value: .comments.nodes}) | from_entries) as $read
         | reduce $ids[] as $i ({}; .[$i] = $read[$refs[$i]])
         | if $format == "raw" then . else map_values(map(comment_safe)) end' <<<"$id_json"$'\n'"$result"
+}
+
+owner_requests() {
+    local email="" label="" owner items comments workspace identifiers refs=() ref
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --email|--label)
+                linear_require_option_value "$@" || return 1
+                if [[ "$1" == --email ]]; then email="$2"; else label="$2"; fi
+                shift 2 ;;
+            *) echo '{"error":"owner-requests requires --email and --label"}' >&2; return 1 ;;
+        esac
+    done
+    [[ -n "$email" && -n "$label" ]] || { echo '{"error":"owner-requests requires --email and --label"}' >&2; return 1; }
+    owner=$(find_user_by_email "$email") || return 1
+    jq -e '.id != null and (.url | type == "string" and startswith("https://"))' <<<"${owner:-null}" >/dev/null || {
+        echo '{"error":"owner-profile-unavailable"}' >&2; return 1;
+    }
+    workspace=$("$BASH" "$SCRIPT_DIR/teams.sh" keys) || return 1
+    items=$("$BASH" "$SCRIPT_DIR/issues.sh" list --assignee "$email" --label "$label" --max --format=safe) || return 1
+    identifiers=$(jq -r '.[].id' <<<"$items") || return 1
+    while IFS= read -r ref; do [[ -z "$ref" ]] || refs+=("$ref"); done <<<"$identifiers"
+    comments='{}'
+    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments --format=safe "${refs[@]}") || return 1; fi
+    jq -cs '
+      .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
+      def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
+      {workspace: $workspace.urlKey, owner: $owner,
+       issues: [$items[] | {id, uuid, url, updated_at, comments: $comments[.id]}]}
+      | . + {requests: [.issues[] | . as $issue | .comments[] | select(.body | mentions($owner.url))
+          | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
+          | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
+      <<<"$owner"$'\n'"$workspace"$'\n'"$items"$'\n'"$comments"
 }
 
 create_comment() {
@@ -244,6 +305,10 @@ create_comment() {
     # attachmentCreate surface, so the link IS the attachment). An upload
     # failure refuses here, before the comment exists — nothing partial.
     local attach_path attach_info attach_sep=$'\n\n'
+    if [[ -n "$body_file" && ${#attach_paths[@]} -gt 0 ]]; then
+        # Attachment composition supplies the separators and final newline.
+        body=$(printf '%s' "$body") || return 1
+    fi
     for attach_path in ${attach_paths[@]+"${attach_paths[@]}"}; do
         attach_info=$(attach_upload_file "$attach_path") || return 1
         local attach_url attach_name attach_type
@@ -261,7 +326,7 @@ create_comment() {
 
     # Escape body for JSON (handle newlines and quotes)
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs '.')
+    escaped_body=$(comment_body_json "$body" "$body_file" "${#attach_paths[@]}") || return 1
 
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
@@ -321,7 +386,7 @@ update_comment() {
     fi
 
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs '.')
+    escaped_body=$(comment_body_json "$body" "$body_file") || return 1
 
     local mutation='
     mutation UpdateComment($id: String!, $input: CommentUpdateInput!) {
@@ -375,6 +440,9 @@ case "$action" in
         ;;
     bulk-list)
         bulk_list_comments "$@"
+        ;;
+    owner-requests)
+        owner_requests "$@"
         ;;
     create)
         if [ -z "${1:-}" ]; then

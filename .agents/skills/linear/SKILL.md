@@ -46,6 +46,8 @@ Aliases: `issues relations` → `list-relations`, `projects dependencies` → `l
 
 The removed `cache` and `sync` verbs refuse with one `linear: removed=` line (`linear.sh --help`).
 
+`comments owner-requests --email EMAIL --label LABEL` supplies Jarvis's complete canonical request projection. It uses the existing exact-email resolver and assigned-issue filters, preserves each original profile-mention comment and exposes its author identity, creation time, parent and server URL. Its `--help` defines the evidence it returns; a failed source publishes no partial result.
+
 Schema reference over ctx7: `/websites/studio_apollographql_public_linear-api_variant_current` (API), `/linear/linear` (SDK), `/websites/linear_app_developers` (guides). [patterns/workflow-actions.md](patterns/workflow-actions.md) covers multi-step state changes.
 
 ## Reads
