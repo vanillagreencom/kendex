@@ -79,14 +79,15 @@ def brief_taken(fixture, harness, identity, event, **fields):
 
 
 def shorten_account_settle(skills):
-    # Each confirmed Start pass judges the pane's account by two process reads
-    # one settle apart (orch lane-launch.sh lane_account_check), a second by
-    # default. A fixture pane carries its account from its exec. The documented
-    # suite override, ORCH_LANE_SETTLE_MS, cannot reach the backend: session.py
-    # environment() hands it only its allowlist and, for Start and resume, the
-    # policy names it reads from the user manager, and ORCH_LANE_SETTLE_MS is
-    # in neither. So the suite's own copy of the scripts takes the short pause;
-    # the reads and their comparison stay production.
+    # The session backend's inspect judges a confirmed pane's account by two
+    # process reads one settle apart (orch lane-launch.sh lane_account_check),
+    # a second by default. A fixture pane carries its account from its exec.
+    # The documented suite override, ORCH_LANE_SETTLE_MS, does not reach that
+    # inspect: session.py runs it with what environment() selects, and the
+    # variable is neither among the names environment() keeps nor among the
+    # user-manager policy names it forwards. So the suite's own copy of the
+    # scripts takes the short pause; the reads and their comparison stay
+    # production.
     library = Path(skills) / "orch/scripts/lib/lane-launch.sh"
     assert not library.is_symlink(), library
     source = library.read_text()
