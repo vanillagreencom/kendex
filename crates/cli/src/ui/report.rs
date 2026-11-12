@@ -124,6 +124,8 @@ impl Style {
     }
 
     /// A titled table rich; plain, the headerless columns a script reads.
+    /// No rows draw nothing in either rendering: a verb with something to
+    /// say about an empty list says it itself.
     pub fn report_table(
         &self,
         title: &str,
@@ -131,6 +133,9 @@ impl Style {
         rows: &[Vec<String>],
         plain: PlainColumns,
     ) -> Vec<String> {
+        if rows.is_empty() {
+            return Vec::new();
+        }
         match self.look {
             Look::Rich { .. } => {
                 let mut lines = self.section(title, rows.len(), Status::Notice);
@@ -444,6 +449,20 @@ mod tests {
                 "  hook   界界界界界界界界界  1 bytes",
             ]
         );
+    }
+
+    #[test]
+    fn report_table_without_rows_draws_nothing() {
+        let headers = ["kind", "name"];
+        for style in [plain(), rich(80)] {
+            for columns in [PlainColumns::Padded, PlainColumns::Joined] {
+                assert!(
+                    style
+                        .report_table("packages", &headers, &[], columns)
+                        .is_empty()
+                );
+            }
+        }
     }
 
     #[test]

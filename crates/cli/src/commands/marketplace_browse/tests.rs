@@ -51,7 +51,6 @@ fn marketplace_browse_snapshots() {
             "  global  cat::tidy  (skill) [installed]",
         ]
     );
-    assert!(listing(&rich(80), &[]).is_empty());
 }
 
 /// A long summary wraps inside its column; the narrow cells stay whole.

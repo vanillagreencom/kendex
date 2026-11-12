@@ -80,7 +80,6 @@ fn mine_snapshots() {
         tagged(&unread(&rich(80), Path::new("/dev/gone"), "no such folder")),
         ["  <31>✗</> /dev/gone: no such folder"]
     );
-    assert!(mine_lines(&rich(80), &[]).is_empty());
 }
 
 /// Each origin of a candidate is its own row, a usable one with its hash
@@ -122,7 +121,6 @@ fn import_candidate_snapshots() {
     for cell in ["0123456789ab", "unusable", "it has no frontmatter"] {
         assert!(drawn.contains(cell), "{cell}: {drawn}");
     }
-    assert!(candidate_lines(&plain(), &[]).is_empty());
 }
 
 #[test]
@@ -180,7 +178,7 @@ fn submit_preflight_snapshots() {
             "  <32>✓</> kendex.toml declares the marketplace",
             "  <31>✗</> a license is chosen",
             "    <90>add a LICENSE file</>",
-            "  <36>•</> everything is pushed",
+            "  <31>✗</> everything is pushed",
         ]
     );
 }
@@ -210,5 +208,4 @@ fn submission_status_snapshots() {
             "acme/tools  listed",
         ]
     );
-    assert!(submissions(&rich(80), &[]).is_empty());
 }

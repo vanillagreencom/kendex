@@ -45,5 +45,4 @@ fn source_list_snapshots() {
             "  global  tools  acme/tools @abc1234   [2 package(s)]",
         ]
     );
-    assert!(listing(&rich(80), &[]).is_empty());
 }

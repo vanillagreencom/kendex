@@ -120,9 +120,6 @@ fn unread(style: &Style, path: &std::path::Path, error: &str) -> Vec<String> {
 
 /// One row per marketplace on Mine: its name, what it holds, and where.
 fn mine_lines(style: &Style, rows: &[author::MineRow]) -> Vec<String> {
-    if rows.is_empty() {
-        return Vec::new();
-    }
     let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {
@@ -356,9 +353,6 @@ fn candidate_lines(style: &Style, candidates: &[author::ImportCandidate]) -> Vec
             ]);
         }
     }
-    if cells.is_empty() {
-        return Vec::new();
-    }
     style.report_table(
         "candidates",
         &["kind", "name", "origin", "hash", "places"],
@@ -434,7 +428,10 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
         return Ok(());
     }
     if !preflight.ready {
-        return Err("fix the rows marked ✗ first — or --dry-run to see what would be sent".into());
+        return Err(
+            "fix the checks that did not pass first — or --dry-run to see what would be sent"
+                .into(),
+        );
     }
     let outcome = {
         let _sending = ui::spinner("submitting");
@@ -458,8 +455,8 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
 }
 
 /// The submission checks: each row's verdict, and the fix under a row
-/// that has one. A failed check blocks the submission; one that could not
-/// be read is a notice.
+/// that has one. A check that failed or could not be read blocks the
+/// submission, so both draw as blocked; plain keeps their own marks.
 fn preflight_lines(style: &Style, checks: &[author::PreflightCheck]) -> Vec<String> {
     use kendex_core::decision::Need;
     let mut lines = Vec::new();
@@ -467,7 +464,7 @@ fn preflight_lines(style: &Style, checks: &[author::PreflightCheck]) -> Vec<Stri
         let (status, mark) = match check.ok {
             Some(true) => (Status::Done, "ok  "),
             Some(false) => (Status::of(Need::Blocked), " ✗  "),
-            None => (Status::of(Need::Notice), " ?  "),
+            None => (Status::of(Need::Blocked), " ?  "),
         };
         lines.extend(style.report_row(status, &[Span::Prose(&check.label)], mark));
         if let Some(fix) = &check.fix {
@@ -482,9 +479,6 @@ fn submissions(
     style: &Style,
     rows: &[kendex_core::registry::submit::SubmissionRow],
 ) -> Vec<String> {
-    if rows.is_empty() {
-        return Vec::new();
-    }
     let cells: Vec<Vec<String>> = rows
         .iter()
         .map(|row| {

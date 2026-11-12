@@ -92,9 +92,6 @@ fn package_cells((scope, marketplace, package): BrowseRow) -> Vec<String> {
 }
 
 fn listing(style: &Style, cells: &[Vec<String>]) -> Vec<String> {
-    if cells.is_empty() {
-        return Vec::new();
-    }
     style.report_table(
         "packages",
         &["scope", "package", "kind", "summary"],

@@ -48,7 +48,6 @@ fn marketplace_list_snapshots() {
             "  global  old    acme/old @ v2    [not downloaded yet] (switched off)",
         ]
     );
-    assert!(subscriptions(&rich(80), &[]).is_empty());
 }
 
 /// The unsubscribe that landed, removed or kept.

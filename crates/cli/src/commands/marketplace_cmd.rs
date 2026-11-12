@@ -269,9 +269,6 @@ fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<String> {
 }
 
 fn subscriptions(style: &Style, cells: &[Vec<String>]) -> Vec<String> {
-    if cells.is_empty() {
-        return Vec::new();
-    }
     style.report_table(
         "subscriptions",
         &["scope", "name", "from", "packages"],

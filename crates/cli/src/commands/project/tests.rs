@@ -154,7 +154,6 @@ fn registry_outcome_snapshots() {
         ),
         ["/dev/a", "/dev/b"]
     );
-    assert!(found(&rich(80), &[]).is_empty());
 }
 
 /// A folder name off the disk cannot move the cursor or split the line.

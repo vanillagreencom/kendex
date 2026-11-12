@@ -87,114 +87,99 @@ pub enum SourceCommand {
 
 pub fn run(env: &Env, args: SourceArgs) -> CliResult {
     let filter = args.effective_scope()?;
-    let command = args.command;
     let style = ui::style();
-    // The stale refresh serves the session check, which reads project AND
-    // global — a project-scoped default here would leave global mirrors
-    // stale forever (and die outright when run outside a project).
-    if let SourceCommand::Refresh { stale: true, .. } = &command {
-        let stale = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
-        let scopes = resolve_scopes(env, stale)?;
-        for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
-            ui::stderr(&style.report_row(Status::Notice, &[Span::Prose(&note)], "note: "));
+    match &args.command {
+        // The stale refresh serves the session check, which reads project
+        // AND global — a project-scoped default here would leave global
+        // mirrors stale forever (and die outright when run outside a
+        // project).
+        SourceCommand::Refresh { stale: true, .. } => {
+            let stale = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
+            let scopes = resolve_scopes(env, stale)?;
+            for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
+                ui::stderr(&style.report_row(Status::Notice, &[Span::Prose(&note)], "note: "));
+            }
+            Ok(())
         }
-        return Ok(());
-    }
-    let scopes = resolve_scopes(env, filter)?;
-    let change = match &command {
+        SourceCommand::Refresh {
+            stale: false,
+            in_use,
+        } => refresh(env, &style, resolve_scopes(env, filter)?, *in_use),
+        SourceCommand::List => list(env, &style, &resolve_scopes(env, filter)?),
         SourceCommand::Add {
             name, reference, ..
-        } => Some(SourceChange::Add { name, reference }),
-        SourceCommand::Remove { name, .. } => Some(SourceChange::Remove { name }),
-        SourceCommand::Enable { name, .. } => Some(SourceChange::SetEnabled {
-            name,
-            enabled: true,
-        }),
-        SourceCommand::Disable { name, .. } => Some(SourceChange::SetEnabled {
-            name,
-            enabled: false,
-        }),
-        SourceCommand::List | SourceCommand::Refresh { .. } => None,
-    };
-    let target = match &command {
-        SourceCommand::Add { name, .. }
-        | SourceCommand::Remove { name, .. }
-        | SourceCommand::Enable { name, .. }
-        | SourceCommand::Disable { name, .. } => name.clone(),
-        SourceCommand::List | SourceCommand::Refresh { .. } => scopes
-            .iter()
-            .map(Scope::label)
-            .collect::<Vec<_>>()
-            .join(", "),
-    };
-    ui::stderr(&style.header(verb(&command), &target));
-    if let Some(change) = change {
-        return write_changes(env, &style, &command, scopes, change);
-    }
-    if let SourceCommand::List = &command {
-        return list(env, &style, &scopes);
-    }
-    for scope in scopes {
-        match &command {
-            SourceCommand::List => unreachable!("listed before the refresh loop"),
-            SourceCommand::Add { .. }
-            | SourceCommand::Remove { .. }
-            | SourceCommand::Enable { .. }
-            | SourceCommand::Disable { .. } => unreachable!("handled before the read loop"),
-            SourceCommand::Refresh { stale: true, .. } => {
-                unreachable!("handled above the scope loop")
-            }
-            SourceCommand::Refresh {
-                stale: false,
-                in_use,
-            } => {
-                // An absent manifest reads as its seed, as everywhere else:
-                // a personal scope that never wrote one still subscribes to
-                // the default marketplace, which a refresh must download.
-                let manifest = kendex_core::engine::ops::manifest_for_mutation(env, &scope)?;
-                let synced = {
-                    let _checking =
-                        ui::spinner(&format!("{}: checking marketplaces", scope_label(&scope)));
-                    match in_use {
-                        true => remote::sync_record_sources(env, &scope, &manifest)?,
-                        false => remote::sync_sources(env, &manifest)?,
-                    }
-                };
-                super::engine_common::print_synced(&synced);
-                // The fetches above stamped their mirrors; the snapshot makes
-                // the fresh verdicts what the next session check reads.
-                if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
-                    ui::stderr(&style.report_warning(&format!("snapshot not derived ({})", error)));
-                }
-                ui::stderr(&style.report_row(
-                    Status::Done,
-                    &[Span::Prose(&format!(
-                        "{}: marketplaces checked for updates",
-                        scope_label(&scope)
-                    ))],
-                    "",
-                ));
-            }
+        } => write_changes(env, &style, filter, SourceChange::Add { name, reference }),
+        SourceCommand::Remove { name, .. } => {
+            write_changes(env, &style, filter, SourceChange::Remove { name })
         }
+        SourceCommand::Enable { name, .. } => write_changes(
+            env,
+            &style,
+            filter,
+            SourceChange::SetEnabled {
+                name,
+                enabled: true,
+            },
+        ),
+        SourceCommand::Disable { name, .. } => write_changes(
+            env,
+            &style,
+            filter,
+            SourceChange::SetEnabled {
+                name,
+                enabled: false,
+            },
+        ),
     }
-    Ok(())
 }
 
-/// The verb a header names.
-fn verb(command: &SourceCommand) -> &'static str {
-    match command {
-        SourceCommand::List => "source list",
-        SourceCommand::Add { .. } => "source add",
-        SourceCommand::Remove { .. } => "source remove",
-        SourceCommand::Enable { .. } => "source enable",
-        SourceCommand::Disable { .. } => "source disable",
-        SourceCommand::Refresh { .. } => "source refresh",
+/// The scopes a listing or a refresh covers, as its header names them.
+fn scope_labels(scopes: &[Scope]) -> String {
+    scopes
+        .iter()
+        .map(Scope::label)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Checks each scope's marketplaces for updates, then derives the snapshot
+/// the next session check reads.
+fn refresh(env: &Env, style: &Style, scopes: Vec<Scope>, in_use: bool) -> CliResult {
+    ui::stderr(&style.header("source refresh", &scope_labels(&scopes)));
+    for scope in scopes {
+        // An absent manifest reads as its seed, as everywhere else: a
+        // personal scope that never wrote one still subscribes to the
+        // default marketplace, which a refresh must download.
+        let manifest = kendex_core::engine::ops::manifest_for_mutation(env, &scope)?;
+        let synced = {
+            let _checking = ui::spinner(&format!("{}: checking marketplaces", scope_label(&scope)));
+            match in_use {
+                true => remote::sync_record_sources(env, &scope, &manifest)?,
+                false => remote::sync_sources(env, &manifest)?,
+            }
+        };
+        super::engine_common::print_synced(&synced);
+        // The fetches above stamped their mirrors; the snapshot makes the
+        // fresh verdicts what the next session check reads.
+        if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
+            ui::stderr(&style.report_warning(&format!("snapshot not derived ({})", error)));
+        }
+        ui::stderr(&style.report_row(
+            Status::Done,
+            &[Span::Prose(&format!(
+                "{}: marketplaces checked for updates",
+                scope_label(&scope)
+            ))],
+            "",
+        ));
     }
+    Ok(())
 }
 
 /// Every scope's marketplaces in one table. A scope that cannot be read
 /// ends the listing after the rows read before it are drawn.
 fn list(env: &Env, style: &Style, scopes: &[Scope]) -> CliResult {
+    ui::stderr(&style.header("source list", &scope_labels(scopes)));
     let mut rows = Vec::new();
     let mut unread = None;
     for scope in scopes {
@@ -234,9 +219,6 @@ fn listed_row(scope: &Scope, row: &source_ops::SourceRow) -> Vec<String> {
 }
 
 fn listing(style: &Style, rows: &[Vec<String>]) -> Vec<String> {
-    if rows.is_empty() {
-        return Vec::new();
-    }
     style.report_table(
         "marketplaces",
         &["scope", "name", "from", "packages"],
@@ -248,44 +230,58 @@ fn listing(style: &Style, rows: &[Vec<String>]) -> Vec<String> {
 fn write_changes(
     env: &Env,
     style: &Style,
-    command: &SourceCommand,
-    scopes: Vec<Scope>,
+    filter: ScopeFilter,
     change: SourceChange<'_>,
 ) -> CliResult {
+    let scopes = resolve_scopes(env, filter)?;
+    let (verb, name) = match change {
+        SourceChange::Add { name, .. } => ("source add", name),
+        SourceChange::Remove { name } => ("source remove", name),
+        SourceChange::SetEnabled {
+            name,
+            enabled: true,
+        } => ("source enable", name),
+        SourceChange::SetEnabled {
+            name,
+            enabled: false,
+        } => ("source disable", name),
+    };
+    ui::stderr(&style.header(verb, name));
     let prepared: Vec<_> = scopes
         .iter()
         .map(|scope| source_ops::prepare_source_change(env, scope, change))
         .collect();
-    for change in prepared.iter().flatten() {
-        if let Err(error) = change.check_catalog_compatibility(env)
+    for prepared in prepared.iter().flatten() {
+        if let Err(error) = prepared.check_catalog_compatibility(env)
             && error.is_catalog_compatibility()
         {
             return Err(error.into());
         }
     }
-    for (scope, change) in scopes.into_iter().zip(prepared) {
-        let wrote = apply_report_accounted(env, &change?.plan(env)?, None)?;
+    for (scope, prepared) in scopes.into_iter().zip(prepared) {
+        let wrote = apply_report_accounted(env, &prepared?.plan(env)?, None)?;
         // The edit is on disk once the write returns: it is said before a
         // failed step after it, which the run then ends on.
-        ui::stderr(&style.report_row(Status::Done, &[Span::Prose(&written(command, &scope))], ""));
+        ui::stderr(&style.report_row(Status::Done, &[Span::Prose(&written(change, &scope))], ""));
         wrote.after.map_err(AfterFailed::into_error)?;
     }
     Ok(())
 }
 
 /// What a landed subscription edit did in one scope.
-fn written(command: &SourceCommand, scope: &Scope) -> String {
+fn written(change: SourceChange<'_>, scope: &Scope) -> String {
     let scope = scope_label(scope);
-    match command {
-        SourceCommand::Add { name, .. } => format!("{scope}: added marketplace '{name}'"),
-        SourceCommand::Remove { name, .. } => format!("{scope}: removed marketplace '{name}'"),
-        SourceCommand::Enable { name, .. } => format!("{scope}: marketplace '{name}' switched on"),
-        SourceCommand::Disable { name, .. } => {
-            format!("{scope}: marketplace '{name}' switched off")
-        }
-        SourceCommand::List | SourceCommand::Refresh { .. } => {
-            unreachable!("only subscription edits are prepared")
-        }
+    match change {
+        SourceChange::Add { name, .. } => format!("{scope}: added marketplace '{name}'"),
+        SourceChange::Remove { name } => format!("{scope}: removed marketplace '{name}'"),
+        SourceChange::SetEnabled {
+            name,
+            enabled: true,
+        } => format!("{scope}: marketplace '{name}' switched on"),
+        SourceChange::SetEnabled {
+            name,
+            enabled: false,
+        } => format!("{scope}: marketplace '{name}' switched off"),
     }
 }
 

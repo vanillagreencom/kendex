@@ -243,9 +243,6 @@ fn reconnected(style: &Style, plan: &settings::Relocation) -> Vec<String> {
 
 /// The project folders discovery found, one per line plain.
 fn found(style: &Style, folders: &[PathBuf]) -> Vec<String> {
-    if folders.is_empty() {
-        return Vec::new();
-    }
     let rows: Vec<Vec<String>> = folders
         .iter()
         .map(|folder| vec![folder.display().to_string()])
