@@ -13,11 +13,13 @@ A catalog is someone else's repository, so a person deserves to see what a packa
 ## Rules
 
 - Do score an item on its own bytes and nothing else: a repository-root skill's `.git`, `node_modules` and build directories are not its bytes, and a rule whose bytes are not in the input reports itself not applicable.
+- Do scan the file a harness loads at full weight, fences included: a fenced `sh` block in a SKILL.md is the instruction. A blockquote and every line of a skill's supporting files weigh one severity less, and a secret never weighs less anywhere (`crates/core/src/quality/rules/mod.rs`).
 - Do keep the scores advisory: nothing holds a plan back, and a run that scored something closes on `safety: clean` only when nothing was flagged and every rule read every item.
 - Do name severity in words, never colour alone.
 - Do report a matched secret as a fingerprint only; the token never appears in a message, log or record.
-- Do tell a mention from a finding by rule precision, in `crates/core/src/quality/text/`: a switch or a destructive command a file only names, in a comment, a printed string or a test fixture, is a mention that costs the score nothing and prints only under `--verbose`.
+- Do tell a mention from a finding by rule precision, in `crates/core/src/quality/text/`: a switch or a destructive command a file only names, in a comment, a printed string or a test fixture, is a mention that costs the score nothing and prints only under `--verbose`. Severities are calibrated against real catalogs, so a rule that fires on ordinary writing is wrong, not strict.
 - Do answer a rule that fires on a guard's own comment or refusal with precision, never with a per-package allowance; the one allowance, `crates/core/src/quality/allowance.toml`, accepts a finding a kendex package really runs or emits, for kendex's own item alone, by the hash of that line, and no catalog can carry one.
+- Never add an LLM judge, a simulation or a letter grade: quality is the static layer of wshobson's weighted-dimension model alone (`crates/core/src/quality/dimensions.rs`).
 - Never let a score gate anything, never average the two, and never read the harness inside a rule.
 
 ## The canonical example
