@@ -12,8 +12,9 @@
 #         `api installation/repositories` and `auth status`
 #   call  check (kendex_github_token_auth_status) or capture
 #         (kendex_github_auth_status_capture)
-#   want  `rc=<status> source=<s> failure=<f> printed=<text>`, `-` for an
-#         unset field or nothing printed
+#   want  `rc=<status> source=<s> failure=<f>[ out=<text>] printed=<text>`,
+#         `-` for an unset field or nothing printed; out, a capture's alone,
+#         is what its stdout file holds, which pr-view puts in its detail
 set -euo pipefail
 
 # Every credential, selection, validation and bound a row sees is its own.
@@ -31,16 +32,26 @@ PASS=0
 FAIL=0
 
 mkdir -p "$TMP_ROOT/bin"
-# gh writes a refused call's body to stdout and `gh: <message> (HTTP NNN)` to
-# stderr. A stub that outlives its bound is the sleep itself.
+# Under --include, gh 2.102.0 writes a refused call's status line, its
+# CRLF-ended headers, a blank CRLF line and the body to stdout, and
+# `gh: <message> (HTTP NNN)` to stderr. A stub that outlives its bound is the
+# sleep itself.
 cat >"$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+refuse() { # STATUS_LINE HEADERS MESSAGE CODE
+  printf '%s\n%s\r\n{"message":"%s"}\n' "$1" "$2" "$3"
+  printf 'gh: %s (HTTP %s)\n' "$3" "$4" >&2
+  exit 1
+}
 case "${1:-} ${2:-}" in
   "api user")
     case "${STUB_USER:-ok}" in
-      401) echo '{"message":"Bad credentials"}'; echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
-      integration) echo '{"message":"Resource not accessible by integration"}'; echo "gh: Resource not accessible by integration (HTTP 403)" >&2; exit 1 ;;
+      401) refuse 'HTTP/2.0 401 Unauthorized' $'Content-Type: application/json\r\n' 'Bad credentials' 401 ;;
+      integration) refuse 'HTTP/2.0 403 Forbidden' $'Content-Type: application/json\r\n' 'Resource not accessible by integration' 403 ;;
+      primary-limit) refuse 'HTTP/2.0 403 Forbidden' $'X-Ratelimit-Limit: 5000\r\nX-Ratelimit-Remaining: 0\r\n' 'API rate limit exceeded for user ID 1.' 403 ;;
+      secondary-limit) refuse 'HTTP/2.0 403 Forbidden' $'X-Ratelimit-Remaining: 4999\r\n' 'You have exceeded a secondary rate limit.' 403 ;;
+      retry-after) refuse 'HTTP/2.0 403 Forbidden' $'Retry-After: 60\r\nX-Ratelimit-Remaining: 4999\r\n' 'You have triggered an abuse detection mechanism.' 403 ;;
       no-status) echo "error connecting to api.github.com" >&2; exit 1 ;;
     esac
     echo test-user
@@ -48,7 +59,7 @@ case "${1:-} ${2:-}" in
     ;;
   "api installation/repositories")
     case "${STUB_INSTALL:-ok}" in
-      401) echo '{"message":"Bad credentials"}'; echo "gh: Bad credentials (HTTP 401)" >&2; exit 1 ;;
+      401) refuse 'HTTP/2.0 401 Unauthorized' $'Content-Type: application/json\r\n' 'Bad credentials' 401 ;;
       sleep) exec sleep 2 ;;
     esac
     echo 3
@@ -82,6 +93,7 @@ run_row() { # ENV CALL
       *) echo "UNKNOWN-CALL: $call" >&2; exit 2 ;;
     esac
     printf 'rc=%s source=%s failure=%s' "$status" "${KENDEX_GITHUB_AUTH_SOURCE:--}" "${KENDEX_GITHUB_AUTH_FAILURE:--}" >"$TMP_ROOT/record"
+    [[ "$call" != capture ]] || printf ' out=%s' "$(<"$TMP_ROOT/capture.out")" >>"$TMP_ROOT/record"
   ) >"$TMP_ROOT/printed" 2>&1 || rc=$?
   [[ "$rc" -eq 0 ]] || { printf 'row harness exited %s\n' "$rc"; return; }
   printed="$(<"$TMP_ROOT/printed")"
@@ -95,7 +107,10 @@ the installation endpoint outliving its bound is a timeout|GH_TOKEN=tok-app KEND
 a refusal carrying no HTTP status is unknown|GH_TOKEN=tok-user KENDEX_GITHUB_SELECTED_TOKEN_SOURCE=GH_TOKEN STUB_USER=no-status|check|rc=1 source=GH_TOKEN failure=unknown printed=-
 with no selection, GH_TOKEN is the source over GITHUB_TOKEN, as gh reads it|GH_TOKEN=tok-user GITHUB_TOKEN=tok-other STUB_USER=401|check|rc=1 source=GH_TOKEN failure=rejected_credential printed=-
 with no selection and no GH_TOKEN, GITHUB_TOKEN is the source|GITHUB_TOKEN=tok-user STUB_USER=401|check|rc=1 source=GITHUB_TOKEN failure=rejected_credential printed=-
-the keyring's own failure names the keyring|STUB_STATUS=fail|capture|rc=1 source=keyring failure=unknown printed=-
+a 403 marking the primary rate limit spent is unknown, with the body alone captured|GH_TOKEN=tok-user STUB_USER=primary-limit|capture|rc=1 source=GH_TOKEN failure=unknown out={\"message\":\"API rate limit exceeded for user ID 1.\"} printed=-
+a 403 naming a secondary rate limit is unknown|GH_TOKEN=tok-user STUB_USER=secondary-limit|capture|rc=1 source=GH_TOKEN failure=unknown out={\"message\":\"You have exceeded a secondary rate limit.\"} printed=-
+a 403 carrying retry-after is unknown|GH_TOKEN=tok-user STUB_USER=retry-after|capture|rc=1 source=GH_TOKEN failure=unknown out={\"message\":\"You have triggered an abuse detection mechanism.\"} printed=-
+the keyring's own failure names the keyring|STUB_STATUS=fail|capture|rc=1 source=keyring failure=unknown out= printed=-
 "
 
 echo "=== the failure record ==="
