@@ -41,6 +41,7 @@ pub const LIVE_EXIT: i32 = 3;
 pub const UNKNOWN_EXIT: i32 = 75;
 const MAP: &str = "kendex-rebase-map";
 const PENDING: &str = "kendex-restack-validation";
+const FOLD_MESSAGE: &str = "kendex-fold-message";
 const RESTACK: &str = "restack-reconcile";
 const PUSHED: &str = "sha-reconcile";
 
@@ -677,6 +678,93 @@ fn push_once(cli: &Path, worktree: &Path, args: &[String]) -> Result<PushRun> {
     }
 }
 
+/// The message the preparation folds the item's commits under, where it
+/// folds more than one: the item's own header, then every folded commit's
+/// subject, oldest first; one commit keeps its own message and takes none.
+/// The folded commits are the ones no branch of origin holds but the item's
+/// own: its base is on origin's base branch, a checkpoint on its own branch.
+/// The item's own header is the first folded one whose scope names the item
+/// by the lane-own rule: the implementation round commits the item's change
+/// under it and each later round refines it, while a bundled child's header
+/// names one part. With no such header the item's change has no name here,
+/// and the preparation refuses before it folds.
+fn fold_message(worktree: &Path, item: &str) -> Result<Option<String>> {
+    let unread = |cause: String| refuse("delivery-message", &[("item", item), ("cause", &cause)]);
+    let branch = git(worktree, "branch", &["branch", "--show-current"]).map_err(unread)?;
+    let own = format!("--exclude=origin/{branch}");
+    let log = git(
+        worktree,
+        "log",
+        &[
+            "log",
+            "--reverse",
+            "--format=%H %s",
+            "HEAD",
+            "--not",
+            &own,
+            "--remotes=origin",
+            "--",
+        ],
+    )
+    .map_err(unread)?;
+    let subjects: Vec<&str> = log
+        .lines()
+        .map(|line| line.split_once(' ').map_or("", |(_, subject)| subject))
+        .collect();
+    if subjects.len() < 2 {
+        return Ok(None);
+    }
+    let key = item.to_ascii_lowercase();
+    let header = subjects
+        .iter()
+        .find(|subject| crate::watch::github::scope_names(&subject.to_ascii_lowercase(), &key))
+        .ok_or_else(|| {
+            refuse(
+                "delivery-message",
+                &[
+                    ("item", item),
+                    ("cause", "no-item-header"),
+                    ("commits", &subjects.len().to_string()),
+                ],
+            )
+        })?;
+    let mut message = format!("{header}\n\n");
+    for subject in &subjects {
+        message.push_str("- ");
+        message.push_str(subject);
+        message.push('\n');
+    }
+    Ok(Some(message))
+}
+
+/// The preparation's one push, its fold given the item's message in `file`
+/// where `fold_message` composes one.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the fold's private message file beside the map, written whole before the fold and removed after it"
+)]
+fn prepare_once(cli: &Path, worktree: &Path, item: &str, file: &Path) -> Result<PushRun> {
+    let mut args = vec!["--prepare-base".to_owned()];
+    if let Some(message) = fold_message(worktree, item)? {
+        fs::write(file, message).map_err(|e| {
+            refuse(
+                "delivery-message",
+                &[
+                    ("item", item),
+                    ("path", &file.display().to_string()),
+                    ("cause", &e.to_string()),
+                ],
+            )
+        })?;
+        args.extend(["--message-file".to_owned(), file.display().to_string()]);
+    }
+    let push = push_once(cli, worktree, &args);
+    // Every fold that reads the file has it written whole first, so one left
+    // behind is never read.
+    let _ = fs::remove_file(file);
+    push
+}
+
 /// Write the item's `push_attempt` in one transition, or remove it where
 /// `value` is `None`. An item with no record has nothing to hold it.
 #[allow(
@@ -957,7 +1045,7 @@ pub fn run(
     }
     let cli = &settings.worktree_cli;
     if let RecordPush::Prepare { .. } = r {
-        let push = push_once(cli, &worktree, &["--prepare-base".to_owned()])?;
+        let push = prepare_once(cli, &worktree, &item, &map.with_file_name(FOLD_MESSAGE))?;
         if let Some(reports) = consume(path, &item, &map, RESTACK, locking, &mut || {
             keep_pending(&worktree)
         })

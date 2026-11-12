@@ -553,7 +553,7 @@ fn lane_own(pull: &Pull, item: &str, owner: &str, pr: Option<u64>) -> bool {
 }
 
 /// `^[a-z]+\(([^)]*[ ,])?KEY([ ,][^)]*)?\)!?:` on a lowercased title.
-fn scope_names(title: &str, key: &str) -> bool {
+pub(crate) fn scope_names(title: &str, key: &str) -> bool {
     let Some(open) = title.find('(') else {
         return false;
     };

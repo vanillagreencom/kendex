@@ -150,6 +150,23 @@ impl Repo {
         git(&self.wt, &["rev-parse", "HEAD"])
     }
 
+    /// The commit-message gate the commit chain installs, commit-guards'
+    /// own, as the repository's commit-msg hook: every commit after this,
+    /// the fold's among them, passes it or is refused.
+    fn arm_gate(&self) {
+        write_executable(
+            &self.main.join(".git/hooks/commit-msg"),
+            format!(
+                "#!/bin/sh\nexec '{}' \"$1\"\n",
+                skills().join("commit-guards/scripts/commit-msg").display()
+            ),
+        );
+    }
+
+    fn message(&self) -> String {
+        git(&self.wt, &["log", "-1", "--format=%B"])
+    }
+
     fn record_path(&self, item: &str) -> PathBuf {
         self.state.join(format!("workflow-state-{item}.json"))
     }
@@ -1185,7 +1202,13 @@ mod push {
 
     fn prepared(repo: &Repo) -> Value {
         let out = repo.push("prepare");
-        assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
+        assert_eq!(
+            exit(&out),
+            Some(0),
+            "{}{}",
+            stderr(&out),
+            String::from_utf8_lossy(&out.stdout)
+        );
         result(&out)["prepared"].clone()
     }
 
@@ -1200,11 +1223,64 @@ mod push {
         let receipt = prepared(&repo);
         assert_eq!(receipt["before"], base);
         assert_eq!(receipt["commit"], repo.head());
+        assert_eq!(repo.message(), "feature", "one commit keeps its message");
         assert_eq!(repo.remote("main"), base, "preparation leaves the base");
         assert!(
             fs::metadata(repo.wt.join("tmp/validated")).is_err(),
             "preparation runs no validation"
         );
+    }
+
+    #[test]
+    fn a_fold_names_the_item_and_carries_every_folded_subject_through_the_gate() {
+        let repo = Repo::new("KEN-1", BASE);
+        repo.record(json!({}));
+        git(
+            &repo.wt,
+            &[
+                "commit",
+                "-q",
+                "--amend",
+                "-m",
+                "docs: describe the feature",
+            ],
+        );
+        repo.arm_gate();
+        commit(&repo.wt, "flag", "flag\n", "feat(KEN-1): add the flag");
+        let out = repo.push("checkpoint");
+        assert_eq!(exit(&out), Some(0), "{}", stderr(&out));
+        commit(&repo.wt, "path", "path\n", "fix(KEN-1): quote the path");
+        let receipt = prepared(&repo);
+        let before = receipt["before"].as_str().unwrap();
+        assert_eq!(
+            git(
+                &repo.wt,
+                &["rev-list", "--count", &format!("{before}..HEAD")]
+            ),
+            "1"
+        );
+        assert_eq!(
+            repo.message(),
+            "feat(KEN-1): add the flag\n\n- docs: describe the feature\n- feat(KEN-1): add the flag\n- fix(KEN-1): quote the path"
+        );
+        assert!(
+            fs::metadata(repo.map().with_file_name("kendex-fold-message")).is_err(),
+            "the message file is removed"
+        );
+    }
+
+    #[test]
+    fn a_fold_whose_headers_never_name_the_item_refuses_before_it_folds() {
+        let repo = Repo::new("KEN-1", BASE);
+        repo.record(json!({}));
+        commit(&repo.wt, "child", "child\n", "feat(KEN-2): the first child");
+        let head = repo.head();
+        assert_eq!(
+            refusal(&repo.push("prepare")),
+            "orch-runtime: delivery-message item=KEN-1 cause=no-item-header commits=2"
+        );
+        assert_eq!(repo.head(), head, "nothing is folded");
+        assert_eq!(repo.message(), "feat(KEN-2): the first child");
     }
 
     #[test]
