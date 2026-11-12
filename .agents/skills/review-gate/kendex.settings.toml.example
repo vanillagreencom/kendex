@@ -18,8 +18,17 @@ REVIEW_GATE_STANDARD_CONTEXTS = ""
 REVIEW_GATE_STANDARD_QUEUE_BYPASS = ""
 
 # The same, for a ruleset that holds the required status checks rule alone.
-# Every other ruleset admits no bypass actor.
+# Every other ruleset admits no bypass actor but the landing app below.
 REVIEW_GATE_STANDARD_CHECKS_BYPASS = ""
+
+# The landing app, TYPE:ID:MODE as above, for example
+# Integration:5726115:always: it pushes an update its own refresh run proved
+# to the default branch with no pull request. The queue and checks rulesets
+# admit it, and so does a ruleset that holds the pull request rule alone, or
+# with the required workflows rule, where it is that ruleset's one bypass
+# actor. A ruleset with any other rule, deletion and force-push protection
+# included, never admits it. Empty admits none.
+REVIEW_GATE_STANDARD_LAND_BYPASS = ""
 
 # Extra kendex projects for automatic refresh, separated by semicolons.
 # Paths are relative to the checkout and must contain kendex.toml.

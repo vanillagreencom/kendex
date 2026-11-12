@@ -2,9 +2,11 @@ name: lock-record
 
 # After each push to main, this repository's install record
 # (.kendex-lock.json) is judged by a kendex built from that tree and, where
-# a merge moved what `kendex refresh` records, re-recorded and landed
-# through the one rolling pull request kendex/lock, which the lanes app arms
-# for the merge queue. A pull request never re-records it: two branches
+# a merge moved what `kendex refresh` records, re-recorded and landed:
+# pushed to main by this run with the landing app's token where the rulesets
+# on main let that push through, else through the one rolling pull
+# request kendex/lock, which the lanes app arms for the merge queue. A pull
+# request never re-records it: two branches
 # changing one package would each rewrite the same rows and conflict at
 # every merge ahead of them (docs/decisions/D007-lock-record-on-main.md).
 # tools/lock-record is the body and says what each line it prints means;
@@ -15,9 +17,10 @@ name: lock-record
 # queue cycle. No path filter: the kendex code under crates/ is part of what
 # moves the record, and a verify that finds it current costs one warm build.
 #
-# The lanes app's two secrets live only in the kendex environment (D003),
-# whose deployment policy admits main alone, so a run from any other ref
-# reads nothing.
+# The lanes app's two secrets and the landing app's pair,
+# KENDEX_LAND_APP_ID and KENDEX_LAND_APP_PRIVATE_KEY, live only in the
+# kendex environment (D003), whose deployment policy admits main alone, so a
+# run from any other ref reads nothing.
 
 on:
   push:
@@ -58,6 +61,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
+      # A step condition cannot read secrets, so the job carries only whether
+      # the landing pair is complete, and whether either name is set, which
+      # tools/lock-record reads to report a token that did not arrive; never
+      # their values.
+      KENDEX_LAND_PAIR: ${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
+      KENDEX_LAND_CONFIGURED: ${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
       GIT_AUTHOR_NAME: vanillagreen-fleet-lanes[bot]
       GIT_AUTHOR_EMAIL: 328550061+vanillagreen-fleet-lanes[bot]@users.noreply.github.com
       GIT_COMMITTER_NAME: vanillagreen-fleet-lanes[bot]
@@ -89,6 +98,23 @@ jobs:
           owner: vanillagreencom
           repositories: kendex
 
+      # The landing app's token pushes the record to main where the rulesets
+      # there let it through, and tools/lock-record uses it
+      # for nothing else. It holds contents: write alone. No pair, or a
+      # failed mint, leaves it empty and the record on the rolling pull
+      # request.
+      - name: Mint the landing token
+        if: env.KENDEX_LAND_PAIR == 'true'
+        id: land-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ secrets.KENDEX_LAND_APP_ID }}
+          private-key: ${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}
+          owner: vanillagreencom
+          repositories: kendex
+          permission-contents: write
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The head just pushed, or main on a dispatch.
@@ -119,6 +145,7 @@ jobs:
       - name: Record the install record and land it
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          KENDEX_LAND_TOKEN: ${{ steps.land-token.outputs.token }}
         run: |
           set -euo pipefail
           home="$(mktemp -d)"

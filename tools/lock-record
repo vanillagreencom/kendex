@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Record this repository's install record on the default branch after a
-# merge, and land it through one rolling pull request.
+# merge, and land it: with one push where GitHub's rulesets let the landing
+# app's token through, else through one rolling pull request.
 #
 # Usage: tools/lock-record [--repo DIR] [--base BRANCH] [--remote NAME] [--branch NAME]
 #
@@ -42,17 +43,38 @@
 # armed, and a head GitHub never shows within those reads leaves the pull
 # request unarmed, which the next run arms; the run also prints a warning
 # annotation, so under GitHub Actions the unarmed pull request shows on a
-# green run. Nothing here pushes to the default branch: the organization
-# ruleset takes every change to it through the merge queue
-# (docs/decisions/D003-one-merge-path.md), and the record takes the same
-# route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
-# follows is skills/AGENTS.md.
+# green run.
+#
+# The record goes to the base with no pull request where KENDEX_LAND_TOKEN
+# holds the landing app's token and the base's merge queue holds no entry,
+# since a push to a branch whose queue holds an entry makes GitHub rebuild
+# every running group. The record is a function of the merged tree, which
+# that tree's merge group already proved, so a second group proves nothing
+# more. The run commits the record on the head it judged, with [skip ci] in
+# its title, and pushes that one commit to the base with the landing token;
+# the base's rulesets judge that push, and the run asks nothing about them
+# first. Where GitHub takes it, no workflow starts on it and an open rolling
+# pull request is closed. No landing token, a merge queue that holds an
+# entry or could not be read, and a push GitHub refuses keep the rolling
+# pull request.
+# A base that moved past the judged head ends the run with nothing landed:
+# the push that moved it starts a run of its own. The landing push is the
+# route docs/decisions/D033-landing-app-proved-commit.md records.
+# Otherwise nothing here pushes to the default branch: the rolling pull
+# request takes the record through the merge queue
+# (docs/decisions/D007-lock-record-on-main.md). The rule a branch follows
+# is skills/AGENTS.md.
 #
 # `gh` reads its token from GH_TOKEN, git pushes through the credential
-# helper `gh auth setup-git` installed for that token, and the commit
+# helper `gh auth setup-git` installed for that token, which reads GH_TOKEN
+# when git asks. The run takes KENDEX_LAND_TOKEN out of its environment at
+# start, so no child it starts inherits it, and the landing push alone sets
+# GH_TOKEN to it, for its own command. The commit
 # identity is GIT_AUTHOR_* and GIT_COMMITTER_*. The disarm and dequeue
 # mutations are the github skill's, .agents/skills/github/scripts/lib/merge-queue.sh,
 # and so are the default-branch and merge-method reads, lib/repo-settings.sh.
+# The landing route's queue read and push are refresh/lib/landing.sh's,
+# shared with the consumer refresh.
 # The suite is crates/cli/tests/lock_record.rs.
 #
 # Every notice this script writes opens `lock-record: <key>=<value>`; the
@@ -80,6 +102,14 @@
 #   dequeue=<n>                 it could not be removed from the merge queue; nothing pushed (exit 1)
 #   disarmed=<n>                auto-merge was disabled on it ahead of the push
 #   dequeued=<n>                it left the merge queue ahead of the push
+#   landed=<sha> paths=<n>      the record's commit, pushed to the base with no pull request; its paths follow
+#   land-deferred=<sha>         the base moved past that judged head before the push; nothing landed, and the run the newer push started records it
+#   land-refused=<status>       GitHub refused the push to the base; the rolling pull request carries the record instead
+#   land-unavailable=token      KENDEX_LAND_CONFIGURED says a landing name is set, but no landing token reached the run: half the pair, or a failed mint; the rolling pull request carries the record instead
+#   land-unavailable=queue-read the base's merge queue could not be read, so no landing was tried; the rolling pull request carries the record instead
+#   land-skipped=queued         the base's merge queue holds an entry, so no landing was tried; the rolling pull request carries the record instead
+#   land-check=<answer>         the landing check gave an answer the run does not know (exit 1)
+#   pull-request-closed=<n>     the open rolling pull request the landed record superseded
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
 #   pull-request=<n> action=<opened|updated>
@@ -141,6 +171,15 @@ source "$here/../.agents/skills/github/scripts/lib/merge-queue.sh"
 source "$here/../.agents/skills/github/scripts/lib/gh-repo.sh"
 # shellcheck source=../.agents/skills/github/scripts/lib/repo-settings.sh
 source "$here/../.agents/skills/github/scripts/lib/repo-settings.sh"
+# shellcheck source=../refresh/lib/landing.sh
+source "$here/../refresh/lib/landing.sh"
+# The landing app's token bypasses the review rulesets and serves the one
+# landing push alone.
+land_token="${KENDEX_LAND_TOKEN:-}"
+unset KENDEX_LAND_TOKEN
+# true where the workflow set either landing name, so a token that did not
+# arrive is reported.
+land_configured="${KENDEX_LAND_CONFIGURED:-false}"
 
 repo="$(cd -- "$here/.." && pwd)"
 base=""
@@ -332,6 +371,71 @@ if [[ "$queued" == true ]]; then
     exit 1
   fi
   say dequeued "$number"
+fi
+
+# Whether the run tries the base itself: a landing token, and a merge queue
+# on the base that holds no entry, read with GH_TOKEN after the dequeue
+# above took this run's own pull request out. The base's rulesets then
+# decide the push. Sets land_check to try, to unconfigured where the
+# workflow set neither landing name, or to unavailable:CAUSE or
+# skipped:CAUSE for the first precondition the run does not meet. The one
+# reporter below says every CAUSE, and refuses an answer it does not know,
+# so no precondition keeps the rolling pull request unsaid.
+land_check_run() {
+  local slug queued
+  land_check=""
+  if [[ -z "$land_token" ]]; then
+    # A half pair, or a mint that failed, leaves the token empty.
+    if [[ "$land_configured" == true ]]; then land_check=unavailable:token; else land_check=unconfigured; fi
+    return 0
+  fi
+  if ! slug="$(cd -- "$repo" && kendex_github_resolve_gh_repo "$repo")" ||
+      ! queued="$(cd -- "$repo" && kendex_land_queue_entries "$slug" "$base")"; then
+    land_check=unavailable:queue-read
+    return 0
+  fi
+  if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi
+  land_check=try
+}
+land_check_run
+case "$land_check" in
+  try | unconfigured) ;;
+  unavailable:token)
+    say land-unavailable token "a landing name is set, but no landing token reached the run, so the record was not pushed to $base; the rolling pull request carries it instead" >&2 ;;
+  unavailable:queue-read)
+    say land-unavailable queue-read "the merge queue of $base could not be read, so the record was not pushed to $base; the rolling pull request carries it instead" >&2 ;;
+  skipped:queued)
+    say land-skipped queued "the merge queue of $base holds an entry, whose running groups a push would rebuild, so the record was not pushed to $base; the rolling pull request carries it instead" ;;
+  *)
+    say land-check "${land_check:-unset}" "the landing check gave an answer this run does not know" >&2
+    exit 1 ;;
+esac
+if [[ "$land_check" == try ]]; then
+  # The commit is made from the index and never checked out, so a refused
+  # push leaves the tree as the rolling route below expects it.
+  tree="$(git -C "$repo" write-tree)"
+  landed="$(git -C "$repo" commit-tree "$tree" -p "$head" \
+    -m "$title [skip ci]" \
+    -m "kendex refresh, built from $head, wrote these paths on $base after the merges up to that head. The rulesets on $base let the landing app push it, so the run pushed the record to $base itself, and [skip ci] starts no workflow on it.")"
+  kendex_land_push "$repo" "$remote" "$landed" "$base" "$land_token"
+  if [[ "$KENDEX_LAND_RESULT" == landed ]]; then
+    say landed "$landed paths=$count" "$changed"
+    # The pull request was disarmed and dequeued above, and a merge of it
+    # would have moved the base past the head this push extends, so GitHub
+    # holds it open and unmerged here.
+    if [[ -n "$number" ]]; then
+      (cd -- "$repo" && gh pr close "$number")
+      say pull-request-closed "$number"
+    fi
+    git -C "$repo" reset -q --hard HEAD
+    exit 0
+  fi
+  if [[ "$KENDEX_LAND_RESULT" == base-moved ]]; then
+    say land-deferred "$head" "$base moved past $head before the record could land; the run the newer push started records it"
+    git -C "$repo" reset -q --hard HEAD
+    exit 0
+  fi
+  say land-refused "$KENDEX_LAND_STATUS" "GitHub refused the push of the record to $base, as printed above; the rolling pull request carries it instead" >&2
 fi
 
 git -C "$repo" checkout -q -B "$branch"

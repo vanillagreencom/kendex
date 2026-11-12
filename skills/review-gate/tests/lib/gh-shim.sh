@@ -13,8 +13,9 @@
 # read for a head is served from workflow-runs-merge-group-<sha>.json where
 # that exists and workflow-runs-merge-group.json otherwise, one naming no head
 # from workflow-runs-merge-group-latest.json; every other runs read from
-# workflow-runs.json. A
-# repos/OWNER/NAME/... read is served from the directory
+# workflow-runs.json. A commit's pull requests are served from
+# commit-pulls-<sha>.json where that exists and commit-pulls.json otherwise.
+# A repos/OWNER/NAME/... read is served from the directory
 # repos/OWNER/NAME/ under the fixtures when that directory exists, so one
 # world can hold several repositories. A compare read is served from
 # compare-<base>.json when that file exists, so a case can give each carry
@@ -91,7 +92,11 @@ case "$url" in
   "orgs/"*"/actions/secrets") name=organization-actions-secrets ;;
   *"/actions/secrets") name=repository-secrets ;;
   "repos/{owner}/{repo}") name=repository ;;
-  *"/commits/"*"/pulls") name=commit-pulls ;;
+  *"/commits/"*"/pulls")
+    name=commit-pulls
+    sha="${url#*/commits/}"
+    [ ! -f "$GH_SHIM_FIXTURES/$name-${sha%/pulls}.json" ] || name="$name-${sha%/pulls}"
+    ;;
   "repos/"*"/commits/"*) name=commit ;;
   *"/actions/runs/"*"/jobs"*)
     run="${url#*/actions/runs/}"

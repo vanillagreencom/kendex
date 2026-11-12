@@ -3,18 +3,43 @@
 # from the kendex release tree the shared workflow checked out. It rebuilds the rolling branch from the
 # checkout and never executes the remote rolling branch. After GitHub shows the
 # published head, it merges directly where the base has no rules or protection,
-# or requests auto-merge. SKILL.md defines the arm outcomes.
+# or requests auto-merge. SKILL.md defines the arm outcomes. A render this
+# run committed first goes to the default branch itself where the landing
+# token, KENDEX_LAND_TOKEN, is set, every project takes its packages from
+# the default catalog at main alone, and that branch's merge queue holds no
+# entry: the run pushes its one commit with that token, and where GitHub's
+# rulesets let the push through, no pull request, merge group or approval
+# follows.
 # Output records: refresh-state=current pr=none class=none, or
+# refresh-state=landed pr=none class=render head=REVISION, or
 # refresh-state=pushed|merged pr=NUMBER class=CLASS, or
 # refresh-state=unchanged pr=NUMBER|none class=CLASS head=REVISION published=false, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
-# refresh-state=deferred reason=queued|merged|closed|branch-gone. A consumer
-# whose render did not run also gets
+# refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved. A
+# render this run committed that it did not push, or whose push GitHub
+# refused, where the caller set either landing name, also prints one landing
+# line ahead of the pull request route's record:
+# refresh-land=refused value=STATUS (GitHub refused the push),
+# refresh-land=unavailable value=token|sources-read|queue-read (no landing
+# token reached the run, or the project sources or the merge queue could not
+# be read), or refresh-land=skipped value=class|sources-uncovered|queued (the
+# class is not render, a project takes packages from another catalog or
+# revision, or the merge queue holds an entry). An unread source answer also
+# writes refresh-sources=unread value=PROJECT to stderr. A consumer whose
+# render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load from the trusted runner before refresh replaces its installed files.
 source "$SCRIPT_DIR/../skills/review-gate/scripts/lib/arm-published-head.sh"
+source "$SCRIPT_DIR/lib/landing.sh"
+# The landing app's token bypasses the review rulesets and serves the one
+# landing push alone, so no child this run starts inherits it.
+land_token="${KENDEX_LAND_TOKEN:-}"
+unset KENDEX_LAND_TOKEN
+# true where the caller set either landing name, so a token that did not
+# arrive is reported; the shared workflow sets it.
+land_configured="${KENDEX_LAND_CONFIGURED:-false}"
 templates="$SCRIPT_DIR"
 ROOT="$(git rev-parse --show-toplevel)"
 ROOT="$(cd -- "$ROOT" && pwd -P)"
@@ -91,6 +116,17 @@ refresh_lifecycle() {
     printf 'refresh-error=push-state value=output\n' >&2
     exit 1
   fi
+}
+# Closes the open rolling pull request a newer state supersedes. GitHub can
+# merge or close it after the read at run start, and gh refuses to close a
+# merged pull request, so its state is read again first.
+refresh_close_superseded() {
+  [ -n "$pr" ] || return 0
+  refresh_lifecycle
+  case "$reason" in
+    merged | closed) return 0 ;;
+  esac
+  gh pr close "$pr" --repo "$GH_REPO"
 }
 # The queue can already own the pull request. An arm alone can stay in place
 # until this run proves it has a replacement head to publish.
@@ -470,48 +506,72 @@ if [ "$publication_status" -gt 1 ]; then
   printf 'refresh-error=read value=publication-diff\n' >&2
   exit 1
 fi
+# Prints sources=covered where every selected project takes its packages
+# from the default catalog at main alone, sources=uncovered where one does
+# not, and sources=unread where the evidence could not be read: the engine's
+# answer, its shape, or a project manifest. The engine owns source
+# resolution. Its subscription JSON identifies remotes but omits item
+# overrides, so inspect TOML for any revision. No revision override can be
+# covered by the main-only tuple. An unread answer writes what kendex said
+# and one refresh-sources=unread value=PROJECT line, the cause after it, to
+# stderr. Anything but covered withholds the current route's record, so a
+# later run refreshes in full, and keeps the landing route's pull request.
+refresh_source_coverage() {
+python3 - "${projects[@]}" <<'SOURCE_COVERAGE'
+import json, pathlib, subprocess, sys
+class Unread(Exception):
+    pass
+def need(held, what):
+    if not held:
+        raise Unread(what)
+def revision(value):
+    if isinstance(value, dict):
+        return 'rev' in value or any(revision(child) for child in value.values())
+    return isinstance(value, list) and any(revision(child) for child in value)
+def covered(project):
+    import tomllib
+    root = pathlib.Path(project)
+    answer = subprocess.run(['kendex', 'marketplace', 'list', '--scope', 'project', '--json'],
+                            cwd=root, timeout=30, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    sys.stderr.buffer.write(answer.stderr)
+    need(answer.returncode == 0, 'kendex marketplace list exited %d' % answer.returncode)
+    listed = json.loads(answer.stdout)
+    need(isinstance(listed, dict) and listed.get('schema') == 1, 'the subscription list is not schema 1')
+    sources = listed.get('subscriptions')
+    need(isinstance(sources, list) and
+         all(isinstance(row, dict) and isinstance(row.get('enabled'), bool) for row in sources),
+         'a subscription row has no boolean enabled')
+    if not sources or not all(row['enabled'] is False or
+            (row.get('repo') == 'vanillagreencom/kendex' and 'path' not in row and 'rev' not in row)
+            for row in sources):
+        return False
+    manifests = [root / 'kendex.toml', root / 'kendex-local.toml']
+    need(manifests[0].is_file(), 'kendex.toml is not a file')
+    for manifest in manifests:
+        need(not manifest.is_symlink(), manifest.name + ' is a symlink')
+        if manifest.exists() and revision(tomllib.loads(manifest.read_text())):
+            return False
+    return True
+verdict = 'covered'
+project = ''
+try:
+    for project in sys.argv[1:]:
+        if not covered(project):
+            verdict = 'uncovered'
+            break
+except (Unread, ImportError, OSError, ValueError, subprocess.SubprocessError) as error:
+    print('refresh-sources=unread value=%s\n%s' % (project, error), file=sys.stderr)
+    verdict = 'unread'
+print('sources=' + verdict)
+SOURCE_COVERAGE
+}
 if [ "$publication_status" -eq 0 ]; then
   report_settings
-  if [ -n "$pr" ]; then
-    gh pr close "$pr" --repo "$GH_REPO"
-  fi
+  refresh_close_superseded
   printf 'refresh-state=current pr=none class=none\n'
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
     printf 'state=current\n' >>"$GITHUB_OUTPUT"
-    # The engine owns source resolution. Its subscription JSON identifies
-    # remotes but omits item overrides, so inspect TOML for any revision.
-    # No revision override can be covered by the main-only tuple.
-    # Missing evidence withholds the record, so a later run refreshes in full.
-    python3 - "${projects[@]}" >>"$GITHUB_OUTPUT" <<'SOURCE_COVERAGE'
-import json, pathlib, subprocess, sys
-try:
-    import tomllib
-    def revision(value):
-        if isinstance(value, dict):
-            return 'rev' in value or any(revision(child) for child in value.values())
-        return isinstance(value, list) and any(revision(child) for child in value)
-    for project in sys.argv[1:]:
-        root = pathlib.Path(project)
-        listed = json.loads(subprocess.check_output(
-        ['kendex', 'marketplace', 'list', '--scope', 'project', '--json'],
-        cwd=root, timeout=30, stderr=subprocess.PIPE))
-        assert listed['schema'] == 1
-        sources = listed['subscriptions']
-        assert isinstance(sources, list) and sources
-        assert all(row.get('enabled') is False or
-               (row.get('enabled') is True and row.get('repo') == 'vanillagreencom/kendex'
-                and 'path' not in row and 'rev' not in row) for row in sources)
-        manifests = [root / 'kendex.toml', root / 'kendex-local.toml']
-        assert manifests[0].is_file()
-        for manifest in manifests:
-            assert not manifest.is_symlink()
-            if manifest.exists():
-                assert not revision(tomllib.loads(manifest.read_text()))
-except (AssertionError, AttributeError, ImportError, KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError):
-    print('sources=uncovered')
-else:
-    print('sources=covered')
-SOURCE_COVERAGE
+    refresh_source_coverage >>"$GITHUB_OUTPUT"
   fi
   printf '%s\n\nNo content changes to publish. Project lock records publish with the next content change.\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
@@ -570,6 +630,72 @@ if [ "$state" = unchanged ]; then
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report" >>"$GITHUB_STEP_SUMMARY"
   exit 0
+fi
+# Only a commit this run made lands on the default branch: the retained head
+# above may be one a failed merge group left, and this run proved only its
+# own commit, on the base it fetched. land_token is the landing app's
+# token, which only the protected environment mints, and the push uses it
+# alone. The default branch's rulesets decide the push: the run asks
+# nothing about them first. The render proof covers a package's bytes, and
+# kendex's merge queue proved only the default catalog's content, so a
+# project that takes packages from any other catalog or revision keeps the
+# pull request, where the consumer reviews them. No token, a class other
+# than render, that coverage, and a merge queue that holds an entry or
+# could not be read keep the pull request route.
+# Sets land_check to try, to unconfigured where the caller set neither
+# landing name, or to unavailable:CAUSE or skipped:CAUSE for the first
+# precondition the run does not meet. The one reporter below prints every
+# CAUSE, and refuses an answer it does not know, so no precondition keeps
+# the pull request route unsaid.
+refresh_land_check() {
+  local queued
+  land_check=""
+  if [ -z "$land_token" ]; then
+    # A half pair, or a mint that failed, leaves the token empty.
+    if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi
+    return 0
+  fi
+  if [ "$class" != render ]; then land_check=skipped:class; return 0; fi
+  case "$(refresh_source_coverage)" in
+    sources=covered) ;;
+    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;
+    *) land_check=unavailable:sources-read; return 0 ;;
+  esac
+  if ! queued="$(kendex_land_queue_entries "$GH_REPO" "$default")"; then
+    land_check=unavailable:queue-read
+    return 0
+  fi
+  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi
+  land_check=try
+}
+refresh_land_check
+case "$land_check" in
+  try | unconfigured) ;;
+  unavailable:?* | skipped:?*) printf 'refresh-land=%s value=%s\n' "${land_check%%:*}" "${land_check#*:}" ;;
+  *) printf 'refresh-error=land-check value=%s\n' "${land_check:-unset}" >&2; exit 1 ;;
+esac
+if [ "$land_check" = try ]; then
+  kendex_land_push "$ROOT" origin "$head" "$default" "$land_token"
+  if [ "$KENDEX_LAND_RESULT" = landed ]; then
+    refresh_close_superseded
+    printf 'refresh-state=landed pr=none class=%s head=%s\n' "$class" "$head"
+    {
+      printf 'Landed `%s` on `%s` with no pull request.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n' \
+        "$head" "$default" "$version_report" "$class" "$class_line"
+      [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report"
+      [ -z "$settings_report" ] || printf '\n%s\n' "$settings_report"
+      [ -z "$retired_items" ] || printf '\nRetired items:\n```text\n%s```\n' "$retired_items"
+    } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+    exit 0
+  fi
+  # A default branch that moved after this run's fetch defers to the next
+  # run, which renders on the new base. GitHub's own refusal keeps the pull
+  # request route.
+  if [ "$KENDEX_LAND_RESULT" = base-moved ]; then
+    printf 'refresh-state=deferred reason=base-moved\n'
+    exit 0
+  fi
+  printf 'refresh-land=refused value=%s\n' "$KENDEX_LAND_STATUS"
 fi
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"

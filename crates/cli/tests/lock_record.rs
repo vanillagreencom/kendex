@@ -41,6 +41,23 @@
 //! unarmed; and with the failed edit's `arm=` field always `armed`, the
 //! unarmed failed-edit row reddens.
 //!
+//! The landing route: with the landing-token check dropped, the no-token
+//! row lands the record on `main` and opens no pull request; with the push
+//! left on `GH_TOKEN`, the landed row finds it under the lanes app's token;
+//! with the queue read taken as empty, the busy-queue row lands it too;
+//! and with `KENDEX_LAND_TOKEN` left in the environment, the landed row
+//! finds it on a gh call. The landing reporter's controls run in the suite,
+//! from `REPORTER_CONTROLS`, one per arm the script's reporter has, read
+//! from the script: with each keyed line dropped (`land-unavailable=token`,
+//! `land-unavailable=queue-read`, `land-skipped=queued`) its row says
+//! nothing; with the pass arm deleted the unconfigured row ends on
+//! `land-check`; and with the refusal arm deleted the unanswered
+//! precondition runs on to the rolling pull request. A reporter arm with no
+//! control reddens the suite. The queue read's answers and the push's
+//! reading of a moved base and of a refusal are `refresh/lib/landing.sh`'s,
+//! proved once with their controls in
+//! `refresh/tests/refresh-consumer.test.sh`.
+//!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
 //! nothing and stay countable.
@@ -66,6 +83,12 @@ fn script() -> PathBuf {
 fn merge_queue_library() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../.agents/skills/github/scripts/lib/merge-queue.sh")
+}
+
+/// The landing route's shared queue read and push the script sources, named
+/// here so a change to that library runs this suite.
+fn landing_library() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../refresh/lib/landing.sh")
 }
 
 fn said(output: &Output) -> String {
@@ -165,9 +188,17 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// hold a merge queue with `GH_QUEUE`'s method where it is set, and the
 /// repository's squash, merge and rebase flags are `GH_METHODS` (all three
 /// unset). `GH_FAIL` fails the `default`, `rules` or `settings` read, and
-/// `methods-none` answers flags that allow nothing.
+/// `methods-none` answers flags that allow nothing. The base's merge queue
+/// holds `GH_QUEUED` entries, none unset, answered as GitHub's GraphQL body
+/// so the shared reader in `refresh/lib/landing.sh` judges it, and
+/// `GH_FAIL` fails that `queue` read. `pr close` removes the pull request's
+/// open, armed and queued state. Each call is also logged to
+/// `GH_LOG.tokens` behind the `GH_TOKEN` it ran with, `none` unset, and
+/// once more behind `land-env` where it inherited `KENDEX_LAND_TOKEN`.
 const GH_STUB: &str = "#!/bin/sh
 printf '%s\\n' \"$*\" >> \"$GH_LOG\"
+printf '%s %s\\n' \"${GH_TOKEN:-none}\" \"$*\" >> \"$GH_LOG.tokens\"
+[ -z \"${KENDEX_LAND_TOKEN+set}\" ] || printf 'land-env %s\\n' \"$*\" >> \"$GH_LOG.tokens\"
 case \"$1 $2\" in
   'repo view') echo acme/widgets; exit 0 ;;
   'api repos/acme/widgets')
@@ -192,6 +223,8 @@ case \"$1 $2\" in
   'pr edit')
     [ \"$GH_FAIL\" != edit ] || { echo 'gh stub: edit refused' >&2; exit 1; }
     exit 0 ;;
+  'pr close')
+    rm -f \"$GH_STATE/open\" \"$GH_STATE/armed\" \"$GH_STATE/queued\"; exit 0 ;;
   'pr view')
     [ \"$GH_FAIL\" != view ] || { echo 'gh stub: view refused' >&2; exit 1; }
     lag=$(cat \"$GH_STATE/lag\" 2>/dev/null || echo 0)
@@ -209,6 +242,9 @@ case \"$1 $2\" in
     : > \"$GH_STATE/armed\"; exit 0 ;;
   'api graphql')
     case \"$*\" in
+      *'mergeQueue(branch'*)
+        [ \"$GH_FAIL\" != queue ] || { echo 'gh stub: queue refused' >&2; exit 1; }
+        printf '{\"data\":{\"repository\":{\"mergeQueue\":{\"entries\":{\"totalCount\":%s}}}}}\\n' \"${GH_QUEUED:-0}\"; exit 0 ;;
       *isInMergeQueue*)
         [ \"$GH_FAIL\" != state ] || { echo 'gh stub: state refused' >&2; exit 1; }
         if [ -f \"$GH_STATE/armed\" ]; then a=true; else a=false; fi
@@ -241,6 +277,24 @@ case \"$KENDEX_FAIL:$1\" in
 esac
 exec 'REAL' \"$@\"
 ";
+
+/// The `git` wrapper on the fixture's `PATH`, over the git at `REAL`: it
+/// logs each push to `LOG` behind the `GH_TOKEN` it ran with, `none` unset,
+/// since the credential helper `gh auth setup-git` installs reads that
+/// variable when git asks.
+const GIT_WRAPPER: &str = "#!/bin/sh
+case \" $* \" in *' push '*) printf '%s %s\\n' \"${GH_TOKEN:-none}\" \"$*\" >> 'LOG' ;; esac
+exec 'REAL' \"$@\"
+";
+
+/// The git the fixture's `git` wrapper runs: the first on `PATH`.
+#[allow(clippy::expect_used)]
+fn real_git() -> PathBuf {
+    std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .map(|dir| dir.join("git"))
+        .find(|path| path.is_file())
+        .expect("git is on PATH")
+}
 
 /// The `sleep` stub on the fixture's `PATH`: it appends its argument to
 /// `LOG` and returns at once.
@@ -318,6 +372,12 @@ fn world_with(source: Source, checkout: Checkout) -> World {
     executable(
         &bin.join("sleep"),
         &SLEEP_STUB.replace("LOG", &home.join("sleep.log").display().to_string()),
+    );
+    executable(
+        &bin.join("git"),
+        &GIT_WRAPPER
+            .replace("REAL", &real_git().display().to_string())
+            .replace("LOG", &home.join("push.log").display().to_string()),
     );
 
     let seed = home.join("seed");
@@ -404,7 +464,6 @@ impl World {
     }
 
     /// `run`, with `env` added to the stub's environment.
-    #[allow(clippy::expect_used)]
     fn run_with(
         &self,
         args: &[&str],
@@ -412,8 +471,21 @@ impl World {
         kendex_fail: &str,
         env: &[(&str, &str)],
     ) -> Output {
+        self.run_script(&script(), args, gh_fail, kendex_fail, env)
+    }
+
+    /// `run_with`, running `program` in place of the script.
+    #[allow(clippy::expect_used)]
+    fn run_script(
+        &self,
+        program: &Path,
+        args: &[&str],
+        gh_fail: &str,
+        kendex_fail: &str,
+        env: &[(&str, &str)],
+    ) -> Output {
         Command::new("bash")
-            .arg(script())
+            .arg(program)
             .args(args)
             // The nested named-target refresh also checks the caller's repository.
             .current_dir(&self.main)
@@ -438,15 +510,30 @@ impl World {
     /// The script against the checkout it judges, every `gh` read answered
     /// and every `kendex` verb run.
     fn lock_record(&self) -> Output {
+        self.lock_record_with("", &[])
+    }
+
+    /// `lock_record`, with `GH_FAIL` set to `gh_fail` and `env` added to the
+    /// `gh` stub's environment.
+    fn lock_record_with(&self, gh_fail: &str, env: &[(&str, &str)]) -> Output {
         let judged = match self.checkout {
             Checkout::Clone => self.main.clone(),
             Checkout::Shallow => self.shallow_checkout(),
         };
-        self.run(
+        self.run_with(
             &["--repo", &judged.display().to_string(), "--base", "main"],
+            gh_fail,
             "",
-            "",
+            env,
         )
+    }
+
+    /// The origin's `main` as the remote holds it.
+    fn origin_main(&self) -> String {
+        self.fetch_origin();
+        git_ok(&self.home, &self.main, &["rev-parse", "origin/main"])
+            .trim()
+            .to_owned()
     }
 
     /// The checkout the script judged on its last run.
@@ -646,6 +733,16 @@ impl World {
         fs::read_to_string(&self.gh_log).unwrap_or_default()
     }
 
+    /// Each `gh` call behind the `GH_TOKEN` it ran with.
+    fn gh_tokens(&self) -> String {
+        fs::read_to_string(self.home.join("gh.log.tokens")).unwrap_or_default()
+    }
+
+    /// Each `git push` behind the `GH_TOKEN` it ran with.
+    fn pushes(&self) -> String {
+        fs::read_to_string(self.home.join("push.log")).unwrap_or_default()
+    }
+
     /// What the `sleep` stub was asked, one argument per line.
     fn sleeps(&self) -> String {
         fs::read_to_string(self.home.join("sleep.log")).unwrap_or_default()
@@ -829,6 +926,513 @@ fn the_rolling_pull_request_takes_the_default_branch_and_merge_method_github_nam
         );
         assert!(listed < opened && opened < armed, "{env:?}: {log}");
     }
+}
+
+/// Variables added to the `gh` stub's environment for one run.
+type StubEnv = &'static [(&'static str, &'static str)];
+
+/// The run holds the lanes app's token and the landing app's token.
+const ADMITTED: StubEnv = &[
+    ("GH_TOKEN", "lanes-token"),
+    ("KENDEX_LAND_TOKEN", "land-token"),
+];
+
+/// The record landed on `main` itself: one commit on the judged `head`,
+/// holding the record and nothing else, titled with `[skip ci]` so no
+/// workflow starts on it, with no pull request opened or armed and the
+/// judged checkout left clean.
+fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
+    let tip = world.origin_main();
+    assert!(
+        output.contains(&format!("lock-record: landed={tip} paths=")),
+        "{output}"
+    );
+    let parent = git_ok(&world.home, &world.main, &["rev-parse", "origin/main^"]);
+    assert_eq!(parent.trim(), head, "{output}");
+    let changed = git_ok(
+        &world.home,
+        &world.main,
+        &["diff", "--name-only", head, "origin/main"],
+    );
+    assert_eq!(changed.trim(), ".kendex-lock.json", "{output}");
+    let title = git_ok(
+        &world.home,
+        &world.main,
+        &["log", "-1", "--format=%s", "origin/main"],
+    );
+    let short = git_ok(&world.home, &world.main, &["rev-parse", "--short", head]);
+    assert_eq!(
+        title.trim(),
+        format!(
+            "chore(lock): record the install record at {} [skip ci]",
+            short.trim()
+        ),
+        "{output}"
+    );
+    let log = world.gh_log();
+    let asked = log.strip_prefix(before).unwrap_or(&log);
+    assert!(!asked.contains("pr create"), "{asked}");
+    assert!(!asked.contains("pr merge"), "{asked}");
+    let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
+    assert_eq!(status, "", "{output}");
+    // The push to main carries the landing token, and no gh call does, as
+    // GH_TOKEN or inherited; the queue read carries the lanes app's.
+    let tokens = world.gh_tokens();
+    assert!(
+        !tokens
+            .lines()
+            .any(|line| line.starts_with("land-token ") || line.starts_with("land-env ")),
+        "{tokens}"
+    );
+    let queue: Vec<&str> = tokens
+        .lines()
+        .filter(|line| line.contains("mergeQueue"))
+        .collect();
+    assert!(!queue.is_empty(), "{tokens}");
+    assert!(
+        queue.iter().all(|line| line.starts_with("lanes-token ")),
+        "{tokens}"
+    );
+    let pushes = world.pushes();
+    let landing_push: Vec<&str> = pushes
+        .lines()
+        .filter(|line| line.contains(":refs/heads/main"))
+        .collect();
+    assert_eq!(landing_push.len(), 1, "{pushes}");
+    assert!(landing_push[0].starts_with("land-token "), "{pushes}");
+}
+
+/// Where the run holds the landing token and GitHub takes its push, the
+/// record lands on `main` with one push and no pull request, from the clone
+/// and from the workflow's shallow checkout, and `main` then verifies clean.
+#[test]
+fn the_record_lands_on_main_where_github_takes_the_landing_push() {
+    for checkout in [Checkout::Clone, Checkout::Shallow] {
+        let world = world_with(Source::Path, checkout);
+        world.branch("a", "ship");
+        assert!(world.queue_merge("a").status.success());
+        let head = world.main_head();
+        let before = world.gh_log();
+        let landed = world.lock_record_with("", ADMITTED);
+        let output = said(&landed);
+        assert_eq!(landed.status.code(), Some(0), "{output}");
+        assert_landed(&world, &head, &before, &output);
+        let absent = git(
+            &world.home,
+            &world.main,
+            &[
+                "ls-remote",
+                "--exit-code",
+                "origin",
+                "refs/heads/kendex/lock",
+            ],
+        );
+        assert_eq!(absent.status.code(), Some(2), "{}", said(&absent));
+        world.fresh_clone_verifies_clean();
+    }
+}
+
+/// A landed record supersedes the open rolling pull request an earlier run
+/// armed: the run disarms it, lands the record and closes it.
+#[test]
+fn a_landed_record_closes_the_open_rolling_pull_request() {
+    let world = world();
+    world.branch("a", "ship");
+    world.branch("b", "roll");
+    assert!(world.queue_merge("a").status.success());
+    let first = world.lock_record();
+    let output = said(&first);
+    assert_eq!(first.status.code(), Some(0), "{output}");
+    assert_recorded_and_opened(&world, &output, 41);
+    let rolling = world.rolling_head();
+    assert!(world.queue_merge("b").status.success());
+    let head = world.main_head();
+    let before = world.gh_log();
+    let landed = world.lock_record_with("", ADMITTED);
+    let output = said(&landed);
+    assert_eq!(landed.status.code(), Some(0), "{output}");
+    assert_landed(&world, &head, &before, &output);
+    assert!(output.contains("lock-record: disarmed=41"), "{output}");
+    assert!(
+        output.contains("lock-record: pull-request-closed=41"),
+        "{output}"
+    );
+    let log = world.gh_log();
+    assert!(log.contains("pr close 41\n"), "{log}");
+    assert_eq!(world.rolling_head(), rolling, "{output}");
+    assert!(!world.gh_state.join("open").exists(), "{output}");
+    world.fresh_clone_verifies_clean();
+}
+
+/// One run the landing reporter answers: `GH_FAIL`, the `gh` stub's
+/// environment, the edits a copy of the script takes (none runs the script
+/// itself), and what the run must say: its exit code and its exact
+/// `lock-record: land` lines.
+struct LandingRow {
+    name: &'static str,
+    gh_fail: &'static str,
+    env: StubEnv,
+    edits: &'static [(&'static str, &'static str)],
+    code: i32,
+    said: &'static [&'static str],
+}
+
+/// Each landing precondition the run does not meet. A run whose workflow
+/// set no landing name says nothing. One whose workflow set a name but
+/// holds no token, half the pair or a failed mint, a busy merge queue,
+/// whose running groups a push to `main` would rebuild, and an unread one
+/// each say their cause and keep the rolling pull request. A precondition
+/// that answers nothing, the busy-queue check returning with no answer,
+/// ends the run on `land-check` before anything is pushed.
+const LANDING_ROWS: &[LandingRow] = &[
+    LandingRow {
+        name: "unconfigured",
+        gh_fail: "",
+        env: &[("GH_TOKEN", "lanes-token")],
+        edits: &[],
+        code: 0,
+        said: &[],
+    },
+    LandingRow {
+        name: "configured-false",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_CONFIGURED", "false"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &[],
+    },
+    LandingRow {
+        name: "half-pair",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_CONFIGURED", "true"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-unavailable=token"],
+    },
+    LandingRow {
+        name: "queue-busy",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", "1"),
+        ],
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-skipped=queued"],
+    },
+    LandingRow {
+        name: "queue-unread",
+        gh_fail: "queue",
+        env: ADMITTED,
+        edits: &[],
+        code: 0,
+        said: &["lock-record: land-unavailable=queue-read"],
+    },
+    LandingRow {
+        name: "precondition-unanswered",
+        gh_fail: "",
+        env: &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", "1"),
+        ],
+        edits: &[(
+            r#"if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi"#,
+            r#"if [[ "$queued" != 0 ]]; then return 0; fi"#,
+        )],
+        code: 1,
+        said: &["lock-record: land-check=unset"],
+    },
+];
+
+impl LandingRow {
+    /// The row's run on a fresh world after one merge, on a copy of the
+    /// script where the row or `arm` names an edit: the world, the head the
+    /// merge left and the run.
+    fn run(&self, arm: Option<(&str, &str)>) -> (World, String, Output) {
+        let world = world();
+        world.branch("a", "ship");
+        assert!(world.queue_merge("a").status.success());
+        let head = world.main_head();
+        let edits: Vec<(&str, &str)> = self.edits.iter().copied().chain(arm).collect();
+        let run = if edits.is_empty() {
+            world.lock_record_with(self.gh_fail, self.env)
+        } else {
+            let copy = script_copy(&world, &edits);
+            let judged = world.main.display().to_string();
+            world.run_script(
+                &copy,
+                &["--repo", &judged, "--base", "main"],
+                self.gh_fail,
+                "",
+                self.env,
+            )
+        };
+        (world, head, run)
+    }
+
+    /// Whether the run said what the row names: its exit code and its
+    /// exact landing lines.
+    fn verdict(&self, run: &Output) -> Result<(), String> {
+        let output = said(run);
+        let lines: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("lock-record: land"))
+            .collect();
+        if run.status.code() == Some(self.code) && lines == self.said {
+            Ok(())
+        } else {
+            Err(format!(
+                "{}: exit {:?}, landing lines {lines:?}",
+                self.name,
+                run.status.code()
+            ))
+        }
+    }
+}
+
+/// A copy of the script beside the libraries it sources, under the world's
+/// home, with each `(old, new)` replacement made where `old` matches once
+/// and the replacement changes the script.
+#[allow(clippy::unwrap_used)]
+fn script_copy(world: &World, edits: &[(&str, &str)]) -> PathBuf {
+    let copy = world.home.join("script-copy");
+    fs::create_dir_all(copy.join("tools")).unwrap();
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for dir in [".agents", "refresh"] {
+        std::os::unix::fs::symlink(checkout.join(dir), copy.join(dir)).unwrap();
+    }
+    let mut source = fs::read_to_string(script()).unwrap();
+    for (old, new) in edits {
+        assert_eq!(source.matches(old).count(), 1, "{old}");
+        let edited = source.replacen(old, new, 1);
+        assert_ne!(edited, source, "{old}");
+        source = edited;
+    }
+    let program = copy.join("tools/lock-record");
+    fs::write(&program, source).unwrap();
+    program
+}
+
+/// The script's landing reporter, the `case` after `land_check_run`: each
+/// arm's pattern and its text, from its pattern line to the next arm or the
+/// `esac`.
+#[allow(clippy::expect_used)]
+fn reporter_arms(source: &str) -> Vec<(String, String)> {
+    let start = "land_check_run\ncase \"$land_check\" in\n";
+    assert_eq!(
+        source.matches(start).count(),
+        1,
+        "the reporter did not parse"
+    );
+    let block = &source[source.find(start).expect("reporter") + start.len()..];
+    let block = &block[..=block.find("\nesac\n").expect("the reporter's esac")];
+    let mut arms: Vec<(String, String)> = Vec::new();
+    for line in block.split_inclusive('\n') {
+        let pattern = line
+            .strip_prefix("  ")
+            .filter(|rest| !rest.starts_with(' '))
+            .and_then(|rest| rest.split_once(')'))
+            .map(|(pattern, _)| pattern);
+        match (pattern, arms.last_mut()) {
+            (Some(pattern), _) => arms.push((pattern.to_owned(), line.to_owned())),
+            (None, Some((_, text))) => text.push_str(line),
+            (None, None) => panic!("a line before the reporter's first arm: {line}"),
+        }
+    }
+    arms
+}
+
+/// A reporter arm, the `LANDING_ROWS` row it answers, and the edit inside
+/// the arm, `None` deleting the arm whole.
+type ReporterControl = (
+    &'static str,
+    &'static str,
+    Option<(&'static str, &'static str)>,
+);
+
+/// One must-fail control per arm of the landing reporter. A keyed line
+/// dropped leaves its row saying nothing; the pass arm deleted sends a run
+/// that tries nothing to the refusal; the refusal deleted lets an
+/// unanswered precondition run on to the rolling pull request.
+const REPORTER_CONTROLS: &[ReporterControl] = &[
+    ("try | unconfigured", "unconfigured", None),
+    (
+        "unavailable:token",
+        "half-pair",
+        Some(("say land-unavailable token ", ": ")),
+    ),
+    (
+        "unavailable:queue-read",
+        "queue-unread",
+        Some(("say land-unavailable queue-read ", ": ")),
+    ),
+    (
+        "skipped:queued",
+        "queue-busy",
+        Some(("say land-skipped queued ", ": ")),
+    ),
+    ("*", "precondition-unanswered", None),
+];
+
+/// A landing precondition the run does not meet keeps `main` where the
+/// merge left it and says its one landing line, or none where the workflow
+/// set no landing name. Where it keeps the rolling pull request the run
+/// records the record there; an unanswered precondition pushes nothing.
+#[test]
+fn a_landing_precondition_the_run_does_not_meet_says_its_line() {
+    assert!(
+        landing_library().is_file(),
+        "{}",
+        landing_library().display()
+    );
+    for row in LANDING_ROWS {
+        let (world, head, run) = row.run(None);
+        let output = said(&run);
+        if let Err(said) = row.verdict(&run) {
+            panic!("{said}: {output}");
+        }
+        assert_eq!(world.origin_main(), head, "{}: {output}", row.name);
+        let pushes = world.pushes();
+        assert!(
+            !pushes.lines().any(|line| line.contains(":refs/heads/main")),
+            "{}: {pushes}",
+            row.name
+        );
+        if row.code == 0 {
+            assert_recorded_and_opened(&world, &output, 41);
+        } else {
+            assert!(
+                !pushes.lines().any(|line| line.contains("kendex/lock")),
+                "{}: {pushes}",
+                row.name
+            );
+        }
+    }
+}
+
+/// Each arm of the script's landing reporter has a control in
+/// `REPORTER_CONTROLS`, and each control turns the row its arm answers red,
+/// so a reporter arm cannot ship without one. The arms are read from the
+/// script.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn each_landing_reporter_arm_has_a_control_that_reddens_its_row() {
+    let source = fs::read_to_string(script()).unwrap();
+    let arms = reporter_arms(&source);
+    let patterns: BTreeSet<&str> = arms.iter().map(|(pattern, _)| pattern.as_str()).collect();
+    assert!(
+        patterns.contains("*") && patterns.len() > 1,
+        "the reporter's arms did not parse: {patterns:?}"
+    );
+    let controlled: BTreeSet<&str> = REPORTER_CONTROLS.iter().map(|(arm, ..)| *arm).collect();
+    assert_eq!(patterns, controlled, "each reporter arm takes one control");
+    for (arm, name, edit) in REPORTER_CONTROLS {
+        let row = LANDING_ROWS.iter().find(|row| row.name == *name).unwrap();
+        let text = &arms.iter().find(|(pattern, _)| pattern == arm).unwrap().1;
+        let edited = match edit {
+            None => String::new(),
+            Some((old, new)) => {
+                assert_eq!(text.matches(old).count(), 1, "{arm}: {old}");
+                text.replacen(old, new, 1)
+            }
+        };
+        let (_world, _head, run) = row.run(Some((text, &edited)));
+        assert!(
+            row.verdict(&run).is_err(),
+            "control: the {arm} arm's edit left the {name} row green: {}",
+            said(&run)
+        );
+    }
+}
+
+/// A base that moved past the judged head lands nothing and pushes nothing:
+/// the push that moved it starts a run of its own.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_base_that_moved_past_the_judged_head_defers_the_record() {
+    let world = world();
+    world.branch("a", "ship");
+    assert!(world.queue_merge("a").status.success());
+    let head = world.main_head();
+    let other = world.home.join("other");
+    git_ok(
+        &world.home,
+        &world.home,
+        &[
+            "clone",
+            "--quiet",
+            &world.origin.display().to_string(),
+            &other.display().to_string(),
+        ],
+    );
+    git_ok(
+        &world.home,
+        &other,
+        &["commit", "-q", "--allow-empty", "-m", "a later merge"],
+    );
+    git_ok(&world.home, &other, &["push", "-q", "origin", "main"]);
+    let moved = git_ok(&world.home, &other, &["rev-parse", "HEAD"]);
+    let before = world.gh_log();
+    let deferred = world.lock_record_with("", ADMITTED);
+    let output = said(&deferred);
+    assert_eq!(deferred.status.code(), Some(0), "{output}");
+    assert!(
+        output.contains(&format!("lock-record: land-deferred={head}")),
+        "{output}"
+    );
+    assert_eq!(world.origin_main(), moved.trim(), "{output}");
+    let log = world.gh_log();
+    let asked = log.strip_prefix(&before).unwrap();
+    assert!(!asked.contains("pr create"), "{asked}");
+    let status = git_ok(&world.home, &world.main, &["status", "--porcelain"]);
+    assert_eq!(status, "", "{output}");
+    let absent = git(
+        &world.home,
+        &world.main,
+        &[
+            "ls-remote",
+            "--exit-code",
+            "origin",
+            "refs/heads/kendex/lock",
+        ],
+    );
+    assert_eq!(absent.status.code(), Some(2), "{}", said(&absent));
+}
+
+/// A landing push a ruleset refuses names the refusal and falls back to the
+/// rolling pull request, pushed with the lanes app's token.
+#[test]
+fn a_refused_push_to_main_falls_back_to_the_rolling_pull_request() {
+    let world = world();
+    world.branch("a", "ship");
+    assert!(world.queue_merge("a").status.success());
+    let head = world.main_head();
+    executable(
+        &world.origin.join("hooks/update"),
+        "#!/bin/sh\n[ \"$1\" != refs/heads/main ] || { echo 'GH013: Repository rule violations found for refs/heads/main.' >&2; exit 1; }\n",
+    );
+    let recorded = world.lock_record_with("", ADMITTED);
+    let output = said(&recorded);
+    assert_eq!(recorded.status.code(), Some(0), "{output}");
+    assert!(output.contains("lock-record: land-refused=1"), "{output}");
+    assert_recorded_and_opened(&world, &output, 41);
+    assert_eq!(world.origin_main(), head, "{output}");
+    // The rolling branch keeps the lanes app's token.
+    let pushes = world.pushes();
+    assert!(
+        pushes
+            .lines()
+            .any(|line| line.starts_with("lanes-token ") && line.contains("refs/heads/kendex/lock")),
+        "{pushes}"
+    );
 }
 
 /// One stand-down run over `main` moved on by a merge outside the package:

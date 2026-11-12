@@ -82,6 +82,8 @@ CHECKS_BYPASS='REVIEW_GATE_STANDARD_CHECKS_BYPASS = "Integration:5115517:pull_re
 CONTEXTS='REVIEW_GATE_STANDARD_CONTEXTS = "Cargo (workspace tests); CI"'
 settings_consumer full "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS"
 settings_consumer no-bypass "$CONTEXTS"
+# `land` also names the landing app.
+settings_consumer land "$CONTEXTS" "$QUEUE_BYPASS" "$CHECKS_BYPASS" 'REVIEW_GATE_STANDARD_LAND_BYPASS = "Integration:5726115:always"'
 settings_consumer bad-bypass "$CONTEXTS" 'REVIEW_GATE_STANDARD_QUEUE_BYPASS = "Integration:4925608:always;lanes-app;Integration:5115517:bypass"'
 settings_consumer no-contexts
 settings_consumer empty-contexts 'REVIEW_GATE_STANDARD_CONTEXTS = ""'
@@ -299,6 +301,45 @@ the head's merge_group runs unreadable~workflow-runs-merge-group~~~standard-ci-c
 a run's jobs unreadable~jobs-8~~~standard-ci-context=unreadable
 ROWS
 
+# A head no pull request merged, cafe, whose first parent is the queue's
+# merge commit dead, whose pull request and merge group carry both legs. A
+# merge group read on cafe itself finds none. Where the consumer names the
+# landing app, cafe is a commit it landed; where it names none, nothing may
+# push past the pull-request rule, and cafe is the departure.
+LANDED_HEAD="$TMP/case-landed-head"
+cp -R "$BASE" "$LANDED_HEAD"
+printf '{"sha": "cafe", "parents": [{"sha": "dead"}]}\n' >"$LANDED_HEAD/commit.json"
+printf '[]\n' >"$LANDED_HEAD/commit-pulls-cafe.json"
+printf '{"workflow_runs": []}\n' >"$LANDED_HEAD/workflow-runs-merge-group-cafe.json"
+# The walk's ends short of a merged pull request: cafe is the root, or its
+# first parent is not a commit sha.
+cp -R "$LANDED_HEAD" "$TMP/case-landed-root"
+printf '{"sha": "cafe", "parents": []}\n' >"$TMP/case-landed-root/commit.json"
+cp -R "$LANDED_HEAD" "$TMP/case-landed-parent-not-sha"
+printf '{"sha": "cafe", "parents": [{"sha": "main"}]}\n' >"$TMP/case-landed-parent-not-sha/commit.json"
+# label ~ fixture under TMP ~ consumer ~ overrides of the BASELINE
+LANDED_ROWS='a landed head reads the queue merge below it~case-landed-head~land~
+a head no pull request merged, with no landing app named, is a departure~case-landed-head~full~standard-ci-context=no-associated-pull-request
+a landed head whose first parents reach the root with no merged pull request is a departure~case-landed-root~land~standard-ci-context=no-associated-pull-request
+a landed head whose first parent is not a sha is unreadable~case-landed-parent-not-sha~land~standard-ci-context=unreadable'
+landed_case() { # FIXTURE CONSUMER OVERRIDES — sets CASE_MATCH and CASE_DIFF
+  local want want_rc
+  CONSUMER="$TMP/consumer-$2"
+  run "$TMP/$1" ""
+  CONSUMER="$TMP/consumer-full"
+  want="$(expected_listing "$3")"
+  want_rc="$(want_rc_of "$3")"
+  CASE_MATCH=false
+  if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ]; then CASE_MATCH=true; fi
+  CASE_DIFF="rc=$RC want $want_rc
+$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
+$RAW"
+}
+while IFS='~' read -r label fixture consumer overrides; do
+  landed_case "$fixture" "$consumer" "$overrides"
+  if [ "$CASE_MATCH" = true ]; then ok "$label"; else bad "$label" "$CASE_DIFF"; fi
+done <<<"$LANDED_ROWS"
+
 # The organization ruleset requests the review through kendex's workflow
 # (the base fixture's rule 3, as the live ruleset carries it). The source row
 # judges the workflow's repository and path; the review row also judges its
@@ -381,6 +422,50 @@ bypass_row "the lanes app is admitted on the queue ruleset and a departure on th
 bypass_row "an admitted app in another bypass mode is a departure" full \
   '[{"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "always"}]' 1 \
   'FAIL check=standard-bypass-actors value=3=Integration:5115517:always\,4=Integration:5115517:always'
+# The landing app: admitted on the queue and checks rulesets and as the one
+# bypass of a ruleset holding pull_request alone or with workflows, here a
+# new organization ruleset 5; a departure on one holding pull_request,
+# workflows and deletion, on one holding deletion and non_fast_forward, on
+# one holding workflows alone, and wherever the consumer names no landing
+# app.
+LAND='{"actor_type": "Integration", "actor_id": 5726115, "bypass_mode": "always"}'
+# label ~ consumer ~ jq edit of rules.json ~ ruleset files given ACTORS ~
+# ACTORS ~ exit status ~ the bypass-actors verdict line
+LAND_ROWS="$(cat <<ROWS
+the landing app is the one bypass of a pull-request-only ruleset~land~.[2].ruleset_id = 5~org-ruleset-5~[$LAND]~0~ok check=standard-bypass-actors value=1
+the landing app is the one bypass of a pull-request and workflows ruleset~land~.[2].ruleset_id = 5 | .[3].ruleset_id = 5~org-ruleset-5~[$LAND]~0~ok check=standard-bypass-actors value=1
+the landing app on a pull-request, workflows and deletion ruleset is a departure~land~.[0].ruleset_id = 5 | .[2].ruleset_id = 5 | .[3].ruleset_id = 5~org-ruleset-5~[$LAND]~1~FAIL check=standard-bypass-actors value=5=Integration:5726115:always
+the landing app is admitted on the queue and checks rulesets~land~.~ruleset-3 ruleset-4~[$LAND]~0~ok check=standard-bypass-actors value=2
+a second actor beside the landing app on a pull-request-only ruleset is a departure~land~.[2].ruleset_id = 5~org-ruleset-5~[$LAND, {"actor_type": "Integration", "actor_id": 5115517, "bypass_mode": "pull_request"}]~1~FAIL check=standard-bypass-actors value=5=Integration:5115517:pull_request
+the landing app on the deletion and force-push ruleset is a departure~land~.~org-ruleset-1~[$LAND]~1~FAIL check=standard-bypass-actors value=1=Integration:5726115:always
+the landing app on a workflows-only ruleset is a departure~land~.~org-ruleset-2~[$LAND]~1~FAIL check=standard-bypass-actors value=2=Integration:5726115:always
+a consumer that names no landing app reads it as a departure~full~.[2].ruleset_id = 5~org-ruleset-5 ruleset-3~[$LAND]~1~FAIL check=standard-bypass-actors value=5=Integration:5726115:always\\,3=Integration:5726115:always
+ROWS
+)"
+# One landing row against the script copy as it stands: CASE_MATCH is true
+# where its exit status and bypass-actors line are the row's.
+land_case() { # CONSUMER RULES_FILTER FILES ACTORS_JSON WANT_RC WANT_LINE
+  local dir="$TMP/case-land-$((PASS + FAIL))" file id got
+  cp -R "$BASE" "$dir"
+  jq "$2" "$BASE/rules.json" >"$dir/rules.json"
+  for file in $3; do
+    id="${file##*-}"
+    printf '{"id": %s, "bypass_actors": %s}\n' "$id" "$4" >"$dir/$file.json"
+  done
+  CONSUMER="$TMP/consumer-$1"
+  run "$dir" ""
+  CONSUMER="$TMP/consumer-full"
+  got="$(grep 'check=standard-bypass-actors ' <<<"$OUT" || true)"
+  CASE_MATCH=false
+  if [ "$RC" -eq "$5" ] && [ "$got" = "$6" ]; then CASE_MATCH=true; fi
+  CASE_DIFF="rc=$RC want $5; $got
+$RAW"
+}
+while IFS='~' read -r label consumer filter files actors want_rc want_line; do
+  [ -n "$label" ] || continue
+  land_case "$consumer" "$filter" "$files" "$actors" "$want_rc" "$want_line"
+  if [ "$CASE_MATCH" = true ]; then ok "$label"; else bad "$label" "$CASE_DIFF"; fi
+done <<<"$LAND_ROWS"
 
 echo "=== a failed read is unreadable, never a match ==="
 run "$BASE" rules
@@ -461,6 +546,33 @@ fi
 # The controls below edit a disposable copy of the script and restore it
 # from this keep.
 cp "$SKILL/scripts/validate-standard.sh" "$TMP/standard-script.keep"
+
+echo "=== the landing app's admission controls ==="
+# name ~ match ~ sed edit of scripts/validate-standard.sh ~ the landing rows
+# it must turn red, ^-separated
+while IFS='~' read -r name match edit reddened; do
+  [ -n "$name" ] || continue
+  file_edit "$SKILL" scripts/validate-standard.sh 1 "$match" "$edit"
+  IFS='^' read -r -a labels <<<"$reddened"
+  for label in "${labels[@]}"; do
+    IFS='~' read -r _ consumer filter files actors want_rc want_line <<<"$(grep -F -- "$label~" <<<"$LAND_ROWS")"
+    land_case "$consumer" "$filter" "$files" "$actors" "$want_rc" "$want_line"
+    if [ "$CASE_MATCH" = false ]; then ok "control: $name turns \"$label\" red"
+    else bad "control: $name leaves \"$label\" passing" "$CASE_DIFF"; fi
+  done
+  cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
+done <<'ROWS'
+the workflows shape dropped~pull_request \| pull_request,workflows\) admitted=~s/pull_request | pull_request,workflows) admitted=/pull_request) admitted=/~the landing app is the one bypass of a pull-request and workflows ruleset
+the landing app admitted on every ruleset~^      \*\) admitted="" ;;$~s/\*) admitted="" ;;/*) admitted="$WANT_LAND_BYPASS" ;;/~the landing app on the deletion and force-push ruleset is a departure^the landing app on a workflows-only ruleset is a departure
+ROWS
+
+# With the landing-app condition dropped, the walk takes any head no pull
+# request merged as landed.
+file_edit "$SKILL" scripts/validate-standard.sh 1 '^    if \[ -z "\$WANT_LAND_BYPASS" \]; then$' 's/^    if \[ -z "\$WANT_LAND_BYPASS" \]; then$/    if false; then/'
+landed_case case-landed-head full standard-ci-context=no-associated-pull-request
+if [ "$CASE_MATCH" = false ]; then ok "control: a walk with no landing app named turns the no-landing-app head red"
+else bad "control: a walk with no landing app named leaves the no-landing-app head passing" "$CASE_DIFF"; fi
+cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"
 
 echo "=== transient reads retry, permanent failures keep their first answer ==="
 retry_case() { # DIAGNOSTIC FAILURES ATTEMPTS WAITS RC

@@ -13,7 +13,10 @@
 # TYPE:ID:MODE per line: WANT_QUEUE_BYPASS
 # (REVIEW_GATE_STANDARD_QUEUE_BYPASS, for a ruleset holding only
 # merge_queue) and WANT_CHECKS_BYPASS (REVIEW_GATE_STANDARD_CHECKS_BYPASS,
-# for one holding only required_status_checks), each empty where the key is.
+# for one holding only required_status_checks), with WANT_LAND_BYPASS
+# (REVIEW_GATE_STANDARD_LAND_BYPASS, the landing app, admitted on those two
+# and on one holding pull_request alone or with workflows), each empty
+# where the key is.
 # An empty WANT_CONTEXTS is no refusal: the standard-required-contexts row
 # reports it. With no jq on PATH, a missing, unreadable or malformed
 # manifest, an unreadable setting, or a bypass entry that is not
@@ -48,6 +51,7 @@ rg_standard_load() { # MANIFEST
 
   WANT_QUEUE_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_QUEUE_BYPASS)" || return 1
   WANT_CHECKS_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_CHECKS_BYPASS)" || return 1
+  WANT_LAND_BYPASS="$(rg_standard_actors REVIEW_GATE_STANDARD_LAND_BYPASS)" || return 1
   contexts="$(rg_setting REVIEW_GATE_STANDARD_CONTEXTS "")" || return 1
   WANT_CONTEXTS="$(rg_pack "$contexts" ';' | LC_ALL=C sort -u | paste -sd ';' -)" || {
     rg_message error standard-read REVIEW_GATE_STANDARD_CONTEXTS "could not split the required contexts" >&2

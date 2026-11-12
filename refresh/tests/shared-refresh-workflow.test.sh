@@ -23,15 +23,18 @@ bad() {
   return 0
 }
 
-# These declarations forward both fixed environment pairs. This checks wiring,
-# not hosted resolution. The FLEET pair also supplies the issue-token step.
+# These declarations forward the fixed environment pairs. This checks wiring,
+# not hosted resolution. The FLEET pair also supplies the issue-token step,
+# and the optional KENDEX_LAND pair the landing token step.
 if python3 - "$TEST_DIR/../kendex-refresh.yml" "$TEST_DIR/../../skills/review-gate/templates/kendex-refresh.yml" <<'FORWARDING'
 from pathlib import Path
 import re, sys
 expected = {'KENDEX_APP_ID': '${{ secrets.KENDEX_APP_ID }}',
             'KENDEX_APP_PRIVATE_KEY': '${{ secrets.KENDEX_APP_PRIVATE_KEY }}',
             'FLEET_GH_APP_ID': '${{ secrets.FLEET_GH_APP_ID }}',
-            'FLEET_GH_APP_PRIVATE_KEY': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}'}
+            'FLEET_GH_APP_PRIVATE_KEY': '${{ secrets.FLEET_GH_APP_PRIVATE_KEY }}',
+            'KENDEX_LAND_APP_ID': '${{ secrets.KENDEX_LAND_APP_ID }}',
+            'KENDEX_LAND_APP_PRIVATE_KEY': '${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}'}
 def check(text):
     block = text.split('    secrets:\n', 1)[1]
     actual = dict(re.findall(r'^      ([A-Za-z0-9_-]+): (.+)$', block, re.M))
@@ -48,7 +51,7 @@ for path in sys.argv[1:]:
         except AssertionError: pass
         else: raise AssertionError('missing forwarding control '+name)
 FORWARDING
-then ok 'default callers forward both fixed pairs; omitted same-name controls fail';
+then ok 'default callers forward the fixed pairs; omitted same-name controls fail';
 else bad 'default caller credential forwarding'; fi
 
 if python3 - "$WORKFLOW" "$TMP" "$BASH" <<'PY'
@@ -58,6 +61,7 @@ import copy, datetime, io, json, os, pathlib, re, subprocess, sys, zipfile
 text = open(sys.argv[1]).read()
 assert 'secrets[' not in text
 job = dict(re.findall(r'^    (environment|runs-on): (.+)$', text, re.M))
+job['env'] = dict(re.findall(r'^      ([A-Z_]+): (.+)$', text.split('\n    env:\n', 1)[1].split('\n    steps:\n', 1)[0], re.M))
 steps = []
 for block in re.split(r'^      - ', text, flags=re.M)[1:]:
     step = {}; current = None
@@ -147,8 +151,27 @@ def check(job):
     assert install['working-directory'] == 'kendex'
     assert install['env'] == {'GH_TOKEN': '""', 'WORKFLOW_REF': '${{ job.workflow_ref }}', 'WORKFLOW_SHA': '${{ job.workflow_sha }}'}
     tokens = [s for s in steps if s.get('uses', '').startswith('actions/create-github-app-token@')]
-    assert len(tokens) == 2
-    repository, upstream = tokens
+    assert len(tokens) == 3
+    repository, land, upstream = tokens
+    # The landing token: the consumer repository alone, contents: write
+    # alone, minted only from a complete landing pair, a failed mint leaving
+    # it empty, and read by the refresh step alone. The job also says
+    # whether either name is set, so the refresh step reports a token that
+    # did not arrive.
+    assert job['env'] == {'KENDEX_LAND_PAIR': "${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}",
+                          'KENDEX_LAND_CONFIGURED': "${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}"}, job['env']
+    assert land['id'] == 'land-token' and land.get('continue-on-error') is True
+    assert land['if'] == "steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'"
+    assert land['with']['owner'] == '${{ github.repository_owner }}'
+    assert land['with']['repositories'] == '${{ github.event.repository.name }}'
+    assert land['with']['app-id'] == '${{ secrets.KENDEX_LAND_APP_ID }}'
+    assert land['with']['private-key'] == '${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}'
+    assert {k: v for k, v in land['with'].items() if k.startswith('permission-')} == {'permission-contents': 'write'}
+    landing = [s for s in steps if 'steps.land-token.outputs.token' in json.dumps(s)]
+    assert len(landing) == 1 and landing[0]['env']['KENDEX_LAND_TOKEN'] == '${{ steps.land-token.outputs.token }}'
+    assert 'refresh-consumer.sh' in landing[0]['run']
+    assert landing[0]['env']['GH_TOKEN'] == '${{ steps.token.outputs.token }}'
+    assert steps.index(land) < steps.index(landing[0])
     assert steps.index(repository) > steps.index(install)
     assert repository['with']['owner'] == '${{ github.repository_owner }}'
     assert repository['with']['repositories'] == '${{ github.event.repository.name }}'
@@ -180,7 +203,8 @@ for script in ('refresh-consumer.sh', 'refresh-reviews.sh'):
     print(f'  executed: {script} from release checkout with consumer cwd; status=0,47')
 for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials', 'exposure', 'repository', 'early-token',
                  'consumer-disabled-exec', 'reviews-disabled-exec', 'consumer-masked-failure', 'reviews-masked-failure',
-                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization'):
+                 'environment', 'app-secret-name', 'dynamic-secret-index', 'mixed-pair', 'unconditional-organization',
+                 'land-workflows', 'land-exposure', 'land-shared', 'land-required'):
     j = copy.deepcopy(job); steps = j['steps']
     refresh = next(s for s in steps if 'refresh-consumer.sh' in s.get('run', ''))
     if mutation == 'consumer-script':
@@ -201,6 +225,14 @@ for mutation in ('consumer-script', 'consumer-cwd', 'kendex-ref', 'credentials',
         next(s for s in steps if s.get('id') == 'token')['with']['private-key'] = '${{ secrets.KENDEX_APP_PRIVATE_KEY || secrets.FLEET_GH_APP_PRIVATE_KEY }}'
     elif mutation == 'unconditional-organization':
         next(s for s in steps if s.get('id') == 'token')['with']['permission-organization-secrets'] = 'read'
+    elif mutation == 'land-workflows':
+        next(s for s in steps if s.get('id') == 'land-token')['with']['permission-workflows'] = 'write'
+    elif mutation == 'land-exposure':
+        next(s for s in steps if 'refresh-reviews.sh' in s.get('run', ''))['env']['KENDEX_LAND_TOKEN'] = '${{ steps.land-token.outputs.token }}'
+    elif mutation == 'land-shared':
+        refresh['env']['GH_TOKEN'] = '${{ steps.land-token.outputs.token }}'
+    elif mutation == 'land-required':
+        del next(s for s in steps if s.get('id') == 'land-token')['continue-on-error']
     elif mutation.endswith(('-disabled-exec', '-masked-failure')):
         script = 'refresh-consumer.sh' if mutation.startswith('consumer-') else 'refresh-reviews.sh'
         step = next(s for s in steps if script in s.get('run', ''))
@@ -231,7 +263,10 @@ full_gate = "steps.inputs.outputs.route == 'full'"
 def check_gates(candidate):
     save = next(s for s in candidate['steps'] if s.get('uses', '').startswith('actions/upload-artifact@'))
     render = next(s for s in candidate['steps'] if s.get('id') == 'refresh')
-    assert all(s.get('if') == gate for s in candidate['steps'][1:] if s is not save and s is not render), 'later-step-ungated'
+    land = next(s for s in candidate['steps'] if s.get('id') == 'land-token')
+    assert all(s.get('if') == gate for s in candidate['steps'][1:] if s not in (save, render, land)), 'later-step-ungated'
+    # Only the render step reads the landing token.
+    assert land['if'] == full_gate + " && env.KENDEX_LAND_PAIR == 'true'"
     # The review route runs no render and so saves no record.
     assert render['if'] == full_gate
     assert save['if'] == full_gate + " && steps.refresh.outputs.state == 'current' && steps.refresh.outputs.sources == 'covered' && steps.inputs.outputs.record-path != ''"

@@ -11,6 +11,9 @@ class InvalidCaller(ValueError):
 CALL = re.compile(r"^    uses: vanillagreencom/kendex/\.github/workflows/refresh-consumer\.yml@[^\n]+\n?", re.M)
 DEFAULT_NAMES = ("FLEET_GH_APP_ID", "FLEET_GH_APP_PRIVATE_KEY")
 NEUTRAL_NAMES = ("KENDEX_APP_ID", "KENDEX_APP_PRIVATE_KEY")
+# The landing app's pair: optional, and never one of the credential pairs
+# below, which the shared job's repository token mints from.
+LAND_NAMES = ("KENDEX_LAND_APP_ID", "KENDEX_LAND_APP_PRIVATE_KEY")
 ALIASES = ("app-id", "app-private-key")
 
 
@@ -47,9 +50,9 @@ def configuration(data):
         if key in section:
             raise InvalidCaller("duplicate")
         section[key] = value
-    if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES):
+    if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES + LAND_NAMES):
         raise InvalidCaller("names")
-    for pair in (DEFAULT_NAMES, NEUTRAL_NAMES, ALIASES):
+    for pair in (DEFAULT_NAMES, NEUTRAL_NAMES, ALIASES, LAND_NAMES):
         if set(pair).intersection(secrets) and not set(pair).issubset(secrets):
             raise InvalidCaller("names")
     pairs = [list(pair) for pair in (NEUTRAL_NAMES, DEFAULT_NAMES) if set(pair).issubset(secrets)]
@@ -101,5 +104,15 @@ def configured(data, config):
         return data
     if replacement["environment"] == config["environment"] and replacement["names"] == config["names"]:
         return data
-    return (replacement["text"][:replacement["start"]] + config["block"] +
+    block = config["block"]
+    # The landing pair's names are fixed, so forwarding it is no consumer
+    # choice: a copy adopted before the template forwarded it gains it.
+    if set(LAND_NAMES).issubset(replacement["names"]) and not set(LAND_NAMES).intersection(config["names"]):
+        lines = block.splitlines(keepends=True)
+        at = lines.index("    secrets:\n") + 1
+        while at < len(lines) and lines[at].startswith("      "):
+            at += 1
+        lines[at:at] = ["      " + name + ": ${{ secrets." + name + " }}\n" for name in LAND_NAMES]
+        block = "".join(lines)
+    return (replacement["text"][:replacement["start"]] + block +
             replacement["text"][replacement["end"]:]).encode()

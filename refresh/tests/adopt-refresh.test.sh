@@ -675,6 +675,7 @@ elif rule=='aliases-without-fleet':
  for key in ('FLEET_GH_APP_ID','FLEET_GH_APP_PRIVATE_KEY'):
   s=s.replace('      '+key+': ${{ secrets.'+key+' }}\n', '')
 elif rule=='unknown-key': s += '      CUSTOM_APP_ID: ${{ secrets.CUSTOM_APP_ID }}\n'
+elif rule=='land-half': s=s.replace('      KENDEX_LAND_APP_PRIVATE_KEY: ${{ secrets.KENDEX_LAND_APP_PRIVATE_KEY }}\n', '')
 elif rule=='mixed-case':
  for name in ('KENDEX_APP_ID','KENDEX_APP_PRIVATE_KEY','FLEET_GH_APP_ID','FLEET_GH_APP_PRIVATE_KEY'):
   s=s.replace('secrets.'+name, 'secrets.'+name.lower())
@@ -793,7 +794,7 @@ RESTORE_FIXED_SECRETS
   else
     cause="$rule"
     case "$rule" in
-      missing|unknown-key|aliases-without-fleet) cause=names ;;
+      missing|unknown-key|aliases-without-fleet|land-half) cause=names ;;
       custom|wrong-alias) cause=secret-names ;;
       inherit) cause=not-mapping ;;
     esac
@@ -839,7 +840,8 @@ wrong-alias|none|
 aliases-without-fleet|none|
 aliases-without-fleet|disabled|if not pairs or (set(ALIASES).intersection(secrets) and not set(DEFAULT_NAMES).issubset(secrets)):
 unknown-key|none|
-unknown-key|disabled|if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES):
+land-half|none|
+unknown-key|disabled|if set(secrets) - set(DEFAULT_NAMES + NEUTRAL_NAMES + ALIASES + LAND_NAMES):
 inherit|none|
 inherit|disabled|if section is None or not match:
 expression|none|
@@ -851,6 +853,34 @@ duplicate|disabled|if key in section:
 inputs|none|
 inputs|disabled|if set(inputs) - {"environment", "app-id-secret-name", "app-private-key-secret-name"}:
 MAPPING_ROWS
+
+# The landing pair's names are fixed, so a copy adopted before the template
+# forwarded it gains the pair and keeps its own environment. The control
+# keeps the copy's block as it was.
+git -C "$SKILL_DIR" show 63447477594a3097e1f383e84f2e22b2e66b6acc:refresh/kendex-refresh.yml >"$TMP/unlanded-caller"
+ship_caller_template "$TMP/unlanded-caller"
+ship_caller_template "$CALLER"
+for mutation in none kept-block; do
+  sandbox
+  sed 's/^      environment: kendex$/      environment: delivery/' "$TMP/unlanded-caller" >"$DIR/$REFRESH"
+  sed 's/^      environment: kendex$/      environment: delivery/' "$CALLER" >"$TMP/landed-caller"
+  if cmp -s "$DIR/$REFRESH" "$TMP/unlanded-caller" || grep -q KENDEX_LAND "$DIR/$REFRESH" || ! grep -q KENDEX_LAND "$TMP/landed-caller"; then
+    bad 'landing pair fixture' "$(cat "$DIR/$REFRESH")"
+  fi
+  commit "$DIR"
+  printf '{"environments":[{"name":"delivery","deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}\n' >"$FIXTURES/environments.json"
+  printf '{"secrets":[{"name":"KENDEX_APP_ID"},{"name":"KENDEX_APP_PRIVATE_KEY"}]}\n' >"$FIXTURES/environment-secrets-delivery.json"
+  [ "$mutation" = none ] || file_edit "$DIR" refresh/lib/caller.py 1 '^    if set\(LAND_NAMES\)\.issubset' \
+    's/^    if set(LAND_NAMES)/    if False and set(LAND_NAMES)/'
+  run_refresh_command "$DIR" "$DIR/$ADOPT" --templates-dir "$RELEASE"
+  matched=no
+  if [ "$RC" -eq 0 ] && cmp -s "$DIR/$REFRESH" "$TMP/landed-caller"; then matched=yes; fi
+  case "$mutation:$matched" in
+    none:yes) ok 'a copy adopted before the landing pair gains it and keeps its environment' ;;
+    kept-block:no) [ "$RC" -eq 0 ] && ok 'control: a kept configuration block turns the landing pair assertion red' || bad 'landing pair control' "$OUT" ;;
+    *) bad "landing pair gain mutation=$mutation (rc=$RC)" "$OUT" ;;
+  esac
+done
 
 # GitHub fills absent environment names from forwarded Actions values. The
 # token expressions read both fixed pairs, even when the other pair is
@@ -910,6 +940,8 @@ organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|none
 organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_PRIVATE_KEY|none
 repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_ID|FLEET_GH_APP_PRIVATE_KEY|none
 organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY FLEET_GH_APP_PRIVATE_KEY|FLEET_GH_APP_ID|none
+repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|KENDEX_LAND_APP_ID|none
+organization|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY KENDEX_LAND_APP_ID|KENDEX_LAND_APP_PRIVATE_KEY|none
 repository|FLEET_GH_APP_ID FLEET_GH_APP_PRIVATE_KEY|KENDEX_APP_ID|judgment
 repository|KENDEX_APP_ID KENDEX_APP_PRIVATE_KEY|FLEET_GH_APP_ID|refusal
 PLACEMENT_ROWS
