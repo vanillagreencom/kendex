@@ -195,34 +195,54 @@ echo "reviewer-read-only: a reviewer deletes nothing inside a work tree"
 printf 'cli\n' >"$REPO/cli.md"
 DELETE_SCRATCH="$(mktemp -d "$TMP_ROOT/delete.XXXXXX")" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
 # delete_row AGENT CWD COMMAND WANT: WANT is the refusal's first line, or
-# pass. The payload names the cwd the call starts in, as the harness does.
+# pass. The payload names the cwd the call starts in, as Claude Code's does;
+# an empty CWD omits the field and runs the hook from $REPO, as the Pi
+# carrier, whose payload names none, spawns it in the session's directory.
 delete_row() {
-  local agent="$1" cwd="$2" cmd="$3" want="$4"
-  run_payload "$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
-    '{agent_type: $a, tool_name: "Bash", cwd: $c, tool_input: {command: $v}}')"
-  if [ "$want" = pass ]; then
-    assert_eq "$rc" 0 "passes for $agent in $cwd: $cmd"
+  local agent="$1" cwd="$2" cmd="$3" want="$4" payload here=$PWD
+  payload=$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
+    '{agent_type: $a, tool_name: "Bash", tool_input: {command: $v}} + (if $c == "" then {} else {cwd: $c} end)')
+  if [ -n "$cwd" ]; then
+    run_payload "$payload"
   else
-    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in $cwd: $cmd"
+    cd "$REPO"
+    run_payload "$payload"
+    cd "$here"
+  fi
+  if [ "$want" = pass ]; then
+    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $cmd"
+  else
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $cmd"
   fi
 }
+# An rm is judged where it runs as a command of the call. One inside a quoted
+# argument or a heredoc body, and an rm word that is an argument, runs
+# nothing here.
 delete_rows() {
   delete_row reviewer-test "$REPO" 'rm cli.md' "delete=$REPO/cli.md"
   # The overnight form: the cd fails and the rm runs where the call started.
   delete_row reviewer-test "$REPO" 'cd /nonexistent-review-dir; rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "" 'rm cli.md' "delete=$REPO/cli.md"
   delete_row reviewer-test "$SCRATCH" "rm -f $REPO/src/lib.rs" "delete=$REPO/src/lib.rs"
-  delete_row reviewer-test "$REPO" 'git rm -q src/lib.rs' "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'LC_ALL=C command rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'git -C src rm -q lib.rs' "delete=$REPO/src/lib.rs"
   delete_row reviewer-test "$REPO" "rm -rf $DELETE_SCRATCH" pass
   delete_row reviewer-test "$REPO" "rm -rf -- $DELETE_SCRATCH 2>/dev/null" pass
-  delete_row reviewer-test "$REPO" 'd=$(mktemp -d); trap '\''rm -rf "$d"'\'' EXIT' pass
+  delete_row reviewer-test "$REPO" 'rm -rf "$d"' pass
   delete_row reviewer-test "$REPO" 'grep -rn "rm -rf" src/' pass
+  delete_row reviewer-test "$REPO" 'grep -n rm src/lib.rs' pass
+  delete_row reviewer-test "$REPO" "mutation-stability --mutate 'rm -f cli.md && sed -i s/a/b/ src/lib.rs'" pass
+  delete_row reviewer-test "$REPO" "bash -c 'ls; rm cli.md'" pass
+  delete_row reviewer-test "$REPO" "cat >$DELETE_SCRATCH/t.sh <<'EOF'"$'\nrm cli.md\nEOF' pass
   delete_row dev "$REPO" 'rm cli.md' pass
 }
 delete_rows
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control delete-allowed "$HOOK" \
-    '    [ -n "$RM_CALLS" ] || exit 0' \
+    '    [ -n "$CWD" ] || CWD=$PWD' \
     '    exit 0' HOOK delete_rows \
     "refused for reviewer-test in $REPO: rm cli.md" \
     "refused for reviewer-test in $REPO: cd /nonexistent-review-dir; rm cli.md"

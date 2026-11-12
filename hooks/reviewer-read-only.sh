@@ -3,9 +3,9 @@
 # name: reviewer-read-only
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed), or `rm` (`git rm` too) on a path inside a git work tree, a relative operand judged against the payload's `cwd`, where the call starts, whatever `cd` precedes it, since a failed `cd` leaves the shell there. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
-# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Bash arm matches raw command text, including quoted mentions, and refuses every stash command. The delete check takes the words after each `rm` up to a control operator, strips their quotes and asks git where each lies. A word holding a `$` or backtick expansion names nothing before the shell runs and is not judged, and a word that opens or closes a quote ends the words judged, so an `rm` inside a quoted string, a grep pattern or a `bash -c` body alike, and an operand holding spaces are not judged past it. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write, or the `mktemp -d` scratch a reviewer may delete in, and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed), or `rm` (`git rm` too) as a command of the call on a path inside a git work tree, a relative operand judged against the directory the call starts in (the payload's `cwd`, or on Pi, whose payload carries none, the hook's own working directory; `git -C` moves it), whatever `cd` precedes it, since a failed `cd` leaves the shell there. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
+# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, no deletes inside a work tree, only its review report.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete check splits the command into words as the shell does at the top level of the call and judges an `rm` only where it is a command word: first after a control operator, a newline, a subshell or command substitution edge, past any assignments, reserved words, a `sudo`, `command`, `exec`, `env`, `eval`, `xargs`, `nohup` or `time` launcher with its options, or `git` with its options. An `rm` inside a quoted argument, the body of `bash -c`, `eval` or a quoted script argument alike, in a comment or in a heredoc body is not judged, nor is an operand holding a `$` or backtick expansion, which names nothing before the shell runs. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write, or the `mktemp -d` scratch a reviewer may delete in, and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # harnesses: [claude, pi, opencode, cursor]
 # ---
@@ -63,9 +63,6 @@ refuse() { # KEY VALUE [CAUSE]
       delete=*)
         echo "a reviewer deletes nothing inside a work tree; $2 is in one, and a delete there can take its author's uncommitted work. A control file goes under a mktemp -d of your own and is deleted there, named by its absolute path."
         ;;
-      grep=unreadable)
-        echo "grep could not read the command text, so its deletes could not be judged"
-        ;;
       git=unreadable)
         echo "git could not say whether $TARGET is inside a work tree, so the call could not be judged:"
         printf '%s\n' "$ANSWER"
@@ -105,6 +102,203 @@ in_work_tree() { # PATH -> 0 inside, 1 outside
     *"not a git repository"*) return 1 ;;
   esac
   refuse git unreadable
+}
+
+# The words of COMMAND as the shell splits them at the top level of the call,
+# into WORDS, each one's kind in KINDS: w a literal word, x a word holding an
+# expansion, `;` the end of a command (a control operator, a newline, a
+# subshell or command substitution edge) and `<` a redirection, whose next
+# word is its target. A quoted string is one word whatever it holds, so the
+# body of `bash -c '...'` or of a quoted script argument runs no command of
+# this call; a comment and a heredoc body are dropped for the same reason.
+shell_words() {
+  local i=0 n=${#COMMAND} c next word="" have="" kind=w quote="" delim="" k line rest
+  local docs=() tabs=()
+  WORDS=() KINDS=()
+  while [ "$i" -lt "$n" ]; do
+    c=${COMMAND:i:1}
+    i=$((i + 1))
+    if [ "$quote" = "'" ]; then
+      if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
+      continue
+    fi
+    if [ "$quote" = '"' ]; then
+      case "$c" in
+        '"') quote="" ;;
+        \\)
+          next=${COMMAND:i:1}
+          case "$next" in
+            '$' | '`' | '"' | \\) word=$word$next; i=$((i + 1)) ;;
+            $'\n') i=$((i + 1)) ;;
+            *) word=$word$c ;;
+          esac
+          ;;
+        '$' | '`') kind=x; word=$word$c ;;
+        *) word=$word$c ;;
+      esac
+      continue
+    fi
+    case "$c" in
+      "'" | '"') quote=$c; have=1 ;;
+      \\)
+        next=${COMMAND:i:1}
+        i=$((i + 1))
+        [ "$next" = $'\n' ] || { word=$word$next; have=1; }
+        ;;
+      ' ' | $'\t') word_end ;;
+      $'\n')
+        word_end
+        WORDS+=(";") KINDS+=(";")
+        # Each heredoc opened on the line ends at its delimiter line.
+        for ((k = 0; k < ${#docs[@]}; k++)); do
+          while [ "$i" -lt "$n" ]; do
+            rest=${COMMAND:i}
+            line=${rest%%$'\n'*}
+            i=$((i + ${#line} + 1))
+            [ "${tabs[k]}" != - ] || line=${line#"${line%%[!$'\t']*}"}
+            [ "$line" != "${docs[k]}" ] || break
+          done
+        done
+        docs=() tabs=()
+        ;;
+      ';' | '|' | '(' | ')' | '`')
+        word_end
+        WORDS+=(";") KINDS+=(";")
+        ;;
+      '&' | '<' | '>')
+        if [ "$c" = '&' ] && [ "${COMMAND:i:1}" != '>' ]; then
+          word_end
+          WORDS+=(";") KINDS+=(";")
+          continue
+        fi
+        # A file descriptor number written against the operator is not a word.
+        case "$word" in
+          *[!0-9]* | '') ;;
+          *) word="" have="" kind=w ;;
+        esac
+        word_end
+        if [ "${COMMAND:i-1:3}" = '<<<' ]; then
+          i=$((i + 2))
+        elif [ "${COMMAND:i-1:2}" = '<<' ]; then
+          i=$((i + 1))
+          delim=1
+          if [ "${COMMAND:i:1}" = - ]; then delim=-; i=$((i + 1)); fi
+        else
+          while :; do
+            case "${COMMAND:i:1}" in
+              '<' | '>' | '&' | '|') i=$((i + 1)) ;;
+              *) break ;;
+            esac
+          done
+        fi
+        WORDS+=("<") KINDS+=("<")
+        ;;
+      '#')
+        if [ -n "$have" ]; then
+          word=$word$c
+        else
+          rest=${COMMAND:i}
+          line=${rest%%$'\n'*}
+          i=$((i + ${#line}))
+        fi
+        ;;
+      '$')
+        kind=x have=1
+        if [ "${COMMAND:i:1}" = '(' ]; then
+          i=$((i + 1))
+          word_end
+          WORDS+=(";") KINDS+=(";")
+        else
+          word=$word$c
+        fi
+        ;;
+      *) word=$word$c; have=1 ;;
+    esac
+  done
+  word_end
+}
+
+# Ends the word shell_words is building, recording it as a heredoc's
+# delimiter when one is awaited.
+word_end() {
+  if [ -n "$have" ]; then
+    WORDS+=("$word") KINDS+=("$kind")
+    if [ -n "$delim" ]; then
+      docs+=("$word") tabs+=("$delim")
+      delim=""
+    fi
+  fi
+  word="" have="" kind=w
+}
+
+# Judges each rm the call runs as a command, `git rm` too, refusing at the
+# first operand inside a work tree. The command word follows any VAR=value
+# assignments, reserved words, and a launcher with its options; rm named by
+# any path is rm. A relative operand lies under the directory the call starts
+# in, whatever `cd` precedes it, since a failed `cd` leaves the shell there;
+# `git -C` moves it. A word holding an expansion names nothing before the
+# shell runs and is not judged.
+judge_deletes() {
+  local k=0 n=${#WORDS[@]} word kind state='head' base=$CWD ended=""
+  local assignment='^[A-Za-z_][A-Za-z0-9_]*\+?='
+  while [ "$k" -lt "$n" ]; do
+    word=${WORDS[k]} kind=${KINDS[k]}
+    k=$((k + 1))
+    case "$kind" in
+      ';') state='head' base=$CWD ended=""; continue ;;
+      '<') k=$((k + 1)); continue ;;
+    esac
+    case "$state" in
+      head | launcher)
+        if [[ $word =~ $assignment ]]; then continue; fi
+        case "$state$word" in launcher-*) continue ;; esac
+        if [ "$kind" != w ]; then state='other'; continue; fi
+        case "$word" in
+          '!' | '{' | '}' | if | then | else | elif | do | while | until) state='head' ;;
+          time | nohup | sudo | command | exec | env | eval | xargs) state='launcher' ;;
+          git) state='git' ;;
+          rm | */rm) state='rm' ;;
+          *) state='other' ;;
+        esac
+        ;;
+      git)
+        case "$word" in
+          -C) state='git-dir' ;;
+          -c | --git-dir | --work-tree | --namespace | --exec-path) state='git-value' ;;
+          -*) ;;
+          rm) state='rm' ;;
+          *) state='other' ;;
+        esac
+        ;;
+      git-dir)
+        state='git'
+        case "$kind:$word" in
+          x:*) base="" ;;
+          w:/*) base=$word ;;
+          *) base=$base/$word ;;
+        esac
+        ;;
+      git-value) state='git' ;;
+      rm)
+        if [ -z "$ended" ]; then
+          case "$word" in
+            --) ended=1; continue ;;
+            -*) continue ;;
+          esac
+        fi
+        if [ "$kind" != w ] || [ -z "$base" ]; then continue; fi
+        case "$word" in
+          '' | \~[!/]*) continue ;;
+          \~ | \~/*) word=$HOME${word#\~} ;;
+          /*) ;;
+          *) word=$base/$word ;;
+        esac
+        if in_work_tree "$word"; then
+          refuse delete "$word"
+        fi
+        ;;
+    esac
+  done
 }
 
 # Every external command this hook runs. jq reads the payload and git answers
@@ -176,56 +370,20 @@ case "$TOOL_NAME" in
     if printf '%s\n' "$COMMAND" | grep -E -- "$GIT_DISCARD" >/dev/null; then
       refuse refused git-discard
     fi
-    # A delete inside a work tree can take uncommitted work with it. `rm` as
-    # its own word (`git rm` too), its words up to a control operator, and a
-    # redirection that ends them. A relative operand is judged against the
-    # payload's cwd, where the call starts: a `cd` before it may have failed
-    # and left the shell there.
-    RM_CALL='(^|[^[:alnum:]_.-])rm([[:space:]]+[^[:space:]&;|()<>]+)*[<>]?'
-    RM_CALLS=$(printf '%s\n' "$COMMAND" | grep -oE -- "$RM_CALL") || [ $? -eq 1 ] || refuse grep unreadable
-    [ -n "$RM_CALLS" ] || exit 0
+    # A delete inside a work tree can take uncommitted work with it. Only a
+    # command that names rm can run one, so any other passes unsplit.
+    case "$COMMAND" in
+      *rm*) ;;
+      *) exit 0 ;;
+    esac
     CWD=$(printf '%s' "$INPUT" | jq -er '.cwd
       | if . == null then "" elif type == "string" then . else error("not a string") end' 2>/dev/null) ||
       refuse payload invalid-json
-    # A harness whose payload names no cwd starts the hook where the call runs.
+    # A harness whose payload names no cwd starts the hook where the call
+    # runs: the Pi carrier spawns it in the session's directory.
     [ -n "$CWD" ] || CWD=$PWD
-    while IFS= read -r CALL; do
-      WORDS=${CALL#*rm}
-      # A redirection's file descriptor number is not an operand.
-      case "$WORDS" in
-        *[\<\>])
-          WORDS=${WORDS%?}
-          if [[ $WORDS =~ ^(.*[[:space:]])[0-9]+$ ]]; then WORDS=${BASH_REMATCH[1]}; fi
-          ;;
-      esac
-      # read splits on whitespace and expands no glob.
-      read -r -a ARGS <<<"$WORDS"
-      ENDED=""
-      for WORD in ${ARGS[@]+"${ARGS[@]}"}; do
-        # A word that opens or closes a quote ends the call: the `rm` sat in
-        # a quoted string, such as a grep pattern, or an operand holds spaces.
-        DQ=${WORD//[!\"]/}
-        SQ=${WORD//[!\']/}
-        if [ $((${#DQ} % 2 + ${#SQ} % 2)) -ne 0 ]; then break; fi
-        if [ -z "$ENDED" ]; then
-          case "$WORD" in
-            --) ENDED=1; continue ;;
-            -*) continue ;;
-          esac
-        fi
-        WORD=${WORD//[\"\'\\]/}
-        # An expansion names nothing until the shell runs it.
-        case "$WORD" in
-          '' | *[\$\`]* | \~[!/]*) continue ;;
-          \~ | \~/*) WORD=$HOME${WORD#\~} ;;
-          /*) ;;
-          *) WORD=$CWD/$WORD ;;
-        esac
-        if in_work_tree "$WORD"; then
-          refuse delete "$WORD"
-        fi
-      done
-    done <<<"$RM_CALLS"
+    shell_words
+    judge_deletes
     exit 0
     ;;
 esac
