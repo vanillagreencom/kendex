@@ -154,6 +154,17 @@ fn registry_outcome_snapshots() {
         ),
         ["/dev/a", "/dev/b"]
     );
+    let long = PathBuf::from(format!("/home/dev/{}app", "projects/".repeat(9)));
+    assert_eq!(
+        tagged(&found(&rich(80), std::slice::from_ref(&long))),
+        [
+            "".to_owned(),
+            "<1;36>projects found</>  <90>1</>".to_owned(),
+            "  <1;90>folder</>".to_owned(),
+            format!("  <90>{}</>", "─".repeat(94)),
+            format!("  {}", long.display()),
+        ]
+    );
 }
 
 /// A folder name off the disk cannot move the cursor or split the line.

@@ -23,7 +23,7 @@ fn subscription(name: &str, counted: Option<usize>, enabled: bool) -> Subscripti
 /// zero, and one switched off says it after its count.
 #[test]
 fn marketplace_list_snapshots() {
-    let cells: Vec<Vec<String>> = [
+    let cells: Vec<Vec<Cell>> = [
         subscription("tools", Some(3), true),
         subscription("old", None, false),
     ]
@@ -47,6 +47,19 @@ fn marketplace_list_snapshots() {
             "  global  tools  acme/tools @ v2  [3 package(s)]",
             "  global  old    acme/old @ v2    [not downloaded yet] (switched off)",
         ]
+    );
+    // A local subscription's folder, longer than its column could be at
+    // 80 cells, stays whole on one line.
+    let folder = format!("/home/dev/{}/tools", "marketplaces/".repeat(4));
+    let local = SubscriptionRow {
+        repo: None,
+        path: Some(folder.clone()),
+        ..subscription("tools", Some(3), true)
+    };
+    let drawn = subscriptions(&rich(80), &[subscription_cells(local)]);
+    assert!(
+        drawn.iter().any(|line| line.contains(&folder)),
+        "{drawn:#?}"
     );
 }
 

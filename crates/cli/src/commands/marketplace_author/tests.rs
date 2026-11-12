@@ -66,6 +66,24 @@ fn mine_snapshots() {
         mine_lines(&plain(), &rows),
         ["team-skills  3 package(s), 1 bundle(s), 1 problem(s)  /dev/team-skills"]
     );
+    // A folder longer than its column could be at 80 cells: the folder
+    // keeps its line, and what the marketplace holds wraps beside it.
+    let far = author::MineRow {
+        path: "/home/dev/projects/marketplaces/acme/team-skills-1".to_owned(),
+        ..mine_row(1, None)
+    };
+    assert_eq!(
+        tagged(&mine_lines(&rich(80), &[far])),
+        [
+            "",
+            "<1;36>marketplaces</>  <90>1</>",
+            "  <1;90>name</>         <1;90>holds</>          <1;90>folder</>",
+            "  <90>──────────────────────────────────────────────────────────────────────────────</>",
+            "  team-skills  3 package(s),  /home/dev/projects/marketplaces/acme/team-skills-1",
+            "               1 bundle(s),",
+            "               1 problem(s)",
+        ]
+    );
     assert_eq!(
         tagged(&mine_lines(&rich(100), &rows)),
         [
@@ -121,6 +139,13 @@ fn import_candidate_snapshots() {
     for cell in ["0123456789ab", "unusable", "it has no frontmatter"] {
         assert!(drawn.contains(cell), "{cell}: {drawn}");
     }
+    // A place longer than its column could be at 80 cells stays whole on
+    // one line.
+    let place = format!("/home/dev/{}review", "marketplaces/".repeat(4));
+    let mut far = candidates[0].clone();
+    far.origins[0].locations = vec![place.clone()];
+    let drawn = candidate_lines(&rich(80), &[far]);
+    assert!(drawn.iter().any(|line| line.contains(&place)), "{drawn:#?}");
 }
 
 #[test]

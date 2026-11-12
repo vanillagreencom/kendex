@@ -45,4 +45,17 @@ fn source_list_snapshots() {
             "  global  tools  acme/tools @abc1234   [2 package(s)]",
         ]
     );
+    // A local marketplace's folder, longer than its column could be at 80
+    // cells, stays whole on one line.
+    let folder = format!("/home/dev/{}/tools", "marketplaces/".repeat(4));
+    let local = source_ops::SourceRow {
+        reference: folder.clone(),
+        is_remote: false,
+        ..row("tools", Some("abc1234"), true, 2)
+    };
+    let drawn = listing(&rich(80), &[listed_row(&Scope::Global, &local)]);
+    assert!(
+        drawn.iter().any(|line| line.contains(&folder)),
+        "{drawn:#?}"
+    );
 }

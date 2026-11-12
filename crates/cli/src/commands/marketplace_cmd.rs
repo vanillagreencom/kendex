@@ -5,7 +5,7 @@ use kendex_core::source_ops;
 use super::engine_common::{AfterFailed, apply_report_accounted};
 use super::{CliResult, answer, resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Span, Status, Style};
+use crate::ui::{self, Cell, Span, Status, Style};
 
 #[derive(Subcommand)]
 pub enum MarketplaceCommand {
@@ -240,8 +240,12 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
         return Ok(());
     }
     let style = ui::style();
-    ui::stderr(&style.header("marketplace list", &format!("{} subscriptions", rows.len())));
-    let cells: Vec<Vec<String>> = rows.into_iter().map(subscription_cells).collect();
+    let count = rows.len();
+    ui::stderr(&style.header(
+        "marketplace list",
+        &format!("{count} subscription{}", if count == 1 { "" } else { "s" }),
+    ));
+    let cells: Vec<Vec<Cell>> = rows.into_iter().map(subscription_cells).collect();
     ui::stdout(&subscriptions(&style, &cells));
     Ok(())
 }
@@ -249,7 +253,7 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
 /// One subscription's cells. The revision rides with its source and the
 /// switch with its count, each with its own spacing, so a plain row stays
 /// the line scripts read.
-fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<String> {
+fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<Cell> {
     let what = row.repo.or(row.path).unwrap_or_default();
     let rev = row.rev.map(|rev| format!(" @ {rev}")).unwrap_or_default();
     let counted = match row.counts {
@@ -261,14 +265,14 @@ fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<String> {
     };
     let state = if row.enabled { "" } else { "  (switched off)" };
     vec![
-        row.scope.label(),
-        row.name,
-        format!("{what}{rev}"),
-        format!("[{counted}]{state}"),
+        row.scope.label().into(),
+        row.name.into(),
+        Cell::default().copy(what).prose(rev),
+        format!("[{counted}]{state}").into(),
     ]
 }
 
-fn subscriptions(style: &Style, cells: &[Vec<String>]) -> Vec<String> {
+fn subscriptions(style: &Style, cells: &[Vec<Cell>]) -> Vec<String> {
     style.report_table(
         "subscriptions",
         &["scope", "name", "from", "packages"],

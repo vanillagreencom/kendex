@@ -537,3 +537,71 @@ fn pinned(style: &Style, want: &[(&str, &[&str])]) {
         assert_eq!(tagged(lines), *expected, "{name}");
     }
 }
+
+/// A copied run in a cell — a path, a reference — is drawn whole: its
+/// column narrows no further than it, the prose beside it wraps instead,
+/// and one wider than the whole line runs past the width. Plain joins the
+/// runs as written.
+#[test]
+fn a_table_draws_a_copied_run_whole() {
+    let folder = "/home/dev/projects/marketplaces/acme/team-skills-1";
+    let long = format!("/{}", "x".repeat(99));
+    let mixed = || {
+        Cell::default()
+            .copy("/srv/a")
+            .prose(" = ")
+            .copy("/srv/b")
+            .prose(" — the folder could not be read just now")
+    };
+    let rows = vec![
+        vec![
+            Cell::from("demo".to_owned()),
+            Cell::from("0 package(s), 0 bundle(s), 0 problem(s)".to_owned()),
+            Cell::default().copy(folder),
+        ],
+        vec![
+            Cell::from("old".to_owned()),
+            Cell::from("1 package(s)".to_owned()),
+            mixed(),
+        ],
+    ];
+    let cases: [(&str, Vec<String>, Vec<String>); 3] = [
+        (
+            "narrower than the width",
+            rich(80).table(&["name", "holds", "folder"], &rows),
+            vec![
+                format!(
+                    "  <1;90>name</>  <1;90>holds</>{}  <1;90>folder</>",
+                    " ".repeat(15)
+                ),
+                format!("  <90>{}</>", "─".repeat(78)),
+                format!("  demo  0 package(s), 0       {folder}"),
+                "        bundle(s), 0".to_owned(),
+                "        problem(s)".to_owned(),
+                "  old   1 package(s)          /srv/a = /srv/b — the folder could not be read"
+                    .to_owned(),
+                format!("{}just now", " ".repeat(30)),
+            ],
+        ),
+        (
+            "wider than the width",
+            rich(80).table(&["folder"], &[vec![Cell::default().copy(long.clone())]]),
+            vec![
+                "  <1;90>folder</>".to_owned(),
+                format!("  <90>{}</>", "─".repeat(100)),
+                format!("  {long}"),
+            ],
+        ),
+        (
+            "plain",
+            plain().table(&["folder"], &[vec![mixed()]]),
+            vec![
+                "folder".to_owned(),
+                "/srv/a = /srv/b — the folder could not be read just now".to_owned(),
+            ],
+        ),
+    ];
+    for (case, drawn, want) in cases {
+        assert_eq!(tagged(&drawn), want, "{case}");
+    }
+}

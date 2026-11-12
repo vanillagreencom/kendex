@@ -93,7 +93,7 @@ mod symbols;
 mod tokens;
 
 pub use blocks::{finish, flush, intro};
-pub use components::{Choice, Key, Status, Target, Value};
+pub use components::{Cell, Choice, Key, Status, Target, Value};
 pub use keys::{choose, consent, typed};
 pub use live::Spinner;
 pub use modes::{Channel, Span, Style, channel, style};

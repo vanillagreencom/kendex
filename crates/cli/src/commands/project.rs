@@ -9,7 +9,7 @@ use kendex_core::{discover, settings};
 use kendex_core::settings_compare::Answer;
 
 use super::CliResult;
-use crate::ui::{self, Lines, Span, Status, Style, escaped};
+use crate::ui::{self, Cell, Lines, Span, Status, Style, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
@@ -243,9 +243,9 @@ fn reconnected(style: &Style, plan: &settings::Relocation) -> Vec<String> {
 
 /// The project folders discovery found, one per line plain.
 fn found(style: &Style, folders: &[PathBuf]) -> Vec<String> {
-    let rows: Vec<Vec<String>> = folders
+    let rows: Vec<Vec<Cell>> = folders
         .iter()
-        .map(|folder| vec![folder.display().to_string()])
+        .map(|folder| vec![Cell::default().copy(folder.display().to_string())])
         .collect();
     style.report_table(
         "projects found",
@@ -274,7 +274,11 @@ fn list(env: &Env, json: bool) -> CliResult {
         return Ok(());
     }
     let style = ui::style();
-    ui::stderr(&style.header("project list", &format!("{} projects", projects.len())));
+    let count = projects.len();
+    ui::stderr(&style.header(
+        "project list",
+        &format!("{count} project{}", if count == 1 { "" } else { "s" }),
+    ));
     for project in projects {
         let state = match kendex_core::scan::missing_why(&project) {
             Some(missing) => Listed::Missing(missing),
@@ -380,9 +384,10 @@ fn compare_settings(env: &Env) -> CliResult {
     let projects = settings::load(env)?.projects;
     let compared = kendex_core::settings_compare::compare_settings(env, &projects);
     let style = ui::style();
+    let count = compared.projects.len();
     ui::stderr(&style.header(
         "project settings",
-        &format!("{} projects", compared.projects.len()),
+        &format!("{count} project{}", if count == 1 { "" } else { "s" }),
     ));
     ui::stderr(&style.note(&[Span::Prose(
         "This report does not include values from the environment of this command.",

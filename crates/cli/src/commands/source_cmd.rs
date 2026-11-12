@@ -7,7 +7,7 @@ use source_ops::SourceChange;
 use super::engine_common::{AfterFailed, apply_report_accounted};
 use super::{CliResult, resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Span, Status, Style};
+use crate::ui::{self, Cell, Span, Status, Style};
 
 #[derive(Args)]
 pub struct SourceArgs {
@@ -200,7 +200,7 @@ fn list(env: &Env, style: &Style, scopes: &[Scope]) -> CliResult {
 
 /// One marketplace's cells. The revision and the switch ride in the third
 /// cell with their own spacing, so a plain row stays the line scripts read.
-fn listed_row(scope: &Scope, row: &source_ops::SourceRow) -> Vec<String> {
+fn listed_row(scope: &Scope, row: &source_ops::SourceRow) -> Vec<Cell> {
     let head = row
         .head
         .as_deref()
@@ -211,14 +211,16 @@ fn listed_row(scope: &Scope, row: &source_ops::SourceRow) -> Vec<String> {
         false => "  (switched off)",
     };
     vec![
-        scope.label(),
-        row.name.clone(),
-        format!("{}{head}{state}", row.reference),
-        format!("[{} package(s)]", row.declared_items.len()),
+        scope.label().into(),
+        row.name.clone().into(),
+        Cell::default()
+            .copy(row.reference.clone())
+            .prose(format!("{head}{state}")),
+        format!("[{} package(s)]", row.declared_items.len()).into(),
     ]
 }
 
-fn listing(style: &Style, rows: &[Vec<String>]) -> Vec<String> {
+fn listing(style: &Style, rows: &[Vec<Cell>]) -> Vec<String> {
     style.report_table(
         "marketplaces",
         &["scope", "name", "from", "packages"],

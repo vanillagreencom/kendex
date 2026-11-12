@@ -10,7 +10,7 @@ use kendex_core::process::Hardened;
 
 use super::{CliResult, Lines, answer, escaped, resolve_scopes};
 use crate::scope::ScopeFilter;
-use crate::ui::{self, Span, Status, Style};
+use crate::ui::{self, Cell, Span, Status, Style};
 
 pub fn new(
     env: &Env,
@@ -120,17 +120,18 @@ fn unread(style: &Style, path: &std::path::Path, error: &str) -> Vec<String> {
 
 /// One row per marketplace on Mine: its name, what it holds, and where.
 fn mine_lines(style: &Style, rows: &[author::MineRow]) -> Vec<String> {
-    let cells: Vec<Vec<String>> = rows
+    let cells: Vec<Vec<Cell>> = rows
         .iter()
         .map(|row| {
             let packages: u32 = row.counts.values().sum();
             vec![
-                row.name.clone(),
+                row.name.clone().into(),
                 format!(
                     "{packages} package(s), {} bundle(s), {} problem(s)",
                     row.bundles, row.breakage
-                ),
-                row.path.clone(),
+                )
+                .into(),
+                Cell::default().copy(row.path.clone()),
             ]
         })
         .collect();
@@ -337,17 +338,23 @@ fn candidate_lines(style: &Style, candidates: &[author::ImportCandidate]) -> Vec
             // merely a format a catalog cannot store. The word says only
             // that it cannot be taken; `problem` says why.
             let hash = match origin.hash.is_empty() {
-                true => "unusable".to_owned(),
-                false => origin.hash[..12].to_owned(),
+                true => Cell::from("unusable".to_owned()),
+                false => Cell::default().copy(&origin.hash[..12]),
             };
-            let places = match &origin.problem {
-                Some(problem) => format!("{} — {problem}", origin.locations.join(" = ")),
-                None => origin.locations.join(" = "),
-            };
+            let mut places = Cell::default();
+            for (at, location) in origin.locations.iter().enumerate() {
+                if at > 0 {
+                    places = places.prose(" = ");
+                }
+                places = places.copy(location.clone());
+            }
+            if let Some(problem) = &origin.problem {
+                places = places.prose(format!(" — {problem}"));
+            }
             cells.push(vec![
-                candidate.kind.name().to_owned(),
-                candidate.name.clone(),
-                format!("[{group}]"),
+                candidate.kind.name().to_owned().into(),
+                candidate.name.clone().into(),
+                format!("[{group}]").into(),
                 hash,
                 places,
             ]);
@@ -429,7 +436,7 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
     }
     if !preflight.ready {
         return Err(
-            "fix the checks that did not pass first — or --dry-run to see what would be sent"
+            "not submitted: some checks did not pass — fix the checks marked above, then submit again"
                 .into(),
         );
     }
@@ -479,7 +486,7 @@ fn submissions(
     style: &Style,
     rows: &[kendex_core::registry::submit::SubmissionRow],
 ) -> Vec<String> {
-    let cells: Vec<Vec<String>> = rows
+    let cells: Vec<Vec<Cell>> = rows
         .iter()
         .map(|row| {
             let reason = row
@@ -487,7 +494,10 @@ fn submissions(
                 .as_ref()
                 .map(|reason| format!(" — {reason}"))
                 .unwrap_or_default();
-            vec![row.repo.clone(), format!("{}{reason}", row.status)]
+            vec![
+                Cell::default().copy(row.repo.clone()),
+                format!("{}{reason}", row.status).into(),
+            ]
         })
         .collect();
     style.report_table(
