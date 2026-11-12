@@ -8,12 +8,29 @@
 #             the test at build time. A literal on the line after its opening
 #             parenthesis, the shape rustfmt gives a long one, counts too.
 #   manifest  a chain of string literals joined onto env!("CARGO_MANIFEST_DIR"),
-#             resolved against that crate's manifest directory: a path code or
-#             a test reads at run time. The chain is the literal arguments of
-#             `.join("...")` calls after it, or the literal arguments beside it
-#             in a `concat!`. A chain that ends with no further argument is a
-#             read of the path it reached, and every path under it when that
-#             is a directory.
+#             resolved against that crate's manifest directory, or onto a
+#             checkout_root() call, crates/test_util.rs's helper, resolved
+#             against the checkout: a path code or a test reads at run time.
+#             The chain is the literal arguments of `.join("...")` calls after
+#             it, or for the manifest directory the literal arguments beside
+#             it in a `concat!`. A chain that ends with no further argument is
+#             a read of the path it reached, and every path under it when
+#             that is a directory.
+#   module    with --modules, which tests can run a manifest read: the
+#             read's path, its owning Cargo.toml, the cargo test argument for
+#             one target and a module path in it (Cargo metadata supplies the
+#             targets and their root files). The module holds the reading
+#             file, or names a module already listed that has pub items, the
+#             one way to reach those from outside; tests named under the
+#             listed modules are the only ones in that target that can run the
+#             read. `.` for the module is the whole target: the reader sits in
+#             its root, or in that target code a trait impl or a macro lets run
+#             from anywhere. `.` in both columns is the whole crate: the reader
+#             is in no library or test target module, the walk from the roots
+#             does not reach it, or it is library code with pub items or with
+#             a trait impl or macro, which other crates can run. The walk takes
+#             `mod x;` declarations that open a line, as rustfmt writes them,
+#             and #[path] attributes.
 #   build     what cargo reads to build every crate: the crates/ tree, the
 #             workspace manifest and lock, the toolchain pin and the cargo,
 #             clippy and rustfmt configuration, whether or not the checkout
@@ -31,15 +48,16 @@
 # a string literal, such as `.join(name)` or `.join(format!(...))`. That
 # second chain also prints the directory it reached, since `.join(name)` most
 # often names a file in it, but the argument can lead out of it too. Code that
-# joins onto a returned path elsewhere is not followed, so a helper like
-# crates/test_util.rs's checkout_root() and every read through it is absent,
-# and a helper returning the manifest directory reads as that crate's
-# directory. A path read by any other route is not here.
+# joins onto a returned path elsewhere is not followed, so a read through a
+# variable holding checkout_root() is `.`, and a helper returning the manifest
+# directory reads as that crate's directory. A file outside every crate, such
+# as crates/test_util/lane.rs, has no owning crate and prints no manifest row.
+# A path read by any other route is not here.
 #
 # A resolved path that climbs out of the checkout names no repository path and
 # is not printed.
 #
-# Usage: tools/rust-reads [--cli-smoke] [ROOT]
+# Usage: tools/rust-reads [--cli-smoke | --modules] [ROOT]
 #   ROOT   the checkout to read; the current directory when omitted
 # stdout: one `<kind><TAB><path>` row per distinct read, sorted, the path
 # relative to ROOT. A manifest row appends `<TAB><owning Cargo.toml>` so
@@ -53,15 +71,20 @@
 #   rust-reads: unreadable=cli-smoke   Cargo metadata failed, the CLI smoke
 #                                   target is missing, or a literal path
 #                                   module could not be read
+#   rust-reads: unreadable=modules  Cargo metadata failed
 #   rust-reads: usage=<usage>       more than one argument
 set -euo pipefail
 
 cli_scope=
-if [ "${1:-}" = --cli-smoke ]; then cli_scope=1; shift; fi
+modules=
+case "${1:-}" in
+  --cli-smoke) cli_scope=1; shift ;;
+  --modules) modules=1; shift ;;
+esac
 case $# in
   0) root=. ;;
   1) root=$1 ;;
-  *) echo "rust-reads: usage=tools/rust-reads [--cli-smoke] [ROOT]" >&2; exit 2 ;;
+  *) echo "rust-reads: usage=tools/rust-reads [--cli-smoke | --modules] [ROOT]" >&2; exit 2 ;;
 esac
 cd -- "$root" 2>/dev/null || { printf 'rust-reads: unreadable=%s\n' "$root" >&2; exit 2; }
 [ -d crates ] || { echo 'rust-reads: unreadable=crates' >&2; exit 2; }
@@ -106,7 +129,27 @@ if [ -n "$cli_scope" ]; then
   fi
 fi
 
-if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find crates -type f -name '*.rs' -exec awk '
+# The test-running targets cargo builds from each crate: `<Cargo.toml> <TAB>
+# <selector> <TAB> <root file>`, the selector being the cargo test argument
+# that runs that target alone.
+targets=
+if [ -n "$modules" ]; then
+  if ! metadata=$(cargo metadata --format-version 1 --no-deps --locked) ||
+     ! jq -e '.packages | arrays' <<<"$metadata" >/dev/null ||
+     ! targets=$(jq -r --arg root "$(pwd -P)/" '
+      .packages[] | .manifest_path as $manifest | .targets[]
+      | (if (.kind | index("test")) then "--test=" + .name
+         elif any(.kind[]; test("lib$") or . == "proc-macro") then "--lib"
+         else empty end) as $selector
+      | [$manifest, $selector, .src_path]
+      | select(all(.[0], .[2]; startswith($root))) | map(ltrimstr($root)) | @tsv
+      ' <<<"$metadata"); then
+    echo 'rust-reads: unreadable=modules' >&2
+    exit 2
+  fi
+fi
+
+if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" RUST_READS_MODULES="$modules" RUST_READS_TARGETS="$targets" find crates -type f -name '*.rs' -exec awk '
   BEGIN {
     n = split(ENVIRON["RUST_READS_MANIFESTS"], found, "\n")
     for (i = 1; i <= n; i++) {
@@ -175,23 +218,44 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find cra
       rest = substr(rest, RSTART + RLENGTH)
       # The closing parentheses of the Path::new or PathBuf::from around it.
       if (match(rest, /^[ \t\n]*\)+/)) rest = substr(rest, RLENGTH + 1)
-      chain = ""
-      while (1) {
-        if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
-          lit = substr(rest, RSTART, RLENGTH)
-          sub(/[ \t\n]*\)$/, "", lit)
-          chain = chain "/" unquote(lit)
-        } else if (match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
-          chain = chain unquote(substr(rest, RSTART, RLENGTH))
-        } else {
-          break
-        }
-        rest = substr(rest, RLENGTH + 1)
-      }
-      emit("manifest", resolve(owner, chain), owner)
-      # An argument the chain could not read may lead anywhere from there.
-      if (match(rest, /^[ \t\n]*(\.join[ \t\n]*\(|,)/)) emit("manifest", ".", owner)
+      rest = follow(file, owner, owner, rest, 1)
     }
+    rest = text
+    while (match(rest, /checkout_root[ \t\n]*\([ \t\n]*\)/)) {
+      lit = substr(rest, 1, RSTART - 1)
+      rest = substr(rest, RSTART + RLENGTH)
+      # A definition of the helper reads nothing.
+      if (lit !~ /fn[ \t\n]+$/) rest = follow(file, owner, ".", rest, 0)
+    }
+  }
+  # The literal chain REST opens with, joined onto BASE: `.join("...")` calls,
+  # and with CONCAT the literals beside it in a concat!. Emits the read for
+  # FILE in crate OWNER, and returns the text after the chain.
+  function follow(file, owner, base, rest, concat,   lit, chain) {
+    chain = ""
+    while (1) {
+      if (match(rest, /^[ \t\n]*\.join[ \t\n]*\([ \t\n]*"[^"]*"[ \t\n]*\)/)) {
+        lit = substr(rest, RSTART, RLENGTH)
+        sub(/[ \t\n]*\)$/, "", lit)
+        chain = chain "/" unquote(lit)
+      } else if (concat && match(rest, /^[ \t\n]*,[ \t\n]*"[^"]*"/)) {
+        chain = chain unquote(substr(rest, RSTART, RLENGTH))
+      } else {
+        break
+      }
+      rest = substr(rest, RLENGTH + 1)
+    }
+    read_by(file, owner, resolve(base, chain))
+    # An argument the chain could not read may lead anywhere from there.
+    if (match(rest, /^[ \t\n]*\.join[ \t\n]*\(/) || (concat && match(rest, /^[ \t\n]*,/))) read_by(file, owner, ".")
+    return rest
+  }
+  # A run-time read of PATH by FILE in crate OWNER: its manifest row, and the
+  # reader --modules maps to the tests that can run it.
+  function read_by(file, owner, path) {
+    emit("manifest", path, owner)
+    if (path == "" || compiling) return
+    readers[file SUBSEP owner SUBSEP path] = 1
   }
   function visit(file,   line, status, text) {
     if (file == "" || file in visited) return
@@ -225,6 +289,141 @@ if ! rows=$(RUST_READS_MANIFESTS="$manifests" RUST_READS_SCOPE="$scope" find cra
         printf "cli-build\t%s\n", root[2]
         for (file in source) if (index(file, root[2] "/") == 1) visit(file)
       }
+    }
+    n = split(ENVIRON["RUST_READS_TARGETS"], roots, "\n")
+    for (i = 1; i <= n; i++) {
+      if (split(roots[i], root, "\t") == 3) walk(root[3], 1, root[1], root[2], "")
+    }
+    if (ENVIRON["RUST_READS_MODULES"] != "") modules()
+  }
+  # FILE as source text, kept in source[]; 0 when it cannot be read.
+  function load(file,   line, status, text) {
+    if (file in source) return 1
+    if (file == "" || file in missing) return 0
+    text = ""
+    while ((status = (getline line < file)) > 0) text = text line "\n"
+    close(file)
+    if (status < 0) { missing[file] = 1; return 0 }
+    source[file] = text
+    return 1
+  }
+  # The modules a target reaches from FILE at module PATH, by the rustc
+  # rules. `mod x;` opens a line, where rustfmt puts every out-of-line
+  # module. Its file is x.rs or x/mod.rs in the directory of FILE when FILE
+  # owns that directory (OWNS: a target root, a mod.rs or a #[path] file),
+  # and in the directory named after FILE otherwise. A #[path] resolves
+  # against the directory of the declaring file.
+  function walk(file, owns, manifest, selector, path,   key, dir, sub_dir, text, decl, name, next_path) {
+    if (!load(file)) return
+    key = file SUBSEP manifest SUBSEP selector SUBSEP path
+    if (key in walked) return
+    walked[key] = ++nw
+    w_file[nw] = file
+    w_manifest[nw] = manifest
+    w_selector[nw] = selector
+    w_path[nw] = path
+    dir = file
+    sub(/\/[^\/]*$/, "", dir)
+    sub_dir = dir
+    if (!owns) { sub_dir = file; sub(/\.rs$/, "", sub_dir) }
+    text = "\n" source[file]
+    while (match(text, /\n(#\[[^\n]*\][ \t]*\n)*(pub(\([^)\n]*\))?[ \t]+)?mod[ \t]+[A-Za-z0-9_]+[ \t]*;/)) {
+      decl = substr(text, RSTART, RLENGTH)
+      text = substr(text, RSTART + RLENGTH)
+      name = decl
+      sub(/[ \t]*;$/, "", name)
+      sub(/.*[ \t]/, "", name)
+      next_path = path == "" ? name : path "::" name
+      if (match(decl, /#\[[ \t]*path[ \t]*=[ \t]*"[^"]*"/))
+        walk(resolve(dir, unquote(substr(decl, RSTART, RLENGTH))), 1, manifest, selector, next_path)
+      else if (load(sub_dir "/" name ".rs")) walk(sub_dir "/" name ".rs", 0, manifest, selector, next_path)
+      else walk(sub_dir "/" name "/mod.rs", 1, manifest, selector, next_path)
+    }
+  }
+  # Rust privacy confines an item that is not pub to its module and the
+  # modules under it. A trait impl runs wherever its type does, and a macro
+  # wherever it expands, so neither is confined.
+  function open_items(file) {
+    if (!(file in has_pub)) has_pub[file] = (" " source[file] " ") ~ /[^A-Za-z0-9_]pub[^A-Za-z0-9_]/
+    return has_pub[file]
+  }
+  function unconfined(file,   text) {
+    if (!(file in has_loose)) {
+      text = " " source[file] " "
+      has_loose[file] = text ~ /[^A-Za-z0-9_]impl[^A-Za-z0-9_][^{;]*[^A-Za-z0-9_]for[^A-Za-z0-9_]/ || text ~ /macro_rules!/
+    }
+    return has_loose[file]
+  }
+  # Whether module I names NAME other than in declaring it: the one way a
+  # pub item of module NAME is reached from outside it.
+  function names(i, name,   text, key) {
+    key = w_file[i] SUBSEP name
+    if (!(key in has_name)) {
+      text = " " source[w_file[i]] " "
+      has_name[key] = 0
+      if (index(text, name)) {
+        gsub("mod[ \t]+" name "[ \t]*;", "", text)
+        has_name[key] = text ~ ("[^A-Za-z0-9_]" name "[^A-Za-z0-9_]")
+      }
+    }
+    return has_name[key]
+  }
+  # Whether the module at PATH in the target of walked module U, or a module
+  # under it, has pub items (OPEN) or unconfined code (otherwise).
+  function tree(u, path, open,   i, found, key) {
+    key = w_manifest[u] SUBSEP w_selector[u] SUBSEP path SUBSEP open
+    if (key in trees) return trees[key]
+    found = 0
+    for (i = 1; i <= nw && !found; i++) {
+      if (w_manifest[i] != w_manifest[u] || w_selector[i] != w_selector[u]) continue
+      if (path != "" && w_path[i] != path && index(w_path[i], path "::") != 1) continue
+      found = open ? open_items(w_file[i]) : unconfined(w_file[i])
+    }
+    return trees[key] = found
+  }
+  function inside(path, reach,   p) {
+    for (p in reach) if (p == "" || path == p || index(path, p "::") == 1) return 1
+    return 0
+  }
+  # One `module` row per reader and each module of a target that can run its
+  # code: the module holding it, and each module naming one of those with pub
+  # items, until none is added. A test target is its own crate, so `.`, its
+  # whole run, holds every read in it; a pub library item can run from other
+  # crates, so `.` in both columns, the whole crate, stands in for it.
+  function modules(   key, part, file, owner, path, rows, u, i, p, reach, grew, whole, leaf) {
+    for (key in readers) {
+      split(key, part, SUBSEP)
+      file = part[1]
+      owner = part[2] "/Cargo.toml"
+      path = part[3]
+      rows = ""
+      for (u = 1; u <= nw; u++) {
+        if (w_file[u] != file || w_manifest[u] != owner) continue
+        if (w_selector[u] == "--lib" && (tree(u, w_path[u], 1) || tree(u, w_path[u], 0))) { rows = ""; break }
+        split("", reach)
+        reach[w_path[u]] = 1
+        whole = w_path[u] == ""
+        grew = 1
+        while (grew && !whole) {
+          grew = 0
+          for (i = 1; i <= nw && !whole; i++) {
+            if (w_manifest[i] != owner || w_selector[i] != w_selector[u] || inside(w_path[i], reach)) continue
+            for (p in reach) {
+              leaf = p
+              sub(/.*::/, "", leaf)
+              if (!tree(u, p, 1) || !names(i, leaf)) continue
+              reach[w_path[i]] = grew = 1
+              whole = w_path[i] == ""
+              break
+            }
+          }
+        }
+        for (p in reach) if (tree(u, p, 0)) whole = 1
+        if (whole) rows = rows sprintf("module\t%s\t%s\t%s\t.\n", path, owner, w_selector[u])
+        else for (p in reach) rows = rows sprintf("module\t%s\t%s\t%s\t%s\n", path, owner, w_selector[u], p)
+      }
+      if (rows == "") rows = sprintf("module\t%s\t%s\t.\t.\n", path, owner)
+      printf "%s", rows
     }
   }
 ' {} +); then

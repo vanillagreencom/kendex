@@ -340,7 +340,8 @@ RC=0
 : >"$REPLAY_CARGO_LOG"
 OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
   DEV_VALIDATE_SCOPED=true "$GUARD" --selection --range "$replay_base" 2>&1)" || RC=$?
-[ "$RC" -eq 0 ] && grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
+# The core tests that read the changed skills run, filtered to their modules.
+[ "$RC" -eq 0 ] && grep -Eq '^test --manifest-path crates/core/Cargo\.toml --quiet( |$)' "$REPLAY_CARGO_LOG" \
   && ok 'the real runtime selector reaches the copied fixture cargo boundary' \
   || bad 'the real runtime selector reaches the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
 for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-switch.test.sh refresh/tests/refresh-consumer.test.sh; do

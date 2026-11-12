@@ -100,10 +100,13 @@ native_lint_policy
 CALLS="$TMP/calls"
 SCAN_BIN="$TMP/scan-bin"
 mkdir -p "$R/fake-bin" "$SCAN_BIN"
-for tool in cargo npm; do
-  printf '#!/usr/bin/env bash\necho "%s $*" >>"$CALL_LOG"\n' "$tool" >"$R/fake-bin/$tool"
-  chmod +x "$R/fake-bin/$tool"
-done
+# Cargo metadata, which tools/rust-reads --modules reads, runs for real;
+# every other cargo call is logged, never run.
+REAL_CARGO="$(command -v cargo)"
+CARGO_METADATA="[ \"\${1:-}\" != metadata ] || exec \"$REAL_CARGO\" \"\$@\""
+printf '%s\n' '#!/usr/bin/env bash' "$CARGO_METADATA" 'echo "cargo $*" >>"$CALL_LOG"' >"$R/fake-bin/cargo"
+printf '%s\n' '#!/usr/bin/env bash' 'echo "npm $*" >>"$CALL_LOG"' >"$R/fake-bin/npm"
+chmod +x "$R/fake-bin/cargo" "$R/fake-bin/npm"
 cat >"$R/fake-bin/rustup" <<'SH'
 #!/usr/bin/env bash
 printf '%s\n' aarch64-apple-darwin x86_64-pc-windows-msvc
@@ -252,7 +255,7 @@ done
 # A selected cargo test's failure must still fail that route.
 printf 'edit\n' >>"$R/skills/watched/SKILL.md"
 cp "$R/fake-bin/cargo" "$TMP/cargo.saved"
-printf '%s\n' '#!/usr/bin/env bash' 'echo "cargo $*" >>"$CALL_LOG"' \
+printf '%s\n' '#!/usr/bin/env bash' "$CARGO_METADATA" 'echo "cargo $*" >>"$CALL_LOG"' \
   '[ "${1:-}" != test ]' >"$R/fake-bin/cargo"
 RC=0
 : >"$CALLS"

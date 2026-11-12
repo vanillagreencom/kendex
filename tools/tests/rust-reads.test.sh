@@ -52,6 +52,10 @@ a chain stopping at the checkout root prints the root|crates/demo/tests/t.rs|let
 the manifest directory alone is the crate|crates/demo/tests/t.rs|let dir = Path::new(env!("CARGO_MANIFEST_DIR"));|manifest:crates/demo:crates/demo/Cargo.toml
 a file deeper in the crate still joins its manifest directory|crates/demo/src/deep/mod.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/x.tsv");|manifest:crates/demo/tests/fixtures/x.tsv:crates/demo/Cargo.toml
 a file outside every crate reads no manifest directory|crates/loose.rs|let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("x"); const A: &str = include_str!("../docs/c.md");|include:docs/c.md
+a checkout_root() chain resolves against the checkout|crates/demo/tests/t.rs|let p = test_util::checkout_root().join("hooks").join("README.md");|manifest:hooks/README.md:crates/demo/Cargo.toml
+a checkout_root() held in a variable is the root|crates/demo/tests/t.rs|let root = checkout_root();\nlet p = root.join("hooks");|manifest:.:crates/demo/Cargo.toml
+a checkout_root() argument beside a literal is not a chain|crates/demo/tests/t.rs|copy(&checkout_root(), "skills/x");|manifest:.:crates/demo/Cargo.toml
+the definition of checkout_root() reads nothing|crates/demo/src/lib.rs|pub fn checkout_root() -> PathBuf {\n    PathBuf::new()\n}|
 two reads of one path print one row|crates/demo/src/lib.rs|const A: &str = include_str!("../../../docs/a.md");\nconst B: &str = include_str!("../../../docs/a.md");|include:docs/a.md
 source reading nothing prints nothing|crates/demo/src/lib.rs|fn main() {}|'
 
@@ -70,7 +74,7 @@ echo "=== this repository's own reads carry the files its crates are known to re
 # which a reader that lost a shape falls through. What is read beyond them
 # is not held here.
 OUT="$(cd "$ROOT" && "$READS" | tr '\t' ':')" || { bad "the repository's own reads are readable" "rc=$?"; OUT=""; }
-for member in include:docs/authoring/README.md manifest:docs/legal:crates/core/Cargo.toml manifest:README.md:crates/core/Cargo.toml manifest:skills:crates/core/Cargo.toml; do
+for member in include:docs/authoring/README.md manifest:docs/legal:crates/core/Cargo.toml manifest:README.md:crates/core/Cargo.toml manifest:skills:crates/core/Cargo.toml manifest:hooks/README.md:crates/core/Cargo.toml; do
   grep -qFx -- "$member" <<<"$OUT" &&
     ok "the repository's reads carry $member" ||
     bad "the repository's reads carry $member" "the extractor is broken for that shape: $OUT"

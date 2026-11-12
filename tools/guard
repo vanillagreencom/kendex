@@ -1566,11 +1566,47 @@ if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && { [ "$rust_all" -eq 1 ] 
   fi
 fi
 
-if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ]; then
-  while IFS= read -r manifest; do
-    [ -n "$manifest" ] || continue
-    cargo test --manifest-path "$manifest" --quiet || say cargo-test "$manifest"
-  done <<<"$runtime_tests"
+# Of each selected crate, only the tests that can run a changed read, by
+# tools/rust-reads --modules: one run per test target, filtered to the module
+# paths its readers map to, unfiltered where a reader maps to the whole
+# target, and the whole crate where a reader maps to `.` in both columns.
+# A row is `<Cargo.toml> <TAB> <cargo test argument or .> <TAB> <filters>`.
+if [ "$cargo_available" -eq 1 ] && [ -f Cargo.toml ] && [ -n "$runtime_tests" ]; then
+  if ! runtime_runs=$("$TOOLS_DIR/rust-reads" --modules . | CHANGED="$touched" awk -F '\t' '
+    $1 == "module" && $2 != "." {
+      n = split(ENVIRON["CHANGED"], changed, "\n")
+      for (i = 1; i <= n; i++) {
+        if (changed[i] != $2 && index(changed[i], $2 "/") != 1) continue
+        if ($4 == ".") whole[$3] = 1
+        else if ($5 == ".") target[$3 SUBSEP $4] = 1
+        else if (!(($3, $4, $5) in seen)) {
+          seen[$3, $4, $5] = 1
+          filters[$3 SUBSEP $4] = filters[$3 SUBSEP $4] " " $5 "::"
+        }
+      }
+    }
+    END {
+      for (m in whole) printf "%s\t.\t\n", m
+      for (k in target) filters[k] = ""
+      for (k in filters) {
+        split(k, part, SUBSEP)
+        if (!(part[1] in whole)) printf "%s\t%s\t%s\n", part[1], part[2], substr(filters[k], 2)
+      }
+    }
+  ' | LC_ALL=C sort); then
+    say rust-reads crates
+  else
+    while IFS=$'\t' read -r manifest selector filters; do
+      [ -n "$manifest" ] || continue
+      if [ "$selector" = . ]; then
+        cargo test --manifest-path "$manifest" --quiet || say cargo-test "$manifest"
+      else
+        read -r -a filter <<<"$filters"
+        cargo test --manifest-path "$manifest" --quiet "$selector" -- ${filter[@]+"${filter[@]}"} ||
+          say cargo-test "$manifest"
+      fi
+    done <<<"$runtime_runs"
+  fi
 fi
 
 fi
