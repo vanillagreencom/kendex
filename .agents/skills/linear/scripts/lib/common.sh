@@ -485,7 +485,7 @@ linear_quota_store() (
         linear_quota_unavailable "store:$_LINEAR_PRIVATE_FAILURES"; return 1
     fi
     staged="$_LINEAR_PRIVATE_STAGE" dir="$_LINEAR_PRIVATE_DIR"
-    chmod 700 -- "$dir" || { linear_quota_unavailable "private:$dir"; return 1; }
+    chmod -- 700 "$dir" || { linear_quota_unavailable "private:$dir"; return 1; }
     file="$dir/quota-$binding.json"
     for ((tries=0; tries<20; tries++)); do
         if mkdir -- "$dir/.quota-$binding.lock" 2>/dev/null; then
