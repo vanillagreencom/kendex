@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-25
 
-**Status**: Active (merge path → D013, break-glass → D016, review requirements → D018, proved render landing → D029)
+**Status**: Active (merge path → D013, break-glass → D016, review requirements → D018, proved render landing → D033)
 
 **Research**: KEN-1776; the consumer refresh design is attached to KEN-2601; KEN-3500 records fleet's dispatch takeover under FLT-993; KEN-4857 records Jarvis's delegated authority to suppress lock-only consumer publication
 
