@@ -404,8 +404,8 @@ SH
   # --- skills/orch/workflows/small.md § 2: the branch against its class ---
   step tier-check
   base="$("$ORCH/resolve-base-branch" "$WT")" || fail base-branch
-  tier_line="$("$ORCH/item-tier" --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail item-tier
-  case "$tier_line" in tier=small*) ;; *) fail item-tier-value ;; esac
+  tier_line="$("$ORCH/orch-runtime" tier --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail tier
+  case "$tier_line" in tier=small*) ;; *) fail tier-value ;; esac
 
   # --- skills/orch/workflows/small.md § 3, then skills/orch/workflows/review-pr.md § 1 through its section 3.3 ---
   step review-depth
@@ -445,8 +445,8 @@ SH
   review_accepted="$(op --item "$(jq -cn --arg r "$RRID" --arg a "$artifact" \
     '{op: "accept-result", round_id: $r, outcome: "pass", end: {from_artifact: $a}}')")" || fail accept-review
   printf '%s\n' "$review_accepted" > tmp/accept-review.json
-  tier_line="$("$ORCH/item-tier" --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail item-tier-review
-  case "$tier_line" in tier=small*) ;; *) fail item-tier-review-value ;; esac
+  tier_line="$("$ORCH/orch-runtime" tier --floor small --base "origin/$base" --head HEAD --repo "$WT")" || fail tier-review
+  case "$tier_line" in tier=small*) ;; *) fail tier-review-value ;; esac
 fi
 
 # --- skills/orch/workflows/submit-pr.md § 2.1: base publication ---

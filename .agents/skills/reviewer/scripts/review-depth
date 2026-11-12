@@ -16,7 +16,7 @@ The measured class selects package review depth:
   standard:               full
 
 --floor CLASS (micro, small or standard) is a class the run already holds,
-as item-tier --floor gives it: the class above the one a run escaped from.
+as orch-runtime tier --floor gives it: the class above the one a run escaped from.
 Depth follows the wider of the measured class and the floor, ranked by
 change-scope's change_scope_rank. The floor only raises: it never lowers the measured class,
 and a failed or unmeasured classifier keeps its exit. stderr names the floor

@@ -532,7 +532,7 @@ fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tie
 }
 
 /// What a launch states of its item's tier: the workflow verb its brief
-/// opens with (`start` is the standard tier), else the one item-tier line
+/// opens with (`start` is the standard tier), else the one tier line
 /// the brief carries whole, and the inputs that line names. A launch that
 /// states none records `null`: it judges no tier it did not read.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -546,9 +546,9 @@ struct Tier {
 impl Tier {
     /// The brief's tier: the verb where the run text opens the orch
     /// workflow with one (`/orch`, `/skill:orch`, `$orch` or `execute the
-    /// orch`, then `micro`, `small` or `start`), with the first item-tier
+    /// orch`, then `micro`, `small` or `start`), with the first tier
     /// line's inputs; else the tier and inputs of the brief's one whole
-    /// item-tier line, none where it has none or two that differ. A cloud
+    /// tier line, none where it has none or two that differ. A cloud
     /// session runs no orch workflow, so its text is read for the line
     /// alone.
     fn of(brief: &str, cloud: bool) -> Tier {
@@ -588,7 +588,7 @@ impl Tier {
     }
 }
 
-/// One item-tier line as a brief states it: `tier=T brief=B cause=...
+/// One tier line as a brief states it: `tier=T brief=B cause=...
 /// estimate=N|- delta=N|- paths=N`, `len` the bytes it spans.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct TierLine {
@@ -599,7 +599,7 @@ struct TierLine {
     len: usize,
 }
 
-/// The item-tier line at the start of `text`, where one stands.
+/// The tier line at the start of `text`, where one stands.
 fn tier_line(text: &str) -> Option<TierLine> {
     let tiers: [&'static str; 3] = ["micro", "small", "standard"];
     let rest = text.strip_prefix("tier=")?;
@@ -1175,6 +1175,15 @@ pub(super) fn launch_lane(
         None => String::new(),
     };
     let tier = Tier::of(&brief, cloud);
+    if let (Some(judged), Some(requested)) = (&judged, tier.tier) {
+        admission::tier_judged(
+            &r.item,
+            requested,
+            &judged.touched,
+            Path::new(&r.mail_root),
+            host,
+        )?;
+    }
     let at = env.iso();
     let index = match position {
         Some(index) => {
@@ -2530,11 +2539,11 @@ mod tests {
 
     /// The tier a brief states, by the one reader of its words: the
     /// workflow verb in any of its spellings, case folded, with the first
-    /// item-tier line's inputs; no verb and one whole item-tier line; no
+    /// tier line's inputs; no verb and one whole tier line; no
     /// verb and two lines that differ, or none; and a cloud session's text
     /// read for the line alone.
     #[test]
-    fn the_tier_a_brief_states_is_read_from_its_verb_or_its_one_item_tier_line() {
+    fn the_tier_a_brief_states_is_read_from_its_verb_or_its_one_tier_line() {
         let line = "tier=small brief=small cause=estimate 3 over estimate=3 delta=10 paths=2";
         type Row<'a> = (
             &'a str,
@@ -2860,6 +2869,60 @@ mod tests {
             ("cause".to_owned(), "stat-unreadable".to_owned())
         );
         assert!(fleet(&path).intents.is_empty());
+    }
+
+    /// A first launch's brief requests a cycle; the touched set its brief
+    /// names earns a wider one through the tier reader, and the launch is
+    /// refused naming both, with no intent recorded; a reader that earns
+    /// the requested cycle admits it.
+    #[test]
+    fn a_launch_requesting_a_cycle_narrower_than_its_touched_set_earns_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        fleet_with(&path, &[]);
+        let brief = dir.path().join("brief");
+        fs::write(
+            &brief,
+            "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=1\nChange `src/a.rs` and `skills/x/SKILL.md`.\n",
+        )
+        .unwrap();
+        let request = Request::LaunchLane(Box::new(LaunchLane {
+            brief_file: Some(brief),
+            ..launch_fields("KEN-T")
+        }));
+        let wider = admission::AdmissionReads {
+            tier: Box::new(|_: &admission::Clis, _: &str, paths: &[String], _: &Path| {
+                assert_eq!(paths, ["skills/x/SKILL.md", "src/a.rs"]);
+                Ok(super::super::tier::Classified {
+                    cycle: super::super::tier::Cycle::Small,
+                    cause: "instruction-file path=skills/x/SKILL.md glob=*/SKILL.md".into(),
+                    delta: None,
+                    notes: Vec::new(),
+                })
+            }),
+            ..no_reads()
+        };
+        let host = Host {
+            admission: Some(wider),
+            ..kernel(4)
+        };
+        let err = apply_on(&path, &request, &env(), LOCK, &host).unwrap_err();
+        assert_eq!(
+            (err.key(), err.fields()),
+            (
+                "tier-narrower",
+                vec![
+                    ("item".to_owned(), "KEN-T".to_owned()),
+                    ("requested".to_owned(), "micro".to_owned()),
+                    ("judged".to_owned(), "small".to_owned()),
+                    ("cause".to_owned(), "instruction-file".to_owned()),
+                ]
+            )
+        );
+        assert!(fleet(&path).intents.is_empty());
+        assert!(fleet(&path).lanes.is_empty());
+        apply_on(&path, &request, &env(), LOCK, &kernel(4)).unwrap();
+        assert_eq!(lane(&path, "KEN-T").extra["tier"], Value::from("micro"));
     }
 
     /// A deliberate hold and its release: a stopped lane with a

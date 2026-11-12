@@ -21,8 +21,9 @@ use agent_runtime::host::{self, Place};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use super::admission::ScopeRange;
 use super::proof::{self, Hop};
-use super::{findings, loaded};
+use super::{findings, loaded, tier};
 use crate::error::{Error, Result};
 use crate::settings::{self, Settings};
 use crate::state;
@@ -844,28 +845,21 @@ fn receipt(stdout: &str, prefix: &str) -> Option<Receipt> {
     Some(r)
 }
 
-/// The micro tier's own check through `item-tier`, run by the one runner;
-/// anything but `tier=micro` publishes nothing.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the publication's tier check through orch's item-tier, the one runner, before any transport"
-)]
+/// The micro cycle's own check over the prepared range; anything but micro
+/// publishes nothing.
 fn micro_tier(settings: &Settings, worktree: &Path, base: &str, head: &str) -> Result<()> {
-    let cli = crate::watch::overseer::scripts_dir(&settings.roots.project).join("item-tier");
-    let wt = worktree.display().to_string();
-    let out = host::run_tagged_in(
-        TAG,
-        "item-tier",
-        &cli,
-        "tier",
-        &["--base", base, "--head", head, "--repo", &wt],
-        Place::default(),
-        READ,
-    )
-    .map_err(|e| refuse("delivery-tier", &[("cause", &e.to_string())]))?;
-    let line = host::stdout_text(&out);
-    if !out.status.success() || !line.starts_with("tier=micro") {
-        return Err(refuse("delivery-tier", &[("result", &line)]));
+    let request = tier::Request {
+        range: Some(ScopeRange {
+            base: base.to_owned(),
+            head: head.to_owned(),
+        }),
+        repo: worktree.to_path_buf(),
+        ..tier::Request::default()
+    };
+    let answer = tier::tier(&tier::arm_cli(&settings.scope_paths_cli), &request)
+        .map_err(|refused| refuse("delivery-tier", &[("result", &refused.line())]))?;
+    if answer.classified.cycle != tier::Cycle::Micro {
+        return Err(refuse("delivery-tier", &[("result", &answer.line())]));
     }
     Ok(())
 }

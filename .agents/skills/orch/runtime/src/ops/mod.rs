@@ -54,6 +54,7 @@ pub mod successor;
     reason = "the rows' shared store entry point"
 )]
 mod testing;
+pub mod tier;
 pub mod validate;
 pub mod verify_pr;
 pub mod verify_review;

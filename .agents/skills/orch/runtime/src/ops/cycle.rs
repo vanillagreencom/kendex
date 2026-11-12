@@ -173,6 +173,15 @@ pub fn record(
         }
     };
     let class = classify(gh, lane, &checkout, repo.as_deref(), &merge);
+    let escaped = match (class.class.as_deref(), tier.as_deref()) {
+        (Some(merged), Some(launched)) => super::tier::escaped(
+            &super::tier::arm_cli(&settings.scope_paths_cli),
+            launched,
+            merged,
+            &checkout,
+        ),
+        _ => None,
+    };
     let pauses = waits_of(lane, state.as_ref().ok().and_then(Option::as_ref))?;
     notes.extend(negative_notes(item, &timeline));
     let cycle = compute(&Inputs {
@@ -183,6 +192,7 @@ pub fn record(
         pauses: &pauses,
         class: &class,
         tier: tier.as_deref(),
+        escaped,
     });
     let line = line_of(item, &cycle);
     let mut lines = vec![line];
@@ -953,6 +963,9 @@ struct Inputs<'a> {
     pauses: &'a [(i64, Option<i64>)],
     class: &'a Class,
     tier: Option<&'a str>,
+    /// Whether the class is wider than the tier, as change-scope's arm
+    /// answers it (`tier::escaped`); `None` where either is unread.
+    escaped: Option<bool>,
 }
 
 /// The seconds of `[from, to]` the spans cover, overlaps counted once.
@@ -1222,13 +1235,7 @@ fn compute(input: &Inputs) -> Value {
     } else {
         cause
     };
-    let escaped = match (class, input.tier) {
-        (Some(class), Some(tier)) => json!(
-            (tier == "micro" && matches!(class, "small" | "standard"))
-                || (tier == "small" && class == "standard")
-        ),
-        _ => Value::Null,
-    };
+    let escaped = input.escaped.map_or(Value::Null, Value::Bool);
     let reason = input.class.reason.clone().unwrap_or_default();
     let escape_cause = if escaped != json!(true) {
         Value::Null
@@ -1806,8 +1813,17 @@ mod tests {
         }
     }
 
+    /// The cycle, its escape read through the catalog's own launch arm.
     fn cycle(lane: &Lane, timeline: &Value, class: &Class, tier: Option<&str>) -> Value {
         let pauses = pauses_of(lane).unwrap();
+        let arm = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../change-scope/scripts/change-scope");
+        let escaped = match (class.class.as_deref(), tier) {
+            (Some(merged), Some(launched)) => {
+                super::super::tier::escaped(&arm, launched, merged, Path::new("."))
+            }
+            _ => None,
+        };
         compute(&Inputs {
             lane,
             timeline,
@@ -1816,6 +1832,7 @@ mod tests {
             pauses: &pauses,
             class,
             tier,
+            escaped,
         })
     }
 
@@ -1943,6 +1960,7 @@ mod tests {
             pauses: &[],
             class: &class("micro", "stub"),
             tier: Some("micro"),
+            escaped: Some(false),
         });
         assert_eq!(
             line_of("KEN-2", &c),
@@ -3042,6 +3060,7 @@ mod tests {
                 pauses: &pauses,
                 class: &class("micro", "stub"),
                 tier: Some("micro"),
+                escaped: Some(false),
             });
             assert_eq!(
                 fields(&line_of("KEN-1", &c), &["waited", "lane", "verdict"]),
@@ -3105,6 +3124,7 @@ mod tests {
                 pauses: &pauses,
                 class: &class("micro", "stub"),
                 tier: Some("micro"),
+                escaped: Some(false),
             });
             let bar = repeat_miss(&self.path(), &lane, &c).unwrap();
             let record = self.lanes.iter_mut().find(|l| l["item"] == item).unwrap();

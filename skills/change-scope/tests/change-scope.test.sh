@@ -21,10 +21,6 @@
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
-# The lane rows classify through orch's reader, so a lane and CI are held to
-# one class; the package stands beside this one in the catalog.
-ORCH_PACKAGE="$(cd "$CHANGE_SCOPE_PACKAGE/../orch" && pwd)"
-
 repo="$(new_repo change-scope)"
 commit_paths "$repo" baseline seed.txt
 base="$(git -C "$repo" rev-parse HEAD)"
@@ -1813,10 +1809,9 @@ CONTROLS
 require_rows change-scope-settings-controls "$settings_controls"
 
 # A lane and CI classify one diff alike. CI's classify step may carry
-# ORCH_SIZE_TEST_PATHS in its environment; a lane's run carries none, whether
-# item-tier or dev-validate-run through orch's lib/change-class.sh, which the
-# lane rows call, and the classifier takes the glob from the base endpoint's
-# settings instead. A script beside a fixture only that glob calls a test answers one class both
+# ORCH_SIZE_TEST_PATHS in its environment; a lane's run of the classifier
+# carries none, which the lane rows run, and the classifier takes the glob
+# from the base endpoint's settings instead. A script beside a fixture only that glob calls a test answers one class both
 # ways: the fixture's lines are test lines, and the fixture, moved a level
 # down or up, sits in no subsystem. So does a render-root copy only the
 # glob's reading of the path past the render root calls a test, a mirror of
@@ -1862,14 +1857,10 @@ while IFS='|' read -r label script_lines fixture_edit expected; do
     "$CHANGE_SCOPE" --repo "$fixture" --event pull_request --base "$fixture_base" \
     --head HEAD 2>&1 >/dev/null)" || true
   assert_eq "$label, in CI" "$expected" "$(printf '%s\n' "$ci_err" | sed -n '/^class: /p')"
-  lane_err="$SANDBOX/lane-$fixture_rows.err"
-  (
-    unset ORCH_SIZE_TEST_PATHS ORCH_SIZE_RENDER_ROOTS
-    # shellcheck source=../../orch/scripts/lib/change-class.sh
-    . "$ORCH_PACKAGE/scripts/lib/change-class.sh"
-    change_class_read "$fixture_base" HEAD "$fixture" "$lane_err"
-  ) || true
-  assert_eq "$label, in a lane" "$expected" "$(sed -n '/^class: /p' "$lane_err")"
+  lane_err="$(env -u ORCH_SIZE_TEST_PATHS -u ORCH_SIZE_RENDER_ROOTS \
+    "$CHANGE_SCOPE" --repo "$fixture" --event pull_request --base "$fixture_base" \
+    --head HEAD 2>&1 >/dev/null)" || true
+  assert_eq "$label, in a lane" "$expected" "$(printf '%s\n' "$lane_err" | sed -n '/^class: /p')"
 done <<'FIXTURES'
 a script within micro beside a new fixture|10|add|class: class=micro measured=true cause=production-within-micro production=10
 a script within small beside a new fixture|30|add|class: class=small measured=true cause=production-within-small subsystem=runtime

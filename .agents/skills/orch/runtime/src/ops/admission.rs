@@ -189,6 +189,18 @@ pub(super) type CheckoutReader<'a> =
 pub(super) type TeamReader<'a> =
     Box<dyn Fn(&Clis, &str) -> std::result::Result<String, ReadFailure> + 'a>;
 
+/// The cycle change-scope's launch arm answers, in the checkout, for a
+/// requested cycle taken as a floor over the touched paths.
+pub(super) type TierReader<'a> = Box<
+    dyn Fn(
+            &Clis,
+            &str,
+            &[String],
+            &Path,
+        ) -> std::result::Result<super::tier::Classified, super::tier::Refused>
+        + 'a,
+>;
+
 /// The admission's reads a host carries: the programs and the readers
 /// over them. A host built without them (the effect and duty
 /// entries, which launch no lane) judges a launch that names a source as
@@ -200,6 +212,7 @@ pub(super) struct AdmissionReads<'a> {
     pub pulls: PullsReader<'a>,
     pub checkout: CheckoutReader<'a>,
     pub team_key: TeamReader<'a>,
+    pub tier: TierReader<'a>,
 }
 
 impl AdmissionReads<'static> {
@@ -212,8 +225,68 @@ impl AdmissionReads<'static> {
             pulls: Box::new(read_open_pulls),
             checkout: Box::new(read_checkout),
             team_key: Box::new(read_team_key),
+            tier: Box::new(read_tier),
         }
     }
+}
+
+fn read_tier(
+    clis: &Clis,
+    requested: &str,
+    paths: &[String],
+    dir: &Path,
+) -> std::result::Result<super::tier::Classified, super::tier::Refused> {
+    super::tier::classify(
+        &super::tier::arm_cli(&clis.scope_paths),
+        &super::tier::ArmInput {
+            floors: &[requested],
+            paths,
+            repo: Some(dir),
+            ..super::tier::ArmInput::default()
+        },
+    )
+}
+
+/// A first launch's requested cycle judged over its touched set by the arm
+/// the `tier` verb runs: a brief that requests a cycle narrower than the one
+/// its touched set earns refuses the launch, naming both; an arm that could
+/// not answer refuses it too, since an unjudged cycle grants nothing. A
+/// standard request is the widest cycle, which no touched set can widen.
+pub(super) fn tier_judged(
+    item: &str,
+    requested: &str,
+    touched: &[String],
+    dir: &Path,
+    host: &Host,
+) -> Result<()> {
+    if touched.is_empty() || requested == super::tier::Cycle::Standard.word() {
+        return Ok(());
+    }
+    let unjudged = |cause: &str| {
+        Error::from(agent_runtime::Error::refused(
+            "tier-unjudged",
+            &[("item", item), ("requested", requested), ("cause", cause)],
+        ))
+    };
+    let reads = host
+        .admission
+        .as_ref()
+        .ok_or_else(|| unjudged("admission-reads-unavailable"))?;
+    let judged =
+        (reads.tier)(&reads.clis, requested, touched, dir).map_err(|r| unjudged(&r.cause))?;
+    if judged.cycle.word() == requested {
+        return Ok(());
+    }
+    let cause = judged.cause.split(' ').next().unwrap_or_default();
+    Err(Error::from(agent_runtime::Error::refused(
+        "tier-narrower",
+        &[
+            ("item", item),
+            ("requested", requested),
+            ("judged", judged.cycle.word()),
+            ("cause", cause),
+        ],
+    )))
 }
 
 /// Judge the paths a lane adds within its item's outcome, or a launch
@@ -346,7 +419,7 @@ fn eligibility(item: &ItemRead) -> std::result::Result<(), &'static str> {
 /// Whether `line` is a Location header:
 /// optional bullet, optional emphasis marks, `Location`, emphasis marks, a
 /// colon.
-fn is_location_line(line: &str) -> bool {
+pub(super) fn is_location_line(line: &str) -> bool {
     let mut rest = line.trim_start();
     if let Some(after) = rest.strip_prefix(['-', '*', '+'])
         && after.starts_with(char::is_whitespace)
@@ -424,6 +497,29 @@ fn brief_paths(brief: &str) -> Vec<String> {
         .into_iter()
         .filter(|t| t.contains('/') && !t.contains("://") && !t.starts_with('-'))
         .collect()
+}
+
+/// The touched set: the body's Location paths, the brief's paths, the
+/// range's changed paths and the paths added, `changelog.d/` left out,
+/// sorted and once each. The admission judges holders over it and the tier
+/// classifies it, so both read one set from the same inputs. A Location line
+/// naming no path is unread (`location`).
+pub(super) fn touched(
+    body: Option<&str>,
+    brief: Option<&str>,
+    range: &[String],
+    added: &[String],
+) -> std::result::Result<Vec<String>, &'static str> {
+    let mut touched: BTreeSet<String> = BTreeSet::new();
+    if let Some(body) = body {
+        touched.extend(location_paths(body)?);
+    }
+    if let Some(brief) = brief {
+        touched.extend(brief_paths(brief));
+    }
+    touched.extend(range.iter().chain(added).cloned());
+    touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
+    Ok(touched.into_iter().collect())
 }
 
 /// Whether `a` and `b` name one file: equal, or one a directory (`/`) the
@@ -687,7 +783,7 @@ pub(super) fn judge(
     if let Some(checkout) = a.checkout {
         bound(path, a.item, a.tracker, a.repo, checkout, host)?;
     }
-    let mut touched: BTreeSet<String> = BTreeSet::new();
+    let mut body = None;
     if let Some(tracker) = a.tracker {
         let reads = reads("item")?;
         let item = (reads.item)(&reads.clis, tracker, a.item, a.repo)
@@ -703,26 +799,24 @@ pub(super) fn judge(
                 (reads.item)(&reads.clis, tracker, parent, a.repo)
             })?;
         }
-        touched.extend(location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?);
+        location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?;
+        body = Some(item.body);
     }
-    if let Some(brief) = a.brief_file {
-        let text =
-            std::fs::read_to_string(brief).map_err(|e| unreadable("brief", e.to_string()))?;
-        touched.extend(brief_paths(&text));
-    }
+    let brief = a
+        .brief_file
+        .map(|brief| std::fs::read_to_string(brief).map_err(|e| unreadable("brief", e.to_string())))
+        .transpose()?;
+    let mut range_paths = Vec::new();
     if let Some(range) = a.scope_range {
         let reads = reads("classification")?;
         let dir = a
             .repo_dir
             .ok_or_else(|| unreadable("classification", "repo-dir-unnamed".to_owned()))?;
-        touched.extend(
-            (reads.range_paths)(&reads.clis, dir, range)
-                .map_err(|c| unreadable("classification", c))?,
-        );
+        range_paths = (reads.range_paths)(&reads.clis, dir, range)
+            .map_err(|c| unreadable("classification", c))?;
     }
-    touched.extend(a.paths.iter().cloned());
-    touched.retain(|p| !p.is_empty() && !p.starts_with(UNCOUNTED_PREFIX));
-    let touched: Vec<String> = touched.into_iter().collect();
+    let touched = touched(body.as_deref(), brief.as_deref(), &range_paths, a.paths)
+        .map_err(|c| unreadable("location", c.into()))?;
     let in_scope: Vec<String> = a
         .in_scope
         .iter()
@@ -1518,6 +1612,7 @@ mod tests {
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
                     checkout: Box::new(|_: &Path| Ok(None)),
                     team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
+                    tier: as_requested(),
                 }),
             }
         }

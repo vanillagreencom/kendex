@@ -351,6 +351,11 @@ enum Verb {
         #[arg(long)]
         request: PathBuf,
     },
+    /// The cycle a work item runs at, through change-scope's launch arm:
+    /// one stdout line `tier=CLASS brief=VERB cause=CAUSE[ DETAIL]
+    /// estimate=N|- delta=N|- paths=N` at exit 0, else one keyed stderr line
+    /// at exit 1 for a body to refile or 2 for an environment failure.
+    Tier(ops::tier::Args),
     /// Wait while Copilot's work on a pull request's current head is in
     /// flight, bounded by `ORCH_COPILOT_HOLD_SECS` from the wait's start:
     /// `none`, `settled` or `expired`, a read that requests and writes
@@ -1808,6 +1813,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     std::process::exit(refused.exit);
                 }
             }
+        }
+        Verb::Tier(args) => {
+            let settings = resolve_settings(&flags)?;
+            std::process::exit(ops::tier::run(&settings.scope_paths_cli, &args));
         }
         Verb::CiProof { pr, head, repo } => {
             let settings = resolve_settings(&flags)?;

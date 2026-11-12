@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The change-scope library: the path rules every classifier phase and orch's
-# item-tier Location inputs read, the base-commit settings reader the
+# The change-scope library: the path rules every classifier phase and the
+# launch arm read, the base-commit settings reader the
 # classifier and harness-ci's wrapper share, and the reader a consumer runs
 # the classifier through. Sourced with extglob enabled. Path helpers read no
 # diff or repository settings.
@@ -15,6 +15,12 @@
 # change_class_path_match PATH GLOBS sets PATH_MATCH_HIT on the first match.
 # GLOBS is newline-separated, with bash patterns matching the whole path.
 # change_class_list_globs CONF KEYWORD reads the narrow-change list grammar.
+# change_scope_location_load REPO loads the narrow-phase lists and
+# CHANGE_CLASS_STANDARD_PATHS from REPO's main checkout, returning 1 with
+# CHANGE_CLASS_CAUSE on an unreadable list or settings file.
+# change_scope_inventory_rendered BASE HEAD REPO STDERR_FILE returns 0 where
+# harness-only proves the range's inventory change names-only under render
+# roots the main checkout's settings name; it needs lib/branch-growth.sh.
 #
 # The helpers after the path rules are the classifier's own, shared with the
 # harness-ci wrapper that judges the queue-only class on the same base commit.
@@ -165,6 +171,55 @@ opencode.jsonc'
       CHANGE_CLASS_PATH_CAUSE="instruction-file $PATH_MATCH_HIT"
     fi
   fi
+}
+
+# The main checkout of the checkout DIR is in, from git's common directory:
+# a linked worktree reads its repository's settings, never its own.
+change_scope_main_root() { # DIR
+  local common
+  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
+  case "$common" in
+    */.git) printf '%s\n' "${common%/.git}" ;;
+    *) git -C "$1" rev-parse --show-toplevel 2>/dev/null ;;
+  esac
+}
+
+change_scope_location_load() { # REPO
+  local root
+  if ! change_class_path_load "$CHANGE_SCOPE_LIB_DIR/../../references/narrow-change.conf"; then
+    CHANGE_CLASS_CAUSE="$CHANGE_CLASS_PATH_CAUSE"
+    return 1
+  fi
+  CHANGE_CLASS_CAUSE=base-settings-unreadable
+  root="$(change_scope_main_root "$1")" || return 1
+  CHANGE_CLASS_SETTINGS_ROOT="$root"
+  # A lane and its inherited settings cannot choose their own standard paths.
+  CHANGE_CLASS_STANDARD_PATHS="$(
+    unset HARNESS_CI_STANDARD_PATHS
+    # shellcheck source=kendex-env.sh
+    . "$CHANGE_SCOPE_LIB_DIR/kendex-env.sh" || exit 1
+    kendex_load_settings_file "$root/kendex.settings.toml" || exit 1
+    kendex_load_settings_file "$root/.kendex/settings.toml" || exit 1
+    globs=()
+    read -r -a globs <<<"${HARNESS_CI_STANDARD_PATHS:-}"
+    [ "${#globs[@]}" -eq 0 ] || printf '%s\n' "${globs[@]}"
+  )" || return 1
+  CHANGE_CLASS_CAUSE=""
+}
+
+# An unreadable or absent verdict keeps the inventory under the path rules.
+change_scope_inventory_rendered() { # BASE HEAD REPO STDERR_FILE
+  local reader="$CHANGE_SCOPE_LIB_DIR/../harness-only" inventory_change
+  [ -x "$reader" ] || return 1
+  "$reader" --mode harness --event pull_request --base "$1" --head "$2" --repo "$3" \
+    --output /dev/null >/dev/null 2>"$4" || return 1
+  inventory_change="$(sed -n 's/^inventory-change: //p' "$4" | tail -1)" || return 1
+  case "$inventory_change" in
+    names-only\ *\ roots=*)
+      names_only_roots_rendered "${inventory_change##* roots=}" \
+        branch_growth_render_roots "$CHANGE_CLASS_SETTINGS_ROOT" ;;
+    *) return 1 ;;
+  esac
 }
 
 # Splitting a blank-separated list leaves each word open to pathname

@@ -98,7 +98,20 @@ pub(super) fn no_reads() -> AdmissionReads<'static> {
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
         checkout: Box::new(|_: &Path| Ok(None)),
         team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
+        tier: as_requested(),
     }
+}
+
+/// A tier reader that earns no cycle past the requested one.
+pub(super) fn as_requested() -> super::admission::TierReader<'static> {
+    Box::new(|_: &Clis, requested: &str, _: &[String], _: &Path| {
+        Ok(super::tier::Classified {
+            cycle: super::tier::Cycle::parse(requested).expect("a fixture requests a cycle"),
+            cause: format!("floor class={requested}"),
+            delta: None,
+            notes: Vec::new(),
+        })
+    })
 }
 
 pub(super) fn item_file(dir: &Path) -> PathBuf {

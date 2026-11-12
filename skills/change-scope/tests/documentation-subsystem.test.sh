@@ -3,10 +3,9 @@
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
-# The launch rows run orch's item-tier beside the classifier: both consume
+# The launch rows run the launch arm beside the classifier: both consume
 # this package's path rules and ceilings, and a source with its documentation
-# has to admit the same tier at launch and in CI.
-ORCH_PACKAGE="$(cd "$CHANGE_SCOPE_PACKAGE/../orch" && pwd)"
+# has to admit the same class at launch and in CI.
 
 SANDBOX="$(cd -- "$SANDBOX" && pwd -P)"
 repo="$(new_repo documentation-subsystem)"
@@ -45,10 +44,10 @@ while IFS='|' read -r label estimate launch_tier class_line specs; do
     "$CHANGE_SCOPE" --repo "$repo" --event pull_request --base "$base" \
     --head HEAD 2>&1 >/dev/null)"
   launch="$(env -i PATH="$PATH" HOME="$SANDBOX" TMPDIR="$SANDBOX" \
-    "$ORCH_PACKAGE/scripts/item-tier" --repo "$repo" --production "$estimate" \
-    "${location_args[@]}")"
-  assert_eq "$label" "tier=$launch_tier $class_line" \
-    "${launch%% *} $(sed -n '/^class: /p' <<<"$class_err")"
+    "$CHANGE_SCOPE" launch --repo "$repo" --production "$estimate" \
+    "${location_args[@]}" 2>/dev/null)"
+  assert_eq "$label" "change_class=$launch_tier $class_line" \
+    "$launch $(sed -n '/^class: /p' <<<"$class_err")"
 done <<'DOCS'
 a source with its architecture document|40|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 docs/architecture/runtime.md:10
 a source with its changelog fragment|31|small|class: class=small measured=true cause=production-within-small subsystem=runtime|runtime/product.ts:30 changelog.d/fixed/runtime.md:1

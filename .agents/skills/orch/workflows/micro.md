@@ -193,7 +193,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scrip
 Check the pushed paths through `item-tier`:
 
 ```bash
-[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/item-tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime tier --base [BASE_SHA] --head [HEAD_SHA] --repo [WT_PATH]
 ```
 
 The accepted answer is `tier=micro`. Over a range the script reads the path rules alone, the class of § Escape condition 3, and never a line count: the tier the admission read stands, and this check proves the pushed paths stayed inside it. A path rule that selects `small` or `standard`, or a command failure, escapes (§ Escape condition 6).

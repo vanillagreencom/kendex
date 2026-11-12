@@ -247,7 +247,7 @@ Use the output as `MAIN_REPO_ROOT`.
    ```
 
    ```bash
-   .agents/skills/orch/scripts/item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
+   .agents/skills/orch/scripts/orch-runtime tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
    ```
 
    Bind `[REVIEW_BASE_CHECKOUT]` to that consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and read the gate mode through [the review call](../references/gates.md#the-review-call), run from `[MAIN_REPO_ROOT]`, `[MARK_READY]` `false`; on `approval` the call also settles `[PREPARED_HEAD]`'s Copilot request ([Copilot requests](../references/gates.md#copilot-requests)). The call runs before every merge call, the direct attempt's and the `--auto` arm's, since every attempt and every return from the cycles re-enters this step. Bind the time of the first call before this merge call as `[HOLD_START]`, and read the bound once with `.agents/skills/orch/scripts/orch-env ORCH_COPILOT_HOLD_SECS 600`. Repeat the call on either of these replies: a `pending` reply whose `reason` opens `copilot-pending`, or a verdict `approved`, `proceeded` or `off` with `copilot.state` `expired` ([Copilot requests](../references/gates.md#copilot-requests)). Run each repeat through [Waiter launch](../references/waiter-launch.md), no more often than every 30 seconds, until the call answers otherwise or that many seconds have passed since `[HOLD_START]`. The hold before a merge call is this call's, never the triage's `orch-runtime copilot-wait`. Then route its last answer:

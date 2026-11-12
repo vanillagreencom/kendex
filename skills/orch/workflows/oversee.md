@@ -140,7 +140,7 @@ Foreign work follows [§ 1](#1-resolve-the-launch-surface).
 Every selected item takes a tier before it launches. `item-tier` assigns it, and its `--help` owns the rule:
 
 ```bash
-.agents/skills/orch/scripts/item-tier --production [ESTIMATE] --body [ITEM_BODY_FILE] --path [LOCATION_PATH] --repo [MAIN_REPO_ROOT]
+.agents/skills/orch/scripts/orch-runtime tier --production [ESTIMATE] --body [ITEM_BODY_FILE] --brief [BRIEF_FILE] --repo [MAIN_REPO_ROOT]
 ```
 
 `[ESTIMATE]` is this session's estimate of the production lines the item adds, made from the body read once under § Lane directive step 2. Save that body as `[ITEM_BODY_FILE]` and pass it with `--body`; `item-tier` floors the estimate with its Expected delta production count. `item-tier --help` owns the header read. Pass every Location path, one `--path` per file. A body that names no Location exits 1 with `item-tier-error: cause=no-location` and no tier: the item does not launch, and goes back to filing for a per-subsystem split, as § Lane directive step 2 sends an item spanning several subsystems. Copy the complete `item-tier` output line into the launch brief once, alone on one line, so the launch records `tier_inputs` from it. The output line's `brief=` word is the brief § Lane directive mints:

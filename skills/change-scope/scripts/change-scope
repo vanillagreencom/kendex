@@ -4,6 +4,28 @@
 # Usage:
 #   change-scope --event EVENT [--base REF] [--head REF] [--repo DIR]
 #                [--paths-output FILE]
+#   change-scope launch [--production N] [--body FILE] [--floor CLASS]...
+#                [--path PATH]... [--base REF --head REF] [--repo DIR]
+#
+# The launch arm classifies a work item before its branch exists, from the
+# inputs that name a class: the widest wins, in change_scope_rank's order,
+# and the first input naming it is the cause. --production is an estimate of
+# added production lines against micro_max_production and
+# small_max_production in references/narrow-change.conf; --body reads its
+# Expected delta (lib/branch-growth.sh's grammar), which floors the estimate,
+# and a body with neither a valid delta nor an estimate is standard; --floor
+# is a class already held, at or above micro; --path is classified by the
+# shared path rules' launch phase, no render proved, and an unmatched path
+# changes nothing; --base and --head classify the range's changed paths, the
+# range itself micro, a names-only inventory change under rendered roots left
+# out. HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
+# (default .), never from a linked worktree's own settings. A list, ceiling
+# or settings file the arm cannot read answers standard, measured=false.
+# A malformed Expected delta prints one `launch-warning: cause=invalid-delta`
+# line and reads as no delta. stdout is `change_class=micro|small|standard`;
+# stderr ends with `class: class=CLASS measured=true|false delta=N|-
+# cause=CAUSE[ DETAIL]`. Exit 2 is a wiring error, `wiring-error: cause=`
+# naming it, with no class.
 #
 # The shared change classifier: one classification for CI's lane selection
 # (harness-ci's change-class), package review depth (reviewer's review-depth)
@@ -294,6 +316,139 @@ need_value() { # FLAG REMAINING NEXT
       "$1 needs a value, got the flag '$3'" ;;
   esac
 }
+
+# The launch arm's choice so far: the first input naming the widest class.
+LAUNCH_CLASS=""
+LAUNCH_RANK=-1
+LAUNCH_CAUSE=""
+LAUNCH_MEASURED=""
+launch_consider() { # CLASS CAUSE [unmeasured]
+  change_scope_rank "$1" || die "cause=class-unranked class=$1" "no rank for class '$1'"
+  if [ "$CHANGE_SCOPE_RANK" -gt "$LAUNCH_RANK" ]; then
+    LAUNCH_CLASS="$1"
+    LAUNCH_RANK="$CHANGE_SCOPE_RANK"
+    LAUNCH_CAUSE="$2"
+    LAUNCH_MEASURED=true
+    [ "${3:-}" != unmeasured ] || LAUNCH_MEASURED=false
+  fi
+}
+
+# One ceiling of the narrow-change list, the last line naming it.
+launch_ceiling() { # KEY
+  sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1
+}
+
+launch_class() { # ARG...
+  local production="" body="" base="" head="" repo=. body_text delta="" path floor
+  local micro_max small_max paths=() floors=() launch_work
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --production) need_value "$1" "$#" "${2:-}"; production="$2"; shift 2 ;;
+      --body) need_value "$1" "$#" "${2:-}"; body="$2"; shift 2 ;;
+      --floor) need_value "$1" "$#" "${2:-}"; floors=("${floors[@]+"${floors[@]}"}" "$2"); shift 2 ;;
+      --path) need_value "$1" "$#" "${2:-}"; paths=("${paths[@]+"${paths[@]}"}" "$2"); shift 2 ;;
+      --base) need_value "$1" "$#" "${2:-}"; base="$2"; shift 2 ;;
+      --head) need_value "$1" "$#" "${2:-}"; head="$2"; shift 2 ;;
+      --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
+      -h | --help) usage; exit 0 ;;
+      *) die "cause=unknown-argument argument=$1" "unknown argument '$1'" ;;
+    esac
+  done
+  case "$production" in
+    '') ;;
+    *[!0123456789]*) die "cause=invalid-production value=$production" "--production must be a whole number" ;;
+  esac
+  for floor in "${floors[@]+"${floors[@]}"}"; do
+    change_scope_floor "$floor" ||
+      die "cause=invalid-floor floor=$floor" "--floor must be a class at or above micro"
+  done
+  if { [ -n "$base" ] && [ -z "$head" ]; } || { [ -z "$base" ] && [ -n "$head" ]; }; then
+    die "cause=range-incomplete" "--base and --head are given together"
+  fi
+  [ -n "$production" ] || [ -n "$body" ] || [ "${#floors[@]}" -gt 0 ] || [ -n "$base" ] ||
+    die "cause=no-input" "name --production, --body, --floor or --base"
+  # shellcheck source=lib/branch-growth.sh
+  . "$SCRIPT_DIR/lib/branch-growth.sh" ||
+    die "cause=measurement-library-unreadable" "lib/branch-growth.sh could not be loaded"
+
+  if [ -n "$body" ]; then
+    body_text="$(cat -- "$body")" || die "cause=body-unreadable path=$body" "cannot read --body '$body'"
+    if ! expected_delta_read "$body_text"; then
+      printf 'launch-warning: cause=invalid-delta line=[%s] accepted=[N lines] [N lines, M test lines] (1 line, 1 test line singular; 0 a stated zero); read as no delta\n' \
+        "$EXPECTED_DELTA_LINE" >&2
+      EXPECTED_DELTA_PRODUCTION=""
+    fi
+    delta="$EXPECTED_DELTA_PRODUCTION"
+    if [ -n "$delta" ] && { [ -z "$production" ] || [ "$delta" -gt "$production" ]; }; then
+      production="$delta"
+    fi
+    [ -n "$production" ] || launch_consider standard body-without-tier-inputs
+  fi
+
+  if [ -n "$production" ]; then
+    if [ ! -r "$NARROW_CONF" ] || ! micro_max="$(launch_ceiling micro_max_production)" ||
+      ! small_max="$(launch_ceiling small_max_production)"; then
+      launch_consider standard narrow-change-unreadable unmeasured
+    elif [ -z "$micro_max" ] || [ -z "$small_max" ]; then
+      launch_consider standard narrow-change-ceilings-missing unmeasured
+    elif [ "$production" -le "$micro_max" ]; then
+      launch_consider micro "estimate-within-micro production=$production"
+    elif [ "$production" -le "$small_max" ]; then
+      launch_consider small "estimate-within-small production=$production"
+    else
+      launch_consider standard "estimate-past-small production=$production"
+    fi
+  fi
+
+  if [ "${#paths[@]}" -gt 0 ]; then
+    if change_scope_location_load "$repo"; then
+      for path in "${paths[@]}"; do
+        change_class_path "$path" launch
+        [ -z "$CHANGE_CLASS_PATH" ] || launch_consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
+      done
+    else
+      launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
+    fi
+  fi
+
+  for floor in "${floors[@]+"${floors[@]}"}"; do
+    launch_consider "$floor" "floor class=$floor"
+  done
+
+  if [ -n "$base" ]; then
+    LAUNCH_WORK="$(mktemp -d 2>/dev/null)" || LAUNCH_WORK=""
+    [ -n "$LAUNCH_WORK" ] && [ -d "$LAUNCH_WORK" ] ||
+      die "cause=scratch-unavailable" "a scratch directory could not be created"
+    trap 'rm -rf -- "${LAUNCH_WORK:?}"' EXIT
+    launch_work="$LAUNCH_WORK"
+    if ! git -C "$repo" diff --name-only -z --no-ext-diff --no-renames "$base...$head" -- \
+      >"$launch_work/paths" 2>/dev/null; then
+      launch_consider standard branch-paths-unreadable unmeasured
+    elif ! change_scope_location_load "$repo"; then
+      launch_consider standard "$CHANGE_CLASS_CAUSE" unmeasured
+    else
+      launch_consider micro branch-paths
+      while IFS= read -r -d '' path; do
+        change_class_path "$path" launch
+        if [ "$path" = .kendex-generated.json ] && [[ "$CHANGE_CLASS_PATH_CAUSE" = excluded-path\ * ]] &&
+          change_scope_inventory_rendered "$base" "$head" "$repo" "$launch_work/inventory-err"; then
+          continue
+        fi
+        [ -z "$CHANGE_CLASS_PATH" ] || launch_consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
+      done <"$launch_work/paths"
+    fi
+  fi
+
+  printf 'class: class=%s measured=%s delta=%s cause=%s\n' \
+    "$LAUNCH_CLASS" "$LAUNCH_MEASURED" "${delta:--}" "$LAUNCH_CAUSE" >&2
+  printf 'change_class=%s\n' "$LAUNCH_CLASS"
+  exit 0
+}
+
+if [ "${1:-}" = launch ]; then
+  shift
+  launch_class "$@"
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

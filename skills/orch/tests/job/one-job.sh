@@ -12,7 +12,7 @@
 # tests/job/stub-harness runs, and the gh fake in github/tests/lib/gh-stub.sh.
 #
 # Rows, one job each: a GitHub issue at the small tier (launch-time
-# item-tier --body --path, the internal panel route, gh issue close), a
+# orch-runtime tier --body, the internal panel route, gh issue close), a
 # tracker-less local key at the small tier (new-local-key, no tracker read,
 # a lane that exits when done), a GitHub issue at the micro tier (no dev
 # round, no review), the local handoff row (the lane records a handoff with
@@ -197,7 +197,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     body="$(cd "$main" && gh issue view "$number" --repo owner/repo --json number,title,body,url,labels,state)"
     assert_eq "$(jq -r '.state' <<<"$body")" OPEN "$name: the tracker read answers an open issue"
     jq -r '.body' <<<"$body" > "$root/issue-body.md"
-    tier_line="$(cd "$main" && "$orch/item-tier" --body "$root/issue-body.md" --path lib.sh --repo "$main")" || tier_line="exit=$?"
+    tier_line="$(cd "$main" && "$orch/orch-runtime" tier --body "$root/issue-body.md" --repo "$main")" || tier_line="exit=$?"
     assert_eq "$tier_line" "tier=$tier brief=$tier cause=estimate-within-$tier production=$delta estimate=- delta=$delta paths=1" \
       "$name: launch-time admission reads the tier from the body and the Location path"
   else
@@ -207,9 +207,9 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     key="$(cd "$main" && "$orch/workflow-state" new-local-key)"
     assert_eq "$([[ "$key" =~ ^local-[0-9]+-[0-9]+-[0-9a-f]+$ ]] && echo shaped || echo "$key")" shaped "$name: a local key is minted"
     one_job_stage_gh 1 /dev/null
-    tier_line="$(cd "$main" && "$orch/item-tier" --production "$delta" --path lib.sh --repo "$main")" || tier_line="exit=$?"
-    assert_eq "$tier_line" "tier=$tier brief=$tier cause=estimate-within-$tier production=$delta estimate=$delta delta=- paths=1" \
-      "$name: launch-time admission reads the tier from the estimate and the Location path"
+    tier_line="$(cd "$main" && "$orch/orch-runtime" tier --production "$delta" --repo "$main")" || tier_line="exit=$?"
+    assert_eq "$tier_line" "tier=$tier brief=$tier cause=estimate-within-$tier production=$delta estimate=$delta delta=- paths=0" \
+      "$name: launch-time admission reads the tier from the estimate"
   fi
   stage_verify_reads
 
