@@ -326,6 +326,8 @@ A `create` whose `review_born` is false is the same command without that flag.
 
 #### 7.2.1 Position in the Active Project
 
+**Skip if** the analyzed input's `source` is `research-issue`. Keep its research issue in Backlog until research-issue § 3 publishes its assets and handles readiness.
+
 **Linear only.** With `TRACKER=github`, record `positioning: n/a (github)` in § 8 and skip.
 
 Once every create has landed and its relations and parent are attached — never per create — position each created issue in Todo unless any of these hold: the project state is not `started`, the issue's `blocked_by_open` names an issue in another project (linear SKILL.md § Blocked Label vs Issue Relations), or it is P4 with no blocking relations.

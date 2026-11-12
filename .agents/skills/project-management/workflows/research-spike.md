@@ -24,7 +24,7 @@ Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxo
 
 On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
 
-This search is the research issue's `supersession` record, in the [audit-output.md](../schemas/audit-output.md) § ISSUE Mode form: each open match the new issue supersedes, duplicates or re-scopes with that action and its identifier, else `none found; searched: [TOPIC_KEYWORDS]`.
+Carry this search's rows, actual search terms and proposed dispositions as `prior_work` to research-issue § 1.2. Include each matched identifier, title, scope evidence and reason. A proposal to replace or transfer scope carries the existing [audit-output.md](../schemas/audit-output.md) `supersedes[]` shape and its `when`; a covering match carries its identifier as `target`. These are recommendations until that writer obtains authorization and applies them; this search performs no disposition.
 
 ## 3. Hand Off
 
@@ -36,9 +36,11 @@ The research issue's project comes from the project map, read as [tpm-audit § 1
 
 Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.
 
-Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `supersession` (§ 2), `auto_execute` as the caller passed it (roadmap-plan § 1 always passes it; a standalone spike defaults to true), and no `blocked_issue`.
+Run `⤵ workflows/research-issue.md § 1-4 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `prior_work` (§ 2), `auto_execute` as the caller passed it (roadmap-plan § 1 always passes it; a standalone spike defaults to true), and no `blocked_issue`.
 
 ## 4. Report
+
+When research-issue returns covering work or a held filing, report that outcome and stop; use the delegated block only when it created the research issue and prepared its assets.
 
 <output_format>
 
