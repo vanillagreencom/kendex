@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use super::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
 use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, TAG, wall};
-use crate::controller::Overseer;
+use crate::controller::{MEMBER, Overseer};
 use crate::error::{Error, Result};
 use crate::harness::Harness;
 use crate::host::{self, Place};
@@ -26,8 +26,6 @@ use crate::record;
 pub const ORCH_ENTRY: &str = ".agents/skills/orch/scripts/orch-runtime";
 /// The count's own bound, its start included.
 const COUNT_BOUND: Duration = Duration::from_secs(60);
-/// The controller member of a fleet record, whose account is a seat.
-const CONTROLLER_MEMBER: &str = "overseer";
 
 /// The lanes' charges orch counted for one fleet record, as `orch-runtime
 /// lane charges` prints them, and the record they were read from.
@@ -109,7 +107,7 @@ fn seat(path: &Path) -> Result<Option<String>> {
     let Some(doc) = record::read_document(path)? else {
         return Ok(None);
     };
-    let controller: Option<Overseer> = record::field(path, &doc, CONTROLLER_MEMBER)?;
+    let controller: Option<Overseer> = record::field(path, &doc, MEMBER)?;
     Ok(controller
         .and_then(|c| {
             c.extra

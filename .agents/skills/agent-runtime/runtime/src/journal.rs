@@ -355,6 +355,23 @@ pub fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Opt
     })
 }
 
+/// How far the external effect of an operation got in this call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "effect", rename_all = "kebab-case")]
+pub enum Effect {
+    /// An intent for the target already stood unfinished; nothing new was
+    /// created and the record did not move. The caller reconciles it.
+    Reconciled { intent: Intent },
+    /// The intent is persisted and has not started; the caller runs the
+    /// effect and records its outcome.
+    Persisted { intent: Intent },
+    /// A launch intent for the target stands open; nothing was created. The
+    /// caller reconciles it and, when it stays unconfirmed with a recorded
+    /// pane, closes it `superseded-by-close` and asks again, so the close
+    /// stops what the pane holds.
+    Supersedes { intent: Intent },
+}
+
 /// The intent an effect operation persists. It carries the identity of the
 /// process persisting it, and is never persisted without one: a contender
 /// could not tell a live operation with no owner from a dead one, and would

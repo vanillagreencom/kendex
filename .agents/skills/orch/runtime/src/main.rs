@@ -291,10 +291,10 @@ enum Verb {
         /// or `memory`), which decides whether the predecessor's own account
         /// is left or kept.
         #[arg(long, requires = "predecessor", value_parser = |word: &str| {
-            watch::overseer::MarkKind::parse(word)
+            agent_runtime::controller::views::MarkKind::parse(word)
                 .ok_or_else(|| format!("{word}: not context, headroom, rate or memory"))
         })]
-        mark: Option<watch::overseer::MarkKind>,
+        mark: Option<agent_runtime::controller::views::MarkKind>,
         /// The model recovery's successor: the predecessor's own launch on
         /// the model it was launched with, and the recovery's binding; no
         /// walk.

@@ -61,7 +61,6 @@ mod coverage;
 mod lane_operation;
 mod launch;
 mod stop;
-mod transfer;
 
 pub use close::{Closed, Word as CloseWord, close_lane};
 
@@ -69,29 +68,25 @@ use std::path::Path;
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
-use agent_runtime::launch::{
-    Brief, Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool,
-};
 use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
 use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::ops::{self, Applied, Effect, OutcomeRecorded, Report, Request};
+use crate::ops::{self, Applied, OutcomeRecorded, Report, Request};
 use crate::settings::Settings;
 use crate::state::{self, Lane, LaneMembers};
 use agent_runtime::clock::Clock;
 use agent_runtime::controller::AdoptController;
+use agent_runtime::controller::effect as controller;
 use agent_runtime::intent::EffectOp;
 use agent_runtime::intent::Intent;
+use agent_runtime::journal::Effect;
 use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 
-use agent_runtime::effects::{
-    Claimant, Companion, EffectOutcome, Identity, ProcessReading, State, Target, job,
-    overseer_target_of, read_intent, read_overseer,
-};
+use agent_runtime::effects::{Claimant, EffectOutcome, Identity, Target, job, read_intent};
 
 /// The refusal `key` with its fields, as orch's error.
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
@@ -434,7 +429,9 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                 .map(Effected::Started)
                 .map_err(Error::from);
         }
-        Request::StartController(r) => transfer::start_effect(run, &intent.id, r),
+        Request::StartController(r) => {
+            with_controller(run, |ctl| controller::start_effect(ctl, &intent.id, r))
+        }
         Request::AdoptSession(_)
         | Request::BeginRound(_)
         | Request::RecordValidationAdmission(_)
@@ -492,9 +489,11 @@ pub fn run_job(
     job::claim(&run.engine, intent_id)?;
     let outcome = match (&request, op) {
         (Request::RequestTransfer(r), job::Op::Transfer) => {
-            transfer::transfer_effect(&run, intent_id, r)?
+            with_controller(&run, |ctl| controller::transfer_effect(ctl, intent_id, r))?
         }
-        (_, job::Op::Stop) => transfer::stop_controller_effect(&run, intent_id)?,
+        (_, job::Op::Stop) => with_controller(&run, |ctl| {
+            controller::stop_controller_effect(ctl, intent_id)
+        })?,
         (_, job::Op::Transfer) => unreachable!("a transfer job reads a transfer request"),
     };
     run.apply_outcome(outcome)
@@ -777,45 +776,16 @@ fn supersede_launch(
     run.apply_outcome(outcome)
 }
 
-/// What one launch runs: the harness, its home and the account it spends,
-/// model, effort, working directory, opening brief, the permission posture
-/// and question-tool posture, its own compaction and the caller's own words,
-/// as a launch or a succession resolved them. The command is spelled from
-/// these by agent-runtime's one builder; no recorded line
-/// is executed.
-struct Spec<'a> {
-    harness: Harness,
-    /// The harness's own home, where its native sessions are read.
-    home: Option<&'a Path>,
-    /// The account the launch spends, routed by the builder's table.
-    account: Option<&'a Path>,
-    model: Option<&'a str>,
-    effort: Option<&'a str>,
-    cwd: &'a Path,
-    brief: Option<&'a Path>,
-    /// The posture the caller judged; `None` takes the settings' posture.
-    permission: Option<Permission>,
-    question_tool: QuestionTool,
-    compaction: Compaction,
-    /// The session id the launch fixes, for a harness that takes one.
-    session_id: Option<&'a str>,
-    /// The caller's own words, appended as given.
-    extra_args: &'a [String],
-}
-
 /// The launcher's record of the fleet watch's start, beside the fleet state.
 const WATCH_RUNNER_FILE: &str = "oversee-watch.runner";
 /// The watch's stderr file beside the fleet state, appended on every start.
 const WATCH_ERR_FILE: &str = "oversee-watch.err";
 
-/// The fleet watch as a controller start's companion job: `words`, the
-/// watch's command line as the start's request names it, launched beside
-/// the fleet state, its claim the watch's own record there.
-fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> {
-    let paths = crate::watch::claim::Paths::of(run.engine.path)?;
-    Ok(Companion {
-        argv: words,
-        name: format!("watch-{}", run.engine.env.iso().replace(['-', ':'], "")),
+/// The fleet watch's files as a controller start's companion keeps them,
+/// beside the fleet state at `path`, its claim the watch's own record there.
+fn watch_files(path: &Path) -> agent_runtime::Result<controller::CompanionFiles> {
+    let paths = crate::watch::claim::Paths::of(path)?;
+    Ok(controller::CompanionFiles {
         record: paths.dir.join(WATCH_RUNNER_FILE),
         stderr: paths.dir.join(WATCH_ERR_FILE),
         claim: Claimant {
@@ -825,129 +795,30 @@ fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> 
     })
 }
 
-/// The intent the harness launches under, built from a spec and the settings
-/// posture. `program` is the configured executable for the harness, so a
-/// test selects its stub through the one binary-path setting. The caller's
-/// words and the judged posture must agree under the builder's table:
-/// a `native` posture whose words carry the harness's
-/// bypass word refuses `permission-mismatch` before any window; under
-/// `bypass` the words are preserved as given and the builder adds no
-/// duplicate permission word.
-fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, LaunchCommand)> {
-    let permission = spec
-        .permission
-        .map_or_else(|| settings.launch.permission.get(), Ok)?;
-    if permission == Permission::Native
-        && let Some(word) = spec.harness.bypass_word_in(spec.extra_args)
-    {
-        return Err(refused(
-            "permission-mismatch",
-            &[
-                ("harness", spec.harness.name()),
-                ("posture", "native"),
-                ("word", &word),
-            ],
-        ));
-    }
-    let intent = LaunchIntent {
-        harness: spec.harness,
-        home: spec.home.map(Path::to_path_buf),
-        account: spec.account.map(Path::to_path_buf),
-        cwd: spec.cwd.to_path_buf(),
-        model: spec.model.map(str::to_owned),
-        effort: spec.effort.map(str::to_owned),
-        permission,
-        question_tool: spec.question_tool,
-        compaction: spec.compaction,
-        brief: match spec.brief {
-            Some(path) => Brief::File {
-                path: path.to_path_buf(),
-            },
-            None => Brief::None,
-        },
-        resume: None,
-        session_id: spec.session_id.map(str::to_owned),
-        env: Default::default(),
-        env_remove: Vec::new(),
-        extra_args: spec.extra_args.to_vec(),
-        program: settings
-            .engine
-            .harness_binaries
-            .get()?
-            .remove(&spec.harness),
+/// `act` run over the hand-over's run on the same record: orch's settings
+/// as the hand-over reads them, and the fleet watch as a start's companion.
+fn with_controller<T>(
+    run: &Run,
+    act: impl FnOnce(&controller::Run) -> agent_runtime::Result<T>,
+) -> Result<T> {
+    let settings = controller::Settings {
+        engine: &run.settings.engine,
+        launch: &run.settings.launch,
+        controller: &run.settings.controller,
+        inherited: run.settings.inherited(),
     };
-    let command = agent_runtime::launch::build(&intent)?;
-    Ok((intent, command))
-}
-
-/// Whether the command's program will run: a path names an existing file,
-/// a bare name is found on this process's `PATH`, the same lookup the
-/// pane's shell makes. The shell reads an unreadable path as no program,
-/// so this preflight answers the same and refuses `harness-binary-missing`.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch line's program preflight answers as the pane's shell will: an unreadable path is no program"
-)]
-fn check_program(command: &LaunchCommand) -> Result<()> {
-    let program = Path::new(&command.program);
-    let found = if program.components().count() > 1 {
-        program.is_file()
-    } else {
-        std::env::var_os("PATH")
-            .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
+    let ctl = controller::Run {
+        engine: engine_run(
+            run.engine.path,
+            run.settings,
+            run.engine.env,
+            run.engine.locking,
+            run.engine.clock,
+        ),
+        settings: &settings,
+        companion: watch_files,
     };
-    if found {
-        Ok(())
-    } else {
-        Err(refused(
-            "harness-binary-missing",
-            &[("program", &command.program)],
-        ))
-    }
-}
-
-/// Whether the launch can start in `dir`: the shell's `cd` reads an
-/// unreadable path as no directory, so this preflight refuses `key` for one
-/// too.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the launch directory's preflight answers as the pane's shell will: an unreadable path is no directory"
-)]
-fn check_directory(key: &'static str, dir: &Path) -> Result<()> {
-    if dir.is_dir() {
-        Ok(())
-    } else {
-        Err(refused(key, &[("path", &dir.display().to_string())]))
-    }
-}
-
-/// The brief's text, or `brief-unreadable` naming the file.
-fn read_brief(brief: &Path) -> Result<String> {
-    std::fs::read_to_string(brief).map_err(|e| {
-        refused(
-            "brief-unreadable",
-            &[
-                ("path", &brief.display().to_string()),
-                ("cause", &e.to_string()),
-            ],
-        )
-    })
-}
-
-fn up(state: &State) -> bool {
-    matches!(state, State::Idle | State::Working)
-}
-
-fn idle(state: &State) -> bool {
-    *state == State::Idle
-}
-
-/// The observation a pending reading leaves on the record.
-fn pending_observation(reading: &ProcessReading, state: &State) -> Value {
-    json!({
-        "process": serde_json::to_value(reading).unwrap_or(Value::Null),
-        "state": serde_json::to_value(state).unwrap_or(Value::Null),
-    })
+    act(&ctl).map_err(Error::from)
 }
 
 /// Re-observe every open intent on `path` by its recorded phase and
@@ -1071,9 +942,11 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
         agent_runtime::intent::EffectOp::CloseResources => stop::reconcile_close(run, &intent)?,
         agent_runtime::intent::EffectOp::RequestTransfer
         | agent_runtime::intent::EffectOp::StartController => {
-            transfer::reconcile_transfer(run, &intent)?
+            with_controller(run, |ctl| controller::reconcile_transfer(ctl, &intent))?
         }
-        agent_runtime::intent::EffectOp::StopController => transfer::reconcile_stop(run, &intent)?,
+        agent_runtime::intent::EffectOp::StopController => {
+            with_controller(run, |ctl| controller::reconcile_stop(ctl, &intent))?
+        }
     };
     let stale = outcome.stale_read();
     Ok(Reconciled {

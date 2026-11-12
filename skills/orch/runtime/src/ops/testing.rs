@@ -16,11 +16,12 @@ use serde_json::{Value, json};
 
 use super::admission::{AdmissionReads, Clis, ItemRead, ScopeRange};
 use super::{
-    AdoptSession, Applied, CloseOwnedResources, Effect, Host, LaunchLane, OverseerExpected, Report,
-    Request, RequestTransfer, apply_on,
+    AdoptSession, Applied, CloseOwnedResources, Host, LaunchLane, Report, Request, apply_on,
 };
 use crate::error::Result;
 use crate::state::{FleetState, ItemState, Lane, Record, fixtures};
+use agent_runtime::controller::transition::{OverseerExpected, RequestTransfer};
+use agent_runtime::journal::Effect;
 use agent_runtime::journal::{Env, RecordOutcome};
 use agent_runtime::settings::Judged;
 
@@ -275,64 +276,6 @@ pub(super) fn outcome(id: &str, outcome: Outcome) -> Request {
         notice: None,
         set_revision: None,
     }))
-}
-
-/// A confirmation whose `launch` is `launch`, with or without the tmux
-/// server's start.
-pub(super) fn confirmed_with(
-    id: &str,
-    launch: Option<LaunchIdentity>,
-    server_start: Option<u64>,
-) -> Request {
-    Request::RecordOutcome(Box::new(RecordOutcome {
-        intent_id: id.into(),
-        outcome: Outcome::Confirmed,
-        launch,
-        session_id: None,
-        server_start,
-        server_socket: None,
-        window: None,
-        home: None,
-        watch: None,
-        members: serde_json::Map::new(),
-        observation: None,
-        while_owner: None,
-        principal_keys: None,
-        notice: None,
-        set_revision: None,
-    }))
-}
-
-/// jq's `. // ""` on one member: the member unless it is absent, `null`
-/// or `false`.
-pub(super) fn alt(record: &Document, key: &str) -> Value {
-    match record.get(key) {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => Value::from(""),
-        Some(v) => v.clone(),
-    }
-}
-
-/// `ol_owns($server; $start; $session)` as `OL_JQ_DEFS` defines it
-/// (`overseer-launch.sh`), member for member, with
-/// jq's typed equality: `ol_names`, the record naming `$server` as the
-/// string `--arg` hands jq, `$session` as its `pane` (or `session`), and
-/// `$start` as its `server_start`'s `tostring`; or `ol_unstarted`, the
-/// same server and session with `server_start` null.
-pub(super) fn ol_owns(record: &Document, server: &str, start: &str, session: &str) -> bool {
-    let names_server_and_session = alt(record, "server") == server
-        && (match record.get("pane") {
-            None | Some(Value::Null) | Some(Value::Bool(false)) => alt(record, "session"),
-            Some(pane) => pane.clone(),
-        }) == session;
-    let jq_tostring = |v: &Value| match v {
-        Value::String(s) => s.clone(),
-        other => other.to_string(),
-    };
-    let ol_names = names_server_and_session
-        && jq_tostring(record.get("server_start").unwrap_or(&Value::Null)) == start;
-    let ol_unstarted =
-        names_server_and_session && record.get("server_start").is_none_or(Value::is_null);
-    ol_names || ol_unstarted
 }
 
 pub(super) fn successor() -> Pending {

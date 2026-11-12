@@ -38,14 +38,13 @@
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
-use agent_runtime::controller::{Pending, TransferCause};
+use agent_runtime::controller::TransferCause;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::PaneState;
-use agent_runtime::launch::Permission;
 use agent_runtime::observe::{self, ProcessReading, State, WallKind};
 use agent_runtime::process::{Identity, Memory};
 use agent_runtime::reading::Reading;
@@ -60,9 +59,10 @@ use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, 
 use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts;
-use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
 use agent_runtime::accounts::walk::{self, WalkRequest};
 use agent_runtime::accounts::{PickAnswer, PickRequest};
+use agent_runtime::controller::transition::{DeathCause, RequestTransfer};
+use agent_runtime::controller::views::{AccountState, Caller, MarkKind, Record, text};
 use agent_runtime::effects::overseer_socket;
 use agent_runtime::settings::Succession;
 
@@ -162,37 +162,6 @@ const CONTEXT_CAP: u64 = 400_000;
 /// The share of the window a reading is due strictly past; a larger
 /// setting cannot weaken it.
 const CONTEXT_PCT_CEILING: u32 = 90;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum MarkKind {
-    Context,
-    Headroom,
-    Rate,
-    Memory,
-}
-
-impl MarkKind {
-    pub fn word(self) -> &'static str {
-        match self {
-            MarkKind::Context => "context",
-            MarkKind::Headroom => "headroom",
-            MarkKind::Rate => "rate",
-            MarkKind::Memory => "memory",
-        }
-    }
-
-    pub fn parse(word: &str) -> Option<MarkKind> {
-        [
-            MarkKind::Context,
-            MarkKind::Headroom,
-            MarkKind::Rate,
-            MarkKind::Memory,
-        ]
-        .into_iter()
-        .find(|kind| kind.word() == word)
-    }
-}
 
 /// The judge's answer: a mark reached, a figure one mark needed that could
 /// not be taken while no other fired (never a mark that lifted), or every
@@ -430,283 +399,6 @@ fn parse_context(text: &str) -> Option<(u64, Option<u64>)> {
     Some((tokens, window))
 }
 
-/// The session the marks are judged for: the recorded controller's own
-/// launch fields.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Caller {
-    pub harness: Option<Harness>,
-    pub account: Option<String>,
-    pub home: Option<String>,
-    pub model: Option<String>,
-    pub effort: Option<String>,
-    pub cwd: Option<String>,
-    pub permission: Option<Permission>,
-    pub extra_args: Vec<String>,
-    /// The handoff the controller's brief named, kept by its successor.
-    pub handoff: Option<String>,
-    pub identity: Option<Identity>,
-}
-
-impl Caller {
-    pub fn of(record: &Record) -> Caller {
-        Caller {
-            harness: record.harness,
-            account: record.account.clone(),
-            home: text(record.raw.get("home")),
-            model: text(record.raw.get("model")),
-            effort: text(record.raw.get("effort")),
-            cwd: text(record.raw.get("cwd")),
-            permission: record
-                .raw
-                .get("permission")
-                .and_then(|p| serde_json::from_value(p.clone()).ok()),
-            extra_args: record
-                .raw
-                .get("extra_args")
-                .and_then(|a| serde_json::from_value(a.clone()).ok())
-                .unwrap_or_default(),
-            handoff: text(record.raw.get("handoff")),
-            identity: record.identity.clone(),
-        }
-    }
-
-    /// The model the account is judged on: a Claude or Pi session on its
-    /// model, a Codex or Copilot session on the account's binding bucket.
-    fn mark_model(&self) -> Option<String> {
-        match self.harness {
-            Some(Harness::Claude | Harness::Pi) => self.model.clone().filter(|m| !m.is_empty()),
-            Some(Harness::Codex | Harness::Copilot) | None => None,
-        }
-    }
-
-    /// The walk's caller entry: this session's own harness and lane, its
-    /// model and effort where the record names them.
-    pub(crate) fn walk_entry(&self, harness: Harness) -> walk::Caller {
-        walk::Caller {
-            harness,
-            lane: self.account.clone(),
-            model: self.model.clone().filter(|m| !m.is_empty()),
-            effort: self.effort.clone().filter(|e| !e.is_empty()),
-            pick_model: self.mark_model(),
-            keep: false,
-        }
-    }
-
-    /// This session's own account through the judge's named form at the
-    /// trigger: the judged record's wall, alias, reset, rate and status,
-    /// read as the state the marks and a mark's succession dispatch on.
-    fn own_account(
-        &self,
-        harness: Harness,
-        settings: &Settings,
-        fleet_path: &Path,
-        host: &crate::ops::Host<'_>,
-        trigger: u32,
-        now: u64,
-    ) -> AccountRead {
-        match self.account.as_deref() {
-            Some(account) => {
-                let answer = accounts::pick_fleet(
-                    settings,
-                    fleet_path,
-                    host,
-                    None,
-                    None,
-                    &PickRequest {
-                        model: self.mark_model(),
-                        lane: Some(account.to_owned()),
-                        for_overseer: true,
-                        min_headroom_pct: Some(trigger),
-                        ..PickRequest::new(harness)
-                    },
-                    now,
-                );
-                match answer {
-                    PickAnswer::Lane(j) => read_account(&j, AccountState::HasRoom, false, now),
-                    PickAnswer::Walled(j)
-                    | PickAnswer::Reserved(j)
-                    | PickAnswer::Retired { judged: j, .. }
-                    | PickAnswer::Excluded(j)
-                    | PickAnswer::CloudRepoUnset(j) => {
-                        read_account(&j, AccountState::AtTrigger, true, now)
-                    }
-                    PickAnswer::Unmeasured(j) => {
-                        read_account(&j, AccountState::Unmeasured, false, now)
-                    }
-                    PickAnswer::NoRecord
-                    | PickAnswer::ProviderUnmeasured { .. }
-                    | PickAnswer::Unbilled { .. } => unmeasured_account(),
-                    PickAnswer::None { .. } | PickAnswer::Unjudged { .. } => unreadable_account(),
-                }
-            }
-            None => unmeasured_account(),
-        }
-    }
-
-    /// This session's own account as [`judge_marks`] reads it: its state,
-    /// and the account mark it reaches, which a succession leaves the
-    /// account by whatever mark sent it.
-    pub(crate) fn account_departure(
-        &self,
-        harness: Harness,
-        settings: &Settings,
-        fleet_path: &Path,
-        host: &crate::ops::Host<'_>,
-        now: u64,
-    ) -> crate::error::Result<(AccountState, Option<MarkKind>)> {
-        let wall_minutes = settings.marks.wall_minutes.get()?;
-        let trigger = settings.accounts.get()?.controller_headroom_pct;
-        let read = self.own_account(harness, settings, fleet_path, host, trigger, now);
-        let reached = read.reached(wall_minutes);
-        Ok((read.state, reached))
-    }
-
-    /// The pending the walk's choice opens: its harness, account, model,
-    /// effort and class, in this session's directory; a same-harness entry
-    /// keeps this session's posture and words, another harness runs the
-    /// full bypass the walk admitted with none of them. The launch prepares
-    /// the home its harness and account run under; the one home named is
-    /// this session's own root, kept by a same-harness successor whose
-    /// account is not its home (a Pi seat). An account the walk admitted
-    /// with its model's window unread carries `scope: unread` to the launch.
-    pub fn successor_of(&self, chosen: &walk::Chosen) -> Pending {
-        let same = self.harness == Some(chosen.harness);
-        Pending {
-            harness: Some(chosen.harness.name().to_owned()),
-            account: chosen.account.clone(),
-            home: self
-                .harness
-                .filter(|h| same && h.account_var(Some(&chosen.model)) != h.home_var())
-                .and(self.home.clone()),
-            model: Some(chosen.model.clone()).filter(|m| !m.is_empty()),
-            effort: Some(chosen.effort.clone()).filter(|e| !e.is_empty()),
-            cwd: self.cwd.clone(),
-            class: chosen.class.clone(),
-            resume: None,
-            permission: if same {
-                self.permission
-            } else {
-                Some(Permission::Bypass)
-            },
-            extra_args: if same {
-                self.extra_args.clone()
-            } else {
-                Vec::new()
-            },
-            handoff: self.handoff.clone(),
-            extra: chosen
-                .record
-                .as_ref()
-                .and_then(|r| r.get("scope"))
-                .filter(|scope| scope.as_str() == Some("unread"))
-                .map(|scope| serde_json::Map::from_iter([("scope".to_owned(), scope.clone())]))
-                .unwrap_or_default(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AccountState {
-    HasRoom,
-    AtTrigger,
-    Unmeasured,
-    Unreadable,
-}
-
-struct AccountRead {
-    state: AccountState,
-    headroom: Option<u32>,
-    account: String,
-    resets: String,
-    ended: bool,
-    reserve_only: bool,
-    rate_state: String,
-    /// The minutes to the wall at the measured rate, counted from the
-    /// sample's instant.
-    projected: Option<u64>,
-}
-
-impl AccountRead {
-    /// The account mark this reading reaches: the headroom trigger, else a
-    /// wall the measured rate projects inside the setting. Headroom leads,
-    /// since it names the account to leave.
-    fn reached(&self, wall_minutes: u32) -> Option<MarkKind> {
-        if self.state == AccountState::AtTrigger {
-            return Some(MarkKind::Headroom);
-        }
-        (wall_minutes > 0
-            && self.rate_state == "measured"
-            && self
-                .projected
-                .is_some_and(|projected| projected <= u64::from(wall_minutes)))
-        .then_some(MarkKind::Rate)
-    }
-
-    fn headroom_field(&self) -> String {
-        match (self.state, self.headroom) {
-            (AccountState::HasRoom | AccountState::AtTrigger, Some(h)) => h.to_string(),
-            (AccountState::Unmeasured, _) => "none".to_owned(),
-            (AccountState::HasRoom | AccountState::AtTrigger | AccountState::Unreadable, _) => {
-                "unreadable".to_owned()
-            }
-        }
-    }
-}
-
-fn record_text(record: &Value, key: &str) -> String {
-    match record.get(key) {
-        Some(Value::String(s)) => s.clone(),
-        Some(Value::Number(n)) => n.to_string(),
-        Some(Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_)) | None => {
-            String::new()
-        }
-    }
-}
-
-/// A percentage figure as the shell callers read one: a whole number of
-/// at most three digits; anything else is unreadable.
-fn whole_pct(record: &Value, key: &str) -> Option<u32> {
-    let text = record_text(record, key);
-    (text.len() <= 3 && !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| text.parse().ok())
-        .flatten()
-}
-
-/// The caller's own account through the judge's named form at the
-/// trigger: the judged record's wall, alias, reset, rate and status, read
-/// as the account state the marks dispatch on.
-fn read_account(
-    judged: &agent_runtime::accounts::Judged,
-    answer: AccountState,
-    at_trigger: bool,
-    now: u64,
-) -> AccountRead {
-    let record = judged.record();
-    let headroom = whole_pct(&record, "wall").map(|wall| 100 - wall);
-    let state = match (answer, headroom) {
-        (AccountState::HasRoom | AccountState::AtTrigger, None) => AccountState::Unreadable,
-        (state, _) => state,
-    };
-    let projected = (record_text(&record, "usage_rate_state") == "measured")
-        .then(|| {
-            let age = record.get("usage_age_s")?.as_f64()?;
-            let minutes = record.get("projected_wall_minutes")?.as_f64()?;
-            let wall_at = now as f64 - age + minutes * 60.0;
-            Some(((wall_at - now as f64 + 59.0) / 60.0).floor().max(0.0) as u64)
-        })
-        .flatten();
-    AccountRead {
-        state,
-        headroom,
-        account: record_text(&record, "alias"),
-        resets: record_text(&record, "binding_resets_at"),
-        ended: judged.row.plan_ended(),
-        reserve_only: at_trigger && agent_runtime::accounts::credit_room(&judged.row, 0.0),
-        rate_state: record_text(&record, "usage_rate_state"),
-        projected,
-    }
-}
-
 /// One ask of the judge: the caller, its context reading, and the reads
 /// the judge makes beyond the fleet's own state.
 pub struct MarksAsk<'a> {
@@ -774,14 +466,18 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let Some(harness) = ask.caller.harness else {
         return Err(agent_runtime::Error::refused("harness-unnamed", &[]).into());
     };
-    let account = ask.caller.own_account(
-        harness,
-        settings,
-        ask.fleet_path,
-        ask.host,
-        trigger,
-        ask.now,
-    );
+    let mut pick = |request: &PickRequest| {
+        accounts::pick_fleet(
+            settings,
+            ask.fleet_path,
+            ask.host,
+            None,
+            None,
+            request,
+            ask.now,
+        )
+    };
+    let account = ask.caller.own_account(harness, &mut pick, trigger, ask.now);
     let memory = match (memory_pct, &ask.caller.identity) {
         (None, _) => MemoryRead::Inert,
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
@@ -887,26 +583,6 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     m.context = context_read;
     m.decision = decision;
     Ok(m)
-}
-
-fn unmeasured_account() -> AccountRead {
-    AccountRead {
-        state: AccountState::Unmeasured,
-        headroom: None,
-        account: String::new(),
-        resets: String::new(),
-        ended: false,
-        reserve_only: false,
-        rate_state: String::new(),
-        projected: None,
-    }
-}
-
-fn unreadable_account() -> AccountRead {
-    AccountRead {
-        state: AccountState::Unreadable,
-        ..unmeasured_account()
-    }
 }
 
 enum MemoryRead {
@@ -1049,136 +725,6 @@ fn relaunch_started(launch: agent_runtime::effects::job::Launch) -> Result<(), S
     match launch {
         Launch::Started { .. } | Launch::Unanswered { .. } => Ok(()),
         Launch::Refused { cause } => Err(cause),
-    }
-}
-
-/// The controller record's fields the duty reads: the server by pid, its
-/// start where recorded, the pane, and the harness identity the watch
-/// start recorded.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Record {
-    pub server: u64,
-    pub server_start: Option<u64>,
-    pub pane: String,
-    pub window: String,
-    pub generation: Option<u64>,
-    pub harness: Option<Harness>,
-    pub identity: Option<Identity>,
-    pub session_rows: Option<PathBuf>,
-    pub exit_status: Option<String>,
-    pub account: Option<String>,
-    pub pending: Option<Pending>,
-    pub raw: serde_json::Map<String, Value>,
-}
-
-fn number(value: Option<&Value>) -> Option<u64> {
-    match value? {
-        Value::Number(n) => n.as_u64(),
-        Value::String(s) => s.parse().ok(),
-        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
-    }
-}
-
-fn text(value: Option<&Value>) -> Option<String> {
-    match value? {
-        Value::String(s) => Some(s.clone()),
-        Value::Number(n) => Some(n.to_string()),
-        Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
-    }
-}
-
-impl Record {
-    /// The record as the fleet state holds it; `None` where it names no
-    /// server or pane.
-    pub fn read(fleet: &FleetState) -> Option<Record> {
-        let overseer = fleet.overseer.as_ref()?;
-        let raw = &overseer.extra;
-        let server = number(raw.get("server"))?;
-        let pane = text(raw.get("pane"))?;
-        let pid = number(raw.get("harness_pid")).and_then(|p| u32::try_from(p).ok());
-        let start = text(raw.get("harness_start"));
-        let identity = match (pid, start) {
-            (Some(pid), Some(start)) => Some(Identity { pid, start }),
-            (Some(_), None) | (None, Some(_)) | (None, None) => None,
-        };
-        Some(Record {
-            server,
-            server_start: number(raw.get("server_start")),
-            pane,
-            window: text(raw.get("window")).unwrap_or_default(),
-            generation: overseer.generation,
-            harness: text(raw.get("harness")).as_deref().and_then(Harness::parse),
-            identity,
-            session_rows: text(raw.get("session_rows")).map(PathBuf::from),
-            exit_status: raw
-                .get("exit")
-                .and_then(|e| e.get("status"))
-                .and_then(|s| text(Some(s))),
-            account: text(raw.get("account")),
-            pending: overseer.pending.clone(),
-            raw: raw.clone(),
-        })
-    }
-
-    fn pane_key(&self) -> String {
-        format!("{} {}", self.server, self.pane)
-    }
-
-    /// The successor a dead session's recovery replays: the pending the
-    /// fleet last chose, else this record's own launch fields, a fresh
-    /// session in the same place on the home its launch prepares, its own
-    /// root kept where its account is not its home. The dead session's
-    /// handoff is what its successor reads, so no held successor resumes the
-    /// dead session.
-    fn held_successor(&self) -> Option<Pending> {
-        if let Some(pending) = &self.pending {
-            return Some(pending.clone());
-        }
-        self.own_successor()
-    }
-
-    /// This record's own launch fields as a fresh session's: the same
-    /// harness, account, model, effort, directory, posture and handoff, on
-    /// the home its launch prepares.
-    pub(crate) fn own_successor(&self) -> Option<Pending> {
-        let caller = Caller::of(self);
-        let harness = caller.harness?;
-        Some(Pending {
-            harness: Some(harness.name().to_owned()),
-            account: caller.account,
-            home: caller
-                .home
-                .filter(|_| harness.account_var(caller.model.as_deref()) != harness.home_var()),
-            model: caller.model,
-            effort: caller.effort,
-            cwd: caller.cwd,
-            class: text(self.raw.get("class")),
-            resume: None,
-            permission: caller.permission,
-            extra_args: caller.extra_args,
-            handoff: caller.handoff,
-            extra: serde_json::Map::new(),
-        })
-    }
-
-    /// The compare-and-swap set the request carries: the record as read.
-    pub(crate) fn expected(&self) -> OverseerExpected {
-        let get = |key: &str| self.raw.get(key).cloned().unwrap_or(Value::Null);
-        OverseerExpected {
-            server: get("server"),
-            server_start: get("server_start"),
-            pane: get("pane"),
-            // The typed fields of the record are not in `raw`.
-            generation: self.generation.map_or(Value::Null, Value::from),
-            launch_line: get("launch_line"),
-            cwd: get("cwd"),
-            session_id: None,
-            pending: self
-                .pending
-                .as_ref()
-                .and_then(|p| serde_json::to_value(p).ok())
-                .unwrap_or(Value::Null),
-        }
     }
 }
 
@@ -1427,7 +973,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             None,
         );
     }
-    let Some(record) = Record::read(pass.fleet) else {
+    let Some(record) = Record::read(pass.fleet.overseer.as_ref()) else {
         return judged(
             Verdict::Unwatched {
                 cause: "record-unnamed",
@@ -2060,7 +1606,9 @@ fn transfer(
                         exclude: vec![spent.to_owned()],
                         max_pct: None,
                         min_headroom_pct: None,
-                        source: Some(crate::ops::successor::source(&caller, harness)),
+                        source: Some(agent_runtime::controller::successor::source(
+                            &caller, harness,
+                        )),
                         caller: Some(caller.walk_entry(harness)),
                         keep_unmeasured: false,
                     };
@@ -2425,7 +1973,7 @@ pub fn marks_verb(
         })
         .transpose()?
         .as_ref()
-        .and_then(Record::read)
+        .and_then(|fleet| Record::read(fleet.overseer.as_ref()))
         .ok_or_else(|| {
             crate::error::Error::from(agent_runtime::Error::refused(
                 "record-missing",
@@ -2471,7 +2019,7 @@ pub fn run_transfer(
     clock: &dyn agent_runtime::clock::Clock,
     mut request: RequestTransfer,
 ) -> crate::error::Result<String> {
-    crate::ops::successor::posture(&mut request.successor, settings)?;
+    agent_runtime::controller::successor::posture(&mut request.successor, &settings.launch)?;
     let mut request = crate::ops::Request::RequestTransfer(Box::new(request));
     let held_brief = crate::ops::successor::overseer_defaults(&mut request, path, settings)?;
     crate::ops::admit(&request, settings)?;
@@ -2484,9 +2032,9 @@ pub fn run_transfer(
         unreachable!("a transfer request reports its transfer")
     };
     let intent = match &report.effect {
-        crate::ops::Effect::Persisted { intent }
-        | crate::ops::Effect::Reconciled { intent }
-        | crate::ops::Effect::Supersedes { intent } => intent.id.clone(),
+        agent_runtime::journal::Effect::Persisted { intent }
+        | agent_runtime::journal::Effect::Reconciled { intent }
+        | agent_runtime::journal::Effect::Supersedes { intent } => intent.id.clone(),
     };
     crate::effects::run(
         path,

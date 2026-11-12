@@ -2,6 +2,7 @@
 //! open, the keys a succession writes, compares and drops, the record as a
 //! succession reads it, the watch job it names, why a succession was
 //! asked for, and the adoption of a controller this runtime did not launch.
+//! The transitions over that record are [`transition`]'s.
 
 use std::path::PathBuf;
 
@@ -10,6 +11,17 @@ use serde_json::{Map, Value};
 
 use crate::launch::Permission;
 use crate::process::Identity;
+
+pub mod effect;
+pub mod successor;
+#[cfg(test)]
+mod testing;
+pub mod transition;
+pub mod views;
+
+/// The record's member that holds the controller: every read and write of
+/// it in this crate names it through this one constant.
+pub const MEMBER: &str = "overseer";
 
 /// The successor a succession is about to open, `overseer.pending`: the
 /// identity fields the record carries, the typed launch fields the runtime

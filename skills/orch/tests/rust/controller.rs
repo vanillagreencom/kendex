@@ -7991,9 +7991,10 @@ fn a_live_succession_is_admitted_only_on_its_generations_snapshot() {
 /// time the planted account's reset stands at, is compared by presence.
 #[test]
 fn the_hook_suites_plant_the_marks_verbs_own_replies() {
+    use agent_runtime::controller::views::Caller;
     use agent_runtime::process::{Identity, Memory};
     use agent_runtime::reading::Reading;
-    use orch_runtime::watch::overseer::{Caller, MarksAsk, judge_marks};
+    use orch_runtime::watch::overseer::{MarksAsk, judge_marks};
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../hooks/tests/fixtures/marks-replies.json");
     let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
@@ -8433,9 +8434,10 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
 /// mark is never judged.
 #[test]
 fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
+    use agent_runtime::controller::views::{Caller, MarkKind};
     use agent_runtime::process::{Identity, Memory, memory_of};
     use agent_runtime::reading::Reading;
-    use orch_runtime::watch::overseer::{Caller, MarkKey, MarkKind, MarksAsk, judge_marks};
+    use orch_runtime::watch::overseer::{MarkKey, MarksAsk, judge_marks};
     let mut world = MarksWorld::new();
     world.plant(None, &[measured_account("eclaude", 10)]);
     world.write_fleet(&world.dir("eclaude"));
@@ -9241,14 +9243,14 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
 /// `Caller::successor_of` over the record as the fleet state holds it.
 fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
     use agent_runtime::accounts::walk::Chosen;
+    use agent_runtime::controller::views::{Caller, Record};
     use orch_runtime::state::{FleetState, Record as _};
-    use orch_runtime::watch::overseer::{Caller, Record};
     let path = runner
         .state_dir()
         .join(agent_runtime::record::FLEET_FILE_NAME);
     let snapshot = orch_runtime::state::load(&path).unwrap().unwrap();
     let fleet = FleetState::view(&path, &snapshot.doc).unwrap();
-    let record = Record::read(&fleet).expect("the recorded controller");
+    let record = Record::read(fleet.overseer.as_ref()).expect("the recorded controller");
     let mut words = entry.split(':');
     let (harness, model, effort) = (
         words.next().unwrap(),

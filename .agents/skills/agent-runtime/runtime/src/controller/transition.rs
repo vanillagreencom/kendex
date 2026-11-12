@@ -10,25 +10,24 @@
 //! restore the pending a failed request overwrote, keep a waiting runner, or
 //! record `off`.
 
-use agent_runtime::controller::{
-    OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending, SUCCESSOR_BINDING_KEYS,
-    SUCCESSOR_IDENTITY_KEYS, TransferCause,
-};
-use agent_runtime::record::{self, Document};
 use std::path::{Path, PathBuf};
 
-use agent_runtime::protocol::Outcome;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-use super::{Effect, Request, TargetMoved, null_held, string_or_null};
+use super::{
+    MEMBER, OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending,
+    SUCCESSOR_BINDING_KEYS, SUCCESSOR_IDENTITY_KEYS, TransferCause,
+};
 use crate::error::{Error, Result};
-use agent_runtime::journal::{self, Env, RecordOutcome, intents, new_intent, push_intent};
-use agent_runtime::settings::Succession;
-
-use crate::settings::Settings;
-use agent_runtime::intent::EffectOp;
-use agent_runtime::intent::Intent;
+use crate::intent::{EffectOp, Intent, Reconciled};
+use crate::journal::{
+    self, ClaimIntent, Effect, Env, IntentClaimed, ProgressRecorded, RecordOutcome, RecordProgress,
+    intents, new_intent, push_intent,
+};
+use crate::protocol::Outcome;
+use crate::record::{self, Document, Locking, null_held};
+use crate::settings::{ControllerSettings, Succession};
 
 /// The overseer record the requester saw: the succession compare-and-swap
 /// set. A key left out compares as `null`, which is what
@@ -254,32 +253,34 @@ pub struct StopRequested {
     pub effect: Effect,
 }
 
-/// What the settings admit before any transition runs: the keys the
-/// request's live effect reads ([`judge_effect_settings`]); a
-/// `request-transfer` under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` refuses
-/// `succession-off` and persists nothing; a live one also needs its
-/// predecessor's current snapshot ([`handoff_current`]).
-pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
-    judge_effect_settings(request, settings)?;
-    if let Request::RequestTransfer(_) = request
-        && settings.controller.succession.get()? == Succession::Off
-    {
+/// A typed member's value as the record holds it.
+fn value(path: &Path, member: impl Serialize) -> Result<Value> {
+    serde_json::to_value(member).map_err(|source| Error::Json {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// What a transfer admits before any transition runs: under
+/// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` it refuses `succession-off` and
+/// persists nothing; it names its brief and its handoff ([`brief_named`]);
+/// a live one also needs its predecessor's current snapshot
+/// ([`handoff_current`]).
+pub fn admit_transfer(r: &RequestTransfer, settings: &ControllerSettings) -> Result<()> {
+    if settings.succession.get()? == Succession::Off {
         return Err(Error::SuccessionOff);
     }
-    let named = match request {
-        Request::RequestTransfer(r) => Some((&r.successor, &r.brief_file)),
-        Request::StartController(r) => Some((&r.controller, &r.brief_file)),
-        _ => None,
-    };
-    if let Some((pending, brief_file)) = named {
-        brief_named(pending, brief_file.as_deref())?;
-    }
-    if let Request::RequestTransfer(r) = request
-        && r.cause == TransferCause::Live
-    {
+    brief_named(&r.successor, r.brief_file.as_deref())?;
+    if r.cause == TransferCause::Live {
         handoff_current(r)?;
     }
     Ok(())
+}
+
+/// What a start admits before any transition runs: its brief and its
+/// handoff named ([`brief_named`]).
+pub fn admit_start(r: &StartController) -> Result<()> {
+    brief_named(&r.controller, r.brief_file.as_deref())
 }
 
 /// A controller opens on the brief its opener names and the handoff its
@@ -287,81 +288,14 @@ pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
 /// transfer naming none is refused `brief-missing` naming the field, before
 /// any intent.
 fn brief_named(pending: &Pending, brief_file: Option<&Path>) -> Result<()> {
-    let missing = |field: &str| agent_runtime::Error::refused("brief-missing", &[("field", field)]);
+    let missing = |field: &str| Error::refused("brief-missing", &[("field", field)]);
     if brief_file.is_none() {
-        return Err(missing("brief_file").into());
+        return Err(missing("brief_file"));
     }
     if pending.handoff.is_none() {
-        return Err(missing("handoff").into());
+        return Err(missing("handoff"));
     }
     Ok(())
-}
-
-/// The keys a request's effect reads, judged before its intent persists and
-/// again by its job before the claim, so no intent stands under a value its
-/// effect would refuse: every live effect's bounds, posture and harness
-/// programs; a controller launch's question dialog; a lane launch's output
-/// mode; a job's claim bound; a lane close's grace. A request with no effect
-/// reads none of them.
-pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
-    let effect = |controller_launch: bool, job: bool| -> Result<()> {
-        settings.engine.verify.get()?;
-        settings.close_grace.get()?;
-        settings.launch.permission.get()?;
-        settings.engine.harness_binaries.get()?;
-        if controller_launch {
-            settings.controller.question_tool.get()?;
-        }
-        if job {
-            settings.engine.claim.get()?;
-        }
-        Ok(())
-    };
-    match request {
-        Request::LaunchLane(_) => {
-            effect(false, false)?;
-            settings.lane_output.get()?;
-            Ok(())
-        }
-        Request::CloseOwnedResources(_) => effect(false, false),
-        Request::RequestTransfer(_) => effect(true, true),
-        Request::StartController(_) => effect(true, false),
-        Request::StopController(_) => effect(false, true),
-        Request::CloseLane(_) => {
-            settings.close_grace.get()?;
-            Ok(())
-        }
-        Request::AdoptSession(_)
-        | Request::BeginRound(_)
-        | Request::RecordValidationAdmission(_)
-        | Request::AdoptController(_)
-        | Request::ClaimIntent(_)
-        | Request::AcceptResult(_)
-        | Request::RecordVerification(_)
-        | Request::VerifyHead(_)
-        | Request::VerifyPr(_)
-        | Request::VerifyReview(_)
-        | Request::ApproveHead(_)
-        | Request::ReconcileRound(_)
-        | Request::RecordHandoff(_)
-        | Request::ResumeHandoff(_)
-        | Request::ParkLane(_)
-        | Request::ReserveLane(_)
-        | Request::ReleaseLane(_)
-        | Request::RecordOutcome(_)
-        | Request::RecordPhase(_)
-        | Request::RecordProgress(_)
-        | Request::RecordLaneProgress(_)
-        | Request::RecordDirectiveSend(_)
-        | Request::RecordWallPauses(_)
-        | Request::AdmitPaths(_)
-        | Request::PruneRecords(_)
-        | Request::Validate(_)
-        | Request::RecordQueueWatch(_)
-        | Request::RecordPush(_)
-        | Request::PruneRound(_)
-        | Request::RecordQaDecision(_) => Ok(()),
-    }
 }
 
 /// The successor's pane and server a transfer confirmation names, or
@@ -380,11 +314,9 @@ fn successor_binding<'a>(intent: &str, r: &'a RecordOutcome) -> Result<(&'a str,
 }
 
 /// The overseer view and its document, or `overseer-missing`.
-pub(super) fn overseer(path: &Path, doc: &Document) -> Result<Overseer> {
-    record::field::<Overseer>(path, doc, "overseer")?.ok_or_else(|| {
-        Error::Runtime(agent_runtime::Error::OverseerMissing {
-            path: path.to_path_buf(),
-        })
+pub fn overseer(path: &Path, doc: &Document) -> Result<Overseer> {
+    record::field::<Overseer>(path, doc, MEMBER)?.ok_or_else(|| Error::OverseerMissing {
+        path: path.to_path_buf(),
     })
 }
 
@@ -397,11 +329,11 @@ fn no_other_controller_intent(intents: &[Intent], op: EffectOp, target: &str) ->
         .iter()
         .find(|i| i.open() && i.op.on_controller() && (i.op != op || i.target != target))
     {
-        Some(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
+        Some(intent) => Err(Error::IntentOpen {
             intent: intent.id.clone(),
             op: intent.op.word(),
             target: intent.target.clone(),
-        })),
+        }),
         None => Ok(()),
     }
 }
@@ -480,15 +412,14 @@ fn handoff_current(r: &RequestTransfer) -> Result<()> {
     if found == expected {
         return Ok(());
     }
-    Err(agent_runtime::Error::refused(
+    Err(Error::refused(
         "handoff-stale",
         &[
             ("path", &file.display().to_string()),
             ("expected", &expected),
             ("found", &found),
         ],
-    )
-    .into())
+    ))
 }
 
 /// What a cause requires of the request beyond the compare-and-swap.
@@ -540,12 +471,12 @@ fn check_cause(r: &RequestTransfer, current: &Overseer) -> Result<()> {
 /// nothing launches.
 fn pending_harness(pending: &Pending) -> Result<()> {
     if let Some(word) = &pending.harness {
-        agent_runtime::harness::Harness::named(word)?;
+        crate::harness::Harness::named(word)?;
     }
     Ok(())
 }
 
-pub(super) fn request_transfer(
+pub fn request_transfer(
     path: &Path,
     doc: &mut Document,
     r: &RequestTransfer,
@@ -572,7 +503,7 @@ pub(super) fn request_transfer(
     // A model recovery's binding, judged in the same transition that
     // installs the pending, so a recovery whose authorization no longer
     // holds writes nothing.
-    let record = record::object_mut(path, doc, "overseer")?;
+    let record = record::object_mut(path, doc, MEMBER)?;
     if let Some(recovery) = &r.recovery
         && let Err(cause) = recovery_bound(record, recovery)
     {
@@ -605,7 +536,7 @@ pub(super) fn request_transfer(
             fields: changed,
         });
     }
-    record::set(record, "pending", serde_json::to_value(&r.successor)?);
+    record::set(record, "pending", value(path, &r.successor)?);
     let mut intent = new_intent(EffectOp::RequestTransfer, &target, env)?;
     intent.original_pending = Some(standing).filter(|v| !v.is_null());
     intent.cause = Some(r.cause);
@@ -617,14 +548,14 @@ pub(super) fn request_transfer(
     })
 }
 
-pub(super) fn start_controller(
+pub fn start_controller(
     path: &Path,
     doc: &mut Document,
     r: &StartController,
     env: &Env,
 ) -> Result<ControllerStarted> {
     pending_harness(&r.controller)?;
-    let current: Option<Overseer> = record::field(path, doc, "overseer")?;
+    let current: Option<Overseer> = record::field(path, doc, MEMBER)?;
     let generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let target = overseer_target(generation);
     let intents = intents(path, doc)?;
@@ -637,12 +568,12 @@ pub(super) fn start_controller(
     no_other_controller_intent(&intents, EffectOp::StartController, &target)?;
     // A fleet that never recorded a controller gets the object the first
     // launch publishes into; the confirmation writes generation 1.
-    if matches!(doc.get("overseer"), None | Some(Value::Null)) {
-        record::set(doc, "overseer", json!({}));
+    if matches!(doc.get(MEMBER), None | Some(Value::Null)) {
+        record::set(doc, MEMBER, json!({}));
     }
-    let record = record::object_mut(path, doc, "overseer")?;
+    let record = record::object_mut(path, doc, MEMBER)?;
     let standing = record.get("pending").cloned().unwrap_or(Value::Null);
-    record::set(record, "pending", serde_json::to_value(&r.controller)?);
+    record::set(record, "pending", value(path, &r.controller)?);
     let mut intent = new_intent(EffectOp::StartController, &target, env)?;
     intent.original_pending = Some(standing).filter(|v| !v.is_null());
     intent.watch = r.watch.clone();
@@ -653,7 +584,7 @@ pub(super) fn start_controller(
     })
 }
 
-pub(super) fn stop_controller(
+pub fn stop_controller(
     path: &Path,
     doc: &mut Document,
     _r: &StopController,
@@ -684,7 +615,7 @@ pub fn overseer_target(generation: u64) -> String {
 }
 
 /// The generation a controller intent's target names.
-pub(super) fn target_generation(target: &str) -> Option<u64> {
+pub fn target_generation(target: &str) -> Option<u64> {
     target.strip_prefix("overseer:")?.parse().ok()
 }
 
@@ -699,13 +630,13 @@ fn retired(observation: Option<&Value>) -> bool {
 /// The controller arms of `record-outcome`, on an overseer whose generation
 /// is still the one the intent names: a transfer or a start publishes,
 /// restores or keeps its runner; a stop records `off`.
-pub(super) fn record_controller_outcome(
+fn record_controller_outcome(
     path: &Path,
     doc: &mut Document,
     intent: &Intent,
     r: &RecordOutcome,
     at: &str,
-    recorded: &mut TargetMoved,
+    recorded: &mut Option<u64>,
 ) -> Result<()> {
     match intent.op {
         EffectOp::RequestTransfer | EffectOp::StartController => {
@@ -715,9 +646,9 @@ pub(super) fn record_controller_outcome(
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
             match r.outcome {
                 Outcome::Confirmed => {
-                    let record = record::object_mut(path, doc, "overseer")?;
+                    let record = record::object_mut(path, doc, MEMBER)?;
                     record::set(record, "off", json!({"at": at, "generation": generation}));
-                    recorded.generation = Some(generation);
+                    *recorded = Some(generation);
                 }
                 Outcome::Failed | Outcome::Unconfirmed | Outcome::NotStarted => {}
             }
@@ -738,13 +669,13 @@ fn record_transfer_outcome(
     doc: &mut Document,
     intent: &Intent,
     r: &RecordOutcome,
-    recorded: &mut TargetMoved,
+    recorded: &mut Option<u64>,
 ) -> Result<()> {
     match r.outcome {
         Outcome::Confirmed => {
             let (pane, server) = successor_binding(&intent.id, r)?;
             let generation = overseer(path, doc)?.generation.unwrap_or(0);
-            let record = record::object_mut(path, doc, "overseer")?;
+            let record = record::object_mut(path, doc, MEMBER)?;
             let Some(Value::Object(pending)) = record.get("pending").cloned() else {
                 return Err(Error::PendingMissing {
                     path: path.to_path_buf(),
@@ -778,7 +709,7 @@ fn record_transfer_outcome(
             // The watch a start launched or found claimed; a succession
             // carries none and the field stands as it was.
             if let Some(watch) = &r.watch {
-                record::set(record, "watch", serde_json::to_value(watch)?);
+                record::set(record, "watch", value(path, watch)?);
             }
             // The class and the posture the successor launched under, its
             // permission and its own words, and the `scope: unread` of an
@@ -837,7 +768,7 @@ fn record_transfer_outcome(
                 record::set(record, "harness_pid", pid);
                 record::set(record, "harness_start", start.as_str());
             }
-            recorded.generation = Some(generation + 1);
+            *recorded = Some(generation + 1);
         }
         Outcome::Failed => {
             // Failure before retirement leaves the predecessor in control
@@ -849,7 +780,7 @@ fn record_transfer_outcome(
             // Read retirement from this outcome's observation, not the
             // intent's stored one, which a reconcile overwrites.
             if !retired(r.observation.as_ref()) {
-                let record = record::object_mut(path, doc, "overseer")?;
+                let record = record::object_mut(path, doc, MEMBER)?;
                 match &intent.original_pending {
                     Some(original) => record::set(record, "pending", original.clone()),
                     None => {
@@ -857,7 +788,7 @@ fn record_transfer_outcome(
                     }
                 }
             }
-            recorded.generation = generation;
+            *recorded = generation;
         }
         Outcome::Unconfirmed => {
             // A failure after retirement: the predecessor is gone and a
@@ -868,10 +799,10 @@ fn record_transfer_outcome(
             if retired(r.observation.as_ref())
                 && let Some(runner) = &r.launch
             {
-                let record = record::object_mut(path, doc, "overseer")?;
+                let record = record::object_mut(path, doc, MEMBER)?;
                 if let Some(Value::Object(pending)) = record.get_mut("pending") {
                     let mut runner_obj = serde_json::Map::new();
-                    runner_obj.insert("pane".to_owned(), string_or_null(&runner.pane));
+                    runner_obj.insert("pane".to_owned(), json!(runner.pane));
                     runner_obj.insert(
                         "server".to_owned(),
                         runner.server.map(Value::from).unwrap_or(Value::Null),
@@ -880,13 +811,13 @@ fn record_transfer_outcome(
                         "pid".to_owned(),
                         runner.pid.map(Value::from).unwrap_or(Value::Null),
                     );
-                    runner_obj.insert("start".to_owned(), string_or_null(&runner.start));
+                    runner_obj.insert("start".to_owned(), json!(runner.start));
                     runner_obj.insert(
                         "server_start".to_owned(),
                         r.server_start.map(Value::from).unwrap_or(Value::Null),
                     );
-                    runner_obj.insert("socket".to_owned(), string_or_null(&r.server_socket));
-                    runner_obj.insert("session_id".to_owned(), string_or_null(&r.session_id));
+                    runner_obj.insert("socket".to_owned(), json!(r.server_socket));
+                    runner_obj.insert("session_id".to_owned(), json!(r.session_id));
                     pending.insert("runner".to_owned(), Value::Object(runner_obj));
                 }
             }
@@ -896,25 +827,198 @@ fn record_transfer_outcome(
     Ok(())
 }
 
+/// The controller arm of `record-outcome`, by the generation its intent
+/// names: on the controller still at that generation a transfer or a start
+/// publishes, restores or keeps its runner and a stop records `off`, the
+/// generation it moved written into `target`; on one that moved, the
+/// generation observed is noted on `intent` and a terminal word closes it
+/// stale.
+pub fn outcome_arm(
+    path: &Path,
+    doc: &mut Document,
+    intent: &mut Intent,
+    r: &RecordOutcome,
+    at: &str,
+    terminal: bool,
+    target: &mut Map<String, Value>,
+) -> Result<Option<Reconciled>> {
+    let generation = overseer(path, doc)?.generation.unwrap_or(0);
+    if target_generation(&intent.target) != Some(generation) {
+        intent.observed_generation = Some(generation);
+        return Ok(terminal.then_some(Reconciled::IntentStale));
+    }
+    let mut moved = None;
+    record_controller_outcome(path, doc, intent, r, at, &mut moved)?;
+    if let Some(generation) = moved {
+        target.insert("generation".to_owned(), Value::from(generation));
+    }
+    Ok(None)
+}
+
+/// One controller request, tagged by `op`: the three transitions, and the
+/// journal's claim, progress and outcome writes on a controller intent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "kebab-case")]
+pub enum Request {
+    RequestTransfer(Box<RequestTransfer>),
+    StartController(Box<StartController>),
+    StopController(StopController),
+    ClaimIntent(ClaimIntent),
+    RecordProgress(Box<RecordProgress>),
+    RecordOutcome(Box<RecordOutcome>),
+}
+
+impl Request {
+    /// The request's `op` word.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Request::RequestTransfer(_) => "request-transfer",
+            Request::StartController(_) => "start-controller",
+            Request::StopController(_) => "stop-controller",
+            Request::ClaimIntent(_) => "claim-intent",
+            Request::RecordProgress(_) => "record-progress",
+            Request::RecordOutcome(_) => "record-outcome",
+        }
+    }
+}
+
+/// What a controller request admits before any transition runs: a
+/// transfer's admission ([`admit_transfer`]) and a start's
+/// ([`admit_start`]); the journal's writes admit as they stand.
+pub fn admit(request: &Request, settings: &ControllerSettings) -> Result<()> {
+    match request {
+        Request::RequestTransfer(r) => admit_transfer(r, settings),
+        Request::StartController(r) => admit_start(r),
+        Request::StopController(_)
+        | Request::ClaimIntent(_)
+        | Request::RecordProgress(_)
+        | Request::RecordOutcome(_) => Ok(()),
+    }
+}
+
+/// An outcome written onto its controller intent, and the generation it
+/// moved the record to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutcomeRecorded {
+    pub intent: Intent,
+    /// False when the same outcome was already recorded.
+    pub recorded_now: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+    /// Set when the outcome closed the intent without moving the record,
+    /// because the record had moved under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled: Option<Reconciled>,
+}
+
+impl OutcomeRecorded {
+    /// The report of the journal's outcome write through [`outcome_arm`].
+    pub fn of(written: journal::OutcomeWritten) -> OutcomeRecorded {
+        OutcomeRecorded {
+            generation: written.target.get("generation").and_then(Value::as_u64),
+            intent: written.intent,
+            recorded_now: written.recorded_now,
+            reconciled: written.reconciled,
+        }
+    }
+}
+
+/// The typed result of one committed controller request, tagged like it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "kebab-case")]
+pub enum Report {
+    RequestTransfer(Box<TransferRequested>),
+    StartController(Box<ControllerStarted>),
+    StopController(Box<StopRequested>),
+    ClaimIntent(Box<IntentClaimed>),
+    RecordProgress(Box<ProgressRecorded>),
+    RecordOutcome(Box<OutcomeRecorded>),
+}
+
+/// The controller request on the record's document, inside the caller's
+/// one commit.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the controller requests' application of the journal's claim, progress and outcome transitions"
+)]
+pub fn transition(path: &Path, doc: &mut Document, request: &Request, env: &Env) -> Result<Report> {
+    Ok(match request {
+        Request::RequestTransfer(r) => {
+            Report::RequestTransfer(Box::new(request_transfer(path, doc, r, env)?))
+        }
+        Request::StartController(r) => {
+            Report::StartController(Box::new(start_controller(path, doc, r, env)?))
+        }
+        Request::StopController(r) => {
+            Report::StopController(Box::new(stop_controller(path, doc, r, env)?))
+        }
+        Request::ClaimIntent(r) => {
+            Report::ClaimIntent(Box::new(journal::claim_intent(path, doc, r, env)?))
+        }
+        Request::RecordProgress(r) => {
+            Report::RecordProgress(Box::new(journal::record_progress(path, doc, r)?))
+        }
+        Request::RecordOutcome(r) => Report::RecordOutcome(Box::new(OutcomeRecorded::of(
+            journal::record_outcome(path, doc, r, env, outcome_arm)?,
+        ))),
+    })
+}
+
+/// Apply one controller request to the record at `path` under its lock. A
+/// launcher-side progress or outcome write, which writes only while its
+/// owner still holds the intent, and the job's claim are read again on a
+/// record another writer moved between the read and the store, so a claim
+/// that landed in the gap is answered with the claimant's state.
+pub fn apply(path: &Path, request: &Request, env: &Env, locking: Locking) -> Result<Report> {
+    apply_interleaved(path, request, env, locking, &|| {})
+}
+
+/// [`apply`] with `between` run after the transition and before the store
+/// on each attempt: the seam a row uses to land another writer's commit in
+/// the gap. Production passes a no-op.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the controller requests' one store write, the journal's commit"
+)]
+pub(super) fn apply_interleaved(
+    path: &Path,
+    request: &Request,
+    env: &Env,
+    locking: Locking,
+    between: &dyn Fn(),
+) -> Result<Report> {
+    let commit = || {
+        journal::commit(path, locking, between, |doc| {
+            transition(path, doc, request, env)
+        })
+    };
+    let reread = match request {
+        Request::RecordProgress(r) => r.while_owner.is_some(),
+        Request::RecordOutcome(r) => r.while_owner.is_some(),
+        Request::ClaimIntent(_) => true,
+        Request::RequestTransfer(_) | Request::StartController(_) | Request::StopController(_) => {
+            false
+        }
+    };
+    if reread {
+        return record::reread(commit, Error::key);
+    }
+    commit()
+}
+
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
     reason = "the rows drive the store through its entry points"
 )]
 mod tests {
-    use agent_runtime::intent::{LaunchIdentity, Notice};
     use std::fs;
 
-    use agent_runtime::intent::ObligationRecord;
-    use agent_runtime::journal::{ClaimIntent, Progress, RecordProgress};
-    use agent_runtime::protocol::Outcome;
-    use serde_json::{Value, json};
+    use crate::intent::{LaunchIdentity, Notice, ObligationRecord};
+    use crate::journal::Progress;
 
     use super::super::testing::*;
     use super::*;
-    use crate::error::Error;
-    use crate::ops::{Effect, Report, Request};
-    use crate::state::fixtures;
 
     /// The compare-and-swap judges the recorded identity set, and a standing
     /// `pending` the requester names is overwritten and kept for restore.
@@ -922,7 +1026,7 @@ mod tests {
     fn request_transfer_compares_the_recorded_identity_set() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let drifted = fixtures::FLEET
+        let drifted = FLEET
             .replacen("\"pane\": \"%7\"", "\"pane\": \"%9\"", 1)
             .replacen("\"server\": \"41020\"", "\"server\": \"41999\"", 1);
         fs::write(&path, &drifted).unwrap();
@@ -934,7 +1038,7 @@ mod tests {
         assert!(fleet(&path).intents.is_empty());
         assert!(fleet(&path).overseer.unwrap().pending.is_none());
 
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         let mut wrong_generation = expected();
         wrong_generation.generation = json!(2);
         let err = run(&path, &transfer(wrong_generation)).unwrap_err();
@@ -967,7 +1071,7 @@ mod tests {
         assert_eq!(overseer.pending, Some(successor()));
         assert_eq!(overseer.generation, Some(3));
         assert_eq!(overseer.extra["pane"], Value::from("%7"));
-        let overseer_keys = keys(before["overseer"].as_object().unwrap());
+        let overseer_keys = keys(before[MEMBER].as_object().unwrap());
         assert_eq!(overseer_keys.last().unwrap(), "pending", "appended");
         // The repeat reconciles the open intent.
         let again = run(&path, &transfer(expected())).unwrap();
@@ -979,7 +1083,7 @@ mod tests {
 
         // A pending another writer left: the requester must name it, and the
         // original is kept on the intent for restore.
-        let standing = fixtures::FLEET.replacen(
+        let standing = FLEET.replacen(
             "\"generation\": 3,",
             "\"generation\": 3, \"pending\": {\"harness\": \"codex\"},",
             1,
@@ -1003,15 +1107,15 @@ mod tests {
         assert_eq!(fleet(&path).overseer.unwrap().pending, Some(successor()));
         // The failed transfer puts the original back.
         run(&path, &outcome(&intent.id, Outcome::Failed)).unwrap();
-        let overseer = object(&path)["overseer"].clone();
+        let overseer = object(&path)[MEMBER].clone();
         assert_eq!(overseer["pending"], json!({"harness": "codex"}));
         assert_eq!(overseer["generation"], json!(3));
 
-        let no_overseer = fixtures::FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+        let no_overseer = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
         fs::write(&path, no_overseer).unwrap();
         let err = run(&path, &transfer(expected())).unwrap_err();
         assert_eq!(err.key(), "overseer-missing");
-        assert_eq!(err.fields()[0].0, "path");
+        assert_eq!(crate::protocol::Refusal::from(&err).fields[0].0, "path");
     }
 
     /// A transfer request under each cause and what the transition
@@ -1035,7 +1139,7 @@ mod tests {
         };
         // dead: the standing pending is not compared, and is the original
         // kept for restore.
-        let standing = fixtures::FLEET.replacen(
+        let standing = FLEET.replacen(
             "\"generation\": 3,",
             "\"generation\": 3, \"pending\": {\"harness\": \"codex\", \"launch_line\": \"held\"},",
             1,
@@ -1060,7 +1164,7 @@ mod tests {
         );
         // walled: the spent account is required; a successor resolving to
         // it, by the canonical directory, refuses and writes nothing.
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         let before = fs::read_to_string(&path).unwrap();
         let err = run(&path, &with(TransferCause::Walled, |_| {})).unwrap_err();
         assert!(
@@ -1108,7 +1212,7 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].cause, Some(TransferCause::Walled));
         // refused-recovery: the handoff's session is required and must be
         // the recorded controller's.
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         let err = run(&path, &with(TransferCause::RefusedRecovery, |_| {})).unwrap_err();
         assert_eq!(err.key(), "transfer-field-missing");
         let err = run(
@@ -1135,7 +1239,7 @@ mod tests {
         };
         assert!(matches!(&t.effect, Effect::Persisted { .. }));
         // off: every cause refuses, and nothing is written.
-        let off = fixtures::FLEET.replacen(
+        let off = FLEET.replacen(
             "\"generation\": 3,",
             "\"generation\": 3, \"off\": {\"at\": \"2026-10-26T10:00:00Z\", \"generation\": 3},",
             1,
@@ -1170,21 +1274,11 @@ mod tests {
     #[test]
     fn succession_off_admits_everything_but_a_transfer() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().to_path_buf(),
-            common: dir.path().to_path_buf(),
-        };
-        let flags = crate::settings::Flags {
-            state_dir: None,
-            private_env: false,
-        };
-        let off = crate::settings::load(
-            &roots,
-            &[("AGENT_RUNTIME_CONTROLLER_SUCCESSION".into(), "off".into())],
-            &flags,
-        )
-        .unwrap();
-        let on = crate::settings::load(&roots, &[], &flags).unwrap();
+        let off = settings(
+            dir.path(),
+            &[("AGENT_RUNTIME_CONTROLLER_SUCCESSION", "off")],
+        );
+        let on = settings(dir.path(), &[]);
         let err = admit(&transfer(expected()), &off).unwrap_err();
         assert_eq!(err.key(), "succession-off");
         let Request::RequestTransfer(mut dead) = transfer(expected()) else {
@@ -1194,7 +1288,6 @@ mod tests {
         admit(&briefed(Request::RequestTransfer(dead)), &on).unwrap();
         admit(&briefed(start()), &off).unwrap();
         admit(&stop(), &off).unwrap();
-        admit(&launch("KEN-1"), &off).unwrap();
     }
 
     /// `request` whose pending names the handoff its brief names.
@@ -1227,15 +1320,7 @@ mod tests {
     #[test]
     fn a_start_or_transfer_naming_no_brief_or_handoff_is_refused_brief_missing() {
         let dir = tempfile::tempdir().unwrap();
-        let roots = agent_runtime::settings::Roots {
-            project: dir.path().to_path_buf(),
-            common: dir.path().to_path_buf(),
-        };
-        let flags = crate::settings::Flags {
-            state_dir: None,
-            private_env: false,
-        };
-        let settings = crate::settings::load(&roots, &[], &flags).unwrap();
+        let settings = settings(dir.path(), &[]);
         let Request::RequestTransfer(mut dead) = transfer(expected()) else {
             unreachable!("transfer builds a request-transfer")
         };
@@ -1302,7 +1387,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         // No controller recorded.
-        let bare = fixtures::FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
+        let bare = FLEET.replacen("\"overseer\"", "\"overseer_was\"", 1);
         fs::write(&path, &bare).unwrap();
         let applied = run(&path, &start()).unwrap();
         let Report::StartController(s) = &applied.report else {
@@ -1324,7 +1409,7 @@ mod tests {
         assert!(matches!(&s.effect, Effect::Reconciled { .. }));
         assert_eq!(run(&path, &stop()).unwrap_err().key(), "intent-open");
         run(&path, &outcome(&intent.id, Outcome::Confirmed)).unwrap();
-        let published = object(&path)["overseer"].clone();
+        let published = object(&path)[MEMBER].clone();
         assert_eq!(published["generation"], json!(1));
         assert_eq!(published["harness"], json!("codex"));
         assert_eq!(published["pane"], json!("%12"));
@@ -1332,7 +1417,7 @@ mod tests {
         assert!(published.get("pending").is_none());
         // Over a recorded, off controller with a pending standing: the
         // pending is held for restore, and the confirmation clears `off`.
-        let off = fixtures::FLEET.replacen(
+        let off = FLEET.replacen(
             "\"generation\": 3,",
             "\"generation\": 3, \"off\": {\"at\": \"2026-10-26T10:00:00Z\", \"generation\": 3}, \"pending\": {\"harness\": \"codex\"},",
             1,
@@ -1352,12 +1437,12 @@ mod tests {
             "intent-open"
         );
         run(&path, &outcome(&intent.id, Outcome::Failed)).unwrap();
-        let restored = object(&path)["overseer"].clone();
+        let restored = object(&path)[MEMBER].clone();
         assert_eq!(restored["pending"], json!({"harness": "codex"}));
         assert!(restored.get("off").is_some(), "a failed start leaves off");
         let id = intend(&path, &start());
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
-        let published = object(&path)["overseer"].clone();
+        let published = object(&path)[MEMBER].clone();
         assert_eq!(published["generation"], json!(4));
         assert!(
             published.get("off").is_none(),
@@ -1365,11 +1450,11 @@ mod tests {
         );
         // A stop over an open transfer refuses, and a transfer over an open
         // stop refuses.
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         run(&path, &transfer(expected())).unwrap();
         assert_eq!(run(&path, &stop()).unwrap_err().key(), "intent-open");
         assert_eq!(run(&path, &start()).unwrap_err().key(), "intent-open");
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         run(&path, &stop()).unwrap();
         assert_eq!(
             run(&path, &transfer(expected())).unwrap_err().key(),
@@ -1384,16 +1469,16 @@ mod tests {
     fn a_confirmed_stop_records_off_and_a_recovery_then_refuses() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
-        let before = object(&path)["overseer"].clone();
+        let before = object(&path)[MEMBER].clone();
         let id = intend(&path, &stop());
         run(&path, &outcome(&id, Outcome::Unconfirmed)).unwrap();
-        assert_eq!(object(&path)["overseer"], before);
+        assert_eq!(object(&path)[MEMBER], before);
         let applied = run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
         let Report::RecordOutcome(r) = &applied.report else {
             panic!()
         };
         assert_eq!(r.generation, Some(3));
-        let after = object(&path)["overseer"].clone();
+        let after = object(&path)[MEMBER].clone();
         assert_eq!(
             after["off"],
             json!({"at": "2026-01-29T15:20:00Z", "generation": 3})
@@ -1407,12 +1492,12 @@ mod tests {
         r.cause = TransferCause::Dead;
         let err = run(&path, &Request::RequestTransfer(r)).unwrap_err();
         assert_eq!(err.key(), "controller-off");
-        assert_eq!(object(&path)["overseer"], after, "nothing written");
+        assert_eq!(object(&path)[MEMBER], after, "nothing written");
         // A failed stop records nothing either.
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         let id = intend(&path, &stop());
         run(&path, &outcome(&id, Outcome::Failed)).unwrap();
-        assert_eq!(object(&path)["overseer"], before);
+        assert_eq!(object(&path)[MEMBER], before);
     }
 
     /// The detached job takes the intent's owner lease by
@@ -1425,13 +1510,13 @@ mod tests {
         let id = intend(&path, &transfer(expected()));
         assert_eq!(fleet(&path).intents[0].owner, Some(owner()));
         let job = Env {
-            owner: Some(agent_runtime::intent::Owner {
+            owner: Some(crate::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
             ..env()
         };
-        let applied = crate::ops::apply(&path, &claim(&id), &job, LOCK).unwrap();
+        let applied = apply_as(&path, &claim(&id), &job, LOCK).unwrap();
         let Report::ClaimIntent(c) = &applied.report else {
             panic!()
         };
@@ -1440,7 +1525,7 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].owner.as_ref().unwrap().pid, 777);
         assert_eq!(fleet(&path).intents[0].handed_from, Some(owner()));
         assert_eq!(
-            crate::ops::apply(&path, &claim("nope"), &job, LOCK)
+            apply_as(&path, &claim("nope"), &job, LOCK)
                 .unwrap_err()
                 .key(),
             "intent-unknown"
@@ -1450,13 +1535,13 @@ mod tests {
             ..env()
         };
         assert_eq!(
-            crate::ops::apply(&path, &claim(&id), &unowned, LOCK)
+            apply_as(&path, &claim(&id), &unowned, LOCK)
                 .unwrap_err()
                 .key(),
             "owner-unreadable"
         );
         // A phase recorded: the prior owner opened something.
-        let opened = agent_runtime::intent::OpenedPane {
+        let opened = crate::intent::OpenedPane {
             pane: "%12".into(),
             server: 41020,
             server_start: 1_769_590_000,
@@ -1472,24 +1557,25 @@ mod tests {
         };
         run(
             &path,
-            &Request::RecordPhase(crate::ops::RecordPhase {
+            &Request::RecordProgress(Box::new(RecordProgress {
                 intent_id: id.clone(),
-                phase: agent_runtime::intent::Phase::WindowOpened { opened },
-            }),
+                phase: Some(crate::intent::Phase::WindowOpened { opened }),
+                obligations: None,
+                while_owner: None,
+                notice: None,
+            })),
         )
         .unwrap();
         let before = fs::read_to_string(&path).unwrap();
-        let err = crate::ops::apply(&path, &claim(&id), &job, LOCK).unwrap_err();
+        let err = apply_as(&path, &claim(&id), &job, LOCK).unwrap_err();
         assert!(
-            matches!(&err, Error::Runtime(agent_runtime::Error::IntentStarted { id: i }) if *i == id),
+            matches!(&err, Error::IntentStarted { id: i } if *i == id),
             "{err:?}"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
         run(&path, &outcome(&id, Outcome::Failed)).unwrap();
         assert_eq!(
-            crate::ops::apply(&path, &claim(&id), &job, LOCK)
-                .unwrap_err()
-                .key(),
+            apply_as(&path, &claim(&id), &job, LOCK).unwrap_err().key(),
             "intent-complete"
         );
     }
@@ -1504,11 +1590,11 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let set = |revision: u64| ObligationRecord {
-            standing: vec![agent_runtime::intent::Held {
-                obligation: agent_runtime::intent::Obligation::JobSidecar {
+            standing: vec![crate::intent::Held {
+                obligation: crate::intent::Obligation::JobSidecar {
                     record: "/fleet/intents/transfer.job".to_owned(),
                 },
-                role: Some(agent_runtime::intent::Role::Job),
+                role: Some(crate::intent::Role::Job),
                 harness: None,
             }],
             discharged: Vec::new(),
@@ -1516,7 +1602,7 @@ mod tests {
             revision,
             ..Default::default()
         };
-        let write = |set: ObligationRecord, while_owner: Option<agent_runtime::intent::Owner>| {
+        let write = |set: ObligationRecord, while_owner: Option<crate::intent::Owner>| {
             Request::RecordProgress(Box::new(RecordProgress {
                 intent_id: id.clone(),
                 phase: None,
@@ -1525,30 +1611,26 @@ mod tests {
                 notice: None,
             }))
         };
-        let progress = |applied: crate::ops::Applied| match applied.report {
+        let progress = |applied: Applied| match applied.report {
             Report::RecordProgress(r) => r,
             _ => panic!("a progress report"),
         };
-        let first = progress(
-            crate::ops::apply(&path, &write(set(0), Some(owner())), &env(), LOCK).unwrap(),
-        );
+        let first = progress(apply_as(&path, &write(set(0), Some(owner())), &env(), LOCK).unwrap());
         assert_eq!(first.progress, Progress::Recorded);
         let revision = first.intent.obligations.as_ref().unwrap().revision;
-        let again = progress(
-            crate::ops::apply(&path, &write(set(revision), Some(owner())), &env(), LOCK).unwrap(),
-        );
+        let again =
+            progress(apply_as(&path, &write(set(revision), Some(owner())), &env(), LOCK).unwrap());
         assert_eq!(
             again.progress,
             Progress::Unchanged,
             "the same set under the recorded owner is accepted without a write"
         );
-        let other = agent_runtime::intent::Owner {
+        let other = crate::intent::Owner {
             pid: 999,
             start: "ticks:999".into(),
         };
-        let yielded = progress(
-            crate::ops::apply(&path, &write(set(revision), Some(other)), &env(), LOCK).unwrap(),
-        );
+        let yielded =
+            progress(apply_as(&path, &write(set(revision), Some(other)), &env(), LOCK).unwrap());
         assert_eq!(
             yielded.progress,
             Progress::Yielded { owner: owner() },
@@ -1568,13 +1650,13 @@ mod tests {
         let id = intend(&path, &transfer(expected()));
         // The job claims: the owner moves from the launcher's to the job's.
         let job = Env {
-            owner: Some(agent_runtime::intent::Owner {
+            owner: Some(crate::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
             ..env()
         };
-        crate::ops::apply(&path, &claim(&id), &job, LOCK).unwrap();
+        apply_as(&path, &claim(&id), &job, LOCK).unwrap();
         let claimed = fleet(&path)
             .intents
             .into_iter()
@@ -1584,11 +1666,11 @@ mod tests {
             .clone();
         // The launcher, still naming the intent's original owner, writes a
         // different set and then a failed outcome: both are no-ops.
-        let sidecar = || agent_runtime::intent::Held {
-            obligation: agent_runtime::intent::Obligation::JobSidecar {
+        let sidecar = || crate::intent::Held {
+            obligation: crate::intent::Obligation::JobSidecar {
                 record: "/fleet/intents/transfer.job".to_owned(),
             },
-            role: Some(agent_runtime::intent::Role::Job),
+            role: Some(crate::intent::Role::Job),
             harness: None,
         };
         let launcher_set = ObligationRecord {
@@ -1604,7 +1686,7 @@ mod tests {
             while_owner: Some(owner()),
             notice: None,
         }));
-        crate::ops::apply(&path, &progress, &env(), LOCK).unwrap();
+        apply_as(&path, &progress, &env(), LOCK).unwrap();
         let fail = Request::RecordOutcome(Box::new(RecordOutcome {
             intent_id: id.clone(),
             outcome: Outcome::Failed,
@@ -1622,7 +1704,7 @@ mod tests {
             notice: None,
             set_revision: None,
         }));
-        crate::ops::apply(&path, &fail, &env(), LOCK).unwrap();
+        apply_as(&path, &fail, &env(), LOCK).unwrap();
         let after = fleet(&path)
             .intents
             .into_iter()
@@ -1654,7 +1736,7 @@ mod tests {
             }))
         };
         let current = claimed.as_ref().map_or(0, |c| c.revision);
-        crate::ops::apply(&path, &open_progress(current), &env(), LOCK).unwrap();
+        apply_as(&path, &open_progress(current), &env(), LOCK).unwrap();
         let after = fleet(&path)
             .intents
             .into_iter()
@@ -1675,14 +1757,14 @@ mod tests {
             current + 1,
             "the replacement took the next revision"
         );
-        let stale = crate::ops::apply(&path, &open_progress(current), &env(), LOCK).unwrap_err();
+        let stale = apply_as(&path, &open_progress(current), &env(), LOCK).unwrap_err();
         assert_eq!(stale.key(), "set-replaced", "{stale}");
         assert_eq!(
             fleet(&path).intents[0].obligations.as_ref(),
             Some(&landed),
             "a write at a stale revision lands nothing"
         );
-        crate::ops::apply(&path, &open_progress(replaced_at), &env(), LOCK).unwrap();
+        apply_as(&path, &open_progress(replaced_at), &env(), LOCK).unwrap();
         assert_eq!(
             fleet(&path).intents[0]
                 .obligations
@@ -1704,7 +1786,7 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let claimant = Env {
-            owner: Some(agent_runtime::intent::Owner {
+            owner: Some(crate::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -1714,11 +1796,11 @@ mod tests {
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
-                standing: vec![agent_runtime::intent::Held {
-                    obligation: agent_runtime::intent::Obligation::JobSidecar {
+                standing: vec![crate::intent::Held {
+                    obligation: crate::intent::Obligation::JobSidecar {
                         record: "/fleet/intents/transfer.job".to_owned(),
                     },
-                    role: Some(agent_runtime::intent::Role::Job),
+                    role: Some(crate::intent::Role::Job),
                     harness: None,
                 }],
                 ..Default::default()
@@ -1729,12 +1811,11 @@ mod tests {
         let once = std::cell::Cell::new(false);
         let claim_in_the_gap = || {
             if !once.replace(true) {
-                crate::ops::apply(&path, &claim(&id), &claimant, LOCK).unwrap();
+                apply_as(&path, &claim(&id), &claimant, LOCK).unwrap();
             }
         };
-        let applied =
-            crate::ops::apply_interleaved(&path, &request, &env(), LOCK, None, &claim_in_the_gap)
-                .expect("the claimant's state, not record-changed");
+        let applied = interleaved(&path, &request, &env(), LOCK, &claim_in_the_gap)
+            .expect("the claimant's state, not record-changed");
         let Report::RecordProgress(r) = &applied.report else {
             panic!("a progress report")
         };
@@ -1758,7 +1839,7 @@ mod tests {
         assert!(
             stored.obligations.as_ref().is_none_or(|o| !o
                 .standing_obligations()
-                .any(|o| matches!(o, agent_runtime::intent::Obligation::JobSidecar { .. }))),
+                .any(|o| matches!(o, crate::intent::Obligation::JobSidecar { .. }))),
             "the launcher's set never landed over the claim: {stored:?}"
         );
         assert!(once.get(), "the claim landed in the gap");
@@ -1773,7 +1854,7 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let job = Env {
-            owner: Some(agent_runtime::intent::Owner {
+            owner: Some(crate::intent::Owner {
                 pid: 777,
                 start: "ticks:777".into(),
             }),
@@ -1783,11 +1864,11 @@ mod tests {
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
-                standing: vec![agent_runtime::intent::Held {
-                    obligation: agent_runtime::intent::Obligation::JobSidecar {
+                standing: vec![crate::intent::Held {
+                    obligation: crate::intent::Obligation::JobSidecar {
                         record: "/fleet/intents/transfer.job".to_owned(),
                     },
-                    role: Some(agent_runtime::intent::Role::Job),
+                    role: Some(crate::intent::Role::Job),
                     harness: None,
                 }],
                 ..Default::default()
@@ -1798,18 +1879,11 @@ mod tests {
         let once = std::cell::Cell::new(false);
         let sidecar_in_the_gap = || {
             if !once.replace(true) {
-                crate::ops::apply(&path, &sidecar, &env(), LOCK).unwrap();
+                apply_as(&path, &sidecar, &env(), LOCK).unwrap();
             }
         };
-        let applied = crate::ops::apply_interleaved(
-            &path,
-            &claim(&id),
-            &job,
-            LOCK,
-            None,
-            &sidecar_in_the_gap,
-        )
-        .expect("the claim lands, not record-changed");
+        let applied = interleaved(&path, &claim(&id), &job, LOCK, &sidecar_in_the_gap)
+            .expect("the claim lands, not record-changed");
         let Report::ClaimIntent(c) = &applied.report else {
             panic!("a claim report")
         };
@@ -1827,10 +1901,7 @@ mod tests {
         assert!(
             obligations.discharged.iter().any(|d| {
                 d.by == "claimed"
-                    && matches!(
-                        d.obligation,
-                        agent_runtime::intent::Obligation::JobSidecar { .. }
-                    )
+                    && matches!(d.obligation, crate::intent::Obligation::JobSidecar { .. })
             }),
             "the launcher's sidecar handle is discharged by the claim: {obligations:?}"
         );
@@ -1846,7 +1917,7 @@ mod tests {
     /// The fixture fleet with a predecessor that died once and was
     /// model-checked: both records the successor's record must not carry.
     fn fleet_with_exit_and_model_check() -> String {
-        fixtures::FLEET.replacen(
+        FLEET.replacen(
             "    \"harness_start\": \"ticks:9912345\",\n",
             "    \"harness_start\": \"ticks:9912345\",\n    \"exit\": {\"at\": \"2026-10-24T21:00:00Z\", \"code\": 0},\n    \"model_check\": {\"at\": \"2026-10-24T20:30:00Z\", \"model\": \"claude-opus-5-5\"},\n",
             1,
@@ -1868,7 +1939,7 @@ mod tests {
         let path = fleet_file(dir.path());
         let text = fleet_with_exit_and_model_check();
         fs::write(&path, &text).unwrap();
-        let before = object(&path)["overseer"].as_object().unwrap().clone();
+        let before = object(&path)[MEMBER].as_object().unwrap().clone();
         assert!(before.contains_key("exit") && before.contains_key("model_check"));
         let id = intend(&path, &handed(transfer(expected())));
         let applied = run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -1876,7 +1947,7 @@ mod tests {
             panic!()
         };
         assert_eq!(r.generation, Some(4));
-        let after = object(&path)["overseer"].as_object().unwrap().clone();
+        let after = object(&path)[MEMBER].as_object().unwrap().clone();
         let published = json!({
             "runtime": "tmux",
             "generation": 4,
@@ -1920,7 +1991,7 @@ mod tests {
             &confirmed_with(&id, Some(identity("%20", 7000)), Some(1_769_600_000)),
         )
         .unwrap();
-        let after = object(&path)["overseer"].as_object().unwrap().clone();
+        let after = object(&path)[MEMBER].as_object().unwrap().clone();
         assert_eq!(after["pane"], Value::from("%20"));
         assert_eq!(after["server"], Value::from("41020"));
         assert_eq!(after["server_start"], Value::from(1_769_600_000_u64));
@@ -1951,7 +2022,7 @@ mod tests {
             })),
         );
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
-        let after = object(&path)["overseer"].as_object().unwrap().clone();
+        let after = object(&path)[MEMBER].as_object().unwrap().clone();
         assert_eq!(after["class"], Value::from("gpt"));
         assert_eq!(after["cwd"], Value::Null);
         let mut with_class = keys(published);
@@ -2026,7 +2097,7 @@ mod tests {
         // The fixture's predecessor owns its own record by `ol_names`, and
         // another pane's or another start's watch start does not: the
         // encoding tells the two apart.
-        let predecessor = object(&path)["overseer"].as_object().unwrap().clone();
+        let predecessor = object(&path)[MEMBER].as_object().unwrap().clone();
         assert!(ol_owns(&predecessor, "41020", "1769590000", "%7"));
         assert!(!ol_owns(&predecessor, "41020", "1769590000", "%20"));
         assert!(!ol_owns(&predecessor, "41020", "1769590001", "%7"));
@@ -2046,7 +2117,7 @@ mod tests {
             &confirmed_with(&id, Some(identity("%20", 7000)), None),
         )
         .unwrap();
-        let after = object(&path)["overseer"].as_object().unwrap().clone();
+        let after = object(&path)[MEMBER].as_object().unwrap().clone();
         assert!(ol_owns(&after, "41020", "1769590000", "%20"), "{after:?}");
         assert!(ol_owns(&after, "41020", "1769600000", "%20"));
         assert!(
@@ -2066,7 +2137,7 @@ mod tests {
             &confirmed_with(&id, Some(identity("%20", 7000)), Some(1_769_600_000)),
         )
         .unwrap();
-        let after = object(&path)["overseer"].as_object().unwrap().clone();
+        let after = object(&path)[MEMBER].as_object().unwrap().clone();
         assert!(ol_owns(&after, "41020", "1769600000", "%20"), "{after:?}");
         assert!(
             !ol_owns(&after, "41020", "1769590000", "%20"),
@@ -2097,7 +2168,7 @@ mod tests {
             "launch_line": "cd /home/u/dev/kendex && CLAUDE_CONFIG_DIR=/home/u/.claude-lanes/a1 claude --model claude-opus-5-5 --effort high",
             "cwd": "/home/u/dev/kendex", "session_id": "0f3d2c1b-9a8e-4d7c-b6a5-443322110000",
         });
-        fixtures::FLEET.replacen(
+        FLEET.replacen(
             "    \"harness_start\": \"ticks:9912345\",\n",
             &format!(
                 "    \"harness_start\": \"ticks:9912345\",\n    \"model_check\": {},\n",
@@ -2125,7 +2196,7 @@ mod tests {
         let rows: [(&str, String, Recovery, &str); 5] = [
             (
                 "no model check on the record",
-                fixtures::FLEET.to_owned(),
+                FLEET.to_owned(),
                 bound_recovery(),
                 "model-check-missing",
             ),
@@ -2222,7 +2293,7 @@ mod tests {
             key: "successor-not-ready".to_owned(),
             text: text.clone(),
             to: None,
-            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
+            owner: crate::intent::NOTICE_OWED.to_owned(),
         };
         let sent = Notice {
             owner: "sent".to_owned(),
@@ -2285,7 +2356,7 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].notice, Some(sent.clone()));
         assert_eq!(fleet(&path).fleet_log.len(), rows_before + 1);
         // A start's outcome carrying a notice records the row and the notice.
-        fs::write(&path, fixtures::FLEET).unwrap();
+        fs::write(&path, FLEET).unwrap();
         let rows_before = fleet(&path).fleet_log.len();
         let id = intend(&path, &start());
         let Request::RecordOutcome(mut failed) = self::outcome(&id, Outcome::Failed) else {
@@ -2344,7 +2415,7 @@ mod tests {
         pi.effort = Some("high".into());
         pi.account = Some("/a/c2".into());
         pi.home = Some("/a/pi-home".into());
-        pi.permission = Some(agent_runtime::launch::Permission::Native);
+        pi.permission = Some(crate::launch::Permission::Native);
         pi.extra_args = vec!["--thinking".into(), "high".into()];
         let id = intend(
             &path,
@@ -2361,13 +2432,10 @@ mod tests {
             })),
         );
         let pending = fleet(&path).overseer.unwrap().pending.unwrap();
-        assert_eq!(
-            pending.permission,
-            Some(agent_runtime::launch::Permission::Native)
-        );
+        assert_eq!(pending.permission, Some(crate::launch::Permission::Native));
         assert_eq!(pending.extra_args, vec!["--thinking", "high"]);
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
-        let after = object(&path)["overseer"].clone();
+        let after = object(&path)[MEMBER].clone();
         assert_eq!(after["harness"], json!("pi"));
         assert_eq!(after["model"], json!("pi-claude/claude-fable-5-1"));
         assert_eq!(after["account"], json!("/a/c2"));

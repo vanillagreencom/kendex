@@ -133,7 +133,38 @@ impl From<&Error> for Refusal {
                 pair("operation", (*operation).to_owned()),
                 pair("subject", subject.clone()),
             ],
-            Error::OverseerMissing { path } => vec![pair("path", path.display().to_string())],
+            Error::OverseerMissing { path } | Error::PendingMissing { path } => {
+                vec![pair("path", path.display().to_string())]
+            }
+            Error::OverseerChanged { path, fields } => vec![
+                pair("path", path.display().to_string()),
+                pair("fields", fields.join(",")),
+            ],
+            Error::LaunchMissing { intent, field } => vec![
+                pair("intent_id", intent.clone()),
+                pair("field", (*field).to_owned()),
+            ],
+            Error::SuccessionOff => vec![pair(
+                "AGENT_RUNTIME_CONTROLLER_SUCCESSION",
+                "off".to_owned(),
+            )],
+            Error::ControllerOff { path, generation } => vec![
+                pair("path", path.display().to_string()),
+                pair("generation", generation.to_string()),
+            ],
+            Error::SuccessorAccountSpent { account } => vec![pair("account", account.clone())],
+            Error::HandoffSessionMismatch { expected, recorded } => vec![
+                pair("expected", expected.clone()),
+                pair("recorded", recorded.clone().unwrap_or_default()),
+            ],
+            Error::TransferFieldMissing { cause, field } => vec![
+                pair("cause", (*cause).to_owned()),
+                pair("field", (*field).to_owned()),
+            ],
+            Error::RecoveryUnbound { path, cause } => vec![
+                pair("path", path.display().to_string()),
+                pair("cause", (*cause).to_owned()),
+            ],
             Error::Yielded { id, owner } => vec![
                 pair("intent_id", id.clone()),
                 pair("owner_pid", owner.pid.to_string()),

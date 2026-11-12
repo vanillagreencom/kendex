@@ -2016,6 +2016,49 @@ impl Producer {
     }
 }
 
+/// A fleet record whose controller member reads while another member does
+/// not is refused by orch's own read before the hand-over's choice reads
+/// that member alone: a succession `record-shape`, a recovery
+/// `record-missing`, each exit 1 with the record's bytes as they stood.
+#[test]
+fn a_succession_over_a_fleet_record_orch_cannot_read_whole_is_refused() {
+    let producer = Producer::new();
+    let path = producer.path().join("state").join(FLEET_FILE_NAME);
+    let fleet = json!({
+        "issue_id": "oversee", "triaged": "unread", "launch_queue": [], "lanes": [],
+        "fleet_log": [], "overseer": {"server": 1, "pane": "%9", "harness": "claude"},
+    });
+    std::fs::write(&path, fleet.to_string()).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let env = producer.env(
+        false,
+        &[(
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+            "claude:claude-opus-5-5:high",
+        )],
+    );
+    for (form, key) in [
+        (None, "record-shape"),
+        (Some("--recover"), "record-missing"),
+    ] {
+        let out = producer
+            .command(&env)
+            .args(["successor", "--fleet", "--predecessor", "%9", "--cwd"])
+            .arg(producer.path().join("project"))
+            .args(form)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(1), "{form:?}: {}", stderr(&out));
+        assert_eq!(
+            reply(&out)["refusal"]["key"],
+            key,
+            "{form:?}: {}",
+            stderr(&out)
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before, "{form:?}: unwritten");
+    }
+}
+
 /// A Claude usage body as the endpoint answers it: the 5-hour window it
 /// still sends, the weekly window and the model-scoped windows, each with
 /// its reset.

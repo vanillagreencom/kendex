@@ -174,6 +174,49 @@ pub enum Error {
         "pane {pane} does not hold the harness: {reading}; open the harness in that pane, or run the request from the pane that holds it"
     )]
     PaneNotHarness { pane: String, reading: String },
+    /// The controller record differs from the one the requester saw in the
+    /// named fields; the succession compare-and-swap refuses to act on a
+    /// record another writer moved.
+    #[error("{path}: the overseer record changed in {}", fields.join(","))]
+    OverseerChanged { path: PathBuf, fields: Vec<String> },
+    /// A confirmed transfer found no `pending` successor to publish.
+    #[error("{path}: the overseer records no pending successor")]
+    PendingMissing { path: PathBuf },
+    /// A transfer confirmation names no successor pane on a server. The
+    /// record it publishes is the successor's own, and the successor's watch
+    /// start keeps a record only where it names that pane on that server.
+    #[error("intent {intent}: the transfer confirmation names no {field}")]
+    LaunchMissing { intent: String, field: &'static str },
+    /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`: no succession is asked for and no
+    /// intent persists.
+    #[error("succession is off, so no transfer is requested")]
+    SuccessionOff,
+    /// The controller was stopped on purpose (`off` recorded); no recovery
+    /// relaunches it, only an explicit start.
+    #[error("{path}: the controller at generation {generation} is off")]
+    ControllerOff { path: PathBuf, generation: u64 },
+    /// A walled succession's successor would run on the account the wall
+    /// spent.
+    #[error("the successor account {account} is the spent one")]
+    SuccessorAccountSpent { account: String },
+    /// A recovery from a standing handoff names a session other than the
+    /// recorded controller's.
+    #[error("the handoff names session {expected:?}, the record {recorded:?}")]
+    HandoffSessionMismatch {
+        expected: String,
+        recorded: Option<String>,
+    },
+    /// A transfer cause needs a field the request left out.
+    #[error("a {cause} transfer needs {field}")]
+    TransferFieldMissing {
+        cause: &'static str,
+        field: &'static str,
+    },
+    /// A model-recovery transfer whose binding no longer holds against the
+    /// record: the recovery predicate (`controller::transition`'s
+    /// `recovery_bound`) read false, and nothing is written.
+    #[error("{path}: the recovery request is not bound to the record: {cause}")]
+    RecoveryUnbound { path: PathBuf, cause: &'static str },
     /// The detached job that runs a transfer or a stop could not be started;
     /// the request is recorded `failed` and the controller keeps control.
     #[error("intent {intent}: the detached job could not be launched: {cause}")]
@@ -238,6 +281,15 @@ impl Error {
             Error::PredecessorUnproven { .. } => "predecessor-unproven",
             Error::OverseerUnreadable { .. } => "overseer-unreadable",
             Error::PaneNotHarness { .. } => "pane-not-harness",
+            Error::OverseerChanged { .. } => "overseer-changed",
+            Error::PendingMissing { .. } => "pending-missing",
+            Error::LaunchMissing { .. } => "launch-missing",
+            Error::SuccessionOff => "succession-off",
+            Error::ControllerOff { .. } => "controller-off",
+            Error::SuccessorAccountSpent { .. } => "successor-account-spent",
+            Error::HandoffSessionMismatch { .. } => "handoff-session-mismatch",
+            Error::TransferFieldMissing { .. } => "transfer-field-missing",
+            Error::RecoveryUnbound { .. } => "recovery-unbound",
             Error::JobLaunchFailed { .. } => "job-launch-failed",
             Error::JobUnclaimed { .. } => "job-unclaimed",
             Error::Refused { key, .. } => key,

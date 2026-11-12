@@ -551,6 +551,13 @@ pub fn field<T: DeserializeOwned>(path: &Path, doc: &Document, key: &str) -> Res
     }
 }
 
+/// Null `key` where `doc` holds it; an absent optional field gains no null.
+pub fn null_held(doc: &mut Document, key: &str) {
+    if doc.contains_key(key) {
+        set(doc, key, Value::Null);
+    }
+}
+
 /// Set `key` to `value`: in place when the key exists, appended otherwise.
 pub fn set(doc: &mut Document, key: &str, value: impl Into<Value>) {
     doc.insert(key.to_owned(), value.into());

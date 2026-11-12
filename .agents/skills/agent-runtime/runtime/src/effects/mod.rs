@@ -59,6 +59,7 @@ mod adoption;
 mod host;
 pub mod job;
 mod obligations;
+pub mod prepare;
 mod receipt;
 #[cfg(test)]
 mod testing;
@@ -176,7 +177,7 @@ pub fn fleet_view(path: &Path) -> Result<FleetView> {
     })?;
     Ok(FleetView {
         intents: crate::record::field(path, &doc, "intents")?.unwrap_or_default(),
-        overseer: crate::record::field(path, &doc, "overseer")?,
+        overseer: crate::record::field(path, &doc, crate::controller::MEMBER)?,
     })
 }
 

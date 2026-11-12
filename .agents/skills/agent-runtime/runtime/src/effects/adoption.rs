@@ -7,7 +7,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::Recorded;
-use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, Overseer};
+use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted, MEMBER, Overseer};
 use crate::error::{Error, Result};
 use crate::journal::{self, intents};
 use crate::record::{self, Document, Locking};
@@ -56,12 +56,12 @@ fn adopt_controller(
             target: intent.target.clone(),
         });
     }
-    let current: Option<Overseer> = record::field(path, doc, "overseer")?;
+    let current: Option<Overseer> = record::field(path, doc, MEMBER)?;
     let prior_generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let home = r.home.clone().or_else(|| r.account.clone());
     let rows = r.session_rows.as_ref().map(|p| p.display().to_string());
     if read.same {
-        let record = record::object_mut(path, doc, "overseer")?;
+        let record = record::object_mut(path, doc, MEMBER)?;
         let generation = prior_generation.max(1);
         record::set(record, "generation", generation);
         record::set(record, "server_start", read.server_start);
@@ -116,7 +116,7 @@ fn adopt_controller(
     for (key, value) in adopted_posture(path, r)? {
         record[key] = value;
     }
-    record::set(doc, "overseer", record);
+    record::set(doc, MEMBER, record);
     Ok(ControllerAdopted {
         generation,
         healed: false,
@@ -207,7 +207,7 @@ mod tests {
         let a = apply_adoption(&path, &request, &read(true), LOCK).unwrap();
         assert!(a.healed);
         assert_eq!(a.generation, 3);
-        let after = object(&path)["overseer"].clone();
+        let after = object(&path)[MEMBER].clone();
         assert_eq!(after["harness"], json!("claude"));
         assert_eq!(after["account"], json!("/a/x"), "the request's");
         assert_eq!(after["home"], json!("/a/x"), "the request's account");
@@ -232,7 +232,7 @@ mod tests {
             ..request.clone()
         };
         apply_adoption(&path, &bare, &read(true), LOCK).unwrap();
-        let after = object(&path)["overseer"].clone();
+        let after = object(&path)[MEMBER].clone();
         assert_eq!(after["model"], json!("claude-opus-5-5"), "kept");
         assert_eq!(after["session_id"], Value::Null, "cleared");
         // Replace: another session's record goes, the new one is written
@@ -241,7 +241,7 @@ mod tests {
         let a = apply_adoption(&path, &request, &read(false), LOCK).unwrap();
         assert!(!a.healed);
         assert_eq!(a.generation, 4);
-        let after = object(&path)["overseer"].clone();
+        let after = object(&path)[MEMBER].clone();
         assert_eq!(
             after,
             json!({

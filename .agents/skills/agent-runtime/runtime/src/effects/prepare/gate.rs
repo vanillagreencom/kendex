@@ -22,11 +22,10 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agent_runtime::harness::Harness;
-use agent_runtime::host;
 use serde_json::Value;
 
-use crate::watch::hosted;
+use crate::harness::Harness;
+use crate::host;
 
 /// The hooks a Copilot lane's turn ends, compactions and starts run, each a
 /// `.sh` beside its `.json` registration.
@@ -44,7 +43,7 @@ const WAKE_FILE: &str = "extensions/lane-mail-wake.ts";
 const WAKE_NAME: &str = "lane-mail-wake.ts";
 
 /// A file's text where it stands, `None` where it does not, else the cause.
-type Read<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
+pub type Read<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
 
 /// Where a Pi lane's files are read: this machine, or the lane's host, where
 /// the reported install is repaired.
@@ -64,11 +63,7 @@ impl Location {
 }
 
 /// A local launch of `harness` running under `home` in `worktree`.
-pub(in crate::effects) fn local(
-    harness: Harness,
-    home: Option<&Path>,
-    worktree: &Path,
-) -> Result<(), String> {
+pub fn local(harness: Harness, home: Option<&Path>, worktree: &Path) -> Result<(), String> {
     let Some(home) = home else {
         return match harness {
             Harness::Claude | Harness::Codex => Ok(()),
@@ -93,11 +88,7 @@ pub(in crate::effects) fn local(
 /// create anything: a Copilot lane, whose home is on its host, and a Pi
 /// lane billing a Claude seat, since the provider places the account it is
 /// given as Pi's own root.
-pub(super) fn before_create(
-    harness: Harness,
-    model: Option<&str>,
-    provider: &str,
-) -> Result<(), String> {
+pub fn before_create(harness: Harness, model: Option<&str>, provider: &str) -> Result<(), String> {
     match harness {
         Harness::Copilot => Err("unsupported-for-oversee harness=copilot reason=hosted".to_owned()),
         Harness::Pi if harness.account_var(model) != harness.home_var() => Err(format!(
@@ -109,22 +100,11 @@ pub(super) fn before_create(
 }
 
 /// A hosted Pi lane's rules on its host's files once `create` made the
-/// worktree: Pi's root the provider named, else its default under the
-/// host's home.
-pub(super) fn hosted_pi(
-    scripts: &Path,
-    provider: &str,
-    item: &str,
-    pi_root: Option<&str>,
-    worktree: &str,
-) -> Result<(), String> {
-    let read = |path: &str| match hosted::fetch(scripts, provider, item, path) {
-        hosted::Answer::Live(text) => Ok(Some(text)),
-        hosted::Answer::Gone => Ok(None),
-        hosted::Answer::Unreadable { cause } => Err(cause),
-    };
+/// worktree, each file read by `read` on the host: Pi's root the provider
+/// named, else its default under the host's home.
+pub fn hosted_pi(read: Read, pi_root: Option<&str>, worktree: &str) -> Result<(), String> {
     pi(
-        &read,
+        read,
         pi_root.unwrap_or(".pi/agent"),
         worktree,
         Location::Hosted,

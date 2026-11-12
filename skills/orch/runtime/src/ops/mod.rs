@@ -28,7 +28,6 @@ mod admission;
 pub mod approve;
 pub mod artifact;
 pub mod boxes;
-mod controller;
 pub mod copilot_wait;
 pub mod cycle;
 mod item;
@@ -63,11 +62,6 @@ pub mod wall;
 
 pub use accept::{SummaryPost, accept};
 pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
-pub use controller::{
-    ControllerStarted, DeathCause, OverseerExpected, RequestTransfer, StartController,
-    StopController, StopRequested, TransferRequested, admit, judge_effect_settings,
-    overseer_target,
-};
 pub use item::{
     AcceptResult, Attempt, BeginRound, EndSource, HandoffRecorded, HandoffResumed, OpenRun,
     ReconcileRound, RecordHandoff, RecordValidationAdmission, RecordVerification, Relaunch,
@@ -103,10 +97,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
+use crate::settings::Settings;
 use crate::state::{self, Kind, Lane, Snapshot};
+use agent_runtime::controller::transition::{
+    self as controller, ControllerStarted, RequestTransfer, StartController, StopController,
+    StopRequested, TransferRequested,
+};
 use agent_runtime::controller::{AdoptController, ControllerAdopted};
 use agent_runtime::intent::EffectOp;
 use agent_runtime::intent::Intent;
+use agent_runtime::journal::Effect;
 use agent_runtime::journal::{
     self, ClaimIntent, Env, IntentClaimed, OutcomeWritten, ProgressRecorded, RecordOutcome,
     RecordProgress,
@@ -268,23 +268,6 @@ impl Request {
             | Request::PruneRecords(_) => Kind::Fleet,
         }
     }
-}
-
-/// How far the external effect of an operation got in this call.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "effect", rename_all = "kebab-case")]
-pub enum Effect {
-    /// An intent for the target already stood unfinished; nothing new was
-    /// created and the record did not move. The caller reconciles it.
-    Reconciled { intent: Intent },
-    /// The intent is persisted and has not started; the caller runs the
-    /// effect and records its outcome.
-    Persisted { intent: Intent },
-    /// A launch intent for the target stands open; nothing was created. The
-    /// caller reconciles it and, when it stays unconfirmed with a recorded
-    /// pane, closes it `superseded-by-close` and asks again, so the close
-    /// stops what the pane holds.
-    Supersedes { intent: Intent },
 }
 
 /// An outcome written onto its intent and the record it moved.
@@ -526,6 +509,86 @@ fn apply_interleaved(
         });
     }
     transition()
+}
+
+/// What the settings admit before any transition runs: the keys the
+/// request's live effect reads ([`judge_effect_settings`]), then a start's
+/// or a transfer's own admission, the hand-over's.
+pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
+    judge_effect_settings(request, settings)?;
+    match request {
+        Request::RequestTransfer(r) => controller::admit_transfer(r, &settings.controller)?,
+        Request::StartController(r) => controller::admit_start(r)?,
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The keys a request's effect reads, judged before its intent persists and
+/// again by its job before the claim, so no intent stands under a value its
+/// effect would refuse: every live effect's bounds, posture and harness
+/// programs; a controller launch's question dialog; a lane launch's output
+/// mode; a job's claim bound; a lane close's grace. A request with no effect
+/// reads none of them.
+pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<()> {
+    let effect = |controller_launch: bool, job: bool| -> Result<()> {
+        settings.engine.verify.get()?;
+        settings.close_grace.get()?;
+        settings.launch.permission.get()?;
+        settings.engine.harness_binaries.get()?;
+        if controller_launch {
+            settings.controller.question_tool.get()?;
+        }
+        if job {
+            settings.engine.claim.get()?;
+        }
+        Ok(())
+    };
+    match request {
+        Request::LaunchLane(_) => {
+            effect(false, false)?;
+            settings.lane_output.get()?;
+            Ok(())
+        }
+        Request::CloseOwnedResources(_) => effect(false, false),
+        Request::RequestTransfer(_) => effect(true, true),
+        Request::StartController(_) => effect(true, false),
+        Request::StopController(_) => effect(false, true),
+        Request::CloseLane(_) => {
+            settings.close_grace.get()?;
+            Ok(())
+        }
+        Request::AdoptSession(_)
+        | Request::BeginRound(_)
+        | Request::RecordValidationAdmission(_)
+        | Request::AdoptController(_)
+        | Request::ClaimIntent(_)
+        | Request::AcceptResult(_)
+        | Request::RecordVerification(_)
+        | Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
+        | Request::ReconcileRound(_)
+        | Request::RecordHandoff(_)
+        | Request::ResumeHandoff(_)
+        | Request::ParkLane(_)
+        | Request::ReserveLane(_)
+        | Request::ReleaseLane(_)
+        | Request::RecordOutcome(_)
+        | Request::RecordPhase(_)
+        | Request::RecordProgress(_)
+        | Request::RecordLaneProgress(_)
+        | Request::RecordDirectiveSend(_)
+        | Request::RecordWallPauses(_)
+        | Request::AdmitPaths(_)
+        | Request::PruneRecords(_)
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => Ok(()),
+    }
 }
 
 /// The precondition every operation shares: the state file at `path` is
@@ -790,13 +853,6 @@ fn string_or_null(value: &Option<String>) -> Value {
     }
 }
 
-/// Null `key` where `doc` holds it; an absent optional field gains no null.
-fn null_held(doc: &mut Document, key: &str) {
-    if doc.contains_key(key) {
-        record::set(doc, key, Value::Null);
-    }
-}
-
 /// orch's arms of an outcome's transition, by the intent's operation: the
 /// lane arms are `lane`'s, judged against the lane's stamp and launch keys;
 /// the succession arms `controller`'s, judged against the controller
@@ -845,14 +901,9 @@ pub fn outcome_arm(
             }
         }
         EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
-            let generation = controller::overseer(path, doc)?.generation.unwrap_or(0);
-            if controller::target_generation(&intent.target) == Some(generation) {
-                controller::record_controller_outcome(path, doc, intent, r, at, recorded)?;
-                None
-            } else {
-                intent.observed_generation = Some(generation);
-                terminal.then_some(Reconciled::IntentStale)
-            }
+            return Ok(controller::outcome_arm(
+                path, doc, intent, r, at, terminal, target,
+            )?);
         }
     };
     if let Value::Object(moved) = serde_json::to_value(moved)? {

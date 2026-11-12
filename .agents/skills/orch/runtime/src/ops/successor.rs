@@ -1,27 +1,21 @@
-//! The controller an overseer launch opens: the overseer walk's choice made
-//! into the pending a `start-controller` or `request-transfer` request
-//! carries. A fleet's first controller walks with no source session, so
-//! only an entry whose harness writes a full bypass is taken, and runs under
-//! the settings' posture; a succession walks with the recorded controller's
-//! posture as the source and keeps it on a same-harness successor. A
-//! succession a mark sent walks as that mark decides (`walk_request`).
-//! Nothing is written: the request that carries the answer records it. The
-//! brief a controller opens on is [`brief`]'s, for every launch of one.
+//! What an overseer adds to the hand-over's choice (agent-runtime's
+//! `controller::successor`): the fleet's ground it walks on, the default
+//! handoff and the takeover brief a controller opens on ([`brief`]'s, for
+//! every launch of one), and the snapshot writer's open-lane-asks line.
 
-use agent_runtime::controller::Pending;
 use std::path::Path;
 
+use agent_runtime::controller::successor::{self as choice, Choosing, Ground};
+use agent_runtime::controller::views::MarkKind;
 use agent_runtime::harness::Harness;
-use agent_runtime::launch::Permission;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::ops::accounts;
-use agent_runtime::accounts::walk::{Preference, Scope, Source, WalkAnswer, WalkRequest};
-use agent_runtime::settings::CONTROLLER_PREFERENCE_KEY;
+use agent_runtime::accounts::PickRequest;
+use agent_runtime::accounts::walk::WalkRequest;
 
 use crate::settings::Settings;
-use crate::watch::overseer::{AccountState, Caller, MarkKind, Record};
 
 /// The handoff a controller is pointed at where its launch names no other.
 pub const HANDOFF: &str = "tmp/handoffs/OVERSEER-HANDOFF.md";
@@ -128,101 +122,61 @@ impl HeldBrief {
     }
 }
 
-/// The posture a successor launches under: the one it carries, else the
-/// settings', so its record names the posture the next walk reads.
-pub fn posture(pending: &mut Pending, settings: &Settings) -> Result<()> {
-    if pending.permission.is_none() {
-        pending.permission = Some(settings.launch.permission.get()?);
-    }
-    Ok(())
-}
-
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
 }
 
-/// The walk's source for a succession: a recorded bypass is a posture any
-/// harness with a bypass word takes, so its row answers; a native posture
-/// carries only its own words, and an unrecorded one none, so no entry of
-/// another harness is launched under a posture nobody recorded. Every
-/// overseer walk with a source session takes it, the watch's walled one
-/// included.
-pub fn source(caller: &Caller, harness: Harness) -> Source {
-    Source {
-        harness,
-        flags: match caller.permission {
-            Some(Permission::Bypass) => None,
-            Some(Permission::Native) | None => Some(caller.extra_args.clone()),
-        },
+/// The hand-over's choice read with orch's settings: the account judge's,
+/// the launch's posture, the hand-over's preference and the overseer's wall
+/// mark.
+fn choosing(settings: &Settings) -> Choosing<'_> {
+    Choosing {
+        accounts: accounts::env(settings),
+        launch: &settings.launch,
+        controller: &settings.controller,
+        wall_minutes: &settings.marks.wall_minutes,
     }
 }
 
-/// The walk a succession the `mark` sent takes for `caller` on `harness`.
-/// Where the caller's own account reaches an account mark (its headroom
-/// trigger, else a wall its rate projects inside the setting), the walk is
-/// that mark's whatever mark fired first, headroom, then rate, then context,
-/// since that account is the one the successor must leave. A headroom or
-/// rate mark leaves the caller's
-/// account out of every pick. A context or memory mark keeps the caller's
-/// own account, unpicked, where it has room; a context mark also keeps an
-/// account nothing measures where no other account of its harness has room
-/// (the walk's `keep_unmeasured`), and walks the caller's own entry alone
-/// where the setting names no preference, since a context handoff replaces
-/// the session and not its harness or model. Every succession walks the
-/// caller's own entry last.
-fn walk_request(
-    settings: &Settings,
-    path: &Path,
-    host: &crate::ops::Host<'_>,
-    caller: &Caller,
-    harness: Harness,
-    mark: MarkKind,
-    now: u64,
-) -> Result<WalkRequest> {
-    let (state, reached) = match mark {
-        MarkKind::Headroom | MarkKind::Rate => (None, None),
-        MarkKind::Context | MarkKind::Memory => {
-            let (state, reached) = caller.account_departure(harness, settings, path, host, now)?;
-            (Some(state), reached)
-        }
-    };
-    let mark = reached.unwrap_or(mark);
-    let mut entry = caller.walk_entry(harness);
-    entry.keep = state == Some(AccountState::HasRoom)
-        && matches!(mark, MarkKind::Context | MarkKind::Memory);
-    let (exclude, preference) = match mark {
-        MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
-        MarkKind::Context => (
-            Vec::new(),
-            (!settings.controller.preference_set).then(String::new),
-        ),
-        MarkKind::Memory => (Vec::new(), None),
-    };
-    Ok(WalkRequest {
-        scope: Scope::Overseer,
-        preference,
-        lane: None,
-        exclude,
-        max_pct: None,
-        min_headroom_pct: None,
-        source: Some(source(caller, harness)),
-        caller: Some(entry),
-        keep_unmeasured: mark == MarkKind::Context,
-    })
-}
-
-/// The `successor` verb: the overseer walk for the fleet at `path`, for its
-/// first controller in `cwd`, or for the successor of the recorded
-/// controller whose pane `predecessor` names, walked as the `mark` that
-/// sent it decides. The reply carries the walk's
-/// own reply, the pending the choice opens and the brief it opens on with
-/// the handoff at `handoff` (each `null` where the walk chose none) and,
-/// for a succession, the compare-and-swap set naming that pane. Left out,
-/// the handoff is the recorded controller's own, else the default, so a
-/// succession keeps the launch's handoff.
+/// The fleet at `path` read whole, each member through its type, as orch's
+/// verbs read their own record before the choice reads the controller's
+/// member alone: a record whose other members do not read is never walked
+/// on. `None` where no record stands; the view's refusal is its own.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the verb's one read of the fleet state, a snapshot the walk reads; the kernel host for the judge's occupancy read, which acts on nothing"
+    reason = "the successor's one read of its own fleet, before the choice reads its member"
+)]
+fn read_whole(path: &Path) -> Result<Option<Result<crate::state::FleetState>>> {
+    Ok(crate::state::load(path)?.map(|snapshot| snapshot.view(path)))
+}
+
+/// The overseer's additions to a choice's reply: the default handoff where
+/// the pending names none, and the brief it opens on (`null` where the walk
+/// chose none).
+fn with_overseer_brief(mut reply: Value) -> Value {
+    let pending = reply.get_mut("successor").filter(|s| s.is_object());
+    let opens_on = pending.map(|pending| {
+        if pending.get("handoff").is_none_or(Value::is_null) {
+            pending["handoff"] = json!(HANDOFF);
+        }
+        let handoff = pending["handoff"].as_str().unwrap_or(HANDOFF).to_owned();
+        pending
+            .get("harness")
+            .and_then(Value::as_str)
+            .and_then(Harness::parse)
+            .map(|harness| brief(harness, &handoff))
+    });
+    reply["brief"] = json!(opens_on.flatten());
+    reply
+}
+
+/// The `successor` verb: the hand-over's choice for the fleet at `path` on
+/// the fleet's ground (each entry's host through the provider, every pick
+/// with the fleet's seats and lanes' live charges), with the overseer's
+/// default handoff and its takeover brief.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the kernel host for the judge's occupancy read, which acts on nothing"
 )]
 pub fn successor(
     settings: &Settings,
@@ -233,139 +187,50 @@ pub fn successor(
     handoff: Option<&str>,
     now: u64,
 ) -> Result<Value> {
-    // An empty preference is a setting with no entry to walk, not a walk
-    // that found no room: no wait for headroom could open anything. A mark's
-    // succession still walks the caller's own entry.
-    if mark.is_none()
-        && Preference::parse(&settings.controller.preference, Scope::Overseer)
-            .is_ok_and(|preference| preference.entries.is_empty())
-    {
-        return Err(refused(
-            "preference-empty",
-            &[("setting", CONTROLLER_PREFERENCE_KEY)],
-        ));
+    if predecessor.is_some() {
+        read_whole(path)?.transpose()?;
     }
-    let recorded = match predecessor {
-        None => None,
-        Some(pane) => {
-            let record = crate::state::load(path)?
-                .map(|snapshot| {
-                    <crate::state::FleetState as crate::state::Record>::view(path, &snapshot.doc)
-                })
-                .transpose()?
-                .as_ref()
-                .and_then(Record::read)
-                .ok_or_else(|| {
-                    refused("record-missing", &[("path", &path.display().to_string())])
-                })?;
-            let caller = Caller::of(&record);
-            let harness = caller
-                .harness
-                .ok_or_else(|| refused("harness-unnamed", &[("pane", pane)]))?;
-            let mut expected = record.expected();
-            expected.pane = json!(pane);
-            Some((caller, harness, expected))
-        }
-    };
-    let handoff = handoff
-        .map(str::to_owned)
-        .or_else(|| {
-            recorded
-                .as_ref()
-                .and_then(|(caller, _, _)| caller.handoff.clone())
-        })
-        .unwrap_or_else(|| HANDOFF.to_owned());
     let host = crate::ops::Host::kernel();
-    let request = match (recorded.as_ref(), mark) {
-        (Some((caller, harness, _)), Some(mark)) => {
-            walk_request(settings, path, &host, caller, *harness, mark, now)?
-        }
-        (recorded, _) => WalkRequest {
-            scope: Scope::Overseer,
-            preference: None,
-            lane: None,
-            exclude: Vec::new(),
-            max_pct: None,
-            min_headroom_pct: None,
-            source: recorded.map(|(caller, harness, _)| source(caller, *harness)),
-            caller: None,
-            keep_unmeasured: false,
+    let mut walk = |request: &WalkRequest| {
+        accounts::walk(settings, path, &host, None, request, now)
+            .map_err(agent_runtime::Error::from)
+    };
+    let mut pick = |request: &PickRequest, judge_host: Option<&str>| {
+        accounts::pick_fleet(settings, path, &host, judge_host, None, request, now)
+    };
+    let reply = choice::successor(
+        &choosing(settings),
+        path,
+        predecessor,
+        mark,
+        cwd,
+        handoff,
+        Ground {
+            walk: &mut walk,
+            pick: &mut pick,
         },
-    };
-    let walked = accounts::walk(settings, path, &host, None, &request, now)?;
-    let successor = match &walked.answer {
-        WalkAnswer::Lane(chosen) => {
-            let mut pending = match &recorded {
-                None => {
-                    let mut pending = Caller::default().successor_of(chosen);
-                    pending.permission = Some(settings.launch.permission.get()?);
-                    pending
-                }
-                Some((caller, _, _)) => {
-                    let mut pending = caller.successor_of(chosen);
-                    posture(&mut pending, settings)?;
-                    pending
-                }
-            };
-            pending.cwd.get_or_insert_with(|| cwd.display().to_string());
-            pending.handoff = Some(handoff.clone());
-            Some(pending)
-        }
-        WalkAnswer::None | WalkAnswer::Held { .. } => None,
-    };
-    let opens_on = successor
-        .as_ref()
-        .and_then(|pending| pending.harness.as_deref())
-        .and_then(Harness::parse)
-        .map(|harness| brief(harness, &handoff));
-    Ok(json!({
-        "walk": walked.reply(),
-        "successor": successor,
-        "brief": opens_on,
-        "expected": recorded.map(|(_, _, expected)| expected),
-    }))
+        now,
+    )?;
+    Ok(with_overseer_brief(reply))
 }
 
 /// The successor a model recovery opens for the recorded controller whose
-/// pane `predecessor` names: the controller's own launch, its model the one
-/// it was launched with, under its own handoff, with the record as the
-/// compare-and-swap set and the record's launch as the recovery's binding,
-/// which the transition holds the acquired model check to. No walk: the
-/// recovery replaces the session, never its account or harness.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verb's one read of the fleet state, a snapshot the reply is composed from"
-)]
+/// pane `predecessor` names, the hand-over's own launch replayed, under the
+/// overseer's default handoff where the record names none.
 pub fn recovery(settings: &Settings, path: &Path, predecessor: &str) -> Result<Value> {
-    let snapshot = crate::state::load(path)?
-        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
-    let record = <crate::state::FleetState as crate::state::Record>::view(path, &snapshot.doc)
-        .ok()
-        .as_ref()
-        .and_then(Record::read)
-        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
-    let mut successor = record
-        .own_successor()
-        .ok_or_else(|| refused("harness-unnamed", &[("pane", predecessor)]))?;
-    successor.handoff.get_or_insert_with(|| HANDOFF.to_owned());
-    posture(&mut successor, settings)?;
-    let mut expected = record.expected();
-    expected.pane = json!(predecessor);
-    let launch = snapshot.doc.get("overseer").cloned().unwrap_or(Value::Null);
-    let binding: serde_json::Map<String, Value> = crate::ops::controller::MODEL_LAUNCH_KEYS
-        .iter()
-        .map(|key| {
-            (
-                (*key).to_owned(),
-                launch.get(*key).cloned().unwrap_or(Value::Null),
-            )
-        })
-        .collect();
-    Ok(json!({
-        "successor": successor,
-        "expected": expected,
-        "recovery": binding,
-    }))
+    if !matches!(read_whole(path)?, Some(Ok(_))) {
+        return Err(refused(
+            "record-missing",
+            &[("path", &path.display().to_string())],
+        ));
+    }
+    let mut reply = choice::recovery(&settings.launch, path, predecessor)?;
+    if let Some(pending) = reply.get_mut("successor").filter(|s| s.is_object())
+        && pending.get("handoff").is_none_or(Value::is_null)
+    {
+        pending["handoff"] = json!(HANDOFF);
+    }
+    Ok(reply)
 }
 
 /// The handoff State line naming the open lane asks; the snapshot writer

@@ -9,37 +9,96 @@
 //! record or by its pane gone on the proven recorded server, never by
 //! absence on a server that is not proven. The explicit stop
 //! retires the controller exactly by identity. A transfer's and a stop's
-//! effect run in the detached job of `agent_runtime::effects::job`; the controller cells
+//! effect run in the detached job of `crate::effects::job`; the controller cells
 //! of the reconcile matrix complete any of them from the recorded phase. The
 //! predecessor's recorded handles join the intent's set at the start of its
 //! retirement, before the first signal, and every terminal outcome after
 //! that consumes them with the runner's.
 
-use agent_runtime::controller::{Overseer, TransferCause};
-use agent_runtime::intent::LaunchIdentity;
 use std::path::{Path, PathBuf};
 
-use agent_runtime::harness::Harness;
-use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
-use agent_runtime::observe::WallKind;
-use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
-use super::{
-    Run, Spec, Target, build_launch, check_directory, check_program, idle, overseer_target_of,
-    pending_observation, read_brief, read_intent, read_overseer, refused, up, watch_companion,
+use super::transition::{RequestTransfer, StartController, overseer_target};
+use super::{Overseer, TransferCause};
+use crate::effects::prepare::{
+    GATE_REFUSED, Inherited, Kept, LaunchHome, Spec, Unready, accountless_kept, build_launch,
+    check_directory, check_program, idle, launch_home, pending_observation, read_brief, up,
+};
+use crate::effects::{
+    Binding, Bootstrap, Claimant, Companion, EffectOutcome, Identity, Observed, OpenRefusal,
+    Operation, Pane, Polled, ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State,
+    Stop, Target, TurnConfirm, WindowClose, Wire, Word, opening_observation, overseer_target_of,
+    read_intent, read_overseer,
 };
 use crate::error::{Error, Result};
-use crate::ops::{RequestTransfer, StartController, overseer_target};
-use crate::settings::Settings;
-use agent_runtime::effects::{
-    Binding, Companion, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
-    ProcessRead, Proof, Published, Recovered, SessionFloor, SignIn, State, Stop, TurnConfirm,
-    WindowClose, Wire, Word, opening_observation,
-};
-use agent_runtime::intent::Intent;
-use agent_runtime::intent::{BoundSession, EffectOp, OpenedPane, Phase};
+use crate::harness::Harness;
+use crate::intent::{BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Phase};
+use crate::launch::{Compaction, LaunchCommand, Permission, Resume};
+use crate::observe::WallKind;
+use crate::reading::Reading;
+use crate::settings::{ControllerSettings, EngineSettings, LaunchSettings};
+
+/// What a controller effect reads beside the engine's run: the engine's,
+/// the launch's and the hand-over's settings as the opener's load read
+/// them, and the homes an accountless launch inherits.
+pub struct Settings<'a> {
+    pub engine: &'a EngineSettings,
+    pub launch: &'a LaunchSettings,
+    pub controller: &'a ControllerSettings,
+    pub inherited: Inherited<'a>,
+}
+
+impl Settings<'_> {
+    fn inherited(&self) -> Inherited<'_> {
+        self.inherited
+    }
+}
+
+/// Where a start's companion job keeps its launcher record, its stderr and
+/// its claim, beside the record at the path it is given: the opener's,
+/// since the companion is the opener's own job.
+pub struct CompanionFiles {
+    pub record: PathBuf,
+    pub stderr: PathBuf,
+    pub claim: Claimant,
+}
+
+/// What one controller effect run or reconcile acts with: the engine's run,
+/// which every generic act reaches through the operation handle, the
+/// settings the launch reads, and where a start's companion keeps its
+/// files.
+pub struct Run<'a> {
+    pub engine: crate::effects::Run<'a>,
+    pub settings: &'a Settings<'a>,
+    pub companion: fn(&Path) -> Result<CompanionFiles>,
+}
+
+fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    Error::refused(key, fields)
+}
+
+/// The operation handle over a controller intent, its set started from the
+/// controller operation's own bootstrap.
+fn open<'a>(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a>> {
+    let Some(bootstrap) = Bootstrap::controller(intent.op) else {
+        unreachable!("a controller operation has its own start")
+    };
+    Operation::open(&run.engine, intent, bootstrap)
+}
+
+/// The companion a start's request names, `words` its command line,
+/// launched beside the record under the opener's files.
+fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> {
+    let files = (run.companion)(run.engine.path)?;
+    Ok(Companion {
+        argv: words,
+        name: format!("watch-{}", run.engine.env.iso().replace(['-', ':'], "")),
+        record: files.record,
+        stderr: files.stderr,
+        claim: files.claim,
+    })
+}
 
 /// Which controller lifetime a succession effect serves: a transfer retires
 /// the recorded predecessor; a start has none to retire and refuses over a
@@ -83,8 +142,8 @@ fn failed_before_retirement_cause(operation: Operation, note: &str, cause: &str)
 /// failure, the path of a missing directory) stand beside it, so the record
 /// says what failed without the host's own text.
 fn failed_before_retirement_refused(operation: Operation, e: &Error) -> EffectOutcome {
-    let fields: serde_json::Map<String, Value> = e
-        .fields()
+    let fields: serde_json::Map<String, Value> = crate::protocol::Refusal::from(e)
+        .fields
         .into_iter()
         .map(|(k, v)| (k, Value::from(v)))
         .collect();
@@ -218,7 +277,7 @@ fn successor_exited(
     }
     operation.read_receipt()?;
     operation.read_standing_processes()?;
-    if let Some(prior) = agent_runtime::effects::predecessor_identity(retired.overseer) {
+    if let Some(prior) = crate::effects::predecessor_identity(retired.overseer) {
         operation.read_process(&prior)?;
     }
     operation.close_overseer_window(retired.overseer)?;
@@ -277,7 +336,7 @@ fn unconfirmed_after_retirement(
 /// account names its own home.
 fn kept(
     settings: &Settings,
-    pending: &agent_runtime::controller::Pending,
+    pending: &crate::controller::Pending,
     harness: Harness,
     served: Option<&Path>,
 ) -> Option<Kept> {
@@ -286,10 +345,10 @@ fn kept(
         named: true,
     });
     match (harness, pending.account.is_some()) {
-        (Harness::Pi, _) => accountless_kept(settings, harness, home, served),
+        (Harness::Pi, _) => accountless_kept(&settings.inherited(), harness, home, served),
         (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
         (Harness::Claude | Harness::Codex | Harness::Copilot, false) => accountless_kept(
-            settings,
+            &settings.inherited(),
             harness,
             home.filter(|_| pending.resume.is_some()),
             served,
@@ -336,7 +395,7 @@ impl Successor {
     /// effect that builds the command.
     fn from_pending(
         settings: &Settings,
-        pending: &agent_runtime::controller::Pending,
+        pending: &crate::controller::Pending,
         served: Option<&Path>,
         sign_in: &dyn Fn(Harness, &Path) -> SignIn,
     ) -> std::result::Result<(Successor, Option<Value>), Unready> {
@@ -357,14 +416,14 @@ impl Successor {
             }
             (Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi, _) => None,
         };
-        let homes = super::launch::launch_home(
-            settings,
+        let homes = launch_home(
+            &settings.inherited(),
             harness,
             pending.account.as_deref(),
             pending.model.as_deref(),
             kept(settings, pending, harness, served).as_ref(),
             &cwd,
-            agent_runtime::launch::full_bypass(
+            crate::launch::full_bypass(
                 harness,
                 pending
                     .permission
@@ -383,14 +442,14 @@ impl Successor {
     /// home is all the launch fields it carries.
     fn opened(
         settings: &Settings,
-        pending: &agent_runtime::controller::Pending,
+        pending: &crate::controller::Pending,
         recorded: Option<&str>,
     ) -> Result<Successor> {
         let (harness, cwd) = Self::checked(pending)?;
         let home = recorded
             .or(pending.account.as_deref())
             .map(PathBuf::from)
-            .or_else(|| agent_runtime::effects::default_home(harness));
+            .or_else(|| crate::effects::default_home(harness));
         let homes = LaunchHome {
             sessions: home.clone(),
             named: home,
@@ -403,7 +462,7 @@ impl Successor {
 
     /// The harness word and the working directory, and the account where
     /// the pending names one, each standing.
-    fn checked(pending: &agent_runtime::controller::Pending) -> Result<(Harness, PathBuf)> {
+    fn checked(pending: &crate::controller::Pending) -> Result<(Harness, PathBuf)> {
         let harness = pending
             .harness
             .as_deref()
@@ -432,7 +491,7 @@ impl Successor {
 
     fn of(
         settings: &Settings,
-        pending: &agent_runtime::controller::Pending,
+        pending: &crate::controller::Pending,
         harness: Harness,
         cwd: PathBuf,
         homes: LaunchHome,
@@ -470,7 +529,8 @@ impl Successor {
             None => Compaction::Native,
         };
         let (mut intent, command) = build_launch(
-            settings,
+            settings.launch,
+            settings.engine,
             &Spec {
                 harness: self.harness,
                 home: self.named.as_deref(),
@@ -501,7 +561,7 @@ impl Successor {
                 session_file: None,
             });
         }
-        Ok(agent_runtime::launch::build(&intent)?)
+        crate::launch::build(&intent)
     }
 
     /// The runner's own native session file: the file its
@@ -519,23 +579,19 @@ impl Successor {
             // A harness that fixes the id names the file before it exists;
             // one that does not names it only once the resumed session's
             // own file is found by that id, read three-valued.
-            if let Some(file) =
-                agent_runtime::effects::fixed_file(self.harness, &self.home, &self.cwd, id)
+            if let Some(file) = crate::effects::fixed_file(self.harness, &self.home, &self.cwd, id)
             {
                 return Ok(bound(file));
             }
             return Ok(
-                match agent_runtime::effects::fixed_id_file(self.harness, &self.home, &self.cwd, id)
-                {
+                match crate::effects::fixed_id_file(self.harness, &self.home, &self.cwd, id) {
                     Reading::Live(file) => bound(file),
                     Reading::Gone => Binding::Absent,
                     Reading::Unreadable { cause } => Binding::Unreadable { cause },
                 },
             );
         }
-        operation
-            .appeared_session(self.harness, &self.home, &self.cwd, opened)
-            .map_err(Error::from)
+        operation.appeared_session(self.harness, &self.home, &self.cwd, opened)
     }
 
     /// The variable that carries the account this launch bills, and the
@@ -556,7 +612,7 @@ impl Successor {
     /// against the one its launch named.
     fn read_back(&self, pid: u32) -> AccountRead {
         let (var, named) = self.named_account();
-        match agent_runtime::effects::process_var(pid, var) {
+        match crate::effects::process_var(pid, var) {
             Ok(found) if found == named => AccountRead::Named,
             Ok(found) => AccountRead::Other { named, found },
             Err(cause) => AccountRead::Unread { cause },
@@ -610,7 +666,7 @@ fn resolve_predecessor(
     live: bool,
 ) -> Result<std::result::Result<Predecessor, (&'static str, Option<&'static str>)>> {
     Ok(
-        match (mode, agent_runtime::effects::predecessor_identity(overseer)) {
+        match (mode, crate::effects::predecessor_identity(overseer)) {
             (Mode::Transfer, Some(identity)) if live => match operation.read_process(&identity)? {
                 ProcessRead::Gone => Err(("predecessor-not-live", None)),
                 ProcessRead::Live | ProcessRead::Stale { .. } | ProcessRead::Unreadable { .. } => {
@@ -736,35 +792,33 @@ fn read_retirement(
         Mode::Transfer => "identity",
         Mode::Start => "identity-gone",
     };
-    Ok(
-        match agent_runtime::effects::predecessor_identity(overseer) {
-            Some(identity) => match operation.read_process(&identity)? {
-                ProcessRead::Live => Retirement::Standing,
-                ProcessRead::Gone => Retirement::Retired { by },
-                ProcessRead::Stale { .. } => {
-                    let readings = operation.count_stale(&identity, observation)?;
-                    if readings >= 2 {
-                        Retirement::Retired { by }
-                    } else {
-                        Retirement::Stale { readings }
-                    }
+    Ok(match crate::effects::predecessor_identity(overseer) {
+        Some(identity) => match operation.read_process(&identity)? {
+            ProcessRead::Live => Retirement::Standing,
+            ProcessRead::Gone => Retirement::Retired { by },
+            ProcessRead::Stale { .. } => {
+                let readings = operation.count_stale(&identity, observation)?;
+                if readings >= 2 {
+                    Retirement::Retired { by }
+                } else {
+                    Retirement::Stale { readings }
                 }
-                ProcessRead::Unreadable { cause } => Retirement::Unreadable { cause },
-            },
-            None => match operation.terminal_proof(overseer)? {
-                Proof::Proven { by } => Retirement::Retired { by },
-                Proof::Standing { .. } => Retirement::Standing,
-                Proof::Empty => match mode {
-                    Mode::Transfer => Retirement::Unproven {
-                        cause: "record-empty",
-                    },
-                    Mode::Start => Retirement::Retired { by: "record-empty" },
-                },
-                Proof::Unproven { cause } => Retirement::Unproven { cause },
-                Proof::Unreadable { cause } => Retirement::Unreadable { cause },
-            },
+            }
+            ProcessRead::Unreadable { cause } => Retirement::Unreadable { cause },
         },
-    )
+        None => match operation.terminal_proof(overseer)? {
+            Proof::Proven { by } => Retirement::Retired { by },
+            Proof::Standing { .. } => Retirement::Standing,
+            Proof::Empty => match mode {
+                Mode::Transfer => Retirement::Unproven {
+                    cause: "record-empty",
+                },
+                Mode::Start => Retirement::Retired { by: "record-empty" },
+            },
+            Proof::Unproven { cause } => Retirement::Unproven { cause },
+            Proof::Unreadable { cause } => Retirement::Unreadable { cause },
+        },
+    })
 }
 
 /// The predecessor as retired, carried to the publication: what retired it, the record whose handles the publication settles,
@@ -780,11 +834,7 @@ struct Retired<'a> {
 // The succession
 // ---------------------------------------------------------------------------
 
-pub(super) fn transfer_effect(
-    run: &Run,
-    intent_id: &str,
-    r: &RequestTransfer,
-) -> Result<EffectOutcome> {
+pub fn transfer_effect(run: &Run, intent_id: &str, r: &RequestTransfer) -> Result<EffectOutcome> {
     succeed(
         run,
         intent_id,
@@ -794,11 +844,7 @@ pub(super) fn transfer_effect(
     )
 }
 
-pub(super) fn start_effect(
-    run: &Run,
-    intent_id: &str,
-    r: &StartController,
-) -> Result<EffectOutcome> {
+pub fn start_effect(run: &Run, intent_id: &str, r: &StartController) -> Result<EffectOutcome> {
     succeed(
         run,
         intent_id,
@@ -816,7 +862,7 @@ fn succeed(
     named_session: Option<&str>,
 ) -> Result<EffectOutcome> {
     let intent = read_intent(run.engine.path, intent_id)?;
-    let mut operation = super::lane_operation::open(run, &intent)?;
+    let mut operation = open(run, &intent)?;
     let overseer = read_overseer(run.engine.path)?;
     // The session the predecessor's recorded pane stands in, read only where
     // neither the request nor the setting names one.
@@ -850,13 +896,13 @@ fn succeed(
     let (server, session) =
         match operation.fleet_server(named_session, predecessor_session.as_deref()) {
             Ok(resolved) => resolved,
-            Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
         };
     let served = match pending.harness.as_deref().and_then(Harness::parse) {
         Some(harness @ (Harness::Claude | Harness::Codex)) if pending.account.is_none() => {
-            match agent_runtime::effects::server_home(&server, &session, harness) {
+            match crate::effects::server_home(&server, &session, harness) {
                 Ok(served) => served,
-                Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+                Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
             }
         }
         Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
@@ -881,7 +927,7 @@ fn succeed(
     // home never held fails here, nothing opened.
     let floor = match &successor.resume {
         Some(id) => {
-            match agent_runtime::effects::fixed_id_file(
+            match crate::effects::fixed_id_file(
                 successor.harness,
                 &successor.home,
                 &successor.cwd,
@@ -904,7 +950,7 @@ fn succeed(
         }
         None => match operation.session_floor(successor.harness, &successor.home, &successor.cwd) {
             Ok(floor) => floor,
-            Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
         },
     };
     // The brief is held, not spelled into the launch: the waiting runner
@@ -945,7 +991,7 @@ fn succeed(
         successor.cleared,
     ) {
         Ok(opening) => opening,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
@@ -956,7 +1002,7 @@ fn succeed(
         // receipt or window was recorded, so nothing stands and the
         // succession fails with the predecessor in control.
         Err(OpenRefusal::Refused(e)) => {
-            return Ok(failed_before_retirement_refused(operation, &Error::from(e)));
+            return Ok(failed_before_retirement_refused(operation, &e));
         }
         // The launcher was asked and did not answer: a window may stand
         // that nothing registers; the intent stays open
@@ -1219,7 +1265,7 @@ fn succeed(
             "identity"
         }
         Predecessor::Absent { by } => {
-            if let Some(prior) = agent_runtime::effects::predecessor_identity(&overseer)
+            if let Some(prior) = crate::effects::predecessor_identity(&overseer)
                 && let ProcessRead::Stale { .. } = operation.read_process(&prior)?
             {
                 // The recorded pid holds another process: one reading that
@@ -1556,15 +1602,12 @@ fn deliver_brief(
                 lines: text.lines().count() as u64,
             },
         )?,
-        Err(_) => agent_runtime::effects::Delivery::Unsent(agent_runtime::Error::refused(
-            "pane-not-standing",
-            &[],
-        )),
+        Err(_) => crate::effects::Delivery::Unsent(crate::Error::refused("pane-not-standing", &[])),
     };
     let stopped = match delivered {
-        agent_runtime::effects::Delivery::Pasted => None,
-        agent_runtime::effects::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
-        agent_runtime::effects::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
+        crate::effects::Delivery::Pasted => None,
+        crate::effects::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
+        crate::effects::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
     };
     if let Some((note, cause)) = stopped {
         return Ok(Err(undelivered(
@@ -1653,7 +1696,7 @@ fn publish(
     // retirement added are discharged first: its identity by this run's
     // read, its window by the close made in this run or now. The runner's
     // pane and identity then pass to the record the publication writes.
-    if let Some(recorded) = agent_runtime::effects::predecessor_identity(retired.overseer) {
+    if let Some(recorded) = crate::effects::predecessor_identity(retired.overseer) {
         operation.read_process(&recorded)?;
     }
     let window = match retired.window {
@@ -1818,14 +1861,14 @@ fn controller_retired(
 /// nothing names what to stop. Runs
 /// in the detached job: the process that asked answers from the controller's
 /// own pane as often as not, so it is let exit before the pane is retired.
-pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<EffectOutcome> {
+pub fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<EffectOutcome> {
     let intent = read_intent(run.engine.path, intent_id)?;
-    let mut operation = super::lane_operation::open(run, &intent)?;
+    let mut operation = open(run, &intent)?;
     operation.await_caller_gone()?;
     let overseer = read_overseer(run.engine.path)?;
     let target = overseer_target_of(&run.settings.engine.harness_binaries, &overseer)?;
     operation.begin_retirement(&overseer)?;
-    match agent_runtime::effects::predecessor_identity(&overseer) {
+    match crate::effects::predecessor_identity(&overseer) {
         Some(identity) => {
             let owns = |name: &str| target.as_ref().is_some_and(|t| t.owns(name));
             let Some(token) = operation.standing_process(&identity) else {
@@ -1898,10 +1941,10 @@ fn stop_without_identity(
 /// pending`, which a repeated request runs), unreadable holds; with no
 /// identity, the terminal proof decides as the effect does. A generation
 /// moved past the intent's is `target-moved`.
-pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
+pub fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let overseer = read_overseer(run.engine.path)?;
     let generation = overseer.generation.unwrap_or(0);
-    let mut operation = super::lane_operation::open(run, intent)?;
+    let mut operation = open(run, intent)?;
     operation.read_standing(Some(&overseer))?;
     if intent.target != overseer_target(generation) {
         // The record the stop named has moved on: before any
@@ -1927,7 +1970,7 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
         operation.begin_retirement(&overseer)?;
     }
     let observation = json!({"reconcile": "stop-controller"});
-    match agent_runtime::effects::predecessor_identity(&overseer) {
+    match crate::effects::predecessor_identity(&overseer) {
         Some(identity) => match operation.read_process(&identity)? {
             ProcessRead::Gone => controller_retired(
                 operation,
@@ -1982,11 +2025,11 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
 /// altogether stops the runner, since nothing could publish it; the brief,
 /// turn and identity steps give `confirmed` or `unconfirmed` with the
 /// runner kept.
-pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
+pub fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let overseer = read_overseer(run.engine.path)?;
     let generation = overseer.generation.unwrap_or(0);
     let mode = Mode::of(intent.op);
-    let mut operation = super::lane_operation::open(run, intent)?;
+    let mut operation = open(run, intent)?;
     // Every standing handle is read by its own key first.
     operation.read_standing(Some(&overseer))?;
     // The record moved past the generation the intent named, an
@@ -2229,7 +2272,7 @@ fn judge_resolved(
                 let predecessor_target =
                     overseer_target_of(&run.settings.engine.harness_binaries, overseer)?;
                 let owns = |name: &str| predecessor_target.as_ref().is_some_and(|t| t.owns(name));
-                let token = agent_runtime::effects::predecessor_identity(overseer)
+                let token = crate::effects::predecessor_identity(overseer)
                     .and_then(|id| operation.standing_process(&id));
                 let stopped = match token {
                     Some(token) => matches!(
@@ -2296,7 +2339,7 @@ fn judge_resolved(
     // before the handles were acquired at retirement acquires them now.
     if !operation.retirement_begun(overseer) {
         operation.begin_retirement(overseer)?;
-        if let Some(prior) = agent_runtime::effects::predecessor_identity(overseer) {
+        if let Some(prior) = crate::effects::predecessor_identity(overseer) {
             operation.read_process(&prior)?;
         }
     }
@@ -2332,7 +2375,7 @@ fn judge_resolved(
                 }
             };
             operation.read_receipt()?;
-            if let Some(prior) = agent_runtime::effects::predecessor_identity(overseer) {
+            if let Some(prior) = crate::effects::predecessor_identity(overseer) {
                 operation.read_process(&prior)?;
             }
             operation.close_overseer_window(overseer)?;

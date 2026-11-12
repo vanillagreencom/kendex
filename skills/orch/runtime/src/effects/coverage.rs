@@ -66,9 +66,11 @@ pub(super) fn coverage_notices(
             }
             Err(e) => notices.push(format!("context-reader=missing home={home} cause={e}")),
         }
-        if let Err(reason) =
-            super::launch::gate::local(harness, Some(Path::new(home)), Path::new(cwd))
-        {
+        if let Err(reason) = agent_runtime::effects::prepare::gate::local(
+            harness,
+            Some(Path::new(home)),
+            Path::new(cwd),
+        ) {
             notices.push(format!(
                 "turn-end-hook=missing harness=copilot reason={reason} {}",
                 fix("copilot")

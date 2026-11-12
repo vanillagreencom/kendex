@@ -544,6 +544,27 @@ pub struct Settings {
     pub lane_output: Judged<LaneOutput>,
 }
 
+/// The setups every orch launch builds its directory's install through
+/// before the window: orch's own, then the agent-runtime its scripts run,
+/// the sibling they reach as `../../agent-runtime`.
+const LAUNCH_SETUPS: &[&str] = &[
+    ".agents/skills/orch/scripts/setup",
+    ".agents/skills/orch/scripts/../../agent-runtime/scripts/setup",
+];
+
+impl Settings {
+    /// What every orch launch's preparation is handed: the homes an
+    /// accountless launch inherits, as this load read them, and orch's
+    /// setups.
+    pub fn inherited(&self) -> agent_runtime::effects::prepare::Inherited<'_> {
+        agent_runtime::effects::prepare::Inherited {
+            copilot_home: self.copilot_home.as_deref(),
+            pi_root: self.pi_root.as_deref(),
+            setups: LAUNCH_SETUPS,
+        }
+    }
+}
+
 pub const LANE_OUTPUT_KEY: &str = "ORCH_LANE_OUTPUT";
 
 /// What a lane prints in its pane, stated in its launch brief so its first

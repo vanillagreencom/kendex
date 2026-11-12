@@ -78,19 +78,6 @@ pub enum Error {
     /// kept as history and is not the current round's.
     #[error("round {round_id} was superseded")]
     RoundSuperseded { round_id: String },
-    /// The overseer record differs from the one the requester saw in the
-    /// named fields; the succession compare-and-swap refuses to act on a
-    /// record another writer moved.
-    #[error("{path}: the overseer record changed in {}", fields.join(","))]
-    OverseerChanged { path: PathBuf, fields: Vec<String> },
-    /// A confirmed transfer found no `pending` successor to publish.
-    #[error("{path}: the overseer records no pending successor")]
-    PendingMissing { path: PathBuf },
-    /// A transfer confirmation names no successor pane on a server. The
-    /// record it publishes is the successor's own, and the successor's watch
-    /// start keeps a record only where it names that pane on that server.
-    #[error("intent {intent}: the transfer confirmation names no {field}")]
-    LaunchMissing { intent: String, field: &'static str },
     /// The word is none a verification record carries (`pass`, `fail`,
     /// `none`). `pending` is a wait that ended without a result,
     /// no verdict about the head, so it is refused rather than recorded.
@@ -143,36 +130,6 @@ pub enum Error {
     HandoffWrittenAtInvalid { written_at: String },
     #[error("handoff written_at {written_at} is later than the clock at {now}")]
     HandoffWrittenAtFuture { written_at: String, now: String },
-    /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`: no succession is asked for and no
-    /// intent persists.
-    #[error("succession is off, so no transfer is requested")]
-    SuccessionOff,
-    /// The controller was stopped on purpose (`off` recorded); no recovery
-    /// relaunches it, only an explicit start.
-    #[error("{path}: the controller at generation {generation} is off")]
-    ControllerOff { path: PathBuf, generation: u64 },
-    /// A walled succession's successor would run on the account the wall
-    /// spent.
-    #[error("the successor account {account} is the spent one")]
-    SuccessorAccountSpent { account: String },
-    /// A recovery from a standing handoff names a session other than the
-    /// recorded controller's.
-    #[error("the handoff names session {expected:?}, the record {recorded:?}")]
-    HandoffSessionMismatch {
-        expected: String,
-        recorded: Option<String>,
-    },
-    /// A transfer cause needs a field the request left out.
-    #[error("a {cause} transfer needs {field}")]
-    TransferFieldMissing {
-        cause: &'static str,
-        field: &'static str,
-    },
-    /// A model-recovery transfer whose binding no longer holds against the
-    /// record: the recovery predicate (`ops::controller`'s `recovery_bound`)
-    /// read false, and nothing is written.
-    #[error("{path}: the recovery request is not bound to the record: {cause}")]
-    RecoveryUnbound { path: PathBuf, cause: &'static str },
     /// A refusal that came after the request's intent was persisted: the
     /// intent stands for the reconcile to settle, so a caller reads the
     /// request as unconfirmed, never as refused. The key and fields are the
@@ -524,9 +481,6 @@ impl Error {
             Error::RoundUnknown { .. } => "round-unknown",
             Error::RunUnknown { .. } => "run-unknown",
             Error::RoundSuperseded { .. } => "round-superseded",
-            Error::OverseerChanged { .. } => "overseer-changed",
-            Error::PendingMissing { .. } => "pending-missing",
-            Error::LaunchMissing { .. } => "launch-missing",
             Error::VerdictInvalid { .. } => "verdict-invalid",
             Error::LaneChannel { .. } => "lane-channel",
             Error::DirectiveSendOwed { .. } => "directive-send-owed",
@@ -539,12 +493,6 @@ impl Error {
             Error::HandoffDiffers { .. } => "handoff-differs",
             Error::HandoffWrittenAtInvalid { .. } => "handoff-written-at-invalid",
             Error::HandoffWrittenAtFuture { .. } => "handoff-written-at-future",
-            Error::SuccessionOff => "succession-off",
-            Error::ControllerOff { .. } => "controller-off",
-            Error::SuccessorAccountSpent { .. } => "successor-account-spent",
-            Error::HandoffSessionMismatch { .. } => "handoff-session-mismatch",
-            Error::TransferFieldMissing { .. } => "transfer-field-missing",
-            Error::RecoveryUnbound { .. } => "recovery-unbound",
             Error::Persisted { error, .. } => error.key(),
             Error::CapReached { .. } => "cap-reached",
             Error::CapUnreadable { .. } => "cap-unreadable",
@@ -594,7 +542,7 @@ impl Error {
         match self {
             Error::Artifact { cause, .. } => vec![pair("cause", cause.clone())],
             Error::Runtime(e) => agent_runtime::protocol::Refusal::from(e).fields,
-            Error::Request { path, .. } | Error::PendingMissing { path } => {
+            Error::Request { path, .. } => {
                 vec![pair("path", path.display().to_string())]
             }
             Error::OpKind {
@@ -618,20 +566,12 @@ impl Error {
                 pair("item", item.clone()),
                 pair("status", status.word().to_owned()),
             ],
-            Error::LaunchMissing { intent, field } => vec![
-                pair("intent_id", intent.clone()),
-                pair("field", (*field).to_owned()),
-            ],
             Error::RoundUnknown { round_id } | Error::RoundSuperseded { round_id } => {
                 vec![pair("round_id", round_id.clone())]
             }
             Error::RunUnknown { round_id, run_dir } => vec![
                 pair("round_id", round_id.clone()),
                 pair("run_dir", run_dir.clone()),
-            ],
-            Error::OverseerChanged { path, fields } => vec![
-                pair("path", path.display().to_string()),
-                pair("fields", fields.join(",")),
             ],
             Error::VerdictInvalid { verdict } => vec![pair("verdict", verdict.clone())],
             Error::OpNotTransition { op } => {
@@ -674,27 +614,6 @@ impl Error {
             Error::HandoffWrittenAtFuture { written_at, now } => vec![
                 pair("written_at", written_at.clone()),
                 pair("now", now.clone()),
-            ],
-            Error::SuccessionOff => vec![pair(
-                "AGENT_RUNTIME_CONTROLLER_SUCCESSION",
-                "off".to_owned(),
-            )],
-            Error::ControllerOff { path, generation } => vec![
-                pair("path", path.display().to_string()),
-                pair("generation", generation.to_string()),
-            ],
-            Error::SuccessorAccountSpent { account } => vec![pair("account", account.clone())],
-            Error::HandoffSessionMismatch { expected, recorded } => vec![
-                pair("expected", expected.clone()),
-                pair("recorded", recorded.clone().unwrap_or_default()),
-            ],
-            Error::TransferFieldMissing { cause, field } => vec![
-                pair("cause", (*cause).to_owned()),
-                pair("field", (*field).to_owned()),
-            ],
-            Error::RecoveryUnbound { path, cause } => vec![
-                pair("path", path.display().to_string()),
-                pair("cause", (*cause).to_owned()),
             ],
             Error::Persisted { intent, error } => {
                 let mut fields = error.fields();
@@ -920,6 +839,14 @@ impl From<Error> for agent_runtime::Error {
                 fields: other.fields(),
             },
         }
+    }
+}
+
+/// A launch preparation refused by an orch read: the launch's own refusal,
+/// crossing as agent-runtime's error under the same key and fields.
+impl From<Error> for agent_runtime::effects::prepare::Unready {
+    fn from(error: Error) -> Self {
+        agent_runtime::effects::prepare::Unready::Refused(error.into())
     }
 }
 

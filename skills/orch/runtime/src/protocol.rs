@@ -86,10 +86,10 @@ mod tests {
                 "orch-runtime: lane-live item=KEN-1 status=running",
             ),
             (
-                Error::OverseerChanged {
+                Error::Runtime(agent_runtime::Error::OverseerChanged {
                     path: "/s.json".into(),
                     fields: vec!["server".into(), "pane".into()],
-                },
+                }),
                 "orch-runtime: overseer-changed path=/s.json fields=server,pane",
             ),
             (
