@@ -5,10 +5,11 @@
 # a source outside the repository is the worktree copy too, a spelling that
 # normalizes back inside is the committed file, `.env` is read by nothing,
 # and a git that cannot answer the index or HEAD probe is a collection error,
-# never a fall back to the built-in list. One table: a row builds its own
-# repository, runs the gate under an optional PATH shim, and reads back the
-# exit status and every line printed — the type list a refusal names is
-# which source answered. The precedence ladder itself is
+# never a fall back to the built-in setting. One table: a row builds its own
+# repository staging one file under each of three folders, runs the gate
+# under an optional PATH shim, and reads back the exit status and every line
+# printed — the path a missing entry names is which source's required-path
+# list answered, and no line at all is the built-in rule, which is off. The precedence ladder itself is
 # settings-precedence.test.sh; the readers are index-reads.test.sh.
 set -euo pipefail
 
@@ -20,8 +21,7 @@ CM="$SKILL_DIR/scripts/commit-msg"
 ROOT="$TMP"
 REAL_GIT="$(command -v git)"
 
-unset COMMIT_GUARDS_COMMIT_TYPES COMMIT_GUARDS_SUBJECT_MAX \
-  COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS COMMIT_GUARDS_CHANGELOG_PATHS \
+unset COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS COMMIT_GUARDS_CHANGELOG_PATHS \
   COMMIT_GUARDS_CHANGELOG_RECORD COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
 PASS=0
@@ -43,8 +43,16 @@ new_repo() { # NAME — fresh fixture repo in $R, cwd unchanged
   git -C "$R" config user.email test@example.com
   git -C "$R" config user.name test
 }
-types_toml() { # FILE LIST — a settings file naming LIST as the type list
-  printf '[env]\nCOMMIT_GUARDS_COMMIT_TYPES = "%s"\n' "$2" >"$1"
+required_toml() { # FILE LIST — a settings file naming LIST as the required paths
+  printf '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "%s"\n' "$2" >"$1"
+}
+# One staged file per folder a list below can name, and no fragment.
+stage_changes() {
+  mkdir -p "$R/docs" "$R/build" "$R/chore"
+  printf 'a\n' >"$R/docs/a.md"
+  printf 'b\n' >"$R/build/b.txt"
+  printf 'c\n' >"$R/chore/c.txt"
+  git -C "$R" add docs build chore
 }
 
 # One line for a run of the gate inside $R over a message on stdin, SHIM-DIR
@@ -62,9 +70,8 @@ judge() { # SHIM-DIR ENVS MSG
   printf 'rc=%s%s' "$rc" "${out:+ $(printf '%s\n' "$out" | LC_ALL=C paste -sd ';' -)}"
 }
 
-OK="commit-msg: header-valid="
-shape_fail() { # HEADER TYPES — the whole shape violation, naming the list that answered
-  printf '%s' "commit-msg: header-shape=$1:$2"
+owed() { # PATH — the missing entry, naming the staged path the answering list required
+  printf '%s' "commit-msg: changelog-missing=$1:changelog.d/*/*.md"
 }
 
 # A git that fails one probe and nothing else, so the row reads which
@@ -83,33 +90,33 @@ git_shim rev-parse '*" rev-parse --verify --quiet HEAD "*'
 
 # The out-of-repo source every fixture below can name: a list no committed
 # file carries, so a verdict naming it was read from here.
-types_toml "$ROOT/outside-settings.toml" "docs build"
+required_toml "$ROOT/outside-settings.toml" "build/*"
 
-fx_untracked() { new_repo "$1"; types_toml "$R/kendex.settings.toml" docs; }
-fx_dotenv() { new_repo "$1"; printf 'COMMIT_GUARDS_COMMIT_TYPES=docs\n' >"$R/.env"; }
-fx_dotenv_local() { new_repo "$1"; printf 'COMMIT_GUARDS_COMMIT_TYPES=chore\n' >"$R/.env.local"; }
-fx_committed() { # NAME — the docs-only list committed
+fx_untracked() { new_repo "$1"; required_toml "$R/kendex.settings.toml" "docs/*"; stage_changes; }
+fx_dotenv() { new_repo "$1"; printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=docs/*\n' >"$R/.env"; stage_changes; }
+fx_dotenv_local() { new_repo "$1"; printf 'COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS=chore/*\n' >"$R/.env.local"; stage_changes; }
+fx_committed() { # NAME — the docs list committed
   new_repo "$1"
-  types_toml "$R/kendex.settings.toml" docs
+  required_toml "$R/kendex.settings.toml" "docs/*"
   git -C "$R" add -A
   git -C "$R" commit -qm "docs: base"
+  stage_changes
 }
-fx_loosened() { # NAME — committed docs-only, the worktree copy loosened to admit feat
+fx_loosened() { # NAME — the docs list committed, the worktree copy loosened to require nothing
   fx_committed "$1"
   mkdir -p "$R/sub"
   echo keep >"$R/sub/keep.txt"
-  git -C "$R" add -A
-  git -C "$R" commit -qm "docs: subdir"
-  types_toml "$R/kendex.settings.toml" "docs feat"
+  git -C "$R" add sub
+  required_toml "$R/kendex.settings.toml" ""
 }
-fx_recreated() { # NAME — committed docs-only, staged for deletion, recreated in the worktree as chore-only
+fx_recreated() { # NAME — the docs list committed, staged for deletion, recreated in the worktree as the chore list
   fx_committed "$1"
   git -C "$R" rm -q --cached kendex.settings.toml
-  types_toml "$R/kendex.settings.toml" chore
+  required_toml "$R/kendex.settings.toml" "chore/*"
 }
 
-DOCS_ONLY="$(shape_fail 'feat: base type' docs)"
-OUTSIDE="$(shape_fail 'feat: base type' 'docs build')"
+DOCS_ONLY="$(owed docs/a.md)"
+OUTSIDE="$(owed build/b.txt)"
 LS_FILES="commit-msg: settings-index-query=kendex.settings.toml:71"
 LS_TREE="commit-msg: settings-head-query=kendex.settings.toml:71"
 LS_FILES_S="commit-msg: settings-index-mode=kendex.settings.toml:71"
@@ -117,12 +124,11 @@ REV_PARSE="commit-msg: settings-head-resolve=.kendex/settings.toml:71"
 echo "=== which settings source answers in the hook lane ==="
 # label | fixture | shim | env | message | expect
 rows=(
-  "an untracked kendex.settings.toml is the worktree copy: its list admits docs|fx_untracked untracked-1|||docs: settings-admitted type|rc=0 ${OK}docs: settings-admitted type"
-  "control: that list refuses feat, and the refusal names it|fx_untracked untracked-2|||feat: base type|rc=1 $DOCS_ONLY"
-  "a .env type list is read by nothing: the built-in list decides|fx_dotenv dotenv|||feat: base type|rc=0 ${OK}feat: base type"
-  "control: .env.local restricts the list|fx_dotenv_local dotenv-local-1|||feat: base type|rc=1 $(shape_fail 'feat: base type' chore)"
-  "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0 ${OK}feat: base type"
-  "control: the committed list refuses feat|fx_committed committed-1|||feat: base type|rc=1 $DOCS_ONLY"
+  "an untracked kendex.settings.toml is the worktree copy, and its list answers|fx_untracked untracked-1|||feat: base type|rc=1 $DOCS_ONLY"
+  "a .env list is read by nothing: the built-in setting, off, decides|fx_dotenv dotenv|||feat: base type|rc=0"
+  "control: .env.local sets the list|fx_dotenv_local dotenv-local-1|||feat: base type|rc=1 $(owed chore/c.txt)"
+  "the /dev/null sentinel selects no source at all, .env.local included|fx_dotenv_local dotenv-local-2||COMMIT_GUARDS_SETTINGS_FILE=/dev/null|feat: base type|rc=0"
+  "control: the committed list answers|fx_committed committed-1|||feat: base type|rc=1 $DOCS_ONLY"
   "a failing index probe is exit 2, never a fall back to the built-in list|fx_committed committed-2|$ROOT/git-shim-ls-files||feat: base type|rc=2 $LS_FILES"
   "a failing index-mode read is exit 2, never the symlink shape let through|fx_committed committed-5|$ROOT/git-shim-ls-files-s||feat: base type|rc=2 $LS_FILES_S"
   "a failing HEAD resolve is exit 2, named on the first source probed|fx_committed committed-6|$ROOT/git-shim-rev-parse||feat: base type|rc=2 $REV_PARSE"
@@ -133,7 +139,7 @@ rows=(
   "a leading './' is the committed file|fx_loosened loosened-3||COMMIT_GUARDS_SETTINGS_FILE=./kendex.settings.toml|feat: base type|rc=1 $DOCS_ONLY"
   "segments that never existed cancel out to the committed file|fx_loosened loosened-4||COMMIT_GUARDS_SETTINGS_FILE=a/b/../../kendex.settings.toml|feat: base type|rc=1 $DOCS_ONLY"
   "control: a spelling that still escapes once normalized reads the out-of-repo file|fx_loosened loosened-5||COMMIT_GUARDS_SETTINGS_FILE=sub/../../outside-settings.toml|feat: base type|rc=1 $OUTSIDE"
-  "control: a source staged for deletion governs as absent, whatever the recreated copy says|fx_recreated recreated-1|||feat: base type|rc=0 ${OK}feat: base type"
+  "control: a source staged for deletion governs as absent, whatever the recreated copy says|fx_recreated recreated-1|||feat: base type|rc=0"
   "a failing HEAD probe is exit 2, never authority for the recreated copy|fx_recreated recreated-2|$ROOT/git-shim-ls-tree||feat: base type|rc=2 $LS_TREE"
 )
 for row in "${rows[@]}"; do

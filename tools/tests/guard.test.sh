@@ -211,7 +211,6 @@ echo "=== the shipped packages' verdicts are not twinned here ==="
 # checks. The preconditions run those checks on the same fixture, so
 # guard's silence on a package-owned refusal proves the delegation.
 head -c 8193 /dev/zero | tr '\0' x >"$R/AGENTS.md"
-printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
 mkdir -p "$R/changelog.d/fixed"
@@ -262,8 +261,8 @@ changelog_entries_pass "$CHANGELOG_ENTRIES" || :
   || bad "precondition: changelog-entries refuses the two-entry fragment" "rc=$CE_RC out=$CE_OUT"
 run_guard
 [ "$RC" -eq 0 ] \
-  && ok "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" \
-  || bad "an over-limit document, a work marker, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" "rc=$RC out=$OUT"
+  && ok "an over-limit document, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" \
+  || bad "an over-limit document, a blanket allow, a 300 KB file, a malformed fragment and a long entry all pass: the packages judge those" "rc=$RC out=$OUT"
 case "$OUT" in *Unreleased* | *changelog* | *fragment*) bad "guard names neither changelog scope" "$OUT" ;; *) ok "guard names neither changelog scope" ;; esac
 reset_world
 

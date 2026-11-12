@@ -1,21 +1,15 @@
 #!/usr/bin/env bash
 # commit-msg — the whole commit-message gate over one message, built to sit
 # directly in .git/hooks/commit-msg (it takes the message file git passes, or
-# stdin). Three rules, because only a commit-msg hook sees the subject and no
-# other lane can carry them:
+# stdin). One rule, which only a commit-msg hook can carry because the waiver
+# lives in the message:
 #
-#   header shape   the first non-blank, non-comment line is `type(scope)!: subject`
-#   subject length at most COMMIT_GUARDS_SUBJECT_MAX characters
 #   changelog      a commit touching COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS
-#                  writes a changelog entry, or says [no-changelog]
+#                  writes a changelog entry, or says [no-changelog] in its
+#                  header (the first non-blank, non-comment line)
 #
-# Git-generated headers (Merge, Revert, Reapply, fixup!, squash!, amend!) are
-# exempt from shape and length alone: nobody chose their wording or their
-# size. The changelog rule still runs over them — a merge that carries code
-# carries its entry — and [no-changelog] still escapes it.
-#
-# Every applicable rule reports before the verdict: a run names everything
-# wrong with the message, never the first thing.
+# The rule runs over every header, git-generated ones included: a merge that
+# carries code carries its entry.
 #
 # Exit codes: 0 pass; 1 violation; 2 usage/config/collection error (an
 # unreadable message file is a collection error, never a pass).
@@ -47,21 +41,11 @@ usage() {
 usage: commit-msg [FILE]
 
 Checks the commit message in FILE (or on stdin when FILE is absent or '-'):
-the conventional header `type(scope)!: subject` (scope and '!' optional;
-uppercase issue keys, fix(ABC-123): ..., are accepted), the subject's
-length, and a changelog entry for a commit that touches the configured
-paths. Git-generated messages (Merge/Revert/Reapply, fixup!/squash!/amend!)
-skip the shape and length rules and keep the changelog one. Wire it as
-.git/hooks/commit-msg: `commit-msg "$1"`.
+a commit that touches the configured paths writes a changelog entry. Wire it
+as .git/hooks/commit-msg: `commit-msg "$1"`.
 
 Configuration (env > .env.local > .kendex/settings.toml >
 kendex.settings.toml [env] > default):
-  COMMIT_GUARDS_COMMIT_TYPES   space-separated type list
-                               (default "build chore ci docs feat fix perf refactor revert style test")
-  COMMIT_GUARDS_SUBJECT_MAX    characters allowed in the header (default 72;
-                               counted the way the changelog cap is, so a
-                               multibyte header measures the same in every
-                               locale a hook may inherit)
   COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS
                                space-separated globs against the full
                                repo-relative path ('*' crosses '/'); a commit
@@ -122,86 +106,10 @@ gg_repo_root_cd
 # The accepted rules are the ones the commit carries, not an unstaged edit.
 gg_settings_index_mode
 
-TYPES="$(gg_setting COMMIT_GUARDS_COMMIT_TYPES "build chore ci docs feat fix perf refactor revert style test")" || exit 2
-TYPE_ALT=""
-for t in $TYPES; do
-  # LC_ALL=C grep, as the header match below: a `case` range is a collation
-  # range in a UTF-8 locale, under which Bash 3.2 puts `F` inside [a-z].
-  printf '%s\n' "$t" | LC_ALL=C grep -qE '^[a-z0-9-]+$' ||
-    gg_fail type-invalid "$t" "COMMIT_GUARDS_COMMIT_TYPES entry '$(gg_scrubbed "$t")' is not a lowercase type name"
-  TYPE_ALT="${TYPE_ALT:+$TYPE_ALT|}$t"
-done
-[ -n "$TYPE_ALT" ] || gg_fail types-empty "COMMIT_GUARDS_COMMIT_TYPES" "COMMIT_GUARDS_COMMIT_TYPES resolved empty — at least one type is required"
-
-SUBJECT_MAX="$(gg_setting COMMIT_GUARDS_SUBJECT_MAX 72)" || exit 2
-gg_positive_int "$SUBJECT_MAX" "COMMIT_GUARDS_SUBJECT_MAX"
-
 REQUIRED_RAW="$(gg_setting COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS "")" || exit 2
 REQUIRED="$(gg_config_path_list "$REQUIRED_RAW" changelog-required)" || exit 2
 
-gg_commit_header "$MSG"
-HEADER="$GG_COMMIT_HEADER"
-
-if [ -z "$HEADER" ]; then
-  gg_message header-empty 0 "No non-comment content in the commit message."
-  exit 1
-fi
-
-FAILED=0
-violation() { # KEY VALUE HEADLINE [DETAIL...]
-  local detail
-  gg_message "$1" "$2" "$3"
-  shift 3
-  for detail in "$@"; do echo "  $detail"; done
-  FAILED=1
-}
-
-GENERATED=0
-if gg_git_generated_header "$HEADER"; then GENERATED=1; fi
-
-# The header is somebody else's bytes: a commit object carries whatever was
-# written into it, and a generated revert or fixup header carries a subject
-# copied out of history that nobody here reviewed. Every message below shows
-# HEADER_SHOWN, never HEADER — gg_scrubbed and not gg_shown because the
-# writer has to retype this line to fix it, and %q would hand them a spelling
-# that is not the one their message needs. The judging still reads HEADER: it
-# is the bytes git will store that the rules are about.
-HEADER_SHOWN="$(gg_scrubbed "$HEADER")"
-
-# --- header shape and length: a hand-written header only ---------------------
-if [ "$GENERATED" -eq 1 ]; then
-  gg_message header-generated "$HEADER_SHOWN" "Git-generated header; shape and length are not judged."
-else
-  HEADER_ERE="^($TYPE_ALT)(\([#A-Za-z0-9 _.,/-]+\))?!?: [^[:space:]]"
-  match_status=0
-  match_error=""
-  # LC_ALL=C, for the same reason gg_chars runs under it below: a bracket
-  # range is a COLLATION range under a UTF-8 locale, so [A-Za-z] admits an
-  # accented scope there and refuses it here. The class this gate documents
-  # is ASCII, and it must be that class in every shell a hook is run from.
-  match_error="$(printf '%s\n' "$HEADER" | LC_ALL=C grep -qE "$HEADER_ERE" 2>&1)" || match_status=$?
-  [ "$match_status" -le 1 ] || gg_fail header-scan "$match_status" "${match_error:-grep failed matching the header (exit $match_status)}"
-  if [ "$match_status" -eq 0 ]; then
-    gg_message header-valid "$HEADER_SHOWN" "Conventional header accepted."
-  else
-    violation header-shape "$HEADER_SHOWN:$TYPES" "Non-conventional header: $HEADER_SHOWN" \
-      "expected: type(scope)!: subject — scope and '!' optional; types: $TYPES" \
-      "scope accepts uppercase issue keys and issue numbers, e.g. fix(ABC-123): tighten the gate / fix(#123): case-fold IDs" \
-      "git-generated headers (Merge/Revert/Reapply, fixup!/squash!/amend!) pass unchanged"
-  fi
-  # gg_chars, not ${#HEADER}: bash counts in whatever locale the committer's
-  # shell happens to carry, and one message must not be accepted in one shell
-  # and refused in another.
-  header_chars="$(gg_chars "$HEADER")"
-  if [ "$header_chars" -gt "$SUBJECT_MAX" ]; then
-    violation header-length "$header_chars:$SUBJECT_MAX:$HEADER_SHOWN" "Header exceeds the character limit." \
-      "move the detail into the body — the header is the one line every log shows"
-  fi
-fi
-
 # --- a commit touching the required paths carries a changelog entry ----------
-# Runs over every header, generated ones included: what the commit CHANGES
-# decides this, not who wrote its first line.
 if [ -n "$REQUIRED" ]; then
   # The same two scopes changelog-entries judges, resolved by the same
   # library: the lane that names where an entry may be written and the lane
@@ -246,18 +154,20 @@ if [ -n "$REQUIRED" ]; then
       gg_package_pattern "$pat" || program="${program:+$program }$pat"
     done
     program="$(gg_scrubbed "$program")"
-    case "$HEADER" in
+    gg_commit_header "$MSG"
+    case "$GG_COMMIT_HEADER" in
       *"[no-changelog]"*) gg_message changelog-waived "$touched" "The header waives the changelog entry." ;;
       *)
         # The record does not satisfy this rule without the release declaration.
-        violation changelog-missing "$touched:$program" "Changed without a changelog entry." \
-          "write one of: $program" \
-          "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
+        gg_message changelog-missing "$touched:$program" "Changed without a changelog entry."
+        echo "  write one of: $program"
+        echo "  or put [no-changelog] in the header when the commit changes nothing a consumer sees"
         [ -z "$GG_CHANGELOG_RECORD" ] \
           || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
+        exit 1
         ;;
     esac
   fi
 fi
 
-exit "$FAILED"
+exit 0

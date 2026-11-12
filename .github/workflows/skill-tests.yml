@@ -396,24 +396,18 @@ jobs:
         run: |
           base_ref=${BASE_REF#refs/heads/}
           DECISIONS_BASE_REF="origin/$base_ref" skills/decider/scripts/decisions check
-      # The two whole-tree content scans live in this job because every class
+      # The whole-tree content scan lives in this job because every class
       # runs it, `render` and `trivial` included, and a diff small enough to
       # be `trivial` can still push a document past its ceiling. always(): a
-      # red check above must not suppress either scan.
+      # red check above must not suppress the scan.
       #
-      # The merge group is the one run that judges a change, so both scans
-      # run there: a byte ceiling past its limit or a work marker ejects the
-      # group and returns the change to its lane.
+      # The merge group is the one run that judges a change, so the scan
+      # runs there: a byte ceiling past its limit ejects the group and
+      # returns the change to its lane.
       - name: doc-limits (document byte ceilings)
         if: always()
         working-directory: candidate
         run: skills/doc-limits/scripts/doc-limits
-      # The commit lane runs todo-ban --staged and judges what a commit adds;
-      # this scan takes the rest, in every blob git reads as text.
-      - name: todo-ban (index-wide work-marker scan)
-        if: always()
-        working-directory: candidate
-        run: skills/commit-guards/scripts/todo-ban
       # The commit lane's changelog check over the whole change, its package
       # version rule included. The commit chain runs the copy in the
       # committing worktree, so a branch cut before a rule landed commits
@@ -805,7 +799,7 @@ jobs:
       # One `guards` shard held all of it and ran
       # 901-1061s on the macOS leg against roughly a third of that on Linux.
       # `guards-scans` is the scans below, each one pass over a tracked-file
-      # roster or the shell roster; the document-set and work-marker scans run
+      # roster or the shell roster; the document-set scan runs
       # in the bot-instructions job instead, which every class runs, on a pull
       # request. The ruff install rides with the two shards that run a suite
       # needing it: commit-guards' own py-names.test.sh in `guards-commit`,
@@ -1935,7 +1929,7 @@ jobs:
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
       # runs of this workflow the slow one of the two tests in
-      # `catalog_render_lint`, `installed_catalog_passes_comment_and_prose_lanes`,
+      # `catalog_render_lint`, `installed_catalog_passes_reference_lane`,
       # took 801-1012s, and over the eleven of those whose step was not killed at
       # its bound every other target together took 235-267s. That test
       # installs every package on every harness and lints the result, so it
@@ -2017,7 +2011,7 @@ jobs:
       # hosted PR timing must confirm both legs, independently of their bounds.
       # render-lint: in merge-group Skill Tests runs 42557012510 to
       # 42960972919, its longest passing test step took 464s. Its cost is
-      # installed_catalog_passes_comment_and_prose_lanes, the slow one of the
+      # installed_catalog_passes_reference_lane, the slow one of the
       # two tests in catalog_render_lint, whose reference pass runs once per
       # top-level scope in parallel. On one Linux host held to cores 0-2
       # (macos-latest has 3), that test takes 101.0-102.1s with the reference

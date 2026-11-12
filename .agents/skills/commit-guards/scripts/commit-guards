@@ -40,15 +40,13 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-type md-refs py-names secrets comments commit-msg"
+KNOWN_CHECKS="byte-ceiling suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets commit-msg"
 # Binary size is opt-in because no proven failure requires a default ceiling.
-BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+BATCH_DEFAULT="suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
 # The checks the batch hands --staged when it is asked for commit scope.
-# todo-ban and comments default to the whole index, which is a CI subject:
-# at commit each judges what the commit adds. md-type judges touched
-# documents; md-refs checks every configured document for broken incoming
-# references. The rest read the index by design.
-STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-type md-refs py-names secrets comments"
+# md-type judges touched documents; md-refs checks every configured document
+# for broken incoming references. The rest read the index by design.
+STAGED_SCOPED_CHECKS="byte-ceiling md-type md-refs py-names secrets"
 # byte-ceiling, py-names and secrets are the batch lanes whose bare default is
 # the commit scope, so the full batch names their scope outright: --all with
 # no flag. A batch summary that listed one clean over a scope it never read
@@ -78,9 +76,9 @@ RANGE_SCOPED_CHECKS="byte-ceiling changelog-entries md-type md-refs py-names sec
 CHANGE_SCOPED_CHECKS="md-type"
 # Checks this package no longer ships, read until its next major release: a
 # setting or a call naming one is dropped with one retired-check warning,
-# never check-unknown, and counts toward no exit. md-format's style refusals
-# prevented no harm; md-reflow --check names a file off the format.
-RETIRED_CHECKS="md-format"
+# never check-unknown, and counts toward no exit. Each refused for style
+# alone and prevented no harm.
+RETIRED_CHECKS="md-format todo-ban prose comments"
 # The range lanes whose baseline is the branch's base rather than the tree
 # the range lands on: changelog-entries asks which version increases the
 # branch made, md-type which shape findings it introduced. A caller that
@@ -126,7 +124,10 @@ EOF
 }
 
 retired_notice() { # CHECK
-  gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type judges a file's shape. Remove $1 from COMMIT_GUARDS_CHECKS."
+  case "$1" in
+    md-format) gg_message retired-check "$1" "$1 was removed from commit-guards. md-reflow --check names a Markdown file that departs from the one-paragraph-per-line format, and md-type judges a file's shape. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
+    *) gg_message retired-check "$1" "$1 was removed from commit-guards and nothing replaces it. Remove $1 from COMMIT_GUARDS_CHECKS." ;;
+  esac
 }
 
 SCOPE_MODE="all"

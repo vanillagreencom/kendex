@@ -172,8 +172,8 @@ export GG_REAL_GIT
 new_repo excludes-unread
 printf 'seed\n' >"$R/seed.txt"
 mkdir -p "$R/tools"
-printf '# notes\n\nTODO: an unlinked work marker\n' >"$R/bad.md"
-printf 'bad.md\tallowed to carry markers\n' >"$R/tools/todo-ban-excludes"
+printf '%s an excluded conflict marker\n' "<<<<""<<<" >"$R/bad.txt"
+printf 'bad.txt\tallowed to carry markers\n' >"$R/tools/conflict-markers-excludes"
 commit_all base
 
 lane() { # SHIM-DIR SCRIPT [ARG...] — one line for a lane run inside $R, SHIM-DIR first on PATH when given
@@ -186,10 +186,10 @@ lane() { # SHIM-DIR SCRIPT [ARG...] — one line for a lane run inside $R, SHIM-
 
 echo "=== a failed policy read stops the gate, it does not become an empty list ==="
 assert_eq "control: with the excludes readable, the excluded marker passes" \
-  "rc=0 todo-ban: index-count=0:0:tools/todo-ban-excludes" "$(lane "" todo-ban)"
+  "rc=0 conflict-markers: result=0:0:tools/conflict-markers-excludes" "$(lane "" conflict-markers)"
 assert_eq "an unreadable exclusion list stops the run at exit 2, with no verdict" \
-  "rc=2 todo-ban: index-query=tools/todo-ban-excludes:128;todo-ban: exclusion-read=tools/todo-ban-excludes:2" \
-  "$(lane "$ROOT/gitstub" todo-ban)"
+  "rc=2 conflict-markers: index-query=tools/conflict-markers-excludes:128;conflict-markers: exclusion-read=tools/conflict-markers-excludes:2" \
+  "$(lane "$ROOT/gitstub" conflict-markers)"
 
 # --- the settings cache ------------------------------------------------------
 

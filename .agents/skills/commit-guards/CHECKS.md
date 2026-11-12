@@ -4,17 +4,6 @@ What each check fails, its scopes and flags, the keys it reads, and the grammar 
 
 Every check exits `0` clean, `1` violations, `2` usage, config or collection error. Scans read index content, and content decides what is read: an attributes rule cannot hide a path, and a symlink, a submodule gitlink, or a blob with a NUL in its leading bytes at a scanned path is counted as unmeasured, never folded into a clean count. The verdict line carries that count and names no path, so a tree tracking hundreds of symlinks does not bury the lane that failed; md-refs alone names a path: the one a judged reference lands on, or every one under its `--verbose`. Excludes lists and baselines take the formats in `SKILL.md § Configuration`. A path-glob list replaces the default. The md-refs settings add each matching EXTRA list before validation. An empty effective list is a config error; a list matching no tracked file is a clean pass.
 
-## todo-ban
-
-`TODO`, `FIXME`, `HACK`, `XXX` in a marker shape fail, case-sensitively, with no baseline:
-
-- the word at line start, after whitespace, or after a comment leader, immediately followed by `:` or `(`;
-- the bare word directly after a comment leader (only whitespace between), followed by whitespace or end of line.
-
-Comment leaders: `//`, `#`, `;`, `/*`, `<!--`. A marker immediately preceded by a backtick, a quote, or joined text matches neither shape; a space between exempts nothing.
-
-`--staged` judges only the lines the staged diff adds, renames held to exact content (a pure move adds no line; a file that moved and changed is read whole); a first commit is judged like any other. The default judges every tracked file. `--excludes FILE` overrides `COMMIT_GUARDS_TODO_EXCLUDES`.
-
 ## byte-ceiling
 
 A tracked binary or non-text file a change puts over `COMMIT_GUARDS_BYTE_CEILING_KB` (KB = 1024 bytes) fails; size is the blob's object size. An existing file already over the ceiling may stay the same size or shrink, but may not grow. Exempt by exact basename: `Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lock`, `bun.lockb`, `flake.lock`, `poetry.lock`, `uv.lock`, `Pipfile.lock`, `Gemfile.lock`, `composer.lock`, `go.sum`, `gradle.lockfile`, `packages.lock.json`, `Package.resolved`, `.kendex-lock.json`. Asset trees go in `COMMIT_GUARDS_BYTE_EXCLUDES`, overridden by `--excludes FILE`.
@@ -112,20 +101,6 @@ A repository that releases chooses each version by this rule. Where `COMMIT_GUAR
 - The compatibility policy belongs to the consuming repository's release standard, not this configurable catalog check.
 - [`tests/changelog-entries.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-entries.test.sh) pins each refusal against a passing control: a major with and without a named Breaking entry, a major named in the `**Breaking**:` spelling, empty and in a package record, beside a copy reading only `**Breaking:**` that refuses it, a minor with a Breaking or an Added entry, a patch with an Added, Breaking, Changed or Fixed entry, a 0.x patch, a named patch release with pending Added fragments or record entries, a named minor with a pending Breaking fragment, and a major whose own release section must name its break, and a `package.json` judged as the app's version file beside a root or nested record and as a package with the record off. Its package rows pin a package-only Breaking entry that leaves a program minor alone beside a program one that refuses it, a package minor refused for its own Breaking entry and a patch for its own Added one, a 0.x package minor left unjudged, the unraised package change against a raised one, with and without version files configured, another package's, an earlier change's or an edited earlier entry ignored, a versionless hook's change and entry accepted, a versionless skill's change and entry, a dropped version and a first version accepted, a misspelled package directory and a nested hook test helper's name refused as no package, a package file with no name refused, an agent and a skill of one name refused as a duplicate, a new package, plain and single-quoted versions beside a top-level `version:` line, a version read past a comment inside `metadata:` and past one on the `metadata:` line, a value holding the word `version` read as versionless, and a version line outside `metadata:`, an empty version, a flow mapping, a quoted key and a space before the colon refused, a mid-path-glob pattern placing program entries, a record `### Packages` Breaking entry beside the same entry under `### Changed`, an amend judged against HEAD's parent beside a next commit judged against HEAD, and copies of the script, one reading every fragment as the program's, one without the unraised refusal, one without the package lookup, one matching package globs across `/`, one without the duplicate refusal, one version-checking a versionless package, one reading a skill with no version as unreadable, one reading an empty version as none, one counting only version lines under `metadata:`, one counting only a version key at a line's start, one counting the word `version` anywhere, one letting a comment end the `metadata:` block, one refusing a comment on the `metadata:` line, one judging a dropped version and one a first version as a raise, and one diffing an amend against HEAD, that each turn their row red. [`tests/changelog-collate.test.sh`](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/tests/changelog-collate.test.sh) pins a skill's versioned heading beside a nested hook test helper of its name, and a versionless skill's bare heading.
 
-## prose
-
-This audit runs only when selected through `COMMIT_GUARDS_CHECKS`. The default chain excludes it.
-
-A calendar date (`20YY-MM-DD`) or a three- or four-digit issue number after `#` in a scanned markdown file fails. Ordinary words do not trigger this check. The issue-number shape takes no leading boundary (`<file>.md#1204` fires), and the character after the digits must be neither a digit nor a hex letter (`#12345`, `#1234ab`, `#0088cc` pass). A decision ID (`D042`) carries no `#` and never fires.
-
-Scope is `COMMIT_GUARDS_PROSE_PATHS` minus `COMMIT_GUARDS_MD_EXCLUDES`, the exclusion list the markdown lanes read, so a vendored skill under a render tree is carved out with a reason rather than by narrowing the scan. An explicit path list is used as given. The default is the load-point files, `AGENTS.md`, `CLAUDE.md`, `GEMINI.md` and `SKILL.md` at any depth, each name spelled twice because `*` crosses `/` but never stands in for the separator:
-
-```
-SKILL.md */SKILL.md AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md GEMINI.md */GEMINI.md
-```
-
-The `no tracked file matches` verdict prints only when nothing was skipped.
-
 ## md-type
 
 A Markdown file's structure, judged against its docs-writing file type. The rules are docs-writing's own files, read as data; the lane holds no rule list and matches no prose. docs-writing is found the way the pre-commit chain finds a sibling gate: the judged tree's install first, then the copy beside this package.
@@ -193,7 +168,7 @@ The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to t
 
 A source file carries the same citations outside markdown, and they are judged there too:
 
-- The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING LITERALS of a TOML file as well, a quoted key among them: a manifest's text is its content, where a program's string literals are its data. The default uses `GG_COMMENT_PATHS_DEFAULT` in `scripts/lib/comment-text.sh`. Set `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA='*'` to include extensionless scripts. A selected extensionless script takes its comment grammar from its shebang. Remove an interim `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` override that only restored the extension-list default. Markdown files use the document pass. Comment text and string literals come from the comments lane's extractor, so the grammars and their limits are § comments'. A carrier with no comment grammar is counted as unmeasured.
+- The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING LITERALS of a TOML file as well, a quoted key among them: a manifest's text is its content, where a program's string literals are its data. The default uses `GG_COMMENT_PATHS_DEFAULT` in `scripts/lib/comment-text.sh`. Set `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA='*'` to include extensionless scripts. A selected extensionless script takes its comment grammar from its shebang. Remove an interim `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` override that only restored the extension-list default. Markdown files use the document pass. Comment text and string literals come from the extractor in `scripts/lib/comment-text.sh`, so the grammars and their limits are § comments'. A carrier with no comment grammar is counted as unmeasured.
 - A decision ID there, but only where it carries a `§` heading, on the same rules.
 - Nothing else. Outside markdown a link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
 - One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is counted as unmeasured, as the other lanes count theirs. md-refs breaks its count out by reason on the summary line (`skipped=503 symlink=503`) and names one skipped path anyway where a judged reference lands on it; `--verbose` names every one.
@@ -231,13 +206,9 @@ A credential in a selected text file fails as `secrets: secret=<path>:<line>:<ru
 
 ## comments
 
-A selected reference in the comment text of a scanned source file fails. `COMMIT_GUARDS_COMMENT_REFERENCE_TYPES` selects issue ids, three- or four-digit issue numbers, and calendar dates. It must name at least one type. Ordinary words do not trigger this check. Issue ids are checked only when `GH_ISSUE_PATTERN` declares a tracker pattern. An empty pattern leaves that type inactive; an ID-only scan then fails configuration. The issue id is matched as written, lowered and uppered, so a pattern written in one case matches the id in any case and a mixed-case pattern matches only its own spelling. A quoted example or backticked span inside the comment still counts. String literals and code are never judged. Each hit is reported once per line and shape. Without a tracker pattern, technical names such as `UTF-8` and `SHA-256` pass. Numeric issue references and dates remain checked by default. Each configured pattern is a POSIX ERE read by awk and `git grep`; one either tool cannot compile is exit 2.
+The comment extractor md-refs reads for its source-file citations, in `scripts/lib/comment-text.sh`. It is not a check.
 
-Applied migrations are immutable first-party content; the exclusion policy is in [SKILL.md](SKILL.md) § Configuration.
-
-Optional audit lane: run `.agents/skills/commit-guards/scripts/commit-guards comments` directly when an audit is needed. Keep `comments` out of `COMMIT_GUARDS_CHECKS` so it does not block commits. Scopes are `todo-ban`'s: `--staged` judges only the lines the staged diff adds, comment state read from the whole staged blob; the default reads every tracked file `COMMIT_GUARDS_COMMENT_PATHS` names minus `COMMIT_GUARDS_COMMENT_EXCLUDES`, overridden by `--excludes FILE`. A matched path the table below gives no grammar is counted as unmeasured.
-
-Comment text is extracted per family, by extension or, for a path with none, by the interpreter its `#!` line names. The default path list is exactly these extensions, with `Makefile` and `Dockerfile` by basename at the root and below:
+Comment text is extracted per family, by extension or, for a path with none, by the interpreter its `#!` line names. md-refs' default source list, `GG_COMMENT_PATHS_DEFAULT`, is exactly these extensions, with `Makefile` and `Dockerfile` by basename at the root and below:
 
 | Family | Extensions | Comments read | Strings tracked |
 |---|---|---|---|
@@ -258,19 +229,13 @@ The scanner is a character walk, not a parser. Its limits, each pinned by a cont
 - A shell line opening two heredocs honours the first; a Ruby heredoc, a YAML block scalar (`key: |`) and a Makefile recipe's shell are read as code, so a `#` inside them is a comment.
 - A Vue or Svelte file is judged for `<!-- -->` only; the `//` inside its script block is not read.
 - A C or JavaScript string ends at its line (a trailing backslash continuation is not tracked); a Rust string does not.
-- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured, and the refusal names the reader as the cause, `comment-reader:unclosed-string line=N` for a quote, with the opener's line. The remaining files are scanned before the lane exits 2. Outside the leading `if (` form above, a JavaScript regex literal holding an odd number of backticks can leave the file in that state.
+- A file that ends inside a block comment, a heredoc body or a string spanning lines is unmeasured, and the refusal names the reader as the cause, `comment-reader:unclosed-string line=N` for a quote, with the opener's line. Outside the leading `if (` form above, a JavaScript regex literal holding an odd number of backticks can leave the file in that state.
 
 ## commit-msg
 
-One message, from FILE or stdin (FILE absent or `-`). Every applicable rule reports before the verdict.
-
-- Shape: the header (the first non-blank, non-comment line) matches `type(scope)!: subject`, scope and `!` optional. Types are `COMMIT_GUARDS_COMMIT_TYPES`; the scope class `[#A-Za-z0-9 _.,/-]+` passes `fix(ABC-123):` and `fix(#123):`.
-- Length: at most `COMMIT_GUARDS_SUBJECT_MAX` characters, counted as the changelog cap counts.
-- Changelog: where `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` names a glob a changed path matches, the commit must also add or modify a program fragment under `COMMIT_GUARDS_CHANGELOG_PATHS` or carry `[no-changelog]` in the header. A [package entry](#fragments) is no entry for it, and the `changelog-missing` remedy names only the patterns that place program entries. Evidence is a path that comes out of the commit with content it did not carry there before (a new blob, a changed blob, a type that became a regular file, a rename destination); deleting a fragment is not writing one. `COMMIT_GUARDS_CHANGELOG_RECORD` counts only under `COMMIT_GUARDS_CHANGELOG_COLLATE=1`.
+One message, from FILE or stdin (FILE absent or `-`). Where `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` names a glob a changed path matches, the commit must also add or modify a program fragment under `COMMIT_GUARDS_CHANGELOG_PATHS` or carry `[no-changelog]` in the header, the first non-blank, non-comment line. A [package entry](#fragments) is no entry for it, and the `changelog-missing` remedy names only the patterns that place program entries. Evidence is a path that comes out of the commit with content it did not carry there before (a new blob, a changed blob, a type that became a regular file, a rename destination); deleting a fragment is not writing one. `COMMIT_GUARDS_CHANGELOG_RECORD` counts only under `COMMIT_GUARDS_CHANGELOG_COLLATE=1`. The rule runs over every header, a git-generated one (Merge, Revert, `fixup!`) included.
 
 Both lists are read from `--raw` with rename detection pinned, against the parent the commit will have: HEAD, or HEAD's parent for an amend. An amend is read off the argv of the nearest `git` ancestor in `/proc/<pid>/cmdline`, only when `GIT_INDEX_FILE` says git started this hook; where nothing is readable (every macOS host) the parent is HEAD. `--amend` counts only where no value-taking option could have consumed it (`--mess --amend`, `-am --amend`, `--status --amend` are not amends); `--no-amend` counts wherever it stands; a bare `--` stops the scan. A rebase `reword` and an `edit` stop are amends; an all-`pick` rebase and an autosquash fixup are not.
-
-Git-generated headers (Merge, Revert, Reapply, `fixup!`, `squash!`, `amend!`) skip shape and length and keep the changelog rule.
 
 ## The run log
 

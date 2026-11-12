@@ -20,10 +20,6 @@ SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS COMMIT_GUARDS_SETTINGS_FILE \
   GG_TMP GG_SETTINGS_INDEX_OWNED GG_SETTINGS_INDEX_DIR GG_SETTINGS_FROM_INDEX 2>/dev/null || true
 
-# Assembled from split tokens so this file carries no marker shape of its
-# own: the kendex repo runs todo-ban over its own tree, tests included.
-TD="TO""DO"
-
 PASS=0
 FAIL=0
 assert_eq() { # LABEL EXPECT ACTUAL
@@ -68,7 +64,8 @@ stub "$TMP/$FULL" bot-instructions "fixture=install-bot-instructions" 0
 # fixture was built with) and then its logical one. ENVS is a
 # comma-separated list of assignments; ARGS are passed through. The batch
 # runs one check, so its lines are one shape: its composition is
-# dispatcher's subject.
+# dispatcher's subject. byte-ceiling's count of the files it checked is each
+# row's staged set, so it reads as N.
 R=""
 TMP_P="$(cd "$TMP" && pwd -P)"
 run() { # ENVS INSTALL ARGS
@@ -76,8 +73,8 @@ run() { # ENVS INSTALL ARGS
   [ -z "$1" ] || IFS=',' read -ra envs <<<"$1"
   r_p="$(cd "$R" && pwd -P)"
   # shellcheck disable=SC2086
-  out="$(cd "$R" && env COMMIT_GUARDS_CHECKS=todo-ban ${envs[@]+"${envs[@]}"} "$TMP/$2/commit-guards/scripts/pre-commit" $3 2>&1)" || rc=$?
-  out="$(printf '%s\n' "$out" | sed '/^  /d')"
+  out="$(cd "$R" && env COMMIT_GUARDS_CHECKS=byte-ceiling ${envs[@]+"${envs[@]}"} "$TMP/$2/commit-guards/scripts/pre-commit" $3 2>&1)" || rc=$?
+  out="$(printf '%s\n' "$out" | sed -e '/^  /d' -e 's/^\(byte-ceiling: result=[0-9]*:\)[0-9]*:/\1N:/')"
   out="${out//"$r_p"/<repo>}"
   out="${out//"$TMP_P"/<root>}"
   out="${out//"$R"/<repo>}"
@@ -108,8 +105,8 @@ local_entry() { mkdir -p "$R/tools"; printf '%b' "$1" >"$R/tools/local-check"; c
 DL="pre-commit: step=doc-limits"
 PF="pre-commit: step=preflight"
 BOT="pre-commit: step=bot-instructions check --staged"
-BATCH="pre-commit: step=commit-guards all --staged;commit-guards: step=todo-ban --staged"
-BATCH_OK="$BATCH;todo-ban: staged-count=0:0:tools/todo-ban-excludes;commit-guards: result=0:todo-ban"
+BATCH="pre-commit: step=commit-guards all --staged;commit-guards: step=byte-ceiling --staged"
+BATCH_OK="$BATCH;byte-ceiling: result=0:N:200:staged:;commit-guards: result=0:byte-ceiling"
 LOCAL_NONE="pre-commit: local-entry=none"
 LOCAL="pre-commit: step=repo-local: tools/local-check"
 CHAIN_OK="pre-commit: result=0"
@@ -368,26 +365,26 @@ fx_scope_unwritable
 unwritable="$(run "$SCOPE_ENV,PATH=$TMP/scope-unwritable-bin:$PATH,TMPDIR=$TMP/scope-unwritable-tmp" "$BARE" "")"
 assert_eq "a path list the chain cannot write blocks the commit rather than skipping the entry" "rc=1 $BATCH_OK" "${unwritable%%;<root>/*}"
 
-echo "=== the batch runs at commit scope: a marker the commit does not add belongs to CI ==="
-# The fixture proves its marker landed in HEAD: a row over a repository
+echo "=== the batch runs at commit scope: a binary the commit does not add is not its to judge ==="
+# The fixture proves its binary landed in HEAD: a row over a repository
 # without one passes for the wrong reason.
-marker_committed() { # NAME
+binary_committed() { # NAME
   repo "$1"
-  printf '// %s: left in a fixture\n' "$TD" >"$R/fixture.rs"
-  git -C "$R" add fixture.rs
+  head -c 307200 /dev/zero >"$R/big.bin"
+  git -C "$R" add big.bin
   git -C "$R" commit -qm 'chore: fixture'
-  git -C "$R" grep -q -- "$TD" HEAD -- fixture.rs || { echo "harness: $1: the committed marker is not in HEAD" >&2; exit 2; }
+  git -C "$R" cat-file -e HEAD:big.bin || { echo "harness: $1: the committed binary is not in HEAD" >&2; exit 2; }
   # A staged file of its own, so the pass is the chain judging content
   # rather than an empty diff finding nothing to judge.
   printf 'fn main() {}\n' >"$R/clean.rs"
   git -C "$R" add clean.rs
 }
-fx_untouched_marker() { marker_committed untouched-marker; }
-fx_added_marker() { marker_committed added-marker; printf '// %s: added by this commit\n' "$TD" >>"$R/b.txt"; git -C "$R" add b.txt; }
-HIT="todo-ban: match=work marker:b.txt:2:// $TD: added by this commit;todo-ban: staged-count=1:0:tools/todo-ban-excludes;commit-guards: result=1"
+fx_untouched_binary() { binary_committed untouched-binary; }
+fx_added_binary() { binary_committed added-binary; head -c 307200 /dev/zero >"$R/new.bin"; git -C "$R" add new.bin; }
+HIT="byte-ceiling: oversized=new.bin:307200:300:200;byte-ceiling: result=1:N:200:staged:;commit-guards: result=1"
 run_rows \
-  "a marker committed earlier and untouched is not this commit's: the staged file is clean and the chain passes|fx_untouched_marker||$BARE||rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
-  "control: a marker this commit adds blocks it at its line|fx_added_marker||$BARE||rc=1 $BATCH;$HIT;$LOCAL_NONE;$BLOCKED"
+  "an oversized binary committed earlier and untouched is not this commit's: the staged file is clean and the chain passes|fx_untouched_binary||$BARE||rc=0 $BATCH_OK;$LOCAL_NONE;$CHAIN_OK" \
+  "control: an oversized binary this commit adds blocks it|fx_added_binary||$BARE||rc=1 $BATCH;$HIT;$LOCAL_NONE;$BLOCKED"
 
 echo "=== the usage is answered, and an argument is refused ==="
 fx_usage() { repo usage; }
