@@ -104,7 +104,7 @@ Every selected directory and its `kendex.toml` must resolve inside the checkout.
 
 ### Adoption and file ownership
 
-`refresh-consumer.sh` reports the exact `kendex --version` output in the rolling pull request body on a new publication, or in `GITHUB_STEP_SUMMARY` when the consumer is current or retains an unchanged head. A failed version read stops publication. `refresh/tests/refresh-consumer.test.sh` in the kendex repository holds these report paths. The retained writer template also uses `install-latest.sh` for its release engine; only its optional main-build installer keeps a fixed commit. `refresh/tests/refresh-workflow.test.sh` in the kendex repository checks that call, and `tests/install-latest.test.sh` checks immutable installer resolution.
+`refresh-consumer.sh` reports the exact `kendex --version` output in the rolling pull request body on a new publication, or in `GITHUB_STEP_SUMMARY` when the consumer is current or retains an unchanged head. A failed version read stops publication. `refresh/tests/refresh-consumer.test.sh` in the kendex repository holds these report paths. The retained writer template also uses `install-latest.sh` for its release engine; only its optional main-build installer keeps a fixed commit. `refresh/tests/refresh-workflow.test.sh` in the kendex repository checks that call, and `skills/harness-ci/tests/install-latest.test.sh` in the kendex repository checks immutable installer resolution.
 
 Run from the consumer root after installing the skill. Set `KENDEX_RELEASE` to a kendex checkout at the installed release tag:
 

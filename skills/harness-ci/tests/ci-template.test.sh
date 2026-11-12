@@ -349,10 +349,10 @@ assert_eq "the template's steps name the shipped script paths" \
 .agents/skills/commit-guards/scripts/secrets
 .agents/skills/harness-ci/scripts/aggregate-needs
 .agents/skills/harness-ci/scripts/harness-only
-.agents/skills/review-gate/scripts/install-latest.sh" \
+.agents/skills/harness-ci/scripts/install-latest.sh" \
   "$(grep -vE '^[[:space:]]*#' "$TEMPLATE" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | LC_ALL=C sort -u)"
 assert_eq "those paths are shipped scripts" "yes yes yes yes yes" \
-  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
+  "$([ -x "$AGGREGATE_NEEDS" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/install-gitleaks" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../commit-guards/scripts/secrets" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # The CI job scans every pull request, with its installer in the same step,
 # and, under the scan's condition, checks out the merge commit alone at
@@ -723,15 +723,15 @@ done
 assert_eq "the candidate step requests the prerequisite-only mode" yes \
   "$(grep -qF -- '--mode render-candidate --repo subject' "$TEMPLATE" && echo yes || echo no)"
 assert_eq "the installer uses the trusted release selector" \
-  'classifier/.agents/skills/review-gate/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
+  'classifier/.agents/skills/harness-ci/scripts/install-latest.sh' "$(step_key "$TEMPLATE" kendex run)"
 assert_eq "the installer reads with the workflow token" 'github.token' "$(step_key "$TEMPLATE" kendex GITHUB_TOKEN)"
 
 # Execute the template's command with the real release-selection helper.
 # Only its external HTTP dependency is replaced. Each release response must
 # reach the installer's arguments, so a fixed old pin fails this assertion.
 install_root="$SANDBOX/release-selection"
-mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/review-gate/scripts" "$install_root/home"
-cp "$TEST_DIR/../../review-gate/scripts/install-latest.sh" "$install_root/classifier/.agents/skills/review-gate/scripts/"
+mkdir -p "$install_root/bin" "$install_root/classifier/.agents/skills/harness-ci/scripts" "$install_root/home"
+cp "$TEST_DIR/../scripts/install-latest.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/"
 mkdir -p "$install_root/classifier/.agents/skills/harness-ci/scripts/lib"
 cp "$TEST_DIR/../scripts/lib/change-class.sh" "$install_root/classifier/.agents/skills/harness-ci/scripts/lib/"
 cat >"$install_root/bin/curl" <<'CURL'
@@ -769,7 +769,7 @@ done
 # Plant the defect in the helper: this models the old fixed-version
 # installer while preserving the production command's dependency execution.
 sed 's/--version "$version"/--version main-build-250/' \
-  "$TEST_DIR/../../review-gate/scripts/install-latest.sh" >"$install_root/classifier/.agents/skills/review-gate/scripts/install-latest.sh"
+  "$TEST_DIR/../scripts/install-latest.sh" >"$install_root/classifier/.agents/skills/harness-ci/scripts/install-latest.sh"
 install_body="$(step_key "$TEMPLATE" kendex run)"
 (cd -- "$install_root" && env -i PATH="$install_root/bin:$PATH" HOME="$install_root/home" \
   RELEASE_TAG=v7.8.10 INSTALL_RECORD="$install_root/record" \

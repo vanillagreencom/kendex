@@ -1,0 +1,3 @@
+- CI installs kendex through harness-ci's sole release installer. Managed CI, catalog checks and the retained writer use the new source and rendered paths. Release selection and credential isolation stay the same. The old review-gate entry point forwards with a migration warning until the next major release. Consumer-refresh compatibility files remain available.
+
+  You do: refresh the installed harness-ci and review-gate packages through your existing refresh workflow, then change custom installer calls from `.agents/skills/review-gate/scripts/install-latest.sh` to `.agents/skills/harness-ci/scripts/install-latest.sh` (source checkouts use `skills/harness-ci/scripts/install-latest.sh`).

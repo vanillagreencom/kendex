@@ -32,9 +32,9 @@ assert_eq "the shapes name the shipped script paths" \
   ".agents/skills/harness-ci/scripts/aggregate-needs
 .agents/skills/harness-ci/scripts/change-class
 .agents/skills/harness-ci/scripts/harness-only
-.agents/skills/review-gate/scripts/install-latest.sh" "$cited"
+.agents/skills/harness-ci/scripts/install-latest.sh" "$cited"
 assert_eq "those paths are shipped by this package and its dependency" "yes yes yes yes" \
-  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/change-class" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../../review-gate/scripts/install-latest.sh" ] && echo yes || echo no)"
+  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/change-class" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/install-latest.sh" ] && echo yes || echo no)"
 
 # Pass each extracted option to the real parser. A documented unknown option
 # must produce the wiring-error status instead of being accepted by a copy of

@@ -3,13 +3,79 @@
 # installer. The real jq judges API payloads; curl is the network boundary.
 set -euo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+HARNESS_DIR="$(cd "$TEST_DIR/.." && pwd)"
+SKILL_DIR="$HARNESS_DIR/../review-gate"
 TMP="$(mktemp -d)" || { echo 'install-latest-test: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP && ! -L $TMP ]] || { echo "install-latest-test: scratch=not-a-directory value=[$TMP]" >&2; exit 1; }
 TMP="$(cd -- "$TMP" && pwd -P)" || { echo 'install-latest-test: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
-. "$TEST_DIR/lib/sandbox.sh"
-. "$TEST_DIR/lib/workflow-edit.sh"
+. "$SKILL_DIR/tests/lib/sandbox.sh"
+. "$SKILL_DIR/tests/lib/workflow-edit.sh"
+# The install suite supplies its recording curl in TMP/bin. Each run starts
+# with an explicit environment and empty records, including for controls.
+run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGNMENT GH_ASSIGNMENT PIN TAGS]
+  local script="$1" release="$2" commit="$3" fail_at="$4" install_rc="$5"
+  local github_env="${6:-}" gh_env="${7:-}" token_env=()
+  local pin="${8:-}" tags="${9:-}" checkout="${11:-$TMP/installer-checkout}"
+  local entry="${10:-harness-ci}"
+  if [ -z "${11:-}" ]; then
+    mkdir -p "$checkout/.agents/skills/review-gate/scripts" "$checkout/.agents/skills/harness-ci/scripts/lib" "$checkout/.github/workflows"
+    cp -- "$installer" "$checkout/.agents/skills/harness-ci/scripts/install-latest.sh"
+    cp -- "$script" "$checkout/.agents/skills/$entry/scripts/install-latest.sh"
+    cp "$SKILL_DIR/../harness-ci/scripts/lib/change-class.sh" "$checkout/.agents/skills/harness-ci/scripts/lib/"
+    rm -f "${checkout:?}/.github/workflows/kendex-refresh.yml"
+  fi
+  if [ -n "$pin" ]; then
+    printf '    uses: vanillagreencom/kendex/.github/workflows/refresh-consumer.yml@%s\n' "$pin" >"$checkout/.github/workflows/kendex-refresh.yml"
+  fi
+  INSTALL_TOKENS=("${github_env#*=}" "${gh_env#*=}")
+  [ -z "$github_env" ] || token_env+=("$github_env")
+  [ -z "$gh_env" ] || token_env+=("$gh_env")
+  : >"$TMP/calls"
+  : >"$TMP/transport"
+  : >"$TMP/github-path"
+  rm -f "$TMP/install-log" "$TMP/install-env"
+  OUT="" RC=0
+  OUT="$(env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP" \
+    CALLS="$TMP/calls" TRANSPORT_LOG="$TMP/transport" INSTALL_LOG="$TMP/install-log" INSTALL_ENV="$TMP/install-env" \
+    GITHUB_PATH="$TMP/github-path" RELEASE="$release" COMMIT="$commit" TAGS="$tags" FAIL_AT="$fail_at" INSTALL_RC="$install_rc" \
+    ${token_env[@]+"${token_env[@]}"} bash "$checkout/.agents/skills/$entry/scripts/install-latest.sh" 2>&1)" || RC=$?
+}
+
+# One assertion holds the transport, installer arguments, environment and
+# path record together. Controls use the same assertion as the success rows.
+install_latest_matches() { # VERSION SHA API_AUTHORIZATION [PIN]
+  local version="$1" sha="$2" authorization="$3" pin="${4:-}" calls transport arguments environment github_path token expected_calls expected_transport
+  calls="$(cat "$TMP/calls")" || return 1
+  transport="$(cat "$TMP/transport")" || return 1
+  arguments="$(cat "$TMP/install-log")" || return 1
+  environment="$(cat "$TMP/install-env")" || return 1
+  github_path="$(cat "$TMP/github-path")" || return 1
+  if [ -n "$pin" ]; then
+    expected_calls="https://api.github.com/repos/vanillagreencom/kendex/commits/$pin
+https://github.com/vanillagreencom/kendex.git
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh"
+    expected_transport="https://api.github.com/repos/vanillagreencom/kendex/commits/$pin|$authorization|unset|unset
+https://github.com/vanillagreencom/kendex.git||unset|unset
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh||unset|unset"
+  else
+    expected_calls="https://api.github.com/repos/vanillagreencom/kendex/releases/latest
+https://api.github.com/repos/vanillagreencom/kendex/commits/$version
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh"
+    expected_transport="https://api.github.com/repos/vanillagreencom/kendex/releases/latest|$authorization|unset|unset
+https://api.github.com/repos/vanillagreencom/kendex/commits/$version|$authorization|unset|unset
+https://raw.githubusercontent.com/vanillagreencom/kendex/$sha/install.sh||unset|unset"
+  fi
+  [ "$calls" = "$expected_calls" ] && [ "$transport" = "$expected_transport" ] || return 1
+  [ "$arguments" = "--version $version --cli-only" ] && [ "$environment" = 'unset|unset' ] &&
+    [ "$github_path" = "$TMP/.local/bin" ] || return 1
+  for token in "${INSTALL_TOKENS[@]}"; do
+    [ -n "$token" ] || continue
+    case "$OUT" in *"$token"*) return 1 ;; esac
+  done
+  return 0
+}
+
 mkdir -p "$TMP/bin"
 cat >"$TMP/bin/curl" <<'CURL'
 #!/usr/bin/env bash
@@ -56,7 +122,33 @@ printf '%b\n' "$TAGS"
 [ "$FAIL_AT" != tags ] || exit 22
 GIT
 chmod +x "$TMP/bin/git"
-installer="$SKILL_DIR/scripts/install-latest.sh"
+installer="$HARNESS_DIR/scripts/install-latest.sh"
+# The CLI catalog test supplies a real package installation. Reuse the
+# transport assertion against that payload without copying its dependencies.
+if [ "${1:-}" = --installed ]; then
+  [ "$#" = 2 ] && [ -d "$2" ] || exit 2
+  installed="$(cd -- "$2" && pwd -P)"
+  for entry in harness-ci review-gate; do
+    if [ "$entry" = review-gate ] && [ ! -e "$installed/.agents/skills/review-gate/scripts/install-latest.sh" ]; then
+      continue
+    fi
+    if [ ! -x "$installed/.agents/skills/$entry/scripts/install-latest.sh" ]; then
+      bad "installed $entry installer is not executable"
+      continue
+    fi
+    run_install_latest '' '{"tag_name":"v7.8.9"}' \
+      '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0 '' '' '' '' "$entry" "$installed"
+    if [ "$RC" = 0 ] && install_latest_matches v7.8.9 0123456789abcdef0123456789abcdef01234567 ''; then
+      ok "installed $entry executes the delivered release installer and its library"
+    else
+      bad "installed $entry release delivery" "$OUT"
+    fi
+  done
+  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+  exit
+fi
+[ "$#" = 0 ] || exit 2
 while IFS='|' read -r name release commit fail_at install_rc expected key github_env gh_env authorization pin tags selected; do
   run_install_latest "$installer" "$release" "$commit" "$fail_at" "$install_rc" "$github_env" "$gh_env" "$pin" "$tags"
   if [ "$RC" = "$expected" ] && grep -qF -- "$key" <<<"$OUT"; then
@@ -100,11 +192,21 @@ caller tag read fails|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789a
 caller needs major tag|{"tag_name":"v1.16.0"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}||0|1|kendex-install: cause=caller-ref||||main|
 CASES
 
+# Existing external callers retain the old public entry point until 2.0.
+run_install_latest "$SKILL_DIR/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
+  '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0 '' '' '' '' review-gate
+if [ "$RC" = 0 ] && install_latest_matches v7.8.9 0123456789abcdef0123456789abcdef01234567 '' &&
+    [ "$(grep -c '^kendex-install: warning=deprecated-path replacement=.agents/skills/harness-ci/scripts/install-latest.sh$' <<<"$OUT")" = 1 ]; then
+  ok 'legacy entry forwards to the sole installer with one structured migration warning'
+else
+  bad 'legacy entry lost selection or its migration warning' "$OUT"
+fi
+
 # Keep both selection branches but bypass the caller, as the base did.
 sandbox
-file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 2 '^if \[ -e "\$caller" \]; then' \
+file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 2 '^if \[ -e "\$caller" \]; then' \
   's/; then/ \&\& false; then/'
-run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
+run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
   '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0 '' '' v1 \
   '0123456789abcdef0123456789abcdef01234567 refs/tags/v1.15.0'
 if [ "$RC" = 0 ] && [ "$(cat "$TMP/install-log")" = '--version v1.16.0 --cli-only' ] &&
@@ -117,8 +219,8 @@ fi
 # Preserve selection while bypassing one rule at a time.
 while IFS='|' read -r name pin tags fail_at match edit; do
   sandbox
-  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "$match" "$edit"
-  run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
+  file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 "$match" "$edit"
+  run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v1.16.0"}' \
     '{"sha":"0123456789abcdef0123456789abcdef01234567"}' "$fail_at" 0 '' '' "$pin" "$tags"
   if [ "$RC" = 0 ]; then
     ok "control: bypassed $name fails its refusal row assertion"
@@ -135,9 +237,9 @@ CALLER_CONTROLS
 # Control: keep the install command text but pass a different version. The
 # success row's installer arguments must detect this production defect.
 sandbox
-file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 '^env .* sh .*--version "\$version" --cli-only' \
+file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 '^env .* sh .*--version "\$version" --cli-only' \
   's/--version "\$version"/--version latest/'
-run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
+run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
   '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0
 if [ "$RC" = 0 ] && ! install_latest_matches v7.8.9 0123456789abcdef0123456789abcdef01234567 ''; then
   ok 'control: a changed installed version fails the success row assertion'
@@ -149,9 +251,9 @@ fi
 # still a failed read, even when its body happens to contain valid JSON.
 while IFS='|' read -r key fail_at install_rc; do
   sandbox
-  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "^ *fail $key " \
+  file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 "^ *fail $key " \
     "s/^ *fail $key /  : fail $key /"
-  run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
+  run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
     '{"sha":"0123456789abcdef0123456789abcdef01234567"}' "$fail_at" "$install_rc"
   if [ "$RC" = 0 ]; then
     ok "control: inert $key refusal fails its dependency row assertion"
@@ -169,9 +271,9 @@ CONTROLS
 # select expressions but bypass each condition on one invalid response.
 while IFS='|' read -r field release commit match; do
   sandbox
-  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "$match" \
+  file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 "$match" \
     's/select(type ==/select(true or type ==/'
-  run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" "$release" "$commit" '' 0
+  run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" "$release" "$commit" '' 0
   if [ "$RC" = 0 ]; then
     ok "control: bypassed $field grammar fails its malformed-response assertion"
   else
@@ -182,9 +284,9 @@ tag|{"tag_name":"../main"}|{"sha":"0123456789abcdef0123456789abcdef01234567"}|^ 
 commit|{"tag_name":"v7.8.9"}|{"sha":"main"}|^sha=
 GRAMMARS
 sandbox
-file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 '^  printf .*GITHUB_PATH' \
+file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 '^  printf .*GITHUB_PATH' \
   's/^  printf /  : printf /'
-run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
+run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
   '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0
 if [ "$RC" = 0 ] && ! install_latest_matches v7.8.9 0123456789abcdef0123456789abcdef01234567 ''; then
   ok 'control: an inert GitHub path write fails the success row assertion'
@@ -196,8 +298,8 @@ fi
 # retain the API/download/install commands but break one token boundary.
 while IFS='|' read -r name github_env gh_env authorization match edit; do
   sandbox
-  file_edit "$DIR" .agents/skills/review-gate/scripts/install-latest.sh 1 "$match" "$edit"
-  run_install_latest "$DIR/.agents/skills/review-gate/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
+  file_edit "$DIR" .agents/skills/harness-ci/scripts/install-latest.sh 1 "$match" "$edit"
+  run_install_latest "$DIR/.agents/skills/harness-ci/scripts/install-latest.sh" '{"tag_name":"v7.8.9"}' \
     '{"sha":"0123456789abcdef0123456789abcdef01234567"}' '' 0 "$github_env" "$gh_env"
   if [ "$RC" = 0 ] && ! install_latest_matches v7.8.9 0123456789abcdef0123456789abcdef01234567 "$authorization"; then
     ok "control: $name fails the transport assertion"

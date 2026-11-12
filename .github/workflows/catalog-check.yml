@@ -88,7 +88,7 @@ jobs:
           GH_TOKEN: ""
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          kendex/skills/review-gate/scripts/install-latest.sh
+          kendex/skills/harness-ci/scripts/install-latest.sh
       # github.event is the caller's: a pull request's base, a merge group's
       # base or the commit a push replaced. A push that created the branch
       # or the repository names forty zeros.

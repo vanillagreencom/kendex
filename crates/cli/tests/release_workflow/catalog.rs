@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use super::{job, run_script, step};
-use crate::test_util::{fixture_env, rooted};
+use crate::test_util::{fixture_env, rooted, source_path};
 
 #[allow(clippy::unwrap_used)]
 fn repo() -> PathBuf {
@@ -273,6 +273,77 @@ fn ignored_catalog_keeps_its_own_ignore_rules(
     }
 }
 
+/// Delivery must carry the sole installer and its path library when either
+/// package is selected. The shell suite owns release selection and transport
+/// assertions; its installed mode executes these CLI-produced payloads.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn selected_ci_packages_deliver_an_executable_release_installer() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let repository = repo();
+    let suite = repository.join("skills/harness-ci/tests/install-latest.test.sh");
+    for package in ["review-gate", "harness-ci"] {
+        let home = root.join(package);
+        let project = home.join("project");
+        fs::create_dir_all(project.join(".agents")).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 7\n[sources.catalog]\n{}\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n",
+                source_path(&repository)
+            ),
+        )
+        .unwrap();
+        let added = Command::new(env!("CARGO_BIN_EXE_kendex"))
+            .args(["add", "catalog", "--skill", package, "--copy", "-y"])
+            .current_dir(&project)
+            .env_clear()
+            .envs(fixture_env(&home))
+            .env("PATH", std::env::var("PATH").unwrap())
+            .output()
+            .unwrap();
+        assert!(added.status.success(), "{package}: {added:?}");
+        if package == "review-gate" {
+            assert!(
+                project
+                    .join(".agents/skills/review-gate/scripts/install-latest.sh")
+                    .is_file(),
+                "review-gate must deliver its supported legacy installer entry point"
+            );
+        }
+
+        let delivered_installs = || {
+            Command::new("/bin/bash")
+                .arg(&suite)
+                .arg("--installed")
+                .arg(&project)
+                .current_dir(&project)
+                .env_clear()
+                .envs(fixture_env(&home))
+                .env("PATH", std::env::var("PATH").unwrap())
+                .output()
+                .unwrap()
+        };
+        let installed = delivered_installs();
+        assert!(installed.status.success(), "{package}: {installed:?}");
+
+        if package == "harness-ci" {
+            // A missing packaged dependency must fail the same execution
+            // assertion, even with the complete source checkout available.
+            let library = project.join(".agents/skills/harness-ci/scripts/lib/change-class.sh");
+            let held = library.with_extension("held");
+            fs::rename(&library, &held).unwrap();
+            let incomplete = delivered_installs();
+            fs::rename(&held, &library).unwrap();
+            assert!(
+                !incomplete.status.success(),
+                "incomplete delivery escaped the execution assertion: {incomplete:?}"
+            );
+        }
+    }
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_current_catalog_renders_and_incomplete_delivery_fails() {
@@ -284,7 +355,7 @@ fn the_current_catalog_renders_and_incomplete_delivery_fails() {
     fs::create_dir(&home).unwrap();
     let mut installer = Command::new("/bin/bash");
     installer
-        .arg(repository.join("skills/review-gate/scripts/install-latest.sh"))
+        .arg(repository.join("skills/harness-ci/scripts/install-latest.sh"))
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap())
@@ -551,7 +622,7 @@ fn catalog_ci_installs_the_release_and_runs_its_render_check() {
         let install_step = step(workflow, "name: Install latest released kendex");
         assert_eq!(
             run_script(&install_step).trim(),
-            "kendex/skills/review-gate/scripts/install-latest.sh"
+            "kendex/skills/harness-ci/scripts/install-latest.sh"
         );
         let environment: Vec<_> = install_step
             .iter()
