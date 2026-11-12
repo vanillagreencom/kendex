@@ -4,7 +4,8 @@
 # For a subagent whose agent_type starts with `reviewer-` the hook refuses
 # every Edit, MultiEdit and NotebookEdit; a Write inside a git work tree
 # unless it is the artifact, <dir>/tmp/review-*.json; and a Bash command
-# running a Git write or discard verb. Pinned here: every other agent passes,
+# running a Git write or discard verb, or an `rm` of a path inside a work
+# tree. Pinned here: every other agent passes,
 # a Write outside any repository passes (a reviewer's controls live under
 # its own mktemp -d), a read-only git verb passes, and the fail-closed
 # edges — an unreadable payload, a path that is not a string, a git that
@@ -188,6 +189,196 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     '      case "$COMMAND" in *checkout*) exit 0 ;; esac' HOOK discard_rows \
     'refused for reviewer-correctness: git checkout -- tools/ht-tools/src/main.rs' \
     'refused for reviewer-correctness-ken-4159: git checkout -- tools/ht-tools/src/main.rs'
+fi
+
+echo "reviewer-read-only: a reviewer deletes nothing inside a work tree"
+printf 'cli\n' >"$REPO/cli.md"
+DELETE_SCRATCH="$(mktemp -d "$TMP_ROOT/delete.XXXXXX")" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
+# delete_row AGENT CWD COMMAND WANT: WANT is the refusal's first line, or
+# pass. The payload names the cwd the call starts in, as Claude Code's does;
+# an empty CWD omits the field and runs the hook from $REPO, as the Pi
+# carrier, whose payload names none, spawns it in the session's directory.
+delete_row() {
+  local agent="$1" cwd="$2" cmd="$3" want="$4" payload here=$PWD
+  payload=$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
+    '{agent_type: $a, tool_name: "Bash", tool_input: {command: $v}} + (if $c == "" then {} else {cwd: $c} end)')
+  if [ -n "$cwd" ]; then
+    run_payload "$payload"
+  else
+    cd "$REPO"
+    run_payload "$payload"
+    cd "$here"
+  fi
+  if [ "$want" = pass ]; then
+    assert_eq "$rc" 0 "passes for $agent in ${cwd:-no cwd}: $cmd"
+  else
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in ${cwd:-no cwd}: $cmd"
+  fi
+}
+# The check is quote-blind: every rm word is judged wherever it stands,
+# quoted or not, after any separator, as a launcher's or find's argument, in
+# a substitution, a heredoc body or a body that runs elsewhere. A search
+# pattern written [r]m and a script file run by its path hold no rm word.
+delete_rows() {
+  delete_row reviewer-test "$REPO" 'rm cli.md' "delete=$REPO/cli.md"
+  # The overnight form: the cd fails and the rm runs where the call started.
+  delete_row reviewer-test "$REPO" 'cd /nonexistent-review-dir; rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cd /nonexistent-review-dir\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'ls && rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'ls | xargs -r rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'rm probe.txt' "delete=$REPO/probe.txt"
+  delete_row reviewer-test "$REPO" 'find . -name cli.md -exec rm {} \;' "delete=$REPO/{}"
+  delete_row reviewer-test "$REPO" 'env -u FOO rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'sudo -u root rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'xargs -n 1 rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'timeout 30 rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'echo "$(rm cli.md)"' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(rm cli.md)\nEOF' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(cat <<X\nhi\nX\n)\nEOF\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'cat <<EOF\n$(ls\nrm cli.md)\nEOF' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" $'x=$((1<<2))\nrm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "echo \$'x\\'y'; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "echo \${x:-'}'}; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'cat <(rm cli.md)' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "'rm' cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" '"rm" cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "mutation-stability --mutate 'rm -f cli.md && sed -i s/a/b/ src/lib.rs'" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'grep -n rm src/lib.rs' "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "" 'rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$SCRATCH" "rm -f $REPO/src/lib.rs" "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "rm -f $DELETE_SCRATCH/x.log; rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'LC_ALL=C command rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" 'git -C src rm -q lib.rs' "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$SCRATCH" "command git -C $REPO rm -f -- cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "rm -rf $DELETE_SCRATCH" pass
+  delete_row reviewer-test "$REPO" "rm -rf -- $DELETE_SCRATCH 2>/dev/null" pass
+  delete_row reviewer-test "$REPO" 'rm -rf "$d"' pass
+  delete_row reviewer-test "$REPO" "grep -n '[r]m' src/lib.rs" pass
+  delete_row reviewer-test "$REPO" "bash $DELETE_SCRATCH/mutate.sh" pass
+  delete_row dev "$REPO" 'rm cli.md' pass
+}
+delete_rows
+
+# Both Git-option forms stop at the same boundary, including on Pi where
+# the payload omits cwd. None of these command fields is executed.
+git_boundary_rows() {
+  local cmd cwd
+  for cmd in \
+    "git -C $DELETE_SCRATCH --version; rm cli.md" \
+    "git -C $DELETE_SCRATCH; rm cli.md" \
+    "git -C $DELETE_SCRATCH --version| rm cli.md" \
+    "git -C $DELETE_SCRATCH --version& rm cli.md" \
+    "git -C $DELETE_SCRATCH --version && rm cli.md" \
+    "git -C $DELETE_SCRATCH --version"$'\nrm cli.md' \
+    "git -C '$DELETE_SCRATCH;other' rm cli.md" \
+    "git -C $DELETE_SCRATCH --work-tree $DELETE_SCRATCH; rm cli.md" \
+    "git -C $DELETE_SCRATCH --git-dir $DELETE_SCRATCH| rm cli.md"; do
+    for cwd in "$REPO" ''; do
+      delete_row reviewer-test "$cwd" "$cmd" "delete=$REPO/cli.md"
+    done
+  done
+  delete_row reviewer-test "$REPO" "git -C $DELETE_SCRATCH rm x.log" pass
+  delete_row reviewer-test "$SCRATCH" "git -C $REPO rm cli.md" "delete=$REPO/cli.md"
+}
+git_boundary_rows
+
+# Bash joins continuations before recognizing command words and operands.
+# The same table covers rm, git rm, and continued scratch operands.
+continuation_rows() {
+  local cmd cwd
+  for cmd in \
+    'rm -f -- \'$'\n''cli.md' \
+    'r\'$'\n''m cli.md' \
+    'rm cli.\'$'\n''md' \
+    'git \'$'\n''rm cli.md'; do
+    for cwd in "$REPO" ''; do
+      delete_row reviewer-test "$cwd" "$cmd" "delete=$REPO/cli.md"
+    done
+  done
+  delete_row reviewer-test "$REPO" 'rm -rf -- \'$'\n'"$DELETE_SCRATCH" pass
+}
+continuation_rows
+
+# Redirections remove their own words, not later literal rm operands. The
+# ampersands in &> and 2>&1 stay in the same command's word stream.
+redirection_rows() {
+  local cmd cwd
+  for cmd in \
+    'rm -f 2>/dev/null -- cli.md' \
+    'rm -f 2>|/dev/null cli.md' \
+    'rm -f 2>| /dev/null cli.md' \
+    'rm 2> /dev/null cli.md' \
+    'rm cli.md >/dev/null 2>&1' \
+    'rm 2>&1 cli.md' \
+    'rm &>/dev/null cli.md' \
+    'rm &> /dev/null cli.md' \
+    'rm >> /dev/null cli.md' \
+    'rm < /dev/null cli.md' \
+    "git -C $DELETE_SCRATCH --version&>/dev/null;rm cli.md"; do
+    for cwd in "$REPO" ''; do
+      delete_row reviewer-test "$cwd" "$cmd" "delete=$REPO/cli.md"
+    done
+  done
+  delete_row reviewer-test "$SCRATCH" "git -C $REPO 2>/dev/null rm cli.md" "delete=$REPO/cli.md"
+  delete_row reviewer-test "$REPO" "git -C $DELETE_SCRATCH &> /dev/null rm x.log" pass
+  delete_row reviewer-test "$REPO" "rm 2> /dev/null -rf -- $DELETE_SCRATCH" pass
+  for cwd in "$REPO" ''; do
+    delete_row reviewer-test "$cwd" "rm -rf 2>|/dev/null -- $DELETE_SCRATCH" pass
+    delete_row reviewer-test "$cwd" "rm -rf 2>| /dev/null -- $DELETE_SCRATCH" pass
+  done
+}
+redirection_rows
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control redirection-ends-operands "$HOOK" \
+    '      if [[ $word =~ $redirection ]]; then' \
+    '        [ "$state" != rm ] || break' HOOK redirection_rows \
+    "refused for reviewer-test in $REPO: rm -f 2>/dev/null -- cli.md" \
+    "refused for reviewer-test in $REPO: rm 2> /dev/null cli.md"
+fi
+
+# Restoring the old separator expression must expose both clobber forms.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control clobber-pipe-split "$HOOK" \
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '    | gsub("[;|()`]|(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    HOOK redirection_rows \
+    "refused for reviewer-test in $REPO: rm -f 2>|/dev/null cli.md" \
+    "refused for reviewer-test in $REPO: rm -f 2>| /dev/null cli.md"
+fi
+
+# Keep the control on the incident row: its old transform preserves the
+# newline instead of joining it, while retaining the other normalizations.
+continuation_control_row() {
+  delete_row reviewer-test "$REPO" 'rm -f -- \'$'\n''cli.md' "delete=$REPO/cli.md"
+}
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control continuation-not-joined "$HOOK" \
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '  bare=$(printf '\''%s\n'\'' "$COMMAND" | jq -Rr '\''explode | map(select(. != 34 and . != 39 and . != 92)) | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'')' \
+    HOOK continuation_control_row
+fi
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control git-boundary-ignored "$HOOK" \
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '  bare=$COMMAND' HOOK git_boundary_rows \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH --version; rm cli.md" \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH; rm cli.md" \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH --version| rm cli.md"
+fi
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control delete-allowed "$HOOK" \
+    '    [ -n "$CWD" ] || CWD=$PWD' \
+    '    exit 0' HOOK delete_rows \
+    "refused for reviewer-test in $REPO: rm cli.md" \
+    "refused for reviewer-test in $REPO: cd /nonexistent-review-dir; rm cli.md"
 fi
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \

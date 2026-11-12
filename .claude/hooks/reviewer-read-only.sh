@@ -3,9 +3,9 @@
 # name: reviewer-read-only
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
-# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
-# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Bash arm matches raw command text, including quoted mentions, and refuses every stash command. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. The refusal names the artifact path a reviewer may write and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash` (all subcommands), `clean`, `reset` or `switch` (options between `git` and the verb allowed). Its delete model stops a cooperating reviewer deleting work-tree files with ordinary `rm` or `git rm` commands as Bash reads them after line joining. A relative operand is judged against the call's starting directory (payload `cwd`, or the hook's working directory on Pi); `git -C` moves it for that Git command only. Expansions (variables, command substitution, `eval`, here-docs) and other deleting programs are outside this model and remain the reviewer's read-only role and tools' responsibility. The scan is quote-blind and can also refuse quoted text. Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write (Codex hooks reference, CLI 0.160.0). Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent, only the caller's own session, and its subagentStart names the lead's session and no subagent id, so a reviewer's tool call cannot be joined to the reviewer (Copilot hooks reference, CLI 1.0.91). Not run on antigravity: its payload carries no agent field.
+# summary: Stops a cooperating reviewer's edits, commits, pushes, Git commands that discard work, and ordinary `rm` or `git rm` deletes in a work tree; lets it write its review report.
+# safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. The Git verb checks match raw command text, including quoted mentions, and refuse every stash command. The delete model covers a cooperating reviewer's ordinary `rm` and `git rm` commands after Bash line joining. It does not model expansions (variables, command substitution, `eval`, here-docs) or other deleting programs; the reviewer's read-only role and tools own those. The quote-blind scan first removes backslash-newline pairs, then drops quote marks and backslashes, then turns command separators into line boundaries, preserving the pipe in `>|` and the ampersand in a redirection such as `2>&1` or `&>`. It judges every remaining `rm` word, `/bin/rm` too, so quoted strings and bodies can also cause refusals. Each segment splits on whitespace. After `rm` or `git rm`, options and redirection operator/target words are skipped; every remaining word is judged as an operand, including words after redirections. A redirection target attached to its operator is skipped with that word; a separate target is the next word. Semicolons, command ampersands, command pipes, parentheses, backticks and newlines end the segment. A relative operand uses the call's starting directory regardless of preceding `cd`, since that `cd` can fail; `git -C` moves the base for that Git command only. An operand holding a `$` or backtick expansion names nothing before the shell runs and is not judged. A search pattern written `[r]m` and a script file run by its path are not read as an rm. Missing tools, unreadable payload or an unreadable Git path check produce one keyed warning and allow the call. A delete refusal names the clearing routes: write a search pattern as `[r]m`, put a body that runs elsewhere in a script file under a `mktemp -d` of its own and run that file, delete scratch in that `mktemp -d`, and leave a probe it made in a work tree named in its report. Every refusal opens with `reviewer-read-only: <key>=<value>`; command diagnostics follow that key.
 # timeout: 10
 # harnesses: [claude, pi, opencode, cursor]
 # ---
@@ -60,8 +60,11 @@ refuse() { # KEY VALUE [CAUSE]
       path=*)
         echo "a reviewer writes nothing into a repository but its artifact, <worktree>/tmp/review-$AGENT_TYPE-<timestamp>.json; $2 is not that path. A control file goes under a mktemp -d of your own."
         ;;
+      delete=*)
+        echo "a reviewer deletes nothing inside a work tree; $2 is in one, and a delete there can take its author's uncommitted work. This check reads every rm in the command, quoted or not. Write a search pattern as [r]m. Put a body that runs elsewhere, such as a mutation-stability --mutate body or a bash -c script, in a script file under a mktemp -d of your own and run that file. A control file goes under that mktemp -d too and is deleted there, named by its absolute path. A probe you made in a work tree stays: leave it and name it in your report."
+        ;;
       git=unreadable)
-        echo "git could not say whether $TARGET is inside a work tree, so the write could not be judged:"
+        echo "git could not say whether $TARGET is inside a work tree, so the call could not be judged:"
         printf '%s\n' "$ANSWER"
         ;;
     esac
@@ -70,11 +73,123 @@ refuse() { # KEY VALUE [CAUSE]
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
   case "$1" in
-    refused | path) exit 2 ;;
+    refused | path | delete) exit 2 ;;
     *)
       echo "Check skipped. Repair the hook installation, tools or payload adapter; retry the command." >&2
       exit 0 ;;
   esac
+}
+
+# Whether PATH lies inside a git work tree, asked of the nearest directory
+# that exists, since a Write creates the missing ones and a delete may name a
+# glob. A symlink is judged by the directory holding it, where the entry a
+# delete removes lies. "Not a git repository" is the no; any other failure is
+# a git that could not answer, and warns.
+in_work_tree() { # PATH -> 0 inside, 1 outside
+  local dir="$1"
+  TARGET=$1
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    dir=$(dirname -- "$dir" 2>&1) || refuse path-read unavailable "$dir"
+  fi
+  while [ ! -d "$dir" ] && [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+    dir=$(dirname -- "$dir" 2>&1) || refuse path-read unavailable "$dir"
+  done
+  if ANSWER=$(git -C "$dir" rev-parse --is-inside-work-tree 2>&1); then
+    [ "$ANSWER" = "true" ]
+    return
+  fi
+  case "$ANSWER" in
+    *"not a git repository"*) return 1 ;;
+  esac
+  refuse git unreadable
+}
+
+# Join Bash continuations before dropping backslashes: otherwise the
+# preserved newline separates an rm from the path Bash gives it. The
+# quote-blind scan also matches quoted mentions; it does not evaluate them.
+# Shell separators then become line boundaries once, so neither Git-option
+# branch can carry a directory into a later command.
+judge_deletes() {
+  local bare call words word state base ended redirect_target redirection
+  redirection='^(&|[0-9]*)(<>|>>|>\||>|<)(&?)(.*)$'
+  # jq drops the quote marks: a Bash 3.2 pattern substitution over the
+  # command takes time that grows with its length squared. A redirection's
+  # ampersand and the pipe in >| belong to their words; other ampersands
+  # and pipes end the command.
+  bare=$(printf '%s' "$INPUT" | jq -er '.tool_input.command
+    | split("\\\n") | join("")
+    | explode | map(select(. != 34 and . != 39 and . != 92)) | implode
+    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")' 2>/dev/null) ||
+    refuse payload invalid-json
+  while IFS= read -r call; do
+    [ -n "$call" ] || continue
+    # read splits on whitespace and expands no glob. Redirections remove
+    # their own operator and target, never the operands that follow them.
+    read -r -a words <<<"$call"
+    state=search base=$CWD ended="" redirect_target=""
+    for word in ${words[@]+"${words[@]}"}; do
+      if [ -n "$redirect_target" ]; then redirect_target=""; continue; fi
+      if [[ $word =~ $redirection ]]; then
+        [ -n "${BASH_REMATCH[4]}" ] || redirect_target=1
+        continue
+      fi
+      case $state in
+        search)
+          case $word in
+            git | */git) state=git; base=$CWD ;;
+            rm | */rm) state=rm ;;
+          esac
+          continue
+          ;;
+        git)
+          case $word in
+            -C) state=dir ;;
+            -c | --git-dir | --work-tree | --namespace | --exec-path) state=value ;;
+            -*) ;;
+            rm) state=rm ;;
+            *) state=search; base=$CWD ;;
+          esac
+          continue
+          ;;
+        dir)
+          state=git
+          case $word in
+            *[\$\`]*) base="" ;;
+            /*) base=$word ;;
+            *) base=$base/$word ;;
+          esac
+          continue
+          ;;
+        value) state=git; continue ;;
+      esac
+      judge_operand
+    done
+  done <<<"$bare"
+}
+
+# Refuses an rm operand inside a work tree. A relative operand lies under the
+# directory the call starts in, whatever `cd` precedes it, since a failed `cd`
+# leaves the shell there; `git -C` moves it for that command only.
+# An operand holding an expansion
+# names nothing before the shell runs and is not judged.
+judge_operand() {
+  local path=$word
+  if [ -z "$ended" ]; then
+    case $path in
+      --) ended=1; return 0 ;;
+      -*) return 0 ;;
+    esac
+  fi
+  if [ -z "$base" ]; then return 0; fi
+  case $path in
+    '' | *[\$\`]* | \~[!/]*) return 0 ;;
+    \~ | \~/*) path=$HOME${path#\~} ;;
+    /*) ;;
+    *) path=$base/$path ;;
+  esac
+  if in_work_tree "$path"; then
+    refuse delete "$path"
+  fi
 }
 
 # Every external command this hook runs. jq reads the payload and git answers
@@ -122,23 +237,10 @@ case "$TOOL_NAME" in
     case "$TARGET" in
       */tmp/review-*.json) exit 0 ;;
     esac
-    # Inside a work tree or not is asked of the nearest directory that
-    # exists, since Write creates the missing ones. "Not a git repository" is
-    # the pass; any other failure is a git that could not answer.
-    DIR=$(dirname -- "$TARGET" 2>&1) || refuse path-read unavailable "$DIR"
-    while [ ! -d "$DIR" ] && [ "$DIR" != "/" ] && [ "$DIR" != "." ]; do
-      DIR=$(dirname -- "$DIR")
-    done
-    if ANSWER=$(git -C "$DIR" rev-parse --is-inside-work-tree 2>&1); then
-      if [ "$ANSWER" != "true" ]; then
-        exit 0
-      fi
+    if in_work_tree "$TARGET"; then
       refuse path "$TARGET"
     fi
-    case "$ANSWER" in
-      *"not a git repository"*) exit 0 ;;
-    esac
-    refuse git unreadable
+    exit 0
     ;;
   Bash)
     COMMAND=$(printf '%s' "$INPUT" | jq -er '.tool_input.command
@@ -159,6 +261,19 @@ case "$TOOL_NAME" in
     if printf '%s\n' "$COMMAND" | grep -E -- "$GIT_DISCARD" >/dev/null; then
       refuse refused git-discard
     fi
+    # A continuation can form an rm word only after Bash line joining.
+    # Send every such command through normalization before judging it.
+    case "$COMMAND" in
+      *rm* | *$'\\\n'*) ;;
+      *) exit 0 ;;
+    esac
+    CWD=$(printf '%s' "$INPUT" | jq -er '.cwd
+      | if . == null then "" elif type == "string" then . else error("not a string") end' 2>/dev/null) ||
+      refuse payload invalid-json
+    # A harness whose payload names no cwd starts the hook where the call
+    # runs: the Pi carrier spawns it in the session's directory.
+    [ -n "$CWD" ] || CWD=$PWD
+    judge_deletes
     exit 0
     ;;
 esac
