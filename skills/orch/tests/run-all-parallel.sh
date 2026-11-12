@@ -48,6 +48,11 @@
 #      caller thresholds and margin arithmetic determine warnings, invalid
 #      inputs refuse before launch, batteries emit no partial job reports,
 #      and the final job mode runs no suites; each rule has a must-fail control
+#  12. the process reads — the walk lists every process below a root over
+#      synthetic tables, a held child reads live and a held zombie ended,
+#      each with its control; every battery above holds the runner's own
+#      files alone, so each run proves it starts, stops and reports with no
+#      other package's library
 #
 # Bash 3.2 compatible.
 # Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/, skills/change-scope/references/,
@@ -84,17 +89,17 @@ mkdir -p "$TMP_ROOT"
 # shellcheck source=lib/assertions.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
-source "$TEST_DIR/../scripts/lib/lane-state.sh"
+source "$TEST_DIR/lib/suite-process.sh"
 
-# A fresh battery directory holding run-all.sh and no suites, the process
-# library run-all.sh sources at its path beside the directory, and DIR.tmp for
-# its TMPDIR.
+# A fresh battery directory holding run-all.sh, its process library and no
+# suites, github's group leader at its path beside the battery's tree, and
+# DIR.tmp for its TMPDIR. Nothing of orch's scripts is copied: the runner
+# starts, stops and reports its suites without them.
 battery() { # DIR
-  mkdir -p "$1/lib" "$1.tmp" "${1%/*}/scripts/lib"
+  mkdir -p "$1/lib" "$1.tmp"
   cp "$TEST_DIR/run-all.sh" "$1/run-all.sh"
   cp "$TEST_DIR/lib/suite-process.sh" "$1/lib/suite-process.sh"
   printf '#!/usr/bin/env bash\n:\n' >"$1/lib/git-env.sh"
-  cp "$TEST_DIR/../scripts/lib/lane-state.sh" "${1%/*}/scripts/lib/lane-state.sh"
   mkdir -p "$1/../../github/scripts/lib"
   cp "$TEST_DIR/../../github/scripts/lib/group-leader.sh" "$1/../../github/scripts/lib/group-leader.sh"
 }
@@ -382,7 +387,8 @@ SH
   until { [ -s "$B.pid" ] && [ -s "$B.holder" ]; } || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
   suite_pid="$(cat "$B.pid" 2>/dev/null)"
   holder_pid="$(cat "$B.holder" 2>/dev/null)"
-  holder_start="$(lane_process_start "$holder_pid" 2>/dev/null)"
+  holder_start=""
+  [ -z "$holder_pid" ] || holder_start="$(started_at "$holder_pid")" || holder_start=""
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
   RC=0
   wait "$runner" 2>/dev/null || RC=$?
@@ -394,12 +400,8 @@ SH
   [ -n "$suite_pid" ] || state=never-started
   holder_state=gone
   [ -n "$holder_start" ] || holder_state=never-started
-  if [ -n "$holder_start" ] &&
-    [ "$(lane_process_start "$holder_pid" 2>/dev/null)" = "$holder_start" ]; then
-    case "$(lane_process_state "$holder_pid" 2>/dev/null)" in
-      '' | Z) ;;
-      *) holder_state=alive ;;
-    esac
+  if [ -n "$holder_start" ] && [ "$(started_at "$holder_pid")" = "$holder_start" ]; then
+    holder_state=alive
   fi
   # The pid names this row's suite only while it runs, so a red row's survivor
   # is killed here and a pid proven gone is never signalled.
@@ -668,7 +670,7 @@ edit_of() { # NAME
     unstarted-green) EDIT=('report "${SUITES[next]}" none 0 unstarted' 'report "${SUITES[next]}" 0 0') ;;
     term-skipped) EDIT=('  signal_tree TERM "$1"' '  :') ;;
     kill-skipped) EDIT=('  signal_tree KILL "$1"' '  :') ;;
-    tree-root-only) EDIT=('table="$(lane_process_table)" || table=""' 'table=""') ;;
+    tree-root-only) EDIT=('table="$(ps -A -o pid= -o ppid= 2>/dev/null)" || table=""' 'table=""') ;;
     red-by-status) EDIT=('[[ "$2" != 0 || -n "${4:-}" ]]' '[[ "$2" != 0 ]]') ;;
     last-dropped) EDIT=('SLOT_LAST[$1]="$(awk' 'SLOT_LAST[$1]="$(: awk') ;;
     *) echo "edit_of: no edit named '$1'" >&2; exit 1 ;;
@@ -900,6 +902,96 @@ run_battery "$B" 1 RUN_ALL_REVIEW_SECS=0 RUN_ALL_MARGIN_PERCENT=125 \
 CONTROL_RC=0
 ( assert_eq "rc=$RC started=$(started_of | tr '\n' ' ')" 'rc=1 started=' 'budget-input oracle'; [ "$FAIL" -eq 0 ] ) >"$B/control.out" || CONTROL_RC=$?
 assert_eq "rc=$RC oracle=$CONTROL_RC" 'rc=0 oracle=1' 'control permits invalid timing policy and turns refusal oracle red'
+
+echo "=== 12. the process reads: the walk below a suite and a held process's identity ==="
+# Synthetic `pid ppid` rows as `ps -A -o pid= -o ppid=` prints them. 400 and
+# 401 name each other, as a table read mid-reparent can.
+PROC_TABLE='    1     0
+  100     1
+  101   100
+  102   100
+  201   101
+  301   201
+  150     1
+  151   150
+  400   401
+  401   400'
+# ROOT|EVERY PROCESS BELOW IT, sorted
+WALK_ROWS='100|101 102 201 301
+150|151
+301|
+400|401'
+walk_outcome() { # LIBRARY
+  local root want got
+  while IFS='|' read -r root want; do
+    got="$( (source "$1"; tree_below "$PROC_TABLE" "$root") | sort -n | tr '\n' ' ')"
+    printf '%s=[%s] ' "$root" "${got% }"
+  done <<<"$WALK_ROWS"
+  printf 'unread=[%s]' "$( (source "$1"; tree_below '' 100) )"
+}
+WALK_WANT="$(while IFS='|' read -r root want; do printf '%s=[%s] ' "$root" "$want"; done <<<"$WALK_ROWS")unread=[]"
+
+# A child this file holds reads live with its start. A zombie, a child its
+# parent has exited without reaping, reads ended: its pid is held, so no later
+# process can be handed it while the row reads it.
+identity_outcome() { # LIBRARY NAME
+  (
+    source "$1"
+    held="$TMP_ROOT/zombie-$2.pid"
+    child="" parent=""
+    trap '[ -z "$child$parent" ] || kill -KILL $child $parent 2>/dev/null' EXIT
+    sleep 1000 &
+    child=$!
+    rc=0
+    start="$(started_at "$child")" || rc=$?
+    live="$rc:${start:+read}"
+    kill -KILL "$child" 2>/dev/null
+    wait "$child" 2>/dev/null
+    child=""
+    perl -e 'defined(my $pid = fork) or die "fork: $!"; exit 0 unless $pid;
+      open my $f, ">", $ARGV[0] or die; print $f "$pid\n"; close $f; sleep 1000' "$held" &
+    parent=$!
+    tick=0
+    until [ -s "$held" ] || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
+    zombie="$(cat "$held" 2>/dev/null)"
+    rc=unread
+    tick=0
+    while [ -n "$zombie" ] && [ "$tick" -lt 100 ]; do
+      rc=0
+      started_at "$zombie" >/dev/null || rc=$?
+      [ "$rc" -eq 0 ] || break
+      sleep 0.1
+      tick=$((tick + 1))
+    done
+    kill -KILL "$parent" 2>/dev/null
+    wait "$parent" 2>/dev/null
+    parent=""
+    printf 'live=%s zombie=%s' "$live" "$rc"
+  )
+}
+
+assert_eq "$(walk_outcome "$TEST_DIR/lib/suite-process.sh")" "$WALK_WANT" \
+  "the walk lists every process below the root at any depth and no other, and a cycle ends"
+assert_eq "$(identity_outcome "$TEST_DIR/lib/suite-process.sh" row)" 'live=0:read zombie=1' \
+  "a held child reads live with its start, and a zombie reads ended"
+
+# CONTROL|TEXT|MUTANT TEXT
+PROCESS_CONTROLS='walk|seen[child[j]] = 1; queue[++n] = child[j]; print child[j]|print child[j]
+identity|    Z*) return 1 ;;|    Z*) ;;'
+while IFS='|' read -r control old new; do
+  P="$TMP_ROOT/process-$control"
+  mkdir -p "$P"
+  cp "$TEST_DIR/lib/suite-process.sh" "$P/suite-process.sh"
+  mutate_file "$P/suite-process.sh" "$old" "$new"
+  if [ "$control" = walk ]; then
+    got="$(walk_outcome "$P/suite-process.sh")" want="$WALK_WANT"
+  else
+    got="$(identity_outcome "$P/suite-process.sh" control)" want='live=0:read zombie=1'
+  fi
+  CONTROL_RC=0
+  ( assert_eq "$got" "$want" "$control oracle"; [ "$FAIL" -eq 0 ] ) >"$P/control.out" || CONTROL_RC=$?
+  assert_eq "$CONTROL_RC" 1 "control, $control: the mutant process read turns its row red"
+done <<<"$PROCESS_CONTROLS"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -8,12 +8,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
 
 mkdir -p "$TMP/host-bin" "$TMP/checkout" "$R/skills/orch/tests/lib" \
-  "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$R/tools/tests" \
+  "$R/skills/github/scripts/lib" "$R/tools/tests" \
   "$R/refresh/tests" "$R/skills/harness-ci/tests"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/"
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/"
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/"
-cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/"
 cp "$REPO/tools/ci-job-set" "$REPO/tools/macos-test-contracts" "$REPO/tools/macos-test-contracts.json" "$R/tools/"
 printf '#!/bin/sh\necho host\n' > "$TMP/host-bin/kendex"

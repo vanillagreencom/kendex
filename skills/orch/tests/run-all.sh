@@ -188,8 +188,7 @@ trap 'stop_suites; exit 143' TERM
 trap 'stop_suites; exit 129' HUP
 
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-# lane_process_table, lane_process_below, lane_process_state and
-# lane_process_start, for the stop.
+# tree_of and stop_tree, for the stop.
 source "$(dirname "${BASH_SOURCE[0]}")/lib/suite-process.sh" ||
   { echo "run-all.sh: lib/suite-process.sh did not load; a stop would have no process owner" >&2; exit 1; }
 source "$(dirname "${BASH_SOURCE[0]}")/../../github/scripts/lib/group-leader.sh" ||

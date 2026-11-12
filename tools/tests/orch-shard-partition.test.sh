@@ -131,11 +131,10 @@ if [[ "$mode" != cargo ]]; then
 
 # --- The sandbox: the real roster, none of the real work --------------------
 SANDBOX="$TMP/routing/skills/orch/tests"
-mkdir -p "$SANDBOX/lib" "$TMP/routing/skills/orch/scripts/lib" "$TMP/routing/skills/github/scripts/lib" "$TMP/routing/tools"
+mkdir -p "$SANDBOX/lib" "$TMP/routing/skills/github/scripts/lib" "$TMP/routing/tools"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$TMP/routing/tools/"
 cp "$TEST_DIR/run-all.sh" "$SANDBOX/run-all.sh"
 cp "$TEST_DIR/lib/suite-process.sh" "$SANDBOX/lib/suite-process.sh"
-cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$TMP/routing/skills/orch/scripts/lib/lane-state.sh"
 cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$TMP/routing/skills/github/scripts/lib/group-leader.sh"
 printf '#!/usr/bin/env bash\n: # the sandbox clears nothing; its suites are empty\n' \
   > "$SANDBOX/lib/git-env.sh"
@@ -231,12 +230,11 @@ ln -s "$ROOT/refresh" "$PART/refresh"
 # Pooled calls use the real runners over stub copies of the suite files.
 # This preserves their discovery and filters without starting the batteries.
 POOL="$TMP/pool"
-mkdir -p "$POOL/skills/orch/tests/lib" "$POOL/skills/orch/scripts/lib" "$POOL/tools/tests" "$TMP/pool-claims"
+mkdir -p "$POOL/skills/orch/tests/lib" "$POOL/tools/tests" "$TMP/pool-claims"
 mkdir -p "$POOL/skills/github/scripts/lib"
 cp "$TEST_DIR/run-all.sh" "$POOL/skills/orch/tests/run-all.sh"
 cp "$TEST_DIR/lib/git-env.sh" "$POOL/skills/orch/tests/lib/git-env.sh"
 cp "$TEST_DIR/lib/suite-process.sh" "$POOL/skills/orch/tests/lib/suite-process.sh"
-cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$POOL/skills/orch/scripts/lib/lane-state.sh"
 cp "$ROOT/skills/github/scripts/lib/group-leader.sh" "$POOL/skills/github/scripts/lib/group-leader.sh"
 cp "$ROOT/tools/tests/run-all.sh" "$POOL/tools/tests/run-all.sh"
 cp "$ROOT/tools/macos-test-contracts" "$ROOT/tools/macos-test-contracts.json" "$POOL/tools/"
