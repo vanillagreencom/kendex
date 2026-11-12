@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::clock;
+use agent_runtime::controller::heal::{self, Heal};
+use agent_runtime::controller::model::{self, Check, Place};
 use agent_runtime::host;
 use serde_json::{Map, Value, json};
 
@@ -461,7 +463,7 @@ pub enum Write {
     /// The standing switched check of `session` at `place` marked
     /// `recovery_started` before its recovery starts.
     ModelStart {
-        place: CheckPlace,
+        place: Place,
         session: String,
     },
     ModelReset {
@@ -484,38 +486,13 @@ pub struct Bucket {
     pub fields: Vec<(String, String)>,
 }
 
-/// Where a model check is recorded: the item record's own `model_checks`
-/// slot for the session, or the fleet record's lane or controller entry.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CheckPlace {
-    Item,
-    Lane(String),
-    Overseer,
-}
-
 /// A model switch's check: the launch it is bound to is `expected`'s (the
 /// record the hook read), the outcome `switched` or `unavailable`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ModelCheck {
-    pub place: CheckPlace,
-    pub session: String,
-    pub outcome: String,
-    pub cause: String,
-    pub launched: String,
-    pub observed: String,
+    pub place: Place,
+    pub check: Check,
     pub expected: PathBuf,
-}
-
-/// The overseer record's heal: the facts the session itself knows, written
-/// where the record names none, for the session the record names.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Heal {
-    pub server: String,
-    pub pane: String,
-    pub start: String,
-    pub harness: String,
-    pub home: String,
-    pub session: String,
 }
 
 /// Apply `write` to the record at `path` and report what it wrote. The
@@ -598,14 +575,23 @@ fn transition(
             cause,
             observed,
         } => Ok(model_slot(path, doc, env, session, cause, observed)),
-        Write::ModelCheck(check) => model_check(path, doc, env, check),
-        Write::ModelStart { place, session } => model_start(path, doc, place, session),
+        Write::ModelCheck(check) => Ok(model::record_model_check(
+            path,
+            doc,
+            &env.iso(),
+            &check.place,
+            &check.check,
+            &one_value(&check.expected)?,
+        )?),
+        Write::ModelStart { place, session } => {
+            Ok(model::start_model_recovery(path, doc, place, session)?)
+        }
         Write::ModelReset {
             lane,
             session,
             expected,
         } => model_reset(path, doc, env, lane, session, &one_value(expected)?),
-        Write::Heal(heal) => heal_overseer(doc, heal),
+        Write::Heal(given) => Ok(heal::heal(doc, given)?),
     }
 }
 
@@ -1288,198 +1274,6 @@ fn model_slot(
     json!({"recorded": true})
 }
 
-/// The launch a check is bound to: the controller's
-/// `{server, server_start, pane, generation, launch_line, cwd, session_id}`,
-/// a lane's `{launch, launched_at}`.
-fn launch_of(place: &CheckPlace, record: &Value) -> Value {
-    let pick = |keys: &[&str]| {
-        let mut out = Map::new();
-        for key in keys {
-            out.insert(
-                (*key).to_owned(),
-                record.get(*key).cloned().unwrap_or(Value::Null),
-            );
-        }
-        Value::Object(out)
-    };
-    match place {
-        CheckPlace::Overseer => pick(&[
-            "server",
-            "server_start",
-            "pane",
-            "generation",
-            "launch_line",
-            "cwd",
-            "session_id",
-        ]),
-        CheckPlace::Item | CheckPlace::Lane(_) => pick(&["launch", "launched_at"]),
-    }
-}
-
-/// A check standing for the same session and launch answers `duplicate`:
-/// a switch once its recovery started, an unavailable check for another
-/// unavailable one, and an unavailable reading over a switch. A switch whose
-/// recovery never started is acquired again, so a lost answer never
-/// suppresses the recovery.
-fn check_stands(current: &Value, session: &str, identity: &Value, outcome: &str) -> bool {
-    let word = |key: &str| current.get(key).and_then(Value::as_str);
-    if word("session_id") != Some(session) || current.get("launch_identity") != Some(identity) {
-        return false;
-    }
-    match word("outcome") {
-        Some("switched") => {
-            outcome != "switched" || current.get("recovery_started") == Some(&Value::Bool(true))
-        }
-        Some("unavailable") => outcome == "unavailable",
-        _ => false,
-    }
-}
-
-fn check_of(env: &Env, check: &ModelCheck, identity: &Value) -> Value {
-    let mut out = json!({"outcome": check.outcome, "session_id": check.session, "launch_identity": identity,
-                         "launched": check.launched, "observed": check.observed, "at": env.iso(),
-                         "cause": check.cause});
-    if check.outcome == "switched" {
-        out["recovery_started"] = json!(false);
-    }
-    out
-}
-
-fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -> Result<Value> {
-    if !matches!(check.outcome.as_str(), "switched" | "unavailable") {
-        return Err(refused("model-outcome", &[("outcome", &check.outcome)]));
-    }
-    let expected = one_value(&check.expected)?;
-    let identity = launch_of(&check.place, &expected);
-    if check.place == CheckPlace::Item {
-        let current = get(
-            doc,
-            &format!("/model_checks/{}", pointer_token(&check.session)),
-        )?;
-        if check_stands(&current, &check.session, &identity, &check.outcome) {
-            return Ok(json!({"result": "duplicate"}));
-        }
-        let record = check_of(env, check, &identity);
-        let slot = format!("/model_checks/{}", pointer_token(&check.session));
-        *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
-        return Ok(json!({"result": "acquired"}));
-    }
-    let (pointer, item) = match &check.place {
-        CheckPlace::Overseer => ("/overseer".to_owned(), "oversee".to_owned()),
-        CheckPlace::Lane(lane) => {
-            let index = doc
-                .get("lanes")
-                .and_then(Value::as_array)
-                .and_then(|lanes| {
-                    lanes
-                        .iter()
-                        .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
-                });
-            match index {
-                Some(index) => (format!("/lanes/{index}"), lane.clone()),
-                None => return Ok(json!({"result": "stale"})),
-            }
-        }
-        CheckPlace::Item => unreachable!("the item check answered above"),
-    };
-    let current = get(doc, &pointer)?;
-    let moved = |key: &str| current.get(key) != expected.get(key);
-    if (check.place == CheckPlace::Overseer && launch_of(&check.place, &current) != identity)
-        || moved("session_id")
-        || moved("model")
-        || moved("launch")
-        || moved("launched_at")
-    {
-        return Ok(json!({"result": "stale"}));
-    }
-    let standing = current.get("model_check").unwrap_or(&Value::Null);
-    if check_stands(standing, &check.session, &identity, &check.outcome) {
-        return Ok(json!({"result": "duplicate"}));
-    }
-    // A switch acquired again before its recovery started is the same
-    // check: the relaunch's recovery limit counts the log's rows for a
-    // launch, so its row is replaced, never doubled.
-    let again = check.outcome == "switched"
-        && standing.get("outcome").and_then(Value::as_str) == Some("switched")
-        && standing.get("session_id").and_then(Value::as_str) == Some(check.session.as_str())
-        && standing.get("launch_identity") == Some(&identity);
-    let record = check_of(env, check, &identity);
-    let mut row = record.clone();
-    row["kind"] = json!(format!("model-{}", check.outcome));
-    row["item"] = json!(item);
-    row["text"] = json!(format!(
-        "launched={} observed={}",
-        check.launched, check.observed
-    ));
-    let log = record::array_mut(path, doc, "fleet_log")?;
-    let own = log.iter().rposition(|r| {
-        r.get("kind") == Some(&row["kind"])
-            && r.get("item") == Some(&row["item"])
-            && r.get("session_id") == Some(&row["session_id"])
-            && r.get("launch_identity") == Some(&identity)
-    });
-    match own.filter(|_| again) {
-        Some(index) => log[index] = row,
-        None => log.push(row),
-    }
-    let slot = format!("{pointer}/model_check");
-    *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
-    Ok(json!({"result": "acquired", "record": get(doc, &pointer)?}))
-}
-
-impl CheckPlace {
-    fn word(&self) -> &'static str {
-        match self {
-            CheckPlace::Item => "item",
-            CheckPlace::Lane(_) => "lane",
-            CheckPlace::Overseer => "overseer",
-        }
-    }
-}
-
-/// Mark the standing switched check of `session` at `place` started, before
-/// the recovery it guards starts: a check acquired again while unmarked is
-/// the same switch, one marked is a duplicate. A repeat changes nothing, so
-/// a replayed mark spends nothing; no switched check of the session refuses
-/// `model-check-missing`.
-fn model_start(
-    path: &Path,
-    doc: &mut Document,
-    place: &CheckPlace,
-    session: &str,
-) -> Result<Value> {
-    let pointer = match place {
-        CheckPlace::Item => Some(format!("/model_checks/{}", pointer_token(session))),
-        CheckPlace::Overseer => Some("/overseer/model_check".to_owned()),
-        CheckPlace::Lane(lane) => doc
-            .get("lanes")
-            .and_then(Value::as_array)
-            .and_then(|lanes| {
-                lanes
-                    .iter()
-                    .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
-            })
-            .map(|index| format!("/lanes/{index}/model_check")),
-    };
-    let check = match &pointer {
-        Some(pointer) => get(doc, pointer)?,
-        None => Value::Null,
-    };
-    let word = |key: &str| check.get(key).and_then(Value::as_str);
-    let switched = word("outcome") == Some("switched") && word("session_id") == Some(session);
-    let Some(pointer) = pointer.filter(|_| switched) else {
-        return Err(refused("model-check-missing", &[("session", session)]));
-    };
-    let started_now = check.get("recovery_started") != Some(&Value::Bool(true));
-    set_at(
-        path,
-        doc,
-        &format!("{pointer}/recovery_started"),
-        Value::Bool(true),
-    )?;
-    Ok(json!({"place": place.word(), "session": session, "started_now": started_now}))
-}
-
 /// Each check the write changed is one a model check writes: an outcome of
 /// `switched` or `unavailable`, and a `recovery_started` mark, a boolean,
 /// only on a switch.
@@ -1537,7 +1331,7 @@ fn model_reset(
         return Ok(json!({"reset": false}));
     }
     let check = json!({"outcome": "passed", "session_id": session,
-                       "launch_identity": launch_of(&CheckPlace::Lane(lane.to_owned()), &current), "at": env.iso()});
+                       "launch_identity": model::launch_of(&Place::Lane(lane.to_owned()), &current), "at": env.iso()});
     for index in &lanes {
         let slot = format!("/lanes/{index}/model_check");
         *slot_mut(path, doc, &slot, &tokens(&slot)?)? = check.clone();
@@ -1548,63 +1342,6 @@ fn model_reset(
     row["text"] = json!("first-turn-complete");
     record::array_mut(path, doc, "fleet_log")?.push(row);
     Ok(json!({"reset": true}))
-}
-
-/// The record names this session where it names its server and pane on the
-/// server's start, or on no start at all, and its harness, home and native
-/// session are this session's or unrecorded.
-fn heal_overseer(doc: &mut Document, heal: &Heal) -> Result<Value> {
-    // A controller runs one of the four harnesses: any other word is refused
-    // by its name and never written.
-    if !heal.harness.is_empty() {
-        agent_runtime::harness::Harness::named(&heal.harness)?;
-    }
-    let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").to_owned();
-    let Some(Value::Object(record)) = doc.get_mut("overseer") else {
-        return Err(refused("overseer-native-unbound", &[("pane", &heal.pane)]));
-    };
-    let pane = record
-        .get("pane")
-        .filter(|v| !v.is_null())
-        .or_else(|| record.get("session"));
-    let start = match record.get("server_start") {
-        None | Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(s.clone()),
-        Some(other) => Some(other.to_string()),
-    };
-    let owns = text(record.get("server")) == heal.server
-        && text(pane) == heal.pane
-        && start.as_deref().is_none_or(|s| s == heal.start);
-    let open = |key: &str, given: &str| {
-        let recorded = text(record.get(key));
-        recorded.is_empty() || given.is_empty() && key == "home" || recorded == given
-    };
-    let native = !heal.session.is_empty()
-        && open("harness", &heal.harness)
-        && open("home", &heal.home)
-        && open("session_id", &heal.session);
-    if !(owns && native) {
-        return Err(refused("overseer-native-unbound", &[("pane", &heal.pane)]));
-    }
-    let Ok(server_start) = heal.start.parse::<u64>() else {
-        return Err(refused("server-start-invalid", &[("start", &heal.start)]));
-    };
-    record.insert("server_start".to_owned(), json!(server_start));
-    for (key, given) in [
-        ("harness", &heal.harness),
-        ("home", &heal.home),
-        ("session_id", &heal.session),
-    ] {
-        if text(record.get(key)).is_empty() && !given.is_empty() {
-            record.insert(key.to_owned(), json!(given));
-        }
-    }
-    Ok(json!({"overseer": Value::Object(record.clone())}))
-}
-
-/// A record key as one RFC 6901 token.
-fn pointer_token(key: &str) -> String {
-    key.replace('~', "~0").replace('/', "~1")
 }
 
 // ---------------------------------------------------------------------------

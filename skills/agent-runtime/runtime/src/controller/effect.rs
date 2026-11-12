@@ -381,6 +381,8 @@ struct Successor {
     /// The native session the launch continues, where the pending names
     /// one: its file must stand under `home` before the window opens.
     resume: Option<String>,
+    /// That session's file, which a Pi launch continues by.
+    resume_file: Option<PathBuf>,
 }
 
 impl Successor {
@@ -476,14 +478,6 @@ impl Successor {
                     &[("harness", pending.harness.as_deref().unwrap_or_default())],
                 )
             })?;
-        // Pi continues a session by its file, which no record carries, so a
-        // Pi controller has no resume form.
-        if harness == Harness::Pi && pending.resume.is_some() {
-            return Err(refused(
-                "resume-unsupported",
-                &[("harness", harness.name())],
-            ));
-        }
         let cwd = PathBuf::from(pending.cwd.clone().unwrap_or_default());
         check_directory("cwd-missing", &cwd)?;
         if let Some(account) = pending.account.as_deref() {
@@ -515,6 +509,7 @@ impl Successor {
             permission: pending.permission,
             extra_args: pending.extra_args.clone(),
             resume: pending.resume.clone(),
+            resume_file: pending.resume_file.as_deref().map(PathBuf::from),
         })
     }
 
@@ -562,7 +557,7 @@ impl Successor {
         if let Some(id) = &self.resume {
             intent.resume = Some(Resume {
                 session_id: id.clone(),
-                session_file: None,
+                session_file: self.resume_file.clone(),
             });
         }
         crate::launch::build(&intent)
@@ -928,7 +923,9 @@ fn succeed(
     // The runner's session is fixed, or the sessions that already stand
     // are read, before the window opens. A resume's session is the fixed
     // one, and its file must already stand under the home: a session the
-    // home never held fails here, nothing opened.
+    // home never held fails here, nothing opened. A Pi resume continues by
+    // the file the pending names, which must be that session's own; one that
+    // names none is refused by the launch builder.
     let floor = match &successor.resume {
         Some(id) => {
             match crate::effects::fixed_id_file(
@@ -937,8 +934,16 @@ fn succeed(
                 &successor.cwd,
                 id,
             ) {
-                Reading::Live(_) => SessionFloor::Fixed(id.clone()),
-                Reading::Gone => {
+                Reading::Live(found)
+                    if successor.harness != Harness::Pi
+                        || successor
+                            .resume_file
+                            .as_ref()
+                            .is_none_or(|named| *named == found) =>
+                {
+                    SessionFloor::Fixed(id.clone())
+                }
+                Reading::Live(_) | Reading::Gone => {
                     return Ok(failed_before_retirement_refused(
                         operation,
                         &refused("session-missing", &[("session", id)]),

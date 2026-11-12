@@ -73,17 +73,6 @@ pub struct Status {
     pub caller: Option<CallerAnswer>,
 }
 
-/// The fields of the launch a model check is bound to.
-const MODEL_LAUNCH_KEYS: &[&str] = &[
-    "server",
-    "server_start",
-    "pane",
-    "generation",
-    "launch_line",
-    "cwd",
-    "session_id",
-];
-
 /// The status of the controller the record at `path` holds; `record-missing`
 /// where no document stands. A server is asked only on the socket the record
 /// names or the caller's own.
@@ -125,20 +114,14 @@ pub fn status(
             }
             Some(_) => Binding::Other,
         };
-        let either = |key: &str, given: &str| {
-            let held = word(key);
-            held.is_empty() || given.is_empty() || held == given
-        };
-        let native_match = !c.session.is_empty()
-            && (word("harness").is_empty() || word("harness") == c.harness)
-            && either("home", c.home)
-            && (word("session_id").is_empty() || word("session_id") == c.session);
+        let native_match = super::heal::native_match(
+            member.as_ref().unwrap_or(&Value::Null),
+            c.harness,
+            c.home,
+            c.session,
+        );
         let model_launch = member.as_ref().map_or(Value::Null, |m| {
-            MODEL_LAUNCH_KEYS
-                .iter()
-                .map(|key| ((*key).to_owned(), m[*key].clone()))
-                .collect::<serde_json::Map<_, _>>()
-                .into()
+            super::model::launch_of(&super::model::Place::Controller, m)
         });
         CallerAnswer {
             binding,

@@ -475,6 +475,54 @@ pub fn replace_atomically(path: &Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
+/// The one creation of a document: `doc` written whole to a fresh file
+/// beside `path` and linked into place, so a document that stands is
+/// never replaced (`state-exists`) and no reader ever sees part of one.
+/// The link alone keeps it unique: a writer holding the record's lock
+/// never holds a creation up. The directory is made where it is missing.
+pub fn create_document(path: &Path, doc: &Document) -> Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|e| Error::io("mkdir", parent, e))?;
+    let base = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("record");
+    let text = serde_json::to_string_pretty(doc).map_err(|source| Error::Json {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut attempt = 0u32;
+    let (staged, mut file) = loop {
+        let candidate = parent.join(format!(".{base}.{}.{attempt}.create", std::process::id()));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => break (candidate, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && attempt < 64 => attempt += 1,
+            Err(e) => return Err(Error::io("create-temp", &candidate, e)),
+        }
+    };
+    let written = file
+        .write_all(text.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|_| file.sync_all());
+    drop(file);
+    let linked = written
+        .map_err(|e| Error::io("write-temp", &staged, e))
+        .and_then(|()| match fs::hard_link(&staged, path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(Error::refused(
+                "state-exists",
+                &[("path", &path.display().to_string())],
+            )),
+            Err(e) => Err(Error::io("create", path, e)),
+        });
+    let _ = fs::remove_file(&staged);
+    linked
+}
+
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
@@ -792,6 +840,35 @@ mod tests {
     }
 
     const V: &[u64] = &[1];
+
+    /// The one creation writes the document whole where none stands, in the
+    /// store's own form, its directory made; a second creation over it
+    /// refuses `state-exists` and the first document keeps its bytes; no
+    /// staged file is left beside either.
+    #[test]
+    fn a_document_is_created_once_and_never_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state/workflow-state-oversee.json");
+        let first: Document =
+            serde_json::from_str(r#"{"issue_id": "oversee", "lanes": []}"#).unwrap();
+        create_document(&path, &first).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert_eq!(read_document(&path).unwrap(), Some(first.clone()));
+        assert_eq!(
+            written,
+            format!("{}\n", serde_json::to_string_pretty(&first).unwrap())
+        );
+        let second: Document = serde_json::from_str(r#"{"issue_id": "other"}"#).unwrap();
+        let err = create_document(&path, &second).unwrap_err();
+        assert_eq!(err.key(), "state-exists");
+        assert_eq!(fs::read_to_string(&path).unwrap(), written);
+        let staged: Vec<String> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".create"))
+            .collect();
+        assert!(staged.is_empty(), "{staged:?}");
+    }
 
     #[test]
     fn a_first_write_needs_an_absent_file_and_starts_at_revision_one() {

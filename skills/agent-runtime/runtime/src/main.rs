@@ -207,8 +207,10 @@ enum ControllerOp {
     Successor {
         #[arg(long)]
         record: PathBuf,
-        #[arg(long)]
-        cwd: PathBuf,
+        /// The first controller's working directory; a resume's is the
+        /// record's.
+        #[arg(long, required_unless_present = "resume", conflicts_with = "resume")]
+        cwd: Option<PathBuf>,
         #[arg(long)]
         predecessor: Option<String>,
         #[arg(long, requires = "predecessor", conflicts_with = "recover", value_parser = mark_kind)]
@@ -223,6 +225,10 @@ enum ControllerOp {
         /// `AGENT_RUNTIME_CONTROLLER_PREFERENCE`.
         #[arg(long, conflicts_with = "recover")]
         preference: Option<String>,
+        /// The recorded controller's own launch continuing its native
+        /// session, for a start once the session running it ended.
+        #[arg(long, conflicts_with_all = ["predecessor", "handoff", "preference"])]
+        resume: bool,
     },
     /// Open a controller where none runs, on the request file's
     /// `{controller, brief_file, session?, watch?}`.
@@ -325,6 +331,36 @@ enum ControllerOp {
         #[arg(long)]
         keep_prior: bool,
     },
+    /// Write the facts the calling session knows of itself where the record
+    /// names none: its server's start, its harness, home and native id, for
+    /// the session the record names.
+    Heal {
+        #[arg(long)]
+        record: PathBuf,
+        /// The caller's tmux server pid.
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        pane: String,
+        /// The caller's tmux server's start.
+        #[arg(long)]
+        start: String,
+        #[arg(long, default_value = "")]
+        harness: String,
+        /// The caller's launch home, empty where it could not be read.
+        #[arg(long, default_value = "")]
+        home: String,
+        /// The caller's native session id.
+        #[arg(long)]
+        session: String,
+    },
+    /// The controller's model check: `record` a switch or an unavailable
+    /// model bound to the launch the reader read, `start` mark a switch's
+    /// recovery begun.
+    ModelCheck {
+        #[command(subcommand)]
+        op: ModelCheckOp,
+    },
     /// The detached job a transfer or a stop runs in.
     #[command(hide = true)]
     Job {
@@ -334,6 +370,38 @@ enum ControllerOp {
         intent: String,
         #[command(flatten)]
         reach: ReachArgs,
+    },
+}
+
+/// The controller's model check, over the record `--record` names.
+#[derive(Subcommand)]
+enum ModelCheckOp {
+    /// Record the check for `--session`: `acquired`, `duplicate` or `stale`
+    /// against the record the reader read, the file `--expected` names.
+    Record {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        session: String,
+        /// `switched` or `unavailable`.
+        #[arg(long)]
+        outcome: String,
+        #[arg(long, default_value = "")]
+        cause: String,
+        #[arg(long, default_value = "")]
+        launched: String,
+        #[arg(long, default_value = "")]
+        observed: String,
+        #[arg(long)]
+        expected: PathBuf,
+    },
+    /// Mark the switched check of `--session` started before its recovery
+    /// starts.
+    Start {
+        #[arg(long)]
+        record: PathBuf,
+        #[arg(long)]
+        session: String,
     },
 }
 
@@ -1906,7 +1974,11 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             recover,
             handoff,
             preference,
+            resume,
         } => {
+            let Some(cwd) = cwd.filter(|_| !resume) else {
+                return controller::successor::resumed(&loaded.launch, &record);
+            };
             if recover {
                 let pane = predecessor.as_deref().unwrap_or_default();
                 return controller::successor::recovery(&loaded.launch, &record, pane);
@@ -2081,6 +2153,67 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
                 source,
             })
         }
+        ControllerOp::Heal {
+            record,
+            server,
+            pane,
+            start,
+            harness,
+            home,
+            session,
+        } => {
+            let given = controller::heal::Heal {
+                server,
+                pane,
+                start,
+                harness,
+                home,
+                session,
+            };
+            controller::rewrite(&record, record::Locking::FLOCK, |doc| {
+                controller::heal::heal(doc, &given)
+            })
+        }
+        ControllerOp::ModelCheck {
+            op:
+                ModelCheckOp::Record {
+                    record,
+                    session,
+                    outcome,
+                    cause,
+                    launched,
+                    observed,
+                    expected,
+                },
+        } => {
+            let check = controller::model::Check {
+                session,
+                outcome,
+                cause,
+                launched,
+                observed,
+            };
+            controller::rewrite(&record, record::Locking::FLOCK, |doc| {
+                controller::model::record_model_check(
+                    &record,
+                    doc,
+                    &env.iso(),
+                    &controller::model::Place::Controller,
+                    &check,
+                    &controller::model::expected(&expected)?,
+                )
+            })
+        }
+        ControllerOp::ModelCheck {
+            op: ModelCheckOp::Start { record, session },
+        } => controller::rewrite(&record, record::Locking::FLOCK, |doc| {
+            controller::model::start_model_recovery(
+                &record,
+                doc,
+                &controller::model::Place::Controller,
+                &session,
+            )
+        }),
         ControllerOp::Job {
             record,
             intent,

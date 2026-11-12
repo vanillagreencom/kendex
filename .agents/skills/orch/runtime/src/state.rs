@@ -14,8 +14,7 @@
 //! This module owns the read views and the kind a file's name selects.
 
 use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::controller::Overseer;
@@ -991,15 +990,10 @@ pub struct Initialized {
     pub kind: Kind,
 }
 
-/// Create the state file at `path` with the init object, as `cmd_init`
-/// writes it: the directory made, the file created exclusively and refused
-/// `state-exists` where one already stands, the object pretty-printed with
-/// jq's two-space indent and final newline, in the shape the shell writers
-/// read.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the one creation of a state file, exclusive, for the `state init` command"
-)]
+/// Create the state file at `path` with the init object through the store's
+/// one creation (`record::create_document`): refused `state-exists` where one already
+/// stands, the object pretty-printed with jq's two-space indent and final
+/// newline, in the shape the shell writers read.
 pub fn init(path: &Path, fields: &InitFields) -> Result<Initialized> {
     let kind = Kind::of_path(path);
     let issue_id = match kind {
@@ -1017,29 +1011,7 @@ pub fn init(path: &Path, fields: &InitFields) -> Result<Initialized> {
                 )
             })?,
     };
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| agent_runtime::Error::io("mkdir", dir, e))?;
-    }
-    let mut file = match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            return Err(agent_runtime::Error::refused(
-                "state-exists",
-                &[("path", &path.display().to_string())],
-            )
-            .into());
-        }
-        Err(e) => return Err(agent_runtime::Error::io("create", path, e).into()),
-    };
-    let mut text = serde_json::to_string_pretty(&Value::Object(init_document(&issue_id, fields)))
-        .map_err(|source| agent_runtime::Error::Json {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    text.push('\n');
-    file.write_all(text.as_bytes())
-        .and_then(|_| file.sync_all())
-        .map_err(|e| agent_runtime::Error::io("write", path, e))?;
+    record::create_document(path, &init_document(&issue_id, fields))?;
     Ok(Initialized {
         path: path.to_path_buf(),
         kind,

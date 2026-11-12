@@ -243,20 +243,63 @@ pub fn recovery(launch: &LaunchSettings, path: &Path, predecessor: &str) -> Resu
     let mut expected = record.expected();
     expected.pane = json!(predecessor);
     let recorded = doc.get(MEMBER).cloned().unwrap_or(Value::Null);
-    let binding: serde_json::Map<String, Value> = super::transition::MODEL_LAUNCH_KEYS
-        .iter()
-        .map(|key| {
-            (
-                (*key).to_owned(),
-                recorded.get(*key).cloned().unwrap_or(Value::Null),
-            )
-        })
-        .collect();
+    let binding = super::model::launch_of(&super::model::Place::Controller, &recorded);
     Ok(json!({
         "successor": successor,
         "expected": expected,
         "recovery": binding,
     }))
+}
+
+/// The successor that continues the recorded controller's own native
+/// session once the session running it ended, as after a restart: its own
+/// launch with no walk, the record's native id as its resume and, for Pi,
+/// which continues by file, the file that id names under its home for its
+/// working directory, which must stand (`session-missing`): the home is the
+/// one the start's launch names, the account where it is the Pi root. A start opens
+/// it; a record naming no native id refuses `session-unrecorded`.
+pub fn resumed(launch: &LaunchSettings, path: &Path) -> Result<Value> {
+    let missing = || refused("record-missing", &[("path", &path.display().to_string())]);
+    let doc = record::read_document(path)?.ok_or_else(missing)?;
+    let overseer = record::field::<Overseer>(path, &doc, MEMBER)?.ok_or_else(missing)?;
+    let record = Record::read(Some(&overseer)).ok_or_else(missing)?;
+    let mut successor = record
+        .own_successor()
+        .ok_or_else(|| refused("harness-unnamed", &[("pane", &record.pane)]))?;
+    posture(&mut successor, launch)?;
+    let id = overseer
+        .session_id
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| refused("session-unrecorded", &[("pane", &record.pane)]))?;
+    if record.harness == Some(Harness::Pi) {
+        // The Pi root the launch runs on: the account where its variable is
+        // Pi's own (a model Pi's root bills), else the home the record keeps.
+        let billed_root =
+            Harness::Pi.account_var(successor.model.as_deref()) == Harness::Pi.home_var();
+        let home = successor
+            .account
+            .as_deref()
+            .filter(|_| billed_root)
+            .or(successor.home.as_deref())
+            .map(std::path::PathBuf::from)
+            .or_else(|| crate::effects::default_home(Harness::Pi));
+        let cwd = successor.cwd.as_deref().map(Path::new);
+        let found = match (home, cwd) {
+            (Some(home), Some(cwd)) => crate::effects::fixed_id_file(Harness::Pi, &home, cwd, &id),
+            (None, _) | (_, None) => crate::reading::Reading::Gone,
+        };
+        successor.resume_file = match found {
+            crate::reading::Reading::Live(file) => Some(file.display().to_string()),
+            crate::reading::Reading::Gone => {
+                return Err(refused("session-missing", &[("session", &id)]));
+            }
+            crate::reading::Reading::Unreadable { cause } => {
+                return Err(refused("session-store-unreadable", &[("cause", cause)]));
+            }
+        };
+    }
+    successor.resume = Some(id);
+    Ok(json!({"successor": successor}))
 }
 
 /// The controller member of the record at `path` as the choice reads it;
@@ -267,4 +310,140 @@ fn controller_record(path: &Path) -> Result<Option<Record>> {
     };
     let overseer: Option<Overseer> = record::field(path, &doc, MEMBER)?;
     Ok(Record::read(overseer.as_ref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::accounts::{AccountRow, Judged};
+    use crate::settings::{AccountSettings, Judged as Setting, QuestionToolSetting, Succession};
+
+    fn account_settings() -> AccountSettings {
+        AccountSettings {
+            retire: Vec::new(),
+            max_pct: 90,
+            burn_pct_per_hour: 0,
+            controller_headroom_pct: 20,
+            codex_credit_floor: 0,
+            cloud_credit_floor: 0,
+            copilot_pool: Vec::new(),
+            exclude: Vec::new(),
+            aliases: Vec::new(),
+            account_dirs: Vec::new(),
+            codex_home: None,
+            usage_ttl: 0,
+            usage_max_age: 0,
+            claude_usage_url: String::new(),
+            codex_usage_url: String::new(),
+            claude_token_url: String::new(),
+            claude_client_id: None,
+        }
+    }
+
+    /// The caller's own account judged `verdict` at `wall` percent used.
+    fn judged(verdict: &str, wall: f64) -> Judged {
+        let raw = json!({"alias": "a1", "harness": "claude", "config_dir": "/a/a1",
+                         "status": "ok", "verdict": verdict, "headroom_pct": 100.0 - wall});
+        Judged {
+            row: AccountRow::parse(&raw, &account_settings()).unwrap(),
+            verdict: verdict.to_owned(),
+            wall: Some(wall),
+            binding: None,
+            claims: 0,
+            projection: None,
+            seat: false,
+            limit: 80.0,
+            credits: false,
+            grant: None,
+            score: None,
+            qualifying: None,
+        }
+    }
+
+    /// Row 250: for one caller and one answer of the pick over its own
+    /// account, the walk a context mark's succession takes keeps or leaves
+    /// that account as `own_account` reads it: an account with room is kept
+    /// unpicked and excluded from nothing; a walled one sends the walk as
+    /// the headroom mark's, the account left out of every pick and not
+    /// kept; one nothing measures is not kept and is left in the pick.
+    #[test]
+    fn a_marks_walk_keeps_or_leaves_the_callers_account_as_its_own_read_says() {
+        let accounts = Setting::of("accounts", Ok(account_settings()));
+        let account_state = Setting::of("account-state", Ok(std::path::PathBuf::from("/none")));
+        let launch = LaunchSettings {
+            permission: Setting::of("permission", Ok(Permission::Bypass)),
+        };
+        let controller = ControllerSettings {
+            question_tool: Setting::of("question-tool", Ok(QuestionToolSetting::Off)),
+            succession: Setting::of("succession", Ok(Succession::On)),
+            preference: String::new(),
+            preference_set: true,
+        };
+        let wall_minutes = Setting::of("wall-minutes", Ok(0));
+        let choosing = Choosing {
+            accounts: Env {
+                accounts: &accounts,
+                account_state: &account_state,
+                home: None,
+                copilot_home: None,
+                controller_preference: "",
+            },
+            launch: &launch,
+            controller: &controller,
+            wall_minutes: &wall_minutes,
+        };
+        let caller = Caller {
+            harness: Some(Harness::Claude),
+            account: Some("/a/a1".to_owned()),
+            model: Some("claude-opus-5-5".to_owned()),
+            ..Caller::default()
+        };
+        type Row = (
+            &'static str,
+            fn() -> PickAnswer,
+            AccountState,
+            bool,
+            &'static [&'static str],
+        );
+        let rows: [Row; 3] = [
+            (
+                "room",
+                || PickAnswer::Lane(judged("room", 40.0)),
+                AccountState::HasRoom,
+                true,
+                &[],
+            ),
+            (
+                "walled",
+                || PickAnswer::Walled(judged("walled", 95.0)),
+                AccountState::AtTrigger,
+                false,
+                &["/a/a1"],
+            ),
+            (
+                "unmeasured",
+                || PickAnswer::NoRecord,
+                AccountState::Unmeasured,
+                false,
+                &[],
+            ),
+        ];
+        for (case, answer, state, keep, exclude) in rows {
+            let mut pick = |_: &PickRequest| answer();
+            let read = caller.own_account(Harness::Claude, &mut pick, 20, 1_800_000_000);
+            assert_eq!(read.state, state, "{case}");
+            let request = walk_request(
+                &choosing,
+                &mut pick,
+                &caller,
+                Harness::Claude,
+                MarkKind::Context,
+                1_800_000_000,
+            )
+            .unwrap();
+            let entry = request.caller.as_ref().unwrap();
+            assert_eq!(entry.keep, keep, "{case}");
+            assert_eq!(request.exclude, exclude, "{case}");
+        }
+    }
 }

@@ -802,3 +802,271 @@ fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
     let (key, fields) = refusal(&world.controller(world.root(), &successor, &[]));
     assert_eq!(key, "preference-empty", "{fields}");
 }
+
+/// The fixture record with its controller's native id and home unrecorded.
+fn unhealed() -> String {
+    let mut doc: Value = serde_json::from_str(FLEET).unwrap();
+    let member = doc["overseer"].as_object_mut().unwrap();
+    member.remove("session_id");
+    member.remove("home");
+    serde_json::to_string_pretty(&doc).unwrap()
+}
+
+/// `controller heal` writes the start, and the harness, home and native id
+/// the record lacks, for the session the record names on that server and
+/// pane; another pane, a start that is not a number and an absent document
+/// are refused by name with the record's bytes kept. Nothing asks a server
+/// or sends a notice.
+#[test]
+fn the_heal_fills_only_the_session_the_record_names() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    let heal = |pane: &str, start: &str| {
+        let mut words = args(&["heal"], &record, None);
+        words.extend(
+            [
+                "--server",
+                "41020",
+                "--pane",
+                pane,
+                "--start",
+                start,
+                "--harness",
+                "claude",
+                "--home",
+                "/h/claude",
+                "--session",
+                "S-1",
+            ]
+            .map(str::to_owned),
+        );
+        world.controller(world.root(), &words, &[])
+    };
+    let (key, _) = refusal(&heal("%7", "1769590000"));
+    assert_eq!(key, "record-missing");
+    let held = world.record(&record, &unhealed());
+    for (pane, start, owed) in [
+        ("%8", "1769590000", "overseer-native-unbound"),
+        ("%7", "1769590001", "overseer-native-unbound"),
+    ] {
+        let (key, fields) = refusal(&heal(pane, start));
+        assert_eq!(key, owed, "{pane} {start}: {fields}");
+        assert_eq!(std::fs::read_to_string(&record).unwrap(), held);
+    }
+    let out = heal("%7", "1769590000");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    let member = &doc["overseer"];
+    assert_eq!(member["session_id"], "S-1");
+    assert_eq!(member["home"], "/h/claude");
+    assert_eq!(member["harness"], "claude");
+    assert_eq!(member["server_start"], 1769590000);
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(&reply["result"]["overseer"], member);
+    let unstarted = unhealed().replace("\"server_start\": 1769590000,", "\"server_start\": null,");
+    assert!(unstarted.contains("\"server_start\": null,"));
+    world.record(&record, &unstarted);
+    let mut words = args(&["heal"], &record, None);
+    words.extend(
+        [
+            "--server",
+            "41020",
+            "--pane",
+            "%7",
+            "--start",
+            "soon",
+            "--harness",
+            "claude",
+            "--session",
+            "S-1",
+        ]
+        .map(str::to_owned),
+    );
+    let (key, _) = refusal(&world.controller(world.root(), &words, &[]));
+    assert_eq!(key, "server-start-invalid");
+    assert_eq!(world.log("tmux.log"), "");
+    assert_eq!(world.log("mail.log"), "");
+}
+
+/// `controller model-check record` acquires a switch bound to the launch
+/// the reader read once: again before its recovery started it is acquired
+/// in place, its fleet log row replaced, never doubled; once `start` marked
+/// it, a duplicate. A reading of a launch the record no longer runs is
+/// stale and writes nothing; an outcome other than the two, a start with no
+/// switch of the session and a missing expected file are refused by name.
+#[test]
+fn the_controllers_model_check_is_acquired_once_per_launch() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    world.record(&record, FLEET);
+    let doc: Value = serde_json::from_str(FLEET).unwrap();
+    let session = doc["overseer"]["session_id"].as_str().unwrap().to_owned();
+    let read = write(&world.root().join("expected.json"), &doc["overseer"]);
+    let check = |outcome: &str, expected: &Path| {
+        let mut words = args(&["model-check", "record"], &record, None);
+        words.extend([
+            "--session".to_owned(),
+            session.clone(),
+            "--outcome".to_owned(),
+            outcome.to_owned(),
+            "--launched".to_owned(),
+            "claude-opus-5-5".to_owned(),
+            "--observed".to_owned(),
+            "claude-sonnet-5-5".to_owned(),
+            "--expected".to_owned(),
+            expected.display().to_string(),
+        ]);
+        world.controller(world.root(), &words, &[])
+    };
+    let start = || {
+        let mut words = args(&["model-check", "start"], &record, None);
+        words.extend(["--session".to_owned(), session.clone()]);
+        world.controller(world.root(), &words, &[])
+    };
+    let answer = |out: &Output| -> Value {
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone()
+    };
+    let rows = || -> usize {
+        let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+        doc["fleet_log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["kind"] == "model-switched" && r["item"] == "oversee")
+            .count()
+    };
+    let (key, _) = refusal(&start());
+    assert_eq!(key, "model-check-missing");
+    // The reader read the same session and model on another pane: only the
+    // launch it is bound to moved.
+    let mut elsewhere = doc["overseer"].clone();
+    elsewhere["pane"] = json!("%9");
+    let moved = write(&world.root().join("moved.json"), &elsewhere);
+    let before = std::fs::read_to_string(&record).unwrap();
+    assert_eq!(answer(&check("switched", &moved))["result"], "stale");
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), before);
+    let first = answer(&check("switched", &read));
+    assert_eq!(first["result"], "acquired");
+    assert_eq!(first["record"]["model_check"]["recovery_started"], false);
+    assert_eq!(rows(), 1);
+    assert_eq!(answer(&check("switched", &read))["result"], "acquired");
+    assert_eq!(rows(), 1);
+    let started = answer(&start());
+    assert_eq!(started["started_now"], true);
+    assert_eq!(started["place"], "overseer");
+    assert_eq!(answer(&start())["started_now"], false);
+    assert_eq!(answer(&check("switched", &read))["result"], "duplicate");
+    assert_eq!(answer(&check("unavailable", &read))["result"], "duplicate");
+    assert_eq!(rows(), 1);
+    let (key, _) = refusal(&check("matching", &read));
+    assert_eq!(key, "model-outcome");
+    let (key, _) = refusal(&check("switched", &world.root().join("absent.json")));
+    assert_eq!(key, "expected-missing");
+    assert_eq!(world.log("tmux.log"), "");
+    assert_eq!(world.log("mail.log"), "");
+}
+
+/// `controller successor --resume` answers the recorded controller's own
+/// launch continuing its native session, with no walk: the record's id as
+/// the resume, and for Pi the file that id names under its home for its
+/// working directory. An absent document refuses `record-missing`, a Pi
+/// session with no file standing `session-missing`, a Pi store that cannot
+/// be listed `session-store-unreadable`, a record naming no native id
+/// `session-unrecorded` and one naming no harness `harness-unnamed`;
+/// nothing asks a server.
+#[test]
+fn a_resume_continues_the_recorded_session_and_pi_names_its_file() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    let resume = || {
+        let words = args(&["successor", "--resume"], &record, None);
+        world.controller(world.root(), &words, &[])
+    };
+    let answer = |out: &Output| -> Value {
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"]["successor"].clone()
+    };
+    let (key, _) = refusal(&resume());
+    assert_eq!(key, "record-missing");
+    world.record(&record, FLEET);
+    let claude = answer(&resume());
+    assert_eq!(claude["harness"], "claude");
+    assert_eq!(claude["resume"], "0f3d2c1b-9a8e-4d7c-b6a5-443322110000");
+    assert_eq!(claude["cwd"], "/home/u/dev/kendex");
+    assert!(claude.get("resume_file").is_none(), "{claude}");
+
+    let pi_root = world.root().join("pi-root");
+    let work = world.root().join("w");
+    let id = "7a1c0e2d-4b3f-4e5a-8d6c-1f2e3d4c5b6a";
+    let mut doc: Value = serde_json::from_str(FLEET).unwrap();
+    let member = doc["overseer"].as_object_mut().unwrap();
+    member.insert("harness".into(), json!("pi"));
+    member.insert("home".into(), json!(pi_root.display().to_string()));
+    member.insert("cwd".into(), json!(work.display().to_string()));
+    member.insert("model".into(), json!("pi-claude/claude-fable-5-1"));
+    member.insert("session_id".into(), json!(id));
+    member.remove("account");
+    world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+    let (key, fields) = refusal(&resume());
+    assert_eq!(key, "session-missing", "{fields}");
+    let dir = pi_root.join("sessions").join(format!(
+        "-{}--",
+        work.display().to_string().replace('/', "-")
+    ));
+    // A file where the session directory stands cannot be listed.
+    std::fs::create_dir_all(dir.parent().unwrap()).unwrap();
+    std::fs::write(&dir, "").unwrap();
+    let (key, fields) = refusal(&resume());
+    assert_eq!(key, "session-store-unreadable", "{fields}");
+    std::fs::remove_file(&dir).unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("2026-11-12T00-00-00-000Z_{id}.jsonl"));
+    std::fs::write(&file, "{}\n").unwrap();
+    let pi = answer(&resume());
+    assert_eq!(pi["harness"], "pi");
+    assert_eq!(pi["resume"], id);
+    assert_eq!(pi["resume_file"], file.display().to_string());
+
+    // On a model Pi's root bills, the account is the root the start's launch
+    // runs on and the record's home is not read: the file is found under the
+    // account, never under another home or the default one.
+    let member = doc["overseer"].as_object_mut().unwrap();
+    member.insert("model".into(), json!("anthropic/claude-fable-5-1"));
+    member.insert("account".into(), json!(pi_root.display().to_string()));
+    member.insert(
+        "home".into(),
+        json!(world.root().join("elsewhere").display().to_string()),
+    );
+    world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+    let default = world.root().join("default-pi").display().to_string();
+    let words = args(&["successor", "--resume"], &record, None);
+    let billed =
+        answer(&world.controller(world.root(), &words, &[("PI_CODING_AGENT_DIR", &default)]));
+    assert_eq!(billed["resume_file"], file.display().to_string());
+
+    doc["overseer"]
+        .as_object_mut()
+        .unwrap()
+        .insert("session_id".into(), Value::Null);
+    world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+    let (key, _) = refusal(&resume());
+    assert_eq!(key, "session-unrecorded");
+    doc["overseer"].as_object_mut().unwrap().remove("harness");
+    world.record(&record, &serde_json::to_string_pretty(&doc).unwrap());
+    let (key, _) = refusal(&resume());
+    assert_eq!(key, "harness-unnamed");
+    assert_eq!(world.log("tmux.log"), "");
+}

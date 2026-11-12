@@ -7475,33 +7475,135 @@ fn an_accountless_pi_successor_with_no_root_kept_refuses_home_missing_before_any
     );
 }
 
-/// Pi continues a session by its file, which no record carries, so the
-/// start refuses `resume-unsupported` by name before anything opens.
+/// Pi continues a session by its file: a start whose pending names that
+/// file launches `--session <file>` with no fresh id; one whose session has
+/// no file under the home fails `session-missing`, one naming no file
+/// `resume-file-missing`, and one naming another file `session-missing`,
+/// each before anything opens.
 #[test]
-fn a_pi_controller_resume_is_refused_unsupported_before_anything_opens() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let home = dir.path().join("pi-home");
-    std::fs::create_dir_all(&home).unwrap();
-    let mut request = resume_request(runner.state_dir(), "pi", &home, "abc");
-    request["controller"]["model"] = json!("pi-claude/claude-fable-5-1");
-    let report = effect_report(&runner.op_fleet(&request));
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    assert_eq!(
-        report["intent"]["observation"]["note"], "resume-unsupported",
-        "{report}"
-    );
-    assert_eq!(
-        report["intent"]["observation"]["fields"]["harness"], "pi",
-        "{report}"
-    );
-    assert_eq!(server.panes().len(), 1, "nothing opened");
-    assert!(
-        runner.fleet()["overseer"].get("pending").is_none(),
-        "the pending is gone again"
-    );
+fn a_pi_controller_resume_continues_by_the_session_file_its_pending_names() {
+    let id = "abc";
+    for case in ["no-file", "unnamed", "other", "named"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let cwd = runner.state_dir().to_path_buf();
+        let home = dir.path().join("pi-home");
+        std::fs::create_dir_all(&home).unwrap();
+        pi_root_marked(&home);
+        let sessions = home
+            .join("sessions")
+            .join(agent_runtime::session::pi_slug(&cwd));
+        let file = sessions.join(format!("2026-11-12T00-00-00-000Z_{id}.jsonl"));
+        if case != "no-file" {
+            std::fs::create_dir_all(&sessions).unwrap();
+            std::fs::write(&file, "{}\n").unwrap();
+        }
+        let mut request = resume_request(&cwd, "pi", &home, id);
+        request["controller"]["model"] = json!("pi-claude/claude-fable-5-1");
+        match case {
+            "named" | "no-file" => {
+                request["controller"]["resume_file"] = json!(file.display().to_string());
+            }
+            "other" => {
+                request["controller"]["resume_file"] =
+                    json!(home.join("other.jsonl").display().to_string());
+            }
+            _ => {}
+        }
+        let brief = cwd.join("brief.md");
+        std::fs::write(&brief, "RESUME HERE\n").unwrap();
+        request["brief_file"] = json!(brief.display().to_string());
+        let binaries = format!("pi={}", fixtures().join("stub-record/pi").display());
+        let report = effect_report(
+            &runner.op_fleet_env(&request, &[("AGENT_RUNTIME_HARNESS_BINARIES", &binaries)]),
+        );
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        let owed = match case {
+            "no-file" | "other" => "session-missing",
+            "unnamed" => "resume-file-missing",
+            _ => "successor-not-ready",
+        };
+        assert_eq!(
+            report["intent"]["observation"]["note"], owed,
+            "{case}: {report}"
+        );
+        if case != "named" {
+            assert_eq!(server.panes().len(), 1, "{case}: nothing opened");
+            continue;
+        }
+        let argv = argv_of(&launch_record(&cwd));
+        assert!(
+            argv.windows(2)
+                .any(|w| w[0] == "--session" && w[1] == file.display().to_string()),
+            "{argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|a| a == "--session-id"),
+            "no fresh id beside a resume: {argv:?}"
+        );
+    }
+}
+
+/// After a restart the record names a controller whose server is gone and
+/// whose session recorded its end; a
+/// start of its own launch resuming its recorded session (the shape
+/// `agent-runtime controller successor --resume` answers) opens in the
+/// standing session the setting names and continues that session, and
+/// where that session does not stand fails `tmux-session-missing` with
+/// nothing opened and the record as it stood.
+#[test]
+fn a_resume_after_a_restart_opens_in_the_standing_session_or_none() {
+    let id = "5b2d9c3e-1f4a-4e6b-8c7d-0a9b8c7d6e5f";
+    for session in ["fleet", "nosuch"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-resume");
+        runner.init_fleet();
+        let home = runner.state_dir().to_path_buf();
+        let file = plant_claude_session(&home, &home, id);
+        let mut fleet = runner.fleet();
+        let mut gone = pending(&home);
+        gone["server"] = json!("1");
+        gone["server_start"] = json!(1);
+        gone["pane"] = json!("%99");
+        gone["generation"] = json!(4);
+        gone["session_id"] = json!(id);
+        // The session recorded its end before the server went: a replaced
+        // server alone proves nothing (`predecessor-unproven`).
+        gone["exit"] = json!({"run": {"generation": 4}});
+        fleet["overseer"] = gone;
+        runner.write_fleet(&fleet);
+        let before = runner.fleet()["overseer"].clone();
+        let mut request = resume_request(&home, "claude", &home, id);
+        let brief = home.join("brief.md");
+        std::fs::write(&brief, "RESUME HERE\n").unwrap();
+        request["brief_file"] = json!(brief.display().to_string());
+        let report = effect_report(
+            &runner.op_fleet_env(&request, &[("AGENT_RUNTIME_TMUX_SESSION", session)]),
+        );
+        if session == "nosuch" {
+            assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+            assert_eq!(
+                report["intent"]["observation"]["note"], "tmux-session-missing",
+                "{report}"
+            );
+            assert_eq!(server.panes().len(), 1, "nothing opened");
+            assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+            continue;
+        }
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+        let overseer = runner.fleet()["overseer"].clone();
+        assert_eq!(overseer["session_id"], id, "{overseer}");
+        assert_ne!(overseer["pane"], "%99", "{overseer}");
+        assert_eq!(
+            file_turns(&file),
+            vec!["RESUME HERE".to_owned()],
+            "the brief went into the resumed session's own file"
+        );
+    }
 }
 
 /// The compare-and-swap set of `record`, with no pending standing.

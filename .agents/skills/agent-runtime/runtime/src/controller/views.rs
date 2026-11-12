@@ -189,6 +189,7 @@ impl Caller {
             cwd: self.cwd.clone(),
             class: chosen.class.clone(),
             resume: None,
+            resume_file: None,
             permission: if same {
                 self.permission
             } else {
@@ -439,6 +440,7 @@ impl Record {
             cwd: caller.cwd,
             class: text(self.raw.get("class")),
             resume: None,
+            resume_file: None,
             permission: caller.permission,
             extra_args: caller.extra_args,
             handoff: caller.handoff,

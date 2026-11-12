@@ -2760,6 +2760,7 @@ fn remove_item(
 /// The `state` verbs: a workflow's reads and writes of a record through the
 /// store module, under the settings resolved once per process.
 fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
+    use agent_runtime::controller::model::Place;
     use orch_runtime::ops::store::{self, Cap, CapSource, LogReader, StopMode, Write};
     let settings = resolve_settings(flags)?;
     let store_settings = &settings.store;
@@ -2889,19 +2890,21 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 fields,
             } => {
                 let place = match (target.fleet, lane) {
-                    (false, _) => store::CheckPlace::Item,
-                    (true, Some(lane)) => store::CheckPlace::Lane(lane),
-                    (true, None) => store::CheckPlace::Overseer,
+                    (false, _) => Place::Item,
+                    (true, Some(lane)) => Place::Lane(lane),
+                    (true, None) => Place::Controller,
                 };
                 write(
                     &target,
                     Write::ModelCheck(store::ModelCheck {
                         place,
-                        session: fields.session,
-                        outcome: fields.outcome,
-                        cause: fields.cause,
-                        launched: fields.launched,
-                        observed: fields.observed,
+                        check: agent_runtime::controller::model::Check {
+                            session: fields.session,
+                            outcome: fields.outcome,
+                            cause: fields.cause,
+                            launched: fields.launched,
+                            observed: fields.observed,
+                        },
                         expected: fields.expected,
                     }),
                 )
@@ -2925,9 +2928,9 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 session,
             } => {
                 let place = match (target.fleet, lane) {
-                    (false, _) => store::CheckPlace::Item,
-                    (true, Some(lane)) => store::CheckPlace::Lane(lane),
-                    (true, None) => store::CheckPlace::Overseer,
+                    (false, _) => Place::Item,
+                    (true, Some(lane)) => Place::Lane(lane),
+                    (true, None) => Place::Controller,
                 };
                 write(&target, Write::ModelStart { place, session })
             }
@@ -2942,7 +2945,7 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             session,
         } => write(
             &target,
-            Write::Heal(store::Heal {
+            Write::Heal(agent_runtime::controller::heal::Heal {
                 server,
                 pane,
                 start,

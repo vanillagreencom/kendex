@@ -14,6 +14,8 @@ use crate::process::Identity;
 
 pub mod effect;
 pub mod handoff;
+pub mod heal;
+pub mod model;
 pub mod run;
 pub mod status;
 pub mod successor;
@@ -25,6 +27,34 @@ pub mod views;
 /// The record's member that holds the controller: every read and write of
 /// it in this crate names it through this one constant.
 pub const MEMBER: &str = "overseer";
+
+/// One write of the controller document at `path`: `change` applied to the
+/// document as read and stored under its lock, applied again to a fresh
+/// read where another writer moved the record between; `record-missing`
+/// where no document stands.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the heal's and the model check's one store write of the controller document"
+)]
+pub fn rewrite(
+    path: &std::path::Path,
+    locking: crate::record::Locking,
+    change: impl Fn(&mut crate::record::Document) -> crate::Result<Value>,
+) -> crate::Result<Value> {
+    crate::record::reread(
+        || {
+            let read =
+                crate::record::read_document(path)?.ok_or_else(|| crate::Error::RecordMissing {
+                    path: path.to_path_buf(),
+                })?;
+            let mut doc = read.clone();
+            let reply = change(&mut doc)?;
+            crate::record::store(path, &read, &doc, locking)?;
+            Ok(reply)
+        },
+        crate::Error::key,
+    )
+}
 
 /// The successor a succession is about to open, `overseer.pending`: the
 /// identity fields the record carries, the typed launch fields the runtime
@@ -47,9 +77,13 @@ pub struct Pending {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
     /// The native session the launch continues in place of starting one:
-    /// its file must stand under `home` for `cwd`, and Pi has no form for it.
+    /// its file must stand under `home` for `cwd`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume: Option<String>,
+    /// The file of that session, which Pi continues by in place of its id:
+    /// it must be the file `resume`'s id names under `home` for `cwd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_file: Option<String>,
     /// The permission posture the launch runs under: `bypass`, or `native`
     /// with the caller's own permission words among `extra_args`. Left out,
     /// the runtime's launch permission setting decides.

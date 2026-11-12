@@ -303,6 +303,7 @@ pub(super) fn successor() -> Pending {
         cwd: Some("/r".into()),
         class: None,
         resume: None,
+        resume_file: None,
         permission: None,
         extra_args: Vec::new(),
         handoff: None,
