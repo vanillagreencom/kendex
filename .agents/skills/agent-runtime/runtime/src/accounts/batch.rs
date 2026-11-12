@@ -349,8 +349,9 @@ pub struct Question {
     /// The headroom the caller's own judgement triggers at, the bound
     /// `100 - T`.
     pub min_headroom_pct: Option<u32>,
-    /// Judge seats as ordinary accounts, and the owner's exclusion as no
-    /// refusal: the controller's own question.
+    /// Judge seats as ordinary accounts, and an account kept from workers
+    /// (the owner's exclusion, a provider's reservation) as no refusal: the
+    /// controller's own question.
     pub for_controller: bool,
 }
 

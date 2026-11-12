@@ -777,6 +777,28 @@ fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
     );
 }
 
+/// The owner's exclusion keeps an account from every walk, the controller
+/// walk's included: the excluded home with the most room is no candidate,
+/// so the walk moves on to the next entry.
+#[test]
+fn the_controller_walk_chooses_no_account_the_owner_excluded() {
+    let mut world = World::new(&[
+        (
+            "AGENT_RUNTIME_CONTROLLER_PREFERENCE",
+            "claude:standard:high,codex:standard:high",
+        ),
+        ("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "aclaude"),
+    ]);
+    world.plant_listing(&[measured("aclaude", 10, 5), codex("codex", 20)]);
+    let result = world.answered(&["--controller", "--source-harness", "claude"]);
+    assert_eq!(
+        result["chosen"]["entry"],
+        json!("codex:standard:high"),
+        "{result}"
+    );
+    assert_eq!(skipped(&result), ["claude:standard:high no-candidate none"]);
+}
+
 #[test]
 fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     let mut world = World::new(&[
@@ -1055,6 +1077,7 @@ fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
             min_headroom_pct: Some(trigger),
             binding_floor: true,
             admit_unread_scope: false,
+            opens_here: false,
         };
         let answer = here::pick(&env, world.path(), Some(&record), &request, PICK_NOW).unwrap();
         let verb = serde_json::to_value(Reply::ok(answer.reply())).unwrap();

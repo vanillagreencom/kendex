@@ -2410,6 +2410,7 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 admit_unread_scope: false,
+                opens_here: false,
             };
             Ok(ops::accounts::pick_fleet(
                 &settings,

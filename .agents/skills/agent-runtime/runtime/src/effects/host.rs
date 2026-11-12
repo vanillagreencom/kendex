@@ -24,7 +24,7 @@ use super::{
     Close, Operation, POLL, Pane, Server, Target, fleet_view, overseer_target_of, pid_value,
     predecessor_identity,
 };
-use crate::accounts::usage::Credential;
+use crate::accounts::usage::{StoredLogin, stored_login};
 use crate::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use crate::error::{Error, Result};
 use crate::intent::Intent;
@@ -648,9 +648,8 @@ impl Operation<'_> {
     /// The sign-in a successor's launch on `account` starts with, read
     /// before anything is written for it: a token variable the window on
     /// `server` inherits in `session`, which signs the harness in whatever
-    /// the account holds; else the credential file the account listing
-    /// reads (`ops::accounts::usage`), Claude's on Linux alone, since
-    /// another platform keeps it in its own store.
+    /// the account holds; else the account's stored login on this machine
+    /// ([`stored_login`]).
     pub fn sign_in(
         &self,
         server: &Server,
@@ -661,11 +660,7 @@ impl Operation<'_> {
         let tokens: &[&'static str] = match harness {
             Harness::Claude => &["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
             Harness::Codex => &["OPENAI_API_KEY"],
-            Harness::Copilot | Harness::Pi => {
-                return SignIn::Unjudged {
-                    cause: "harness-unread",
-                };
-            }
+            Harness::Copilot | Harness::Pi => &[],
         };
         // An environment that cannot be read may hold a token: no account
         // is refused on a read that did not answer.
@@ -680,36 +675,15 @@ impl Operation<'_> {
                 }
             }
         }
-        if harness == Harness::Claude && !cfg!(target_os = "linux") {
-            return SignIn::Unjudged {
-                cause: "platform-store",
-            };
-        }
-        let dir = account.display().to_string();
-        match crate::accounts::usage::credential(harness, &dir) {
-            Credential::Missing(_) => SignIn::Missing {
-                cause: "no-credential",
-            },
-            Credential::NoToken { .. } => SignIn::Missing { cause: "no-token" },
-            Credential::Invalid(_) => SignIn::Unjudged {
-                cause: "credential-invalid",
-            },
-            Credential::Token {
-                refresh_expires_ms, ..
-            } => {
-                let now = self
-                    .clock
-                    .wall()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |d| d.as_secs());
-                if crate::accounts::usage::expired(refresh_expires_ms, now) {
-                    SignIn::Missing {
-                        cause: "login-expired",
-                    }
-                } else {
-                    SignIn::Held
-                }
-            }
+        let now = self
+            .clock
+            .wall()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        match stored_login(harness, &account.display().to_string(), now) {
+            StoredLogin::Held => SignIn::Held,
+            StoredLogin::Missing { cause } => SignIn::Missing { cause },
+            StoredLogin::Unjudged { cause } => SignIn::Unjudged { cause },
         }
     }
 

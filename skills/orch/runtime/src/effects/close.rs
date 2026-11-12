@@ -829,6 +829,7 @@ impl Close<'_> {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
+            opens_here: false,
         };
         let answer = super::lane_operation::pick_account(
             self.settings,

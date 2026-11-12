@@ -545,6 +545,50 @@ pub fn expired(expires_ms: u64, now: u64) -> bool {
     expires_ms > 0 && expires_ms <= now * 1000
 }
 
+/// Whether a home holds a sign-in on this machine, as a session opened here
+/// under it signs in: the account walk and a controller's transfer read
+/// this one answer, so they cannot disagree on a home.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoredLogin {
+    /// The home holds a credential whose login has not expired.
+    Held,
+    /// The home holds nothing the harness signs in with.
+    Missing { cause: &'static str },
+    /// Nothing here reads this harness's stored login.
+    Unjudged { cause: &'static str },
+}
+
+/// The stored login of `harness` under `dir` at `now`: the credential file
+/// the listing reads, Claude's on Linux alone, since another platform keeps
+/// it in its own store; Copilot's and Pi's are read by nothing here.
+pub fn stored_login(harness: Harness, dir: &str, now: u64) -> StoredLogin {
+    if matches!(harness, Harness::Copilot | Harness::Pi) {
+        return StoredLogin::Unjudged {
+            cause: "harness-unread",
+        };
+    }
+    if harness == Harness::Claude && !cfg!(target_os = "linux") {
+        return StoredLogin::Unjudged {
+            cause: "platform-store",
+        };
+    }
+    match credential(harness, dir) {
+        Credential::Missing(_) => StoredLogin::Missing {
+            cause: "no-credential",
+        },
+        Credential::NoToken { .. } => StoredLogin::Missing { cause: "no-token" },
+        Credential::Invalid(_) => StoredLogin::Unjudged {
+            cause: "credential-invalid",
+        },
+        Credential::Token {
+            refresh_expires_ms, ..
+        } if expired(refresh_expires_ms, now) => StoredLogin::Missing {
+            cause: "login-expired",
+        },
+        Credential::Token { .. } => StoredLogin::Held,
+    }
+}
+
 /// The `exp` claim of a JWT access token in milliseconds, 0 where the
 /// token is no JWT or carries none. The segments are unpadded base64url.
 pub fn jwt_exp_ms(token: &str) -> u64 {

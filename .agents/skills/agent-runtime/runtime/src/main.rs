@@ -638,6 +638,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 admit_unread_scope: false,
+                opens_here: false,
             };
             let answer =
                 accounts::here::pick(&env, &loaded.project, record.as_deref(), &request, now)?;

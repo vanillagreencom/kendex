@@ -22,9 +22,10 @@
 //! live reading contradicts (a credential that answers after its end) is a
 //! reported line, never a silent absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
 //! names is measured like any other and refused by that word for every
-//! lane pick and launch, from this machine's listing, a provider's rows or
-//! the owner's statement; an overseer's own pick reads its figures. Both
-//! kinds of account kept from workers read `reserve` to a reader.
+//! pick, a lane's or an overseer's, from this machine's listing, a
+//! provider's rows or the owner's statement; a controller's question about
+//! its own account reads its figures. Both kinds of account kept from
+//! workers read `reserve` to a reader.
 //!
 //! A listing that could not be read whole admits nothing: no pick, and a
 //! roster line saying `unread`. A provider's `plan-ends` that names no
@@ -589,9 +590,24 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// [`PickRequest::admit_unread_scope`]) judges it on the provider's shared
 /// windows, its buckets as read, marked `scope: unread`; and a local copy
 /// with no credential file is no reading, so the provider's measured one
-/// stands as an account's one reading does. An account with one reading
-/// keeps it. The roster is never resolved: it reports both readings.
-fn resolve(rows: &[AccountRow], billed: Harness, model: &str, admit: bool) -> Vec<AccountRow> {
+/// stands as an account's one reading does. The provider's words
+/// (`reserved`, `plan-ends`) stand whichever reading does, a row with no
+/// reading included. An account with one reading keeps it. The roster is
+/// never resolved: it reports both readings.
+///
+/// A session that opens on this machine (`opens_here`) signs in with this
+/// machine's stored login of the home, never with the token a provider
+/// measured it through: the provider's reading stands for it only where
+/// that login reads held ([`usage::stored_login`]), else the account is
+/// judged on this machine's own row, and a provider's row with no home
+/// listed here is no candidate for it.
+fn resolve(
+    rows: &[AccountRow],
+    billed: Harness,
+    model: &str,
+    req: &PickRequest,
+    now: u64,
+) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
         let other = out.iter().position(|r| {
@@ -606,10 +622,31 @@ fn resolve(rows: &[AccountRow], billed: Harness, model: &str, admit: bool) -> Ve
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                out[i] = prefer(own, provider, billed, model, admit);
+                let signed_in = !req.opens_here
+                    || usage::stored_login(own.harness, &own.config_dir, now)
+                        == usage::StoredLogin::Held;
+                let (reserved, plan_ends) = (provider.reserved, provider.plan_ends.clone());
+                let mut stands = if signed_in {
+                    prefer(own, provider, billed, model, req.admit_unread_scope)
+                } else {
+                    own
+                };
+                stands.reserved |= reserved;
+                if stands.plan_ends == PlanEnd::None {
+                    stands.plan_ends = plan_ends;
+                }
+                out[i] = stands;
             }
             None => out.push(row.clone()),
         }
+    }
+    if req.opens_here {
+        out.retain(|r| {
+            !provider_reading(r)
+                || rows.iter().any(|own| {
+                    !provider_reading(own) && own.harness == r.harness && own.canon == r.canon
+                })
+        });
     }
     out
 }
@@ -791,6 +828,11 @@ pub struct PickRequest {
     /// walk's question alone, where the account-wall succession covers the
     /// unread window. Otherwise that account is unmeasured for the model.
     pub admit_unread_scope: bool,
+    /// The session the pick places opens on this machine (an overseer, a
+    /// lane in a local window), so it signs in with this machine's stored
+    /// login of the account and never with the token a provider measured
+    /// the account through.
+    pub opens_here: bool,
 }
 
 impl PickRequest {
@@ -808,6 +850,7 @@ impl PickRequest {
             min_headroom_pct: None,
             binding_floor: false,
             admit_unread_scope: false,
+            opens_here: false,
         }
     }
 
@@ -1630,7 +1673,7 @@ fn judge(
         grant.as_ref(),
         settings.codex_credit_floor as f64,
     );
-    let standing = row.standing(today);
+    let standing = standing_for(row, req, today);
     let credits = reads == Reads::Credits && standing == Standing::Open;
     let verdict = match standing {
         Standing::Reserved => "reserved",
@@ -1683,12 +1726,30 @@ fn judge(
 /// The verdict of an account a request's exclusion covers.
 const EXCLUDED: &str = "excluded";
 
+/// Whether `req` is a controller's question about one account by name: the
+/// read of its own account at its trigger (`Caller::own_account`) and the
+/// walk's keep of the caller's own account. A controller already running
+/// on an account kept from workers may stay on it, so that question reads
+/// the account's figures; every choice among accounts refuses it.
+fn own_question(req: &PickRequest) -> bool {
+    req.for_overseer && req.lane.is_some()
+}
+
 /// Whether `req` leaves the account out by name: `--exclude-lane`'s
 /// directories, and the owner's exclusion, which keeps an account from
-/// every lane, never from its overseer: an overseer's own marks and walk
-/// read its figures.
+/// every pick but a controller's question about its own account.
 fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
-    req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !req.for_overseer)
+    req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !own_question(req))
+}
+
+/// The account's standing for `req`: its word's, except that a
+/// controller's question about its own account reads a provider's
+/// reservation as no refusal, as it reads the owner's exclusion.
+fn standing_for(row: &AccountRow, req: &PickRequest, today: &str) -> Standing {
+    match row.standing(today) {
+        Standing::Reserved if own_question(req) => Standing::Open,
+        standing => standing,
+    }
 }
 
 /// One named account judged for `req`: the judgement, its verdict
@@ -1740,7 +1801,7 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
-    let rows = &resolve(rows, billed, model, req.admit_unread_scope);
+    let rows = &resolve(rows, billed, model, req, now);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
     if let Some(lane) = &req.lane {
@@ -1759,7 +1820,7 @@ pub fn pick(
         if judged.verdict == EXCLUDED {
             return PickAnswer::Excluded(judged);
         }
-        return named_answer(judged, &today);
+        return named_answer(judged, req, &today);
     }
     let candidates = rows.iter().filter(|r| candidate(r)).count();
     let judged: Vec<Judged> = rows
@@ -1835,8 +1896,8 @@ pub fn pick(
 /// where the word refused it (an end nobody can read is no verdict, so it
 /// is unjudged with the cause), else the windows' answer by
 /// `lanes pick --lane`'s exits.
-fn named_answer(judged: Judged, today: &str) -> PickAnswer {
-    match judged.row.standing(today) {
+fn named_answer(judged: Judged, req: &PickRequest, today: &str) -> PickAnswer {
+    match standing_for(&judged.row, req, today) {
         Standing::Reserved => PickAnswer::Reserved(judged),
         Standing::Retired { date, source } => PickAnswer::Retired {
             judged,

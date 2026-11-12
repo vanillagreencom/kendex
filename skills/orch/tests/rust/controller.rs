@@ -8109,34 +8109,56 @@ fn the_hook_suites_plant_the_marks_verbs_own_replies() {
     );
 }
 
-/// An account the owner's `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names is kept from every
-/// lane, never from its overseer: the real `marks` verb reads the excluded
-/// home's figures for the controller seated on it, and the real `accounts
-/// pick --lane` refuses the same home to a lane by its word, with the
-/// figures it measured.
+/// An account kept from workers, by the owner's
+/// `AGENT_RUNTIME_ACCOUNT_EXCLUDE` or by a provider's `reserved=1` on a row
+/// with no reading, is kept from every lane, never from the controller
+/// already on it: the real `marks` verb reads the kept home's figures for
+/// the controller seated on it, and the real `lane pick --lane` refuses the
+/// same home to a lane by its word, with the figures it measured.
 #[test]
-fn an_excluded_home_is_measured_for_its_overseers_marks_and_refused_to_a_lane_pick() {
-    let mut world = MarksWorld::new();
-    world.plant(None, &[measured_account("eclaude", 20)]);
-    let home = world.dir("eclaude");
-    world.write_fleet(&home);
-    let exclude = [("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "eclaude")];
-    let marks = world.marks(&["--context", "100000:1000000"], &exclude);
-    assert_eq!(marks["key"], json!("below-mark"), "{marks}");
-    assert_eq!(
-        marks["headroom"],
-        json!("80"),
-        "the overseer reads its excluded home's figures: {marks}"
-    );
-    let pick = world.pick_lane(&home, &exclude)["result"].clone();
-    assert_eq!(pick["answer"], json!("excluded"), "{pick}");
-    assert_eq!(pick["exit"], json!(3), "{pick}");
-    assert_eq!(pick["record"]["excluded"], json!(true), "{pick}");
-    assert_eq!(
-        pick["record"]["headroom_pct"],
-        json!(80),
-        "the refused home is measured: {pick}"
-    );
+fn a_home_kept_from_workers_is_measured_for_its_overseers_marks_and_refused_to_a_lane_pick() {
+    // case, the provider's host, the owner's setting, the lane's answer
+    let cases = [
+        (
+            "excluded",
+            None,
+            Some(("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "eclaude")),
+            "excluded",
+        ),
+        ("reserved", Some("vm"), None, "reserved"),
+    ];
+    for (case, host, setting, answer) in cases {
+        let mut world = MarksWorld::new();
+        let home = world.dir("eclaude");
+        let mut measured = measured_account("eclaude", 20);
+        measured["model_buckets"] =
+            json!([{"label": null, "pct": 20, "resets_at": measured["binding_resets_at"]}]);
+        let mut rows = vec![measured];
+        if host.is_some() {
+            rows.push(json!({
+                "harness": "claude", "config_dir": home, "measured_through": "host", "reserved": 1
+            }));
+        }
+        world.plant(host, &rows);
+        world.write_fleet(&home);
+        let env: Vec<(&str, &str)> = setting.into_iter().collect();
+        let marks = world.marks(&["--context", "100000:1000000"], &env);
+        assert_eq!(marks["key"], json!("below-mark"), "{case}: {marks}");
+        assert_eq!(
+            marks["headroom"],
+            json!("80"),
+            "{case}: the overseer reads its kept home's figures: {marks}"
+        );
+        let pick = world.pick_lane(&home, &env)["result"].clone();
+        assert_eq!(pick["answer"], json!(answer), "{case}: {pick}");
+        assert_eq!(pick["exit"], json!(3), "{case}: {pick}");
+        assert_eq!(pick["record"]["word"], json!("reserve"), "{case}: {pick}");
+        assert_eq!(
+            pick["record"]["headroom_pct"],
+            json!(80),
+            "{case}: the refused home is measured: {pick}"
+        );
+    }
 }
 
 /// The account judge's replies the hook suites plant for a lane's turn end
@@ -9951,6 +9973,116 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["account"], account, "{overseer}");
     assert_eq!(overseer["scope"], "unread", "{overseer}");
+}
+
+/// The real `successor` verb's choice of a first controller over `rows`,
+/// under the provider `vm`, on a Claude entry then a Codex one: the reply's
+/// `result`.
+fn first_choice_on_vm(runner: &mut Runner, rows: &[Value]) -> Value {
+    let (_, bin, env, work) = walk_world_on(runner, Some("vm"), rows);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "AGENT_RUNTIME_CONTROLLER_PREFERENCE".to_owned(),
+        "claude:fable:high,codex:gpt-6.1-sol:high".to_owned(),
+    ));
+    let answer =
+        reply(&runner.run(&["successor", "--fleet", "--cwd", &work.display().to_string()]));
+    assert_eq!(answer["ok"], true, "{answer}");
+    answer["result"].clone()
+}
+
+/// A measured Codex account at `alias`, `used` percent on its weekly window.
+fn measured_codex(alias: &str, used: u64) -> Value {
+    let mut row = measured_account(alias, used);
+    row["harness"] = json!("codex");
+    row
+}
+
+/// A controller opens on this machine and signs in with this machine's
+/// stored login of its home: a home holding no credential here, which the
+/// provider measures with room through its own token, is judged on this
+/// machine's row, so the real `successor` verb passes it over as
+/// `unmeasured` and opens on the next entry's credentialed home.
+#[test]
+fn a_controller_is_not_placed_on_a_home_this_machine_cannot_sign_in_to() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let signed_out = planted(&runner, "aclaude");
+    let mut local = measured_account("aclaude", 10);
+    local["status"] = json!("no_credentials");
+    let mut provider = measured_account("aclaude", 10);
+    provider["measured_through"] = json!("host");
+    provider["config_dir"] = json!(signed_out);
+    let result = first_choice_on_vm(
+        &mut runner,
+        &[local, provider, measured_codex("xcodex", 20)],
+    );
+    assert_eq!(
+        result["successor"]["account"],
+        planted(&runner, "xcodex"),
+        "{result}"
+    );
+    let skipped = &result["walk"]["skipped"][0];
+    assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
+    assert_eq!(skipped["reason"], "unmeasured", "{result}");
+    assert_eq!(skipped["lane"], signed_out, "{result}");
+}
+
+/// A provider's row naming a home this machine does not list is no
+/// candidate for a controller, which would open here with nothing to sign
+/// in with: the real `successor` verb passes over the provider-only home
+/// with room and opens on the next entry's home.
+#[test]
+fn a_controller_is_not_placed_on_a_home_only_the_provider_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let mut provider = measured_account("zclaude", 5);
+    provider["measured_through"] = json!("host");
+    provider["config_dir"] = json!(planted(&runner, "zclaude"));
+    let result = first_choice_on_vm(&mut runner, &[provider, measured_codex("xcodex", 20)]);
+    assert_eq!(
+        result["successor"]["account"],
+        planted(&runner, "xcodex"),
+        "{result}"
+    );
+    let skipped = &result["walk"]["skipped"][0];
+    assert_eq!(skipped["entry"], "claude:fable:high", "{result}");
+    assert_eq!(skipped["reason"], "no-candidate", "{result}");
+}
+
+/// A provider's reservation is a fact of the account, read apart from any
+/// measurement: an account the provider's row reserves with no reading at
+/// all, whose home here measures the most room, is chosen by no walk: the
+/// real `successor` verb opens the controller on the other home, and a
+/// lane's pick takes the other home too.
+#[test]
+fn a_reserved_account_reported_with_no_reading_is_chosen_by_no_walk() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let reserved = planted(&runner, "rclaude");
+    let mut measured = measured_account("rclaude", 10);
+    measured["model_buckets"] =
+        json!([{"label": null, "pct": 10, "resets_at": measured["binding_resets_at"]}]);
+    let result = first_choice_on_vm(
+        &mut runner,
+        &[
+            measured,
+            json!({"harness": "claude", "config_dir": reserved, "measured_through": "host", "reserved": 1}),
+            measured_account("bclaude", 40),
+        ],
+    );
+    let other = planted(&runner, "bclaude");
+    assert_eq!(result["successor"]["account"], other, "{result}");
+    let lane = reply(&runner.run(&["lane", "pick", "--fleet", "--harness", "claude"]));
+    assert_eq!(lane["result"]["answer"], "lane", "{lane}");
+    assert_eq!(lane["result"]["record"]["config_dir"], other, "{lane}");
 }
 
 #[test]
