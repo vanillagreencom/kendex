@@ -293,7 +293,7 @@ for row in \
   "a changed key no example declares maps the file by path|loose-key|$PATH_READERS" \
   "a foreign table maps the file by path|foreign-table|$PATH_READERS" \
   "comments and blank lines select only the noted copiers|comment|$NOTED" \
-  "a comment-only example change selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
+  "a prose-comment example change selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
   "an example and its render adding a key a test module names select its reader|named-example-key|skills/keyed/tests/reader.sh " \
   "an example and its render adding a key no test names select the tree's whole set|unnamed-example-key|skills/keyed/tests/other.sh skills/keyed/tests/reader.sh " \
   "an example and its render changing a named key's value select its reader|changed-example-value|skills/keyed/tests/reader.sh "; do

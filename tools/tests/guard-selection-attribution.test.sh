@@ -69,8 +69,8 @@ attr_selection() { # GUARD
 
 # name | change | selected suites | the whole-set note, or - for none
 for row in \
-  "a comment-only example change selects the suite reading it by path|attr-example-comment|skills/attr/tests/linted.sh |-" \
-  "a comment-only example change nothing reads selects no suite|bare-example-comment||-" \
+  "a prose-comment example change selects the suite reading it by path|attr-example-comment|skills/attr/tests/linted.sh |-" \
+  "a prose-comment example change nothing reads selects no suite|bare-example-comment||-" \
   "a path no file reads still selects its tree's whole set|unread-data|$ATTR_ALL|skills/attr/tests/data/rows.txt" \
   "a test module a from line imports by dotted path selects its importer's wrapper|harness-module|skills/pyimp/tests/from-wrapper.sh |-" \
   "a test module an import line lists by dotted path selects its importer's wrapper|other-module|skills/pyimp/tests/import-wrapper.sh |-" \
@@ -89,8 +89,9 @@ for row in \
   git -C "$R" checkout -q -- .
 done
 
-# Control: main's key-only example role leaves a comment-only change a path of
-# no role that no note names, so its tree's whole set runs.
+# Control: with the example role held to a change that names a key, a
+# prose-comment change is a path of no role that no note names, so its tree's
+# whole set runs.
 read -r -d '' KEY_ONLY <<'SED' || true
 /^    skills\/\*:kendex\.settings\.toml\.example)$/,/^      ;;$/s/^      \[ "\$scoped_only" -eq 1 \] || return 1$/      [[ ${example_areas-} == *" $1"$'\\n'* ]] || return 1/
 SED
@@ -112,8 +113,8 @@ if mutant_guard '/^    \*:tests\/\*\/\*\.py)$/,/^      ;;$/d'; then
   attr_selection "$MUTANT_TOOLS/guard"
   [ "$RC" -eq 0 ] && [ "$PLAN" = "$PY_ALL" ] \
     && grep -qx 'guard-note: suites=all reason=unidentified path=skills/pyimp/tests/fixtures/harness.py' <<<"$OUT" \
-    && ok 'control: main role selects the whole set and breaks the from-line row' \
-    || bad 'control: main role selects the whole set and breaks the from-line row' "rc=$RC plan=$PLAN out=$OUT"
+    && ok 'control: without the test-import role a fixtures module selects the whole set and breaks the from-line row' \
+    || bad 'control: without the test-import role a fixtures module selects the whole set and breaks the from-line row' "rc=$RC plan=$PLAN out=$OUT"
   git -C "$R" checkout -q -- .
 else
   bad 'control removes the test-import role'

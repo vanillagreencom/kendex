@@ -1676,7 +1676,8 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # dotted module path, `fixtures.harness` for tests/fixtures/harness.py.
 # Status 1 is a path of no role:
 # run-all.sh, any other file under tests/<dir>/, a Python file under tests/
-# outside a scoped run, a file of hooks/ that is no hook, and anything else.
+# but tests/lib/ outside a scoped run, a file of hooks/ that is no hook, and
+# anything else.
 # mapped_suites' header says what a scoped run reads for a test module or
 # such a path.
 path_role() { # DIR REL
@@ -2160,9 +2161,11 @@ reach_join() { # ROLE PATH [changed]
 # input notes, the files doc_readers finds naming it by path, and per key
 # whose declaring line the change adds, removes or changes (example_areas)
 # the files naming the key. A key no suite, helper, test module or test
-# program of the tree names runs the tree's whole set. A change to comments
-# alone names no key, so it seeds the notes and path readers alone: suites
-# that lint an example's comments read it by path.
+# program of the tree names runs the tree's whole set. A commented-out
+# assignment is a declaring line; a change that adds, removes or changes no
+# declaring line, such as one to prose comments, names no key, so it seeds
+# the notes and path readers alone: suites that lint an example's comments
+# read it by path. An example no file reads runs nothing.
 # Only a scoped run gives tests/*.py the test-program role (path_role): a
 # control can run a test program through a bare quoted file name or a sibling
 # suite, which no needle follows. In any other run no scan reads a test
@@ -2187,8 +2190,8 @@ reach_join() { # ROLE PATH [changed]
 # only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
-# deleted suite or test program, a module no suite names or a doc no file
-# reads; status 1 is a path mapped to no
+# deleted suite or test program, a module no suite names, a doc no file
+# reads or a settings example no file reads; status 1 is a path mapped to no
 # suite, status 2 evidence the scan could not read or compare, status 3 a role
 # reach_join does not know, a broken guard, and status 4, scoped only, a path
 # whose readers are unidentified, which runs the tree's whole set.
@@ -2564,8 +2567,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     fi
   fi
   # example_keys' reading of each changed skill settings example, source or
-  # render, for path_role: one `<key> <tree>` line per key its change names,
-  # as settings_areas holds them.
+  # render, for scan_load's per-key settings-example reader queries: one
+  # `<key> <tree>` line per key its change names, as settings_areas holds
+  # them.
   example_areas=$'\n'
   if [ "$scoped_only" -eq 1 ]; then
     while IFS= read -r f; do
