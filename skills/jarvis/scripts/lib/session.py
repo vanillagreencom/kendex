@@ -30,6 +30,10 @@ BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
 START_BRIEF = "Read .agents/skills/jarvis/SKILL.md and follow the Start procedure in .agents/skills/jarvis/workflows/session.md."
+# The name the live controller's window shows in the jarvis session; no task
+# window takes it (task.py). A bare =jarvis target would then match that window
+# before the session, so window creation targets the session as =jarvis:.
+CONTROLLER_WINDOW = "jarvis"
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
@@ -1246,7 +1250,7 @@ os.execvpe(argv[0],argv,env)
                 if existing.returncode == 0:
                     if not succeeding or adopted or not self.terminal(predecessor):
                         raise Refusal("name-conflict")
-                creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
+                creation = ["new-window", "-d", "-t", "=jarvis:"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
                 # new-session is the one call that can start the home's server.
                 launcher = self.server_scope() if creation[0] == "new-session" else []
                 # A first launch runs in the pane it creates, held on a tmux
@@ -1259,7 +1263,7 @@ os.execvpe(argv[0],argv,env)
                 runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [
                     BASH, "--noprofile", "--norc", "-c", "tmux wait-for " + channel + " && { " + prepared["line"] + '; }; result=$?; exit "$result"']
                 with self.pane_command(runner) as command:
-                    created = self.tmux(*creation, "-c", self.home,
+                    created = self.tmux(*creation, "-n", CONTROLLER_WINDOW, "-c", self.home,
                                         "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *command,
                                         launcher=launcher)
                     socket, server, started, window, pane = created.stdout.strip().split("\t")
@@ -1283,6 +1287,10 @@ os.execvpe(argv[0],argv,env)
                 transferred = True
                 self.tmux("set-option", "-p", "-t", pane, "@jarvis-generation", generation)
                 if succeeding:
+                    # The successor opened behind the predecessor, whose end
+                    # leaves tmux to pick the next window, a task's among them.
+                    # Focus is presentation: a failed select fails no transfer.
+                    self.tmux("select-window", "-t", window, check=False)
                     self.end_owned(record.get("predecessor"), window=True)
                     record["transfer"]["phase"] = "predecessor-ended"
                     record.update(state="starting", reason="launching")

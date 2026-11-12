@@ -86,7 +86,8 @@ class TaskContract(unittest.TestCase):
         key = hashlib.sha256(os.fsencode(str(self.home))).hexdigest()
         self.record_path = self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
         self.label = "jarvis-" + key[:32]
-        created = self.tmux("new-session", "-d", "-s", "jarvis", "-P", "-F",
+        # The controller's window carries the name Start gives it.
+        created = self.tmux("new-session", "-d", "-s", "jarvis", "-n", "jarvis", "-P", "-F",
                             "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}",
                             self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc")
         socket, server, started, window, pane = created.stdout.strip().split("\t")
@@ -190,6 +191,40 @@ class TaskContract(unittest.TestCase):
             self.assertEqual(self.call("cleanup", "--id", record["id"]), cleaned)
         windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
         self.assertEqual(windows, [self.terminal["window"]])
+
+    def front_window(self):
+        return self.tmux("display-message", "-p", "-t", "=jarvis:", "#{window_id}").stdout.strip()
+
+    def test_cleanup_puts_the_live_window_in_front(self):
+        # Each task window in front in turn, as a person reads them: closing
+        # the one in front leaves tmux to pick the other task's.
+        tasks = [self.launch("claude"), self.launch("codex")]
+        for task in tasks:
+            self.acknowledgement(task)
+            self.tmux("select-window", "-t", task["terminal"]["window"])
+        Path(tasks[-1]["result_path"]).write_text("Output: checked\n")
+        self.call("complete", "--id", tasks[-1]["id"], "--outcome", "succeeded")
+        self.assertEqual(self.call("cleanup", "--id", tasks[-1]["id"])["cleanup"]["state"], "done")
+        self.assertEqual(self.front_window(), self.terminal["window"])
+
+    def test_no_task_window_takes_the_live_window_name(self):
+        # tmux expands formats in a window name, so a name spelling the
+        # session's own would otherwise open a window called jarvis.
+        for name, launched in (("jarvis", False), ("Jarvis", False), ("#S", True), ("#{session_name}", True)):
+            with self.subTest(name=name):
+                tasks = len(self.saved_tasks())
+                answer = self.call("launch", "--name", name, "--harness", "claude", "--model", "standard",
+                                   "--task-file", self.task_file, "--result-file", self.home / "result.md",
+                                   success=launched)
+                windows = dict(row.split("\t", 1) for row in self.tmux(
+                    "list-windows", "-t", "=jarvis:", "-F", "#{window_id}\t#{window_name}").stdout.splitlines())
+                self.assertEqual(windows.pop(self.terminal["window"]), "jarvis")
+                self.assertNotIn("jarvis", {shown.casefold() for shown in windows.values()})
+                if launched:
+                    self.assertEqual(windows[answer["terminal"]["window"]], name)
+                else:
+                    self.assertIn("refused=name-reserved", answer.stderr)
+                    self.assertEqual(len(self.saved_tasks()), tasks)
 
     def test_launch_runs_in_its_created_pane(self):
         # The process tmux creates for a task window is the one the native
@@ -1044,8 +1079,8 @@ while True: signal.pause()
 
     def test_launch_directory_control(self):
         self.regression_controls((("fixed-home", "task.py", ((
-            '            tmux_cwd = cwd.replace("#", "##")',
-            '            cwd = self.home\n            tmux_cwd = cwd.replace("#", "##")'),),
+            '            # Results outlive scratch cleanup; the caller selects their home.\n',
+            '            cwd = self.home\n            # Results outlive scratch cleanup; the caller selects their home.\n'),),
             "test_launch_directory_contract"),))
 
     def test_browser_profile_control(self):
@@ -1104,7 +1139,7 @@ while True: signal.pause()
             ("browser-endpoint", "task.py", (('child_env.append("JARVIS_BROWSER_PORT=0")',
                 'child_env.append("JARVIS_BROWSER_PORT=9222")'),), "test_launch_contract"),
             ("created-pane", "task.py", (('self.tmux("wait-for", "-S", channel, socket=terminal["server"])',
-                'self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_cwd, *launch, socket=terminal["server"])'),),
+                'self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_literal(cwd), *launch, socket=terminal["server"])'),),
              "test_launch_runs_in_its_created_pane"),
         )
         self.regression_controls(rows)
