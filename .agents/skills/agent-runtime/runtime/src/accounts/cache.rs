@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::usage::{Rounding, parse_body};
+use super::wall;
 use super::{MODEL, WINDOWS};
-use crate::ops::wall;
 
 /// How long a refused endpoint is left alone when its answer named no
 /// Retry-After: long enough that a fleet measuring every thirty seconds
@@ -121,7 +121,7 @@ fn fall(harness: &str, earlier: (u64, &Value), later: (u64, &Value)) -> Option<F
         let reset = buckets
             .pointer("/resets/weekly")
             .and_then(Value::as_str)
-            .and_then(|s| agent_runtime::clock::epoch_secs(&super::usage::utc_stamp(s)));
+            .and_then(|s| crate::clock::epoch_secs(&super::usage::utc_stamp(s)));
         (pct, reset)
     };
     let (from_at, from) = earlier;
@@ -232,7 +232,7 @@ pub fn consumed_reset(buckets: &Value, now: u64) -> Option<String> {
         });
     shared.chain(scoped).find_map(|(pct, reset)| {
         let reset = reset?;
-        let epoch = agent_runtime::clock::epoch_secs(&super::usage::utc_stamp(&reset))?;
+        let epoch = crate::clock::epoch_secs(&super::usage::utc_stamp(&reset))?;
         (pct.is_some_and(|p| p > 0.0) && epoch <= now).then_some(reset)
     })
 }
@@ -373,7 +373,7 @@ pub fn under_refresh_lock<R>(usage_dir: &Path, f: impl FnOnce() -> R) -> (R, Opt
             )),
         );
     }
-    let mut guard = match agent_runtime::record::lock(&usage_dir.join(".usage-refresh")) {
+    let mut guard = match crate::record::lock(&usage_dir.join(".usage-refresh")) {
         Ok(guard) => guard,
         Err(_) => {
             return (
@@ -385,9 +385,9 @@ pub fn under_refresh_lock<R>(usage_dir: &Path, f: impl FnOnce() -> R) -> (R, Opt
             );
         }
     };
-    let wait = agent_runtime::record::Wait {
+    let wait = crate::record::Wait {
         limit: LOCK_WAIT,
-        ..agent_runtime::record::Wait::DEFAULT
+        ..crate::record::Wait::DEFAULT
     };
     let mut f = Some(f);
     let held = guard.with_wait(&wait.start(), || Ok(f.take().map(|f| f())));

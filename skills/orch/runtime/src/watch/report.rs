@@ -1072,7 +1072,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     out.push_str("\n```\nHeadroom remaining\n```\n\n");
     match crate::ops::accounts::roster(&ctx.settings, None, now) {
         Ok(roster) => {
-            for line in roster.lines(&crate::ops::accounts::today(now)) {
+            for line in roster.lines(&agent_runtime::accounts::today(now)) {
                 out.push_str(&format!("- {}\n", cell(&line)));
             }
         }

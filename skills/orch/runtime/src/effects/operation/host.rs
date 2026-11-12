@@ -25,8 +25,8 @@ use super::{
     predecessor_identity, refused,
 };
 use crate::error::{Error, Result};
-use crate::ops::accounts::usage::Credential;
 use crate::ops::{self};
+use agent_runtime::accounts::usage::Credential;
 use agent_runtime::controller::{AdoptController, AdoptionRead, ControllerAdopted};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
@@ -663,7 +663,7 @@ impl Operation<'_> {
             };
         }
         let dir = account.display().to_string();
-        match crate::ops::accounts::usage::credential(harness.name(), &dir) {
+        match agent_runtime::accounts::usage::credential(harness.name(), &dir) {
             Credential::Missing(_) => SignIn::Missing {
                 cause: "no-credential",
             },
@@ -679,7 +679,7 @@ impl Operation<'_> {
                     .wall()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
-                if crate::ops::accounts::usage::expired(refresh_expires_ms, now) {
+                if agent_runtime::accounts::usage::expired(refresh_expires_ms, now) {
                     SignIn::Missing {
                         cause: "login-expired",
                     }

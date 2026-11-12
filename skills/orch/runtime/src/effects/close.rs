@@ -684,23 +684,22 @@ impl Close<'_> {
                 resets: None,
             };
         };
-        let request = crate::ops::accounts::PickRequest {
+        let request = agent_runtime::accounts::PickRequest {
             harness: harness.to_owned(),
             model: self.lane.model.clone().filter(|m| !m.is_empty()),
             exclude: Vec::new(),
-            replaces: None,
             for_overseer: false,
             lane: Some(account.to_owned()),
             projected: false,
             max_pct: None,
             min_headroom_pct: None,
             binding_floor: false,
-            host: Some(self.host.to_owned()),
             admit_unread_scope: false,
         };
         let answer = super::lane_operation::pick_account(
             self.settings,
             self.path,
+            self.host,
             &request,
             self.env.now_secs,
         );

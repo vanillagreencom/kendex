@@ -1,6 +1,6 @@
 # Copilot credit record
 
-The record the runtime's account listing produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login. [`runtime/src/ops/accounts/listing.rs`](../runtime/src/ops/accounts/listing.rs) owns the endpoint and the login layout, and `parse_copilot` in [`usage.rs`](../runtime/src/ops/accounts/usage.rs) the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from the lane host's `harness=pi` accounts row for that root ([lane-host.md](lane-host.md)), or, where no row reads it, from its stated `ORCH_LANE_COPILOT_POOL` override.
+The record the runtime's account listing produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login. [`runtime/src/ops/accounts/listing.rs`](../../agent-runtime/runtime/src/accounts/listing.rs) owns the endpoint and the login layout, and `parse_copilot` in [`usage.rs`](../../agent-runtime/runtime/src/accounts/usage.rs) the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from the lane host's `harness=pi` accounts row for that root ([lane-host.md](lane-host.md)), or, where no row reads it, from its stated `ORCH_LANE_COPILOT_POOL` override.
 
 ## Where it is
 

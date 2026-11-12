@@ -737,11 +737,12 @@ pub(super) fn apply_request(
 pub(super) fn pick_account(
     settings: &Settings,
     path: &Path,
-    request: &ops::accounts::PickRequest,
+    lane_host: &str,
+    request: &agent_runtime::accounts::PickRequest,
     now: u64,
-) -> ops::accounts::PickAnswer {
+) -> agent_runtime::accounts::PickAnswer {
     let host = ops::Host::kernel();
-    ops::accounts::pick_fleet(settings, path, &host, request, now)
+    ops::accounts::pick_fleet(settings, path, &host, Some(lane_host), None, request, now)
 }
 
 /// The lane set's store transition, applied as the engine's progress

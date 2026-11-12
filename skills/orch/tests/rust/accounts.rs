@@ -33,11 +33,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agent_runtime::clock;
-use agent_runtime::settings::Roots;
-use orch_runtime::ops::accounts::{
+use agent_runtime::accounts::{
     self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
 };
+use agent_runtime::clock;
+use agent_runtime::settings::Roots;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
 use support::*;
@@ -227,7 +227,7 @@ impl World {
         let dir = self.dir(alias);
         self.path().join("usage").join(format!(
             "{harness}-{}-{}.json",
-            orch_runtime::ops::wall::cksum(dir.as_bytes()),
+            agent_runtime::accounts::wall::cksum(dir.as_bytes()),
             dir.len()
         ))
     }
@@ -284,6 +284,11 @@ impl World {
     /// `accounts pick --fleet` for `req`: the reply's `result`, the answer's
     /// word, its exit and its record.
     fn pick(&self, req: &PickRequest) -> Value {
+        self.pick_replacing(req, None)
+    }
+
+    /// [`World::pick`] for a relaunch of the lane of `replaces`.
+    fn pick_replacing(&self, req: &PickRequest, replaces: Option<&str>) -> Value {
         let mut command = self.command();
         command.args(["accounts", "pick", "--fleet", "--harness", &req.harness]);
         if let Some(model) = &req.model {
@@ -292,7 +297,7 @@ impl World {
         for dir in &req.exclude {
             command.args(["--exclude-lane", dir]);
         }
-        if let Some(item) = &req.replaces {
+        if let Some(item) = replaces {
             command.args(["--replaces", item]);
         }
         if req.for_overseer {
@@ -761,10 +766,7 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
         (json!(1), json!(0)),
         "the live lane's charge walls the account for a fresh launch: {fresh}"
     );
-    let relaunch = world.pick(&PickRequest {
-        replaces: Some("KEN-1".to_owned()),
-        ..claude(None)
-    });
+    let relaunch = world.pick_replacing(&claude(None), Some("KEN-1"));
     assert_eq!(
         chosen(&relaunch).as_deref(),
         Some(account.as_str()),
@@ -4793,13 +4795,13 @@ fn weekly_body(pct: u64, reset: u64) -> Value {
 /// The account wall the watch records for `dir`, resetting with the walled
 /// week and naming `seen_at` as the banner's first sighting.
 fn plant_wall(world: &World, dir: &str, seen_at: Option<u64>) {
-    let path = orch_runtime::ops::wall::account_wall_path(
+    let path = agent_runtime::accounts::wall::account_wall_path(
         &world.settings.account_state.get().unwrap(),
         dir,
     );
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut record = json!({
-        "config_dir": orch_runtime::ops::wall::canon(dir),
+        "config_dir": agent_runtime::accounts::wall::canon(dir),
         "resets_at": walled_week(),
     });
     if let Some(seen) = seen_at {
@@ -4959,7 +4961,7 @@ fn a_reading_with_room_holds_the_wall_unless_its_figure_fell_after_the_sighting_
     std::fs::write(
         hosted.path().join("usage").join(format!(
             "claude-{}-{}.json",
-            orch_runtime::ops::wall::cksum(spelling.as_bytes()),
+            agent_runtime::accounts::wall::cksum(spelling.as_bytes()),
             spelling.len()
         )),
         json!({"harness": "claude", "config_dir": spelling, "fetched_at": now() - 60,

@@ -55,10 +55,10 @@ use super::lanes::{
 use super::tracker::{QUOTA_ROW, Quota};
 use crate::marker;
 use crate::ops::CLOUD_KIND;
-use crate::ops::accounts::Roster;
-use crate::ops::wall;
 use crate::settings;
 use crate::state::{self, Lane, LaneStatus};
+use agent_runtime::accounts::Roster;
+use agent_runtime::accounts::wall;
 
 /// The tag the lane duty's provider calls are counted under.
 const TAG: &str = "lanes";

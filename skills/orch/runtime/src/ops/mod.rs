@@ -59,7 +59,6 @@ pub mod validate;
 pub mod verify_pr;
 pub mod verify_review;
 pub mod wake;
-pub mod walk;
 pub mod wall;
 
 pub use accept::{SummaryPost, accept};

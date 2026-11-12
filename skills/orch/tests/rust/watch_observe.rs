@@ -23,6 +23,9 @@ use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agent_runtime::accounts::Roster;
+use agent_runtime::accounts::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
+use agent_runtime::accounts::wall::{self as account_wall, AccountWall};
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneState};
@@ -33,9 +36,7 @@ use agent_runtime::rows::{self, LaneVerdict};
 use agent_runtime::settings::{Roots, Succession};
 use jiff::tz::TimeZone;
 use orch_runtime::effects;
-use orch_runtime::ops::accounts::Roster;
-use orch_runtime::ops::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
-use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
+use orch_runtime::ops::wall::{self, RecordWallPauses};
 use orch_runtime::ops::{self, DeathCause, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use orch_runtime::state::{self, FleetState, Record};
@@ -589,7 +590,10 @@ fn a_usage_limit_screen_is_reported_once_and_an_older_screen_is_not_a_wall() {
 /// (`lib/account-wall.sh`, `account_wall_record`): `walls/<cksum>.json`
 /// beside the claim store, or none.
 fn wall_record(settings: &Settings) -> Option<AccountWall> {
-    let path = wall::account_wall_path(&settings.account_state.get().unwrap(), "/home/me/.eclaude");
+    let path = account_wall::account_wall_path(
+        &settings.account_state.get().unwrap(),
+        "/home/me/.eclaude",
+    );
     let text = std::fs::read_to_string(path).ok()?;
     Some(serde_json::from_str(&text).unwrap())
 }
@@ -647,7 +651,7 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
     );
     // The same banner first seen before this process started: an earlier
     // process's screen, judged under its identity.
-    std::fs::remove_file(wall::account_wall_path(
+    std::fs::remove_file(account_wall::account_wall_path(
         &driver.settings.account_state.get().unwrap(),
         "/home/me/.eclaude",
     ))
@@ -710,7 +714,7 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     );
     let quiet = driver.pass(&state);
     assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
-    std::fs::remove_file(wall::account_wall_path(
+    std::fs::remove_file(account_wall::account_wall_path(
         &driver.settings.account_state.get().unwrap(),
         "/home/me/.eclaude",
     ))
@@ -3687,7 +3691,7 @@ fn open_pull(sha: &str, body: &str, draft: Option<bool>) -> Value {
 /// The body digest as the stall row keeps it (`cksum` over the body and
 /// the newline jq printed after it).
 fn digest(body: &str) -> String {
-    wall::cksum(format!("{body}\n").as_bytes()).to_string()
+    account_wall::cksum(format!("{body}\n").as_bytes()).to_string()
 }
 
 /// A running Claude cloud lane: its session opened at `now - 7000`, on
@@ -3757,7 +3761,7 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
     ]
     .iter()
     .map(|raw| {
-        orch_runtime::ops::accounts::AccountRow::parse(raw, &driver.settings.accounts.get().unwrap())
+        agent_runtime::accounts::AccountRow::parse(raw, &driver.settings.accounts.get().unwrap())
     })
     .collect::<Option<Vec<_>>>()
     .map(|rows| Roster {

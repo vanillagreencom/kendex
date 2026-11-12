@@ -1611,7 +1611,7 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
         identity: "CC-1".into(),
         value: format!(
             "aaa111|{}|{}||",
-            orch_runtime::ops::wall::cksum(b"\n"),
+            agent_runtime::accounts::wall::cksum(b"\n"),
             now - 3700
         ),
     });

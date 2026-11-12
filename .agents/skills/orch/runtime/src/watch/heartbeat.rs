@@ -42,13 +42,14 @@ use agent_runtime::clock;
 use crate::verify::wire::Pull;
 
 use crate::ops::Host;
-use crate::ops::accounts::{
-    self, PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
-};
+use crate::ops::accounts;
 use crate::settings::Settings;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
+use agent_runtime::accounts::{
+    PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
+};
 use agent_runtime::journal::Env;
 
 /// The host word of a lane record with no host.
@@ -292,10 +293,17 @@ fn wall_verdict(
     let request = PickRequest {
         harness: owed.harness.clone(),
         model: (owed.model != "-").then(|| owed.model.clone()),
-        host: Some(owed.host.clone()),
         ..PickRequest::default()
     };
-    match accounts::pick_fleet(&ctx.settings, &ctx.path, host, &request, now) {
+    match accounts::pick_fleet(
+        &ctx.settings,
+        &ctx.path,
+        host,
+        Some(&owed.host),
+        None,
+        &request,
+        now,
+    ) {
         PickAnswer::Lane(_) => "verdict=queue".to_owned(),
         PickAnswer::None {
             walled,
@@ -411,7 +419,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         Err(_) => body("account-roster unread".to_owned()),
         Ok(listing) => {
             body(format!("account-roster accounts={}", listing.rows.len()));
-            for line in listing.lines(&accounts::today(tick.wall)) {
+            for line in listing.lines(&agent_runtime::accounts::today(tick.wall)) {
                 body(line);
             }
         }

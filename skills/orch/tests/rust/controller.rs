@@ -9358,7 +9358,7 @@ fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
 /// controller when its walk chose `entry` on `account`: the watch's own
 /// `Caller::successor_of` over the record as the fleet state holds it.
 fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
-    use orch_runtime::ops::walk::Chosen;
+    use agent_runtime::accounts::walk::Chosen;
     use orch_runtime::state::{FleetState, Record as _};
     use orch_runtime::watch::overseer::{Caller, Record};
     let path = runner

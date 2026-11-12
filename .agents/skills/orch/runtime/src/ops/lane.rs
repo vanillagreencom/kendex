@@ -28,7 +28,7 @@ pub use lane_obligations::{
     WORKTREE_MAIL_KEPT,
 };
 
-use super::accounts::{self, PickAnswer, PickRequest};
+use super::accounts;
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
@@ -40,6 +40,7 @@ use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
     self, CloseGround, Lane, LaneMembers, LaneStatus, Reservation, Selection, TerminalVerdict,
 };
+use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::{EffectOp, Phase, PrincipalKeys, Role};
 use agent_runtime::journal::{self, Env, RecordOutcome, intents};
@@ -786,10 +787,9 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
         model: r.model.clone(),
         lane: Some(account.clone()),
         projected: true,
-        replaces: replaces.map(str::to_owned),
         ..PickRequest::default()
     };
-    match accounts::pick_fleet(settings, path, host, &request, env.now_secs) {
+    match accounts::pick_fleet(settings, path, host, None, replaces, &request, env.now_secs) {
         PickAnswer::Lane(_) | PickAnswer::NoRecord => Ok(()),
         PickAnswer::Walled(judged) => {
             let record = judged.record();

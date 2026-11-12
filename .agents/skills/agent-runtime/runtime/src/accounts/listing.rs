@@ -14,22 +14,19 @@
 //! the refused request again, and a usage 429 is answered from the last
 //! figure the record holds while that figure is younger than five hours.
 
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::clock;
-use agent_runtime::host::{self, Place};
+use crate::clock;
+use crate::host::{self, Place};
 use serde_json::{Map, Value, json};
 
 use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
 use super::renewal;
 use super::usage::{self, CopilotLogin, Credential, FIVE_HOURS_S, Rounding};
 use super::{AccountRow, TAG, WINDOWS, credit_room, grant, wall_verdict};
-use crate::ops::wall;
-use crate::settings::{ProviderSettings, Settings};
-use crate::watch::overseer::scripts_dir;
-use agent_runtime::settings::{AccountSettings, CopilotPool};
+use super::{Env, wall};
+use crate::settings::{AccountSettings, CopilotPool};
 
 const COPILOT_CREDITS_URL: &str = "https://api.github.com/copilot_internal/user";
 pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
@@ -52,73 +49,94 @@ pub struct Listing {
     pub notes: Vec<String>,
 }
 
-struct Ctx<'a> {
-    settings: &'a Settings,
-    accounts: &'a AccountSettings,
-    provider: ProviderSettings,
+/// One listing's reading state: the settings, the cache's place, the clock
+/// and the lines said beside the rows. A provider's reader measures its
+/// rows through it as this machine's are measured.
+pub struct Ctx<'a> {
+    settings: &'a Env<'a>,
+    pub accounts: &'a AccountSettings,
     /// The account records' root; the usage cache is `usage/` under it.
     account_state: PathBuf,
-    usage_dir: PathBuf,
+    pub usage_dir: PathBuf,
     /// The age a cached figure is served within: the TTL, or the caller's
     /// own pass interval where that is longer; 0 declines every cached
     /// figure.
-    serve_max_age: u64,
-    now: u64,
+    pub serve_max_age: u64,
+    pub now: u64,
     today: String,
-    notes: Vec<String>,
+    pub notes: Vec<String>,
     retry_spent: bool,
 }
 
-/// The listing under `host` (the provider, or none for this machine
-/// alone) at `now`, with `named`, a pick's `(harness, directory)`, measured
-/// as that harness's account where the directory stands and nothing else
-/// lists it; or the cause where it could not be read whole: a home that
-/// cannot be listed, a provider whose capability line cannot be read.
+impl<'a> Ctx<'a> {
+    /// The state of one listing at `now`, or the cause the account records'
+    /// root could not be resolved with.
+    pub fn new(
+        settings: &'a Env<'a>,
+        accounts: &'a AccountSettings,
+        now: u64,
+    ) -> Result<Ctx<'a>, String> {
+        let account_state = settings.account_state.get().map_err(|e| e.to_string())?;
+        let usage_dir = account_state.join("usage");
+        let serve_max_age = if accounts.usage_ttl == 0 {
+            0
+        } else {
+            accounts.usage_ttl.max(accounts.usage_max_age)
+        };
+        Ok(Ctx {
+            settings,
+            accounts,
+            account_state,
+            usage_dir,
+            serve_max_age,
+            now,
+            today: super::today(now),
+            notes: Vec::new(),
+            retry_spent: false,
+        })
+    }
+}
+
+/// A provider's reading, read by its caller before the listing: the
+/// provider's name, the pool its kind declares, its finished rows, the
+/// cause its read failed with, and the lines said beside them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Provider {
+    pub host: String,
+    pub pool: String,
+    pub rows: Vec<Value>,
+    pub failure: Option<String>,
+    pub notes: Vec<String>,
+}
+
+/// The listing at `now`, with a provider's reading beside this machine's
+/// where the caller read one, and `named`, a pick's `(harness, directory)`,
+/// measured as that harness's account where the directory stands and
+/// nothing else lists it; or the cause where it could not be read whole: a
+/// home that cannot be listed.
 pub fn list(
-    settings: &Settings,
-    host: Option<&str>,
+    settings: &Env,
+    accounts: &AccountSettings,
+    provider: Option<Provider>,
     named: Option<(&str, &str)>,
     now: u64,
 ) -> Result<Listing, String> {
-    let accounts = &settings.accounts.get().map_err(|e| e.to_string())?;
-    let provider = settings.provider.get().map_err(|e| e.to_string())?;
-    let account_state = settings.account_state.get().map_err(|e| e.to_string())?;
-    let usage_dir = account_state.join("usage");
-    let serve_max_age = if accounts.usage_ttl == 0 {
-        0
-    } else {
-        accounts.usage_ttl.max(accounts.usage_max_age)
-    };
-    let mut ctx = Ctx {
-        settings,
-        accounts,
-        provider,
-        account_state,
-        usage_dir,
-        serve_max_age,
-        now,
-        today: super::today(now),
-        notes: Vec::new(),
-        retry_spent: false,
-    };
-    let host_pool = match host {
-        Some(host) => host_pool(&ctx, host)?,
-        None => "plan".to_owned(),
-    };
+    let mut ctx = Ctx::new(settings, accounts, now)?;
+    let host_pool = provider.as_ref().map_or("plan", |p| p.pool.as_str());
     let mut rows = Vec::new();
     let found = discover(&mut ctx, named)?;
     for account in &found {
-        let pool = local_pool(account.harness, &host_pool);
+        let pool = local_pool(account.harness, host_pool);
         let mut row = measure(&mut ctx, account);
         row["configured"] = json!(account.configured);
         finish(&ctx, &mut row, &pool);
         rows.push(row);
     }
-    let provider_failure = match host {
-        Some(host) => {
-            let (provider_rows, failure) = provider_rows(&mut ctx, host, &host_pool);
-            rows.extend(provider_rows);
-            failure
+    let provider_failure = match provider {
+        Some(provider) => {
+            rows.extend(provider.rows);
+            ctx.notes.extend(provider.notes);
+            provider.failure
         }
         None => None,
     };
@@ -202,7 +220,7 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
     if accounts.account_dirs.is_empty() {
         ctx.notes.push(format!(
             "accounts-unconfigured key={}",
-            agent_runtime::settings::ACCOUNT_DIRS_KEY
+            crate::settings::ACCOUNT_DIRS_KEY
         ));
     }
     for entry in &accounts.account_dirs {
@@ -237,10 +255,7 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
             .codex_home
             .as_deref()
             .map(|h| ("codex", usage::home_account(h))),
-        ctx.settings
-            .copilot_home
-            .as_deref()
-            .map(|h| ("copilot", h.to_owned())),
+        ctx.settings.copilot_home.map(|h| ("copilot", h.to_owned())),
     ];
     for (harness, dir) in homes.into_iter().flatten() {
         if !found.iter().any(|f| f.dir == dir) {
@@ -293,46 +308,9 @@ fn local_pool(harness: &str, host_pool: &str) -> String {
     }
 }
 
-/// The pool the configured host's kind declares (`pool=` on its
-/// capability line). A declaration that cannot be read refuses: no pool is
-/// guessed for a host.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the listing's read of the provider's capability line, `lane-host capabilities`, through the one runner under its tag; it acts on nothing"
-)]
-fn host_pool(ctx: &Ctx, host: &str) -> Result<String, String> {
-    let unread = |cause: String| format!("host-capabilities-unread host={host} cause={cause}");
-    let out = host::run_tagged_in(
-        TAG,
-        "lane-host",
-        &scripts_dir(&ctx.settings.roots.project).join("lane-host"),
-        "capabilities",
-        &["capabilities"],
-        Place {
-            cwd: None,
-            env: &[("ORCH_LANE_HOST", OsStr::new(host))],
-        },
-        REQUEST_BOUND,
-    )
-    .map_err(|e| unread(e.to_string()))?;
-    if !out.status.success() {
-        return Err(unread(format!(
-            "exit={} {}",
-            out.status.code().unwrap_or(-1),
-            host::stderr_text(&out)
-        )));
-    }
-    let line = host::stdout_text(&out);
-    let pool = line
-        .split('\t')
-        .find_map(|field| field.strip_prefix("pool="))
-        .ok_or_else(|| unread("no pool= field".to_owned()))?;
-    Ok(pool.to_owned())
-}
-
 // --- one account measured ---------------------------------------------------------------------
 
-enum Usage {
+pub enum Usage {
     /// A usage body the endpoint answered, parsed by its harness.
     Body(Value),
     /// The provider's row, its windows as it stated them.
@@ -341,16 +319,16 @@ enum Usage {
     Stated { used: u64, granted: u64 },
 }
 
-struct Reading {
-    status: String,
-    detail: String,
-    plan: String,
-    usage: Option<Usage>,
-    age: Option<u64>,
+pub struct Reading {
+    pub status: String,
+    pub detail: String,
+    pub plan: String,
+    pub usage: Option<Usage>,
+    pub age: Option<u64>,
     /// The sample the figure displaced and the seconds between them.
-    prior: Option<(Value, u64)>,
+    pub prior: Option<(Value, u64)>,
     /// The fall of the weekly figure the account's record holds.
-    fall: Option<cache::Fall>,
+    pub fall: Option<cache::Fall>,
 }
 
 impl Reading {
@@ -999,363 +977,15 @@ fn plan_ended(usage_url: &str, token: &str) -> Option<String> {
         .then(|| format!("plan ended: {kind}, subscription {status}"))
 }
 
-// --- the provider's rows ----------------------------------------------------------------------
-
-/// The provider's `accounts` answer, one tab-separated `key=value` line per
-/// account it holds a credential for, read through `lane-host` under the
-/// host and cached under the same window every figure here is; an absent
-/// verb (exit 2) is cached as well, a failed one never, since the failure
-/// is the transient answer and must not be replayed for the rest of the
-/// window. The read is bounded by `ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S`,
-/// the dispatcher's own slot wait held under it.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the listing's read of the provider's accounts, `lane-host accounts`, through the one runner under its tag, bounded; it acts on nothing"
-)]
-fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, Option<String>) {
-    let path = cache::record_path(&ctx.usage_dir, "lane-host", host);
-    let cached = |ctx: &mut Ctx| -> Option<(u64, String)> {
-        let record = cache::read(&path, "lane-host", host)?;
-        let usage = record.usage.as_ref()?;
-        let status = usage.get("status")?.as_u64()?;
-        let rows = usage.get("rows")?.as_str()?.to_owned();
-        let fresh = record.fetched_at <= ctx.now && ctx.now - record.fetched_at < ctx.serve_max_age;
-        if !fresh {
-            return None;
-        }
-        let reset = rows
-            .lines()
-            .filter_map(|line| provider_line(line).ok())
-            .find_map(|line| cache::consumed_reset(&line.buckets, ctx.now));
-        if let Some(reset) = reset {
-            ctx.notes.push(format!(
-                "usage-cache-reset account={host} resets-at={reset}"
-            ));
-            return None;
-        }
-        Some((status, rows))
-    };
-    let answer = match cached(ctx) {
-        Some(answer) => Ok(answer),
-        None => {
-            let usage_dir = ctx.usage_dir.clone();
-            let (answer, notice) = cache::under_refresh_lock(&usage_dir, || {
-                if let Some(answer) = cached(ctx) {
-                    return Ok(answer);
-                }
-                let timeout = ctx.provider.accounts_timeout;
-                let bound = match timeout {
-                    0 => Duration::from_secs(u64::from(u32::MAX)),
-                    secs => Duration::from_secs(secs),
-                };
-                let busy_wait = ctx
-                    .provider
-                    .host_busy_wait
-                    .clone()
-                    .unwrap_or_else(|| "30".to_owned());
-                let busy_wait = match busy_wait.parse::<u64>() {
-                    Ok(wait) if timeout != 0 && wait >= timeout => (timeout - 1).to_string(),
-                    Ok(_) | Err(_) => busy_wait,
-                };
-                let out = host::run_tagged_in(
-                    TAG,
-                    "lane-host",
-                    &scripts_dir(&ctx.settings.roots.project).join("lane-host"),
-                    "accounts",
-                    &["accounts"],
-                    Place {
-                        cwd: None,
-                        env: &[
-                            ("ORCH_LANE_HOST", OsStr::new(host)),
-                            (
-                                "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS",
-                                OsStr::new(&busy_wait),
-                            ),
-                        ],
-                    },
-                    bound,
-                );
-                match out {
-                    Ok(out) if out.status.success() => {
-                        let rows = String::from_utf8_lossy(&out.stdout).into_owned();
-                        cache::write_figure(
-                            &path,
-                            "lane-host",
-                            host,
-                            json!({"status": 0, "rows": rows}),
-                            ctx.now,
-                        );
-                        Ok((0, rows))
-                    }
-                    Ok(out) if out.status.code() == Some(2) => {
-                        cache::write_figure(
-                            &path,
-                            "lane-host",
-                            host,
-                            json!({"status": 2, "rows": ""}),
-                            ctx.now,
-                        );
-                        Ok((2, String::new()))
-                    }
-                    Ok(out) if out.status.code() == Some(69) => Err(format!(
-                        "lane-host-busy step=accounts {}",
-                        host::stderr_text(&out)
-                    )),
-                    Ok(out) => Err(format!(
-                        "host-accounts-unreadable host={host} exit={} {}",
-                        out.status.code().unwrap_or(-1),
-                        host::stderr_text(&out)
-                    )),
-                    Err(e) => Err(format!("host-accounts-unreadable host={host} cause={e}")),
-                }
-            });
-            if let Some(notice) = notice {
-                ctx.notes.push(notice);
-            }
-            answer
-        }
-    };
-    match answer {
-        Ok((2, _)) => (Vec::new(), None),
-        Ok((_, rows)) => (host_rows(ctx, &rows, host_pool), None),
-        Err(cause) => {
-            ctx.notes.push(cause.clone());
-            (Vec::new(), Some(cause))
-        }
-    }
-}
-
-/// A non-negative decimal with at most two places, the protocol's dollar
-/// field.
-fn dollars(text: &str) -> Option<f64> {
-    let (whole, fraction) = match text.split_once('.') {
-        Some((w, f)) => (w, Some(f)),
-        None => (text, None),
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !digits(whole) || fraction.is_some_and(|f| !digits(f) || f.len() > 2) {
-        return None;
-    }
-    text.parse().ok()
-}
-
-/// One provider `accounts` line read: its fields, and its windows in the
-/// bucket shape every reading takes.
-struct ProviderLine {
-    fields: Map<String, Value>,
-    account: String,
-    harness: String,
-    buckets: Value,
-    credit_fields: bool,
-}
-
-struct Unreadable {
-    account: String,
-    field: &'static str,
-}
-
-/// One provider line: `account` and `harness` required, the percentages
-/// whole numbers 0 to 100, the four credit fields together on a
-/// `harness=pi` row with no `monthly-pct`.
-fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
-    let mut fields: Map<String, Value> = Map::new();
-    for field in line.split('\t').filter(|f| !f.is_empty()) {
-        let (key, value) = field.split_once('=').unwrap_or((field, ""));
-        fields.insert(key.to_owned(), Value::from(value));
-    }
-    let get = |key: &str| {
-        fields
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
-    let account = get("account");
-    let harness = get("harness");
-    let mut bad: Option<&'static str> = None;
-    let mut pcts: [(&'static str, Option<u64>); 3] = [
-        ("weekly-pct", None),
-        ("model-pct", None),
-        ("monthly-pct", None),
-    ];
-    for (key, value) in &mut pcts {
-        let text = get(key);
-        if text.is_empty() {
-            continue;
-        }
-        match text.parse::<u64>() {
-            Ok(n) if text.len() <= 3 && n <= 100 => *value = Some(n),
-            Ok(_) | Err(_) => bad = bad.or(Some(key)),
-        }
-    }
-    if account.is_empty() {
-        bad = bad.or(Some("account"));
-    }
-    if !matches!(harness.as_str(), "claude" | "codex" | "copilot" | "pi") {
-        bad = bad.or(Some("harness"));
-    }
-    let credit_fields = [
-        "credit-limit",
-        "credit-spent",
-        "credit-remaining",
-        "credit-expires",
-    ]
-    .iter()
-    .any(|k| fields.contains_key(*k));
-    let limit = dollars(&get("credit-limit"));
-    let remaining = dollars(&get("credit-remaining"));
-    if credit_fields {
-        if harness != "pi"
-            || fields.contains_key("monthly-pct")
-            || limit.is_none_or(|l| l <= 0.0)
-            || remaining.is_none()
-            || clock::epoch_secs(&get("credit-expires")).is_none()
-        {
-            bad = bad.or(Some("credit-fields"));
-        }
-        if dollars(&get("credit-spent")).is_none() {
-            bad = bad.or(Some("credit-spent"));
-        }
-    }
-    if let Some(field) = bad {
-        return Err(Unreadable { account, field });
-    }
-    let nz = |key: &str| {
-        let v = get(key);
-        if v.is_empty() {
-            Value::Null
-        } else {
-            Value::from(v)
-        }
-    };
-    let [weekly, model, monthly] = pcts.map(|(_, v)| v);
-    let credits = credit_fields.then(|| {
-        json!({
-            "unit": "usd",
-            "limit_dollars": limit,
-            "used_dollars": dollars(&get("credit-spent")),
-            "remaining_dollars": remaining,
-            "resets_at": get("credit-expires"),
-            "locked_reason": Value::Null,
-        })
-    });
-    let buckets = json!({
-        "weekly_pct": weekly,
-        "model_pct": model,
-        "monthly_pct": monthly,
-        "credits": credits.unwrap_or(Value::Null),
-        "model_label": nz("model-label"),
-        "model_buckets": match model {
-            None => json!([]),
-            Some(pct) => json!([{"label": nz("model-label"), "pct": pct, "resets_at": nz("model-resets")}]),
-        },
-        "resets": {"weekly": nz("weekly-resets"), "model": nz("model-resets"),
-                   "monthly": nz("monthly-resets")},
-    });
-    Ok(ProviderLine {
-        fields,
-        account,
-        harness,
-        buckets,
-        credit_fields,
-    })
-}
-
-/// The provider's rows as records: a row a field of which cannot be read
-/// is left out with a note rather than listed on a guess, since a
-/// percentage nobody can parse must not be judged as room. The provider's
-/// words `plan-ends`, `reserved` and `seat` are carried as written where
-/// non-empty; this listing judges none of them.
-fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
-    let mut out = Vec::new();
-    for line in rows.lines().filter(|l| !l.is_empty()) {
-        let ProviderLine {
-            fields,
-            account,
-            harness,
-            buckets,
-            credit_fields,
-        } = match provider_line(line) {
-            Ok(parsed) => parsed,
-            Err(Unreadable { account, field }) => {
-                let named = if account.is_empty() {
-                    "<unnamed>"
-                } else {
-                    account.as_str()
-                };
-                ctx.notes.push(format!(
-                    "host-account-invalid account={named} field={field}"
-                ));
-                continue;
-            }
-        };
-        let get = |key: &str| {
-            fields
-                .get(key)
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let status = match get("status") {
-            s if s.is_empty() => "ok".to_owned(),
-            s => s,
-        };
-        let mut words = Map::new();
-        for (key, name) in [
-            ("plan-ends", "plan_ends"),
-            ("reserved", "reserved"),
-            ("seat", "seat"),
-        ] {
-            let value = get(key);
-            if !value.is_empty() {
-                words.insert(name.to_owned(), Value::from(value));
-            }
-        }
-        let grant = credit_fields || get("detail").starts_with("api-credit-");
-        let pool = match harness.as_str() {
-            "pi" if grant => "api-credit",
-            "pi" | "copilot" => "copilot",
-            "claude" if host_pool == "cloud-credit" => "cloud-credit",
-            _ => "plan",
-        };
-        let alias = alias(ctx.accounts, &account);
-        let mut row = emit(
-            ctx,
-            &Emit {
-                alias: &alias,
-                harness: &harness,
-                dir: &account,
-                through: "host",
-                reading: Reading {
-                    status,
-                    detail: get("detail"),
-                    plan: String::new(),
-                    usage: Some(Usage::Provider(buckets)),
-                    age: None,
-                    prior: None,
-                    // The provider's protocol states no time a figure was
-                    // read, so no fall of it can follow a wall's sighting;
-                    // a record of this spelling here is this machine's.
-                    fall: None,
-                },
-                words: Some(words),
-            },
-        );
-        finish(ctx, &mut row, pool);
-        out.push(row);
-    }
-    out
-}
-
 // --- the row ----------------------------------------------------------------------------------
 
-struct Emit<'a> {
-    alias: &'a str,
-    harness: &'a str,
-    dir: &'a str,
-    through: &'a str,
-    reading: Reading,
-    words: Option<Map<String, Value>>,
+pub struct Emit<'a> {
+    pub alias: &'a str,
+    pub harness: &'a str,
+    pub dir: &'a str,
+    pub through: &'a str,
+    pub reading: Reading,
+    pub words: Option<Map<String, Value>>,
 }
 
 fn buckets_of(harness: &str, usage: &Usage) -> Value {
@@ -1383,7 +1013,7 @@ fn buckets_of(harness: &str, usage: &Usage) -> Value {
 /// its rate against the displaced sample, the weekly wall a harness banner
 /// stated held at 100 until its reset or a fall after it, and the owner's
 /// words as flags.
-fn emit(ctx: &Ctx, e: &Emit) -> Value {
+pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
     let Reading {
         status,
         detail,
@@ -1655,7 +1285,7 @@ fn same_reset(a: &Value, b: &Value) -> bool {
 /// wall, an ended plan a full wall, and a grant pool judged on the grant
 /// by the expires-first rule, so the listing and the judge cannot disagree
 /// about a grant at the floor.
-fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
+pub fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
     row["pool"] = json!(pool);
     row["verdict"] = json!("unmeasured");
     let Some(parsed) = AccountRow::parse(row, ctx.accounts) else {
@@ -1698,89 +1328,21 @@ fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn world() -> (tempfile::TempDir, Settings) {
-        let dir = tempfile::tempdir().unwrap();
-        let settings = crate::settings::load(
-            &agent_runtime::settings::Roots {
-                project: dir.path().to_path_buf(),
-                common: dir.path().to_path_buf(),
-            },
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().to_path_buf()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        (dir, settings)
-    }
-
-    #[test]
-    fn a_providers_row_is_read_field_by_field_and_dropped_on_one_nobody_can_parse() {
-        let (dir, settings) = world();
-        let accounts = settings.accounts.get().unwrap();
-        let mut ctx = Ctx {
-            settings: &settings,
-            accounts: &accounts,
-            provider: settings.provider.get().unwrap(),
-            account_state: dir.path().to_path_buf(),
-            usage_dir: dir.path().join("usage"),
-            serve_max_age: 300,
-            now: 1_800_000_000,
-            today: "2027-01-15".to_owned(),
-            notes: Vec::new(),
-            retry_spent: false,
-        };
-        let rows = host_rows(
-            &mut ctx,
-            "account=/h/.a\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\n\
-             account=/h/.b\tharness=claude\tsession-5h-pct=4\tweekly-pct=9\tplan-ends=2027-01-31\treserved=1\tseat=1\n\
-             account=/h/.c\tharness=claude\tweekly-pct=abc\n\
-             harness=claude\tweekly-pct=8\n\
-             account=/h/.d\tharness=claude\n\
-             account=/h/.p\tharness=pi\tcredit-limit=200.00\tcredit-spent=50.00\tcredit-remaining=150\tcredit-expires=2027-02-01T00:00:00Z\n",
-            "plan",
-        );
-        assert_eq!(rows.len(), 4, "{rows:?}");
-        assert_eq!(rows[0]["status"], json!("refused"));
-        assert_eq!(rows[0]["detail"], json!("http-403-permission_error"));
-        assert_eq!(rows[0].get("plan_ends"), None);
-        assert_eq!(rows[1]["status"], json!("ok"));
-        assert_eq!(rows[1]["detail"], Value::Null);
-        assert_eq!(rows[1]["headroom_pct"], json!(91));
-        assert_eq!(rows[1]["plan_ends"], json!("2027-01-31"));
-        assert_eq!(rows[1]["seat"], json!("1"));
-        assert_eq!(rows[1]["verdict"], json!("room"));
-        assert_eq!(rows[2]["status"], json!("no_usage_data"));
-        assert_eq!(rows[3]["pool"], json!("api-credit"));
-        assert_eq!(rows[3]["verdict"], json!("room"));
-        assert_eq!(rows[3]["headroom_pct"], json!(75));
-        assert_eq!(
-            ctx.notes,
-            vec![
-                "host-account-invalid account=/h/.c field=weekly-pct",
-                "host-account-invalid account=<unnamed> field=account"
-            ]
-        );
-    }
+    use crate::settings::Judged;
 
     #[test]
     fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {
-        let (_dir, settings) = world();
-        let accounts = settings.accounts.get().unwrap();
-        let ctx = Ctx {
-            settings: &settings,
+        let accounts = Judged::of("accounts", Ok(super::super::tests::settings()));
+        let state = Judged::of("state", Ok(PathBuf::new()));
+        let env = Env {
             accounts: &accounts,
-            provider: settings.provider.get().unwrap(),
-            account_state: PathBuf::new(),
-            usage_dir: PathBuf::new(),
-            serve_max_age: 300,
-            now: 1_800_000_000,
-            today: "2027-01-15".to_owned(),
-            notes: Vec::new(),
-            retry_spent: false,
+            account_state: &state,
+            home: None,
+            copilot_home: None,
+            controller_preference: "",
         };
+        let read = accounts.get().unwrap();
+        let ctx = Ctx::new(&env, &read, 1_800_000_000).unwrap();
         let body = |session: u64, weekly: u64| {
             json!({"five_hour": {"utilization": session, "resets_at": "2027-01-15T05:00:00Z"},
                    "seven_day": {"utilization": weekly, "resets_at": "2027-01-20T00:00:00Z"}})

@@ -1,4 +1,4 @@
-//! The preference walk: the entries of `ORCH_LANE_PREFERENCE` (a lane) or
+//! The preference walk: the entries of the caller's preference (a lane) or
 //! `AGENT_RUNTIME_CONTROLLER_PREFERENCE` (an overseer's session) in the setting's
 //! order, each entry's model classified through `kendex tier-model` and
 //! its account asked of the accounts judge, the first that names an
@@ -7,21 +7,17 @@
 //! the retirement, the wall and the seat are the judge's words, and the
 //! permission posture an entry may cross to is agent-runtime's table.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
-use agent_runtime::harness::{Harness, PermissionMeaning};
-use agent_runtime::host::{self, Place};
+use crate::harness::{Harness, PermissionMeaning};
+use crate::host::{self, Place};
 use serde_json::{Value, json};
 
-use super::accounts::{self, PickAnswer, PickRequest};
-use super::occupancy::Host;
+use super::{Env, PickAnswer, PickRequest};
+use crate::accounts;
 use crate::error::{Error, Result};
-use agent_runtime::settings::DEFAULT_CONTROLLER_PREFERENCE;
-
-use crate::settings::Settings;
-use crate::watch::hosted::{self, Capabilities, Launch};
+use crate::settings::DEFAULT_CONTROLLER_PREFERENCE;
 
 const CLASSIFY_BOUND: Duration = Duration::from_secs(60);
 const LOCAL: &str = "local";
@@ -31,13 +27,13 @@ const LOCAL: &str = "local";
 const CLASSIFY_CONTEXT: &str = r#"{"protocol":"model-resolution-v1","harness":"HARNESS","account":"unpicked","host":"unpicked","providers":[],"currentProvider":null,"models":{"tag":"unsupported","source":"orch-launch"},"default":{"tag":"native-default"},"capacity":[],"rejected":[]}"#;
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
-    agent_runtime::Error::refused(key, fields).into()
+    crate::Error::refused(key, fields)
 }
 
 /// Whose preference is walked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// A lane: `ORCH_LANE_PREFERENCE`, the launcher's bound, a named lane
+    /// A lane: the caller's preference, the launcher's bound, a named lane
     /// judged for every entry, the `:last` hold.
     Lane,
     /// An overseer's session: `AGENT_RUNTIME_CONTROLLER_PREFERENCE`, seats judged as
@@ -81,9 +77,6 @@ pub struct WalkRequest {
     /// alias).
     pub lane: Option<String>,
     pub exclude: Vec<String>,
-    /// The item of the lane this launch replaces: its charge is left out,
-    /// and no cloud session is taken (the cloud has no resume form).
-    pub replaces: Option<String>,
     pub max_pct: Option<u32>,
     pub min_headroom_pct: Option<u32>,
     pub source: Option<Source>,
@@ -502,7 +495,9 @@ pub struct Chosen {
     pub account: Option<String>,
     pub record: Option<Value>,
     pub warning: Option<String>,
-    pub launch: Option<Launch>,
+    /// The launch kind the entry's host declares (`window`, `ssh`,
+    /// `cloud-session`), where a lane's host was read.
+    pub launch: Option<&'static str>,
     /// The caller's own lane, kept without a pick.
     pub kept: bool,
     /// The caller's own lane, kept with the judge reading it unmeasured.
@@ -543,12 +538,7 @@ impl Walked {
                 let env = Harness::parse(&c.harness)
                     .zip(c.account.as_ref())
                     .map(|(h, dir)| format!("{}={dir}", h.account_var(Some(c.model.as_str()))));
-                let launch = c.launch.map(|l| match l {
-                    Launch::Window => "window",
-                    Launch::Ssh => "ssh",
-                    Launch::CloudSession => "cloud-session",
-                    Launch::CloudTask => "cloud-task",
-                });
+                let launch = c.launch;
                 let chosen = json!({
                     "entry": c.entry, "harness": c.harness, "host": c.host, "model": c.model,
                     "class": c.class, "effort": c.effort, "pick_model": c.pick_model,
@@ -578,33 +568,13 @@ fn skip(entry: &str, reason: &str, lane: Option<&str>) -> Value {
     json!({"entry": entry, "reason": reason, "lane": lane})
 }
 
-struct Hosts<'a> {
-    scripts: &'a Path,
-    lines: BTreeMap<String, Capabilities>,
-}
-
-impl Hosts<'_> {
-    fn read(&mut self, host: &str) -> Result<&Capabilities> {
-        if !self.lines.contains_key(host) {
-            let line = hosted::capabilities(self.scripts, host).map_err(|cause| {
-                refused(
-                    "host-capabilities-unread",
-                    &[("host", host), ("cause", &cause)],
-                )
-            })?;
-            self.lines.insert(host.to_owned(), line);
-        }
-        Ok(&self.lines[host])
-    }
-}
-
 /// `--lane` as the judge takes it: a path is a directory that must exist;
 /// a bare word is a listed alias, else a directory of that name.
 #[allow(
     clippy::disallowed_methods,
     reason = "the walk's read of a named lane's directory, three-valued through `metadata`; the alias through the judge's own roster read"
 )]
-fn named_lane(settings: &Settings, lane: &str, now: u64) -> Result<String> {
+fn named_lane(settings: &Env, lane: &str, now: u64) -> Result<String> {
     let unknown = |cause: &str| refused("lane-unknown", &[("lane", lane), ("cause", cause)]);
     let directory = |path: &str| match std::fs::metadata(path) {
         Ok(m) if m.is_dir() => Ok(()),
@@ -635,18 +605,42 @@ fn unjudged(entry: &str, step: &str, cause: &str) -> Error {
     )
 }
 
+/// Where an entry is judged: under `host` (`None` this machine), with the
+/// launch kind that host declares where a lane's host was read; or the
+/// entry passed over, its host's launch kind taking no lane of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hosted {
+    Judge {
+        host: Option<String>,
+        launch: Option<&'static str>,
+    },
+    Skip {
+        host: String,
+        launch: &'static str,
+    },
+}
+
+/// What the walk asks of its caller per entry: where the entry is judged,
+/// from the walk's scope, the entry's own host and its harness; and the
+/// judge's answer for a request under that host. The caller's own command
+/// reads this machine alone; orch's reads the fleet's provider and lanes.
+pub struct Ground<'a> {
+    pub host: &'a mut HostOf<'a>,
+    pub pick: &'a mut PickUnder<'a>,
+}
+
+/// Where an entry is judged, from the walk's scope, the entry's own host
+/// and its harness.
+pub type HostOf<'a> = dyn FnMut(Scope, Option<&str>, &str) -> Result<Hosted> + 'a;
+
+/// The judge's answer for a request under a host.
+pub type PickUnder<'a> = dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer + 'a;
+
 /// The walk over the preference, the caller's entry last where one is
 /// named. Each entry's account is the judge's answer under the entry's
 /// host; an answer the judge could not give ends the walk as a refusal.
-pub fn walk(
-    settings: &Settings,
-    fleet_path: &Path,
-    kernel: &Host,
-    req: &WalkRequest,
-    now: u64,
-) -> Result<Walked> {
+pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
-    let provider = settings.provider.get()?;
     // The session the walk is asked for and its predecessor each run one of
     // the four harnesses; any other is refused by its name, never walked as
     // a session of no posture or no entry.
@@ -656,8 +650,8 @@ pub fn walk(
         Harness::named(word)?;
     }
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
-        Scope::Lane => settings.lane_preference.clone().unwrap_or_default(),
-        Scope::Overseer => settings.engine.controller_preference.clone(),
+        Scope::Lane => String::new(),
+        Scope::Overseer => settings.controller_preference.to_owned(),
     });
     // An entry whose harness is none of the four names that harness and the
     // four beside the entry, so the reader is not left guessing which of its
@@ -665,7 +659,7 @@ pub fn walk(
     let preference = Preference::parse(&text, req.scope).map_err(|entry| {
         let head = entry.split([':', '@']).next().unwrap_or_default();
         let mut fields = vec![("entry".to_owned(), entry.clone())];
-        if let Err(agent_runtime::Error::Refused { fields: named, .. }) = Harness::named(head) {
+        if let Err(crate::Error::Refused { fields: named, .. }) = Harness::named(head) {
             fields.extend(named);
         }
         let fields: Vec<(&str, &str)> = fields
@@ -679,11 +673,10 @@ pub fn walk(
         .as_deref()
         .map(|lane| named_lane(settings, lane, now))
         .transpose()?;
-    let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
-    let mut hosts = Hosts {
-        scripts: &scripts,
-        lines: BTreeMap::new(),
-    };
+    let Ground {
+        host: hosted,
+        pick: judge,
+    } = ground;
     let trigger = req
         .min_headroom_pct
         .unwrap_or(accounts.controller_headroom_pct);
@@ -812,49 +805,15 @@ pub fn walk(
             walked.skipped.push(row);
             continue;
         }
-        // The host the entry is judged under: a lane's own, else the
-        // fleet's; an overseer runs here, so only a provider sharing the
-        // Claude plan's pool over ssh reads for it.
-        let fleet_host = provider.host.as_deref();
-        let (judge_host, launch) = match req.scope {
-            Scope::Lane => {
-                let host = host.as_deref().or(fleet_host).filter(|h| *h != LOCAL);
-                let launch = match host {
-                    Some(h) => hosts.read(h)?.launch,
-                    None => Capabilities::LOCAL.launch,
-                };
-                let Some(launch) = launch else {
-                    return Err(refused(
-                        "host-capabilities-unread",
-                        &[("host", host.unwrap_or(LOCAL)), ("cause", "launch-missing")],
-                    ));
-                };
-                let skipped = match launch {
-                    Launch::Window | Launch::Ssh => false,
-                    Launch::CloudSession => harness != "claude" || req.replaces.is_some(),
-                    Launch::CloudTask => true,
-                };
-                if skipped {
-                    let mut row = skip(&text, "host-launch", None);
-                    row["host"] = json!(host.unwrap_or(LOCAL));
-                    row["launch"] = json!(match launch {
-                        Launch::CloudSession => "cloud-session",
-                        _ => "cloud-task",
-                    });
-                    walked.skipped.push(row);
-                    continue;
-                }
-                (host.map(str::to_owned), Some(launch))
-            }
-            Scope::Overseer => {
-                let mut host = None;
-                if harness == "claude"
-                    && let Some(h) = fleet_host.filter(|h| *h != LOCAL)
-                    && hosts.read(h)?.launch == Some(Launch::Ssh)
-                {
-                    host = Some(h.to_owned());
-                }
-                (host, None)
+        // The host the entry is judged under, as the caller reads it.
+        let (judge_host, launch) = match hosted(req.scope, host.as_deref(), &harness)? {
+            Hosted::Judge { host, launch } => (host, launch),
+            Hosted::Skip { host, launch } => {
+                let mut row = skip(&text, "host-launch", None);
+                row["host"] = json!(host);
+                row["launch"] = json!(launch);
+                walked.skipped.push(row);
+                continue;
             }
         };
         let billed = accounts::pick_harness(&harness, &pick_model);
@@ -881,7 +840,6 @@ pub fn walk(
                 harness: harness.clone(),
                 model: Some(pick_model.clone()).filter(|m| !m.is_empty()),
                 exclude,
-                replaces: req.replaces.clone(),
                 for_overseer: overseer,
                 projected: !overseer && lane.is_some(),
                 lane,
@@ -898,11 +856,11 @@ pub fn walk(
                 // A Codex or Copilot overseer's own mark reads its account's
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness.as_str(), "claude" | "pi"),
-                host: Some(judge_host.clone().unwrap_or_else(|| LOCAL.to_owned())),
                 admit_unread_scope: overseer,
             }
         };
-        let pick = |pr: &PickRequest| accounts::pick_fleet(settings, fleet_path, kernel, pr, now);
+        let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
+        let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
         if req.scope == Scope::Overseer && billed == "unmeasured" {
             // An entry spending no account the judge measures: nothing to
             // pick or refuse, its first turn the one reading of its room.

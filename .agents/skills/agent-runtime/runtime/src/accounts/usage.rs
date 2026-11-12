@@ -279,7 +279,7 @@ pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
                 .get("reset_at")
                 .and_then(Value::as_f64)
                 .map_or(Value::Null, |s| {
-                    Value::from(agent_runtime::clock::iso_utc(s as u64))
+                    Value::from(crate::clock::iso_utc(s as u64))
                 }),
             window_s: w
                 .get("limit_window_seconds")

@@ -160,7 +160,6 @@ fn orch_reads_its_fixtures_as_mentions_and_its_launcher_row_is_accepted() {
         "skills/orch/tests/lane-launch-trust.sh",
         "skills/orch/tests/rust/fixtures/stub-bypass-gated/claude",
         "skills/orch/runtime/src/effects/operation/host.rs",
-        "skills/orch/runtime/src/ops/walk.rs",
         "skills/orch/tests/rust/controller.rs",
         "skills/orch/tests/rust/effects.rs",
         "skills/orch/tests/rust/walk.rs",

@@ -69,11 +69,10 @@ use super::overseer::{Pick, RelaunchPending, relaunch_pending};
 use crate::effects;
 use crate::marker;
 use crate::ops::CLOUD_KIND;
-use crate::ops::wall::{
-    self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
-};
+use crate::ops::wall::{self, RecordWallPauses, WallObservation, WallReading};
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, FleetState, Lane, LaneStatus};
+use agent_runtime::accounts::wall::{self as account_wall, AccountWallWrite, WallChannel};
 use agent_runtime::intent::Phase;
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
@@ -1199,7 +1198,7 @@ fn handoffs(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
                 format!("handoff-read-failed item={item} path={}", path.display()),
             ),
             HandoffReading::Stands { record } => {
-                let key = wall::cksum(record.as_bytes()).to_string();
+                let key = account_wall::cksum(record.as_bytes()).to_string();
                 let prior = pass.baseline.get("handoff", item);
                 out.changes.push(set("handoff", item, key.clone()));
                 if prior != Some(key.as_str()) {
@@ -1669,7 +1668,7 @@ fn wall(
         .get()
         .map_err(crate::Error::from)
         .and_then(|root| {
-            wall::record_account_wall(
+            account_wall::record_account_wall(
                 &root,
                 &AccountWallWrite {
                     config_dir: account.clone(),
@@ -1683,6 +1682,7 @@ fn wall(
                     },
                 },
             )
+            .map_err(crate::Error::from)
         })
         .err()
         .map(|e| e.to_string());
@@ -1800,7 +1800,7 @@ fn route(
         WallRelaunch::Ask => return Routed::Left,
     }
     // The spent account is never relaunched onto before its reset.
-    if wall::canon(&to) == wall::canon(account) {
+    if account_wall::canon(&to) == account_wall::canon(account) {
         return refused(notes, "spent-account");
     }
     let relaunch = match relaunch_request(

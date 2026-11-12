@@ -16,7 +16,8 @@ use agent_runtime::launch::Permission;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::ops::walk::{self, Preference, Scope, Source, WalkAnswer, WalkRequest};
+use crate::ops::accounts;
+use agent_runtime::accounts::walk::{Preference, Scope, Source, WalkAnswer, WalkRequest};
 use agent_runtime::settings::CONTROLLER_PREFERENCE_KEY;
 
 use crate::settings::Settings;
@@ -115,7 +116,6 @@ fn walk_request(
         preference,
         lane: None,
         exclude,
-        replaces: None,
         max_pct: None,
         min_headroom_pct: None,
         source: Some(source(caller, harness)),
@@ -198,7 +198,6 @@ pub fn successor(
             preference: None,
             lane: None,
             exclude: Vec::new(),
-            replaces: None,
             max_pct: None,
             min_headroom_pct: None,
             source: recorded.map(|(caller, harness, _)| source(caller, *harness)),
@@ -206,7 +205,7 @@ pub fn successor(
             keep_unmeasured: false,
         },
     };
-    let walked = walk::walk(settings, path, &host, &request, now)?;
+    let walked = accounts::walk(settings, path, &host, None, &request, now)?;
     let successor = match &walked.answer {
         WalkAnswer::Lane(chosen) => {
             let mut pending = match &recorded {

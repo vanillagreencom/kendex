@@ -62,9 +62,10 @@ use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, 
 use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
 use crate::effects::overseer_socket;
-use crate::ops::accounts::{self, PickAnswer, PickRequest};
-use crate::ops::walk::{self, WalkRequest};
+use crate::ops::accounts;
 use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
+use agent_runtime::accounts::walk::{self, WalkRequest};
+use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::settings::Succession;
 
 use crate::settings::{Settings, WatchSettings};
@@ -511,6 +512,8 @@ impl Caller {
                     settings,
                     fleet_path,
                     host,
+                    None,
+                    None,
                     &PickRequest {
                         harness: harness.name().to_owned(),
                         model: self.mark_model(),
@@ -676,7 +679,7 @@ fn whole_pct(record: &Value, key: &str) -> Option<u32> {
 /// trigger: the judged record's wall, alias, reset, rate and status, read
 /// as the account state the marks dispatch on.
 fn read_account(
-    judged: &accounts::Judged,
+    judged: &agent_runtime::accounts::Judged,
     answer: AccountState,
     at_trigger: bool,
     now: u64,
@@ -701,7 +704,7 @@ fn read_account(
         account: record_text(&record, "alias"),
         resets: record_text(&record, "binding_resets_at"),
         ended: judged.row.plan_ended(),
-        reserve_only: at_trigger && accounts::credit_room(&judged.row, 0.0),
+        reserve_only: at_trigger && agent_runtime::accounts::credit_room(&judged.row, 0.0),
         rate_state: record_text(&record, "usage_rate_state"),
         projected,
     }
@@ -2147,7 +2150,6 @@ fn transfer(
                         preference: None,
                         lane: None,
                         exclude: vec![spent.to_owned()],
-                        replaces: None,
                         max_pct: None,
                         min_headroom_pct: None,
                         source: Some(crate::ops::successor::source(&caller, harness)),
@@ -2695,10 +2697,11 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             .map_err(|e| e.to_string())
         };
         let walk = |request: &WalkRequest| {
-            walk::walk(
+            accounts::walk(
                 &ctx.settings,
                 &ctx.path,
                 &occupancy_host,
+                None,
                 request,
                 tick.wall,
             )
@@ -2709,6 +2712,8 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 &ctx.settings,
                 &ctx.path,
                 &occupancy_host,
+                None,
+                None,
                 &PickRequest {
                     harness: harness.name().to_owned(),
                     model: Some(model.to_owned()),

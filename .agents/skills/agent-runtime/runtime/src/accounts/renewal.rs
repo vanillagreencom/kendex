@@ -21,15 +21,15 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use agent_runtime::host::{self, Hold, Place};
-use agent_runtime::record;
+use crate::host::{self, Hold, Place};
+use crate::record;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::TAG;
 use super::listing::CLAUDE_OAUTH_BETA;
 use super::usage::{self, Credential};
-use agent_runtime::settings::AccountSettings;
+use crate::settings::AccountSettings;
 
 /// The token endpoint answers HTTP 429 to a POST carrying no User-Agent,
 /// whatever the rate; it matches the `claude-cli/` prefix and reads no
@@ -55,7 +55,7 @@ const STEP_ARG: &str = "accounts-renewal-step";
 /// then `account/read` with `refreshToken`, the request its protocol
 /// documents as asking the CLI to refresh its token before answering.
 const CODEX_RENEW_REQUESTS: &str = concat!(
-    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"orch-runtime\",\"version\":\"1\"}}}\n",
+    "{\"method\":\"initialize\",\"id\":0,\"params\":{\"clientInfo\":{\"name\":\"agent-runtime\",\"version\":\"1\"}}}\n",
     "{\"method\":\"initialized\"}\n",
     "{\"method\":\"account/read\",\"id\":1,\"params\":{\"refreshToken\":true}}\n",
 );
@@ -119,7 +119,7 @@ pub fn renew(
     let request = serde_json::to_string(&step).map_err(|e| unrun(e.to_string()))?;
     let out = host::run_tagged_fed_own_group(
         TAG,
-        "orch-runtime",
+        "agent-runtime",
         &exe,
         "renew",
         &[STEP_ARG],
@@ -187,7 +187,7 @@ fn renew_here(step: &Step) -> Result<String, Refused> {
     let deadline = record::Wait {
         limit: LOCK_WAIT,
         poll: Duration::from_millis(100),
-        timer: &agent_runtime::clock::SystemClock,
+        timer: &crate::clock::SystemClock,
     }
     .start();
     let mutex = !record::flock_on_path(std::env::var_os("PATH").as_deref());

@@ -1685,7 +1685,7 @@ pub fn run_driven(
 fn usage_record_path(state: &Path, harness: &str, config_dir: &str) -> PathBuf {
     state.join("usage").join(format!(
         "{harness}-{}-{}.json",
-        orch_runtime::ops::wall::cksum(config_dir.as_bytes()),
+        agent_runtime::accounts::wall::cksum(config_dir.as_bytes()),
         config_dir.len()
     ))
 }

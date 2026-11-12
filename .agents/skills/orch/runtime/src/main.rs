@@ -2357,27 +2357,33 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             let named = agent_runtime::harness::Harness::named(&harness)?;
             let path = target_path(&target, &settings);
             let host = ops::Host::kernel();
-            let request = ops::accounts::PickRequest {
+            let request = agent_runtime::accounts::PickRequest {
                 harness,
                 model: native_model,
                 exclude,
-                replaces,
                 for_overseer,
                 lane,
                 projected,
                 max_pct,
                 min_headroom_pct,
                 binding_floor,
-                host: None,
                 admit_unread_scope: false,
             };
-            let answer = ops::accounts::pick_fleet(&settings, &path, &host, &request, now);
+            let answer = ops::accounts::pick_fleet(
+                &settings,
+                &path,
+                &host,
+                None,
+                replaces.as_deref(),
+                &request,
+                now,
+            );
             if env {
                 // The text form a consumer's room check reads: the account
                 // variable the harness launches under (agent-runtime's
                 // table) and the directory, on stdout at exit 0; any other
                 // answer is its keyed line on stderr at the answer's exit.
-                if let ops::accounts::PickAnswer::Lane(judged) = &answer {
+                if let agent_runtime::accounts::PickAnswer::Lane(judged) = &answer {
                     let _ = writeln!(
                         std::io::stdout().lock(),
                         "{}={}",
@@ -2418,24 +2424,23 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
         } => {
             let path = target_path(&target, &settings);
             let host = ops::Host::kernel();
-            let request = ops::walk::WalkRequest {
+            let request = agent_runtime::accounts::walk::WalkRequest {
                 scope: if overseer {
-                    ops::walk::Scope::Overseer
+                    agent_runtime::accounts::walk::Scope::Overseer
                 } else {
-                    ops::walk::Scope::Lane
+                    agent_runtime::accounts::walk::Scope::Lane
                 },
                 preference: None,
                 lane,
                 exclude,
-                replaces,
                 max_pct,
                 min_headroom_pct,
-                source: source_harness.map(|harness| ops::walk::Source {
+                source: source_harness.map(|harness| agent_runtime::accounts::walk::Source {
                     harness,
                     flags: source_flags
                         .map(|text| text.split_whitespace().map(str::to_owned).collect()),
                 }),
-                caller: caller_harness.map(|harness| ops::walk::Caller {
+                caller: caller_harness.map(|harness| agent_runtime::accounts::walk::Caller {
                     harness,
                     lane: caller_lane,
                     model: caller_model,
@@ -2445,10 +2450,13 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 }),
                 keep_unmeasured,
             };
-            Ok(ops::walk::walk(&settings, &path, &host, &request, now)?.reply())
+            Ok(
+                ops::accounts::walk(&settings, &path, &host, replaces.as_deref(), &request, now)?
+                    .reply(),
+            )
         }
         AccountsOp::Roster { host } => {
-            let today = ops::accounts::today(now);
+            let today = agent_runtime::accounts::today(now);
             Ok(
                 match ops::accounts::roster(&settings, host.as_deref(), now) {
                     Ok(roster) => serde_json::json!({
@@ -2476,7 +2484,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
         } => {
             agent_runtime::harness::Harness::named(&harness)?;
             Ok(serde_json::json!({
-                "billed": ops::accounts::pick_harness(&harness, &native_model),
+                "billed": agent_runtime::accounts::pick_harness(&harness, &native_model),
             }))
         }
     }
@@ -3239,7 +3247,7 @@ const USAGE_EXIT: i32 = 2;
 fn main() {
     // The account renewal re-executes this program for its step, apart
     // from the caller's process group.
-    if ops::accounts::renewal_step(std::env::args_os().nth(1).as_deref()) {
+    if agent_runtime::accounts::renewal_step(std::env::args_os().nth(1).as_deref()) {
         return;
     }
     let stdout = std::io::stdout();

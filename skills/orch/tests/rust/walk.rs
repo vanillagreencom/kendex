@@ -18,10 +18,11 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use agent_runtime::accounts::PickRequest;
 use agent_runtime::clock;
 use agent_runtime::settings::Roots;
 use orch_runtime::ops::Host;
-use orch_runtime::ops::accounts::{PickRequest, pick_fleet};
+use orch_runtime::ops::accounts::pick_fleet;
 use orch_runtime::protocol::Reply;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
@@ -121,17 +122,15 @@ fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
             harness: harness.to_owned(),
             model: None,
             exclude: vec![world.dir(excluded)],
-            replaces: None,
             for_overseer: true,
             lane: None,
             projected: false,
             max_pct: None,
             min_headroom_pct: Some(trigger),
             binding_floor: true,
-            host: None,
             admit_unread_scope: false,
         };
-        let answer = pick_fleet(&settings, &fleet, &host, &request, PICK_NOW);
+        let answer = pick_fleet(&settings, &fleet, &host, None, None, &request, PICK_NOW);
         let verb = serde_json::to_value(Reply::ok(answer.reply())).unwrap();
         let key = format!("{harness}-{trigger}-{excluded}");
         let planted = std::fs::read_to_string(planted_pick_replies().join(format!("{key}.json")))
