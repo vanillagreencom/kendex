@@ -91,7 +91,7 @@ case "${1:-} ${2:-}" in
     # ahead of the body.
     [[ "${STUB_API_USER_SLEEP:-0}" == 0 ]] || exec sleep 2
     case "${STUB_API_USER:-}" in
-      403) printf 'HTTP/1.1 403 Forbidden\n\n'; echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2; exit 1 ;;
+      403) printf 'HTTP/1.1 403 Forbidden\nX-Ratelimit-Remaining: 4999\n\n'; echo "gh: Must have admin rights to Repository. (HTTP 403)" >&2; exit 1 ;;
       502) printf 'HTTP/1.1 502 Bad Gateway\n\n'; echo "gh: Server Error (HTTP 502)" >&2; exit 1 ;;
     esac
     _auth_ok || { printf 'HTTP/1.1 401 Unauthorized\n\n'; echo "HTTP 401: Bad credentials" >&2; exit 1; }
