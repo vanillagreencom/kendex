@@ -8,13 +8,29 @@ use super::{
 use crate::test_util;
 use std::process::Command;
 
-/// A work marker for a fixture to write, spelled in halves.
+/// A merge-conflict marker for a fixture to write, spelled in halves.
 ///
 /// The check under test scans this repository too, so a fixture that spells
-/// the word it is about would fail the very gate it proves works — and the
+/// the marker it is about would fail the very gate it proves works — and the
 /// failure would name the test file, not the code.
-fn work_marker(head: &str, tail: &str) -> String {
-    format!("// {head}{tail}\n")
+fn conflict_marker() -> String {
+    format!("{}{} ours\n", "<<<<", "<<<")
+}
+
+/// Stage a commit the message gate owes a changelog entry: a settings file
+/// requiring one for `src/`, and a change under `src/` with no fragment. Only
+/// a message whose header carries `[no-changelog]` passes it, so a pass proves
+/// the gate read the message it was handed.
+#[allow(clippy::unwrap_used)]
+fn stage_a_change_owing_an_entry(home: &std::path::Path, root: &std::path::Path) {
+    std::fs::write(
+        root.join("kendex.settings.toml"),
+        "[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = \"src/*\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(root.join("src/lib.rs"), "pub fn f() {}\n").unwrap();
+    git_ok(home, root, &["add", "kendex.settings.toml", "src/lib.rs"]);
 }
 
 /// The gate needs no kendex binary. Once the shims are written, git runs
@@ -31,7 +47,7 @@ fn the_armed_gate_still_blocks_with_no_kendex_on_path() {
     let hook = std::fs::read_to_string(root.join(".git/hooks/pre-commit")).unwrap();
     assert!(hook.contains("kendex-guards-hook"), "{hook}");
 
-    std::fs::write(root.join("b.rs"), work_marker("FIX", "ME: later")).unwrap();
+    std::fs::write(root.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let blocked = run_with(
         home,
@@ -41,7 +57,11 @@ fn the_armed_gate_still_blocks_with_no_kendex_on_path() {
         &[("PATH", &path_without_binary())],
     );
     assert!(!blocked.status.success(), "{}", said(&blocked));
-    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+    assert!(
+        said(&blocked).contains("conflict-markers"),
+        "{}",
+        said(&blocked)
+    );
 }
 
 /// The commit-msg lane runs too, on the message file git hands the hook.
@@ -52,13 +72,26 @@ fn the_message_gate_judges_what_git_passes_the_hook() {
     let home = tmp.path();
     let root = armed_repo(home);
 
-    std::fs::write(root.join("b.txt"), "fine\n").unwrap();
-    git_ok(home, &root, &["add", "-A"]);
-    let blocked = git(home, &root, &["commit", "-m", "not conventional at all"]);
+    stage_a_change_owing_an_entry(home, &root);
+    let blocked = git(home, &root, &["commit", "-m", "feat: no entry"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
+    assert!(
+        said(&blocked).contains("commit-msg: changelog-missing="),
+        "{}",
+        said(&blocked)
+    );
 
-    let ok = git(home, &root, &["commit", "-m", "feat: conventional"]);
+    let ok = git(
+        home,
+        &root,
+        &["commit", "-m", "feat: no entry [no-changelog]"],
+    );
     assert!(ok.status.success(), "{}", said(&ok));
+    assert!(
+        said(&ok).contains("commit-msg: changelog-waived="),
+        "{}",
+        said(&ok)
+    );
 }
 
 /// An existing hook keeps its content and its exit status: the package's
@@ -122,12 +155,12 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
     let home = tmp.path();
     let root = repo(home);
     install_package(home, &root, &["commit-guards"]);
-    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &root, &["add", "-A"]);
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
 }
 
 /// An installed sibling joins the chain. An absent sibling leaves the
@@ -168,17 +201,22 @@ fn the_message_lane_resolves_a_relative_path_against_the_caller() {
     let home = tmp.path();
     let root = repo(home);
     install_package(home, &root, &["commit-guards"]);
+    stage_a_change_owing_an_entry(home, &root);
     let sub = root.join("sub");
     std::fs::create_dir_all(&sub).unwrap();
-    std::fs::write(sub.join("MSG"), "not conventional at all\n").unwrap();
+    std::fs::write(sub.join("MSG"), "feat: no entry [no-changelog]\n").unwrap();
 
     let out = run(home, &sub, "kendex", &["guard", "run", "commit-msg", "MSG"]);
-    assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("commit-msg"), "{}", said(&out));
+    assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        said(&out).contains("commit-msg: changelog-waived="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// With no file, the message arrives on stdin. A hardened child pointed at
-/// /dev/null would read an empty message and fail every piped commit.
+/// /dev/null would read an empty message, and the owed entry would refuse it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_message_lane_reads_a_piped_message() {
@@ -187,6 +225,7 @@ fn the_message_lane_reads_a_piped_message() {
     let home = tmp.path();
     let root = repo(home);
     install_package(home, &root, &["commit-guards"]);
+    stage_a_change_owing_an_entry(home, &root);
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(["guard", "run", "commit-msg"])
@@ -203,10 +242,15 @@ fn the_message_lane_reads_a_piped_message() {
         .stdin
         .take()
         .unwrap()
-        .write_all(b"feat: piped and conventional\n")
+        .write_all(b"feat: piped [no-changelog]\n")
         .unwrap();
     let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(0), "{}", said(&out));
+    assert!(
+        said(&out).contains("commit-msg: changelog-waived="),
+        "{}",
+        said(&out)
+    );
 }
 
 /// The resolver mirrors the generated helper: the main checkout is searched
@@ -227,11 +271,15 @@ fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
     );
 
     // The chain runs there, resolved from the main checkout.
-    std::fs::write(linked.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(linked.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &linked, &["add", "-A"]);
     let blocked = git(home, &linked, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
-    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+    assert!(
+        said(&blocked).contains("conflict-markers"),
+        "{}",
+        said(&blocked)
+    );
 
     // And the check reports it armed rather than stale.
     let out = run(home, &linked, "kendex", &["check"]);
@@ -371,11 +419,11 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
     }
 
-    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
 }
 
 /// A checkout path holding an apostrophe: the installer escapes it into the
@@ -404,15 +452,19 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     assert!(helper.contains("'\\''"), "the path was escaped: {helper}");
 
     // Both sides run the same copy: a real commit, and kendex's own lane.
-    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
-    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+    assert!(
+        said(&blocked).contains("conflict-markers"),
+        "{}",
+        said(&blocked)
+    );
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
 }
 
 /// A kendex project can sit below the git top level, and the package
@@ -454,18 +506,22 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     );
 
     // The chain runs from there, resolved through the project's manifest.
-    std::fs::write(project.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(project.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &outer, &["add", "-A"]);
     let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
 
     // And arming from there gates a real commit.
     let armed = run(home, &project, "kendex", &["guard", "install"]);
     assert!(armed.status.success(), "{}", said(&armed));
     let blocked = git(home, &project, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
-    assert!(said(&blocked).contains("todo-ban"), "{}", said(&blocked));
+    assert!(
+        said(&blocked).contains("conflict-markers"),
+        "{}",
+        said(&blocked)
+    );
 }
 
 /// A tampered helper cannot redirect the guard verbs.
@@ -524,7 +580,7 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
     std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     // The verbs fall through to the search roots and run the real package.
-    std::fs::write(root.join("b.rs"), work_marker("TO", "DO: not yet")).unwrap();
+    std::fs::write(root.join("b.rs"), conflict_marker()).unwrap();
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert!(
@@ -533,7 +589,7 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
         said(&out)
     );
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("todo-ban"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
 }
 
 /// A package next to the git directory is not this repository's package.

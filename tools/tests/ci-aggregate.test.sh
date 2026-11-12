@@ -528,10 +528,9 @@ check "the shard matrix expands ci-job-set's roster, in order, when nothing clas
   "$(selection standard false .github/workflows/skill-tests.yml | sed -n 's/.* shards=\([^ ]*\).*/\1/p')" \
   "$(legs "$WORKFLOW" "$ALL_OFF" failure merge_group shard)"
 
-# The document byte ceilings and the work-marker scan run in the job a
-# `render` or `trivial` diff runs, and in no other, so every class that runs
-# any gated job runs both scans in its merge group, as the step table below
-# holds. Each `run:` line is read with the job it sits in.
+# The document byte ceilings run in the job a `render` or `trivial` diff
+# runs, and in no other, so every class that runs any gated job runs that
+# scan in its merge group, as the step table below holds. Each `run:` line is read with the job it sits in.
 job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorted and spaced
   COMMAND="$2" awk '
     /^jobs:/ { in_jobs = 1; next }
@@ -542,9 +541,8 @@ job_of_run() { # WORKFLOW COMMAND — the jobs whose `run:` line names it, sorte
 }
 VERIFY_JOBS="$(running "$WORKFLOW" "$VERIFY_ROW" success merge_group)"
 [ -n "$VERIFY_JOBS" ] || { echo "the verify row runs no job, so the extractor is broken" >&2; exit 1; }
-for scan in skills/doc-limits/scripts/doc-limits skills/commit-guards/scripts/todo-ban; do
-  check "$scan runs in the verify job alone" "$VERIFY_JOBS" "$(job_of_run "$WORKFLOW" "$scan")"
-done
+check "doc-limits runs in the verify job alone" "$VERIFY_JOBS" \
+  "$(job_of_run "$WORKFLOW" skills/doc-limits/scripts/doc-limits)"
 
 # Every step runs on the merge group, the one run that judges a change: a
 # pull request runs no lane. Every run step of the job is held here: a step is known by its `id:`, or
@@ -553,7 +551,6 @@ done
 DOC_LIMITS=skills/doc-limits/scripts/doc-limits
 STEP_JOB=bot-instructions
 DOC_STEP='doc-limits (document byte ceilings)'
-TODO_STEP='todo-ban (index-wide work-marker scan)'
 SECRETS_STEP='secrets (credential scan of the change)'
 # `KEY<tab>IF<tab>RUN` per step of JOB: KEY its id, else its name, else `?`;
 # IF its condition (`${{ }}` stripped, or none); RUN yes where it has `run:`.
@@ -601,7 +598,6 @@ step_coverage_gap() { # WORKFLOW
 }
 # EVENT|STEP|RUNS
 STEP_ROWS="merge_group|$DOC_STEP|yes
-merge_group|$TODO_STEP|yes
 merge_group|$SECRETS_STEP|yes
 merge_group|bot-instructions-check|yes
 merge_group|decision-ids|yes

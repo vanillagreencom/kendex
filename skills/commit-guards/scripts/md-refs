@@ -7,7 +7,7 @@
 # --against name — rechecks all configured documents and source files so
 # target edits cannot leave unchanged callers broken. Fenced code is not read.
 # The grammar is in lib/md-refs.awk; comment text and TOML strings come from
-# the comments lane's extractor, lib/comment-text.sh.
+# the extractor in lib/comment-text.sh.
 #
 # A content citation is a markdown code span whose text before the first `::`
 # holds a `/` and is spelled from path characters only, with a non-empty
@@ -48,8 +48,7 @@ source "$SCRIPT_DIR/lib/md-scope.sh"
 source "$SCRIPT_DIR/lib/comment-text.sh"
 
 # What an agent harness loads, plus the architecture docs those files point
-# at; each name spelled at the root and below it, as the prose lane spells
-# them.
+# at; each name spelled at the root and below it.
 PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 # Broader discovery is opt-in because every scan rechecks unchanged files.
 SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"

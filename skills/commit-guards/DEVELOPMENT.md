@@ -9,7 +9,7 @@ What a maintainer must not break. What each check fails: [CHECKS.md](CHECKS.md);
 - `scripts/lib/configured-paths.sh` holds a glob-list lane's list, excludes, matcher, index walk and `gg_note_skip`.
 - `scripts/lib/staged-lines.sh` is `gg_added_lines`, the lines the staged diff or a commit range adds to one path, off one pinned `-U0` diff.
 - `scripts/lib/command-position.sh` remains available to older installed `block-worktree-refresh` hooks. The current hook uses the parsed CLI guard; its suite under `hooks/tests/` tests advisory behavior.
-- `scripts/lib/comment-text.sh` is the comment grammar per path and the `line<TAB>text` scanner; its limits are stated in CHECKS.md § comments and pinned by `tests/comments.test.sh`.
+- `scripts/lib/comment-text.sh` is the comment grammar per path and the `line<TAB>text` scanner md-refs reads; its limits are stated in CHECKS.md § comments and pinned by `tests/comments.test.sh`.
 - `scripts/lib/commit-header.sh` and `changelog-grammar.sh` define what a commit header and a changelog fragment are; `commit-parent.sh` is the parent a commit will have, an amend read off `/proc/<pid>/cmdline`.
 - `scripts/lib/helper-body.sh` is the exact bytes of `.git/hooks/kendex-guards` (`helper_body`, `helper_head_shape`, `gg_shell_quote`), and with them `GG_LANES` and `gg_lane_verb`: the lanes this package owns and the verb each one gates, read by the installer's delegating line and by `--check`, and carried a third time inside the helper, which can source nothing; `skill-roots.sh` is the one definition of the skills roots, including the copy baked into the helper; `hooks-path.sh` is where git reads hooks from.
 - `scripts/lib/md-blocks.awk` is the one reading of a markdown file's blocks; `md-shapes.awk` the line-shape predicates it asks, always the first `-f` program of `md-reflow`, `md-refs` and `md-type`, never loaded alone; `md-type.awk` md-type's readings of docs-writing's route table and section list and of a judged file's structure; `md-refs.awk` what a file cites and defines; `md-slug.awk` a heading reduced to its GitHub anchor; `md-scope.sh` the scopes the markdown lanes share, the staged and range scopes selecting by the lane's own rename policy.
@@ -98,10 +98,6 @@ Every step runs before the verdict. A present companion, or the batch, whose scr
 - The reflow is the block state machine printing the format, and `--check` compares a file with its reflow; `tests/md-reflow.test.sh` proves the output over the corpus and proves each rewrite is a fixed point.
 - The batch passes `--staged` to both markdown checks at commit scope and `--base REF` or `--against REF` at a range scope, on byte-ceiling's dot conventions. md-type selects the documents the scope changed, renames detected, so a move is judged against the path it left; md-refs is a trigger, so any change in scope widens it to all configured documents against the index, since a removed target invalidates references in callers the change never touched. `COMMIT_GUARDS_MD_SCOPE=all` makes unflagged checks unconditional, and keeps md-refs on the sweep under a range; md-type keeps the range, since its verdict is what the change introduced.
 
-## todo-ban marker shapes
-
-Stated once, in CHECKS.md § todo-ban. At `--staged` the change set is collected as byte-ceiling's staged lane collects it (`--raw`, renames at exact content, symlinks and gitlinks dropped by destination mode), a `git grep --cached` over those paths names the carriers in chunks inside ARG_MAX, and only the named paths reach the per-path `-U0` diff. Membership is a `case` over a newline-delimited set: Bash 3.2 has no associative array.
-
 ## byte-ceiling sizing
 
 The shared binary classifier selects blobs for the ceiling and warning. Text and source files are not sized against the ceiling. Large binary blobs remain in every clone.
@@ -118,7 +114,7 @@ The pathspec table is in CHECKS.md § suppression-ban. The bare-allow count runs
 
 ## Excludes format
 
-The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Configuration`; all six excludes lists share it, and a bare `!` is a config error. A baseline is `path<TAB>N`, `LC_ALL=C` sorted, unique paths, N a positive integer; a malformed, unsorted or duplicated row is exit 2, never repaired, by `gg_validate_baseline` in `scripts/lib/common.sh` for both baselines. The path-glob lists (`COMMIT_GUARDS_CHANGELOG_PATHS`, `COMMIT_GUARDS_PROSE_PATHS`, `COMMIT_GUARDS_MD_PATHS`, `COMMIT_GUARDS_MD_REFS_PATHS`, `COMMIT_GUARDS_COMMENT_PATHS`) load through `gg_load_path_globs`: an absolute pattern, one escaping the repository, one leading with `-`, and an empty effective list are exit 2. For md-refs, `gg_md_load_paths` combines each base list with its matching EXTRA list before this check. The caller runs under `set -f`, which the loader checks; without it the patterns expand against the work tree.
+The row format, the `!` carve and the `\!` escape are stated in `SKILL.md § Configuration`; every excludes list shares it, and a bare `!` is a config error. A baseline is `path<TAB>N`, `LC_ALL=C` sorted, unique paths, N a positive integer; a malformed, unsorted or duplicated row is exit 2, never repaired, by `gg_validate_baseline` in `scripts/lib/common.sh` for both baselines. The path-glob lists (`COMMIT_GUARDS_CHANGELOG_PATHS`, `COMMIT_GUARDS_MD_PATHS`, `COMMIT_GUARDS_MD_REFS_PATHS`) load through `gg_load_path_globs`: an absolute pattern, one escaping the repository, one leading with `-`, and an empty effective list are exit 2. For md-refs, `gg_md_load_paths` combines each base list with its matching EXTRA list before this check. The caller runs under `set -f`, which the loader checks; without it the patterns expand against the work tree.
 
 ## Probing a terminal-only code path
 

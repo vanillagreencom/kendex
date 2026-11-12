@@ -1,6 +1,13 @@
 {
   "keys": [
     "COMMIT_GUARDS_CHANGELOG_CAP",
+    "COMMIT_GUARDS_COMMENT_EXCLUDES",
+    "COMMIT_GUARDS_COMMENT_PATHS",
+    "COMMIT_GUARDS_COMMENT_REFERENCE_TYPES",
+    "COMMIT_GUARDS_COMMIT_TYPES",
+    "COMMIT_GUARDS_PROSE_PATHS",
+    "COMMIT_GUARDS_SUBJECT_MAX",
+    "COMMIT_GUARDS_TODO_EXCLUDES",
     "PR_APPROVAL_GATE",
     "PR_REVIEW_CHECK",
     "PR_REVIEW_GATE",
@@ -40,7 +47,8 @@
       "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs",
       "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names",
       "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names secrets",
-      "todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets"
+      "todo-ban suppression-ban conflict-markers changelog-entries md-format md-refs py-names secrets",
+      "todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
     ],
     "COMMIT_GUARDS_MD_REFS_PATHS": [
       "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"

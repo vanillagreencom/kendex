@@ -138,39 +138,6 @@ gg_config_path() { # RAW LABEL — normalized on stdout; nonzero + ::error on st
   printf '%s' "$norm"
 }
 
-# The family's character count, as awk source, read under LC_ALL=C. One
-# definition, because every cap in this package counts one way — bash's
-# ${#var} follows the ambient locale, and a git hook inherits whatever
-# environment the committer has, so the same text would be accepted in one
-# shell and refused in another.
-#
-# Each well-formed UTF-8 sequence collapses to one character; every other byte
-# counts as itself. So a stray continuation byte, an overlong form, a
-# surrogate encoding and an out-of-range lead byte each cost one per byte
-# rather than one per sequence: text that is not valid UTF-8 has no character
-# count, and a cap must round that in the direction that cannot let an
-# over-long value through. The alternatives are the byte grammar RFC 3629
-# defines — the same ranges GG_UTF8_AWK validates against — because a range
-# written loosely is what makes E0 80 80 or F4 90 80 80 measure as one.
-GG_CHARS_AWK_FN='
-function gg_chars(s,   seq) {
-  seq = "[\302-\337][\200-\277]"
-  seq = seq "|\340[\240-\277][\200-\277]"
-  seq = seq "|[\341-\354][\200-\277][\200-\277]"
-  seq = seq "|\355[\200-\237][\200-\277]"
-  seq = seq "|[\356-\357][\200-\277][\200-\277]"
-  seq = seq "|\360[\220-\277][\200-\277][\200-\277]"
-  seq = seq "|[\361-\363][\200-\277][\200-\277][\200-\277]"
-  seq = seq "|\364[\200-\217][\200-\277][\200-\277]"
-  gsub(seq, "x", s)
-  return length(s)
-}
-'
-
-gg_chars() { # TEXT — its character count on stdout
-  printf '%s' "$1" | LC_ALL=C awk "$GG_CHARS_AWK_FN"'{ total += gg_chars($0) } END { print total + 0 }'
-}
-
 # What a git tree mode IS, asked by what a file is rather than by a list of
 # what it is not: 100644 and 100755 are a regular file, and 120000, 160000
 # and 040000 are a symlink, a gitlink and a tree. A mode nobody has thought
@@ -248,8 +215,7 @@ gg_grep_guard() { # STATUS ERRFILE CONTEXT — returns only when the scan is com
 # genuine asset and is counted as unmeasured, so it never reaches a violation
 # record as raw bytes and never rides inside a clean total either. Only a path
 # the listing NAMED is read, so the sniff costs one `cat-file` per matching
-# file, never one per tracked file. That is the same answer todo-ban's commit
-# lane gives the same question.
+# file, never one per tracked file.
 # Needs GG_TMP (gg_tmpdir) and the excludes already loaded.
 gg_content_carriers() { # OUTFILE LABEL ERE PATHSPEC... — measurable carriers, NUL-delimited
   local out="$1" label="$2" ere="$3" status=0 f

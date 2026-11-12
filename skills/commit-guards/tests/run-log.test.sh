@@ -6,8 +6,8 @@
 # named and leaves the verdict alone. A reader of the log parses the format
 # ../CHECKS.md § The run log sets out.
 #
-# Marker words are assembled from split tokens so this file never contains
-# a marker shape itself.
+# Conflict markers are assembled from split tokens so this file never
+# contains a marker shape itself.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,8 +17,8 @@ GG="$SKILL_DIR/scripts/commit-guards"
 . "$TEST_DIR/lib/harness.bash"
 unset CI GITHUB_ACTIONS COMMIT_GUARDS_CHECKS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
-TD="TO""DO"
-TWO="COMMIT_GUARDS_CHECKS=todo-ban conflict-markers"
+CM="<<<<""<<<"
+TWO="COMMIT_GUARDS_CHECKS=conflict-markers suppression-ban"
 
 # The production clock reads date in separate processes. A file carries its
 # deterministic input across those reads, including command substitutions.
@@ -70,8 +70,9 @@ assert_eq() { # LABEL EXPECT ACTUAL
   fi
 }
 
-# A repository with one clean commit tagged base, then a staged work marker,
-# so todo-ban fails the staged batch and conflict-markers passes it.
+# A repository with one clean commit tagged base, then a staged conflict
+# marker, so conflict-markers fails the staged batch and suppression-ban
+# passes it.
 R=""
 fixture() { # NAME
   R="$TMP/$1"
@@ -85,7 +86,7 @@ fixture() { # NAME
   git -C "$R" add ok.rs
   git -C "$R" commit -qm seed
   git -C "$R" tag base
-  printf '// %s: planted for the run log\n' "$TD" >"$R/planted.rs"
+  printf '%s planted for the run log\n' "$CM" >"$R/planted.rs"
   git -C "$R" add planted.rs
 }
 run() { # DIR ENVS ARGS [GG] — the batch's exit status
@@ -104,15 +105,15 @@ times() { LC_ALL=C awk -F '\t' '{ printf "%s%s,%s", (NR > 1 ? ";" : ""), $1, $5 
 
 echo "=== every batch outcome writes its row and continues to the next guard ==="
 for row in \
-  'violations|todo-ban|1|violations' \
+  'violations|conflict-markers|1|violations' \
   'incomplete|secrets|2|incomplete'; do
   IFS='|' read -r name guard status outcome <<<"$row"
   fixture "$name"
   head="$(git -C "$R" rev-parse HEAD)"
   assert_eq "$name: the batch keeps the guard's verdict" "$status" \
-    "$(run "$R" "COMMIT_GUARDS_CHECKS=$guard conflict-markers" "all --staged")"
+    "$(run "$R" "COMMIT_GUARDS_CHECKS=$guard suppression-ban" "all --staged")"
   assert_eq "$name: each guard's outcome, batch scope and starting commit" \
-    "$guard,staged,$outcome,$head;conflict-markers,staged,clean,$head" "$(rows "$(log_of "$R")")"
+    "$guard,staged,$outcome,$head;suppression-ban,staged,clean,$head" "$(rows "$(log_of "$R")")"
   assert_eq "$name: each guard carries the clock's elapsed time" "" "$(unmeasured "$(log_of "$R")")"
   assert_eq "$name: starts are whole epoch seconds and durations have three decimals" \
     '1700000000,0.125;1700000000,0.125' "$(times "$(log_of "$R")")"
@@ -134,12 +135,12 @@ echo "=== a range batch records the range; a linked worktree logs beside its mai
 fixture range
 git -C "$R" commit -qm 'add the marker'
 head="$(git -C "$R" rev-parse HEAD)"
-assert_eq "a range batch runs" 1 "$(run "$R" "COMMIT_GUARDS_CHECKS=todo-ban" "all --base base")"
-assert_eq "the row names the range on byte-ceiling's dots" "todo-ban,base,violations,base...$head" "$(rows "$(log_of "$R")")"
+assert_eq "a range batch runs" 1 "$(run "$R" "COMMIT_GUARDS_CHECKS=conflict-markers" "all --base base")"
+assert_eq "the row names the range on byte-ceiling's dots" "conflict-markers,base,violations,base...$head" "$(rows "$(log_of "$R")")"
 git -C "$R" worktree add -q "$TMP/range-linked" base
-assert_eq "a batch in the linked worktree runs" 0 "$(run "$TMP/range-linked" "COMMIT_GUARDS_CHECKS=todo-ban" "all --against base")"
+assert_eq "a batch in the linked worktree runs" 0 "$(run "$TMP/range-linked" "COMMIT_GUARDS_CHECKS=conflict-markers" "all --against base")"
 assert_eq "its row lands in the common git directory" \
-  "todo-ban,base,violations,base...$head;todo-ban,against,clean,base..$(git -C "$R" rev-parse base)" "$(rows "$(log_of "$R")")"
+  "conflict-markers,base,violations,base...$head;conflict-markers,against,clean,base..$(git -C "$R" rev-parse base)" "$(rows "$(log_of "$R")")"
 
 echo "=== a log that cannot be written is named and changes no verdict ==="
 fixture unwritable
@@ -153,15 +154,15 @@ gg_mutant CLEAN_GG commit-guards 'outcome=incomplete' 'outcome=clean'
 fixture false-clean
 head="$(git -C "$R" rev-parse HEAD)"
 assert_eq "must-fail: falsifying an incomplete row leaves the batch dependency error" 2 \
-  "$(run "$R" 'COMMIT_GUARDS_CHECKS=secrets conflict-markers' 'all --staged' "$CLEAN_GG")"
+  "$(run "$R" 'COMMIT_GUARDS_CHECKS=secrets suppression-ban' 'all --staged' "$CLEAN_GG")"
 assert_eq "must-fail: the incomplete outcome assertion detects a false clean row" \
-  "secrets,staged,clean,$head;conflict-markers,staged,clean,$head" "$(rows "$(log_of "$R")")"
+  "secrets,staged,clean,$head;suppression-ban,staged,clean,$head" "$(rows "$(log_of "$R")")"
 # A copy that reads the clock again before the guard runs measures nothing.
 gg_mutant UNTIMED_GG commit-guards 'ended="$(clock)" || ended=""' 'ended="$started"'
 fixture untimed
 run "$R" "$TWO" "all --staged" "$UNTIMED_GG" >/dev/null
 assert_eq "must-fail: a duration taken before the guard runs is not a measurement" \
-  "1:todo-ban:0.000;2:conflict-markers:0.000" "$(unmeasured "$(log_of "$R")" | paste -sd ';' -)"
+  "1:conflict-markers:0.000;2:suppression-ban:0.000" "$(unmeasured "$(log_of "$R")" | paste -sd ';' -)"
 # A copy that writes under the work tree root.
 gg_mutant INTREE_GG commit-guards 'gg_git_path RUN_LOG . rev-parse --git-common-dir' 'gg_git_path RUN_LOG . rev-parse --show-toplevel'
 fixture intree

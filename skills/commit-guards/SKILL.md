@@ -1,7 +1,7 @@
 ---
 name: commit-guards
 description: "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
-summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown, Python names and commit messages, plus an optional comment audit and git hook shims."
+summary: "Commit guards for bytes, suppressions, conflicts, changelog, markdown and Python names, plus git hook shims."
 license: MIT
 user-invocable: true
 metadata:

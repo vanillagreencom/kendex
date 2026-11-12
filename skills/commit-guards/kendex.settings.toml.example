@@ -4,9 +4,9 @@
 
 # Which checks run, separated by spaces. The value shown here is the default
 # set; delete a name to turn that one off. A project can add the optional
-# byte-ceiling, prose and comments checks by name. Commit-msg never runs in
-# this batch. What each name refuses is in the skill's CHECKS.md.
-COMMIT_GUARDS_CHECKS = "todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+# byte-ceiling check by name. Commit-msg never runs in this batch. What each
+# name refuses is in the skill's CHECKS.md.
+COMMIT_GUARDS_CHECKS = "suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
 
 # Kilobytes one tracked binary file may reach before a commit carrying it
 # is refused. An oversized binary file may hold or shrink, but never grow.
@@ -71,23 +71,6 @@ COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL
 # nothing.
 # COMMIT_GUARDS_MD_REFS_PATHS_EXTRA = "docs/guides/*.md"
 # COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA = "bin/fleet"
-
-# The source files the comments check reads, as path patterns separated by
-# spaces. A value replaces the list of file extensions the skill ships; add
-# the shapes an extension cannot name, such as scripts with no suffix. An
-# explicitly empty value is refused, so name a path or drop the check.
-# COMMIT_GUARDS_COMMENT_PATHS = "*.rs *.sh hooks/* */scripts/*"
-
-# The file listing the generated and vendored folders whose comments this
-# project does not own. Each row names a pattern and the reason it is
-# skipped.
-COMMIT_GUARDS_COMMENT_EXCLUDES = "tools/comments-excludes"
-
-# Which references a comment may not carry, separated by spaces. Dates and
-# issue numbers written after a hash, such as #1234, are checked as shipped.
-# An ordinary number passes. Issue ids are checked only once the github
-# package's issue-id pattern is set.
-COMMIT_GUARDS_COMMENT_REFERENCE_TYPES = "issue-id issue-number date"
 
 # This project's own check, run last before a commit lands. Give the path to
 # an executable at the project root: a non-zero result blocks the commit,

@@ -16,12 +16,12 @@ INSTALL="$SKILL_DIR/scripts/install-git-hooks"
 GG_SKILL_TEMPLATE="$TMP/.templates/commit-guards"
 
 unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_PRE_COMMIT_LOCAL COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS COMMIT_GUARDS_SETTINGS_FILE \
-  COMMIT_GUARDS_COMMIT_TYPES DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE 2>/dev/null || true
+  COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS DOC_LIMITS_CLASSES DOC_LIMITS_DEFAULT_CLASSES DOC_LIMITS_EXCLUDES DOC_LIMITS_SETTINGS_FILE 2>/dev/null || true
 
-# Marker words are assembled from split tokens so this file never contains a
-# marker shape itself — the kendex repo runs todo-ban over its own tree.
-TD="TO""DO"
-FX="FIX""ME"
+# Conflict markers are assembled from split tokens so this file never
+# contains a marker shape itself — the kendex repo runs conflict-markers over
+# its own tree.
+CM="<<<<""<<<"
 
 PASS=0
 FAIL=0
@@ -317,7 +317,7 @@ armed_from() { # NAME SCRIPTS_DIR
   "$R/.agents/skills/commit-guards/scripts/install-git-hooks" --repo "$R" >/dev/null 2>&1 || true
 }
 stage() { printf '%b' "$2" >"$R/$1"; git -C "$R" add -- "$1"; }
-stage_marker() { stage b.py "# $TD: finish this\n"; }
+stage_marker() { stage b.py "$CM finish this\n"; }
 seed() { git -C "$R" commit -q -m "feat: seed" >/dev/null 2>&1 || SEEDS_FAILED="$SEEDS_FAILED ${R##*/}"; }
 foreign() { printf '%b' "$2" >"$R/.git/hooks/$1"; chmod +x "$R/.git/hooks/$1"; }
 settings() { stage kendex.settings.toml "[env]\n$1\n"; }
@@ -362,13 +362,12 @@ SHIM_MSG="$X:#!/bin/sh~@MSG@~@CREATED@"
 SHIM_PUSH="$X:#!/bin/sh~@PUSH@~@CREATED@"
 FRESH="helper=$OURS pre-commit=$SHIM_PRE commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>"
 CHAIN_OK="pre-commit: result=0"
-MSG_OK="commit-msg: header-valid="
 BLOCKED="pre-commit: result=1"
 NO_HELPER="commit-guards: hook-helper=.git/hooks/kendex-guards"
 NO_SCRIPT="kendex-guards: lane-missing=pre-commit"
 # The plumbing rows run one check: the batch's composition is not their
 # subject and every check has its own suite.
-ONE="COMMIT_GUARDS_CHECKS=todo-ban"
+ONE="COMMIT_GUARDS_CHECKS=conflict-markers"
 
 
 # A fixture that takes something away from the scratch root (a directory's

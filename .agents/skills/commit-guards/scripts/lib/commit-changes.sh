@@ -8,7 +8,7 @@ source "$GG_COMMIT_LIB/commit-parent.sh"
 
 gg_commit_paths() { # sets GG_TMP/staged.z and written.z
   local meta src dest srcmode dstmode srcsha dstsha status
-  # --raw, the spelling todo-ban and byte-ceiling already use: a raw record
+  # --raw, the spelling byte-ceiling already uses: a raw record
   # carries the old and new MODE and the old and new BLOB for every path, so
   # what a commit did to a file is read off the record rather than inferred
   # from a letter. --name-status collapses each record into one letter, which

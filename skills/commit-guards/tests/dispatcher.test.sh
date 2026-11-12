@@ -11,8 +11,8 @@
 # are that check's suite's), and the single-check invocations, pinned by
 # the exit status and the first line the named check printed.
 #
-# Marker words are assembled from split tokens so this file never contains
-# a marker shape itself.
+# Conflict markers are assembled from split tokens so this file never
+# contains a marker shape itself.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,15 +21,15 @@ GG="$SKILL_DIR/scripts/commit-guards"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would change every batch below.
-unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_TODO_EXCLUDES COMMIT_GUARDS_BYTE_CEILING_KB \
+unset COMMIT_GUARDS_CHECKS COMMIT_GUARDS_BYTE_CEILING_KB \
   COMMIT_GUARDS_BYTE_EXCLUDES COMMIT_GUARDS_SUPPRESSION_EXCLUDES \
   COMMIT_GUARDS_SUPPRESSION_BASELINE COMMIT_GUARDS_CONFLICT_EXCLUDES \
-  COMMIT_GUARDS_COMMIT_TYPES COMMIT_GUARDS_PROSE_PATHS \
+  COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS \
   COMMIT_GUARDS_MD_PATHS COMMIT_GUARDS_MD_REFS_PATHS COMMIT_GUARDS_MD_REFS_PATHS_EXTRA COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA \
   COMMIT_GUARDS_MD_EXCLUDES COMMIT_GUARDS_MD_SCOPE \
   COMMIT_GUARDS_CHANGELOG_VERSION_PATHS COMMIT_GUARDS_SETTINGS_FILE 2>/dev/null || true
 
-TD="TO""DO"
+CM="<<<<""<<<"
 
 PASS=0
 FAIL=0
@@ -68,8 +68,8 @@ single() { # ENVS ARGS [STDIN]
 }
 
 # Stable dispatcher records and scope values.
-DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
-STAGED_SCOPED="todo-ban byte-ceiling md-type md-refs py-names secrets comments"
+DEFAULT="suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"
+STAGED_SCOPED="byte-ceiling md-type md-refs py-names secrets"
 ERR="commit-guards: "
 steps() { # MODE CHECKS [INCOMPLETE]
   local mode="$1" c flag
@@ -113,11 +113,20 @@ large_binary() { # NAME [CHECKS]: a new 300 KB binary staged after the seed
   head -c 307200 /dev/zero >"$R/large.bin"
   git -C "$R" add large.bin
 }
-planted() { clean "$1"; put planted.rs "// $TD: planted for the dispatcher\n"; } # NAME — a staged work marker
+planted() { clean "$1"; put planted.rs "$CM planted for the dispatcher\n"; } # NAME — a staged conflict marker
 fx_settings_checks() { clean settings-checks; put kendex.settings.toml '[env]\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; }
+owed() { # NAME — a staged change the commit-msg gate owes a changelog entry
+  clean "$1"; commit
+  put kendex.settings.toml '[env]\nCOMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = "src/*"\n'
+  put src/a.rs 'fn a() {}\n'
+}
 fx_settings_bad() { clean settings-bad; put kendex.settings.toml '[env\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n'; } # an unclosed table header
-staged_batch() { # NAME — a committed marker, and a staged change that adds none
-  clean "$1"; commit; put fixture.rs "// $TD: committed in a fixture\n"; commit fixture
+# The default batch plus byte-ceiling, the staged-scoped lane whose full
+# scope reads the committed tree: --staged must hand it the commit's diff.
+STAGED_SET="byte-ceiling $DEFAULT"
+STAGED_ENV="COMMIT_GUARDS_CHECKS=$STAGED_SET"
+staged_batch() { # NAME — a committed 300 KB binary, and a staged change that adds none
+  clean "$1"; commit; head -c 307200 /dev/zero >"$R/large.bin"; git -C "$R" add large.bin; commit fixture
   # The staged lane reads a non-empty diff; what it prints about it is
   # its own suite's, so no row here can tell this change from none.
   printf 'fn other() {}\n' >>"$R/ok.rs"; git -C "$R" add ok.rs
@@ -185,14 +194,14 @@ echo "=== a scope that stages nothing withholds the checks that read only that =
 # read off their own scripts, so this row moves if the library does.
 MD_ONLY=COMMIT_GUARDS_CHECKS=md-type
 REFS_ONLY=COMMIT_GUARDS_CHECKS=md-refs
-MD_AND_MARKERS='COMMIT_GUARDS_CHECKS=todo-ban md-type'
+MD_AND_CONFLICTS='COMMIT_GUARDS_CHECKS=conflict-markers md-type'
 SECRETS_ONLY=COMMIT_GUARDS_CHECKS=secrets
 SECRETS_WITHHELD="rc=0 commit-guards: unscoped=secrets;commit-guards: withheld-all=secrets"
 run_rows \
   "must-fail: without the flag the batch reports a document it never opened as clean|fx_committed_md md-folded|$MD_ONLY||rc=0 commit-guards: step=md-type;$(ok md-type)" \
   "control: the document really is malformed, which --all over the same tree finds|fx_committed_md md-really|$MD_ONLY|md-type --all|rc=1" \
   "with the flag the lane is named as unscoped, and every enabled check being one is said outright|fx_committed_md md-withheld|$MD_ONLY|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
-  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_MARKERS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: step=todo-ban;$(ok todo-ban)" \
+  "the checks the scope does reach still run, and the verdict names only those|fx_committed_md md-partial|$MD_AND_CONFLICTS|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: step=conflict-markers;$(ok conflict-markers)" \
   "--skip-unscoped under --staged is a contradiction, since that is the scope those checks read|fx_committed_md md-contradiction|$MD_ONLY|all --staged --skip-unscoped|rc=2 ${ERR}scope-contradiction=--staged,--skip-unscoped" \
   "a project that configured the lane to sweep the tree gets it run, since that scope stages nothing either|fx_committed_refs md-scope-all|$REFS_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=1 commit-guards: step=md-refs;$VIOLATIONS" \
   "a change-scoped lane handed no range is withheld under the sweep setting too, never a clean run against HEAD|fx_committed_table md-type-all|$MD_ONLY,COMMIT_GUARDS_MD_SCOPE=all|all --skip-unscoped|rc=0 commit-guards: unscoped=md-type;commit-guards: withheld-all=md-type" \
@@ -229,7 +238,6 @@ run_rows \
   "COMMIT_GUARDS_CHECKS narrows the batch: with byte-ceiling alone the planted marker is not judged|planted planted-2|COMMIT_GUARDS_CHECKS=byte-ceiling||rc=0 $(steps all byte-ceiling)$(ok byte-ceiling)" \
   "the check list resolves from kendex.settings.toml|fx_settings_checks|||rc=0 $(steps all conflict-markers)$(ok conflict-markers)" \
   "a check list that cannot be read is exit 2 before any check runs; the loader's own error is the only line|fx_settings_bad|||rc=2 commit-guards: settings-header=kendex.settings.toml:1" \
-  "a check outside the default batch runs when named, with its staged scope|clean comments-staged|COMMIT_GUARDS_CHECKS=comments|--staged|rc=0 $(steps staged comments)$(ok comments)" \
   "commit-msg in the batch list is exit 2 with the hook pointer|clean list-commit-msg|COMMIT_GUARDS_CHECKS=conflict-markers commit-msg||rc=2 ${ERR}check-interactive=commit-msg" \
   "an unknown name in the check list is exit 2 naming the known set|clean list-unknown|COMMIT_GUARDS_CHECKS=conflict-markers no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
   "a blank check list is exit 2|clean list-blank|COMMIT_GUARDS_CHECKS= ||rc=2 ${ERR}checks-empty=COMMIT_GUARDS_CHECKS" \
@@ -268,10 +276,10 @@ versioned() { # NAME — a committed major bump after base
   commit
 }
 run_rows \
-  "'all --staged' hands --staged to the staged-scoped checks and no other, so a commit adding no marker passes|staged_batch staged-1||all --staged|rc=0 $(steps staged "$DEFAULT")$(ok)" \
-  "control: a hard-wrapped markdown file staged beside the code fails the staged batch|fx_staged_md||all --staged|rc=1 $(steps staged "$DEFAULT")$VIOLATIONS" \
-  "'--staged' without 'all' is the same batch|staged_batch staged-2||--staged|rc=0 $(steps staged "$DEFAULT")$(ok)" \
-  "control: the index-wide batch still refuses the committed marker|staged_batch staged-3|||rc=1 $(steps all "$DEFAULT")$VIOLATIONS" \
+  "'all --staged' hands --staged to the staged-scoped checks and no other, so a commit adding no binary passes|staged_batch staged-1|$STAGED_ENV|all --staged|rc=0 $(steps staged "$STAGED_SET")$(ok "$STAGED_SET")" \
+  "control: a hard-wrapped markdown file staged beside the code fails the staged batch|fx_staged_md|$STAGED_ENV|all --staged|rc=1 $(steps staged "$STAGED_SET")$VIOLATIONS" \
+  "'--staged' without 'all' is the same batch|staged_batch staged-2|$STAGED_ENV|--staged|rc=0 $(steps staged "$STAGED_SET")$(ok "$STAGED_SET")" \
+  "control: the full batch still refuses the committed binary|staged_batch staged-3|$STAGED_ENV||rc=1 $(steps all "$STAGED_SET")$VIOLATIONS" \
   "a check outside the staged-scoped set runs unflagged under --staged|staged_batch staged-4|COMMIT_GUARDS_CHECKS=conflict-markers|all --staged|rc=0 $(steps staged conflict-markers)$(ok conflict-markers)" \
   "'all' hands byte-ceiling --all, so a committed oversized file fails the full batch|full_scope full-1|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all|rc=1 $(steps all byte-ceiling)$VIOLATIONS" \
   "control: 'all --staged' hands byte-ceiling --staged and judges only the staged diff|full_scope full-2|$BC=1,COMMIT_GUARDS_CHECKS=byte-ceiling|all --staged|rc=0 $(steps staged byte-ceiling)$(ok byte-ceiling)" \
@@ -301,10 +309,12 @@ assert_eq "must-fail: without the change-scoped list md-type sweeps the tree and
   "$(GG="$SWEEPING_GG" batch "COMMIT_GUARDS_CHECKS=md-type,COMMIT_GUARDS_MD_SCOPE=all" "all --base base")"
 
 echo "=== a retired check name is dropped with one warning until the next major release ==="
-run_rows \
-  "a setting naming md-format runs the rest and warns once|clean retired-1|COMMIT_GUARDS_CHECKS=md-format md-refs||rc=0 commit-guards: retired-check=md-format;commit-guards: step=md-refs;$(ok md-refs)" \
-  "a setting naming only md-format runs nothing and passes|clean retired-2|COMMIT_GUARDS_CHECKS=md-format||rc=0 commit-guards: retired-check=md-format;commit-guards: unrun-all=retired"
-gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format"' 'RETIRED_CHECKS=""'
+for retired in md-format todo-ban prose comments; do
+  run_rows \
+    "a setting naming $retired runs the rest and warns once|clean retired-$retired-1|COMMIT_GUARDS_CHECKS=$retired md-refs||rc=0 commit-guards: retired-check=$retired;commit-guards: step=md-refs;$(ok md-refs)" \
+    "a setting naming only $retired runs nothing and passes|clean retired-$retired-2|COMMIT_GUARDS_CHECKS=$retired||rc=0 commit-guards: retired-check=$retired;commit-guards: unrun-all=retired"
+done
+gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format todo-ban prose comments"' 'RETIRED_CHECKS=""'
 clean retired-3
 assert_eq "must-fail: without the retired list the setting is refused as unknown" \
   "rc=2 commit-guards: check-unknown=md-format" \
@@ -322,13 +332,16 @@ single_rows() { # label | fixture | envs | args | stdin | expect — through `si
   done
 }
 single_rows \
-  "a single check runs alone with its own output|clean single-1||todo-ban||rc=0 todo-ban: index-count=0:0:tools/todo-ban-excludes" \
+  "a single check runs alone with its own output|clean single-1||conflict-markers||rc=0 conflict-markers: result=0:0:tools/conflict-markers-excludes" \
   "flags pass through to the named check|clean single-2|$BC=7|byte-ceiling --all||rc=0 byte-ceiling: result=0:1:7:all:" \
   "the step line precedes the check's own output: a batch's first line is the announcement|clean order-1|COMMIT_GUARDS_CHECKS=conflict-markers|||rc=0 commit-guards: step=conflict-markers" \
-  "control: the named check's exit status is the run's|planted single-3||todo-ban||rc=1 todo-ban: match=work marker:planted.rs:1:// $TD: planted for the dispatcher" \
-  "commit-msg is invocable by name over stdin: only the batch refuses it|clean single-4||commit-msg|feat: dispatched\n|rc=0 commit-msg: header-valid=feat: dispatched" \
+  "control: the named check's exit status is the run's|planted single-3||conflict-markers||rc=1 conflict-markers: match=conflict marker:planted.rs:1:$CM planted for the dispatcher" \
+  "commit-msg is invocable by name over stdin: only the batch refuses it|owed single-4||commit-msg|feat: dispatched [no-changelog]\n|rc=0 commit-msg: changelog-waived=src/a.rs" \
   "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
   "a retired check by name warns and exits 0|clean single-6||md-format --all||rc=0 ${ERR}retired-check=md-format" \
+  "todo-ban by name warns and exits 0|clean single-7||todo-ban --staged||rc=0 ${ERR}retired-check=todo-ban" \
+  "prose by name warns and exits 0|clean single-8||prose||rc=0 ${ERR}retired-check=prose" \
+  "comments by name warns and exits 0|clean single-9||comments --staged||rc=0 ${ERR}retired-check=comments" \
   "--help prints usage at exit 0|clean help||--help||rc=0 commit-guards: usage=commit-guards" \
   "-h is --help|clean help-h||-h||rc=0 commit-guards: usage=commit-guards"
 
@@ -344,20 +357,6 @@ git -C "$R" add SKILL.md source.rs changelog.d/changed/note.md
 commit_rc=0
 git -C "$R" commit -qm 'feat: accept text and release notes' >"$TMP/default-commit.log" 2>&1 || commit_rc=$?
 assert_eq "the default chain commits large text, dated guidance and long release notes" 0 "$commit_rc"
-# A private dispatcher that restores prose must fail that same input.
-python3 - "$R/.agents/skills/commit-guards/scripts/commit-guards" <<'EDIT'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-s = p.read_text()
-needle = 'BATCH_DEFAULT="todo-ban suppression-ban conflict-markers changelog-entries md-type md-refs py-names secrets"'
-assert s.count(needle) == 1
-p.write_text(s.replace(needle, needle.replace('changelog-entries md-type', 'changelog-entries prose md-type')))
-EDIT
-printf 'Published: 2026-10-06.\n' >>"$R/SKILL.md"
-git -C "$R" add SKILL.md
-commit_rc=0
-git -C "$R" commit -qm 'docs: restore prose control' >"$TMP/prose-control.log" 2>&1 || commit_rc=$?
-assert_eq "control: restoring prose refuses the dated guidance" 1 "$commit_rc"
 
 echo "=== a check the package does not ship runnable is named and left out; a setting naming no check is refused ==="
 # A private copy of the package with one check's execute bit removed: the
@@ -373,11 +372,11 @@ incomplete() { # ENVS — the dispatcher's own records from the private copy
 }
 clean incomplete-one
 assert_eq "an unrunnable check is named and left out; the rest run and the verdict names only them" \
-  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: step=todo-ban;commit-guards: result=0:todo-ban" \
-  "$(incomplete COMMIT_GUARDS_CHECKS='todo-ban conflict-markers')"
+  "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: step=suppression-ban;commit-guards: result=0:suppression-ban" \
+  "$(incomplete COMMIT_GUARDS_CHECKS='suppression-ban conflict-markers')"
 assert_eq "control: the shipped package runs the same check" \
-  "rc=0 commit-guards: step=todo-ban;commit-guards: step=conflict-markers;commit-guards: result=0:todo-ban conflict-markers" \
-  "$(R="$R" batch COMMIT_GUARDS_CHECKS='todo-ban conflict-markers' '')"
+  "rc=0 commit-guards: step=suppression-ban;commit-guards: step=conflict-markers;commit-guards: result=0:suppression-ban conflict-markers" \
+  "$(R="$R" batch COMMIT_GUARDS_CHECKS='suppression-ban conflict-markers' '')"
 assert_eq "every enabled check unrunnable is named, and nothing runs" \
   "rc=0 commit-guards: package-incomplete=conflict-markers;commit-guards: unrun-all=conflict-markers" \
   "$(incomplete COMMIT_GUARDS_CHECKS=conflict-markers)"

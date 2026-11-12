@@ -48,9 +48,9 @@ ZERO=0000000000000000000000000000000000000000
 # The lines this lane and the checks that find a breach put in front of a
 # person. The batch's own step and verdict lines are dispatcher's contract and
 # are dropped, so a row reads as the push does: what was judged, what was
-# found, and the verdict. todo-ban's per-hit lines quote the marker they found,
-# and this file carries no marker shape, so only its count is kept.
-KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|todo-ban: index-count=|md-type: (staged-count|summary|no-match|finding)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
+# found, and the verdict. conflict-markers' per-hit lines quote the marker they
+# found, and this file carries no marker shape, so only its count is kept.
+KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|violations)=|conflict-markers: result=|md-type: (staged-count|summary|no-match|finding)=|md-refs: link-target=|commit-guards: (unscoped|withheld-all)=)'
 # No fixture here carries a doc-limits sibling, so that lane states its skip on
 # every single run and would repeat one long line in every row below. It is
 # asserted once, directly, after the table; what the lane finds at push is
@@ -58,8 +58,8 @@ KEEP='^(pre-push: |byte-ceiling: |changelog-entries: (checked|major-breaking|vio
 DROP='^pre-push: lane-absent=doc-limits '
 
 # Assembled from split tokens, so this file never holds a marker shape itself:
-# the kendex repo runs todo-ban over its own tree, tests included.
-TD="TO""DO"
+# the kendex repo runs conflict-markers over its own tree, tests included.
+CM="<<<<""<<<"
 
 # One line for a run: the exit status, then every kept line in order joined by
 # ';', with object ids reduced to <oid> — a fixture's commits are new every
@@ -561,16 +561,17 @@ cp -- "$REWRITE_KEPT" "$REWRITE_LANE"
 # staged away is uploaded while the batch reads clean bytes, which is a
 # fail-open in gate code.
 #
-# One repository, three states, one lane: todo-ban, which reads the index.
+# One repository, three states, one lane: conflict-markers, which reads the
+# index.
 drift_repo() { # VAR NAME [SKILL-SOURCE] — VAR gets a repo whose HEAD carries a marker
   local __v="$1" r=""
   new_repo r "$2" "${3:-}"
-  printf '[env]\nCOMMIT_GUARDS_CHECKS = "todo-ban"\n' >"$r/kendex.settings.toml"
+  printf '[env]\nCOMMIT_GUARDS_CHECKS = "conflict-markers"\n' >"$r/kendex.settings.toml"
   q git -C "$r" add kendex.settings.toml
   q git -C "$r" commit -q -m "feat: seed"
   q git -C "$r" push -q origin main
   q git -C "$r" checkout -q -b topic
-  printf '# %s: finish this\n' "$TD" >"$r/marked.py"
+  printf '%s finish this\n' "$CM" >"$r/marked.py"
   q git -C "$r" add marked.py
   # Committed with no hook running, which is the state this whole lane exists
   # for: a replay puts a commit on a branch that no guard has ever judged.
@@ -586,7 +587,7 @@ drift_repo DRIFT drift
 # work tree.
 printf 'clean\n' >"$DRIFT/marked.py"
 assert_eq "an unstaged edit changes nothing the lanes read, and the marker is still found" \
-  "rc=1 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=1" \
+  "rc=1 pre-push: step=base:<oid>;conflict-markers: result=1:0:tools/conflict-markers-excludes;pre-push: result=1" \
   "$(push_ref "$DRIFT" topic)"
 
 # Staged, and now the index says clean while HEAD carries the marker that is
@@ -615,7 +616,7 @@ drift_repo BLINDED blinded "$BLIND"
 printf 'clean\n' >"$BLINDED/marked.py"
 q git -C "$BLINDED" add marked.py
 assert_eq "must-fail: with the index test gone, the marker is pushed under a clean verdict" \
-  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=0:0:tools/todo-ban-excludes;pre-push: result=0" \
+  "rc=0 pre-push: step=base:<oid>;conflict-markers: result=0:0:tools/conflict-markers-excludes;pre-push: result=0" \
   "$(push_ref "$BLINDED" topic)"
 
 # The must-fail control: the same rebased state, judged by a copy of the lane
@@ -635,7 +636,7 @@ assert_eq "the mutant edit took" "rewritten" \
 MUTATED=""
 drift_repo MUTATED mutated "$MUTANT"
 assert_eq "must-fail: with the batch's verdict dropped, the same breach pushes" \
-  "rc=0 pre-push: step=base:<oid>;todo-ban: index-count=1:0:tools/todo-ban-excludes;pre-push: result=0" \
+  "rc=0 pre-push: step=base:<oid>;conflict-markers: result=1:0:tools/conflict-markers-excludes;pre-push: result=0" \
   "$(push_ref "$MUTATED" topic)"
 
 # ------------------------------------------------------ the destination

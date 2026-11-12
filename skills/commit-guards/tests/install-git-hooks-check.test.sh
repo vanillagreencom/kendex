@@ -124,7 +124,7 @@ run_rows \
   "install refuses a shim of ours under an untrusted interpreter and leaves it byte for byte|fx_our_shim_reshebanged||install||rc=1 $WARN hook-interpreter=<repo>/.git/hooks/pre-commit;$INCOMPLETE|helper=$OURS pre-commit=$X:#!/usr/local/bin/bash~@PRE@~@CREATED@ commit-msg=$SHIM_MSG pre-push=$SHIM_PUSH hooksPath=<unset>" \
   "and --check calls it unverifiable, not merely not armed|fx_our_shim_reshebanged_check||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/usr/local/bin/bash|" \
   "a shebang option that stops the body running is unverifiable|fx_sh_n||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/bin/sh\\ -n|" \
-  "and that shim really does let a violation through: the chain never runs|fx_sh_n_commit|$ONE|commit|feat: add b|rc=0 ${MSG_OK}feat: add b|" \
+  "and that shim really does let a violation through: the chain never runs|fx_sh_n_commit|$ONE|commit|feat: add b|rc=0|" \
   "an interpreter that is not on this host is unverifiable|fx_nonexistent||check||rc=2 ${CND}hook-interpreter=pre-commit interpreter=\\#\\!/nonexistent/sh|"
 
 echo "=== a shim carrying the guard line elsewhere is unverifiable, not ungated ==="

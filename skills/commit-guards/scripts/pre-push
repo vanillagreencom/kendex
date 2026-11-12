@@ -462,7 +462,7 @@ doc_limits_once() { # folds the lane's verdict into this run's aggregators, once
 # commit under several remote refs, and the batch reads this checkout, so a
 # second run over the same base would repeat the first one's verdict word for
 # word. Bash 3.2 has no associative array; membership is a `case` over the
-# set, the way todo-ban's commit lane does it.
+# set.
 JUDGED=""
 
 judge() { # SCOPE REF SCOPE-FLAGS... — run the batch once per distinct scope
