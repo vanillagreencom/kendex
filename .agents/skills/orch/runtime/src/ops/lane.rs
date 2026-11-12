@@ -2957,6 +2957,53 @@ mod tests {
         assert_eq!(lane(&path, "KEN-T").extra["tier"], Value::from("micro"));
     }
 
+    /// The production tier reader over an install with no change-scope
+    /// beside the configured path reader: the requested cycle cannot be
+    /// judged, so the launch is refused naming the arm's cause, and neither
+    /// a lane nor an intent is recorded.
+    #[test]
+    fn a_launch_whose_cycle_cannot_be_judged_is_refused_before_any_intent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        fleet_with(&path, &[]);
+        let brief = dir.path().join("brief");
+        fs::write(
+            &brief,
+            "tier=micro brief=micro cause=estimate-within-micro production=1 estimate=1 delta=- paths=1\nChange `src/a.rs`.\n",
+        )
+        .unwrap();
+        let request = Request::LaunchLane(Box::new(LaunchLane {
+            brief_file: Some(brief),
+            ..launch_fields("KEN-T")
+        }));
+        let production = admission::AdmissionReads::through(admission::Clis {
+            scope_paths: dir.path().join("absent/harness-only"),
+            ..no_clis()
+        });
+        let host = Host {
+            admission: Some(admission::AdmissionReads {
+                clis: production.clis,
+                tier: production.tier,
+                ..no_reads()
+            }),
+            ..kernel(4)
+        };
+        let err = apply_on(&path, &request, &env(), LOCK, &host).unwrap_err();
+        assert_eq!(
+            (err.key(), err.fields()),
+            (
+                "tier-unjudged",
+                vec![
+                    ("item".to_owned(), "KEN-T".to_owned()),
+                    ("requested".to_owned(), "micro".to_owned()),
+                    ("cause".to_owned(), "dependency-absent".to_owned()),
+                ]
+            )
+        );
+        assert!(fleet(&path).intents.is_empty());
+        assert!(fleet(&path).lanes.is_empty());
+    }
+
     /// A deliberate hold and its release: a stopped lane with a
     /// `resume` reservation charges until its term under an injected clock
     /// and not at or after it; `release-lane` bound to the attempt drops it,

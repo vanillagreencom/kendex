@@ -20,7 +20,7 @@ use super::admission::{self, ScopeRange};
 const TAG: &str = "tier";
 /// How long one run of the arm may take: a range read and its inventory
 /// verdict included.
-const READ: Duration = Duration::from_secs(60);
+const READ: Duration = Duration::from_secs(120);
 
 /// A cycle a work item runs at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

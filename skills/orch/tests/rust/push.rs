@@ -1348,6 +1348,55 @@ mod push {
         assert_eq!(repo.remote("main"), receipt["commit"]);
     }
 
+    /// The micro cycle's own check refuses the publication where change-scope
+    /// cannot classify the prepared range (none installed beside the
+    /// configured path reader), then where the range earns a wider cycle (an
+    /// instruction file), and neither publishes.
+    #[test]
+    fn a_micro_publication_unclassified_or_earning_more_publishes_nothing() {
+        let repo = Repo::new("KEN-1", BASE);
+        repo.link_agents();
+        repo.record(json!({"tier": "micro"}));
+        let base = repo.remote("main");
+        let absent = repo.root.join("absent/harness-only");
+        let publish = |receipt: &Value, env: &[(&str, &str)]| {
+            repo.op_env(
+                &repo.item,
+                &json!({"op": "record-push", "mode": "publish", "worktree": repo.wt,
+                "base": receipt["before"], "head": receipt["commit"]}),
+                env,
+            )
+        };
+        let receipt = prepared(&repo);
+        assert_eq!(
+            refusal(&publish(
+                &receipt,
+                &[("CHANGE_SCOPE_PATHS_CLI", absent.to_str().unwrap())]
+            )),
+            format!(
+                "orch-runtime: delivery-tier result=orch-runtime: tier cause=dependency-absent skill=change-scope path={}",
+                repo.root.join("absent/change-scope").display()
+            )
+        );
+        assert_eq!(
+            repo.remote("main"),
+            base,
+            "an unclassified range publishes nothing"
+        );
+        commit(
+            &repo.wt,
+            "AGENTS.md",
+            "# Instructions\n",
+            "feat(KEN-1): instructions",
+        );
+        let receipt = prepared(&repo);
+        assert_eq!(
+            refusal(&publish(&receipt, &[])),
+            "orch-runtime: delivery-tier result=tier=small brief=small cause=instruction-file path=AGENTS.md glob=AGENTS.md estimate=- delta=- paths=0"
+        );
+        assert_eq!(repo.remote("main"), base, "a wider cycle publishes nothing");
+    }
+
     #[test]
     fn a_conflicting_history_refuses_with_the_worktree_key_and_publishes_nothing() {
         let repo = Repo::new("KEN-1", "");

@@ -162,6 +162,26 @@ fn each_input_opens_its_cycle_with_the_line_a_brief_carries() {
     }
 }
 
+/// change-scope installed without its narrow-change ceilings cannot measure
+/// an estimate: the verb answers the widest cycle with the arm's cause,
+/// never a refusal and never a narrower cycle.
+#[test]
+fn an_unmeasured_classification_answers_standard_with_its_cause() {
+    let w = World::new();
+    fs::remove_file(w.scripts.join("../references/narrow-change.conf")).unwrap();
+    let out = w.tier(&["--production", "1"]);
+    assert_eq!(
+        (out.status.code(), answer(&out).1),
+        (
+            Some(0),
+            "tier=standard brief=start cause=narrow-change-unreadable estimate=1 delta=- paths=0"
+                .to_owned()
+        ),
+        "{}",
+        stderr(&out)
+    );
+}
+
 #[test]
 fn a_range_is_classified_by_its_changed_paths() {
     let w = World::new();
