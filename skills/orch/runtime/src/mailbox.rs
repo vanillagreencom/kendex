@@ -1,6 +1,7 @@
 //! The mailbox client: the watch's mailbox reads, the owner asks' answers
-//! and closes, directive sends, lane notices, the owner notices and the
-//! overseer mailbox's compaction, each a `lane-mail` call through
+//! and closes, directive sends, lane notices, the owner notices, the
+//! overseer mailbox's compaction and a lane's turn-end peek, acknowledgement
+//! and events, each a `lane-mail` call through
 //! agent-runtime's one runner under the tag `mail` and under one bound, and
 //! each reply decoded into typed records at this boundary. A program that never
 //! started, one that gave no answer, a nonzero exit and a reply the decoder
@@ -10,7 +11,8 @@
 //! written: a send's caller reads the two apart through
 //! [`Refusal::wrote_nothing`].
 //!
-//! The wire forms are `lane-mail --help`'s: the `count= first=` header, one
+//! The wire forms are `lane-mail --help`'s: the `count= first=` header of
+//! `drain`, `events --box` and `inbox --peek`, one
 //! JSON envelope per line, the `receipts` section of `drain --receipts`, the
 //! `item=` sections of `drain-many`, the keyed `lane-mail: <key>=<value>`
 //! refusal lines and the receipts of `send` and `resolve`. An envelope's
@@ -194,6 +196,13 @@ pub struct Envelope {
     pub tracker_comment: Option<String>,
     #[serde(default)]
     pub tracker_label: Option<String>,
+    /// A directive that halts the lane until it is read.
+    #[serde(default)]
+    pub halt: Option<bool>,
+    /// `events` alone: the box the envelope came from, `to-lane` or
+    /// `to-overseer`.
+    #[serde(default, rename = "box")]
+    pub mailbox: Option<String>,
 }
 
 impl Envelope {
@@ -268,6 +277,15 @@ pub struct BoxEvents {
 pub struct Batch {
     pub read: Vec<Drained>,
     pub refused: Option<Refusal>,
+}
+
+/// What `inbox --peek` answered for a lane: the header's count, the one an
+/// `--ack` moves the cursor to, and every unread envelope beside the line
+/// it was printed as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Peeked {
+    pub count: u64,
+    pub unread: Vec<(String, Envelope)>,
 }
 
 /// How a `resolve --default` ended.
@@ -460,6 +478,55 @@ impl Mailbox {
     /// on a FIFO waits it out at this bound.
     pub fn bounded(self, bound: Duration) -> Mailbox {
         Mailbox { bound, ..self }
+    }
+
+    /// The program this client runs.
+    pub fn cli(&self) -> &Path {
+        &self.cli
+    }
+
+    /// `inbox --item ITEM --root ROOT --peek`: the lane's unread directives,
+    /// moving no cursor. A reply with no header line is refused as one whose
+    /// header does not read.
+    pub fn inbox_peek(&self, item: &str, root: &Path) -> Result<Peeked, Refusal> {
+        const VERB: &str = "inbox";
+        let root = root.display().to_string();
+        let stdout = self
+            .call(VERB, &["--item", item, "--root", &root, "--peek"])?
+            .ok(VERB)?;
+        let mut lines = stdout.lines();
+        let (count, _) = header(VERB, lines.next().unwrap_or_default())?;
+        let unread = lines
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| envelope(VERB, l).map(|env| (l.to_owned(), env)))
+            .collect::<Result<_, _>>()?;
+        Ok(Peeked { count, unread })
+    }
+
+    /// The words of `inbox --item ITEM --root ROOT --ack COUNT`, which
+    /// moves the lane's cursor to the count a peek printed and never past
+    /// an unread halt: [`Self::acknowledge`] runs them, and a caller that
+    /// hands the lines on itself runs them once its own send returns.
+    pub fn ack_argv(&self, item: &str, root: &Path, count: u64) -> Vec<String> {
+        [
+            self.cli.display().to_string(),
+            "inbox".to_owned(),
+            "--item".to_owned(),
+            item.to_owned(),
+            "--root".to_owned(),
+            root.display().to_string(),
+            "--ack".to_owned(),
+            count.to_string(),
+        ]
+        .into()
+    }
+
+    /// Run [`Self::ack_argv`]'s words.
+    pub fn acknowledge(&self, item: &str, root: &Path, count: u64) -> Result<(), Refusal> {
+        const VERB: &str = "inbox";
+        let argv = self.ack_argv(item, root, count);
+        let args: Vec<&str> = argv[2..].iter().map(String::as_str).collect();
+        self.call(VERB, &args)?.ok(VERB).map(drop)
     }
 
     /// One run of the program: the verb first, then `args`, under the bound.
@@ -937,10 +1004,16 @@ impl Mailbox {
     /// `events --item overseer` at the main checkout `root`: both of the
     /// overseer's boxes whole, the overseer's own sends among them.
     pub fn events(&self, root: &Path) -> Result<Vec<Envelope>, Refusal> {
+        self.events_of("overseer", root)
+    }
+
+    /// `events --item ITEM --root ROOT`: both boxes of the mailbox whole,
+    /// each envelope naming the box it came from.
+    pub fn events_of(&self, item: &str, root: &Path) -> Result<Vec<Envelope>, Refusal> {
         const VERB: &str = "events";
         let root = root.display().to_string();
         let stdout = self
-            .call(VERB, &["--item", "overseer", "--root", &root])?
+            .call(VERB, &["--item", item, "--root", &root])?
             .ok(VERB)?;
         stdout
             .lines()

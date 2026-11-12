@@ -266,7 +266,7 @@ fn is_dir(path: &Path) -> bool {
 /// `path` as one shell word, spelled as bash's `printf %q` spells an
 /// absolute path, so the command a refusal names is the call the halt arm
 /// compares with.
-fn shell_quoted(path: &Path) -> String {
+pub(super) fn shell_quoted(path: &Path) -> String {
     let text = path.to_string_lossy();
     if text.chars().any(char::is_control) {
         let mut quoted = String::from("$'");

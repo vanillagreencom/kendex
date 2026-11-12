@@ -92,6 +92,7 @@ impl World {
             "claude" => ".claude/hooks",
             "codex" => ".codex/hooks",
             "copilot" => ".github/hooks",
+            "pi" => ".pi/kendex/hooks",
             other => panic!("no install directory for {other}"),
         };
         self.root.join("install").join(dir)
@@ -916,5 +917,685 @@ fn a_payload_that_cannot_be_read_is_refused() {
     assert_eq!(
         text.lines().next(),
         Some("lane-mail-check: payload=unreadable")
+    );
+}
+
+/// The mailbox package's own reader, which every mail row runs.
+fn lane_mail() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../mailbox/scripts/lane-mail")
+}
+
+/// The plain read that acknowledges a halt, as the lead is told to run it.
+fn read_command(world: &World) -> String {
+    format!(
+        "{} inbox --item {ITEM} --root {}",
+        lane_mail().display(),
+        world.lane.display()
+    )
+}
+
+impl World {
+    fn lane_box(&self) -> PathBuf {
+        self.mail_root().join(ITEM)
+    }
+
+    /// One line appended to the lane's box `file`, as the mailbox writes it.
+    fn append(&self, file: &str, line: Value) {
+        let mut handle = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.lane_box().join(file))
+            .unwrap();
+        writeln!(handle, "{line}").unwrap();
+    }
+
+    /// A directive the overseer sent the lane, a halt where `halt`.
+    fn direct(&self, id: &str, text: &str, halt: bool) {
+        let mut line = json!({"id": id, "kind": "directive", "at": "2026-11-11T00:00:00Z", "from": "overseer", "text": text});
+        if halt {
+            line["halt"] = json!(true);
+        }
+        self.append("to-lane.jsonl", line);
+    }
+
+    /// An ask or a notice the lane sent its overseer.
+    fn report(&self, id: &str, kind: &str) {
+        let line = json!({"id": id, "kind": kind, "at": "2026-11-11T00:00:00Z", "from": ITEM, "text": "x"});
+        self.append("to-overseer.jsonl", line);
+    }
+
+    /// The count the lane's cursor stands at, none before a first read.
+    fn cursor(&self) -> String {
+        fs::read_to_string(self.lane_box().join("to-lane.cursor"))
+            .unwrap_or_default()
+            .trim()
+            .to_owned()
+    }
+
+    fn sent_count(&self) -> String {
+        fs::read_to_string(self.lane_box().join("sent-count")).unwrap_or_default()
+    }
+
+    /// The verb run from the lane under `harness`'s install, with the
+    /// mailbox package's reader named.
+    fn mail(&self, harness: &str, args: &[&str], payload: &str) -> Out {
+        let reader = lane_mail().display().to_string();
+        let env = [("LANE_MAIL_CLI", reader.as_str())];
+        self.turn_in(&self.lane, &self.hooks(harness), args, payload, &env)
+    }
+
+    /// The Copilot lead `session`, as its start records it.
+    fn lead(&self, session: &str) {
+        plant(&self.leads().join(session));
+    }
+}
+
+#[test]
+fn unread_mail_holds_a_lanes_turn_end_and_is_marked_read_once_the_refusal_is_written() {
+    let world = World::launched();
+    world.direct("d1", "rebase onto main", false);
+    world.direct("d2", "then push", false);
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.stdout, "");
+    assert_eq!(out.first(), "lane-mail-check: unread=2");
+    assert!(
+        out.stderr.contains(
+            "the overseer sent these messages to this lane; act on each as its text directs:\n{\"id\":\"d1\""
+        ),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.contains("\"text\":\"then push\""),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("a halt among them"), "{}", out.stderr);
+    assert_eq!(world.cursor(), "2");
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: idle={ITEM}"),
+        "read once"
+    );
+
+    world.direct("d3", "and report", false);
+    let out = world.mail("copilot", &[], "{}");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let answer = out.json();
+    assert_eq!(answer["decision"], "block");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("lane-mail-check: unread=1\n"),
+        "{answer}"
+    );
+    assert_eq!(world.cursor(), "3");
+
+    // A subagent's turn end is handed none; a continued one is not read.
+    world.direct("d4", "later", false);
+    let out = world.mail("claude", &[], r#"{"agent_id":"a1"}"#);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+    let out = world.mail("claude", &[], r#"{"stop_hook_active":true}"#);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(!out.stderr.contains("unread="), "{}", out.stderr);
+    assert_eq!(world.cursor(), "3");
+}
+
+#[test]
+fn a_halt_refuses_every_tool_call_but_the_read_that_acknowledges_it() {
+    let world = World::launched();
+    let call = |command: &str| {
+        json!({"tool_name": "Bash", "tool_input": {"command": command}}).to_string()
+    };
+    world.direct("d1", "go on", false);
+    let out = world.mail("claude", &["halt"], &call("ls"));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "no halt stands");
+
+    world.direct("h1", "stop the push", true);
+    let command = read_command(&world);
+    let out = world.mail("claude", &["halt"], &call("ls"));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: halt=h1");
+    assert!(
+        out.stderr.ends_with(&format!(
+            "Run exactly this command, then act on the directive:\n{command}\nstop the push\n"
+        )),
+        "{}",
+        out.stderr
+    );
+    let out = world.mail("claude", &["halt"], &call(&command));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "the read passes");
+
+    let out = world.mail(
+        "claude",
+        &["halt"],
+        &json!({"agent_id": "a1", "tool_input": {"command": command}}).to_string(),
+    );
+    assert_eq!(out.code, 2, "a subagent is refused the read");
+    assert_eq!(out.first(), "lane-mail-check: halt=h1");
+    assert!(!out.stderr.contains(&command), "{}", out.stderr);
+    assert!(
+        out.stderr
+            .contains("Stop, and report the halt to the lead:\nstop the push")
+    );
+
+    let unknown =
+        json!({"sessionId": "s9", "toolName": "bash", "toolArgs": {"command": "ls"}}).to_string();
+    let out = world.mail("copilot", &["halt"], &unknown);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.json()["permissionDecision"], "deny");
+    assert!(!out.stderr.contains(&command), "{}", out.stderr);
+    assert!(out.stderr.contains("is not shown here"), "{}", out.stderr);
+    let unknown = json!({"sessionId": "s9", "toolName": "bash", "toolArgs": {"command": command}})
+        .to_string();
+    let out = world.mail("copilot", &["halt"], &unknown);
+    assert_eq!(
+        (out.code, out.stdout.as_str()),
+        (0, ""),
+        "an unknown caller may run the read"
+    );
+    assert_eq!(world.cursor(), "0", "the halt arm acknowledges nothing");
+
+    // A turn end shows the lead the read, and its acknowledgement stops
+    // short of the halt, which still stands.
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(out.first(), "lane-mail-check: unread=2");
+    assert!(
+        out.stderr.ends_with(&format!(
+            "a halt among them refuses every tool call but one until the lane runs exactly this command:\n{command}\n"
+        )),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.cursor(), "1");
+    let out = world.mail("claude", &["halt"], &call("ls"));
+    assert_eq!(out.first(), "lane-mail-check: halt=h1");
+}
+
+#[test]
+fn unread_mail_travels_as_context_after_a_tool_call_at_a_start_and_at_a_prompt() {
+    let world = World::launched();
+    world.direct("d1", "rebase", false);
+    let out = world.mail("claude", &["deliver"], "{}");
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{}", out.stderr);
+    let answer = out.json();
+    assert_eq!(answer["hookSpecificOutput"]["hookEventName"], "PostToolUse");
+    let context = answer["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(
+        context.starts_with("lane-mail-check: unread=1\n"),
+        "{context}"
+    );
+    assert!(context.contains("\"text\":\"rebase\""), "{context}");
+    assert_eq!(answer.as_object().unwrap().len(), 1, "{answer}");
+    assert_eq!(world.cursor(), "1");
+
+    world.direct("d2", "push", false);
+    let out = world.mail("claude", &["start"], "{}");
+    assert_eq!(
+        out.json()["hookSpecificOutput"]["hookEventName"],
+        "SessionStart"
+    );
+    assert_eq!(world.cursor(), "2");
+
+    world.lead("s1");
+    world.direct("d3", "report", false);
+    let out = world.mail(
+        "copilot",
+        &["deliver"],
+        r#"{"sessionId":"s1","toolName":"bash"}"#,
+    );
+    let answer = out.json();
+    assert!(
+        answer["additionalContext"]
+            .as_str()
+            .unwrap()
+            .starts_with("lane-mail-check: unread=1\n"),
+        "{answer}"
+    );
+    assert_eq!(answer.as_object().unwrap().len(), 1, "{answer}");
+    assert_eq!(world.cursor(), "3");
+
+    // A Copilot prompt's context may be dropped: it acknowledges nothing.
+    world.direct("d4", "again", false);
+    let out = world.mail("copilot", &["prompt"], r#"{"sessionId":"s1","prompt":"x"}"#);
+    assert!(
+        out.json()["additionalContext"].is_string(),
+        "{}",
+        out.stdout
+    );
+    assert_eq!(world.cursor(), "3");
+    let out = world.mail("claude", &["prompt"], "{}");
+    assert_eq!(
+        out.json()["hookSpecificOutput"]["hookEventName"],
+        "UserPromptSubmit"
+    );
+    assert_eq!(world.cursor(), "4");
+}
+
+#[test]
+fn a_caller_that_sends_the_context_on_is_handed_the_acknowledgement() {
+    let world = World::launched();
+    world.direct("d1", "rebase", false);
+    world.direct("d2", "push", false);
+    let out = world.mail("pi", &["deliver"], r#"{"kendex_ack":"caller"}"#);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{}", out.stderr);
+    let answer = out.json();
+    let argv: Vec<String> = serde_json::from_value(answer["kendex_ack"].clone()).unwrap();
+    let root = world.lane.display().to_string();
+    let reader = lane_mail().display().to_string();
+    assert_eq!(
+        argv,
+        [
+            reader.as_str(),
+            "inbox",
+            "--item",
+            ITEM,
+            "--root",
+            root.as_str(),
+            "--ack",
+            "2"
+        ]
+    );
+    assert!(answer["hookSpecificOutput"]["additionalContext"].is_string());
+    assert_eq!(world.cursor(), "0", "the caller moves the cursor");
+    let ran = program(&argv[0]).args(&argv[1..]).output().unwrap();
+    assert!(ran.status.success(), "{}", stderr(&ran));
+    assert_eq!(world.cursor(), "2");
+}
+
+#[test]
+fn a_copilot_tool_call_from_no_recorded_lead_is_handed_no_mail() {
+    let world = World::launched();
+    world.direct("d1", "rebase", false);
+    let out = world.mail(
+        "copilot",
+        &["deliver"],
+        r#"{"sessionId":"s9","toolName":"bash"}"#,
+    );
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: session-unrecorded=s9");
+    assert!(
+        out.stderr.contains("finished Copilot tool call"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.cursor(), "0");
+}
+
+#[test]
+fn a_context_answer_stdout_cannot_take_is_refused_and_leaves_the_lines_unread() {
+    let world = World::launched();
+    world.direct("d1", "rebase", false);
+    let mut command = isolated();
+    let mut child = command
+        .args(["turn-end", "--hook-dir"])
+        .arg(world.hooks("claude"))
+        .arg("deliver")
+        .current_dir(&world.lane)
+        .env("PWD", &world.lane)
+        .env("HOME", &world.home)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("LANE_MAIL_CLI", lane_mail())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    child.stdin.take().unwrap().write_all(b"{}").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert_eq!(
+        text.lines().next(),
+        Some("lane-mail-check: notice=unwritten")
+    );
+    assert_eq!(world.cursor(), "0");
+}
+
+#[test]
+fn a_reader_that_cannot_answer_is_refused_never_read_as_an_empty_mailbox() {
+    let world = World::launched();
+    world.direct("d1", "rebase", false);
+    let absent = world.root.join("no-reader");
+    let env = [("LANE_MAIL_CLI", absent.to_str().unwrap())];
+    let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], "{}", &env);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: reader={}", absent.display())
+    );
+
+    fs::remove_file(world.lane_box().join("to-lane.jsonl")).unwrap();
+    fs::create_dir(world.lane_box().join("to-lane.jsonl")).unwrap();
+    let out = world.mail("claude", &["halt"], r#"{"tool_input":{"command":"ls"}}"#);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: inbox=2");
+    assert!(
+        out.stderr.contains("lane-mail: mailbox-unsafe="),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn the_question_tool_is_refused_in_a_launched_lane_with_the_route_its_lead_runs() {
+    let world = World::launched();
+    let call = |extra: Value| {
+        let mut payload = json!({"tool_name": "AskUserQuestion", "tool_input": {}});
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        payload.to_string()
+    };
+    let out = world.mail("claude", &["halt"], &call(json!({})));
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        "lane-mail-check: question-tool=AskUserQuestion"
+    );
+    let (reader, root) = (
+        lane_mail().display().to_string(),
+        world.lane.display().to_string(),
+    );
+    assert!(
+        out.stderr.ends_with(&format!(
+            "then wait on the id the send prints:\n  {reader} ask --item {ITEM} --root {root} --file [PATH]\n  {reader} wait --item {ITEM} --root {root} --id [MSGID]\n"
+        )),
+        "{}",
+        out.stderr
+    );
+    for tool in ["EnterPlanMode", "request_user_input", "question"] {
+        let out = world.mail("claude", &["halt"], &call(json!({"tool_name": tool})));
+        assert_eq!(
+            out.first(),
+            format!("lane-mail-check: question-tool={tool}")
+        );
+    }
+    let out = world.mail(
+        "claude",
+        &["halt"],
+        &call(json!({"agent_type": "reviewer"})),
+    );
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr
+            .contains("Stop, and report the question to the lead"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains(" ask --item "), "{}", out.stderr);
+    let out = world.mail("claude", &["halt"], &call(json!({"tool_name": "Bash"})));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+
+    // A session that is no launched lane asks its user as it always did.
+    fs::remove_file(world.common().join("lane-mail").join(ITEM)).unwrap();
+    let out = world.mail("claude", &["halt"], &call(json!({})));
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""));
+}
+
+#[test]
+fn an_idle_turn_end_is_held_once_then_told_to_the_overseer() {
+    let world = World::launched();
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+    let (reader, root) = (
+        lane_mail().display().to_string(),
+        world.lane.display().to_string(),
+    );
+    assert!(
+        out.stderr.contains(&format!(
+            "continue the workflow:\n  {reader} inbox --item {ITEM} --root {root}\nSend a question"
+        )),
+        "{}",
+        out.stderr
+    );
+    assert!(
+        out.stderr.ends_with(&format!(
+            "Send changed work as a notice:\n  {reader} notice --item {ITEM} --root {root} --file [PATH]\nFor a wait that continues, update this lane status file and end the turn:\n  {root}/tmp/lane-status-{ITEM}.md\n"
+        )),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.sent_count(), "0 held\n");
+
+    let out = world.mail("claude", &[], r#"{"stop_hook_active":true}"#);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), format!("lane-mail-check: idle-notice={ITEM}"));
+    assert_eq!(world.sent_count(), "1\n");
+    let sent = fs::read_to_string(world.lane_box().join("to-overseer.jsonl")).unwrap();
+    assert!(
+        sent.contains(&format!("lane-mail-check: lane-idle={ITEM}")),
+        "{sent}"
+    );
+
+    // The told notice is the lane's last report: the next turn end is held.
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+    // A turn another hook continued is held as a fresh one.
+    fs::write(world.lane_box().join("sent-count"), "1\n").unwrap();
+    let out = world.mail("claude", &[], r#"{"stop_hook_active":true}"#);
+    assert_eq!(out.first(), format!("lane-mail-check: idle={ITEM}"));
+}
+
+#[test]
+fn a_report_since_the_last_judged_turn_end_passes_it() {
+    let world = World::launched();
+    let stop = |world: &World| world.mail("claude", &[], "{}");
+    assert_eq!(
+        stop(&world).first(),
+        format!("lane-mail-check: idle={ITEM}")
+    );
+    world.report("n1", "notice");
+    let out = stop(&world);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "a notice sent");
+    assert_eq!(world.sent_count(), "1\n", "the hold clears");
+    world.report("a1", "ask");
+    assert_eq!((stop(&world).code, world.sent_count().as_str()), (0, "2\n"));
+    world.report("x1", "answer");
+    assert_eq!(stop(&world).code, 2, "an answer is no report");
+
+    let status = world
+        .lane
+        .join("tmp")
+        .join(format!("lane-status-{ITEM}.md"));
+    fs::write(&status, "waiting on CI\n").unwrap();
+    let out = stop(&world);
+    assert_eq!(
+        (out.code, out.stderr.as_str()),
+        (0, ""),
+        "a status file update"
+    );
+    assert_eq!(stop(&world).code, 2, "the same state again");
+    fs::write(&status, "waiting on CI\n").unwrap();
+    assert_eq!(stop(&world).code, 0, "a rewrite of the same text");
+    fs::remove_file(&status).unwrap();
+    assert_eq!(stop(&world).code, 2, "a removed file is no report");
+
+    world.direct("h1", "stop", true);
+    let out = stop(&world);
+    assert_eq!(
+        out.first(),
+        "lane-mail-check: unread=1",
+        "the mail is held first"
+    );
+    let read = program(lane_mail())
+        .args(["inbox", "--item", ITEM, "--root"])
+        .arg(&world.lane)
+        .output()
+        .unwrap();
+    assert!(read.status.success(), "{}", stderr(&read));
+    let out = stop(&world);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "a halt standing");
+    assert!(
+        !world.sent_count().contains("held"),
+        "{}",
+        world.sent_count()
+    );
+    world.direct("d2", "go on", false);
+    assert_eq!(stop(&world).first(), "lane-mail-check: unread=1");
+    assert_eq!(
+        stop(&world).first(),
+        format!("lane-mail-check: idle={ITEM}"),
+        "a later directive lifts the halt"
+    );
+}
+
+#[test]
+fn a_continued_pi_turn_end_tells_the_overseer_instead_of_holding() {
+    let world = World::launched();
+    let out = world.mail("pi", &[], r#"{"stop_hook_active":true}"#);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), format!("lane-mail-check: idle-notice={ITEM}"));
+    assert_eq!(world.sent_count(), "1\n");
+}
+
+#[test]
+fn a_record_or_listing_the_idle_judge_cannot_read_passes_the_turn_end_reported() {
+    let world = World::launched();
+    let record = world.lane_box().join("sent-count");
+    for text in [
+        "x\n",
+        "1 held held\n",
+        "01\n",
+        "1 status=a/b held\n",
+        "1 maybe\n",
+    ] {
+        fs::write(&record, text).unwrap();
+        let out = world.mail("claude", &[], "{}");
+        assert_eq!(
+            (out.code, out.stdout.as_str()),
+            (0, ""),
+            "{text:?}: {}",
+            out.stderr
+        );
+        assert_eq!(
+            out.first(),
+            format!("lane-mail-check: idle-record={}", record.display()),
+            "{text:?}"
+        );
+        assert_eq!(world.sent_count(), "0\n", "{text:?}: rewritten");
+    }
+    fs::remove_file(&record).unwrap();
+    fs::create_dir(&record).unwrap();
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    let lines: Vec<&str> = out
+        .stderr
+        .lines()
+        .filter(|l| l.starts_with("lane-mail-check: "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            format!("lane-mail-check: idle-record={}", record.display()),
+            format!("lane-mail-check: idle-unrecorded={}", record.display())
+        ]
+    );
+    assert!(
+        out.stderr
+            .ends_with("compares against the record it already holds:\n"),
+        "left, never written over: {}",
+        out.stderr
+    );
+    fs::remove_dir(&record).unwrap();
+
+    let status = world
+        .lane
+        .join("tmp")
+        .join(format!("lane-status-{ITEM}.md"));
+    std::os::unix::fs::symlink(world.root.join("elsewhere"), &status).unwrap();
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: idle-status={}", status.display())
+    );
+    assert!(
+        out.stderr.contains("no symbolic link at the file itself"),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(
+        out.last(),
+        format!("  {}", status.display()),
+        "held on the mail alone"
+    );
+    fs::remove_file(&status).unwrap();
+
+    fs::create_dir(world.lane_box().join("to-overseer.jsonl")).unwrap();
+    let out = world.mail("claude", &[], "{}");
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: events=2");
+    assert!(
+        out.stderr.contains("lane-mail: mailbox-unsafe="),
+        "{}",
+        out.stderr
+    );
+}
+
+#[test]
+fn an_idle_notice_the_mailbox_or_the_record_cannot_take_is_reported_and_the_turn_ends() {
+    let world = World::launched();
+    let outbox = world.lane_box().join("to-overseer.jsonl");
+    fs::write(&outbox, "").unwrap();
+    fs::set_permissions(&outbox, fs::Permissions::from_mode(0o444)).unwrap();
+    let out = world.mail("pi", &[], r#"{"stop_hook_active":true}"#);
+    fs::set_permissions(&outbox, fs::Permissions::from_mode(0o644)).unwrap();
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: idle-notice-unsent=2");
+    assert!(
+        out.stderr.contains("lane-mail: write-failed="),
+        "{}",
+        out.stderr
+    );
+    assert_eq!(world.sent_count(), "", "nothing recorded");
+
+    let dir = world.lane_box();
+    let mode = fs::metadata(&dir).unwrap().permissions();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = world.mail("pi", &[], r#"{"stop_hook_active":true}"#);
+    fs::set_permissions(&dir, mode).unwrap();
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    let lines: Vec<&str> = out
+        .stderr
+        .lines()
+        .filter(|l| l.starts_with("lane-mail-check: "))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            format!(
+                "lane-mail-check: idle-notice-unrecorded={}",
+                dir.join("sent-count").display()
+            ),
+            format!("lane-mail-check: idle-notice={ITEM}"),
+        ]
+    );
+    let sent = fs::read_to_string(&outbox).unwrap();
+    assert!(sent.contains("lane-idle="), "the notice was sent: {sent}");
+}
+
+#[test]
+fn a_hold_the_record_cannot_take_is_not_made() {
+    let world = World::launched();
+    let dir = world.lane_box();
+    let mode = fs::metadata(&dir).unwrap().permissions();
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+    let out = world.mail("claude", &[], "{}");
+    fs::set_permissions(&dir, mode).unwrap();
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!(
+            "lane-mail-check: idle-hold-unrecorded={}",
+            dir.join("sent-count").display()
+        )
     );
 }

@@ -6,6 +6,7 @@
 
 pub mod answer;
 pub mod identity;
+pub mod mail;
 pub mod payload;
 
 use std::io::Read;
@@ -83,6 +84,41 @@ pub struct Answer {
     pub stdout: String,
     pub stderr: String,
     pub code: i32,
+    /// The mailbox cursor moved past the lines the answer carried.
+    ack: Option<Box<mail::Ack>>,
+    /// For a context answer, the exit status the arm's refusal takes.
+    unwritten: Option<i32>,
+}
+
+impl Answer {
+    /// Hand the answer over, stderr then stdout, and return its exit
+    /// status. The cursor moves only once stdout is written, so a run that
+    /// dies first leaves the lines unread rather than consumed unseen; a
+    /// context answer stdout cannot take is refused under
+    /// `notice=unwritten` instead, its lines left unread.
+    pub fn write(self) -> i32 {
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = stderr.write_all(self.stderr.as_bytes());
+        let mut stdout = std::io::stdout().lock();
+        let written = stdout
+            .write_all(self.stdout.as_bytes())
+            .and_then(|()| stdout.flush());
+        match (written, self.unwritten) {
+            (Ok(()), _) => {
+                if let Some(ack) = &self.ack {
+                    let _ = stderr.write_all(ack.settle().as_bytes());
+                }
+                self.code
+            }
+            (Err(e), Some(code)) => {
+                let text = Said::NoticeUnwritten.text(&e.to_string());
+                let _ = stderr.write_all(format!("{text}\n").as_bytes());
+                code
+            }
+            (Err(_), None) => self.code,
+        }
+    }
 }
 
 /// A step's way on, or the answer that ends the run.
@@ -102,10 +138,12 @@ struct Vars {
     /// with no lane discovery.
     tmux_without_pane: bool,
     pi_dir: Option<PathBuf>,
+    /// The command line's word on the private env file the settings read.
+    private_env: bool,
 }
 
 impl Vars {
-    fn read() -> Vars {
+    fn read(private_env: bool) -> Vars {
         let set = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
         Vars {
             home: std::env::var("HOME").unwrap_or_default(),
@@ -118,6 +156,7 @@ impl Vars {
             jarvis_record: set("JARVIS_RECORD").is_some(),
             tmux_without_pane: set("TMUX").is_some() && set("TMUX_PANE").is_none(),
             pi_dir: set("PI_CODING_AGENT_DIR").map(PathBuf::from),
+            private_env,
         }
     }
 }
@@ -137,6 +176,8 @@ struct Turn {
     /// with the tool call it refuses.
     reported: bool,
     stderr: String,
+    /// The cursor move a refusal carrying mail makes once written.
+    ack: Option<Box<mail::Ack>>,
 }
 
 impl Turn {
@@ -157,6 +198,8 @@ impl Turn {
             stdout,
             stderr,
             code,
+            ack: self.ack.take(),
+            unwritten: None,
         }
     }
 
@@ -180,6 +223,8 @@ impl Turn {
             stdout: stdout.to_owned(),
             stderr: std::mem::take(&mut self.stderr),
             code: 0,
+            ack: None,
+            unwritten: None,
         }
     }
 
@@ -194,20 +239,23 @@ impl Turn {
 }
 
 /// Judge one hook call: the install at `hook_dir` names the harness, `arm`
-/// and `event` the event, `stdin` carries the payload.
+/// and `event` the event, `stdin` carries the payload, and `private_env`
+/// says whether the settings read the private env file.
 pub fn run(
     hook_dir: &Path,
     arm: Option<&str>,
     event: Option<&str>,
+    private_env: bool,
     stdin: &mut dyn Read,
 ) -> Answer {
-    let vars = Vars::read();
+    let vars = Vars::read(private_env);
     let mut turn = Turn {
         harness: Harness::of(hook_dir, vars.pi_dir.as_deref()),
         arm: None,
         caller: Caller::Lead,
         reported: false,
         stderr: String::new(),
+        ack: None,
     };
     match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),
@@ -275,7 +323,7 @@ fn judge(
         };
         return Err(turn.said(answer));
     }
-    judged(turn, &arm, &lane, continued)
+    judged(turn, vars, &arm, &lane, &payload, continued)
 }
 
 /// Who made the call: the payload names a subagent on every harness, and
@@ -332,7 +380,14 @@ fn wall_now() -> SystemTime {
 /// The decisions past the lane's identity, in the order a turn end takes
 /// them. Each is a place of its own; a place that holds nothing lets the
 /// next judge, and a turn end none holds passes.
-fn judged(turn: &mut Turn, arm: &Arm, lane: &Lane, continued: bool) -> Flow {
+fn judged(
+    turn: &mut Turn,
+    vars: &Vars,
+    arm: &Arm,
+    lane: &Lane,
+    payload: &Payload,
+    continued: bool,
+) -> Flow {
     session_pane()?;
     match arm {
         Arm::Row { .. } => {
@@ -364,16 +419,16 @@ fn judged(turn: &mut Turn, arm: &Arm, lane: &Lane, continued: bool) -> Flow {
         return model_switch();
     }
     if !continued {
-        mail_check()?;
+        mail::check(turn, vars, arm, lane, payload)?;
     }
     if *arm == Arm::Halt {
         if lane.item.is_some() {
-            question_tool_check()?;
+            mail::question_tool_check(turn, vars, lane, payload)?;
         }
         attached_launch_check()?;
     }
     handoff_check()?;
-    idle_check()
+    mail::idle_check(turn, vars, arm, lane, continued)
 }
 
 /// Where a session in tmux with no pane named recovers its controller's
@@ -424,16 +479,6 @@ fn model_switch() -> Flow {
     Ok(())
 }
 
-/// Where the session's unread mail is handed over or held; it holds none.
-fn mail_check() -> Flow {
-    Ok(())
-}
-
-/// Where a lane's harness question tool is refused; it refuses none.
-fn question_tool_check() -> Flow {
-    Ok(())
-}
-
 /// Where an attached launch past the context mark is refused; it refuses
 /// none.
 fn attached_launch_check() -> Flow {
@@ -442,10 +487,5 @@ fn attached_launch_check() -> Flow {
 
 /// Where the handoff marks are judged; it holds nothing.
 fn handoff_check() -> Flow {
-    Ok(())
-}
-
-/// Where an idle lane's turn end is held; it holds none.
-fn idle_check() -> Flow {
     Ok(())
 }

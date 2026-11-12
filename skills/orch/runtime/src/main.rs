@@ -1856,11 +1856,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &hook_dir,
                 arm.as_deref(),
                 event.as_deref(),
+                flags.private_env,
                 &mut std::io::stdin().lock(),
             );
-            let _ = std::io::stderr().lock().write_all(answer.stderr.as_bytes());
-            let _ = std::io::stdout().lock().write_all(answer.stdout.as_bytes());
-            std::process::exit(answer.code);
+            std::process::exit(answer.write());
         }
         Verb::Cycle { op } => {
             let settings = resolve_settings(&flags)?;
