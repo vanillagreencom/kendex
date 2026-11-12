@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 # Build a shipped runtime crate from its sources into a user-owned cache,
 # keyed by those sources, and make the binary visible in one rename. usage()
-# is the contract. Nothing here runs on a hook path: a caller that finds no
-# binary refuses and names this script (scripts/agent-runtime, or the wrapper
-# of a crate that depends on this one, such as orch's scripts/orch-runtime).
+# is the contract. A wrapper that finds no binary builds nothing and names this
+# script (scripts/agent-runtime, or the wrapper of a crate that depends on this
+# one, such as orch's scripts/orch-runtime); a caller that must answer while
+# the binary is missing, such as a harness hook, runs --detach, which starts
+# the build beside it and answers at once.
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
 Usage: setup [--runtime DIR] [--name NAME] [--offline]
-  --runtime DIR  the crate to build: its Cargo.toml, Cargo.lock and src/
-                 (default: the runtime beside this script)
-  --name NAME    the binary the crate builds, and the cache entry's name
-                 (default: agent-runtime)
-  --offline      pass --offline to cargo: no network, so every locked
-                 dependency must already sit in the cargo cache
+       setup --detach [--hold PATH] [--cap SECONDS] [--runtime DIR] [--name NAME] [--offline]
+  --runtime DIR    the crate to build: its Cargo.toml, Cargo.lock and src/
+                   (default: the runtime beside this script)
+  --name NAME      the binary the crate builds, and the cache entry's name
+                   (default: agent-runtime)
+  --offline        pass --offline to cargo: no network, so every locked
+                   dependency must already sit in the cargo cache
+  --detach         start the build in the background and answer at once
+  --hold PATH      with --detach: what the caller cannot serve without the
+                   binary, such as a mailbox directory; the answer holds the
+                   caller while PATH exists
+  --cap SECONDS    with --detach: the build's bound (default 1200); a build
+                   still running past it is ended and read as unbuilt
 
 Computes the crate's build key (lib/key.sh: one sha256 over Cargo.toml,
 Cargo.lock, every file under src/, and the same inputs of every path
@@ -34,12 +43,40 @@ inputs-missing, inputs-unreadable, manifest-unreadable, digest-failed,
 cache-unwritable, build-failed, binary-missing, place-failed. bin/ never
 holds a partial binary: the copy lands in an exclusively created temporary
 file beside the target and is renamed over it only once whole.
+
+--detach runs at most one build per key on the computer: the first caller
+claims <cache>/build/<name>/<key>.lock and runs this setup outside its own
+process group, the output in <cache>/build/<name>/<key>.log; a caller that
+finds the claim standing starts nothing. It prints one line:
+  <name>-setup: key=<key> binary=<path>
+  <name>-setup: runtime-building key=<key> log=<path>
+  <name>-setup: runtime-unbuilt cause=<cause> key=<key> log=<path>
+Causes: build-failed (the build's own keyed line is the log's last),
+build-capped, build-lost (the build ended leaving no record), cargo-missing.
+A build that ends unbuilt is recorded in
+<cache>/build/<name>/<key>.failed and --detach starts that key no more: a
+setup without --detach is the remedy, and its success clears the record.
+Every answer exits 0, except with --hold PATH while PATH exists: a running
+build exits 3 every time, and an unbuilt key exits 3 once per PATH and
+cause, then 0. With PATH absent nothing is printed.
 USAGE
 }
+
+# The seconds a claim may stand before its build has taken it: the build
+# takes it within milliseconds, so one older was left by a caller killed
+# between the two.
+CLAIM_GRACE=10
+# A detached build's bound where --cap names none: a first build that
+# compiles every locked dependency runs for minutes, and a held caller waits
+# no longer than this.
+BUILD_CAP=1200
 
 here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 name=agent-runtime
 runtime_arg="$here/../runtime"
+detach=0
+hold=""
+cap=""
 
 refuse() { # KEY FIELD=VALUE...
   local key="$1"
@@ -48,17 +85,29 @@ refuse() { # KEY FIELD=VALUE...
   exit 1
 }
 
-cargo_args=(build --release --locked)
+offline=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --runtime) [ "$#" -ge 2 ] || refuse usage "argument=$1 wanted=DIR"; runtime_arg="$2"; shift ;;
     --name) [ "$#" -ge 2 ] && [ -n "$2" ] || refuse usage "argument=$1 wanted=NAME"; name="$2"; shift ;;
-    --offline) cargo_args+=(--offline) ;;
+    --offline) offline=1 ;;
+    --detach) detach=1 ;;
+    --hold) [ "$#" -ge 2 ] && [ -n "$2" ] || refuse usage "argument=$1 wanted=PATH"; hold="$2"; shift ;;
+    --cap)
+      [ "$#" -ge 2 ] || refuse usage "argument=$1 wanted=SECONDS"
+      case "$2" in '' | 0* | *[!0-9]*) refuse usage "argument=$1 wanted=SECONDS got=$2" ;; esac
+      cap="$2"
+      shift
+      ;;
     -h | --help) usage; exit 0 ;;
     *) refuse usage "argument=$1" ;;
   esac
   shift
 done
+[ "$detach" -eq 1 ] || { [ -z "$hold" ] && [ -z "$cap" ]; } || refuse usage "argument=--hold|--cap wanted=--detach"
+cap="${cap:-$BUILD_CAP}"
+cargo_args=(build --release --locked)
+[ "$offline" -eq 0 ] || cargo_args+=(--offline)
 
 runtime="$(cd -- "$runtime_arg" 2>/dev/null && pwd -P)" || refuse runtime-missing "runtime=$runtime_arg"
 
@@ -68,6 +117,107 @@ runtime="$(cd -- "$runtime_arg" 2>/dev/null && pwd -P)" || refuse runtime-missin
 cache="$(agent_runtime_cache)"
 key="$(agent_runtime_key "$runtime")"
 binary="$cache/bin/$name-$key"
+builds="$cache/build/$name"
+failed="$builds/$key.failed"
+
+if [ "$detach" -eq 1 ]; then
+  lock="$builds/$key.lock"
+  log="$builds/$key.log"
+  held=0
+  [ -z "$hold" ] || [ ! -e "$hold" ] || held=1
+  # answer WORD FIELDS... prints the one line and exits as usage() states.
+  answer() {
+    [ -n "$hold" ] && [ "$held" -eq 0 ] || printf '%s-setup: %s\n' "$name" "$*"
+    [ "$held" -eq 1 ] || exit 0
+    case "$1" in
+      runtime-building) exit 3 ;;
+      runtime-unbuilt)
+        local cause told
+        cause="${2#cause=}"
+        told="$builds/$key.told-$(printf '%s' "$hold" | agent_runtime_digest)-$cause"
+        [ ! -e "$told" ] || exit 0
+        : >"$told" || exit 0
+        exit 3
+        ;;
+    esac
+    exit 0
+  }
+  unbuilt() { answer runtime-unbuilt "cause=$1" "key=$key" "log=$log"; }
+  [ ! -x "$binary" ] || answer "key=$key" "binary=$binary"
+  mkdir -p -- "$builds" "$cache/bin" || refuse cache-unwritable "path=$cache"
+  # The claim is a symlink whose target is "<start> <cap>", then
+  # "<start> <cap> <pid>" once the build has started: made in one call that
+  # fails where one stands, on Linux and macOS alike, with no lock tool. A
+  # build releases its claim only after writing its record, so a record is
+  # read once the claim is held.
+  start="$(date +%s)"
+  if ln -s -- "$start $cap" "$lock" 2>/dev/null; then
+    if [ -f "$failed" ]; then
+      rm -f -- "$lock"
+      unbuilt "$(cat -- "$failed")"
+    fi
+    if ! command -v cargo >/dev/null 2>&1; then
+      rm -f -- "$lock"
+      printf '%s-setup: cargo-missing key=%s\n' "$name" "$key" >"$log"
+      unbuilt cargo-missing
+    fi
+    build=(--runtime "$runtime" --name "$name")
+    [ "$offline" -eq 0 ] || build+=(--offline)
+    # The build leads its own process group (`set -m` gives a background job
+    # one, on Bash 3.2 as on 5), ignores SIGHUP and holds none of the
+    # caller's descriptors: a harness that waits on its hook's output, or
+    # signals the hook's group or session when it ends, never reaches it. It
+    # bounds itself: past the cap it signals its own group, setup and cargo
+    # with it, and records the cap.
+    set -m
+    (
+      trap '' HUP
+      me="$(exec sh -c 'echo "$PPID"')"
+      ln -s -- "$start $cap $me" "$lock.$me"
+      mv -f -- "$lock.$me" "$lock"
+      "$here/setup" "${build[@]}" >"$log" 2>&1 &
+      child=$!
+      cause=""
+      while kill -0 "$child" 2>/dev/null; do
+        if [ "$(($(date +%s) - start))" -ge "$cap" ]; then
+          cause="build-capped"
+          trap '' TERM
+          kill -TERM -- "-$me" 2>/dev/null || :
+          break
+        fi
+        sleep 1
+      done
+      if [ ! -x "$binary" ]; then
+        printf '%s\n' "${cause:-build-failed}" >"$failed.$me"
+        mv -f -- "$failed.$me" "$failed"
+      fi
+      rm -f -- "$lock"
+    ) </dev/null >/dev/null 2>&1 &
+    set +m
+    answer runtime-building "key=$key" "log=$log"
+  fi
+  # A claim stands. Its build runs while its process lives and its cap has
+  # not passed; a claim whose build never took it is given CLAIM_GRACE
+  # seconds. A claim whose build is gone without a record was lost (a
+  # reboot, a kill): it is recorded so, and started again only when asked.
+  claim="$(readlink -- "$lock" 2>/dev/null)" || claim=""
+  # shellcheck disable=SC2086 # the claim's numbers, split on purpose
+  set -- $claim
+  case "$#" in
+    3)
+      if kill -0 "$3" 2>/dev/null; then
+        [ "$(($(date +%s) - $1))" -ge "$2" ] || answer runtime-building "key=$key" "log=$log"
+        unbuilt build-capped
+      fi
+      ;;
+    2) [ "$(($(date +%s) - $1))" -ge "$CLAIM_GRACE" ] || answer runtime-building "key=$key" "log=$log" ;;
+  esac
+  [ ! -x "$binary" ] || answer "key=$key" "binary=$binary"
+  [ -f "$failed" ] || { printf 'build-lost\n' >"$failed.$$" && mv -f -- "$failed.$$" "$failed"; } ||
+    refuse cache-unwritable "path=$failed"
+  rm -f -- "$lock"
+  unbuilt "$(cat -- "$failed")"
+fi
 
 if [ -x "$binary" ]; then
   printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"
@@ -75,13 +225,13 @@ if [ -x "$binary" ]; then
 fi
 
 command -v cargo >/dev/null 2>&1 || refuse cargo-missing "key=$key"
-mkdir -p -- "$cache/build/$name/$key" "$cache/bin" || refuse cache-unwritable "path=$cache"
+mkdir -p -- "$builds/$key" "$cache/bin" || refuse cache-unwritable "path=$cache"
 
 status=0
-CARGO_TARGET_DIR="$cache/build/$name/$key" cargo "${cargo_args[@]}" \
+CARGO_TARGET_DIR="$builds/$key" cargo "${cargo_args[@]}" \
   --manifest-path "$runtime/Cargo.toml" >/dev/null || status=$?
 [ "$status" -eq 0 ] || refuse build-failed "status=$status key=$key"
-built="$cache/build/$name/$key/release/$name"
+built="$builds/$key/release/$name"
 [ -f "$built" ] || refuse binary-missing "path=$built"
 
 # Exclusive creation under noclobber, so a concurrent setup of the same key
@@ -95,4 +245,6 @@ trap 'rm -f -- "$tmp"' EXIT
 chmod -- 755 "$tmp" || refuse place-failed "path=$tmp"
 mv -f -- "$tmp" "$binary" || refuse place-failed "path=$binary"
 trap - EXIT
+# A detached build of this key that ended unbuilt is answered by this build.
+rm -f -- "$failed" "$builds/$key".told-*
 printf '%s-setup: key=%s binary=%s\n' "$name" "$key" "$binary"

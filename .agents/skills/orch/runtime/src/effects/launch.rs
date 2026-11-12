@@ -101,6 +101,9 @@ const PI_SESSION_ENV_STEP: &str = include_str!("pi-session-env.txt");
 const CLOUD_BOUND: Duration = Duration::from_secs(600);
 /// The bound on the worktree package and git during a cloud launch.
 const CLOUD_PREPARE_BOUND: Duration = Duration::from_secs(900);
+/// The bound on one package's setup before a window opens: a first build
+/// that compiles every locked dependency runs for minutes.
+const SETUP_BOUND: Duration = Duration::from_secs(1200);
 
 /// The session a launch opens: the lane's bound native session resumed, or
 /// a fresh one, with why where a relaunch could not resume. The route is
@@ -613,7 +616,9 @@ fn named_home(
 /// (`accountless_kept` decides which). A launch whose line runs at full
 /// bypass (`bypass`) gets the account's consent to it beside the trust
 /// record. The harness gate then judges what the harness needs beyond its
-/// trust record under the home its sessions are read from.
+/// trust record under the home its sessions are read from, and the runtimes
+/// of `cwd`'s install are built last (`build_runtimes`): a lane's launch and
+/// relaunch and a controller's start all pass here before their window.
 pub(super) fn launch_home(
     settings: &Settings,
     harness: Harness,
@@ -641,6 +646,7 @@ pub(super) fn launch_home(
     }
     let sessions = named.clone().or_else(|| operation::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
+    build_runtimes(cwd)?;
     Ok(LaunchHome {
         sessions,
         named,
@@ -648,6 +654,67 @@ pub(super) fn launch_home(
         account: billed,
         trust: trusted.map(|t| t.route),
     })
+}
+
+/// The orch and agent-runtime binaries of `cwd`'s own orch install
+/// (`.agents/skills/orch`), built through each package's setup before the
+/// window opens, so the harness's first turn end, which reads its mail
+/// through them, never meets the sources unbuilt; a key already built
+/// builds nothing. agent-runtime is the sibling orch's scripts reach as
+/// `../../agent-runtime`, the package they run. A directory with no orch
+/// install of its own builds nothing here: the install its harness runs is
+/// not this launch's. A setup that refuses, or gives no answer within its
+/// bound, refuses the launch `runtime-unbuilt` with the setup's last line.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "each package's own setup, through the one runner, before the window it serves opens"
+)]
+fn build_runtimes(cwd: &Path) -> Result<()> {
+    let scripts = cwd.join(".agents/skills/orch/scripts");
+    if !scripts.join("setup").is_file() {
+        return Ok(());
+    }
+    for setup in [
+        scripts.join("setup"),
+        scripts.join("../../agent-runtime/scripts/setup"),
+    ] {
+        let at = setup.display().to_string();
+        let out = host::run_tagged_in(
+            "launch",
+            "setup",
+            &setup,
+            "build",
+            &[],
+            Place {
+                cwd: Some(cwd),
+                env: &[],
+            },
+            SETUP_BOUND,
+        )
+        .map_err(|e| {
+            refused(
+                "runtime-unbuilt",
+                &[("setup", &at), ("detail", &e.to_string())],
+            )
+        })?;
+        if !out.status.success() {
+            let stderr = host::stderr_text(&out);
+            let line = stderr.lines().rev().find(|l| !l.trim().is_empty());
+            let status = out
+                .status
+                .code()
+                .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+            return Err(refused(
+                "runtime-unbuilt",
+                &[
+                    ("setup", &at),
+                    ("status", &status),
+                    ("detail", line.unwrap_or("")),
+                ],
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The trust record a launch of `harness` under `home` needs for `cwd`,

@@ -3,8 +3,9 @@
 # skills/agent-runtime/scripts/**, skills/agent-runtime/runtime/Cargo.toml,
 # runtime/Cargo.lock, runtime/src/**.
 #
-# A fake cargo first on PATH records its argv and writes a small executable
-# where a real build would, so no row compiles anything. The package under
+# The planted cargo beside this suite, first on PATH, records its argv and
+# writes a small executable where a real build would, so no row compiles
+# anything. The package under
 # test is a copy of scripts/ beside a copy of the runtime inputs, in scratch;
 # AGENT_RUNTIME_UNDER_TEST names another package directory whose scripts/ are
 # copied instead, which is how a control runs a mutated setup.
@@ -26,29 +27,7 @@ cp -R "$SRC/runtime/src" "$PKG/runtime/src"
 SETUP="$PKG/scripts/setup"
 WRAPPER="$PKG/scripts/agent-runtime"
 
-# The fake cargo: one argv line per call into FAKE_CARGO_LOG, then the
-# binary a release build leaves, named as the manifest's [[bin]] names it,
-# or FAKE_CARGO_EXIT and nothing.
-cat >"$TMP_ROOT/bin/cargo" <<'CARGO'
-#!/usr/bin/env bash
-set -eu
-printf '%s\n' "$*" >>"$FAKE_CARGO_LOG"
-if [ "${FAKE_CARGO_EXIT:-0}" -ne 0 ]; then
-  echo 'fake cargo: build failed' >&2
-  exit "$FAKE_CARGO_EXIT"
-fi
-manifest=""
-while [ "$#" -gt 0 ]; do
-  [ "$1" != --manifest-path ] || manifest="$2"
-  shift
-done
-bin="$(awk '/^\[\[bin\]\]/ { in_bin = 1; next } /^\[/ { in_bin = 0 } in_bin && /^name = / { gsub(/^name = "|"$/, ""); print; exit }' "$manifest")"
-[ -n "$bin" ] || { echo "fake cargo: no [[bin]] name in $manifest" >&2; exit 101; }
-mkdir -p "$CARGO_TARGET_DIR/release"
-printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/$bin"
-chmod 755 "$CARGO_TARGET_DIR/release/$bin"
-CARGO
-chmod 755 "$TMP_ROOT/bin/cargo"
+ln -s "$SRC/tests/setup/cargo" "$TMP_ROOT/bin/cargo"
 
 # chmod as BSD reads its arguments, first on PATH for every row, so a Linux
 # run fails the placement a macOS one fails: getopt(3) stops at the first
@@ -238,6 +217,162 @@ RC=0
 env -u AGENT_RUNTIME_CACHE XDG_CACHE_HOME="$TMP_ROOT/xdg" "$SETUP" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" || RC=$?
 assert_eq "$RC" 0 'setup under XDG_CACHE_HOME exits 0' "$TMP_ROOT/err"
 assert_eq "$(cat "$TMP_ROOT/out")" "agent-runtime-setup: key=$KEY binary=$TMP_ROOT/xdg/kendex/agent-runtime/bin/agent-runtime-$KEY" 'the default cache is kendex/agent-runtime under XDG_CACHE_HOME'
+
+# --- --detach: the build a caller that must answer starts beside itself ----
+# A turn end on a computer whose runtime is unbuilt (a pull, a cleared
+# cache, an edited runtime) starts the build here and answers at once. The
+# rows hold a build in flight with the cargo hold, and wait on files with a
+# bound, ten seconds each.
+until_there() { # PATH
+  local n=0
+  while [ ! -e "$1" ]; do
+    n=$((n + 1))
+    [ "$n" -lt 100 ] || return 1
+    sleep 0.1
+  done
+}
+until_gone() { # PATH, a file or a symlink
+  local n=0
+  while [ -e "$1" ] || [ -L "$1" ]; do
+    n=$((n + 1))
+    [ "$n" -lt 100 ] || return 1
+    sleep 0.1
+  done
+}
+MAIL="$TMP_ROOT/mailbox"
+mkdir -p "$MAIL"
+HOLD="$TMP_ROOT/hold"
+building_line() { printf 'agent-runtime-setup: runtime-building key=%s log=%s/build/agent-runtime/%s.log' "$KEY" "$1" "$KEY"; }
+unbuilt_line() { printf 'agent-runtime-setup: runtime-unbuilt cause=%s key=%s log=%s/build/agent-runtime/%s.log' "$2" "$KEY" "$1" "$KEY"; }
+
+# One build per key: the caller holding a mailbox is held while the build it
+# started runs, returns while it runs (a harness reads its hook's output to
+# its end), and a second caller starts nothing. The build is outside the
+# caller's process group, so a signal to the hook's group misses it.
+DC="$TMP_ROOT/cache-detach"
+: >"$HOLD"
+before="$(calls)"
+RC=0
+OUT="$(FAKE_CARGO_HOLD="$HOLD" AGENT_RUNTIME_CACHE="$DC" "$SETUP" --detach --hold "$MAIL" 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC|$OUT" "3|$(building_line "$DC")" 'detach: a caller holding a mailbox is held while the build it started runs' "$TMP_ROOT/err"
+until_there "$HOLD.pid" || fail 'detach: the build reached cargo'
+read -r cargo_pid cargo_group <"$HOLD.pid"
+if kill -0 "$cargo_pid" 2>/dev/null; then pass 'detach: the caller returned while its build runs'; else fail 'detach: the caller returned while its build runs'; fi
+own_group="$(ps -o pgid= -p "$$" | tr -d ' ')"
+if [ "$cargo_group" != "$own_group" ]; then pass "detach: the build runs outside the caller's process group"; else fail "detach: the build runs outside the caller's process group" "$cargo_group"; fi
+FAKE_CARGO_HOLD="$HOLD" run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(building_line "$DC")" 'detach: a second caller is held while the build runs'
+# The first build stays held while a second, were one started, keys the
+# sources and reaches cargo: three seconds, ten times what that takes.
+n=0
+while [ "$(calls)" -lt "$((before + 2))" ] && [ "$n" -lt 30 ]; do
+  n=$((n + 1))
+  sleep 0.1
+done
+assert_eq "$(calls)" "$((before + 1))" 'detach: a second caller while a build runs starts no second build'
+rm -f "$HOLD"
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the build released its claim'
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "0|agent-runtime-setup: key=$KEY binary=$DC/bin/agent-runtime-$KEY" 'detach: a built key passes with the success line'
+assert_eq "$(calls)" "$((before + 1))" 'detach: a built key starts nothing'
+
+# A root with no mailbox passes silently, and a caller naming no hold (the
+# row, usage and compact arms) passes with the line; both start the build.
+DC="$TMP_ROOT/cache-quiet"
+before="$(calls)"
+run "$DC" "$SETUP" --detach --hold "$TMP_ROOT/no-mailbox"
+assert_eq "$RC|$OUT|$(cat "$TMP_ROOT/err")" '0||' 'detach: a root with no mailbox passes silently'
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the quiet build ended'
+assert_eq "$(calls)" "$((before + 1))" 'detach: a root with no mailbox still starts the build'
+DC="$TMP_ROOT/cache-record"
+run "$DC" "$SETUP" --detach
+assert_eq "$RC|$OUT" "0|$(building_line "$DC")" 'detach: a caller with no hold passes with the building line'
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the record build ended'
+if [ -x "$DC/bin/agent-runtime-$KEY" ]; then pass 'detach: a caller with no hold still builds'; else fail 'detach: a caller with no hold still builds'; fi
+
+# A failed build holds a mailbox once per root and cause, then passes; it is
+# never started again by --detach, and a setup without it clears the record.
+DC="$TMP_ROOT/cache-failed-detach"
+before="$(calls)"
+FAKE_CARGO_EXIT=1 run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(building_line "$DC")" 'detach: the failing build is held while it runs'
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the failed build released its claim'
+FAKE_CARGO_EXIT=1 run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-failed)" 'detach: a failed build holds a mailbox once with its cause'
+FAKE_CARGO_EXIT=1 run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "0|$(unbuilt_line "$DC" build-failed)" 'detach: the next caller of a failed build passes'
+assert_eq "$(calls)" "$((before + 1))" 'detach: a failed build is not started again'
+assert_contains "$(cat "$DC/build/agent-runtime/$KEY.log")" "agent-runtime-setup: build-failed status=1 key=$KEY" "detach: the log holds the build's own refusal"
+mkdir -p "$TMP_ROOT/other-mailbox"
+run "$DC" "$SETUP" --detach --hold "$TMP_ROOT/other-mailbox"
+assert_eq "$RC" 3 'detach: another root is held once for the same failure'
+run "$DC" "$SETUP"
+assert_eq "$RC" 0 'detach: a setup without --detach builds the failed key' "$TMP_ROOT/err"
+assert_eq "$(ls -A "$DC/build/agent-runtime" | grep -c -e '\.failed$' -e '\.told-' || :)" 0 'detach: the build clears the failure and its notices'
+
+# A build past its cap is ended, its group with it, and read as unbuilt. The
+# cap is four seconds: the clock is whole seconds, and the build keys the
+# sources before it reaches cargo, which must be running when the cap ends it.
+DC="$TMP_ROOT/cache-capped"
+: >"$HOLD"
+rm -f "$HOLD.pid"
+FAKE_CARGO_HOLD="$HOLD" run "$DC" "$SETUP" --detach --cap 4 --hold "$MAIL"
+assert_eq "$RC" 3 'detach: a capped build is held while it runs'
+until_there "$HOLD.pid" || fail 'detach: the capped build reached cargo'
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the capped build released its claim'
+read -r cargo_pid cargo_group <"$HOLD.pid"
+n=0
+while kill -0 "$cargo_pid" 2>/dev/null && [ "$n" -lt 20 ]; do n=$((n + 1)); sleep 0.1; done
+if kill -0 "$cargo_pid" 2>/dev/null; then fail 'detach: the cap ends the build with its group'; else pass 'detach: the cap ends the build with its group'; fi
+rm -f "$HOLD"
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-capped)" 'detach: a capped build holds a mailbox once'
+
+# A claim past its cap is read as unbuilt while its process still lives, and
+# a claim whose build is gone with no record was lost.
+DC="$TMP_ROOT/cache-claims"
+mkdir -p "$DC/build/agent-runtime"
+sleep 30 &
+live=$!
+ln -s "1 5 $live" "$DC/build/agent-runtime/$KEY.lock"
+before="$(calls)"
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-capped)" 'detach: a claim past its cap reads unbuilt while its process lives'
+kill "$live"
+wait "$live" 2>/dev/null || :
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-lost)" 'detach: a claim whose process is gone with no record is lost'
+assert_eq "$(calls)|$(cat "$DC/build/agent-runtime/$KEY.failed")" "$before|build-lost" 'detach: a lost build is recorded and not started again'
+if [ -L "$DC/build/agent-runtime/$KEY.lock" ]; then fail 'detach: the lost claim is removed'; else pass 'detach: the lost claim is removed'; fi
+DC="$TMP_ROOT/cache-untaken"
+mkdir -p "$DC/build/agent-runtime"
+ln -s "1 1200" "$DC/build/agent-runtime/$KEY.lock"
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" build-lost)" 'detach: a claim no build took within its grace is lost'
+
+# No cargo: the caller is told once, nothing is recorded, and a later cargo
+# builds. The PATH holds every tool the setup reads but cargo.
+NOCARGO="$TMP_ROOT/no-cargo-bin"
+mkdir -p "$NOCARGO"
+for tool in awk bash cat chmod cut date find ln mkdir mv readlink rm sh sha256sum shasum sort tr wc; do
+  if found="$(command -v "$tool")"; then ln -s "$found" "$NOCARGO/$tool"; fi
+done
+DC="$TMP_ROOT/cache-no-cargo"
+RC=0
+OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$DC" "$SETUP" --detach --hold "$MAIL" 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC|$OUT" "3|$(unbuilt_line "$DC" cargo-missing)" 'detach: a computer with no cargo holds a mailbox once' "$TMP_ROOT/err"
+RC=0
+OUT="$(PATH="$NOCARGO" AGENT_RUNTIME_CACHE="$DC" "$SETUP" --detach --hold "$MAIL" 2>"$TMP_ROOT/err")" || RC=$?
+assert_eq "$RC" 0 'detach: the next caller with no cargo passes'
+run "$DC" "$SETUP" --detach --hold "$MAIL"
+assert_eq "$RC|$OUT" "3|$(building_line "$DC")" 'detach: once cargo is there the build starts'
+until_gone "$DC/build/agent-runtime/$KEY.lock" || fail 'detach: the late build ended'
+
+# --hold and --cap belong to --detach; a cap is a positive whole number.
+run "$TMP_ROOT/cache-usage" "$SETUP" --hold "$MAIL"
+assert_eq "$RC|$ERR" '1|agent-runtime-setup: usage argument=--hold|--cap wanted=--detach' '--hold without --detach is refused'
+run "$TMP_ROOT/cache-usage" "$SETUP" --detach --cap 0
+assert_eq "$RC|$ERR" '1|agent-runtime-setup: usage argument=--cap wanted=SECONDS got=0' 'a cap of zero is refused'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -6,7 +6,8 @@
 # for these sources (lib/key.sh; <cache> as setup resolves it). When it is
 # absent this wrapper builds nothing: it prints
 #   agent-runtime: setup-required key=<key> run=<path to scripts/setup>
-# on stderr and exits 69, so a hook or status read never compiles.
+# on stderr and exits 69; a caller that must answer meanwhile starts it with
+# `setup --detach`.
 set -euo pipefail
 
 here="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"

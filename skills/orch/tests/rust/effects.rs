@@ -5881,6 +5881,96 @@ fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_
     );
 }
 
+/// The launch directory's own install, its orch and agent-runtime packages
+/// linked where an apply puts them, built through their real setup over
+/// agent-runtime's planted cargo into the row's cache before the window
+/// opens, so the lane's first turn end can read its mail; a build that fails
+/// refuses the launch with no window and no marker.
+#[test]
+fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_opens_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let root = std::fs::canonicalize(runner.state_dir()).unwrap();
+    let packages = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let skills = root.join(".agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    for package in ["orch", "agent-runtime"] {
+        std::os::unix::fs::symlink(packages.join(package), skills.join(package)).unwrap();
+    }
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::os::unix::fs::symlink(
+        packages.join("agent-runtime/tests/setup/cargo"),
+        tools.join("cargo"),
+    )
+    .unwrap();
+    runner.tools = Some(tools);
+    let cache = dir.path().join("cache");
+    let log = dir.path().join("cargo.log");
+    runner.env.push((
+        "AGENT_RUNTIME_CACHE".to_owned(),
+        cache.display().to_string(),
+    ));
+    runner
+        .env
+        .push(("FAKE_CARGO_LOG".to_owned(), log.display().to_string()));
+
+    let out = runner.op_fleet_env(
+        &launch_request("KEN-B", runner.state_dir()),
+        &[("FAKE_CARGO_EXIT", "1")],
+    );
+    let report = effect_report(&out);
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["cause"], "runtime-unbuilt", "{report}");
+    assert_eq!(
+        observation["setup"],
+        skills.join("orch/scripts/setup").display().to_string()
+    );
+    assert!(
+        observation["detail"]
+            .as_str()
+            .is_some_and(|line| line.starts_with("orch-runtime-setup: build-failed status=1 key=")),
+        "the setup's own refusal: {report}"
+    );
+    assert_eq!(server.panes().len(), 1, "no window opened");
+    assert_eq!(marker_of(&root, "KEN-B"), None, "no marker written");
+
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-C", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let mut built: Vec<String> = std::fs::read_dir(cache.join("bin"))
+        .unwrap()
+        .map(|entry| {
+            let name = entry.unwrap().file_name().into_string().unwrap();
+            name.rsplit_once('-').unwrap().0.to_owned()
+        })
+        .collect();
+    built.sort();
+    assert_eq!(
+        built,
+        ["agent-runtime", "orch-runtime"],
+        "both runtimes built"
+    );
+    let manifests: Vec<String> = std::fs::read_to_string(&log)
+        .unwrap()
+        .lines()
+        .map(|line| line.rsplit_once(' ').unwrap().1.to_owned())
+        .collect();
+    let orch = skills.join("orch/runtime/Cargo.toml");
+    let agent = skills.join("agent-runtime/runtime/Cargo.toml");
+    let canonical = |path: &Path| std::fs::canonicalize(path).unwrap();
+    assert_eq!(
+        manifests
+            .iter()
+            .map(|m| canonical(Path::new(m)))
+            .collect::<Vec<_>>(),
+        [canonical(&orch), canonical(&orch), canonical(&agent)],
+        "the failed orch build, then each package's own runtime"
+    );
+}
+
 /// The hosted launch's world: the provider fixture as the project's
 /// `lane-host`, its answers planted by argv, the ssh client fixture and the
 /// stub harness on the runtime's path, and a "host" worktree on this disk.

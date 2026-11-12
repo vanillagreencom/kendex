@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The planted cargo a row puts first on PATH, so no row compiles anything:
+# one argv line per call into FAKE_CARGO_LOG, then the binary a release build
+# leaves under CARGO_TARGET_DIR, named as the manifest's [[bin]] names it, or
+# FAKE_CARGO_EXIT and nothing. Where FAKE_CARGO_HOLD names a file it writes
+# its pid and process group beside it and runs while the file stands, twenty
+# seconds at most, so a row can read a build in flight.
+set -eu
+printf '%s\n' "$*" >>"$FAKE_CARGO_LOG"
+if [ -n "${FAKE_CARGO_HOLD:-}" ]; then
+  printf '%s %s\n' "$$" "$(ps -o pgid= -p "$$" | tr -d ' ')" >"$FAKE_CARGO_HOLD.pid"
+  n=0
+  while [ -e "$FAKE_CARGO_HOLD" ] && [ "$n" -lt 200 ]; do
+    sleep 0.1
+    n=$((n + 1))
+  done
+fi
+if [ "${FAKE_CARGO_EXIT:-0}" -ne 0 ]; then
+  echo 'fake cargo: build failed' >&2
+  exit "$FAKE_CARGO_EXIT"
+fi
+manifest=""
+while [ "$#" -gt 0 ]; do
+  [ "$1" != --manifest-path ] || manifest="$2"
+  shift
+done
+bin="$(awk '/^\[\[bin\]\]/ { in_bin = 1; next } /^\[/ { in_bin = 0 } in_bin && /^name = / { gsub(/^name = "|"$/, ""); print; exit }' "$manifest")"
+[ -n "$bin" ] || { echo "fake cargo: no [[bin]] name in $manifest" >&2; exit 101; }
+mkdir -p "$CARGO_TARGET_DIR/release"
+printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/$bin"
+chmod 755 "$CARGO_TARGET_DIR/release/$bin"

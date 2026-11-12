@@ -55,10 +55,10 @@ sync-base|1|post-merge: sync-base=1,
 command|1|post-merge: sync-base=0,post-merge: command=1,
 refresh|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=1,post-merge: changes=kept,
 verify|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=1,post-merge: changes=kept,
-success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: changes=kept,
-empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: changes=kept,
-absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,
-refresh-only|0|refresh --scope project --yes --leave,post-merge: refresh=0,post-merge: changes=kept,
+success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: changes=kept,post-merge: setup=skipped,
+empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,post-merge: changes=kept,post-merge: setup=skipped,
+absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,post-merge: setup=skipped,
+refresh-only|0|refresh --scope project --yes --leave,post-merge: refresh=0,post-merge: changes=kept,post-merge: setup=skipped,
 ROWS
 }
 table "$DIR/post-merge" real assert_eq
@@ -109,7 +109,7 @@ workflow_owner() { # SCRIPT TAG JUDGE [MODE]
     if [[ "$mode" == refresh-only ]]; then
       rc=0; out="$(bash "$script" --refresh-only "$W" 2>"$SCRATCH/error")" || rc=$?
       "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
-      "$judge" "$rc:$out" '0:post-merge: refresh=skipped cause=workflow-owned path=.github/workflows/kendex-refresh.yml' "$fail: refresh-only skips all work" || return 1
+      "$judge" "$rc:$out" $'0:post-merge: refresh=skipped cause=workflow-owned path=.github/workflows/kendex-refresh.yml\npost-merge: setup=skipped' "$fail: refresh-only skips all work" || return 1
     fi
     rc=0; out="$(bash "$script" $flag "$W" 2>"$SCRATCH/error")" || rc=$?
     "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
@@ -121,6 +121,7 @@ workflow_owner() { # SCRIPT TAG JUDGE [MODE]
     "$judge" "$(git -C "$W" rev-parse refs/kendex/post-merge-base)" "$before" "$fail: successful checkpoint" || return 1
     want=$'main\npost-merge: sync-base=0\npost-merge: command='"$expected"
     [[ "$mode" == command-only || "$expected" != 0 ]] || want+=$'\npost-merge: refresh=skipped cause=workflow-owned path=.github/workflows/kendex-refresh.yml\npost-merge: verify=skipped'
+    [[ "$expected" != 0 ]] || want+=$'\npost-merge: setup=skipped'
     "$judge" "$out" "$want" "$fail: no refresh or verify" || return 1
     "$judge" "$(cat "$KENDEX_CALL_LOG")" '' "$fail: kendex was not called" || return 1
     "$judge" "$(git -C "$W" status --porcelain --untracked-files=all)" '' "$fail: no refresh dirt" || return 1
@@ -138,7 +139,7 @@ mutate_file "$mutant" 'if [[ -f "$refresh_caller" ]]; then' 'if false; then'
 rc=0; out="$(workflow_owner "$mutant" caller-removed miss full 2>"$SCRATCH/control-error")" || rc=$?
 assert_contains "$rc:$out" '1:miss first: no refresh dirt' 'control: removing caller ownership creates refresh dirt'
 mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
-mutate_file "$mutant" '[[ "$mode" != command-only ]] || exit 0' ':'
+mutate_file "$mutant" '[[ "$mode" != command-only ]] || setup_and_exit' ':'
 rc=0; out="$(workflow_owner "$mutant" refresh-fallthrough miss 2>"$SCRATCH/control-error")" || rc=$?
 assert_contains "$rc:$out" '1:miss first: no refresh dirt' 'control: local refresh during workflow ownership is rejected'
 
@@ -206,6 +207,39 @@ for defect in tracked untracked; do
   rc=0; out="$(preservation "$mutant" "$defect" full miss)" || rc=$?
   assert_eq "$rc:$out" "$expected" "$defect cleanup control rejects data loss"
 done
+
+# Every mode ends by building the checkout's own install: its orch and
+# agent-runtime packages' real setup, over agent-runtime's planted cargo,
+# into a private cache. The install is the two source packages linked where
+# an apply puts them; no kendex.toml, so refresh and verify skip.
+PACKAGES="$(cd -- "$DIR/../.." && pwd -P)"
+mkdir -p "$SCRATCH/cargo-bin"
+ln -s "$PACKAGES/agent-runtime/tests/setup/cargo" "$SCRATCH/cargo-bin/cargo"
+git clone -q -c gc.auto=0 -c maintenance.auto=false "$SCRATCH/seed" "$SCRATCH/install-seed"
+mkdir -p "$SCRATCH/install-seed/.agents/skills"
+ln -s "$PACKAGES/orch" "$SCRATCH/install-seed/.agents/skills/orch"
+ln -s "$PACKAGES/agent-runtime" "$SCRATCH/install-seed/.agents/skills/agent-runtime"
+git -C "$SCRATCH/install-seed" add .agents
+git -C "$SCRATCH/install-seed" -c user.name=test -c user.email=test@example.com commit -qm install
+installed() { # SCRIPT TAG JUDGE — the build after a merge, then a failing build
+  local W="$SCRATCH/install-$2" cache="$SCRATCH/install-cache-$2" log="$SCRATCH/install-cargo-$2" rc out
+  git clone -q -c gc.auto=0 -c maintenance.auto=false "$SCRATCH/install-seed" "$W"
+  rc=0
+  out="$(cd -- "$W" && PATH="$SCRATCH/cargo-bin:$PATH" AGENT_RUNTIME_CACHE="$cache" FAKE_CARGO_LOG="$log" ORCH_POST_MERGE_CMD='' bash "$1" 2>"$SCRATCH/error")" || rc=$?
+  out="$(printf '%s\n' "$out" | sed -n 's/^\(post-merge: [a-z-]*=[a-z0-9]*\).*/\1/p; s/^\([a-z-]*-setup\): key=.*/\1/p' | tr '\n' ',')"
+  "$3" "$rc:$out" '0:post-merge: sync-base=0,post-merge: command=skipped,post-merge: refresh=skipped,post-merge: verify=skipped,orch-runtime-setup,agent-runtime-setup,post-merge: setup=0,' "$2: the install's two runtimes are built last" "$SCRATCH/error" || return 1
+  "$3" "$(sed 's/.*--manifest-path //' "$log" | tr '\n' ',')" "$PACKAGES/orch/runtime/Cargo.toml,$PACKAGES/agent-runtime/runtime/Cargo.toml," "$2: each package's own runtime is the one built" || return 1
+  "$3" "$(cd -- "$cache/bin" && ls | sed 's/-[0-9a-f]*$//' | tr '\n' ',')" 'agent-runtime,orch-runtime,' "$2: both binaries stand in the cache" || return 1
+  rm -rf -- "${cache:?}"
+  rc=0
+  out="$(cd -- "$W" && PATH="$SCRATCH/cargo-bin:$PATH" AGENT_RUNTIME_CACHE="$cache" FAKE_CARGO_LOG="$log" FAKE_CARGO_EXIT=1 ORCH_POST_MERGE_CMD='' bash "$1" 2>"$SCRATCH/error")" || rc=$?
+  "$3" "$rc:$(printf '%s\n' "$out" | tail -n 1)" '1:post-merge: setup=1' "$2: a failed build fails the step" || return 1
+}
+installed "$DIR/post-merge" real assert_eq
+mutant="$(mutant_scripts orch post-merge)/post-merge" || exit 1
+mutate_file "$mutant" 'step setup build_runtimes || exit $?' ':'
+rc=0; out="$(installed "$mutant" no-setup miss 2>"$SCRATCH/control-error")" || rc=$?
+assert_eq "$rc:$out" '1:miss no-setup: the install'"'"'s two runtimes are built last rc=0' 'control: a post-merge that ends without the set-up fails the build row' "$SCRATCH/control-error"
 
 # Git status may fail after refresh (for example, an index read error).
 # Fail that external boundary only after kendex has run, so sync is exercised.

@@ -1646,6 +1646,59 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert!(live(live_controller.pid()));
 }
 
+/// A controller's start builds its directory's own install before its
+/// window, through the preparation a lane's launch shares: the orch and
+/// agent-runtime packages linked where an apply puts them, their real setup
+/// over agent-runtime's planted cargo. A build that fails is `failed` before
+/// retirement with the setup's refusal, nothing opened.
+#[test]
+fn a_controller_start_whose_install_does_not_build_opens_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let skills = runner.state_dir().join(".agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    for package in ["orch", "agent-runtime"] {
+        std::os::unix::fs::symlink(packages.join(package), skills.join(package)).unwrap();
+    }
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::os::unix::fs::symlink(
+        packages.join("agent-runtime/tests/setup/cargo"),
+        tools.join("cargo"),
+    )
+    .unwrap();
+    runner.tools = Some(tools);
+    runner.env.extend([
+        (
+            "AGENT_RUNTIME_CACHE".to_owned(),
+            dir.path().join("cache").display().to_string(),
+        ),
+        (
+            "FAKE_CARGO_LOG".to_owned(),
+            dir.path().join("cargo.log").display().to_string(),
+        ),
+        ("FAKE_CARGO_EXIT".to_owned(), "1".to_owned()),
+    ]);
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": pending(runner.state_dir()),
+    })));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["note"], "runtime-unbuilt", "{report}");
+    assert_eq!(observation["retired"], false);
+    assert!(
+        observation["fields"]["detail"]
+            .as_str()
+            .is_some_and(|line| line.starts_with("orch-runtime-setup: build-failed status=1 key=")),
+        "the setup's own refusal: {report}"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+}
+
 /// An adoption records the harness identity read in the pane's foreground,
 /// never the caller's word for it; a record of another, live controller
 /// refuses `overseer-live`; a pane holding no harness refuses
@@ -5505,7 +5558,10 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// the account and its usage from the usage fixture as `curl` in `bin`,
 /// named to the launch through `env`. The walk's `kendex tier-model`
 /// finds the `kendex-launch` fixture in `bin`, the watch world's directory
-/// first on the rows' `PATH`, never the operator's install. Returns the
+/// first on the rows' `PATH`, never the operator's install. The runtime
+/// sources are linked beside `scripts` and agent-runtime's planted cargo is
+/// `cargo` in `bin`, into a cache of the world's own, so a successor whose
+/// directory holds this install builds it as a real one does. Returns the
 /// scripts directory the launch runs from.
 fn launcher_checkout(
     runner: &Runner,
@@ -5539,6 +5595,20 @@ fn launcher_checkout(
         symlink(entry.path(), scripts.join(name)).unwrap();
     }
     symlink(dir.join("orch-runtime"), scripts.join("orch-runtime")).unwrap();
+    symlink(shipped.join("../runtime"), dir.join("skills/orch/runtime")).unwrap();
+    symlink(
+        skills.join("agent-runtime/tests/setup/cargo"),
+        bin.join("cargo"),
+    )
+    .unwrap();
+    env.push((
+        "AGENT_RUNTIME_CACHE".to_owned(),
+        dir.join("runtime-cache").display().to_string(),
+    ));
+    env.push((
+        "FAKE_CARGO_LOG".to_owned(),
+        dir.join("cargo.log").display().to_string(),
+    ));
     symlink(
         fixtures().join("lane-host/lane-host"),
         scripts.join("lane-host"),

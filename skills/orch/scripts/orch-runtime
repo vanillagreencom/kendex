@@ -8,8 +8,8 @@
 # this crate's inputs and agent-runtime's. When the binary is absent this
 # wrapper builds nothing: it prints
 #   orch-runtime: setup-required key=<key> run=<path to scripts/setup>
-# on stderr and exits 69, so a hook or status read never compiles. A copy
-# outside the sibling layout is refused first, exit 2:
+# on stderr and exits 69; a caller that must answer meanwhile starts it with
+# `setup --detach`. A copy outside the sibling layout is refused first, exit 2:
 #   orch-runtime: dependency-absent skill=agent-runtime path=<key.sh>
 set -euo pipefail
 
