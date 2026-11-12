@@ -360,7 +360,9 @@ pub enum Error {
     )]
     ValidateCmdEmpty { setting: &'static str },
     /// The base does not name a commit in the worktree.
-    #[error("the base {base} names no commit in the worktree")]
+    #[error(
+        "the base {base} names no commit in the worktree; a run compares only from the base it was given, so name a new base with the authority that named this one"
+    )]
     BaseInvalid { base: String },
     /// A run of the round stands open with its job recorded: one run at a
     /// time per round.

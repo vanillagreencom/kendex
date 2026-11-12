@@ -2555,12 +2555,41 @@ fn reuse_of_the_real_pass_ends_after_a_later_failed_or_unfinished_attempt_on_tha
     assert!(!run_file(&directory(&next), "start").contains("pass-run="));
 }
 
-#[test]
-fn a_range_base_projects_once_per_rebase_hop_and_an_unmapped_rewrite_refuses() {
-    let w = World::new();
+/// A round's base, then its fix, restacked by hand onto an origin base
+/// branch that changed the line the base's own commit changed: the conflict
+/// is resolved in `conflict.txt` of the rewritten base commit, before the
+/// fix. The rewrite's hop is recorded in the worktree's rebase map as the
+/// worktree skill records it. Answers the round's base.
+fn restacked(w: &World) -> String {
+    let fork = w.head();
+    fs::write(w.worktree.join("conflict.txt"), "branch\n").unwrap();
+    git(&w.worktree, &["add", "conflict.txt"]);
+    git(&w.worktree, &["commit", "-q", "-m", "base"]);
     let base = w.head();
-    let second = w.commit("source.rs");
-    let third = w.commit("another.rs");
+    let fix = w.commit("fix.rs");
+    git(&w.worktree, &["checkout", "-q", "-b", "upstream", &fork]);
+    fs::write(w.worktree.join("conflict.txt"), "upstream\n").unwrap();
+    git(&w.worktree, &["add", "conflict.txt"]);
+    git(&w.worktree, &["commit", "-q", "-m", "upstream"]);
+    git(
+        &w.worktree,
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    git(&w.worktree, &["checkout", "-q", "main"]);
+    let rebase = program("git")
+        .arg("-C")
+        .arg(&w.worktree)
+        .args(["rebase", "-q", "refs/remotes/origin/main"])
+        .output()
+        .unwrap();
+    assert!(!rebase.status.success(), "the restack must conflict");
+    fs::write(w.worktree.join("conflict.txt"), "resolved\n").unwrap();
+    git(&w.worktree, &["add", "conflict.txt"]);
+    git(
+        &w.worktree,
+        &["-c", "core.editor=true", "rebase", "--continue"],
+    );
+    let rewritten = git(&w.worktree, &["rev-parse", "HEAD~1"]);
     let map = git(
         &w.worktree,
         &[
@@ -2572,63 +2601,90 @@ fn a_range_base_projects_once_per_rebase_hop_and_an_unmapped_rewrite_refuses() {
     );
     fs::write(
         &map,
-        format!("rebase-hop:\nrebase-map: {base} {second}\nrebase-map: {second} {third}\n"),
+        format!(
+            "rebase-hop:\nrebase-map: {base} {rewritten}\nrebase-map: {fix} {}\n",
+            w.head()
+        ),
     )
     .unwrap();
+    base
+}
+
+#[test]
+fn a_range_after_a_restack_compares_from_the_authorized_base_and_holds_the_resolution() {
+    let w = World::new();
+    let base = restacked(&w);
+    let out = w.local(
+        &["--validate-mode", "range", "--base", &base],
+        &[(
+            "DEV_VALIDATE_RANGE_CMD",
+            "git diff --name-only \"$DEV_VALIDATE_BASE\" HEAD; cat \"$DEV_VALIDATE_PATHS\"",
+        )],
+    );
+    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
+    let dir = directory(&out);
+    // The range command's own diff from the base it received, then the
+    // classified paths it is handed: the resolution is in both.
+    let log = run_file(&dir, "log");
+    assert_eq!(
+        log.lines().filter(|line| *line == "conflict.txt").count(),
+        2,
+        "{log}"
+    );
+    assert_eq!(
+        log.lines().filter(|line| *line == "fix.rs").count(),
+        2,
+        "{log}"
+    );
+    let fields = orch_runtime::validate::files::fields(&Path::new(&dir).join("start")).unwrap();
+    assert_eq!(fields["validate-base"], base);
+    assert_eq!(fields["class-base"], base);
+}
+
+#[test]
+fn a_base_a_restack_left_unreachable_and_pruned_is_refused_by_name_and_runs_nothing() {
+    let w = World::new();
+    let base = restacked(&w);
+    git(&w.worktree, &["update-ref", "-d", "ORIG_HEAD"]);
+    git(
+        &w.worktree,
+        &[
+            "reflog",
+            "expire",
+            "--expire=now",
+            "--expire-unreachable=now",
+            "--all",
+        ],
+    );
+    git(&w.worktree, &["gc", "-q", "--prune=now"]);
+    let gone = program("git")
+        .arg("-C")
+        .arg(&w.worktree)
+        .args(["cat-file", "-e", &format!("{base}^{{commit}}")])
+        .output()
+        .unwrap();
+    assert!(!gone.status.success(), "the base must be pruned");
     let out = w.local(
         &["--validate-mode", "range", "--base", &base],
         &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
     );
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(run_file(&directory(&out), "start").contains(&format!("validate-base={second}\n")));
-    fs::write(
-        &map,
-        format!(
-            "rebase-hop:\nrebase-map: {base} {second}\nrebase-hop:\nrebase-map: {second} {third}\n"
-        ),
-    )
-    .unwrap();
-    let out = w.local(
-        &["--validate-mode", "range", "--base", &base, "--fresh"],
-        &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "{} {}",
+        text(&out),
+        stderr(&out)
     );
-    assert!(out.status.success(), "{}", stderr(&out));
-    assert!(run_file(&directory(&out), "start").contains(&format!("validate-base={third}\n")));
-    // A map the projection cannot read refuses the range start, naming why.
-    for (text, cause) in [
-        (format!("rebase-unmapped: {third}\n"), "rebase-unmapped"),
-        (
-            format!("rebase-hop:\nrebase-map: nonsha {second}\n"),
-            "map-sha",
-        ),
-        (
-            format!("rebase-hop:\nrebase-map: {base} nonsha\n"),
-            "map-sha",
-        ),
-        (
-            format!("rebase-map: {base} {second}\n"),
-            "restack-map-grammar",
-        ),
-        ("rebase-hop:\n".to_owned(), "restack-map-grammar"),
-        (
-            format!("rebase-hop:\nother: {base}\n"),
-            "restack-map-grammar",
-        ),
-    ] {
-        fs::write(&map, &text).unwrap();
-        let out = w.local(
-            &["--validate-mode", "range", "--base", &base, "--fresh"],
-            &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
-        );
-        assert_eq!(out.status.code(), Some(2), "{text}");
-        assert!(
-            stderr(&out).starts_with(&format!(
-                "dev-validate-run: rebase-map-unreadable cause={cause}"
-            )),
-            "{text}: {}",
-            stderr(&out)
-        );
-    }
+    assert_eq!(
+        stderr(&out).trim(),
+        format!("dev-validate-run: invalid-base base={base}")
+    );
+    let runs = fs::read_dir(w.worktree.join("tmp"))
+        .unwrap()
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("dev-validate-"))
+        .count();
+    assert_eq!(runs, 0, "a refused start leaves no run directory");
 }
 
 #[test]
@@ -4238,59 +4294,6 @@ fn a_classifier_refusal_keeps_the_local_command_and_explicit_fallback() {
     );
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(fallback(&out), "base-unresolved", "{}", text(&out));
-}
-
-#[test]
-fn an_orphaned_range_base_records_the_original_and_uses_the_branch_merge_base() {
-    let w = World::new();
-    let base = w.head();
-    w.commit("range.rs");
-    let tree = git(&w.worktree, &["rev-parse", "HEAD^{tree}"]);
-    let out = program("git")
-        .arg("-C")
-        .arg(&w.worktree)
-        .args(["commit-tree", &tree, "-m", "separate-root"])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    let orphan = text(&out);
-    let out = w.local(
-        &["--validate-mode", "range", "--base", &orphan],
-        &[("DEV_VALIDATE_RANGE_CMD", "echo orphan-range")],
-    );
-    assert!(out.status.success(), "{} {}", text(&out), stderr(&out));
-    let dir = directory(&out);
-    let fields = orch_runtime::validate::files::fields(&Path::new(&dir).join("start")).unwrap();
-    assert_eq!(fields["validate-base-orphaned"], orphan);
-    assert_eq!(fields["validate-base"], base);
-    assert!(run_file(&dir, "log").contains("orphan-range"));
-    assert_eq!(
-        field(&read_record(&w, &dir), "validate-base-orphaned"),
-        orphan
-    );
-    // A base whose ancestry git cannot read, the history between it and HEAD
-    // missing an object, is no answer and never an orphaned base.
-    let w = World::new();
-    let base = w.head();
-    let middle = w.commit("middle.rs");
-    w.commit("top.rs");
-    fs::remove_file(
-        w.worktree
-            .join(".git/objects")
-            .join(&middle[..2])
-            .join(&middle[2..]),
-    )
-    .unwrap();
-    let out = w.local(
-        &["--validate-mode", "range", "--base", &base],
-        &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
-    );
-    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
-    assert!(
-        stderr(&out).contains("dev-validate-run: ancestry-unreadable"),
-        "{}",
-        stderr(&out)
-    );
 }
 
 #[test]

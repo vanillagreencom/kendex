@@ -592,7 +592,9 @@ struct Run {
     head: String,
     tree: String,
     base: Option<String>,
-    orphaned: Option<String>,
+    /// The start's `validate-base`: a run that compared from the round's base
+    /// belongs to that round whatever a restack later did to the branch.
+    compared_from: Option<String>,
     start: u64,
     verdict: String,
     time: Value,
@@ -623,7 +625,7 @@ fn run_record(path: &Path) -> Result<Run> {
         head: file.get("head").to_owned(),
         tree: file.get("tree").to_owned(),
         base: field("class-base").map(str::to_owned),
-        orphaned: field("validate-base-orphaned").map(str::to_owned),
+        compared_from: field("validate-base").map(str::to_owned),
         start: file.get("start").parse().unwrap_or_default(),
         verdict: file.verdict().map_err(unreadable)?.to_owned(),
         lanes,
@@ -776,7 +778,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
     let tree = run_tree(&r.id, run)?;
     if !ancestor(&r.id.worktree, base, &run.head)? {
         let equivalent = committed_tree(&r.id.worktree, base)? == tree;
-        if !equivalent && run.orphaned.as_deref() != Some(base) {
+        if !equivalent && run.compared_from.as_deref() != Some(base) {
             let mapped = projected_base(&r.id.worktree, base)?;
             let contains = match mapped {
                 Some(mapped) => ancestor(&r.id.worktree, &mapped, &run.head)?,

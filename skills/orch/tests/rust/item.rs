@@ -2066,8 +2066,9 @@ mod dev_artifacts {
             ),
             "run-off-round",
         );
-        // A fix run binds to its round's base by ancestry, its orphan record
-        // or an identical tree, and its proof is the declared command's.
+        // A fix run binds to its round's base by ancestry, by having compared
+        // from it or by an identical tree, and its proof is the declared
+        // command's.
         let w = World::new();
         w.stamp("r1");
         let write = |round: &str, run: &Path| {
@@ -2120,16 +2121,13 @@ mod dev_artifacts {
         refused(&write("orph", &snapshot("unbound", None)), "run-off-round");
         result(&write(
             "orph",
-            &snapshot("orphaned", Some(format!("validate-base-orphaned={base}"))),
+            &snapshot("compared", Some(format!("validate-base={base}"))),
         ));
         let main = git(&w.wt, &["rev-parse", "main"]);
         refused(
             &write(
                 "orph",
-                &snapshot(
-                    "orphaned-other",
-                    Some(format!("validate-base-orphaned={main}")),
-                ),
+                &snapshot("compared-other", Some(format!("validate-base={main}"))),
             ),
             "run-off-round",
         );

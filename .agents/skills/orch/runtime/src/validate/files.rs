@@ -208,7 +208,7 @@ impl RunFile {
             self.get("head"),
             self.get("start")
         );
-        for key in ["validate-base-orphaned", "class-base", "tree"] {
+        for key in ["class-base", "tree"] {
             self.append(&mut line, key);
         }
         if let Some(t) = self.timing()? {

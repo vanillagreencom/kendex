@@ -868,7 +868,6 @@ struct Resolved {
     paths: Vec<String>,
     /// The sentinel and log a run that runs nothing records at once.
     ran_nothing: Option<RanNothing>,
-    orphaned: Option<String>,
 }
 
 /// A start that launches no command: required CI pending, or an earlier
@@ -900,7 +899,6 @@ struct Settled {
     ci_event: String,
     cause: Option<String>,
     base_sha: String,
-    orphaned: Option<String>,
     class: Classified,
     class_base: String,
     scoped: bool,
@@ -949,10 +947,6 @@ fn delivery(settings: &crate::settings::ValidateSettings) -> Result<Delivery> {
 
 /// Resolve the request's mode from the declaration and the worktree,
 /// reading everything and recording nothing.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the start's ancestry read of the worktree needs git's exit status itself, which the read helper folds into no answer"
-)]
 fn settle(
     settings: &Settings,
     scratch: &Scratch,
@@ -988,11 +982,12 @@ fn settle(
         .clone()
         .filter(|_| req.mode == Some(ValidateMode::Full));
     let mut mode = requested;
-    // The base as one commit, fixed when the run starts; one a rebase left
-    // off the branch is recorded as orphaned, and a range then runs from
-    // the merge base of HEAD with the origin base branch.
+    // The base is the commit the request names, fixed when the run starts
+    // and never replaced: after a restack the range from it holds every
+    // change the comparison was authorized to check, the conflict
+    // resolutions among them, and a base that no longer resolves is refused
+    // rather than run over a comparison nobody authorized.
     let mut base_sha = String::new();
-    let mut orphaned = false;
     // A full request validates the whole tree from no base, ignoring a
     // carried base; the round's base still names a fix round, so the cause
     // rule above applies.
@@ -1011,57 +1006,8 @@ fn settle(
             return Err(Error::BaseInvalid { base: base.clone() });
         };
         base_sha = sha.trim().to_owned();
-        let map = git(
-            worktree,
-            "rebase-map",
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                "kendex-rebase-map",
-            ],
-            &mut log,
-        )?
-        .ok_or_else(|| files::unreadable("rebase-map-unreadable", "git-path"))?;
-        match fs::symlink_metadata(&map) {
-            Ok(_) => {
-                let text = fs::read_to_string(&map)
-                    .map_err(|e| files::unreadable("rebase-map-unreadable", e))?;
-                let projected = crate::ops::proof::project_rebase(&text, &base_sha)?;
-                if !projected.starts_with("dropped:") {
-                    base_sha = projected;
-                }
-            }
-            Err(e) if e.kind() == ErrorKind::NotFound => {}
-            Err(e) => return Err(files::unreadable("rebase-map-unreadable", e)),
-        }
-
-        // Exit 1 is git's answer that the base is off the branch; any other
-        // failure is no answer, never an orphaned base.
-        let ancestry = host::run_tagged_in(
-            "validate",
-            "git",
-            Path::new("git"),
-            "merge-base",
-            &["merge-base", "--is-ancestor", &base_sha, "HEAD"],
-            at(worktree, &[]),
-            READ_TIMEOUT,
-        )
-        .map_err(|e| files::unreadable("ancestry-unreadable", e))?;
-        log.push_str(&host::stderr_text(&ancestry));
-        match ancestry.status.code() {
-            Some(0) => {}
-            Some(1) => orphaned = true,
-            _ => {
-                return Err(files::unreadable(
-                    "ancestry-unreadable",
-                    format!("base={base_sha}"),
-                ));
-            }
-        }
     }
-    let orphaned_sha = orphaned.then(|| base_sha.clone());
-    let round_class_base = if requested == ValidateMode::Full || orphaned {
+    let round_class_base = if requested == ValidateMode::Full {
         String::new()
     } else {
         base_sha.clone()
@@ -1123,26 +1069,24 @@ fn settle(
                 } else {
                     previewed = true;
                     ci_fallback = Some("selection-unread".to_owned());
-                    if orphaned_sha.is_none() {
-                        class_base = round_class_base.clone();
-                        class = read(&class_base, &mut log)?;
-                        if class.fallback.is_none() {
-                            preview = preview_selection(
-                                settings,
-                                worktree,
-                                &class,
-                                &paths_file,
-                                &base_sha,
-                                requested,
-                                &mut log,
-                            )?;
-                            if matches!(
-                                preview.selection.as_deref(),
-                                Some("selection=all" | "selection=subset")
-                            ) {
-                                mode = ValidateMode::Ci;
-                                ci_fallback = None;
-                            }
+                    class_base = round_class_base.clone();
+                    class = read(&class_base, &mut log)?;
+                    if class.fallback.is_none() {
+                        preview = preview_selection(
+                            settings,
+                            worktree,
+                            &class,
+                            &paths_file,
+                            &base_sha,
+                            requested,
+                            &mut log,
+                        )?;
+                        if matches!(
+                            preview.selection.as_deref(),
+                            Some("selection=all" | "selection=subset")
+                        ) {
+                            mode = ValidateMode::Ci;
+                            ci_fallback = None;
                         }
                     }
                 }
@@ -1162,30 +1106,6 @@ fn settle(
         };
         if mode == ValidateMode::Full {
             base_sha.clear();
-        } else if orphaned {
-            let Some(branch) = base_branch(settings, worktree, &mut log)? else {
-                return Err(Error::ValidateUnreadable {
-                    read: "orphaned-base",
-                    cause: "the base branch could not be resolved".to_owned(),
-                });
-            };
-            let Some(mb) = git(
-                worktree,
-                "merge-base-origin",
-                &[
-                    "merge-base",
-                    "HEAD",
-                    &format!("refs/remotes/origin/{branch}"),
-                ],
-                &mut log,
-            )?
-            else {
-                return Err(Error::ValidateUnreadable {
-                    read: "orphaned-base",
-                    cause: format!("no merge base with origin/{branch}"),
-                });
-            };
-            base_sha = mb.trim().to_owned();
         }
     }
     if docs_mode {
@@ -1278,9 +1198,6 @@ fn settle(
             };
             class_base = mb.trim().to_owned();
         }
-        if mode == ValidateMode::Ci && orphaned {
-            base_sha = class_base.clone();
-        }
     } else if mode == ValidateMode::Ci {
         class_base.clear();
     }
@@ -1316,7 +1233,6 @@ fn settle(
         ci_event,
         cause,
         base_sha,
-        orphaned: orphaned_sha,
         class,
         class_base,
         scoped,
@@ -1342,7 +1258,6 @@ fn resolve(
         ci_event,
         cause,
         base_sha,
-        orphaned,
         class,
         class_base,
         scoped,
@@ -1485,14 +1400,13 @@ fn resolve(
         class_log: log,
         paths: class.paths,
         ran_nothing,
-        orphaned,
     })
 }
 
 // --- The run directory ------------------------------------------------------------
 
 /// The run's `start` record, line for line in the form the executor reads.
-fn start_record(worktree: &Path, proof: &Proof, start: u64, orphaned: Option<&str>) -> String {
+fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
     let mut text = String::new();
     let mut line = |l: String| {
         text.push_str(&l);
@@ -1514,9 +1428,6 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64, orphaned: Option<&st
         line("scoped=true".to_owned());
     }
     line(format!("validate-base={}", proof.base));
-    if let Some(base) = orphaned {
-        line(format!("validate-base-orphaned={base}"));
-    }
     if let Some(cause) = &proof.ci_fallback {
         line(format!("ci-fallback={cause}"));
     }
@@ -1575,15 +1486,7 @@ fn write_run_dir(
     }
     write("paths", &paths)?;
     write("cmd", &resolved.proof.cmd)?;
-    write(
-        "start",
-        &start_record(
-            worktree,
-            &resolved.proof,
-            start,
-            resolved.orphaned.as_deref(),
-        ),
-    )?;
+    write("start", &start_record(worktree, &resolved.proof, start))?;
     record::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
         let mut names = Vec::new();
         for entry in
