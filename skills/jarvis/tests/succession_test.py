@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import patch
 import session_test
 from session_test import ANY_PERMISSION_WORD, PERMISSION_WORDS, SessionContract, SKILLS
-from fixtures.harness import native_launcher
+from fixtures.harness import native_launcher, shorten_account_settle
 
 
 class SuccessionContract(SessionContract):
@@ -23,6 +23,7 @@ class SuccessionContract(SessionContract):
         self.skills = self.root / "installed/skills"
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(SKILLS / package / "scripts", self.skills / package / "scripts")
+        shorten_account_settle(self.skills)
         # The dependency answers account readings. The production walk decides
         # which entry to try, its exclusion, and the resulting launch identity.
         lanes = self.skills / "orch/scripts/lanes"
@@ -1126,7 +1127,7 @@ set-hook -g after-new-window "rename-window user-hook"
         phases = ("saved", "waiting", "predecessor-ended", "confirmed", "brief-delivered", "complete")
         rows = [(phase, edge, False) for phase in phases for edge in ("before", "after")] + [("confirmed", "after", True)]
         with patch.object(session_test, "SCRIPT", script):
-            for phase, edge, abandoned in rows:
+            for phase, edge, abandoned in self.selected(("phase", "edge", "abandoned"), rows):
                 with self.row(phase=phase, edge=edge, abandoned=abandoned):
                     print("adoption-row: phase=" + phase + " edge=" + edge + " abandoned=" + str(abandoned).lower(), flush=True)
                     contents = self.handoff()
@@ -1211,6 +1212,20 @@ set-hook -g after-new-window "rename-window user-hook"
         with self.subTest(**params):
             yield
         self.released()
+
+    def selected(self, names, rows):
+        # A must-fail control names the row its planted defect turns red
+        # (succession_controls.py), and its run takes that row alone.
+        # Every other run takes the whole table.
+        chosen = os.environ.get("SUCCESSION_CONTROL_ROW")
+        if not chosen:
+            return rows
+        wanted = json.loads(chosen)
+        picked = [row for row in rows if wanted.items() <= dict(zip(names, row)).items()]
+        # An error, not a failure: the control counts only a failed row.
+        if not picked:
+            raise LookupError("succession-control: row=unmatched value=" + chosen)
+        return picked
 
     def released(self):
         self.successor_ended("a row left the home's session standing\n" + self.session_log())
@@ -1338,8 +1353,9 @@ set-hook -g after-new-window "rename-window user-hook"
         held, release = self.root / "runner-held.json", self.root / "runner-release"
         self.model_classes()
         with patch.object(session_test, "SCRIPT", script):
-            for phase, edge, walled in (("predecessor-ended", "before", None), ("brief-delivered", "after", None),
-                                        ("predecessor-ended", "before", "every"), ("predecessor-ended", "before", "first")):
+            for phase, edge, walled in self.selected(("phase", "edge", "walled"), (
+                    ("predecessor-ended", "before", None), ("brief-delivered", "after", None),
+                    ("predecessor-ended", "before", "every"), ("predecessor-ended", "before", "first"))):
                 with self.row(phase=phase, edge=edge, walled=walled):
                     self.handoff()
                     self.call("start", mode="new", brief=brief)

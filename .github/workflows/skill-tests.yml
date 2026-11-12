@@ -1169,7 +1169,7 @@ jobs:
         if: matrix.shard == 'jarvis'
         run: |
           set --
-          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1290,7 +1290,7 @@ jobs:
               orch) continue ;;
               review-gate) needle="skills/$x/tests/*.test.sh" ;;
               github | slack | mailbox) needle="--battery skills/$x/tests" ;;
-              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;
+              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.test.sh" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;

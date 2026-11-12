@@ -351,11 +351,11 @@ else
   bad 'control changes the example line comparison'
 fi
 
-# A tree with no run-all.sh runs each suite through guard's direct loop.
-# skills/jarvis is such a tree, and a child of its session.test.sh reads
-# stdin. Here a-reader reads stdin, whole or one line, and every suite names
-# the changed script. A suite named by SIGNAL_SUITE sends the guard TERM once
-# it has logged, so the guard's signal report names what it had not started.
+# A tree with no run-all.sh runs each suite through guard's direct loop, and
+# a suite or its child may read stdin. Here a-reader reads stdin, whole or
+# one line, and every suite names the changed script. A suite named by
+# SIGNAL_SUITE sends the guard TERM once it has logged, so the guard's signal
+# report names what it had not started.
 mkdir -p "$R/skills/stdin/scripts" "$R/skills/stdin/tests"
 printf '#!/usr/bin/env bash\n:\n' > "$R/skills/stdin/scripts/tool"
 for name in a-reader b-later c-later d-later; do

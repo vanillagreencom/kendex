@@ -17,7 +17,7 @@ import time
 import unittest
 from unittest.mock import patch
 
-from fixtures.harness import native_launcher
+from fixtures.harness import native_launcher, shorten_account_settle
 
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
@@ -33,6 +33,7 @@ class TaskContract(unittest.TestCase):
         self.skills = self.root / "skills"
         for package in ("jarvis", "orch", "mailbox"):
             shutil.copytree(SKILLS / package / "scripts", self.skills / package / "scripts")
+        shorten_account_settle(self.skills)
         self.script = self.skills / "jarvis/scripts/task"
         self.account = self.root / "picked account"
         self.account.mkdir()
@@ -1099,8 +1100,9 @@ while True: signal.pause()
                         self.assertNotEqual(changed, source)
                         source = changed
                     path.write_text(source)
+                    # The first red row proves the control; later rows only add time.
                     result = subprocess.run([sys.executable, "-B", str(Path(__file__).resolve()),
-                        "TaskContract." + case], env=env,
+                        "--failfast", "TaskContract." + case], env=env,
                         capture_output=True, text=True, timeout=120)
                     self.assertNotEqual(result.returncode, 0, name)
                     self.assertIn("FAIL: " + case, result.stderr)

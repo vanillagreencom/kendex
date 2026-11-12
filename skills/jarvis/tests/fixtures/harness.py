@@ -78,6 +78,29 @@ def brief_taken(fixture, harness, identity, event, **fields):
     result.check_returncode()
 
 
+def shorten_account_settle(skills):
+    # The session backend's inspect judges a confirmed pane's account by two
+    # process reads one settle apart (orch lane-launch.sh lane_account_check),
+    # a second by default. A fixture pane carries its account from its exec.
+    # The documented suite override, ORCH_LANE_SETTLE_MS, does not reach that
+    # inspect: session.py runs it with what environment() selects, and the
+    # variable is neither among the names environment() keeps nor among the
+    # user-manager policy names it forwards. So the suite's own copy of the
+    # scripts takes the short pause; the reads and their comparison stay
+    # production.
+    library = Path(skills) / "orch/scripts/lib/lane-launch.sh"
+    assert not library.is_symlink(), library
+    source = library.read_text()
+    default, short = "\nLANE_SETTLE_MS_DEFAULT=1000\n", "\nLANE_SETTLE_MS_DEFAULT=50\n"
+    # task_test.py's test_failed_succession_prints_evidence_before_cleanup and
+    # test_browser_profile_control hand their child run their own, already
+    # shortened, copy.
+    if source.count(short) == 1:
+        return
+    assert source.count(default) == 1, "lane-launch.sh no longer sets LANE_SETTLE_MS_DEFAULT=1000"
+    library.write_text(source.replace(default, short))
+
+
 @contextmanager
 def native_launcher():
     if not shutil.which("python3"):
