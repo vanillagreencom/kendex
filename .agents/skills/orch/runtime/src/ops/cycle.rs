@@ -1214,8 +1214,12 @@ fn compute(input: &Inputs) -> Value {
     };
     let escaped = input.escaped.map_or(Value::Null, Value::Bool);
     let reason = input.class.reason.clone().unwrap_or_default();
+    // A removal of test protection names a path too, but no launch input
+    // could have read it, so it is no path miss.
     let escape_cause = if escaped != json!(true) {
         Value::Null
+    } else if reason == "protection-removed" {
+        json!("protection-removed")
     } else if reason == "several-subsystems"
         || input.class.evidence.starts_with("path=")
         || input.class.evidence.contains(" path=")
@@ -2905,6 +2909,20 @@ mod tests {
         assert_eq!(
             launch_tier(&lane("KEN-1", json!({"tier": null}))),
             (None, None)
+        );
+    }
+
+    #[test]
+    fn a_removal_of_test_protection_is_its_own_escape_cause() {
+        let micro = lane("KEN-1", json!({"tier": "micro"}));
+        let removal = class(
+            "small",
+            "protection-removed kind=case path=src/lib.rs removed=1 added=0 measured-class=micro",
+        );
+        let c = cycle(&micro, &timeline(5520, 300, 110), &removal, Some("micro"));
+        assert_eq!(
+            fields(&line_of("KEN-1", &c), &["escape_cause"]),
+            "escape_cause=protection-removed"
         );
     }
 

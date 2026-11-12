@@ -358,6 +358,56 @@ awk -v line='        change_class_path "$path" launch' '
 ' "$ARM" >"$SANDBOX/no-range-paths/change-scope/scripts/change-scope"
 ARM_BIN="$SANDBOX/no-range-paths/change-scope/scripts/change-scope" control no-range-paths assert_range_paths
 
+# A range that removes test protection launches at small, read as the size
+# path reads it, net over the range; one whose read fails is standard.
+PROTECT="$(new_repo protect)"
+protect_commit() { # BRANCH TEST_LINES... -> prints the commit
+  local branch="$1"
+  shift
+  git -C "$PROTECT" checkout -q -B "$branch" "${PROTECT_BASE:-HEAD}"
+  mkdir -p "$PROTECT/src"
+  printf '%s\n' 'pub fn one() -> u32 {' '    1' '}' '' '#[cfg(test)]' 'mod tests {' ${1+"$@"} '}' >"$PROTECT/src/lib.rs"
+  git -C "$PROTECT" add -A
+  git -C "$PROTECT" commit -qm "$branch"
+  git -C "$PROTECT" rev-parse HEAD
+}
+PROTECT_BASE=""
+PROTECT_BASE="$(protect_commit base '    #[test]' '    fn one_is_one() {' '        assert_eq!(super::one(), 1);' '    }')"
+PROTECT_DELETED="$(protect_commit deleted)"
+PROTECT_REWRITTEN="$(protect_commit rewritten '    #[tokio::test]' '    async fn one_is_one() {' \
+  '        assert_eq!(super::one(), 2 - 1);' '    }')"
+git -C "$PROTECT" checkout -q -B quoted "$PROTECT_BASE"
+printf 'x\n' >"$PROTECT/src/odd\"name.rs"
+git -C "$PROTECT" add -A
+git -C "$PROTECT" commit -qm quoted
+PROTECT_QUOTED="$(git -C "$PROTECT" rev-parse HEAD)"
+assert_range_deletes() {
+  assert_eq "a range deleting a test case selects small" \
+    "change_class=small class=small measured=true delta=- cause=protection-removed kind=case path=src/lib.rs removed=1 added=0 rc=0" \
+    "$(ARM_RAW=true run_arm --base "$PROTECT_BASE" --head "$PROTECT_DELETED" --repo "$PROTECT")"
+}
+assert_range_rewrites() {
+  assert_eq "a range rewriting a test in place stays micro" "micro cause=branch-paths rc=0" \
+    "$(run_arm --base "$PROTECT_BASE" --head "$PROTECT_REWRITTEN" --repo "$PROTECT")"
+}
+assert_range_unreadable() {
+  assert_eq "a range whose protection read fails is standard, unmeasured" \
+    "change_class=standard class=standard measured=false delta=- cause=protection-unreadable rc=0" \
+    "$(ARM_RAW=true run_arm --base "$PROTECT_BASE" --head "$PROTECT_QUOTED" --repo "$PROTECT")"
+}
+assert_range_deletes
+assert_range_rewrites
+assert_range_unreadable
+ARM_BIN="$(mutant no-range-floor change-scope '      elif [ -n "$BRANCH_PROTECTION_KIND" ]; then' '      elif false; then')" \
+  control no-range-floor assert_range_deletes
+ARM_BIN="$(mutant range-gross lib/branch-growth.sh \
+  '      for (k = 1; k <= n; k++) if (kind[k] == "case" && lost[k] > gained[k]) {' \
+  '      for (k = 1; k <= n; k++) if (kind[k] == "case" && lost[k] > 0) {')" \
+  control range-gross assert_range_rewrites
+ARM_BIN="$(mutant range-read-continues change-scope \
+  '        launch_consider standard protection-unreadable unmeasured' '        true')" \
+  control range-read-continues assert_range_unreadable
+
 # Catalog additions carry their render and its inventory name in the same diff.
 INVENTORY_RANGE="$(new_repo inventory-range)"
 printf '[".kendex-generated.json",{"path":".agents/skills/x/scripts/kept","template":"x","templateHash":"sha256:%064d"}]\n' 0 \

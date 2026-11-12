@@ -18,7 +18,9 @@
 # shared path rules' launch phase, no render proved, and an unmatched path
 # changes nothing; --base and --head classify the range's changed paths, the
 # range itself micro, a names-only inventory change under rendered roots left
-# out. HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
+# out, and a range that removes test protection, read as the size path below
+# reads it, small with cause=protection-removed (standard, measured=false,
+# cause=protection-unreadable where that read fails). HARNESS_CI_STANDARD_PATHS comes from the main checkout of --repo
 # (default .), never from a linked worktree's own settings. A list, ceiling
 # or settings file the arm cannot read answers standard, measured=false.
 # A malformed Expected delta prints one `launch-warning: cause=invalid-delta`
@@ -128,7 +130,14 @@
 #            package's references/narrow-change.conf (AGENTS.md, SKILL.md), that earns trivial or
 #            micro answers small instead, cause=instruction-file: it changes
 #            how every agent behaves, and small is the lowest class the
-#            default review policy gives a bot review round.
+#            default review policy gives a bot review round. A diff that
+#            removes test protection and earns trivial or micro answers small
+#            too, cause=protection-removed kind=case|suite|skip|selection
+#            path=P removed=N added=M measured-class=C, by the `case`,
+#            `skip` and `selection` lines of that list, counted net over the
+#            whole range; an instruction file keeps its cause. A diff whose
+#            protection read fails answers standard,
+#            cause=protection-unreadable, measured=false.
 #   standard everything else, and every diff this script cannot prove into a
 #            narrower class. A size is measured only where harness-only read
 #            every changed path against an inventory it could read: that file
@@ -436,6 +445,11 @@ launch_class() { # ARG...
         fi
         [ -z "$CHANGE_CLASS_PATH" ] || launch_consider "$CHANGE_CLASS_PATH" "$CHANGE_CLASS_PATH_CAUSE"
       done <"$launch_work/paths"
+      if ! branch_protection_removed "$repo" "$base" "$head" "$NARROW_CONF"; then
+        launch_consider standard protection-unreadable unmeasured
+      elif [ -n "$BRANCH_PROTECTION_KIND" ]; then
+        launch_consider small "protection-removed kind=$BRANCH_PROTECTION_KIND path=$BRANCH_PROTECTION_PATH removed=$BRANCH_PROTECTION_REMOVED added=$BRANCH_PROTECTION_ADDED"
+      fi
     fi
   fi
 
@@ -1264,12 +1278,20 @@ esac
 # An agent instruction file, an `instruction` line of the list, changes
 # how every agent behaves, so it never answers below small, the lowest class
 # the default review policy gives a bot round; CLAUDE.md is refused above by
-# name. Every trivial and micro answer goes through here.
+# name. A diff that removes test protection, read by the measurement
+# library's branch_protection_removed against the list's markers, never
+# answers below small either: deleted lines cost nothing in the size rules,
+# so its size alone would leave it unreviewed. That read is fail-closed, as
+# the measurement is. Every trivial and micro answer goes through here.
 instruction_file=""
 ! path_class_matches narrow small || instruction_file="$PATH_MATCH_HIT"
 answer_narrow() { # CLASS FIELDS
-  [ -n "$instruction_file" ] || answer "$1" "$2"
-  answer small "cause=instruction-file $instruction_file measured-class=$1"
+  [ -z "$instruction_file" ] || answer small "cause=instruction-file $instruction_file measured-class=$1"
+  branch_protection_removed "$repo" "$base" "$head" "$NARROW_CONF" ||
+    answer standard "cause=protection-unreadable detail=$BRANCH_GROWTH_ERROR"
+  [ -z "$BRANCH_PROTECTION_KIND" ] ||
+    answer small "cause=protection-removed kind=$BRANCH_PROTECTION_KIND path=$BRANCH_PROTECTION_PATH removed=$BRANCH_PROTECTION_REMOVED added=$BRANCH_PROTECTION_ADDED measured-class=$1"
+  answer "$1" "$2"
 }
 
 trivial_max="${HARNESS_CI_TRIVIAL_MAX_LINES:-20}"

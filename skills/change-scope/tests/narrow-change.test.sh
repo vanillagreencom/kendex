@@ -3,7 +3,8 @@
 # a package's risk sits in and not the package whole, the render inventory only
 # where its change is more than the names the same diff adds or deletes, an
 # agent instruction file held to small where it would earn trivial or micro,
-# and the repository's own standard paths, read off the base commit alone.
+# a diff that removes test protection held to small the same way, and the
+# repository's own standard paths, read off the base commit alone.
 # The list's `queue` group is harness-ci's: its queue-only.test.sh holds it.
 #
 # The list is the real references/narrow-change.conf beside the script under
@@ -57,6 +58,39 @@ edit_inventory() { # [JQ_ARGS...] FILTER
   mv "$SANDBOX/inventory" "$repo/$INVENTORY"
 }
 
+# The protection rows' files, as the protection base holds them or as one
+# edit leaves them: a source file with two test cases in its test module, a
+# shell suite with assert lines and a table, and a Cargo test roster.
+lib_rs() { # base|case-removed|case-rewritten|ignore-added|case-added
+  printf '%s\n' 'pub fn one() -> u32 {' '    1' '}' '' '#[cfg(test)]' 'mod tests {'
+  if [ "$1" = case-rewritten ]; then
+    printf '%s\n' '    #[tokio::test]' '    async fn one_is_one() {' '        assert_eq!(super::one(), 2 - 1);'
+  else
+    printf '%s\n' '    #[test]' '    fn one_is_one() {' '        assert_eq!(super::one(), 1);'
+  fi
+  printf '%s\n' '    }'
+  if [ "$1" != case-removed ]; then
+    printf '\n'
+    [ "$1" != ignore-added ] || printf '%s\n' '    #[ignore]'
+    printf '%s\n' '    #[test]' '    fn one_is_positive() {' '        assert!(super::one() > 0);' '    }'
+  fi
+  [ "$1" != case-added ] ||
+    printf '%s\n' '' '    #[test]' '    fn one_is_odd() {' '        assert_eq!(super::one() % 2, 1);' '    }'
+  printf '%s\n' '}'
+}
+guard_suite() { # base|rows-removed
+  printf '%s\n' '#!/usr/bin/env bash' 'assert_eq "one" 1 1'
+  [ "$1" = rows-removed ] || printf '%s\n' 'assert_eq "two" 2 2'
+  printf '%s\n' "while IFS='|' read -r label want; do" '  assert_eq "$label" "$want" "$want"' \
+    "done <<'TABLE'" 'first row|1'
+  [ "$1" = rows-removed ] || printf '%s\n' 'second row|2'
+  printf '%s\n' 'TABLE'
+}
+cargo_roster() { # base|target-removed
+  printf '%s\n' '[package]' 'name = "runtime"' '' '[[test]]' 'name = "moved"' 'path = "tests/moved.rs"'
+  [ "$1" = target-removed ] || printf '%s\n' '' '[[test]]' 'name = "target"' 'path = "tests/target.rs"'
+}
+
 # The row's edit, by name: each is the diff a real change of that kind makes.
 apply_edit() { # EDIT
   case "$1" in
@@ -77,6 +111,13 @@ apply_edit() { # EDIT
     standard-head-clear) printf '[env]\nHARNESS_CI_STANDARD_PATHS = ""\n' >"$repo/kendex.settings.toml" ;;
     standard-head-add) printf '[env]\nHARNESS_CI_STANDARD_PATHS = "runtime/*"\n' >"$repo/kendex.settings.toml" ;;
     unmark-bench) printf 'bench benches/*\n' >"$repo/.github/ci-lanes.conf" ;;
+    case-removed | case-rewritten | ignore-added | case-added) lib_rs "$1" >"$repo/runtime/src/lib.rs" ;;
+    case-moved)
+      printf '%s\n' '#[test]' 'fn stays() {}' >"$repo/runtime/tests/moved.rs"
+      printf '%s\n' '#[test]' 'fn kept() {}' '' '#[test]' 'fn moved() {}' >"$repo/runtime/tests/target.rs" ;;
+    rows-removed) guard_suite "$1" >"$repo/runtime/tests/guard.test.sh" ;;
+    target-removed) cargo_roster "$1" >"$repo/runtime/Cargo.toml" ;;
+    lanes-changed) printf 'check runtime/src/*\n' >"$repo/.github/ci-lanes.conf" ;;
     *=*) write_lines "${1%=*}" "${1##*=}" ;;
     *) echo "unknown edit $1" >&2; exit 1 ;;
   esac
@@ -108,7 +149,7 @@ while IFS='|' read -r label expected edits ROW_ENV; do
   row_err="$(run_row "$CHANGE_SCOPE" $edits)"
   assert_eq "$label" "$expected" "$(verdict_of "$row_err")"
 done <<'ROWS'
-a test deleted under a rendered skill, its inventory row with it|class=micro measured=true cause=production-within-micro|test-removed
+a test deleted under a rendered skill, its inventory row with it|class=small measured=true cause=protection-removed|test-removed
 an inventory entry whose hash changed stays excluded|class=standard measured=true cause=excluded-path|hash-changed
 an inventory that unlists a path the diff edits is excluded|class=standard measured=true cause=excluded-path|edited-unlisted
 a prose schema document measures on its size|class=micro measured=true cause=production-within-micro|skills/orch/schemas/state.md=12
@@ -236,5 +277,92 @@ git -C "$repo" commit -q -m "old fork"
 assert_eq "the base endpoint declares exclusions after the fork" \
   "class=standard measured=true cause=repository-standard-path path=runtime/product.ts glob=runtime/*" \
   "$(class_line_of "$("$CHANGE_SCOPE" --repo "$repo" --event pull_request --base "$standard_base" --head HEAD 2>&1 >/dev/null)")"
+
+# The protection floor. Deleted lines cost nothing in the size rules, so each
+# row's diff measures micro; the floor reads what it removes, net over the
+# whole range.
+ROW_BASE="" reset_case
+mkdir -p "$repo/runtime/src" "$repo/runtime/tests" "$repo/.github"
+lib_rs base >"$repo/runtime/src/lib.rs"
+printf '%s\n' '#[test]' 'fn moved() {}' '' '#[test]' 'fn stays() {}' >"$repo/runtime/tests/moved.rs"
+printf '%s\n' '#[test]' 'fn kept() {}' >"$repo/runtime/tests/target.rs"
+guard_suite base >"$repo/runtime/tests/guard.test.sh"
+cargo_roster base >"$repo/runtime/Cargo.toml"
+printf 'check runtime/*\n' >"$repo/.github/ci-lanes.conf"
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "protection base"
+ROW_BASE="$(git -C "$repo" rev-parse HEAD)"
+
+# label | edit | exact structured class line
+protection_rows=0
+while IFS='|' read -r label edit expected; do
+  protection_rows=$((protection_rows + 1))
+  assert_eq "$label" "$expected" "$(class_line_of "$(run_row "$CHANGE_SCOPE" "$edit")")"
+done <<'ROWS'
+a test case deleted from a source file's test module is held to small|case-removed|class=small measured=true cause=protection-removed kind=case path=runtime/src/lib.rs removed=1 added=0 measured-class=micro
+a test rewritten in place, its marker line changed, loses nothing|case-rewritten|class=micro measured=true cause=production-within-micro production=3
+a test moved between two files loses nothing|case-moved|class=micro measured=true cause=production-within-micro production=0
+an added ignore is held to small|ignore-added|class=small measured=true cause=protection-removed kind=skip path=runtime/src/lib.rs removed=0 added=1 measured-class=micro
+a shell suite that loses an assert line and a table row is held to small|rows-removed|class=small measured=true cause=protection-removed kind=case path=runtime/tests/guard.test.sh removed=1 added=0 measured-class=micro
+a test target removed from the Cargo roster is held to small|target-removed|class=small measured=true cause=protection-removed kind=case path=runtime/Cargo.toml removed=1 added=0 measured-class=micro
+a test added with none removed stays micro|case-added|class=micro measured=true cause=production-within-micro production=5
+a changed CI lane declaration is held to small|lanes-changed|class=small measured=true cause=protection-removed kind=selection path=.github/ci-lanes.conf removed=1 added=1 measured-class=micro
+ROWS
+require_rows protection "$protection_rows"
+
+# A protection read git refuses is standard, unmeasured: a planted git that
+# refuses the line read alone.
+mkdir -p "$SANDBOX/refusing-git"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" != -U0 ] || exit 128; done\nexec "%s" "$@"\n' \
+  "$(command -v git)" >"$SANDBOX/refusing-git/git"
+chmod +x "$SANDBOX/refusing-git/git"
+REFUSING_ENV="PATH=$SANDBOX/refusing-git:$PATH"
+assert_eq "an unreadable protection read is standard, unmeasured" \
+  "class=standard measured=false cause=protection-unreadable" \
+  "$(verdict_of "$(ROW_ENV="$REFUSING_ENV" run_row "$CHANGE_SCOPE" case-removed)")"
+
+# The floor's controls: each changes one line of the rule, or drops one
+# marker from a planted list, and its row answers the class the floor exists
+# to refuse. Each reaches the printed class alone.
+protection_control() { # LABEL EXPECTED PLANTED EDIT [BASE]
+  assert_eq "control: $1" "$2" "$(verdict_of "$(ROW_BASE="${5:-$ROW_BASE}" run_row "$3" "$4")")"
+}
+# A planted classifier reading the shipped list without the lines that start
+# with PREFIX.
+list_without() { # NAME PREFIX
+  PREFIX="$2" awk 'index($0, ENVIRON["PREFIX"]) == 1 { hits++; next } { print } END { exit hits > 0 ? 0 : 3 }' \
+    "$CHANGE_SCOPE_PACKAGE/references/narrow-change.conf" >"$SANDBOX/$1.conf" ||
+    { echo "FAIL: control $1: no list line starts '$2'" >&2; exit 1; }
+  mutant "$1" change-scope 'NARROW_CONF="$SCRIPT_DIR/../references/narrow-change.conf"' \
+    "NARROW_CONF=\"$SANDBOX/$1.conf\""
+}
+MICRO="class=micro measured=true cause=production-within-micro"
+SMALL="class=small measured=true cause=protection-removed"
+protection_control "without the floor a deleted test case is micro" "$MICRO" \
+  "$(mutant no-floor change-scope '  [ -z "$BRANCH_PROTECTION_KIND" ] ||' '  true ||')" case-removed
+protection_control "without the deleted-suite count a deleted suite is micro" "$MICRO" \
+  "$(mutant no-suite lib/branch-growth.sh \
+    '        if (from && !to) { suite_removed[g]++; if (suite_first[g] == "") suite_first[g] = gone }' -)" \
+  test-removed "$base"
+gross="$(mutant gross lib/branch-growth.sh \
+  '      for (k = 1; k <= n; k++) if (kind[k] == "case" && lost[k] > gained[k]) {' \
+  '      for (k = 1; k <= n; k++) if (kind[k] == "case" && lost[k] > 0) {')"
+protection_control "a gross count floors a test rewritten in place" "$SMALL" "$gross" case-rewritten
+protection_control "a gross count floors a moved test" "$SMALL" "$gross" case-moved
+protection_control "a list without the ignore marker reads an added ignore as micro" "$MICRO" \
+  "$(list_without no-ignore 'skip *.rs ')" ignore-added
+protection_control "a list without the shell markers reads lost rows as micro" "$MICRO" \
+  "$(list_without no-shell 'case *.test.sh ')" rows-removed
+protection_control "a list without the roster marker reads a removed target as micro" "$MICRO" \
+  "$(list_without no-roster 'case *Cargo.toml ')" target-removed
+protection_control "added lines read as removed floor an added test" "$SMALL" \
+  "$(mutant swapped lib/branch-growth.sh '      removed = (sign == "-")' '      removed = (sign == "+")')" \
+  case-added
+protection_control "a list without the selection line reads a lane change as micro" "$MICRO" \
+  "$(list_without no-selection 'selection ')" lanes-changed
+assert_eq "control: a protection read failure that continues answers micro" "$MICRO" \
+  "$(verdict_of "$(ROW_ENV="$REFUSING_ENV" run_row "$(mutant read-continues change-scope \
+    '    answer standard "cause=protection-unreadable detail=$BRANCH_GROWTH_ERROR"' '    true')" case-removed)")"
+ROW_ENV=""
 
 report narrow-change

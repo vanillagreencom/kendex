@@ -140,6 +140,32 @@ branch_baseline_lines() {
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
 }
+# The awk functions both programs below share. glob_to_regex reads a
+# configured glob as a regex anchored over the whole path: only `*` and `?`
+# are wild, and every other regex metacharacter is escaped, so the dot in
+# check-*.py matches a dot and nothing else. is_test is the built-in test
+# rule, widened by the regexes a program puts in pattern[1..npats].
+BRANCH_GROWTH_AWK_PATHS='
+    function base_name(p) { sub(/^.*\//, "", p); return p }
+    function glob_to_regex(g,   out, i, c) {
+      out = "^"
+      for (i = 1; i <= length(g); i++) {
+        c = substr(g, i, 1)
+        if (c == "*") out = out ".*"
+        else if (c == "?") out = out "."
+        else if (index("\\^$.[]|()+{}", c) > 0) out = out "\\" c
+        else out = out c
+      }
+      return out "$"
+    }
+    function is_test(p,   b, i) {
+      if (p ~ /(^|\/)(test|tests|__tests__)\//) return 1
+      b = base_name(p)
+      if ((b == "tests.rs") || (b ~ /test_util\.rs$/) || (b ~ /\.(test|spec)\./)) return 1
+      for (i = 1; i <= npats; i++) if (p ~ pattern[i]) return 1
+      return 0
+    }
+'
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
@@ -191,7 +217,7 @@ branch_size_classified() {
   branch_growth_render_roots "$worktree" || return 1
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat "$base_override" || return 1
   if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
-    awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" '
+    awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" "$BRANCH_GROWTH_AWK_PATHS"'
     # One end of a numstat path, 1 the path before a rename and 2 after it.
     # git abbreviates a shared prefix and suffix as `a/{b => c}/d`, and a side
     # that is empty there, as in `a/{ => c}/d`, leaves one slash too many.
@@ -210,7 +236,6 @@ branch_size_classified() {
       if (side == 1) sub(/ => .*$/, "", p); else sub(/^.* => /, "", p)
       return p
     }
-    function base_name(p) { sub(/^.*\//, "", p); return p }
     # The path with its final extension removed, so a render and the source it
     # renders compare equal across a changed extension.
     function stem_path(p,   b, dot, head, i) {
@@ -226,27 +251,6 @@ branch_size_classified() {
       sub(/\/.*$/, "", first)
       for (i = 1; i <= nroots; i++) if (first == root[i]) return substr(p, length(first) + 2)
       return ""
-    }
-    # A glob anchored over the whole path: only `*` and `?` are wild, and
-    # every other regex metacharacter is escaped, so the dot in check-*.py
-    # matches a dot and nothing else.
-    function glob_to_regex(g,   out, i, c) {
-      out = "^"
-      for (i = 1; i <= length(g); i++) {
-        c = substr(g, i, 1)
-        if (c == "*") out = out ".*"
-        else if (c == "?") out = out "."
-        else if (index("\\^$.[]|()+{}", c) > 0) out = out "\\" c
-        else out = out c
-      }
-      return out "$"
-    }
-    function is_test(p,   b, i) {
-      if (p ~ /(^|\/)(test|tests|__tests__)\//) return 1
-      b = base_name(p)
-      if ((b == "tests.rs") || (b ~ /test_util\.rs$/) || (b ~ /\.(test|spec)\./)) return 1
-      for (i = 1; i <= npats; i++) if (p ~ pattern[i]) return 1
-      return 0
     }
     function list_if_test(p,   rest) {
       rest = render_rest(p)
@@ -298,4 +302,132 @@ branch_size_classified() {
   case "$measured" in
     *$'\n'*) BRANCH_SIZE_TEST_FILES="${measured#*$'\n'}" ;;
   esac
+}
+BRANCH_PROTECTION_KIND=""
+BRANCH_PROTECTION_PATH=""
+BRANCH_PROTECTION_REMOVED=""
+BRANCH_PROTECTION_ADDED=""
+# Whether the range BASE...HEAD removes test protection, read against the
+# `case`, `skip` and `selection` lines of CONF, whose header states each.
+# Every count is net over the whole range, so a test moved between files, or
+# a test whose body changed while its marker line stayed, removes nothing.
+# The first finding, in the order suite, case, skip, selection and then the
+# list's own order, sets BRANCH_PROTECTION_KIND, _PATH, _REMOVED and _ADDED;
+# a range that removes nothing leaves all four empty. A failed git read, an
+# unreadable or malformed list, or a path git prints only quoted returns 1
+# with BRANCH_GROWTH_ERROR: a range not read whole earns no finding and no
+# clean answer either.
+#
+# A suite is a file the built-in test rule and a `case` glob both name,
+# counted where the range deletes it or renames it out of that glob, net of
+# those it adds or renames in. A skip line in a file the range adds narrows
+# nothing that ran before, so it counts only in a file the base holds.
+branch_protection_removed() { # REPO BASE HEAD CONF
+  local repo="$1" range="$2...$3" conf="$4" statuses patch verdict
+  BRANCH_PROTECTION_KIND=""
+  BRANCH_PROTECTION_PATH=""
+  BRANCH_PROTECTION_REMOVED=""
+  BRANCH_PROTECTION_ADDED=""
+  statuses="$(git -C "$repo" -c core.quotePath=false diff --name-status --no-ext-diff --find-renames "$range" --)" \
+    || branch_growth_fail "git could not list the paths '$range' changes in '$repo'" || return 1
+  patch="$(git -C "$repo" -c core.quotePath=false diff -U0 --no-ext-diff --no-textconv --no-color \
+    --src-prefix=a/ --dst-prefix=b/ --find-renames "$range" --)" \
+    || branch_growth_fail "git could not read the lines '$range' changes in '$repo'" || return 1
+  if ! verdict="$(BRANCH_PROTECTION_CONF="$conf" awk "$BRANCH_GROWTH_AWK_PATHS"'
+    function fail(why) { if (!failed) { failed = 1; reason = why }; exit }
+    # A glob is matched against the path itself, which a quoted name is not.
+    function plain(p) { if (substr(p, 1, 1) == "\"") fail("quoted-path " p); return p }
+    function header_path(s, prefix) {
+      sub(/\t$/, "", s)
+      if (s == "/dev/null") return ""
+      plain(s)
+      if (substr(s, 1, 2) != prefix) fail("unprefixed-path " s)
+      return substr(s, 3)
+    }
+    function suite_path(p, g) { return p != "" && is_test(p) && p ~ suite_re[g] }
+    function found(what, p, removed, added) { printf "%s\t%s\t%d\t%d\n", what, p, removed, added }
+    BEGIN {
+      conf = ENVIRON["BRANCH_PROTECTION_CONF"]
+      while ((got = (getline line < conf)) > 0) {
+        if (line !~ /^(case|skip|selection) /) continue
+        word = line; sub(/ .*$/, "", word)
+        rest = substr(line, length(word) + 2); sub(/^ +/, "", rest)
+        glob = rest; sub(/ .*$/, "", glob)
+        ere = substr(rest, length(glob) + 1); sub(/^ +/, "", ere)
+        if (glob == "" || (word == "selection") == (ere != "")) fail("malformed-marker " line)
+        n++; kind[n] = word; path_re[n] = glob_to_regex(glob); marker[n] = ere
+        if (word == "case" && !(glob in suite_of)) { suite_of[glob] = ++suites; suite_re[suites] = path_re[n] }
+      }
+      if (got < 0) fail("list-unreadable " conf)
+      close(conf)
+    }
+    # The name-status rows come first; the first file header of the patch
+    # ends them.
+    !in_patch && /^diff --git / { in_patch = 1 }
+    !in_patch {
+      if ($0 == "") next
+      fields = split($0, f, "\t")
+      if (fields < 2) fail("status-unreadable " $0)
+      for (i = 2; i <= fields; i++) plain(f[i])
+      st = substr(f[1], 1, 1); gone = ""; came = ""
+      if (st == "R") { gone = f[2]; came = f[3] }
+      else if (st == "C") came = f[3]
+      else if (st == "D") gone = f[2]
+      else if (st == "A") came = f[2]
+      for (g = 1; g <= suites; g++) {
+        from = suite_path(gone, g); to = suite_path(came, g)
+        if (from && !to) { suite_removed[g]++; if (suite_first[g] == "") suite_first[g] = gone }
+        if (to && !from) suite_added[g]++
+      }
+      for (i = 2; i <= fields; i++) for (k = 1; k <= n; k++)
+        if (kind[k] == "selection" && selected[k] == "" && f[i] ~ path_re[k]) selected[k] = f[i]
+      next
+    }
+    /^diff --git / { hunk = 0; old_path = ""; new_path = ""; created = 0; next }
+    !hunk && /^--- / { old_path = header_path(substr($0, 5), "a/"); created = (old_path == ""); next }
+    !hunk && /^\+\+\+ / { new_path = header_path(substr($0, 5), "b/"); next }
+    /^@@ / {
+      if (!hunk) for (k = 1; k <= n; k++) {
+        on_old[k] = (old_path != "" && old_path ~ path_re[k])
+        on_new[k] = (new_path != "" && new_path ~ path_re[k])
+      }
+      hunk = 1
+      next
+    }
+    !hunk { next }
+    {
+      sign = substr($0, 1, 1)
+      if (sign != "-" && sign != "+") next
+      removed = (sign == "-")
+      text = substr($0, 2)
+      for (k = 1; k <= n; k++) {
+        if (!(removed ? on_old[k] : on_new[k])) continue
+        if (kind[k] != "selection" && text !~ marker[k]) continue
+        if (kind[k] == "skip" && !removed && created) continue
+        if (removed) { lost[k]++; if (lost_first[k] == "") lost_first[k] = old_path }
+        else { gained[k]++; if (gained_first[k] == "") gained_first[k] = new_path }
+      }
+    }
+    END {
+      if (failed) { print reason; exit 2 }
+      for (g = 1; g <= suites; g++) if (suite_removed[g] > suite_added[g]) {
+        found("suite", suite_first[g], suite_removed[g], suite_added[g]); exit
+      }
+      for (k = 1; k <= n; k++) if (kind[k] == "case" && lost[k] > gained[k]) {
+        found("case", lost_first[k], lost[k], gained[k]); exit
+      }
+      for (k = 1; k <= n; k++) if (kind[k] == "skip" && gained[k] > lost[k]) {
+        found("skip", gained_first[k], lost[k], gained[k]); exit
+      }
+      for (k = 1; k <= n; k++) if (kind[k] == "selection" && selected[k] != "") {
+        found("selection", selected[k], lost[k], gained[k]); exit
+      }
+    }
+  ' <<<"$statuses"$'\n'"$patch")"; then
+    branch_growth_fail "the protection read of '$range' against '$conf' failed: ${verdict:-awk-failed}"
+    return 1
+  fi
+  [ -n "$verdict" ] || return 0
+  IFS=$'\t' read -r BRANCH_PROTECTION_KIND BRANCH_PROTECTION_PATH BRANCH_PROTECTION_REMOVED \
+    BRANCH_PROTECTION_ADDED <<<"$verdict"
 }
