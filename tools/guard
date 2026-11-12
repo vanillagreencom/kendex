@@ -1657,27 +1657,32 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #                directly under tests/, which a suite wrapper runs by
 #                path or a sibling imports; in any other run it is a
 #                path of no role
+#   test-import  in a DEV_VALIDATE_SCOPED=true run only, a Python file
+#                below tests/<dir>/ outside tests/lib/, which a test
+#                program imports by its dotted module path; in any other
+#                run it is a path of no role
 #   suite        a member of the tree's whole set: tests/*.sh but
 #                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
 #                the set
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
 #   settings-example in a DEV_VALIDATE_SCOPED=true run only, a skill's
-#                kendex.settings.toml.example, source or render, whose
-#                change names a key (example_areas); any other change of it
-#                is a path of no role
+#                kendex.settings.toml.example, source or render; in any
+#                other run it is a path of no role
 # A module is scanned as a lib is, and a test module or test program as a
 # helper is, but a changed module seeds its enclosing folder and file name.
 # A changed test module seeds no name: an import can spell no path. A
-# changed test program seeds its file name.
+# changed test program seeds its file name, and a changed test import its
+# dotted module path, `fixtures.harness` for tests/fixtures/harness.py.
 # Status 1 is a path of no role:
-# run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
-# run, a file of hooks/ that is no hook, and anything else. mapped_suites'
-# header says what a scoped run reads for a test module or such a path.
+# run-all.sh, any other file under tests/<dir>/, a Python file under tests/
+# outside a scoped run, a file of hooks/ that is no hook, and anything else.
+# mapped_suites' header says what a scoped run reads for a test module or
+# such a path.
 path_role() { # DIR REL
   case "$1:$2" in
     skills/*:kendex.settings.toml.example)
-      [[ ${example_areas-} == *" $1"$'\n'* ]] || return 1
+      [ "$scoped_only" -eq 1 ] || return 1
       echo settings-example
       ;;
     *:tests/run-all.sh) return 1 ;;
@@ -1685,6 +1690,10 @@ path_role() { # DIR REL
     *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
     *:scripts/*/*) echo module ;;
     *:tests/lib/*) echo test-module ;;
+    *:tests/*/*.py)
+      [ "$scoped_only" -eq 1 ] || return 1
+      echo test-import
+      ;;
     *:tests/*/*) return 1 ;;
     *:tests/*.py)
       [ "$scoped_only" -eq 1 ] || return 1
@@ -1804,7 +1813,8 @@ PY
 # What the scan holds of each file skill_files lists for the tree SCAN_DIR,
 # loaded once for all of the tree's changed paths, one index per file:
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
-# spells and each `/<module>.py` a test program imports, and SCAN_SOURCED, each
+# spells and each `/<module>.py` and dotted `/<package>.<module>` a test
+# program imports, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
 # and SCAN_INPUTS, the repository path patterns in its input notes, as
 # INPUTS_NOTE_AWK reads them.
@@ -1880,8 +1890,9 @@ scan_load() { # DIR
       }
     }
     # A test program imports a sibling by module name, which spells no path:
-    # `import a, b` reads /a.py and /b.py, and `from a.c import x` reads /a.py.
-    function scan_imports(reader, text, rest, count, modules, j, name) {
+    # `import a, b` reads /a.py and /b.py, and `from a.c import x` reads /a.py
+    # and the dotted module /a.c, the needle a changed test import seeds.
+    function scan_imports(reader, text, rest, count, modules, j, name, dotted) {
       rest = text
       if (sub(/^[[:space:]]*from[[:space:]]+/, "", rest)) {
         count = 1
@@ -1894,10 +1905,15 @@ scan_load() { # DIR
       for (j = 1; j <= count; j++) {
         name = modules[j]
         sub(/^[[:space:]]+/, "", name)
-        if (!match(name, /^[[:alpha:]_][[:alnum:]_]*/)) continue
-        name = "/" substr(name, 1, RLENGTH) ".py"
+        if (!match(name, /^[[:alpha:]_][[:alnum:]_]*(\.[[:alpha:]_][[:alnum:]_]*)*/)) continue
+        dotted = "/" substr(name, 1, RLENGTH)
+        name = dotted
+        sub(/\..*/, "", name)
+        name = name ".py"
         if (!name_seen["N", reader, name]++)
           print "N\t" reader "\t" name
+        if (dotted ~ /\./ && !name_seen["N", reader, dotted]++)
+          print "N\t" reader "\t" dotted
       }
     }
     function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i) {
@@ -2095,7 +2111,7 @@ reach_join() { # ROLE PATH [changed]
 #     joins the reach when its code, comment lines dropped, names a needle
 #     as `/<name>`, the whole name; a test program also
 #     names `/<module>.py` for each module an `import` or `from` line of it
-#     imports. A lib, helper, module, test module or test program that
+#     imports, and `/<package>.<module>` for a dotted one. A lib, helper, module, test module or test program that
 #     joins adds a needle any file may name. A script, the changed one or
 #     one that joins, adds a needle a suite, helper, test module or test
 #     program may name anywhere and any other file only on a line that
@@ -2115,6 +2131,9 @@ reach_join() { # ROLE PATH [changed]
 #     The folder needle reaches no test program: the folder a test program
 #     spells is part of a module path it names, which the file name reaches.
 #     A module no suite names runs nothing.
+#   - A changed or deleted test import seeds its dotted module path, which
+#     a test program names when an `import` or `from` line spells it whole.
+#     One whose reach holds no suite has unidentified readers.
 #   - A path of no role, a changed test module, and a path whose
 #     reach holds no suite map to no suite, save in a scoped run below.
 #   - Every tree also scans repository inputs outside its tree. Whole paths in
@@ -2137,12 +2156,13 @@ reach_join() { # ROLE PATH [changed]
 # seeds only the file's input notes. Any other settings change seeds by path
 # as an unscoped run does.
 # Scoped too, a changed skills/<name>/kendex.settings.toml.example, or its
-# render under .agents/skills/<name>/, whose change adds, removes or changes
-# the line declaring a key (example_areas) is a settings-example: it seeds
-# its input notes, the files doc_readers finds naming it by path, and per
-# such key the files naming the key. A key no suite, helper, test module or
-# test program of the tree names runs the tree's whole set. Any other
-# example change is a path of no role.
+# render under .agents/skills/<name>/, is a settings-example: it seeds its
+# input notes, the files doc_readers finds naming it by path, and per key
+# whose declaring line the change adds, removes or changes (example_areas)
+# the files naming the key. A key no suite, helper, test module or test
+# program of the tree names runs the tree's whole set. A change to comments
+# alone names no key, so it seeds the notes and path readers alone: suites
+# that lint an example's comments read it by path.
 # Only a scoped run gives tests/*.py the test-program role (path_role): a
 # control can run a test program through a bare quoted file name or a sibling
 # suite, which no needle follows. In any other run no scan reads a test
@@ -2203,6 +2223,10 @@ mapped_suites() { # DIR REL
   done
   if [ "$role" = none ] || [ "$role" = test-module ]; then
     [ -n "$noted" ] || return 4
+  elif [ "$role" = test-import ]; then
+    name=${rel#tests/}
+    name=${name%.py}
+    next_any+=("${name//\//.}")
   elif [ "$role" = doc ] || [ "$role" = settings-example ]; then
     readers=""
     for ((q = 0; q < ${#SCAN_RELS[@]}; q++)); do
@@ -2293,7 +2317,7 @@ mapped_suites() { # DIR REL
     done
   done
   if [ -z "$out" ]; then
-    case "$role" in none | test-module) return 4 ;; module) return 0 ;; esac
+    case "$role" in none | test-module | test-import) return 4 ;; module) return 0 ;; esac
     case "$rel" in
       tests/*/*) ;;
       tests/*) [ -e "$dir/$rel" ] || return 0 ;;
@@ -2541,8 +2565,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
   fi
   # example_keys' reading of each changed skill settings example, source or
   # render, for path_role: one `<key> <tree>` line per key its change names,
-  # as settings_areas holds them. A tree with no line keeps its example a
-  # path of no role.
+  # as settings_areas holds them.
   example_areas=$'\n'
   if [ "$scoped_only" -eq 1 ]; then
     while IFS= read -r f; do

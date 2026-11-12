@@ -266,7 +266,6 @@ settings_change() { # CHANGE: one edit of the settings world, then a clean SUITE
     foreign-table) printf '[other]\nFIXTURE_READ_KEY = "z"\n' >> "$R/kendex.settings.toml" ;;
     comment) printf '# changed\n\n' >> "$R/kendex.settings.toml" ;;
     noted-example) printf '# changed\n' >> "$R/skills/settings/kendex.settings.toml.example" ;;
-    unnoted-example) printf '# changed\n' >> "$R/skills/area/kendex.settings.toml.example" ;;
     named-example-key | unnamed-example-key)
       key=FIXTURE_NEW_KEY
       [ "$1" = named-example-key ] || key=FIXTURE_UNNAMED_KEY
@@ -294,8 +293,7 @@ for row in \
   "a changed key no example declares maps the file by path|loose-key|$PATH_READERS" \
   "a foreign table maps the file by path|foreign-table|$PATH_READERS" \
   "comments and blank lines select only the noted copiers|comment|$NOTED" \
-  "a path of no role selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
-  "a path of no role no note names selects its tree's whole set|unnoted-example|skills/area/tests/one.sh skills/area/tests/two.sh " \
+  "a comment-only example change selects the suite noting it|noted-example|skills/settings/tests/example-noted.sh " \
   "an example and its render adding a key a test module names select its reader|named-example-key|skills/keyed/tests/reader.sh " \
   "an example and its render adding a key no test names select the tree's whole set|unnamed-example-key|skills/keyed/tests/other.sh skills/keyed/tests/reader.sh " \
   "an example and its render changing a named key's value select its reader|changed-example-value|skills/keyed/tests/reader.sh "; do
@@ -342,10 +340,9 @@ fi
 if mutant_guard 's/settings_declared --lines/settings_declared -/'; then
   settings_change changed-example-value
   doc_selection "$MUTANT_TOOLS/guard"
-  [ "$RC" -eq 0 ] && [ "$PLAN" = 'skills/keyed/tests/other.sh skills/keyed/tests/reader.sh ' ] \
-    && grep -qx 'guard-note: suites=all reason=unidentified path=.agents/skills/keyed/kendex.settings.toml.example' <<<"$OUT" \
-    && ok 'control: comparing declared keys alone selects the whole set and breaks the value row' \
-    || bad 'control: comparing declared keys alone selects the whole set and breaks the value row' "rc=$RC plan=$PLAN out=$OUT"
+  [ "$RC" -eq 0 ] && [ -z "$PLAN" ] \
+    && ok 'control: comparing declared keys alone selects no suite and breaks the value row' \
+    || bad 'control: comparing declared keys alone selects no suite and breaks the value row' "rc=$RC plan=$PLAN out=$OUT"
   git -C "$R" checkout -q -- .
 else
   bad 'control changes the example line comparison'
