@@ -4130,6 +4130,56 @@ mod dev_artifacts {
         );
     }
 
+    /// An unchanged result on a GitHub issue a hosted lane works completes
+    /// through the repository the lane's record names, as the close and the
+    /// park read it: the item's recorded worktree is the provider's path,
+    /// which this host does not hold, and the fleet's own checkout names no
+    /// repository. The defect: the acceptance read the recorded worktree
+    /// alone and refused `repo-unresolved`.
+    #[test]
+    fn a_hosted_lanes_unchanged_result_on_a_github_issue_completes_through_the_lanes_repository() {
+        let w = World::new();
+        w.github_item(&format!("Compare the two.\n\n{PERMIT}\n"), true);
+        let out = w.no_change("issue-8", "implement", "not-run", PERMIT, &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        git(&w.wt, &["remote", "remove", "origin"]);
+        let provider = w.root.join("provider/issue-8");
+        assert!(!provider.exists());
+        let mut doc = w.doc();
+        doc["worktree"] = json!(provider);
+        fs::write(w.item(), doc.to_string()).unwrap();
+        fs::write(
+            w.state.join("workflow-state-oversee.json"),
+            json!({
+                "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+                "lanes": [{"item": "issue-8", "tracker": "github", "repo": "o/r",
+                    "harness": "claude", "window": null, "host": "sandbox-1",
+                    "mail_root": "/w/issue-8", "status": "running"}],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let summary = w.wt.join("tmp/completion-summary-issue-8.md");
+        let closed = result(&w.accept_github("no-change", Some(&summary), &[]));
+        let report = &closed["report"];
+        assert_eq!(report["closed_now"], true, "{closed}");
+        assert_eq!(report["summary"]["posted"], "created", "{closed}");
+        assert_eq!(
+            report["issue"],
+            json!({"closed": "completed", "repo": "o/r", "number": 8}),
+            "{closed}"
+        );
+        assert_eq!(w.issue_comments().len(), 1);
+        let calls = w.gh_calls();
+        let at = |call: &str| calls.iter().position(|c| c == call);
+        let post = at("api --method POST repos/o/r/issues/8/comments --input -");
+        let close = at("api --method PATCH repos/o/r/issues/8 --input -");
+        assert!(
+            matches!((post, close), (Some(p), Some(c)) if p < c),
+            "{calls:?}"
+        );
+    }
+
     /// The declared command a passing run runs, the world's own.
     const PASSING: &str = "printf 'validate: lanes=unit selection=battery\\n'";
 

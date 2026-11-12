@@ -55,6 +55,16 @@ pub fn of(resolver: &Path, dir: &Path) -> Result<String, Unread> {
     resolve(resolver, dir, "kendex_github_resolve_gh_repo")
 }
 
+/// The repository a lane works in: the one its record names, else the
+/// fleet's own, the checkout at `project`. A hosted lane's worktree is on
+/// the provider's disk, so a lane's repository is never read from it.
+pub fn of_lane(recorded: Option<&str>, project: &Path) -> Result<String, Unread> {
+    match recorded.filter(|r| !r.is_empty()) {
+        Some(repo) => Ok(repo.to_owned()),
+        None => of(&resolver(project), project),
+    }
+}
+
 /// The `owner/name` the origin remote of the checkout at `dir` names on
 /// github.com (`kendex_github_origin_slug`): read offline, and not judged
 /// by the classes, as the resolver prints it.

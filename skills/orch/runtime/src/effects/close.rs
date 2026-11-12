@@ -1289,10 +1289,12 @@ impl Close<'_> {
     fn park_judge(&self, wait: &ParkWait) -> Result<ParkLane> {
         self.park_check()?;
         let gh = crate::watch::github::handle(Path::new("gh"));
-        let repo = match &self.who.repo {
-            Some(repo) => repo.clone(),
-            None => self.fleet_repo()?,
-        };
+        // A lane that parks is hosted, and a hosted launch records the
+        // repository it names.
+        let repo = crate::repo::of_lane(self.who.repo.as_deref(), &self.settings.roots.project)
+            .map_err(|unread| {
+                self.park_refused("repo-unresolved", &[("cause", &unread.to_string())])
+            })?;
         let until_repo = wait.until_repo.as_ref().map(|r| r.to_ascii_lowercase());
         if let Some(until) = &until_repo
             && !self.settings.reads.watched([repo.as_str()]).contains(until)
@@ -1408,16 +1410,6 @@ impl Close<'_> {
             until_pr: wait.until_pr,
             until_repo,
             reservation: None,
-        })
-    }
-
-    /// The fleet's own repository, for a record naming none: a lane that
-    /// parks is hosted, its worktree on the provider's disk, and a hosted
-    /// launch records the repository it names.
-    fn fleet_repo(&self) -> Result<String> {
-        let project = &self.settings.roots.project;
-        crate::repo::of(&crate::repo::resolver(project), project).map_err(|unread| {
-            self.park_refused("repo-unresolved", &[("cause", &unread.to_string())])
         })
     }
 

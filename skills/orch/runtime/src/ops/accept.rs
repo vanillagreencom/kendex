@@ -212,8 +212,12 @@ pub enum IssueClose {
 /// The issue an unchanged result on an item keyed `issue-N` completes,
 /// read before any write: `None` for every other acceptance. The item key
 /// carries no repository (the item alphabet admits no `/`), so the issue's
-/// repository is the one repository identity of the item's recorded
-/// checkout; neither read refuses `repo-unresolved` and writes nothing.
+/// repository is the item's lane's, as the close and the park read it
+/// (`repo::of_lane`), where the fleet holds a lane record for the item: a
+/// hosted lane's checkout is not on this host. With no lane record it is
+/// the one repository identity of the item's recorded checkout. A
+/// repository neither names is refused `repo-unresolved`, with nothing
+/// written.
 #[allow(
     clippy::disallowed_methods,
     reason = "the acceptance's one read of the item record for its recorded checkout, before the close"
@@ -229,6 +233,12 @@ fn completed_issue(path: &Path, r: &AcceptResult, settings: &Settings) -> Result
     let unresolved = |cause: &str| -> crate::error::Error {
         agent_runtime::Error::refused("repo-unresolved", &[("item", item), ("cause", cause)]).into()
     };
+    let project = &settings.roots.project;
+    if let Some(lane) = crate::validate::run::lane_record(settings, item)? {
+        let repo = crate::repo::of_lane(lane.repo.as_deref(), project)
+            .map_err(|unread| unresolved(&unread.to_string()))?;
+        return Ok(Some(Issue { repo, number }));
+    }
     let worktree = state::load(path)?
         .and_then(|s| {
             s.doc
@@ -238,7 +248,7 @@ fn completed_issue(path: &Path, r: &AcceptResult, settings: &Settings) -> Result
                 .map(PathBuf::from)
         })
         .ok_or_else(|| unresolved("worktree-unrecorded"))?;
-    let resolver = crate::repo::resolver(&settings.roots.project);
+    let resolver = crate::repo::resolver(project);
     let repo =
         crate::repo::of(&resolver, &worktree).map_err(|unread| unresolved(&unread.to_string()))?;
     Ok(Some(Issue { repo, number }))

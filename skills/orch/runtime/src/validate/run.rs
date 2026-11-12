@@ -659,14 +659,15 @@ fn send_notice(
 }
 
 /// The lane of `item` from the fleet record where one stands. No fleet, or
-/// one with no record for `item`, is no session lane: the mailbox route
+/// one with no record for `item`, is no lane: the notice's mailbox route
 /// then writes a local inbox, which is the channel every non-cloud lane
-/// reads. A fleet that cannot be read is `Err`: it may hold a session lane.
+/// reads, and the acceptance reads the item's own checkout. A fleet that
+/// cannot be read is `Err`: it may hold the item's lane.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner"
+    reason = "the one read of an item's lane record from the fleet record: the notice send's route and the acceptance's repository"
 )]
-fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane>> {
+pub(crate) fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane>> {
     let fleet = record::fleet_path(&settings.state_dir);
     let Some(snapshot) = state::load(&fleet)? else {
         return Ok(None);
