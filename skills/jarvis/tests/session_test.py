@@ -2247,22 +2247,35 @@ class SessionContract(unittest.TestCase):
         # the server right after that read. The close is done either way, and
         # a session end (window=False) also ends the task windows left behind.
         tmux = ["tmux", "-L", self.label]
+        served = None
         for gone, window in (("pane", False), ("server", False), ("pane", True), ("server", True)):
             with self.subTest(gone=gone, window=window):
-                # A failed row leaves its server; each row starts on none.
+                # A failed row leaves its server; each row starts on none. The
+                # kill-server client returns before its server exits, and until
+                # the exit that server drops each new client, so a row starts
+                # only once the last row's socket refuses a connection.
                 subprocess.run([*tmux, "kill-server"], capture_output=True, env=self.env)
-                pane, window_id = subprocess.run(
-                    [*tmux, "new-session", "-d", "-s", "jarvis", "-P", "-F", "#{pane_id} #{window_id}",
-                     self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
-                    check=True, capture_output=True, text=True, env=self.env).stdout.split()
+                deadline = time.monotonic() + 10
+                while served and time.monotonic() < deadline:
+                    with socket.socket(socket.AF_UNIX) as probe:
+                        try:
+                            probe.connect(served)
+                        except (ConnectionRefusedError, FileNotFoundError):
+                            break
+                    time.sleep(0.05)
+                opened = subprocess.run([*tmux, "new-session", "-d", "-s", "jarvis", "-P", "-F", "#{pane_id} #{window_id}",
+                                         self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                        capture_output=True, text=True, env=self.env)
+                self.assertEqual(opened.returncode, 0, "new-session stderr=" + opened.stderr)
+                pane, window_id = opened.stdout.split()
                 subprocess.run([*tmux, "set-option", "-p", "-t", pane, "@jarvis-generation", "1"], check=True, env=self.env)
                 task = subprocess.run([*tmux, "new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{pane_id}",
                                        self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
                                       check=True, capture_output=True, text=True, env=self.env).stdout.strip()
                 subprocess.run([*tmux, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"], check=True, env=self.env)
-                socket, server, started = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{socket_path} #{pid} #{start_time}"],
+                served, server, started = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{socket_path} #{pid} #{start_time}"],
                                                          check=True, capture_output=True, text=True, env=self.env).stdout.split()
-                record = {"terminal": {"server": socket, "session": "jarvis", "window": window_id, "pane": pane},
+                record = {"terminal": {"server": served, "session": "jarvis", "window": window_id, "pane": pane},
                           "server_pid": int(server), "server_started_at": int(started), "generation": 1,
                           "pending": {"generation": 1}}
                 with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
