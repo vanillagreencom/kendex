@@ -105,7 +105,10 @@
 #   landed=<sha> paths=<n>      the record's commit, pushed to the base with no pull request; its paths follow
 #   land-deferred=<sha>         the base moved past that judged head before the push; nothing landed, and the run the newer push started records it
 #   land-refused=<status>       GitHub refused the push to the base; the rolling pull request carries the record instead
+#   land-unavailable=token      KENDEX_LAND_CONFIGURED says a landing name is set, but no landing token reached the run: half the pair, or a failed mint; the rolling pull request carries the record instead
 #   land-unavailable=queue-read the base's merge queue could not be read, so no landing was tried; the rolling pull request carries the record instead
+#   land-skipped=queued         the base's merge queue holds an entry, so no landing was tried; the rolling pull request carries the record instead
+#   land-check=<answer>         the landing check gave an answer the run does not know (exit 1)
 #   pull-request-closed=<n>     the open rolling pull request the landed record superseded
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
@@ -174,6 +177,9 @@ source "$here/../refresh/lib/landing.sh"
 # landing push alone.
 land_token="${KENDEX_LAND_TOKEN:-}"
 unset KENDEX_LAND_TOKEN
+# true where the workflow set either landing name, so a token that did not
+# arrive is reported.
+land_configured="${KENDEX_LAND_CONFIGURED:-false}"
 
 repo="$(cd -- "$here/.." && pwd)"
 base=""
@@ -370,18 +376,41 @@ fi
 # Whether the run tries the base itself: a landing token, and a merge queue
 # on the base that holds no entry, read with GH_TOKEN after the dequeue
 # above took this run's own pull request out. The base's rulesets then
-# decide the push.
-may_land() {
+# decide the push. Sets land_check to try, to unconfigured where the
+# workflow set neither landing name, or to unavailable:CAUSE or
+# skipped:CAUSE for the first precondition the run does not meet. The one
+# reporter below says every CAUSE, and refuses an answer it does not know,
+# so no precondition keeps the rolling pull request unsaid.
+land_check_run() {
   local slug queued
-  [[ -n "$land_token" ]] || return 1
+  land_check=""
+  if [[ -z "$land_token" ]]; then
+    # A half pair, or a mint that failed, leaves the token empty.
+    if [[ "$land_configured" == true ]]; then land_check=unavailable:token; else land_check=unconfigured; fi
+    return 0
+  fi
   if ! slug="$(cd -- "$repo" && kendex_github_resolve_gh_repo "$repo")" ||
       ! queued="$(cd -- "$repo" && kendex_land_queue_entries "$slug" "$base")"; then
-    say land-unavailable queue-read "the merge queue of $base could not be read, so the record was not pushed to $base; the rolling pull request carries it instead" >&2
-    return 1
+    land_check=unavailable:queue-read
+    return 0
   fi
-  [[ "$queued" == 0 ]]
+  if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi
+  land_check=try
 }
-if may_land; then
+land_check_run
+case "$land_check" in
+  try | unconfigured) ;;
+  unavailable:token)
+    say land-unavailable token "a landing name is set, but no landing token reached the run, so the record was not pushed to $base; the rolling pull request carries it instead" >&2 ;;
+  unavailable:queue-read)
+    say land-unavailable queue-read "the merge queue of $base could not be read, so the record was not pushed to $base; the rolling pull request carries it instead" >&2 ;;
+  skipped:queued)
+    say land-skipped queued "the merge queue of $base holds an entry, whose running groups a push would rebuild, so the record was not pushed to $base; the rolling pull request carries it instead" ;;
+  *)
+    say land-check "${land_check:-unset}" "the landing check gave an answer this run does not know" >&2
+    exit 1 ;;
+esac
+if [[ "$land_check" == try ]]; then
   # The commit is made from the index and never checked out, so a refused
   # push leaves the tree as the rolling route below expects it.
   tree="$(git -C "$repo" write-tree)"

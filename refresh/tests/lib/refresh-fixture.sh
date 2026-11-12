@@ -113,6 +113,11 @@ run_refresh() { # CONTENT VERIFY CLASS
   if [ -n "${LAND_TOKEN:-}" ]; then
     catalog_env+=("KENDEX_LAND_TOKEN=$LAND_TOKEN")
   fi
+  # LAND_CONFIGURED, where a row sets it, is what the shared workflow says
+  # of the landing names.
+  if [ -n "${LAND_CONFIGURED:-}" ]; then
+    catalog_env+=("KENDEX_LAND_CONFIGURED=$LAND_CONFIGURED")
+  fi
   rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/refreshed" \
     "$TMP/state/head-reads" "$TMP/state/shown-head" "$TMP/state/arm-attempted" \
     "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json" \
@@ -299,7 +304,7 @@ verify|packaging/jarvis home|verify
 render|packaging/jarvis home|bot-instructions-render value=50
 covered|packaging/jarvis home|sources=covered
 third-party|packaging/jarvis home|sources=uncovered
-coverage-unread|packaging/jarvis home|sources=uncovered
+coverage-unread|packaging/jarvis home|sources=unread
 revision|packaging/jarvis home|sources=uncovered
 fallback|packaging/jarvis home|fallback
 PROJECT_ROWS

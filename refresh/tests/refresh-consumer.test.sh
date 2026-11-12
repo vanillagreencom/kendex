@@ -38,33 +38,36 @@ engine = bin_dir / 'kendex'
 engine.write_text('#!' + sys.executable + '\n'
     'import os, pathlib, sys\n'
     'assert sys.argv[1:] == ["marketplace", "list", "--scope", "project", "--json"]\n'
-    'if os.environ.get("SOURCE_READ") == "fail": sys.exit(47)\n'
+    'if os.environ.get("SOURCE_READ") == "fail": sys.stderr.write("kendex-said-probe\\n"); sys.exit(47)\n'
     'sys.stdout.write(pathlib.Path(os.environ["SOURCE_JSON"]).read_text())\n')
 engine.chmod(0o755)
 default = dict(schema=1, subscriptions=[dict(enabled=True, repo='vanillagreencom/kendex')])
 manifest = 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n'
-cases = [('default-main', default, manifest, True),
-         ('third-party', dict(schema=1, subscriptions=[dict(enabled=True, repo='owner/catalog')]), manifest, False),
-         ('local-path', dict(schema=1, subscriptions=[dict(enabled=True, path='../catalog')]), manifest, False),
-         ('disabled-remote', dict(schema=1, subscriptions=default['subscriptions'] + [dict(enabled=False, repo='owner/catalog')]), manifest, True),
-         ('unknown-schema', dict(schema=2, subscriptions=default['subscriptions']), manifest, False),
-         ('unknown-sources', dict(schema=1, subscriptions=[]), manifest, False),
-         ('unknown-row', dict(schema=1, subscriptions=[{}]), manifest, False),
-         ('unknown-enabled', dict(schema=1, subscriptions=[dict(enabled='true', repo='vanillagreencom/kendex')]), manifest, False),
-         ('unknown-json', None, manifest, False),
-         ('malformed-json', '{', manifest, False),
-         ('malformed-manifest', default, '[', False),
-         ('missing-manifest', default, None, False),
-         ('unreadable-owner', default, manifest, False)]
+# The answer each case takes: covered, uncovered where a source or an
+# override is not the default catalog at main, and unread where the engine's
+# answer, its shape or a manifest could not be read.
+cases = [('default-main', default, manifest, 'covered'),
+         ('third-party', dict(schema=1, subscriptions=[dict(enabled=True, repo='owner/catalog')]), manifest, 'uncovered'),
+         ('local-path', dict(schema=1, subscriptions=[dict(enabled=True, path='../catalog')]), manifest, 'uncovered'),
+         ('disabled-remote', dict(schema=1, subscriptions=default['subscriptions'] + [dict(enabled=False, repo='owner/catalog')]), manifest, 'covered'),
+         ('unknown-schema', dict(schema=2, subscriptions=default['subscriptions']), manifest, 'unread'),
+         ('no-sources', dict(schema=1, subscriptions=[]), manifest, 'uncovered'),
+         ('unknown-row', dict(schema=1, subscriptions=[{}]), manifest, 'unread'),
+         ('unknown-enabled', dict(schema=1, subscriptions=[dict(enabled='true', repo='vanillagreencom/kendex')]), manifest, 'unread'),
+         ('unknown-json', None, manifest, 'unread'),
+         ('malformed-json', '{', manifest, 'unread'),
+         ('malformed-manifest', default, '[', 'unread'),
+         ('missing-manifest', default, None, 'unread'),
+         ('unreadable-owner', default, manifest, 'unread')]
 for revision in ('topic', 'v1', 'd'*40):
     listed = copy.deepcopy(default)
     listed['subscriptions'][0]['rev'] = revision
-    cases.append(('source-revision-' + revision, listed, manifest, False))
+    cases.append(('source-revision-' + revision, listed, manifest, 'uncovered'))
 for table in ('agents', 'skills', 'hooks', 'commands', 'mcp-servers', 'bundles', 'pi-extensions'):
-    cases.append((table + '-override', default, manifest + '\n[' + table + '.probe]\nsource = "kendex"\nrev = "topic"\n', False))
-cases += [('inline-override', default, 'schema = 7\nskills = {probe = {source = "kendex", rev = "topic"}}\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n', False),
-          ('local-manifest-override', default, manifest, False)]
-def check_body(script, name, listed, text, covered):
+    cases.append((table + '-override', default, manifest + '\n[' + table + '.probe]\nsource = "kendex"\nrev = "topic"\n', 'uncovered'))
+cases += [('inline-override', default, 'schema = 7\nskills = {probe = {source = "kendex", rev = "topic"}}\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n', 'uncovered'),
+          ('local-manifest-override', default, manifest, 'uncovered')]
+def check_body(script, name, listed, text, answer):
     folder = root / name
     folder.mkdir(exist_ok=True)
     if text is not None:
@@ -78,26 +81,38 @@ def check_body(script, name, listed, text, covered):
                  SOURCE_READ='fail' if name == 'unreadable-owner' else ''),
         capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, (name, result.stderr)
-    assert result.stdout == ('sources=covered\n' if covered else 'sources=uncovered\n'), ('source-coverage', name, result.stdout)
+    assert result.stdout == 'sources=' + answer + '\n', ('source-coverage', name, result.stdout)
+    # An unread answer names the project on stderr, after what kendex said.
+    unread_line = 'refresh-sources=unread value=' + str(folder)
+    assert (unread_line in result.stderr.splitlines()) == (answer == 'unread'), ('source-coverage', name, result.stderr)
+    if name == 'unreadable-owner':
+        assert result.stderr.startswith('kendex-said-probe\n'), ('source-coverage', name, result.stderr)
 for case in cases:
     check_body(body, *case)
     print('source-coverage: case=' + case[0] + ' pass')
-original = "assert all(row.get('enabled') is False or"
+original = "if not sources or not all(row['enabled'] is False or"
 assert body.count(original) == 1
-broken = body.replace(original, "assert True or all(row.get('enabled') is False or")
+broken = body.replace(original, "if not sources or not all(True or row['enabled'] is False or")
 assert broken != body
 case = next(row for row in cases if row[0] == 'third-party')
 try: check_body(broken, 'control-third-party', *case[1:])
 except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
 else: raise AssertionError('source coverage control missed other catalog')
-original = 'assert not revision(tomllib.loads(manifest.read_text()))'
+original = 'if manifest.exists() and revision(tomllib.loads(manifest.read_text())):'
 assert body.count(original) == 1
-broken = body.replace(original, 'assert True # ' + original)
+broken = body.replace(original, 'if False and ' + original[3:])
 assert broken != body
 case = next(row for row in cases if row[0] == 'skills-override')
 try: check_body(broken, 'control-item-override', *case[1:])
 except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
 else: raise AssertionError('source coverage control missed item override')
+original = "    verdict = 'unread'\n"
+assert body.count(original) == 1
+broken = body.replace(original, "    verdict = 'uncovered'\n")
+case = next(row for row in cases if row[0] == 'unreadable-owner')
+try: check_body(broken, 'control-unread-as-uncovered', *case[1:])
+except AssertionError as error: assert error.args[0][0] == 'source-coverage', error
+else: raise AssertionError('source coverage control missed an unread answer read as uncovered')
 SOURCE_CASES
 then ok 'source coverage uses engine subscriptions and rejects revisions or unknown evidence; controls'
 else bad 'source coverage'; fi
@@ -1031,16 +1046,20 @@ cp "$TMP/arm-helper" "$arm_helper"
 # A render this run committed goes to the default branch from the run
 # itself, with no pull request and with the landing token alone, where its
 # merge queue holds no entry, and lands where GitHub takes the push. No
-# token, another class, a busy or unread queue and GitHub's refusal keep the
-# pull request route, and a default branch that moved defers to the next
-# run. A retained head never lands, and a landed run closes the open rolling
-# pull request only while GitHub still holds it open. Each run restores the
-# remote's default branch, so the next starts from it.
-land_matches() { # OUTCOME CLASS CLOSE
+# token, another class, other sources, a busy or unread queue and GitHub's
+# refusal keep the pull request route, and a default branch that moved
+# defers to the next run. A retained head never lands, and a landed run
+# closes the open rolling pull request only while GitHub still holds it
+# open. SAID is the one refresh-land line the run prints, or none: every
+# precondition that keeps the pull request names itself, once a landing
+# name is set. Each run restores the remote's default branch, so the next
+# starts from it.
+land_matches() { # OUTCOME CLASS CLOSE SAID
   local main rolling
   main="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)" || return 1
   rolling="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)" || return 1
   [ "$RC" -eq 0 ] || return 1
+  [ "$(grep '^refresh-land=' <<<"$OUT" || true)" = "${4:+refresh-land=$4}" ] || return 1
   case "$1" in
     landed)
       [ "$main" != "$land_base" ] && [ "$(git --git-dir="$TMP/remote" rev-parse "$main^")" = "$land_base" ] &&
@@ -1070,20 +1089,14 @@ land_matches() { # OUTCOME CLASS CLOSE
       [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
         grep -qxF "refresh-state=unchanged pr=1 class=render head=$land_rolling published=false" <<<"$OUT" &&
         ! grep -q '^git push\|^pr \(merge\|close\) \|^api --method ' "$TMP/state/calls" ;;
-    pull | refused | unasked | unread)
+    pull | refused | unasked)
       [ "$main" = "$land_base" ] && [ "$rolling" != "$land_rolling" ] &&
         grep -qxF "refresh-state=pushed pr=1 class=$2" <<<"$OUT" &&
         grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
-      # Only a queue the check could not read names itself.
-      if [ "$1" = unread ]; then
-        grep -qxF 'refresh-land=unavailable value=queue-read' <<<"$OUT" || return 1
-      else
-        ! grep -q '^refresh-land=unavailable' <<<"$OUT" || return 1
-      fi
       case "$1" in
-        refused) grep -qxF 'refresh-land=refused value=1' <<<"$OUT" ;;
+        refused) grep -qxF 'git push main token=land-token' "$TMP/state/calls" ;;
         unasked) ! grep -q 'mergeQueue\|^git push main ' "$TMP/state/calls" ;;
-        pull | unread) ! grep -q '^git push main ' "$TMP/state/calls" ;;
+        pull) ! grep -q '^git push main ' "$TMP/state/calls" ;;
       esac ;;
     *) return 1 ;;
   esac
@@ -1146,25 +1159,30 @@ printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo
 commit "$repo"
 landing_lib="$repo/refresh/lib/landing.sh"
 cp "$landing_lib" "$TMP/land-lib"
-# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE
+# NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE|CONFIGURED|SAID
 # PUSH is GitHub's answer to the landing push: taken, moved (the base moved)
 # or rejected (a ruleset refused it). CONTROL is a source edit on a copy of
 # the runner, or of the landing library it sources, that must turn the
-# row's assertion red. The third-party row's project also subscribes to a
-# catalog other than kendex's.
+# row's assertion red. CONFIGURED is KENDEX_LAND_CONFIGURED, which the
+# shared workflow sets true where either landing name is set; the
+# half-pair row holds a name and no token. The third-party row's project
+# also subscribes to a catalog other than kendex's, and the sources-unread
+# row's engine fails its subscription list.
 for row in \
-  'landed|render|true||landed|token-exported|0|land-token|close' \
-  'merged-since-start|render|true||landed|close-merged|0|land-token|merged' \
-  'no-token|render|true||unasked|token-unchecked|0||' \
-  'small-class|small|true||unasked||0|land-token|' \
-  'unmeasured|standard|false||unasked||0|land-token|' \
-  'base-moved|render|true|moved|base-moved|moved-unread|0|land-token|' \
-  'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token|' \
-  'third-party|render|true||pull|coverage-ignored|0|land-token|' \
-  'queue-busy|render|true||pull|queue-ignored|2|land-token|' \
-  'unread-queue|render|true||unread|unread-silent|fail|land-token|' \
-  'retained|render|true||retained|skip-unchanged|0|land-token|'; do
-  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close <<<"$row"
+  'landed|render|true||landed|token-exported|0|land-token|close|true|' \
+  'merged-since-start|render|true||landed|close-merged|0|land-token|merged|true|' \
+  'no-token|render|true||unasked|token-unchecked|0|||false|' \
+  'half-pair|render|true||unasked|token-unsaid|0|||true|unavailable value=token' \
+  'small-class|small|true||unasked|precondition-unsaid|0|land-token||true|skipped value=class' \
+  'unmeasured|standard|false||unasked||0|land-token||true|skipped value=class' \
+  'base-moved|render|true|moved|base-moved|moved-unread|0|land-token||true|' \
+  'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token||true|refused value=1' \
+  'third-party|render|true||unasked|coverage-ignored|0|land-token||true|skipped value=sources-uncovered' \
+  'sources-unread|render|true||unasked|sources-unread-uncovered|0|land-token||true|unavailable value=sources-read' \
+  'queue-busy|render|true||pull|queue-ignored|2|land-token||true|skipped value=queued' \
+  'unread-queue|render|true||pull|reporter-silent|fail|land-token||true|unavailable value=queue-read' \
+  'retained|render|true||retained|skip-unchanged|0|land-token||true|'; do
+  IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close LAND_CONFIGURED said <<<"$row"
   printf '%s\n' "$queue" >"$TMP/state/queue-entries"
   for mutation in none $control; do
     reset_default
@@ -1179,10 +1197,13 @@ target, old, new = {
     'refusal-deferred': (runner, "  printf 'refresh-land=refused value=%s\\n' \"$KENDEX_LAND_STATUS\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
     'close-merged': (runner, '    merged | closed) return 0 ;;', '    merged | closed) ;;'),
     'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
-    'token-unchecked': (runner, '[ -n "$land_token" ] && [ "$class" = render ]', '[ "$class" = render ]'),
-    'coverage-ignored': (runner, '  [ "$(refresh_source_coverage)" = sources=covered ] || return 1\n', ''),
-    'queue-ignored': (runner, '  [ "$queued" = 0 ]\n}', '  : # [ "$queued" = 0 ]\n}'),
-    'unread-silent': (runner, "    printf 'refresh-land=unavailable value=queue-read\\n'\n", ''),
+    'token-unchecked': (runner, '  if [ -z "$land_token" ]; then\n', '  if false; then\n'),
+    'token-unsaid': (runner, 'if [ "$land_configured" = true ]; then land_check=unavailable:token; else land_check=unconfigured; fi', 'land_check=unconfigured'),
+    'precondition-unsaid': (runner, 'if [ "$class" != render ]; then land_check=skipped:class; return 0; fi', 'if [ "$class" != render ]; then return 0; fi'),
+    'coverage-ignored': (runner, '    sources=uncovered) land_check=skipped:sources-uncovered; return 0 ;;\n', '    sources=uncovered) ;;\n'),
+    'sources-unread-uncovered': (runner, '    *) land_check=unavailable:sources-read; return 0 ;;\n', '    *) land_check=skipped:sources-uncovered; return 0 ;;\n'),
+    'queue-ignored': (runner, '  if [ "$queued" != 0 ]; then land_check=skipped:queued; return 0; fi\n', ''),
+    'reporter-silent': (runner, "  unavailable:?* | skipped:?*) printf 'refresh-land=%s value=%s\\n' \"${land_check%%:*}\" \"${land_check#*:}\" ;;\n", '  unavailable:?* | skipped:?*) ;;\n'),
     'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
     'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
     'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
@@ -1195,9 +1216,10 @@ assert changed != s
 p.write_text(changed)
 LAND_CONTROL
     fi
-    if [ "$name" = third-party ]; then
-      printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources"
-    fi
+    case "$name" in
+      third-party) printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources" ;;
+      sources-unread) : >"$repo/.fixture-source-unread" ;;
+    esac
     commit "$repo"
     git -C "$repo" push -q origin main
     land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
@@ -1225,16 +1247,17 @@ LAND_CONTROL
     rm -f -- "${TMP:?}/state/land-token-seen"
     run_refresh "$content" pass "$class"
     if [ "$mutation" = none ]; then
-      if land_matches "$expected" "$class" "$close"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
-    elif ! land_matches "$expected" "$class" "$close"; then
+      if land_matches "$expected" "$class" "$close" "$said"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
+    elif ! land_matches "$expected" "$class" "$close" "$said"; then
       ok "control: $mutation turns the $name landing assertion red"
     else bad "$name $mutation landing control" "$OUT"; fi
     git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
-    if [ "$name" = third-party ]; then
-      reset_default
-      git -C "$repo" rm -q .fixture-sources
-      commit "$repo"
-    fi
+    case "$name" in
+      third-party | sources-unread)
+        reset_default
+        git -C "$repo" rm -q .fixture-sources .fixture-source-unread --ignore-unmatch
+        commit "$repo" ;;
+    esac
   done
 done
 cp "$TMP/land-lib" "$landing_lib"
@@ -1285,7 +1308,7 @@ if [ "$RC" -eq 0 ] && [ "$forward" != "$land_base" ] && [ "$(git --git-dir="$TMP
   ok 'a render reverted on kendex main lands by the same route'
 else bad 'reverted render landing' "$OUT"; fi
 git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
-unset MEASURED LAND_TOKEN
+unset MEASURED LAND_TOKEN LAND_CONFIGURED
 rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/queue-entries"
 reset_default
 git -C "$repo" rm -q kendex.toml

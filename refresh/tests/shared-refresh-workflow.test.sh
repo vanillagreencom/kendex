@@ -155,8 +155,11 @@ def check(job):
     repository, land, upstream = tokens
     # The landing token: the consumer repository alone, contents: write
     # alone, minted only from a complete landing pair, a failed mint leaving
-    # it empty, and read by the refresh step alone.
-    assert job['env'] == {'KENDEX_LAND_PAIR': "${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}"}, job['env']
+    # it empty, and read by the refresh step alone. The job also says
+    # whether either name is set, so the refresh step reports a token that
+    # did not arrive.
+    assert job['env'] == {'KENDEX_LAND_PAIR': "${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}",
+                          'KENDEX_LAND_CONFIGURED': "${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}"}, job['env']
     assert land['id'] == 'land-token' and land.get('continue-on-error') is True
     assert land['if'] == "steps.inputs.outputs.route == 'full' && env.KENDEX_LAND_PAIR == 'true'"
     assert land['with']['owner'] == '${{ github.repository_owner }}'

@@ -311,24 +311,32 @@ cp -R "$BASE" "$LANDED_HEAD"
 printf '{"sha": "cafe", "parents": [{"sha": "dead"}]}\n' >"$LANDED_HEAD/commit.json"
 printf '[]\n' >"$LANDED_HEAD/commit-pulls-cafe.json"
 printf '{"workflow_runs": []}\n' >"$LANDED_HEAD/workflow-runs-merge-group-cafe.json"
-# label ~ consumer ~ overrides of the BASELINE
-LANDED_ROWS='a landed head reads the queue merge below it~land~
-a head no pull request merged, with no landing app named, is a departure~full~standard-ci-context=no-associated-pull-request'
-landed_case() { # CONSUMER OVERRIDES — sets CASE_MATCH and CASE_DIFF
+# The walk's ends short of a merged pull request: cafe is the root, or its
+# first parent is not a commit sha.
+cp -R "$LANDED_HEAD" "$TMP/case-landed-root"
+printf '{"sha": "cafe", "parents": []}\n' >"$TMP/case-landed-root/commit.json"
+cp -R "$LANDED_HEAD" "$TMP/case-landed-parent-not-sha"
+printf '{"sha": "cafe", "parents": [{"sha": "main"}]}\n' >"$TMP/case-landed-parent-not-sha/commit.json"
+# label ~ fixture under TMP ~ consumer ~ overrides of the BASELINE
+LANDED_ROWS='a landed head reads the queue merge below it~case-landed-head~land~
+a head no pull request merged, with no landing app named, is a departure~case-landed-head~full~standard-ci-context=no-associated-pull-request
+a landed head whose first parents reach the root with no merged pull request is a departure~case-landed-root~land~standard-ci-context=no-associated-pull-request
+a landed head whose first parent is not a sha is unreadable~case-landed-parent-not-sha~land~standard-ci-context=unreadable'
+landed_case() { # FIXTURE CONSUMER OVERRIDES — sets CASE_MATCH and CASE_DIFF
   local want want_rc
-  CONSUMER="$TMP/consumer-$1"
-  run "$LANDED_HEAD" ""
+  CONSUMER="$TMP/consumer-$2"
+  run "$TMP/$1" ""
   CONSUMER="$TMP/consumer-full"
-  want="$(expected_listing "$2")"
-  want_rc="$(want_rc_of "$2")"
+  want="$(expected_listing "$3")"
+  want_rc="$(want_rc_of "$3")"
   CASE_MATCH=false
   if [ "$RC" -eq "$want_rc" ] && [ "$OUT" = "$want" ]; then CASE_MATCH=true; fi
   CASE_DIFF="rc=$RC want $want_rc
 $(diff <(printf '%s\n' "$want") <(printf '%s\n' "$OUT") || true)
 $RAW"
 }
-while IFS='~' read -r label consumer overrides; do
-  landed_case "$consumer" "$overrides"
+while IFS='~' read -r label fixture consumer overrides; do
+  landed_case "$fixture" "$consumer" "$overrides"
   if [ "$CASE_MATCH" = true ]; then ok "$label"; else bad "$label" "$CASE_DIFF"; fi
 done <<<"$LANDED_ROWS"
 
@@ -561,7 +569,7 @@ ROWS
 # With the landing-app condition dropped, the walk takes any head no pull
 # request merged as landed.
 file_edit "$SKILL" scripts/validate-standard.sh 1 '^    if \[ -z "\$WANT_LAND_BYPASS" \]; then$' 's/^    if \[ -z "\$WANT_LAND_BYPASS" \]; then$/    if false; then/'
-landed_case full standard-ci-context=no-associated-pull-request
+landed_case case-landed-head full standard-ci-context=no-associated-pull-request
 if [ "$CASE_MATCH" = false ]; then ok "control: a walk with no landing app named turns the no-landing-app head red"
 else bad "control: a walk with no landing app named leaves the no-landing-app head passing" "$CASE_DIFF"; fi
 cp "$TMP/standard-script.keep" "$SKILL/scripts/validate-standard.sh"

@@ -137,8 +137,9 @@ never advisory.
                                     ci-context-missing:LEG:JOBS (LEG ran no
                                     such job; JOBS is what ran, or none),
                                     merge-group-unobserved:JOBS (the
-                                    pull_request leg ran CI and the head did
-                                    not come through the merge queue),
+                                    pull_request leg ran CI and the commit
+                                    that pull request merged did not come
+                                    through the merge queue),
                                     no-associated-pull-request or unreadable
 
 A failed read reports its row as FAIL with `unreadable` in the value, never

@@ -457,7 +457,6 @@ impl World {
     }
 
     /// `run`, with `env` added to the stub's environment.
-    #[allow(clippy::expect_used)]
     fn run_with(
         &self,
         args: &[&str],
@@ -465,8 +464,21 @@ impl World {
         kendex_fail: &str,
         env: &[(&str, &str)],
     ) -> Output {
+        self.run_script(&script(), args, gh_fail, kendex_fail, env)
+    }
+
+    /// `run_with`, running `program` in place of the script.
+    #[allow(clippy::expect_used)]
+    fn run_script(
+        &self,
+        program: &Path,
+        args: &[&str],
+        gh_fail: &str,
+        kendex_fail: &str,
+        env: &[(&str, &str)],
+    ) -> Output {
         Command::new("bash")
-            .arg(script())
+            .arg(program)
             .args(args)
             // The nested named-target refresh also checks the caller's repository.
             .current_dir(&self.main)
@@ -1048,11 +1060,30 @@ fn a_landed_record_closes_the_open_rolling_pull_request() {
 /// A run with no landing token keeps the rolling pull request and pushes
 /// nothing to `main`, and so does a merge queue that holds an entry, whose
 /// running groups a push to `main` would rebuild, and one that could not be
-/// read. `main` stays where the merge left it.
+/// read. `main` stays where the merge left it. Each row names the one
+/// landing line the run says, or none where the workflow set no landing
+/// name: a run whose workflow set a name but holds no token, half the pair
+/// or a failed mint, says so.
 #[test]
 fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
-    let rows: &[(&str, StubEnv)] = &[
-        ("", &[("GH_TOKEN", "lanes-token")]),
+    let rows: &[(&str, StubEnv, Option<&str>)] = &[
+        ("", &[("GH_TOKEN", "lanes-token")], None),
+        (
+            "",
+            &[
+                ("GH_TOKEN", "lanes-token"),
+                ("KENDEX_LAND_CONFIGURED", "false"),
+            ],
+            None,
+        ),
+        (
+            "",
+            &[
+                ("GH_TOKEN", "lanes-token"),
+                ("KENDEX_LAND_CONFIGURED", "true"),
+            ],
+            Some("lock-record: land-unavailable=token"),
+        ),
         (
             "",
             &[
@@ -1060,15 +1091,20 @@ fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
                 ("KENDEX_LAND_TOKEN", "land-token"),
                 ("GH_QUEUED", "1"),
             ],
+            Some("lock-record: land-skipped=queued"),
         ),
-        ("queue", ADMITTED),
+        (
+            "queue",
+            ADMITTED,
+            Some("lock-record: land-unavailable=queue-read"),
+        ),
     ];
     assert!(
         landing_library().is_file(),
         "{}",
         landing_library().display()
     );
-    for (gh_fail, env) in rows {
+    for (gh_fail, env, said_land) in rows {
         let world = world();
         world.branch("a", "ship");
         assert!(world.queue_merge("a").status.success());
@@ -1080,14 +1116,13 @@ fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
             Some(0),
             "{gh_fail} {env:?}: {output}"
         );
-        // Only the unread queue names why no landing was tried.
+        let land_lines: Vec<&str> = output
+            .lines()
+            .filter(|line| line.starts_with("lock-record: land"))
+            .collect();
         assert_eq!(
-            output.contains("lock-record: land-unavailable=queue-read\n"),
-            *gh_fail == "queue",
-            "{gh_fail} {env:?}: {output}"
-        );
-        assert!(
-            !output.contains("lock-record: landed="),
+            land_lines,
+            said_land.iter().copied().collect::<Vec<_>>(),
             "{gh_fail} {env:?}: {output}"
         );
         assert_recorded_and_opened(&world, &output, 41);
@@ -1098,6 +1133,56 @@ fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
             "{gh_fail} {env:?}: {pushes}"
         );
     }
+}
+
+/// A landing precondition that answers nothing ends the run on
+/// `land-check` before anything is pushed, so no precondition keeps the
+/// rolling pull request unsaid: a copy of the script, beside the libraries
+/// it sources, whose busy-queue precondition returns with no answer.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_landing_precondition_that_answers_nothing_ends_the_run() {
+    let world = world();
+    world.branch("a", "ship");
+    assert!(world.queue_merge("a").status.success());
+    let head = world.main_head();
+    let copy = world.home.join("unanswered");
+    fs::create_dir_all(copy.join("tools")).unwrap();
+    let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for dir in [".agents", "refresh"] {
+        std::os::unix::fs::symlink(checkout.join(dir), copy.join(dir)).unwrap();
+    }
+    let source = fs::read_to_string(script()).unwrap();
+    let guard = r#"if [[ "$queued" != 0 ]]; then land_check=skipped:queued; return 0; fi"#;
+    assert_eq!(source.matches(guard).count(), 1, "{guard}");
+    let unanswered = source.replace(guard, r#"if [[ "$queued" != 0 ]]; then return 0; fi"#);
+    fs::write(copy.join("tools/lock-record"), unanswered).unwrap();
+    let judged = world.main.display().to_string();
+    let recorded = world.run_script(
+        &copy.join("tools/lock-record"),
+        &["--repo", &judged, "--base", "main"],
+        "",
+        "",
+        &[
+            ("GH_TOKEN", "lanes-token"),
+            ("KENDEX_LAND_TOKEN", "land-token"),
+            ("GH_QUEUED", "1"),
+        ],
+    );
+    let output = said(&recorded);
+    assert_eq!(recorded.status.code(), Some(1), "{output}");
+    assert!(
+        output.contains("lock-record: land-check=unset\n"),
+        "{output}"
+    );
+    assert_eq!(world.origin_main(), head, "{output}");
+    let pushes = world.pushes();
+    assert!(
+        !pushes
+            .lines()
+            .any(|line| line.contains(":refs/heads/main") || line.contains("kendex/lock")),
+        "{pushes}"
+    );
 }
 
 /// A base that moved past the judged head lands nothing and pushes nothing:

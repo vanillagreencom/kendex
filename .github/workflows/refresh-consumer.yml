@@ -72,9 +72,12 @@ jobs:
     timeout-minutes: 30
     environment: ${{ inputs.environment }}
     # A step condition cannot read secrets, so the job carries only whether
-    # the landing pair is complete, never its values.
+    # the landing pair is complete, and whether either name is set, which
+    # refresh-consumer.sh reads to report a token that did not arrive; never
+    # their values.
     env:
       KENDEX_LAND_PAIR: ${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
+      KENDEX_LAND_CONFIGURED: ${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
     # Inherit the caller's grants. Older callers have contents:read only;
     # their unreadable review/record evidence must select a full refresh.
     steps:

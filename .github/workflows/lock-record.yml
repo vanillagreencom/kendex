@@ -62,8 +62,11 @@ jobs:
     timeout-minutes: 30
     env:
       # A step condition cannot read secrets, so the job carries only whether
-      # the landing pair is complete, never its values.
+      # the landing pair is complete, and whether either name is set, which
+      # tools/lock-record reads to report a token that did not arrive; never
+      # their values.
       KENDEX_LAND_PAIR: ${{ secrets.KENDEX_LAND_APP_ID != '' && secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
+      KENDEX_LAND_CONFIGURED: ${{ secrets.KENDEX_LAND_APP_ID != '' || secrets.KENDEX_LAND_APP_PRIVATE_KEY != '' }}
       GIT_AUTHOR_NAME: vanillagreen-fleet-lanes[bot]
       GIT_AUTHOR_EMAIL: 328550061+vanillagreen-fleet-lanes[bot]@users.noreply.github.com
       GIT_COMMITTER_NAME: vanillagreen-fleet-lanes[bot]
