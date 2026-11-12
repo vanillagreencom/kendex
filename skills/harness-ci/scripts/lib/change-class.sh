@@ -167,6 +167,7 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local reader_missing queue_reader per_push_reader standdown_missing hit
   local reach reach_kind unclaimed_unproved
   local declared_paths=""
+  local unread_globs unread_hit
   # Older library callers do not write declaration evidence.
   if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then
     declared_paths="$(cat -- "${work:?}/declared" 2>/dev/null)" ||
@@ -187,6 +188,11 @@ per_push="$(sed -n 's/^per-push: state=//p' "${work:?}/class-log")" ||
 # change-class's light-ci record, likewise.
 light="$(sed -n 's/^light-ci: kind=//p' "${work:?}/class-log")" ||
   die "cause=light-record-unreadable" "could not read change-class's light-ci line"
+# change-class's unread-paths record: the base's HARNESS_CI_UNREAD_PATHS,
+# globs of paths no lane reads. An absent record declares none.
+unread_globs="$(sed -n 's/^unread-paths: //p' "${work:?}/class-log" | tail -n 1 | tr ' ' '\n')" ||
+  die "cause=unread-record-unreadable" "could not read change-class's unread-paths line"
+unread_hit=""
 
 declaration=""
 if [ -n "$lanes_from" ]; then
@@ -219,11 +225,15 @@ needs_lane_claim() { # PATH — declared text and paths outside the docs set nee
   case $'\n'"$declared_paths"$'\n' in *$'\n'"$1"$'\n'*) return 0 ;; esac
   grep -qxF -- "$1" "${work:?}/outside" 2>/dev/null || status=$?
   case "$status" in
-    0) return 0 ;;
+    0) ;;
     1) return 1 ;;
     *) die "cause=outside-list-unreadable status=$status" \
       "could not read the paths harness-only placed outside the docs set" ;;
   esac
+  # A path the base declares unread needs none; declared text keeps its claim.
+  change_class_path_match "$1" "$unread_globs" || return 0
+  [ -n "$unread_hit" ] || unread_hit="$PATH_MATCH_HIT"
+  return 1
 }
 
 lane_count=0
@@ -525,6 +535,8 @@ while [ "$index" -lt "$lane_count" ]; do
     lane_values[$index]=true lane_causes[$index]="cause=declaration-changed path=.github/ci-lanes.conf"
   elif [ "${lane_nightly[$index]}" = true ]; then
     lane_values[$index]=false lane_causes[$index]="cause=nightly-unreached"
+  elif [ -n "$unread_hit" ]; then
+    lane_values[$index]=false lane_causes[$index]="cause=unread-path setting=HARNESS_CI_UNREAD_PATHS $unread_hit"
   else
     lane_values[$index]=false lane_causes[$index]="cause=unreached"
   fi
