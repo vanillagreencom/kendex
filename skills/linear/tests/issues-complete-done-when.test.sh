@@ -10,6 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/assert.sh
 source "$SCRIPT_DIR/lib/assert.sh"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=../scripts/lib/issue-validation.sh
+source "$SKILL_DIR/scripts/lib/issue-validation.sh"
 assert_tmpdir TMP_ROOT
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -21,78 +23,86 @@ git -C "$TMP_ROOT" config maintenance.auto false
 
 # The issue read answers with the description in DESCRIPTION_FILE; the update
 # answers with the description it was sent, or that one when it was sent none,
-# and fails when UPDATE_FAILS is set.
+# and fails when UPDATE_FAILS is set. Any other id the issue read names
+# resolves to the source, as Linear resolves a moved issue's historical
+# identifier; a superseded item reads canceled, or not at all under
+# SUPERSEDED_READ_FAILS. Each request is one jq run, printing the payload as
+# sent and then the answer: every process start counts against the suite's
+# 60 s control cap.
 cat >"$TMP_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
-config="$(cat)"
-payload="$(sed -n 's/^data = //p' <<<"$config" | jq -r)"
-query="$(jq -r '.query' <<<"$payload")"
-printf '%s\n' "$payload" >> "${CURL_PAYLOAD_LOG:?}"
-description="$(jq -Rs . "${DESCRIPTION_FILE:?}")"
-
-case "$query" in
-*"commentCreate(input:"*)
-  printf '%s' '{"data":{"commentCreate":{"success":true,"comment":{"id":"comment-1","body":"ok","createdAt":"2026-07-14T00:00:00Z","updatedAt":"2026-07-14T00:00:00Z","user":{"name":"Test"},"issue":{"identifier":"CC-720","updatedAt":"2026-07-14T00:00:00Z"}}}}}___HTTP_CODE___200'
-  ;;
-*"workflowStates(filter:"*)
-  state="$(jq -r '.variables.name' <<<"$payload")"
-  case "$state" in
-    Verifying) state_id=state-verifying ;;
-    Done) state_id=state-done ;;
-    Todo) state_id=state-todo ;;
-    'In Progress') state_id=state-in-progress ;;
-    'In Review') state_id=state-in-review ;;
-    'In QA') state_id=state-in-qa ;;
-    *) printf 'unsupported workflow state: %s\n' "$state" >&2; exit 2 ;;
-  esac
-  jq -cn --arg id "$state_id" '{data:{workflowStates:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[{id:$id,type:(if $id == "state-done" then "completed" elif $id == "state-todo" then "unstarted" else "started" end)}]}}}'
-  printf '___HTTP_CODE___200'
-  ;;
-*"teams(filter:"*)
-  printf '%s' '{"data":{"teams":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"id":"team-uuid","key":"CC","name":"Claude"}]}}}___HTTP_CODE___200'
-  ;;
-*"issue(id:"*)
-  # Any other id resolves to the source, as Linear resolves a moved issue's
-  # historical identifier. A superseded item reads canceled, or not at all
-  # under SUPERSEDED_READ_FAILS.
-  read_id="$(jq -r '.variables.id' <<<"$payload")"
-  uuid=issue-uuid identifier=CC-720 state="${CURRENT_STATE:-In Review}" type="${CURRENT_TYPE:-started}" archived=null trashed=null
-  if [ "$read_id" = "${REPLACEMENT_ID:-}" ]; then
-    uuid=replacement-uuid identifier="$REPLACEMENT_ID" state=replacement type="${REPLACEMENT_TYPE:?}" description="$(jq -Rs . "${REPLACEMENT_FILE:?}")"
-    archived="${REPLACEMENT_ARCHIVED_AT:-null}" trashed="${REPLACEMENT_TRASHED:-null}"
-  elif [ "$read_id" = "${SUPERSEDED_ID:-}" ]; then
-    if [ -n "${SUPERSEDED_READ_FAILS:-}" ]; then
-      printf '%s' '{"data":{"issue":null}}___HTTP_CODE___200'
-      exit 0
-    fi
-    uuid=superseded-uuid identifier="$SUPERSEDED_ID" state=Canceled type=canceled
-  fi
-  jq -cj --arg uuid "$uuid" --argjson archived "$archived" --argjson trashed "$trashed" --arg identifier "$identifier" --arg title "${CONTAINER_TITLE:-t}" --argjson children "${CONTAINER_CHILDREN:-[]}" --arg state "$state" --arg type "$type" --arg parent "${CURRENT_PARENT:-}" --argjson d "$description" '{data:{issue:{id:$uuid,identifier:$identifier,title:$title,description:$d,state:(if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name:"Todo",type:"unstarted"} else {name:$state,type:$type} end),assignee:null,project:null,projectMilestone:null,cycle:null,team:{key:"CC",id:"7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",branchName:"cc-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:$archived,trashed:$trashed,parent:(if $parent == "" then null else {id:"parent-uuid",identifier:$parent,title:"shared bundle"} end),children:{pageInfo:{hasNextPage:false,endCursor:null},nodes:$children},relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}' <<<'null'
-  printf '___HTTP_CODE___200'
-  ;;
-*"issueUpdate(id:"*)
-  if [ -n "${UPDATE_FAILS:-}" ]; then
-    printf '%s' '{"errors":[{"message":"update refused"}]}___HTTP_CODE___200'
-    exit 0
-  fi
-  jq -cj --argjson prior_state '{"name":"In Review","type":"started"}' --argjson d "$description" '{data:{issueUpdate:{success:true,issue:{id:"issue-uuid",identifier:"CC-720",title:"t",description:(.variables.input.description // $d),state:(if .variables.input.stateId == "state-verifying" then {name:"Verifying",type:"started"} elif .variables.input.stateId == "state-done" then {name:"Done",type:"completed"} elif .variables.input.stateId == "state-todo" then {name:"Todo",type:"unstarted"} elif .variables.input.stateId == "state-in-review" then {name:"In Review",type:"started"} elif .variables.input.stateId == "state-in-progress" then {name:"In Progress",type:"started"} elif .variables.input.stateId == "state-in-qa" then {name:"In QA",type:"started"} elif .variables.input.stateId == null then $prior_state else error("unsupported state id") end),assignee:null,project:null,projectMilestone:null,cycle:null,parent:null,team:{key:"CC",name:"Claude"},labels:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},priority:3,estimate:null,sortOrder:1.0,url:"https://linear.app/test/issue/CC-720",createdAt:"2026-07-14T00:00:00Z",updatedAt:"2026-07-14T00:00:00Z",archivedAt:null,trashed:null,relations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]},inverseRelations:{pageInfo:{hasNextPage:false,endCursor:null},nodes:[]}}}}}' <<<"$payload"
-  printf '___HTTP_CODE___200'
-  ;;
-*)
-  printf '%s' '{"errors":[{"message":"unexpected query"}]}___HTTP_CODE___200'
-  ;;
-esac
+IFS= read -r -d '' config || true
+data="${config#*$'\n'data = }"
+answer="$(jq -j --rawfile d "${DESCRIPTION_FILE:?}" --rawfile replacement "${REPLACEMENT_FILE:-/dev/null}" '
+  def setting($name; $default): ($ENV[$name] // "") | if . == "" then $default else . end;
+  def connection($nodes): {pageInfo: {hasNextPage: false, endCursor: null}, nodes: $nodes};
+  def state_named: {Verifying: "state-verifying", Done: "state-done", Todo: "state-todo",
+    "In Progress": "state-in-progress", "In Review": "state-in-review", "In QA": "state-in-qa"}[.];
+  def state_of_id: {"state-verifying": {name: "Verifying", type: "started"}, "state-done": {name: "Done", type: "completed"},
+    "state-todo": {name: "Todo", type: "unstarted"}, "state-in-review": {name: "In Review", type: "started"},
+    "state-in-progress": {name: "In Progress", type: "started"}, "state-in-qa": {name: "In QA", type: "started"}}[.];
+  def issue_read($v):
+    {uuid: "issue-uuid", identifier: "CC-720", state: setting("CURRENT_STATE"; "In Review"),
+     type: setting("CURRENT_TYPE"; "started"), description: $d, archived: null, trashed: null} as $source
+    | if $v.id == $ENV.REPLACEMENT_ID then
+        $source + {uuid: "replacement-uuid", identifier: $v.id, state: "replacement",
+          type: (setting("REPLACEMENT_TYPE"; null) // error("REPLACEMENT_TYPE unset")), description: $replacement,
+          archived: (setting("REPLACEMENT_ARCHIVED_AT"; "null") | fromjson), trashed: (setting("REPLACEMENT_TRASHED"; "null") | fromjson)}
+      elif $v.id == $ENV.SUPERSEDED_ID then
+        if setting("SUPERSEDED_READ_FAILS"; "") != "" then null
+        else $source + {uuid: "superseded-uuid", identifier: $v.id, state: "Canceled", type: "canceled"} end
+      else $source end
+    | if . == null then {data: {issue: null}} else
+        setting("CONTAINER_TITLE"; "t") as $title | (setting("CONTAINER_CHILDREN"; "[]") | fromjson) as $children
+        | setting("CURRENT_PARENT"; "") as $parent
+        | {data: {issue: {id: .uuid, identifier, title: $title, description,
+          state: (if ($children | length) > 0 and ($title | test("\\(one PR\\)"; "i") | not) then {name: "Todo", type: "unstarted"} else {name: .state, type} end),
+          assignee: null, project: null, projectMilestone: null, cycle: null,
+          team: {key: "CC", id: "7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47", name: "Claude"}, labels: connection([]),
+          priority: 3, estimate: null, sortOrder: 1.0, url: "https://linear.app/test/issue/CC-720", branchName: "cc-720",
+          createdAt: "2026-07-14T00:00:00Z", updatedAt: "2026-07-14T00:00:00Z", archivedAt: .archived, trashed: .trashed,
+          parent: (if $parent == "" then null else {id: "parent-uuid", identifier: $parent, title: "shared bundle"} end),
+          children: connection($children), relations: connection([]), inverseRelations: connection([])}}} end;
+  def issue_update($input):
+    if setting("UPDATE_FAILS"; "") != "" then {errors: [{message: "update refused"}]}
+    else {data: {issueUpdate: {success: true, issue: {id: "issue-uuid", identifier: "CC-720", title: "t",
+      description: ($input.description // $d),
+      state: (if $input.stateId == null then {name: "In Review", type: "started"} else ($input.stateId | state_of_id) // error("unsupported state id") end),
+      assignee: null, project: null, projectMilestone: null, cycle: null, parent: null, team: {key: "CC", name: "Claude"},
+      labels: connection([]), priority: 3, estimate: null, sortOrder: 1.0, url: "https://linear.app/test/issue/CC-720",
+      createdAt: "2026-07-14T00:00:00Z", updatedAt: "2026-07-14T00:00:00Z", archivedAt: null, trashed: null,
+      relations: connection([]), inverseRelations: connection([])}}}} end;
+  . as $sent | fromjson | .query as $query | .variables as $v
+  | $sent, "\n",
+    (if ($query | contains("commentCreate(input:")) then
+      {data: {commentCreate: {success: true, comment: {id: "comment-1", body: "ok", createdAt: "2026-07-14T00:00:00Z",
+        updatedAt: "2026-07-14T00:00:00Z", user: {name: "Test"}, issue: {identifier: "CC-720", updatedAt: "2026-07-14T00:00:00Z"}}}}}
+    elif ($query | contains("workflowStates(filter:")) then
+      (($v.name | state_named) // error("unsupported workflow state: \($v.name)")) as $id
+      | {data: {workflowStates: connection([{id: $id, type: ($id | state_of_id | .type)}])}}
+    elif ($query | contains("issue(id:")) then issue_read($v)
+    elif ($query | contains("issueUpdate(id:")) then issue_update($v.input)
+    else {errors: [{message: "unexpected query"}]} end | tojson),
+    "___HTTP_CODE___200"' <<<"${data%%$'\n'*}")" || exit 2
+printf '%s\n' "${answer%%$'\n'*}" >>"${CURL_PAYLOAD_LOG:?}"
+printf '%s' "${answer#*$'\n'}"
 SH
 chmod +x "$TMP_ROOT/bin/curl"
 
+# No team is configured: the cross-team guard's two reads per call are
+# cross-team-guard.test.sh's subject, and here they cost a third of this
+# suite's time against its 60 s control cap. The guard's inactive notice is
+# dropped, so stderr holds the command's own JSON.
 run_complete() { # DESCRIPTION_FILE PAYLOAD_LOG ARG...
-  local description_file="$1" payload_log="$2"
+  local description_file="$1" payload_log="$2" rc=0
   shift 2
   : >"$payload_log"
   (cd "$TMP_ROOT" && PATH="$TMP_ROOT/bin:$PATH" \
-    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=CC \
+    LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM='' \
     CURL_PAYLOAD_LOG="$payload_log" DESCRIPTION_FILE="$description_file" \
-    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@")
+    "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" issues complete "$@" 2>"$TMP_ROOT/run.err") || rc=$?
+  sed '/^linear: cross-team-guard=inactive /d' "$TMP_ROOT/run.err" >&2
+  return "$rc"
 }
 
 # The issueUpdate payloads in LOG, one compact JSON object per line.
@@ -137,6 +147,13 @@ while IFS='|' read -r name description; do
 done <<'ROWS'
 absent|No checklist.
 level-three|### Done when\n- [ ] shared outcome\n### Requirements\n- [ ] requirement
+ROWS
+# The parser alone tells these from the rows above, which run the command's
+# refusal of both selection forms over no box, with a box outside the section
+# and without one.
+while IFS='|' read -r name description; do
+  assert_jq "selection $name holds no box" "$(done_when_parse "$(printf '%b' "$description")" '"all"')" '.boxes == []'
+done <<'ROWS'
 hyphenated|## Done-when\n- [ ] shared outcome
 empty|## Done when
 no-boxes|## Done when\n* a bullet with no box
@@ -160,14 +177,25 @@ while IFS='|' read -r name description expected field; do
 done <<'ROWS'
 branch|## Done when\n- [ ] shared outcome|refuse|unmet_branch_boxes
 missing-proof|## Done when\n- [x] shared outcome|refuse|missing_evidence_boxes
-blank-proof|## Done when\n- [x] shared outcome\n  Evidence:   |refuse|missing_evidence_boxes
-unindented-proof|## Done when\n- [x] shared outcome\nEvidence: read|refuse|missing_evidence_boxes
-not-direct-proof|## Done when\n- [x] shared outcome\n\n  Evidence: read|refuse|missing_evidence_boxes
 complete|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done|-
 post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-in-review|-
 absent|No checklist.|state-done|-
-empty|## Done when|state-done|-
-no-boxes|## Done when\n* a bullet with no box|state-done|-
+ROWS
+# The parser alone tells these descriptions from the rows above that run the
+# command for the same verdict: a refusal naming its box, or Done.
+while IFS='|' read -r name description verdict; do
+  parsed="$(done_when_parse "$(printf '%b' "$description")" '[]')"
+  if [[ "$verdict" == Done ]]; then
+    assert_jq "bare $name reads Done" "$parsed" '.completion_state == "Done"'
+  else
+    assert_jq "bare $name names its box" "$parsed" ".completion_state == null and .$verdict == [1]"
+  fi
+done <<'ROWS'
+blank-proof|## Done when\n- [x] shared outcome\n  Evidence:   |missing_evidence_boxes
+unindented-proof|## Done when\n- [x] shared outcome\nEvidence: read|missing_evidence_boxes
+not-direct-proof|## Done when\n- [x] shared outcome\n\n  Evidence: read|missing_evidence_boxes
+empty|## Done when|Done
+no-boxes|## Done when\n* a bullet with no box|Done
 ROWS
 
 # A container completes under the ordinary checklist rule: with no checklist
@@ -188,10 +216,16 @@ while IFS='|' read -r name title description expected; do
   fi
 done <<'ROWS'
 absent|t|No checklist.|state-done
-empty|t|## Done when|state-done
-post-only|t|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read|state-done
 child-box|t|## Done when\n- [ ] Every child Done or cancelled|refuse
-proved|t|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done
+ROWS
+# The parser alone tells these checklists from the absent row above, which runs
+# the command on a container for the same Done verdict.
+while IFS='|' read -r name description; do
+  assert_jq "container $name reads Done" "$(done_when_parse "$(printf '%b' "$description")" '[]')" '.completion_state == "Done"'
+done <<'ROWS'
+empty|## Done when
+post-only|## Done when\n- [x] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z\n  Evidence: source read
+proved|## Done when\n- [x] shared outcome\n  Evidence: source read passed
 ROWS
 
 log="$TMP_ROOT/all.jsonl"
@@ -306,7 +340,6 @@ assert_eq "CRLF post-merge checklist is accepted" "$rc" 0
 assert_jq "CRLF checklist remains Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying" and (.variables.input.description | contains("\r") | not)'
 
 # Completion consumes the shared parser for every trigger form.
-source "$SKILL_DIR/scripts/lib/issue-validation.sh"
 parsed="$(done_when_parse "## Done when"$'\n'"- [ ] $post" '[]' "$merged")"
 assert_jq "a missing Trigger parses as merge" "$parsed" '.boxes[0].trigger == "merge" and .boxes[0].trigger_kind == "merge"'
 parsed="$(done_when_parse "## Done when"$'\n'"- [ ] ${post/merged release/merged release; live evidence}" '[]' "$merged")"
@@ -315,25 +348,23 @@ assert_jq "a semicolon in Why preserves the legacy form" "$parsed" '(.errors | l
 # Filing and completion read one Deadline rule from done_when_parse: each row
 # below gets the same verdict from both. Filing cannot know the merge time, so
 # a merge trigger's UTC deadline and a time trigger before merge are judged at
-# completion alone, in the refusal table below. A refused row reads its
-# completion verdict from the parser completion calls; that table proves the
-# command refuses each rule before any write. Columns: name | trigger |
-# deadline | the completion rule, or valid.
+# completion alone, in the refusal table below. Each row reads its
+# completion verdict from the parser completion calls; the verification rows
+# above prove the command keeps a Verifying verdict, and the refusal table
+# below that it refuses a parser error before any write. Columns: name |
+# trigger | deadline | the completion rule, or valid.
 while IFS='|' read -r name trigger deadline rule; do
   printf '%s\n' '> **Story:** The owner checks a released change. The branch proof is complete. After release, live health decides acceptance.' '' '> **Why this matters:** Live readings keep incomplete acceptance visible.' '' '## Done when' '- [x] branch proof' '  Evidence: branch source read' "- [ ] Post-merge: Read health; Where: service; Why after merge: live release; Trigger: $trigger; Deadline: $deadline" >"$TMP_ROOT/trigger.md"
   filed=0
   require_issue_header_shape "$(cat "$TMP_ROOT/trigger.md")" 2>"$TMP_ROOT/filing.err" || filed=$?
+  parsed="$(done_when_parse "$(cat "$TMP_ROOT/trigger.md")" '[]' "$merged")"
   if [[ "$rule" == valid ]]; then
-    log="$TMP_ROOT/trigger-$name.jsonl"
-    rc=0
-    run_complete "$TMP_ROOT/trigger.md" "$log" CC-720 --post-merge-at "$merged" >"$TMP_ROOT/trigger.out" 2>"$TMP_ROOT/trigger.err" || rc=$?
     assert_eq "post-merge $name files" "$filed" 0
-    assert_eq "post-merge $name trigger completes successfully" "$rc" 0
-    assert_jq "post-merge $name trigger keeps Verifying" "$(updates "$log")" '.variables.input.stateId == "state-verifying"'
+    assert_jq "post-merge $name trigger keeps Verifying" "$parsed" '.errors == [] and .completion_state == "Verifying"'
   else
     assert_eq "post-merge $name refuses at filing" "$filed" 1
     assert_jq "post-merge $name names the filing rule" "$(cat "$TMP_ROOT/filing.err")" '.rule == "post-merge-deadline" and .box == 2'
-    assert_jq "post-merge $name refuses at completion" "$(done_when_parse "$(cat "$TMP_ROOT/trigger.md")" '[]' "$merged")" ".errors == [{box: 2, rule: \"$rule\"}] and .completion_state == null"
+    assert_jq "post-merge $name refuses at completion" "$parsed" ".errors == [{box: 2, rule: \"$rule\"}] and .completion_state == null"
   fi
 done <<'ROWS'
 merge|merge|2026-10-04T00:00:00Z|valid
@@ -378,13 +409,20 @@ while IFS='|' read -r name body branch rule; do
 done <<'ROWS'
 branch|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z| |.error == "post-merge-checklist" and .unmet_branch_boxes == [1]
 fields|Post-merge: Read health; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
-reading-empty|Post-merge:  ; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
-late|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-04T00:00:01Z|x|.errors[0].rule == "post-merge-window"
-early|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-01T00:00:00Z|x|.errors[0].rule == "post-merge-window"
-date|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-09-31T12:00:00Z|x|.errors[0].rule == "post-merge-fields"
-trigger|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: someday; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
-trigger-empty|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: ; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-fields"
-trigger-before-merge|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-09-30T00:00:00Z; Deadline: 2026-10-02T00:00:00Z|x|.errors[0].rule == "post-merge-window"
+ROWS
+# The parser alone tells these bodies from the fields row above, which runs the
+# command for the same refusal. Columns: name | post-merge body | rule.
+while IFS='|' read -r name body rule; do
+  parsed="$(done_when_parse "## Done when"$'\n'"- [x] branch proof"$'\n'"  Evidence: branch source read"$'\n'"- [ ] $body" '[]' "$merged")"
+  assert_jq "post-merge $name identifies its rule" "$parsed" ".errors[0].rule == \"$rule\" and .completion_state == null"
+done <<'ROWS'
+reading-empty|Post-merge:  ; Where: service; Why after merge: live release; Deadline: 2026-10-02T00:00:00Z|post-merge-fields
+late|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-04T00:00:01Z|post-merge-window
+early|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-10-01T00:00:00Z|post-merge-window
+date|Post-merge: Read health; Where: service; Why after merge: live release; Deadline: 2026-09-31T12:00:00Z|post-merge-fields
+trigger|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: someday; Deadline: 2026-10-02T00:00:00Z|post-merge-fields
+trigger-empty|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: ; Deadline: 2026-10-02T00:00:00Z|post-merge-fields
+trigger-before-merge|Post-merge: Read health; Where: service; Why after merge: live release; Trigger: 2026-09-30T00:00:00Z; Deadline: 2026-10-02T00:00:00Z|post-merge-window
 ROWS
 # An invalid merge timestamp refuses before any API request.
 log="$TMP_ROOT/merge-timestamp.jsonl"
