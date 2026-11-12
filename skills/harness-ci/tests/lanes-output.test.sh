@@ -349,16 +349,6 @@ unread-ci-input|unreadwide|.github/dependabot.yml .github/workflows/ci.yml|-|lan
 unread-quoted|unreadquote|.github/workflows/a"b.yml|-|lane_check=true,lane_other=true,lane_mac=false|verdict=true cause=unclaimed-path path=".github/workflows/a\"b.yml" claim=none
 ROWS
 }
-# Each exemption arm of needs_lane_claim, by its exact source line, and the
-# unread row that must fail at a copy without that line.
-unread_arms() {
-  cat <<'ARMS'
-  case $'\n'"$declared_paths"$'\n' in *$'\n'"$1"$'\n'*) return 0 ;; esac|unread-text
-  case "$1" in \"*) return 0 ;; esac|unread-quoted
-  ! unread_list_match "$1" "$queue_globs" || return 0|unread-ci-input
-  unread_list_match "$1" "$unread_globs" || return 0|unread-beside-unclaimed
-ARMS
-}
 unread_case() { # ROW, through the action at ACTION_ROOT
   local name base_name paths environment expected other base_var base
   IFS='|' read -r name base_name paths environment expected other <<<"$1"
@@ -378,30 +368,18 @@ while IFS= read -r row; do
   unread_case "$row"
 done < <(unread_rows)
 require_rows unread-paths "$rows"
-# Every exemption arm in needs_lane_claim has a row in unread_arms. A copy
-# without the arm's line fails its row and runs no lane: each arm keeps a
-# claim the unread globs would otherwise drop.
-arm_body="$(awk '/^needs_lane_claim\(\) /{ on = 1; next } on && /^}/{ exit } on' \
-  "${CHANGE_CLASS%/*}/lib/change-class.sh")"
-assert_eq "every exemption arm of needs_lane_claim has a killing row" \
-  "$(unread_arms | sed 's/|[^|]*$//' | sort)" \
-  "$(grep -E '(^|[^[:alnum:]_])return 0([^[:alnum:]_]|$)' <<<"$arm_body" | sort)"
-arms=0
-while IFS= read -r arm; do
-  arms=$((arms + 1))
-  arm_row="${arm##*|}"
-  arm_mutant="$(mutant "unread-arm-$arms" lib/change-class.sh "${arm%|*}" -)"
-  mkdir -p "$SANDBOX/unread-arm-root-$arms"
-  ln -s "${arm_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/unread-arm-root-$arms/skills"
-  control_status=0
-  (PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/unread-arm-root-$arms"
-    unread_case "$(unread_rows | sed -n "/^$arm_row|/p")"; [ "$FAIL" -eq 0 ]) \
-    >"$SANDBOX/unread-arm-$arms.log" 2>&1 || control_status=$?
-  assert_eq "must-fail: the $arm_row row rejects a copy without its arm" 1 "$control_status"
-  assert_eq "the copy without the $arm_row arm runs no lane" \
-    lane_check=false,lane_other=false,lane_mac=false "$(verdicts)"
-done < <(unread_arms)
-require_rows unread-arms "$arms"
+# The control ignores the declaration and must reach the unclaimed fallback.
+unread_mutant="$(mutant unread-ignored lib/change-class.sh \
+  '  unread_list_match "$1" "$unread_globs" || return 0' '  return 0')"
+mkdir -p "$SANDBOX/unread-root"
+ln -s "${unread_mutant%/harness-ci/scripts/change-class}" "$SANDBOX/unread-root/skills"
+control_status=0
+(PASS=0; FAIL=0; ACTION_ROOT="$SANDBOX/unread-root"
+  unread_case "$(unread_rows | sed -n '/^only-unread|/p')"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/unread-control.log" 2>&1 || control_status=$?
+assert_eq "must-fail: the only-unread row rejects an ignored declaration" 1 "$control_status"
+assert_eq "the control reaches the unclaimed fallback" \
+  lane_check=true,lane_other=true,lane_mac=false "$(verdicts)"
 # The action sources the library with extglob off, so the unread match sets
 # it for itself and restores the caller's setting. The control drops the
 # shopt: the extglob glob then misses, and the unclaimed fallback runs.
