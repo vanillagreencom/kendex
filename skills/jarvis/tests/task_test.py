@@ -253,6 +253,9 @@ sys.exit(task.main())
                 ("codex", onboarded, captured / "codex-dialog-trust.txt", "harness-not-ready"),
                 ("codex", onboarded, captured / "codex-rate-limit-switch.txt", "harness-not-ready"),
                 ("copilot", onboarded, captured / "copilot-idle.txt", "harness-not-ready"),
+                ("copilot", onboarded, captured / "copilot-dialog-trust.txt", "harness-not-ready"),
+                ("copilot", onboarded, captured / "copilot-model-turn.txt", None),
+                ("copilot", onboarded, captured / "copilot-model-turn-sidebar.txt", None),
                 ("codex", onboarded, captured / "codex-composer-idle.txt", None),
                 ("codex", onboarded, captured / "codex-working.txt", None))
         for index, (harness, config, screen, reason) in enumerate(rows):

@@ -46,11 +46,17 @@
 #
 # Copilot CLI 1.0.88 draws `esc interrupt` in its footer while a command runs,
 # the key drawn bold and the word after it plain, measured on a `!` shell
-# command at the pane (fixtures/oversee-watch/copilot-working.txt). Its footer
-# during a model turn is not measured; the same hint there is assumed, and a
-# turn it does not draw reads as not working, the direction the counter's first
-# seconds already take.
-WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom [(]|esc interrupt'
+# command at the pane (fixtures/oversee-watch/copilot-working.txt). Copilot CLI
+# 1.0.109 draws `ctrl+c interrupt` at the end of its status during a model
+# turn: `◉ Working ctrl+c interrupt`, `Retrying model request · 15s ctrl+c
+# interrupt` and `Waiting for model response · 27s ctrl+c interrupt`, measured
+# with its sidebar closed and open (fixtures/oversee-watch/
+# copilot-model-turn.txt and copilot-model-turn-sidebar.txt). Its idle footer,
+# `← open sidebar · / commands · ? help`, draws no interrupt hint. With the
+# sidebar open the composer sits after the sidebar's border, off column 0,
+# where the framed-composer rule cannot see it, so during a turn this footer
+# is what pane_harness_up reads as the harness up.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom [(]|esc interrupt|ctrl\+c interrupt'
 
 # A dialog waiting on an answer: the selected numbered row, drawn with each
 # harness's marker, and Claude Code's question and key hints.
