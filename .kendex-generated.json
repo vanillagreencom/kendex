@@ -4,6 +4,7 @@
   ".agents/skills/agent-runtime/runtime/Cargo.lock",
   ".agents/skills/agent-runtime/runtime/Cargo.toml",
   ".agents/skills/agent-runtime/runtime/src/clock.rs",
+  ".agents/skills/agent-runtime/runtime/src/context.rs",
   ".agents/skills/agent-runtime/runtime/src/controller.rs",
   ".agents/skills/agent-runtime/runtime/src/copilot-lane-context.mjs",
   ".agents/skills/agent-runtime/runtime/src/error.rs",

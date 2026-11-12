@@ -7,6 +7,7 @@
 //! its intent and policy inputs and consumes typed results.
 
 pub mod clock;
+pub mod context;
 pub mod controller;
 pub mod error;
 pub mod harness;
