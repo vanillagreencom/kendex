@@ -2069,9 +2069,11 @@ tracker_case() { # ROW WATCH
       [[ "$row" != close-changed ]] || TRACKER_LABEL=different-label
       case "$row" in
         close-watch-unreadable)
-          # The private env producer fails only in the mailbox reader. The
-          # watch loads its settings, then reports the close's failed read.
-          printf 'if [[ $0 == */mailbox/scripts/lane-mail ]]; then return 1; fi\n' >"$CASE_REPO_ROOT/.env.local"
+          # Only the mailbox reader selects a private file the loader refuses.
+          # The watch loads its settings, then reports the close's failed read.
+          printf 'not an assignment\n' >"$CASE_REPO_ROOT/close-read.env"
+          printf '#!/usr/bin/env bash\nKENDEX_ENV_FILE=close-read.env exec %q "$@"\n' "$TRACKER_MAIL" >"$STUB_DIR/close-read-mail"
+          chmod +x "$STUB_DIR/close-read-mail"
           cause=settings-unreadable ;;
         *unreadable)
           printf '[env]\nORCH_OWNER_ASK_LABEL = [broken]\n' >"$CASE_REPO_ROOT/kendex.settings.toml"
@@ -2082,7 +2084,11 @@ tracker_case() { # ROW WATCH
           jq -c 'if .kind == "ask" then .deadline = "2000-01-01T00:00:00Z" else . end' \
             "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl" >"$STUB_DIR/due"
           mv -- "$STUB_DIR/due" "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-overseer.jsonl"
-          tracker_pass "$watch"
+          if [[ "$row" == close-watch-unreadable ]]; then
+            TRACKER_MAIL="$STUB_DIR/close-read-mail" tracker_pass "$watch"
+          else
+            tracker_pass "$watch"
+          fi
           cp -- "$STUB_DIR/tracker.err" "$STUB_DIR/write.err"
           assert_contains "$TRACKER_OUT" "EVENT owner-ask-closed $id by=default" "$row reports the close event" ;;
         *) tracker_mail resolve --item overseer --id "$id" --default >"$STUB_DIR/closed.out" 2>"$STUB_DIR/write.err" ;;
@@ -2095,7 +2101,7 @@ tracker_case() { # ROW WATCH
         assert_eq "$(jq --rawfile body "$STUB_DIR/old-description" '.description == $body and .assignee == "" and (.labels | index("owner-gated") == null) and .labels == ["feature","skills"]' "$STUB_DIR/item")" true "$row clears the recorded tracker ownership"
         assert_contains "$(cat "$STUB_DIR/posted")" "ask=$id closed (default):" "$row posts the machine-read close marker"
       fi
-      rm -f -- "$CASE_REPO_ROOT/kendex.settings.toml" "$CASE_REPO_ROOT/.env.local"
+      rm -f -- "$CASE_REPO_ROOT/kendex.settings.toml" "$CASE_REPO_ROOT/.env.local" "$CASE_REPO_ROOT/close-read.env"
       TRACKER_FACTS=0,0
       return ;;
   esac

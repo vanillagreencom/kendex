@@ -4,7 +4,7 @@
 # Sources, lowest to highest precedence among project files:
 #   1. kendex.settings.toml, then .kendex/settings.toml ([env] table only)
 #   2. the project's private env file, .env.local unless KENDEX_ENV_FILE
-#      names another
+#      names another, read as data and never run (kendex_read_env_file)
 # The caller's own environment outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it. A `.env` file is
 # never read; shared settings belong in kendex.settings.toml, personal and
@@ -84,11 +84,15 @@ kendex_env_message() {
       ;;
     private-env-outside)
       printf 'kendex-env: private-env-outside arg1=%s\n' "$1"
-      printf '%s\n' "::error::the private env file $1 resolves outside the project through a link on the way to it; a private env file is sourced, so it must stay inside the project it belongs to"
+      printf '%s\n' "::error::the private env file $1 resolves outside the project through a link on the way to it; a private env file supplies this project's values, so it must stay inside the project it belongs to"
       ;;
     private-env-unresolved)
       printf 'kendex-env: private-env-unresolved arg1=%s\n' "$1"
-      printf '%s\n' "::error::$1 could not be resolved, so nothing can say whether the private env file is inside the project; a source that cannot be placed is not sourced"
+      printf '%s\n' "::error::$1 could not be resolved, so nothing can say whether the private env file is inside the project; a source that cannot be placed is not read"
+      ;;
+    private-env-line)
+      printf 'kendex-env: private-env-line file=%s lineno=%s\n' "$1" "$2"
+      printf '%s\n' "::error::$1:$2: the private env file is read as data and never run, so each line is blank, a # comment, or [export ]KEY=VALUE, where VALUE is a single-quoted string with no apostrophe inside, a double-quoted string with no '\"', '\\', '\$' or backtick inside, or a bare word of letters, digits and _ . / : @ % + , = -, optionally followed by a space and a # comment"
       ;;
     value-syntax)
       printf 'kendex-env: value-syntax file=%s key=%s\n' "$file" "$key"
@@ -134,16 +138,6 @@ kendex_source_usable() { # PATH — 0 = readable regular file or absent; 1 + ::e
     kendex_env_message not-file "$@" >&2
   fi
   return 1
-}
-
-kendex_source_env_file() {
-  local file="$1"
-  kendex_source_usable "$file" || return 1
-  [[ -f "$file" ]] || return 0
-  kendex_bom_guard "$file" || return 1
-  # Private env files can print; keep those messages out of parsed stdout.
-  # shellcheck source=/dev/null
-  source "$file" >&2
 }
 
 # Both helpers assign into a caller-named variable instead of printing.
@@ -234,14 +228,106 @@ kendex_load_settings_file() {
   done < "$file"
 }
 
+# The private env file is data: it sits in the project checkout, so running
+# it would let whoever writes there choose code this caller runs on its own
+# account. A line is blank, a `#` comment, or `[export ]KEY=VALUE`, and
+# kendex_env_line_value says which values read as the shell would read them.
+# Any other line fails the load, naming the file and the line: a line read
+# some other way than the shell reads it would load a value nobody wrote.
+#
+# Reading and assigning are two steps. Nothing is assigned until the whole
+# file has been read, and kendex_load_project_env assigns only after its
+# parent snapshot is gone, so no line can land on a variable the loader is
+# still using: Bash expands `$(...)` inside a name such as `a[$(cmd)]` when
+# a variable holding that name is expanded indirectly or counted.
+
+# The value of one assignment, or 1 where the shell would not read RAW as
+# that literal text: it would run a command, expand a name or split words.
+# A bare word is taken as written. A quoted value is the settings grammar's
+# own string (kendex_decode_value), except where the shell reads a quoted
+# value differently: a `#` touching the closing quote is part of the value
+# there, and double quotes expand `$` and backticks.
+kendex_env_line_value() { # OUT_VAR RAW — value assigned to OUT_VAR; 1 = outside the grammar, OUT_VAR untouched
+  local _kendex_line_decoded
+  local _kendex_line_bare='^([A-Za-z0-9_./:@%+,=-]*)([[:space:]]+#.*)?$'
+  local _kendex_line_glued="^('[^']*'|\"[^\"]*\")#"
+  if [[ "$2" =~ $_kendex_line_bare ]]; then
+    printf -v "$1" '%s' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  case "$2" in
+    \'* | \"*) ;;
+    *) return 1 ;;
+  esac
+  [[ ! "$2" =~ $_kendex_line_glued ]] || return 1
+  kendex_decode_value _kendex_line_decoded "$2" || return 1
+  [[ "$2" != \"* || "$_kendex_line_decoded" != *[\$\`]* ]] || return 1
+  printf -v "$1" '%s' "$_kendex_line_decoded"
+}
+
+# Reads FILE into _KENDEX_PRIVATE_VALUES, three entries per assignment: the
+# key, the value, and `export` or `plain`. A key the parent snapshot holds is
+# left out, as kendex_load_settings_file leaves it out.
+kendex_read_env_file() { # FILE — 0 = read, an absent FILE included; 1 + ::error otherwise
+  local _kendex_env_line _kendex_env_lineno=0 _kendex_env_key _kendex_env_value _kendex_env_form LC_ALL=C
+  local _kendex_env_assignment='^([A-Za-z_][A-Za-z0-9_]*)=(.*)$'
+  _KENDEX_PRIVATE_VALUES=()
+  kendex_source_usable "$1" || return 1
+  [[ -f "$1" ]] || return 0
+  kendex_bom_guard "$1" || return 1
+  while IFS= read -r _kendex_env_line || [[ -n "$_kendex_env_line" ]]; do
+    _kendex_env_lineno=$((_kendex_env_lineno + 1))
+    _kendex_env_line="${_kendex_env_line%$'\r'}"
+    kendex_trim _kendex_env_line "$_kendex_env_line"
+    [[ -z "$_kendex_env_line" || "$_kendex_env_line" == \#* ]] && continue
+    _kendex_env_form=plain
+    if [[ "$_kendex_env_line" =~ ^export[[:space:]]+(.*)$ ]]; then
+      _kendex_env_form=export
+      _kendex_env_line="${BASH_REMATCH[1]}"
+    fi
+    _kendex_env_key=""
+    if [[ "$_kendex_env_line" =~ $_kendex_env_assignment ]]; then
+      _kendex_env_key="${BASH_REMATCH[1]}"
+      kendex_env_line_value _kendex_env_value "${BASH_REMATCH[2]}" || _kendex_env_key=""
+    fi
+    if [[ -z "$_kendex_env_key" ]]; then
+      kendex_env_message private-env-line "$1" "$_kendex_env_lineno" >&2
+      return 1
+    fi
+    kendex_parent_env_has "$_kendex_env_key" ||
+      _KENDEX_PRIVATE_VALUES+=("$_kendex_env_key" "$_kendex_env_value" "$_kendex_env_form")
+  done < "$1"
+}
+
+# Assigns what kendex_read_env_file read, as the shell would have: an
+# `export` line exports its key, and any other line sets a variable that is
+# exported only when it already was or the caller runs under `set -a`. It
+# keeps no variable of its own for a line to overwrite.
+kendex_assign_env_file() {
+  set -- ${_KENDEX_PRIVATE_VALUES[@]+"${_KENDEX_PRIVATE_VALUES[@]}"}
+  unset _KENDEX_PRIVATE_VALUES
+  while (($# >= 3)); do
+    printf -v "$1" '%s' "$2" || return 1
+    [[ "$3" != export ]] || export "$1"
+    shift 3
+  done
+}
+
+# One private env file, read and assigned, for a caller that loads it alone.
+# The name is older than the rule: the file is never sourced.
+kendex_source_env_file() { # FILE
+  kendex_read_env_file "$1" || return 1
+  kendex_assign_env_file
+}
+
 # Which file this project keeps its secrets in, relative to its root.
 # Read from KENDEX_ENV_FILE, which the settings load above has already
 # exported when the project sets it, and which the caller's environment
 # outranks like every other key.
 #
 # The path is refused rather than resolved when it could reach outside the
-# project: a private env file is sourced, so a path a project did not mean
-# to name runs somebody else's file in this shell.
+# project: a path a project did not mean to name would load somebody else's
+# values into this shell.
 # Whether the DIRECTORY the private env file sits in stays inside the
 # project once every link on the way is followed. Spelling alone cannot
 # answer that: `config/priv.env` names nothing outside the project, and
@@ -311,7 +397,7 @@ kendex_private_env_file() { # OUT_VAR PROJECT_ROOT — project-relative private 
   fi
   # The default is checked too, so the guarantee is one rule rather than a
   # rule about configured names: `.env.local` linked out of the project
-  # sources somebody else's file just as surely as a named path does.
+  # reads somebody else's file just as surely as a named path does.
   kendex_inside_project "$2" "$_kendex_named" || return 1
   printf -v "$1" '%s' "$_kendex_named"
 }
@@ -354,16 +440,16 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   done < <(compgen -e)
 
   # Load order (lowest to highest among project files): settings, then the
-  # private env file. kendex_load_settings_file skips parent keys directly;
-  # the env file is sourced wholesale, so its clobbers are undone below. A
-  # refused load — settings, a private path outside the project, or a
-  # BOM-prefixed env file — fails the whole call: resolving on a partial or
+  # private env file. Both readers skip parent keys directly, and a settings
+  # clobber of a parent value is undone below. A refused load — settings, a
+  # private path outside the project, a private line outside its grammar, or
+  # a BOM-prefixed file — fails the whole call: resolving on a partial or
   # silently reinterpreted file would be worse than stopping.
   kendex_load_settings_file "$project_root/kendex.settings.toml" || return 1
   kendex_load_settings_file "$project_root/.kendex/settings.toml" || return 1
   local _kendex_private_file
   kendex_private_env_file _kendex_private_file "$project_root" || return 1
-  kendex_source_env_file "$project_root/$_kendex_private_file" || return 1
+  kendex_read_env_file "$project_root/$_kendex_private_file" || return 1
 
   # Re-assert parent values so parent env wins over every project file, while
   # the settings < .env.local order is preserved for non-parent keys.
@@ -378,6 +464,8 @@ kendex_load_project_env() { # PROJECT_ROOT [PRIVATE_FILE_OUT_VAR] — optional o
   done
 
   unset _KENDEX_PARENT_ENV_NAMES _KENDEX_PARENT_ENV_VALUES _KENDEX_PARENT_ENV_NAME_SET
+  # The private values land only once the snapshot the loop above expands is gone.
+  kendex_assign_env_file || return 1
   if [[ -n "${2:-}" ]]; then
     printf -v "$2" '%s' "$_kendex_private_file"
   fi

@@ -287,6 +287,10 @@ for name, record, extra, args, status, key in rows:
             result(name + ': exact native context decision', int(remaining is not None), 1)
             compared = (actual[0], remaining, actual[2])
         for i, field in enumerate(('exit', 'stdout bytes', 'stderr bytes')):
+            # The base sourced the private file; this loader refuses its line by key.
+            if name == 'settings-error' and field == 'stderr bytes':
+                result(name + ': keyed private-file refusal', int(b'kendex-env: private-env-line' in compared[i]), 1)
+                continue
             result(name + ': base ' + field, int(compared[i] == before[i]), 1)
         if name in ('context-due', 'context-due-before-runtime') and compared == before[:3]:
             original = (scripts / 'oversee-succeed').read_text()
@@ -409,13 +413,13 @@ exit "$rc"
     'SCRIPT_DIR': str(tree), 'DEP_ERR': str(dep_err)}, capture_output=True, timeout=30)
     return answer.returncode, answer.stdout, answer.stderr, dep_err.read_bytes()
 
-# kendex_source_env_file forwards private-file output to stderr. The caller
-# hides path diagnostics and keeps the private file's shell changes isolated.
-printing_config = "printf '%s\\n' private-loader-message\ncd /\ntrap ':' EXIT\nset -f\n"
+# The caller hides path diagnostics, a private-file refusal's included.
+private_config = "PRIVATE_NOTE=kept\n"
+refused_config = private_config + 'return 1\n'
 for name, config, record, status in [
-    ('printing-private-file', printing_config, identity, 0),
-    ('printing-loader-failure', printing_config + 'return 1\n', identity, 1),
-    ('printing-record-error', printing_config, 'invalid', 2),
+    ('private-file', private_config, identity, 0),
+    ('private-loader-failure', refused_config, identity, 1),
+    ('private-record-error', private_config, 'invalid', 2),
 ]:
     (root / 'work/.env.local').write_text(config)
     record_file.write_text('{ invalid\n' if record == 'invalid' else json.dumps({'overseer': record}) + '\n')
@@ -455,9 +459,9 @@ leaky = 'state_file="$(source "$SCRIPT_DIR/workflow-state" && workflow_state_pat
 assert text.count(new) == 1, (path, new)
 path.write_text(text.replace(new, leaky))
 assert path.read_text() != text
-(root / 'work/.env.local').write_text(printing_config)
+(root / 'work/.env.local').write_text(refused_config)
 leak_control = caller_read(root / 'path-mutant/orch/scripts')
-result('path stderr control: caller succeeds and reader unchanged', leak_control[0], 0)
+result('path stderr control: caller refuses and reader unchanged', leak_control[0], 1)
 result('path stderr control: rejects escaped diagnostics', int(bool(leak_control[2])), 1)
 (root / 'work/.env.local').unlink()
 

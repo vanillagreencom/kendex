@@ -250,8 +250,8 @@ class MainHostContract(unittest.TestCase):
         return answer["JARVIS_MAIN_HOST"]
 
     def test_main_host_private_file_contract(self):
-        original = (b"# fixture private settings\r\nSECRET='first line\n"
-                    b"JARVIS_MAIN_HOST=literal-secret-text\nlast line'\n"
+        original = (b"# fixture private settings\r\nSECRET='first line "
+                    b"JARVIS_MAIN_HOST=literal-secret-text last line'\n"
                     b"export OTHER_SECRET='keep these bytes'\nJARVIS_MAIN_HOST='old:/home/old'")
         rows = (("default", None, None), ("configured", "private/role.env", None),
                 ("override", "unused.env", "nested/selected.env"), ("linked", None, None))
@@ -273,13 +273,13 @@ class MainHostContract(unittest.TestCase):
                 private.chmod(0o640)
                 self.assertEqual(self.value("--get"), "old:/home/old")
                 sentinel = self.root / "evaluated"
-                literal = "host:/home/O'Neil $USER `id` $(touch " + str(sentinel) + ")"
+                literal = "host:/home/O Neil $USER `id` $(touch " + str(sentinel) + ")"
                 for words, expected in ((("--set", literal), literal), (("--set", "next:/main"), "next:/main"),
                                         (("--clear",), ""), (("--clear",), "")):
                     self.assertEqual(self.value(*words), expected)
                     self.assertEqual(self.value("--get"), expected)
                     # Independently compare the complete pre-existing bytes
-                    # and mode; a multiline secret is not an assignment list.
+                    # and mode; a quoted secret is not an assignment list.
                     self.assertEqual(private.read_bytes()[:len(original)], original)
                     self.assertEqual(private.stat().st_mode & 0o777, 0o640)
                     status = json.loads(self.command("status", "--main").stdout)
@@ -342,6 +342,14 @@ class MainHostContract(unittest.TestCase):
                 self.assertIn("main-host=refused cause=setting-invalid", result.stderr)
                 self.assertEqual(private.read_bytes(), original)
                 self.assertEqual(private.stat().st_mode & 0o777, 0o640)
+        # A valid role the private file cannot hold as a single-quoted value.
+        for value, problem in (("host:/home/O'Neil", "apostrophe"), ("host\x01:/main", "control-character")):
+            with self.subTest(value=value):
+                result = self.command("main-host", "--set=" + value, code=2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("main-host=refused cause=value-unwritable key=JARVIS_MAIN_HOST problem=" + problem,
+                              result.stderr)
+                self.assertEqual(private.read_bytes(), original)
         for words in ((), ("--get", "--clear"), ("--set", "host:/main", "--clear")):
             with self.subTest(words=words):
                 self.assertEqual(self.command("main-host", *words, code=2).stdout, "")

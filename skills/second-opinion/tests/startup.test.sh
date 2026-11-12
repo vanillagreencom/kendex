@@ -106,7 +106,7 @@ word_settings() {
   case "$1" in
     settings:header) printf '[env] # comment\nSECOND_OPINION_CURRENT_MODEL = "codex"\n' >"$PROJ/kendex.settings.toml" ;;
     settings:cap) printf '[env]\nSECOND_OPINION_FOREGROUND_CAP = "1"\n' >"$PROJ/kendex.settings.toml" ;;
-    envlocal:cap) printf 'export SAFE=1 SECOND_OPINION_FOREGROUND_CAP=1\n' >"$PROJ/.env.local" ;;
+    envlocal:cap) printf 'SAFE=1\nexport SECOND_OPINION_FOREGROUND_CAP=1\n' >"$PROJ/.env.local" ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
   esac
 }
