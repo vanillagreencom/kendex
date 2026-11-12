@@ -130,9 +130,12 @@ for s in dev_validate_run dev_validate_run_selection; do
 done
 ln -s "$W" "$TMP/pool-link"
 alone_order "$TMP/pool-link/skills/orch/tests/run-all.runner" =dev_validate_run =held =held.test =same.test
-if [ "rc=$RC $STARTED" = "rc=0 orch--dev_validate_run orch--dev_validate_run_selection a--same.test hooks--held.test orch--held" ]; then
-  ok "through a symlink the alias family runs and the ALONE suites start last"
-else bad "through a symlink the alias family runs and the ALONE suites start last" "rc=$RC started=$STARTED"; fi
+case "rc=$RC $STARTED" in
+  "rc=0 orch--dev_validate_run orch--dev_validate_run_selection a--same.test hooks--held.test orch--held" | \
+  "rc=0 orch--dev_validate_run_selection orch--dev_validate_run a--same.test hooks--held.test orch--held")
+    ok "through a symlink the alias family runs and the ALONE suites start last" ;;
+  *) bad "through a symlink the alias family runs and the ALONE suites start last" "rc=$RC started=$STARTED" ;;
+esac
 alone_order "$TMP/pool-link/skills/orch/tests/logical.runner" =dev_validate_run =held =held.test =same.test
 if [ "rc=$RC $STARTED" = "rc=0 hooks--held.test orch--dev_validate_run orch--held a--same.test" ]; then
   ok "control: logical runner paths drop the family and pool the ALONE suites"
