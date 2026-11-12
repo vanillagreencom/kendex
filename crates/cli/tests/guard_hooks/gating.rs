@@ -58,7 +58,7 @@ fn the_armed_gate_still_blocks_with_no_kendex_on_path() {
     );
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(
-        said(&blocked).contains("conflict-markers"),
+        said(&blocked).contains("conflict-markers: match="),
         "{}",
         said(&blocked)
     );
@@ -160,7 +160,7 @@ fn the_stand_in_gate_runs_the_same_chain_the_shim_would() {
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
 }
 
 /// An installed sibling joins the chain. An absent sibling leaves the
@@ -276,7 +276,7 @@ fn a_linked_worktree_is_served_by_the_main_checkouts_copy() {
     let blocked = git(home, &linked, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(
-        said(&blocked).contains("conflict-markers"),
+        said(&blocked).contains("conflict-markers: match="),
         "{}",
         said(&blocked)
     );
@@ -423,7 +423,7 @@ fn a_broken_copy_does_not_shadow_a_working_one() {
     git_ok(home, &root, &["add", "-A"]);
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
 }
 
 /// A checkout path holding an apostrophe: the installer escapes it into the
@@ -457,14 +457,14 @@ fn a_path_with_an_apostrophe_resolves_the_same_on_both_sides() {
     let blocked = git(home, &root, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(
-        said(&blocked).contains("conflict-markers"),
+        said(&blocked).contains("conflict-markers: match="),
         "{}",
         said(&blocked)
     );
 
     let out = run(home, &root, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
 }
 
 /// A kendex project can sit below the git top level, and the package
@@ -510,7 +510,7 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     git_ok(home, &outer, &["add", "-A"]);
     let out = run(home, &project, "kendex", &["guard", "run", "pre-commit"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
 
     // And arming from there gates a real commit.
     let armed = run(home, &project, "kendex", &["guard", "install"]);
@@ -518,7 +518,7 @@ fn a_project_below_the_git_toplevel_is_found_where_it_renders() {
     let blocked = git(home, &project, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", said(&blocked));
     assert!(
-        said(&blocked).contains("conflict-markers"),
+        said(&blocked).contains("conflict-markers: match="),
         "{}",
         said(&blocked)
     );
@@ -589,7 +589,7 @@ fn a_tampered_helper_does_not_redirect_the_guard_verbs() {
         said(&out)
     );
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
-    assert!(said(&out).contains("conflict-markers"), "{}", said(&out));
+    assert!(said(&out).contains("conflict-markers: match="), "{}", said(&out));
 }
 
 /// A package next to the git directory is not this repository's package.

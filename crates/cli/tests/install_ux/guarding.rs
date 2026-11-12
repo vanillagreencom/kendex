@@ -120,7 +120,7 @@ fn the_guards_travel_with_the_repository_and_gate_a_clone() {
     let blocked = git_without_kendex(&clone, &["commit", "-m", "feat: adds a marker"]);
     assert!(!blocked.status.success(), "{}", spoke(&blocked));
     assert!(
-        spoke(&blocked).contains("conflict-markers"),
+        spoke(&blocked).contains("conflict-markers: match="),
         "{}",
         spoke(&blocked)
     );

@@ -108,7 +108,7 @@ The comment reader exited with status $2.${reason:+ $reason}" ;;
   esac
 }
 
-# comments and md-refs parse stdout as line<TAB>text. An extraction refusal
+# md-refs, the one consumer, parses stdout as line<TAB>text. An extraction refusal
 # uses stderr enum:line[:terminator], retained in GG_COMMENT_ERROR.
 # The comment text of one file under one grammar, as "line<TAB>text"
 # records. A block comment spanning lines emits one record per line. A

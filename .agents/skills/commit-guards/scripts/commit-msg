@@ -109,18 +109,6 @@ gg_settings_index_mode
 REQUIRED_RAW="$(gg_setting COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS "")" || exit 2
 REQUIRED="$(gg_config_path_list "$REQUIRED_RAW" changelog-required)" || exit 2
 
-gg_commit_header "$MSG"
-HEADER="$GG_COMMIT_HEADER"
-
-FAILED=0
-violation() { # KEY VALUE HEADLINE [DETAIL...]
-  local detail
-  gg_message "$1" "$2" "$3"
-  shift 3
-  for detail in "$@"; do echo "  $detail"; done
-  FAILED=1
-}
-
 # --- a commit touching the required paths carries a changelog entry ----------
 if [ -n "$REQUIRED" ]; then
   # The same two scopes changelog-entries judges, resolved by the same
@@ -166,18 +154,20 @@ if [ -n "$REQUIRED" ]; then
       gg_package_pattern "$pat" || program="${program:+$program }$pat"
     done
     program="$(gg_scrubbed "$program")"
-    case "$HEADER" in
+    gg_commit_header "$MSG"
+    case "$GG_COMMIT_HEADER" in
       *"[no-changelog]"*) gg_message changelog-waived "$touched" "The header waives the changelog entry." ;;
       *)
         # The record does not satisfy this rule without the release declaration.
-        violation changelog-missing "$touched:$program" "Changed without a changelog entry." \
-          "write one of: $program" \
-          "or put [no-changelog] in the header when the commit changes nothing a consumer sees"
+        gg_message changelog-missing "$touched:$program" "Changed without a changelog entry."
+        echo "  write one of: $program"
+        echo "  or put [no-changelog] in the header when the commit changes nothing a consumer sees"
         [ -z "$GG_CHANGELOG_RECORD" ] \
           || echo "  $(gg_shown "$GG_CHANGELOG_RECORD") counts only under COMMIT_GUARDS_CHANGELOG_COLLATE=1, which is the release commit collating the fragments"
+        exit 1
         ;;
     esac
   fi
 fi
 
-exit "$FAILED"
+exit 0

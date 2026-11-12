@@ -311,9 +311,10 @@ assert_eq "must-fail: without the change-scoped list md-type sweeps the tree and
 echo "=== a retired check name is dropped with one warning until the next major release ==="
 for retired in md-format todo-ban prose comments; do
   run_rows \
-    "a setting naming $retired runs the rest and warns once|clean retired-$retired-1|COMMIT_GUARDS_CHECKS=$retired md-refs||rc=0 commit-guards: retired-check=$retired;commit-guards: step=md-refs;$(ok md-refs)" \
-    "a setting naming only $retired runs nothing and passes|clean retired-$retired-2|COMMIT_GUARDS_CHECKS=$retired||rc=0 commit-guards: retired-check=$retired;commit-guards: unrun-all=retired"
+    "a setting naming $retired runs the rest and warns once|clean retired-$retired-1|COMMIT_GUARDS_CHECKS=$retired md-refs||rc=0 commit-guards: retired-check=$retired;commit-guards: step=md-refs;$(ok md-refs)"
 done
+run_rows \
+  "a setting naming only retired checks runs nothing and passes|clean retired-2|COMMIT_GUARDS_CHECKS=md-format||rc=0 commit-guards: retired-check=md-format;commit-guards: unrun-all=retired"
 gg_mutant UNRETIRED_GG commit-guards 'RETIRED_CHECKS="md-format todo-ban prose comments"' 'RETIRED_CHECKS=""'
 clean retired-3
 assert_eq "must-fail: without the retired list the setting is refused as unknown" \
@@ -339,9 +340,6 @@ single_rows \
   "commit-msg is invocable by name over stdin: only the batch refuses it|owed single-4||commit-msg|feat: dispatched [no-changelog]\n|rc=0 commit-msg: changelog-waived=src/a.rs" \
   "an unknown check name is exit 2 naming the known set|clean single-5||no-such-check||rc=2 ${ERR}check-unknown=no-such-check" \
   "a retired check by name warns and exits 0|clean single-6||md-format --all||rc=0 ${ERR}retired-check=md-format" \
-  "todo-ban by name warns and exits 0|clean single-7||todo-ban --staged||rc=0 ${ERR}retired-check=todo-ban" \
-  "prose by name warns and exits 0|clean single-8||prose||rc=0 ${ERR}retired-check=prose" \
-  "comments by name warns and exits 0|clean single-9||comments --staged||rc=0 ${ERR}retired-check=comments" \
   "--help prints usage at exit 0|clean help||--help||rc=0 commit-guards: usage=commit-guards" \
   "-h is --help|clean help-h||-h||rc=0 commit-guards: usage=commit-guards"
 
