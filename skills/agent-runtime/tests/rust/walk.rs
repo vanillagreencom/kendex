@@ -164,7 +164,7 @@ impl World {
             accounts: AccountSettings::read(&values),
             account_state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
-            preference: settings::EngineSettings::read(&values).controller_preference,
+            preference: settings::ControllerSettings::read(&values).preference,
         }
     }
 

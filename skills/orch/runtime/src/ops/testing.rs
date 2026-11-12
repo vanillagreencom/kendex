@@ -375,6 +375,7 @@ pub(super) fn transfer(expected: OverseerExpected) -> Request {
         expected,
         successor: successor(),
         brief_file: None,
+        session: None,
         cause: TransferCause::Live,
         exclude_account: None,
         handoff_session_id: None,

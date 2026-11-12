@@ -42,7 +42,7 @@ pub fn env(settings: &Settings) -> Env<'_> {
         account_state: &settings.account_state,
         home: settings.home.as_deref(),
         copilot_home: settings.copilot_home.as_deref(),
-        controller_preference: &settings.engine.controller_preference,
+        controller_preference: &settings.controller.preference,
     }
 }
 

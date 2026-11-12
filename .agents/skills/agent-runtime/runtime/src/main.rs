@@ -344,7 +344,7 @@ impl AccountSettings {
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
             copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
-            preference: settings::EngineSettings::read(&values).controller_preference,
+            preference: settings::ControllerSettings::read(&values).preference,
             project: roots.project,
         };
         // Every verb reads the account keys first: a value outside its form

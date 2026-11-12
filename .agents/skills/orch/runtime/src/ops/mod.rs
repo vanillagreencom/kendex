@@ -98,7 +98,6 @@ use agent_runtime::intent::Reconciled;
 use agent_runtime::record::{self, Document, Locking};
 use std::path::Path;
 
-use agent_runtime::protocol::Outcome;
 use lane::IntentTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -781,57 +780,6 @@ fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standin
     Ok(match journal::open_intent(intents, op, target)? {
         None => Standing::Clear,
         Some(intent) => Standing::Same(intent),
-    })
-}
-
-/// Append `intent`, refusing `intent-duplicate` when a row already carries
-/// its id: the id ends in the call's own stamp, so a match is a replayed
-/// `Env`, never a second effect.
-fn push_intent(path: &Path, doc: &mut Document, intent: &Intent) -> Result<()> {
-    let value = serde_json::to_value(intent)?;
-    let rows = record::array_mut(path, doc, "intents")?;
-    if rows
-        .iter()
-        .any(|row| row.get("id").and_then(Value::as_str) == Some(intent.id.as_str()))
-    {
-        return Err(Error::Runtime(agent_runtime::Error::IntentDuplicate {
-            id: intent.id.clone(),
-        }));
-    }
-    rows.push(value);
-    Ok(())
-}
-
-/// The intent an effect operation persists. It carries the identity of the
-/// process persisting it, and is never persisted without one: a contender
-/// could not tell a live operation with no owner from a dead one, and would
-/// fail it out from under the live effect. A stored intent may still lack
-/// it, and is judged as one with no owner.
-fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
-    let Some(owner) = env.owner.clone() else {
-        return Err(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
-            op: op.word(),
-        }));
-    };
-    Ok(Intent {
-        id: format!("{}:{target}:{}", op.word(), env.round_id()),
-        op,
-        target: target.to_owned(),
-        created_at: env.iso(),
-        owner: Some(owner),
-        outcome: Outcome::NotStarted,
-        completed_at: None,
-        original_pending: None,
-        cause: None,
-        handed_from: None,
-        watch: None,
-        phase: None,
-        obligations: None,
-        observation: None,
-        reconciled: None,
-        observed_generation: None,
-        extra: Default::default(),
-        notice: None,
     })
 }
 

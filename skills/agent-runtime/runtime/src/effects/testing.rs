@@ -52,6 +52,7 @@ pub(super) fn run<'a>(
     clock: &'a dyn Clock,
 ) -> Run<'a> {
     Run {
+        speaker: "agent-runtime",
         path,
         settings,
         state_dir: dir.to_path_buf(),

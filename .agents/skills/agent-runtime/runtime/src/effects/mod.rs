@@ -111,9 +111,11 @@ const POLL: Duration = Duration::from_millis(200);
 /// brief and notice files live in, the grace a stop leaves between its
 /// signals, the mailbox program the owner notice runs and the main checkout
 /// it runs at, the writer's stamp and lock policy, the one clock every wait
-/// reads, and the opener's part of an outcome's transition, which moves the
-/// target record the intent names.
+/// reads, the opener's part of an outcome's transition, which moves the
+/// target record the intent names, and the program name the owner notice
+/// opens with, which is the opener's.
 pub struct Run<'a> {
+    pub speaker: &'static str,
     pub path: &'a Path,
     pub settings: &'a EngineSettings,
     pub state_dir: PathBuf,
@@ -720,7 +722,7 @@ pub fn apply_outcome_with(
 ) -> Result<OutcomeWritten> {
     let record_after = outcome.record.clone();
     let while_owner = outcome.while_owner.clone();
-    let mut outcome = outcome.wire();
+    let mut outcome = outcome.wire(run.speaker);
     arm(&mut outcome);
     let intent = read_intent(run.path, &outcome.intent_id)?;
     if intent.open()
@@ -770,8 +772,9 @@ impl EffectOutcome {
     /// The wire record of the outcome: the word,
     /// the record fields it publishes or keeps, and the observation with what
     /// remains or stands untouched written beside it. The principal keys
-    /// are the caller's to carry, under the target's stamp it knows.
-    pub fn wire(self) -> RecordOutcome {
+    /// are the caller's to carry, under the target's stamp it knows. An
+    /// owed notice opens with `speaker`, the opener's program name.
+    pub fn wire(self, speaker: &str) -> RecordOutcome {
         let EffectOutcome {
             intent_id,
             op,
@@ -803,7 +806,7 @@ impl EffectOutcome {
                 Outcome::Failed
             }
         };
-        let notice = job::owed_notice(op, &intent_id, word, &observation);
+        let notice = job::owed_notice(speaker, op, &intent_id, word, &observation);
         RecordOutcome {
             intent_id,
             outcome: word,

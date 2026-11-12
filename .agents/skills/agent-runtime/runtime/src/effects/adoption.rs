@@ -82,9 +82,6 @@ fn adopt_controller(
         record::set(record, "session_id", json!(r.session_id));
         record::set(record, "harness_pid", read.identity.pid);
         record::set(record, "harness_start", read.identity.start.as_str());
-        if let Some(command) = &r.succession {
-            record::set(record, "succession", json!(command));
-        }
         for (key, value) in adopted_posture(path, r)? {
             record::set(record, key, value);
         }
@@ -116,9 +113,6 @@ fn adopt_controller(
         "effort": r.effort,
         "cwd": r.cwd,
     });
-    if let Some(command) = &r.succession {
-        record["succession"] = json!(command);
-    }
     for (key, value) in adopted_posture(path, r)? {
         record[key] = value;
     }
@@ -183,7 +177,6 @@ mod tests {
             model: Some("m".into()),
             effort: None,
             cwd: Some("/r".into()),
-            succession: None,
             session_rows: Some("/r/tmp/lane-mail/overseer/session-41020-7.jsonl".into()),
             permission: None,
             extra_args: None,

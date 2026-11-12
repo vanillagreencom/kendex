@@ -2026,8 +2026,10 @@ pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
 /// runner stands at the composer and the fleet runs unwatched until a
 /// reconcile claims the watch, which only the caller's reply said. A
 /// confirmed outcome, a start held on anything else, and an intent of
-/// another operation owe none.
+/// another operation owe none. The text opens with `speaker`, the opener's
+/// program name.
 pub(super) fn owed_notice(
+    speaker: &str,
     op: EffectOp,
     intent_id: &str,
     outcome: Outcome,
@@ -2064,7 +2066,7 @@ pub(super) fn owed_notice(
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap_or_default();
     let mut text = format!(
-        "orch-runtime: {key} op={} intent={intent_id} outcome={outcome_word}",
+        "{speaker}: {key} op={} intent={intent_id} outcome={outcome_word}",
         op.word()
     );
     if let Some(cause) = word("cause").filter(|c| *c != key) {
@@ -2956,7 +2958,7 @@ mod tests {
         // The crash: the outcome's write lands, the send never runs.
         let operation =
             Operation::open(&run, &intent, Bootstrap::controller(intent.op).unwrap()).unwrap();
-        let request = outcome(operation).wire();
+        let request = outcome(operation).wire(run.speaker);
         let committed = crate::journal::write_outcome(
             &path,
             &request,

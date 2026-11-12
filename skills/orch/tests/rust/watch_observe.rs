@@ -43,8 +43,7 @@ use orch_runtime::watch::context;
 use orch_runtime::watch::hosted;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
 use orch_runtime::watch::overseer::{
-    self, Caller, ContextRead, Judges, MarkKey, MarkKind, Marks, Pick, Slot, Source,
-    SuccessionAnswer, Verdict,
+    self, Caller, ContextRead, Judges, MarkKey, MarkKind, Marks, Pick, Slot, Source, Verdict,
 };
 use orch_runtime::watch::{Baseline, Change, Event, Produced};
 use serde_json::{Value, json};
@@ -1524,9 +1523,9 @@ impl OverseerDriver<'_> {
                 succession: self.succession,
                 preference: self
                     .settings
-                    .engine
-                    .controller_preference_set
-                    .then_some(self.settings.engine.controller_preference.as_str()),
+                    .controller
+                    .preference_set
+                    .then_some(self.settings.controller.preference.as_str()),
                 now: self.now,
                 transfer: &transfer,
                 context_record: self.context_record.as_deref(),
@@ -1622,10 +1621,6 @@ fn no_walk(_: &WalkRequest) -> Result<Walked, String> {
     panic!("the overseer walk is asked only for a walled succession")
 }
 
-fn no_succeed(_: &[String]) -> Result<SuccessionAnswer, String> {
-    panic!("no record names a succession owner")
-}
-
 fn no_wall_pick(_: &Path, _: Harness, _: &str, _: &str) -> Pick {
     panic!("the wall route's pick is the lanes pass's, never the overseer's")
 }
@@ -1690,7 +1685,6 @@ macro_rules! overseer_driver {
                 walk: &$pick,
                 wall_pick: &no_wall_pick,
                 relaunch: &no_relaunch,
-                succeed: &no_succeed,
                 memory: &$memory,
             },
             settings: settings_in($fleet.runner.state_dir()),
@@ -2658,8 +2652,8 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     overseer_driver!(
         server, fleet, reached, no_walk, readers2, transfers2, chosen
     );
-    chosen.settings.engine.controller_preference = "claude:fable:high".to_owned();
-    chosen.settings.engine.controller_preference_set = true;
+    chosen.settings.controller.preference = "claude:fable:high".to_owned();
+    chosen.settings.controller.preference_set = true;
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
@@ -2693,88 +2687,6 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         ]
     );
     assert!(transfers3.borrow().is_empty());
-}
-
-fn reached_context(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
-    Ok(marks(
-        MarkKey::Reached(MarkKind::Context),
-        "910000",
-        "90",
-        Succession::On,
-        "",
-    ))
-}
-
-fn reached_context_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
-    Ok(marks(
-        MarkKey::Reached(MarkKind::Context),
-        "910000",
-        "90",
-        Succession::Off,
-        "",
-    ))
-}
-
-/// A live controller whose record names its succession command is handed
-/// that command under the mark line under either `AGENT_RUNTIME_CONTROLLER_SUCCESSION`
-/// value, with no successor walk, no transfer and no run of the command by
-/// the watch; the same record without the field keeps the setting's own
-/// line.
-#[test]
-fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_its_mark() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let claude = named_sleep(dir.path(), "claude");
-    let pane = server.open_window(
-        "overseer",
-        dir.path(),
-        &format!(
-            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
-            claude.display()
-        ),
-    );
-    let identity = await_named(&server, &pane, "claude");
-    let window = window_of(&server, &pane);
-    let mut record = overseer_at(&server, &pane, &window, dir.path());
-    record["harness_pid"] = json!(identity.pid.to_string());
-    record["harness_start"] = json!(identity.start);
-    fleet.set_overseer(record.clone());
-    let plain = fleet.read();
-    record["succession"] = json!(["/h/bin/jarvis-session", "succeed", "--home", "/h/jarvis"]);
-    fleet.set_overseer(record);
-    let owned = fleet.read();
-    let owner = "Hand this session over at the next safe point through the succession owner its record names: run /h/bin/jarvis-session succeed --home /h/jarvis and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.".to_owned();
-    let route = hand_over(
-        dir.path(),
-        &pane,
-        "context",
-        "this session's own entry alone, AGENT_RUNTIME_CONTROLLER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, AGENT_RUNTIME_CONTROLLER_PREFERENCE=claude:standard:high,codex:standard:high without that account",
-    );
-    let off = "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned();
-    type Judge = dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
-    // The judge, the setting it reports, the fleet as read, the line under
-    // the mark.
-    let cases: [(&Judge, &str, &FleetState, &String); 4] = [
-        (&reached_context, "on", &owned, &owner),
-        (&reached_context_off, "off", &owned, &owner),
-        (&reached_context, "on", &plain, &route),
-        (&reached_context_off, "off", &plain, &off),
-    ];
-    for (judge, setting, state, line) in cases {
-        overseer_driver!(server, fleet, judge, no_walk, readers, transfers, driver);
-        assert_eq!(
-            lines(&driver.pass(state)),
-            vec![
-                format!(
-                    "EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession={setting}"
-                ),
-                line.clone(),
-            ],
-            "succession={setting}"
-        );
-        assert!(transfers.borrow().is_empty(), "succession={setting}");
-    }
 }
 
 // The overseer's context record, judged beside a live session.
@@ -5176,9 +5088,8 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
 }
 
 // ---------------------------------------------------------------------------
-// The dead replay from the record's own fields, the walled case the walk
-// answers none for, and the succession owner's command in place of a
-// transfer.
+// The dead replay from the record's own fields and the walled case the walk
+// answers none for.
 // ---------------------------------------------------------------------------
 
 /// A record carrying no launch line, as the row plants it with the field
@@ -5351,152 +5262,6 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
         Some(agent_runtime::launch::Permission::Bypass)
     );
     assert!(successor.extra_args.is_empty());
-}
-
-/// A dead controller whose record names its succession command has that
-/// command run once through the runner, the line naming it under the
-/// death's line, and no transfer asked for; a command that fails is
-/// reported, not run again every pass.
-#[test]
-fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_and_no_transfer() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
-    let window = window_of(&server, &pane);
-    let mut record = overseer_at(&server, &pane, &window, dir.path());
-    record["succession"] = json!(["jarvis-session", "succeed", "--home", "/h/jarvis"]);
-    fleet.set_overseer(record);
-    let state = fleet.read();
-    let runs: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
-    let succeed = |words: &[String]| {
-        runs.borrow_mut().push(words.to_vec());
-        Ok(SuccessionAnswer::Done)
-    };
-    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
-    driver.judges.succeed = &succeed;
-    let key = format!("{} {pane}", server.pid);
-    let first = driver.pass(&state);
-    assert_eq!(
-        lines(&first),
-        vec![format!(
-            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=process"
-        )]
-    );
-    let second = driver.pass(&state);
-    assert_eq!(
-        lines(&second),
-        vec!["succession owner=jarvis-session succeed --home /h/jarvis".to_owned()]
-    );
-    assert_eq!(
-        driver.baseline.get("overseer-dead", &key),
-        Some("requested")
-    );
-    assert!(transfers.borrow().is_empty(), "no transfer is asked for");
-    assert_eq!(
-        *runs.borrow(),
-        vec![vec![
-            "jarvis-session".to_owned(),
-            "succeed".to_owned(),
-            "--home".to_owned(),
-            "/h/jarvis".to_owned()
-        ]]
-    );
-    driver.pass(&state);
-    assert_eq!(runs.borrow().len(), 1, "run once");
-    let failing = |_: &[String]| Err("exit 1".to_owned());
-    overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, failed);
-    failed.judges.succeed = &failing;
-    failed.pass(&state);
-    let second = failed.pass(&state);
-    assert_eq!(
-        second.failed.as_deref(),
-        Some("succession-owner-failed cause=exit 1")
-    );
-    assert_eq!(failed.baseline.get("overseer-dead", &key), Some("reported"));
-    assert!(transfers2.borrow().is_empty());
-}
-
-/// A dead controller's succession command that started and gave no answer
-/// is `requested`, nothing said, and the record settles it: while the
-/// record still names the dead session within the settle bound the row
-/// holds, and past it the owner's failure is said once and the row is
-/// `reported`. A record the command moved names another session, whose key
-/// this row never reads.
-#[test]
-fn a_succession_command_that_gave_no_answer_is_settled_by_the_record() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
-    let window = window_of(&server, &pane);
-    let mut record = overseer_at(&server, &pane, &window, dir.path());
-    record["succession"] = json!(["jarvis-session", "succeed", "--home", "/h/jarvis"]);
-    fleet.set_overseer(record);
-    let state = fleet.read();
-    let runs = RefCell::new(0);
-    let unanswered = |_: &[String]| {
-        *runs.borrow_mut() += 1;
-        Ok(SuccessionAnswer::Unanswered {
-            cause: "succession-owner succeed: no answer within 120s".to_owned(),
-        })
-    };
-    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
-    driver.judges.succeed = &unanswered;
-    let key = format!("{} {pane}", server.pid);
-    driver.pass(&state);
-    let asked_at = driver.now;
-    let asked = driver.pass(&state);
-    assert_eq!(asked.failed, None, "no failure said on no answer");
-    assert_eq!(
-        driver.baseline.get("overseer-dead", &key),
-        Some("requested")
-    );
-    // Each pass moves the driver's clock on; these two are set by hand.
-    driver.now = asked_at + 239;
-    let within = driver.pass(&state);
-    assert_eq!(within.failed, None, "the record has the bound to move");
-    assert_eq!(
-        driver.baseline.get("overseer-dead", &key),
-        Some("requested")
-    );
-    driver.now = asked_at + 240;
-    let past = driver.pass(&state);
-    assert_eq!(
-        past.failed.as_deref(),
-        Some(
-            format!("succession-owner-failed cause=unanswered pane={pane} record=unmoved").as_str()
-        )
-    );
-    assert_eq!(driver.baseline.get("overseer-dead", &key), Some("reported"));
-    let after = driver.pass(&state);
-    assert_eq!(after.failed, None, "said once");
-    assert_eq!(*runs.borrow(), 1, "run once");
-    assert!(transfers.borrow().is_empty(), "no transfer is asked for");
-}
-
-/// The succession command's own answer through the runner: an exit 0 is
-/// done, a failing exit and a program that never started are the owner's
-/// failure, and one ended by a signal gave no answer.
-#[test]
-fn a_succession_command_s_answer_is_read_by_its_exit_and_its_start() {
-    let words = |w: &[&str]| w.iter().map(|w| (*w).to_owned()).collect::<Vec<_>>();
-    assert_eq!(
-        overseer::succeed_through_runner(&words(&["sh", "-c", "exit 0"])),
-        Ok(SuccessionAnswer::Done)
-    );
-    assert!(overseer::succeed_through_runner(&words(&["sh", "-c", "exit 1"])).is_err());
-    assert!(
-        overseer::succeed_through_runner(&words(&["/nonexistent/succession-owner"])).is_err(),
-        "never started"
-    );
-    assert!(
-        matches!(
-            overseer::succeed_through_runner(&words(&["sh", "-c", "kill -KILL $$"])),
-            Ok(SuccessionAnswer::Unanswered { .. })
-        ),
-        "ended by a signal"
-    );
 }
 
 #[test]

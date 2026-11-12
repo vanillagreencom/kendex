@@ -16,9 +16,8 @@
 //! the log is the one that ended. The case is
 //! said on the log before anything moves, then the one existing request,
 //! `request-transfer` with its cause and the spent account, asks for the
-//! succession, whose terminal proof runs inside that transfer; a
-//! controller whose record names its own succession owner has that owner's
-//! command run in its place. The controller's own marks are judged here
+//! succession, whose terminal proof runs inside that transfer. The
+//! controller's own marks are judged here
 //! ([`judge_marks`]): the watch asks in-process every pass with the
 //! overseer's own context reading, and the turn-end hook asks through the
 //! `marks` verb; the successor of a walled succession is the overseer
@@ -45,7 +44,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use agent_runtime::harness::Harness;
-use agent_runtime::host;
 use agent_runtime::host::tmux::PaneState;
 use agent_runtime::launch::Permission;
 use agent_runtime::observe::{self, ProcessReading, State, WallKind};
@@ -736,7 +734,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let context_pct = settings.marks.context_pct.get()?;
     let wall_minutes = settings.marks.wall_minutes.get()?;
     let memory_pct = settings.marks.memory_pct.get()?;
-    let succession = settings.engine.succession.get()?;
+    let succession = settings.controller.succession.get()?;
     let trigger = settings.accounts.get()?.controller_headroom_pct;
     let context = match ask.context {
         Some(text) => Some(parse_context(text).ok_or_else(|| {
@@ -939,9 +937,6 @@ pub struct Judges<'a> {
     /// The wall relaunch, the walled lane's close and its `launch-lane`
     /// (`lanes::Relaunch`), started as a detached job.
     pub relaunch: RelaunchStart<'a>,
-    /// The succession command a controller's own owner recorded, run in
-    /// place of a transfer; `Err` is its failure.
-    pub succeed: SuccessionRun<'a>,
     /// The memory reading of the control-group path a pane's process runs
     /// in, the kernel's under `/proc` and `/sys/fs/cgroup`: the caps' OOM
     /// kill count a death is judged against.
@@ -954,17 +949,7 @@ pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> Result<walk::Walked, String>
 pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started as a detached job; `Err` the launcher's refusal.
 pub type RelaunchStart<'a> = &'a dyn Fn(&Relaunch) -> Result<(), String>;
-pub type SuccessionRun<'a> = &'a dyn Fn(&[String]) -> Result<SuccessionAnswer, String>;
 pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<Memory>>;
-
-/// What a succession owner's command answered short of a failure: it ran
-/// to its end, or it started and gave no answer within the bound, so
-/// whether it succeeded is the record's to say.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SuccessionAnswer {
-    Done,
-    Unanswered { cause: String },
-}
 
 /// The wall route's answer as the lanes pass reads it: the `config_dir`
 /// of the account picked, none where no account qualifies, else unjudged
@@ -996,13 +981,6 @@ pub fn picked_by_judge(answer: PickAnswer) -> Pick {
     }
 }
 
-/// The bound on a recorded succession command.
-const RUNNER_BOUND: Duration = Duration::from_secs(120);
-
-/// How long after the pass that ran it a succession command that gave no
-/// answer has to move the record: its own bound, then as long again.
-const SUCCESSION_SETTLE: Duration = Duration::from_secs(2 * RUNNER_BOUND.as_secs());
-
 /// The job name and record of a wall relaunch, beside its log.
 fn relaunch_record(r: &Relaunch) -> (String, PathBuf) {
     (
@@ -1025,45 +1003,6 @@ const RELAUNCH_WRAPPER: &str = "log=\"$1\"; exit_file=\"$2\"; launch_cwd=\"$3\";
 /// The scripts directory under the project's orch install.
 pub fn scripts_dir(project: &Path) -> PathBuf {
     project.join(".agents/skills/orch/scripts")
-}
-
-/// A controller's own succession command through the one runner: the
-/// first word the program, the rest its arguments. A command that never
-/// started, or that exited with a failure, is `Err`; one that started and
-/// gave no answer, past the bound or ended by a signal, may have moved the
-/// record, so it is `Unanswered`.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the recorded owner's succession command, run once through the one runner in place of a transfer"
-)]
-pub fn succeed_through_runner(words: &[String]) -> Result<SuccessionAnswer, String> {
-    let Some((program, args)) = words.split_first() else {
-        return Err("succession command empty".to_owned());
-    };
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = match host::run_tagged(
-        "succession-owner",
-        "succession-owner",
-        Path::new(program),
-        "succeed",
-        &args,
-        RUNNER_BOUND,
-    ) {
-        Ok(out) => out,
-        Err(e @ agent_runtime::Error::NotStarted { .. }) => return Err(e.to_string()),
-        Err(e) => {
-            return Ok(SuccessionAnswer::Unanswered {
-                cause: e.to_string(),
-            });
-        }
-    };
-    match out.status.code() {
-        Some(0) => Ok(SuccessionAnswer::Done),
-        Some(_) => Err(host::stderr_text(&out)),
-        None => Ok(SuccessionAnswer::Unanswered {
-            cause: "signal".to_owned(),
-        }),
-    }
 }
 
 /// The wall relaunch as a job of the runtime's launcher: the record's own
@@ -1220,10 +1159,6 @@ impl Record {
             handoff: caller.handoff,
             extra: serde_json::Map::new(),
         })
-    }
-
-    fn succession(&self) -> Option<Vec<String>> {
-        crate::state::succession_command(self.raw.get("succession"))
     }
 
     /// The compare-and-swap set the request carries: the record as read.
@@ -2024,12 +1959,7 @@ fn pass_next_due() -> std::time::Instant {
 /// flight, or confirmed, it holds, a confirmed transfer having moved the
 /// record; failed, it is said as `overseer-relaunch-failed` with the
 /// intent's note as its step and asked again on the next run while the
-/// recovery's attempts last, else the row is `reported`. A row naming no
-/// transfer is a succession owner's command, whose outcome is the
-/// owner's. A succession command that gave no answer is read by the
-/// record: one that moved it names another session, which this row never
-/// reads again; one that still names this session once the settle bound
-/// has passed is the owner's failure, said and `reported`.
+/// recovery's attempts last, else the row is `reported`.
 fn transfer_settled(
     record: &Record,
     row: &str,
@@ -2038,22 +1968,6 @@ fn transfer_settled(
     pass: &Pass,
     out: &mut Produced,
 ) {
-    if let Some(asked) = pass
-        .baseline
-        .get(TRANSFER_ROW, key)
-        .and_then(|v| v.strip_prefix("succession:"))
-    {
-        let asked = asked.parse::<u64>().unwrap_or(0);
-        if pass.now >= asked.saturating_add(SUCCESSION_SETTLE.as_secs()) {
-            out.failed.get_or_insert(format!(
-                "succession-owner-failed cause=unanswered pane={} record=unmoved",
-                record.pane
-            ));
-            out.changes.push(set(row, key, format!("{prefix}reported")));
-            out.changes.push(clear(TRANSFER_ROW, key));
-        }
-        return;
-    }
     let Some((attempt, intent_id)) = pass
         .baseline
         .get(TRANSFER_ROW, key)
@@ -2107,12 +2021,7 @@ fn transfer_settled(
 /// walk with the spent account excluded; a refusal is the duty's failure,
 /// said on the log by the runner, and the row stays announced so the next
 /// pass asks again. An admitted transfer is `requested`, its intent and
-/// attempt on the transfer row for the next pass to read its outcome. A
-/// controller whose record names its own succession
-/// owner has that owner's command run instead, once: the row is
-/// `requested` on its success and `reported` on its failure, so a command
-/// that fails is not run again every pass. A command that gave no answer is
-/// `requested` with its pass on the transfer row: the record settles it.
+/// attempt on the transfer row for the next pass to read its outcome.
 fn transfer(
     record: &Record,
     case: OverseerCase,
@@ -2168,29 +2077,6 @@ fn transfer(
             (TransferCause::Walled, spent, successor)
         }
     };
-    if let Some(words) = record.succession() {
-        out.events
-            .push(Event::Tail(format!("succession owner={}", words.join(" "))));
-        let word = match (pass.judges.succeed)(&words) {
-            Ok(SuccessionAnswer::Done) => "requested",
-            Ok(SuccessionAnswer::Unanswered { cause }) => {
-                context::note(
-                    "succession-owner-unanswered",
-                    &format!("pane={} cause={cause}", record.pane),
-                );
-                out.changes
-                    .push(set(TRANSFER_ROW, key, format!("succession:{}", pass.now)));
-                "requested"
-            }
-            Err(cause) => {
-                out.failed
-                    .get_or_insert(format!("succession-owner-failed cause={cause}"));
-                "reported"
-            }
-        };
-        out.changes.push(set(row, key, format!("{prefix}{word}")));
-        return;
-    }
     let Some(successor) = successor else {
         out.changes.push(set(row, key, format!("{prefix}reported")));
         return;
@@ -2205,6 +2091,7 @@ fn transfer(
         expected: record.expected(),
         successor,
         brief_file: None,
+        session: None,
         cause,
         exclude_account,
         handoff_session_id: None,
@@ -2502,16 +2389,9 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
                 preference.unwrap_or(agent_runtime::settings::DEFAULT_CONTROLLER_PREFERENCE)
             ),
         };
-        // A controller another lifecycle replaces is handed over by that
-        // owner alone, whatever the setting: the setting governs orch's own
-        // transfer, which refuses this record.
-        let sentence = match (record.succession(), marks.succession) {
-            (Some(words), Succession::On | Succession::Off) => format!(
-                "Hand this session over at the next safe point through the succession owner its record names: run {} and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.",
-                words.join(" ")
-            ),
-            (None, Succession::Off) => "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
-            (None, Succession::On) => format!(
+        let sentence = match marks.succession {
+            Succession::Off => "AGENT_RUNTIME_CONTROLLER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
+            Succession::On => format!(
                 "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks {walks}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
                 text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
                 record.pane,
@@ -2592,10 +2472,14 @@ pub fn run_transfer(
     mut request: RequestTransfer,
 ) -> crate::error::Result<String> {
     crate::ops::successor::posture(&mut request.successor, settings)?;
-    let request = crate::ops::Request::RequestTransfer(Box::new(request));
+    let mut request = crate::ops::Request::RequestTransfer(Box::new(request));
+    let held_brief = crate::ops::successor::overseer_defaults(&mut request, path, settings)?;
     crate::ops::admit(&request, settings)?;
     let host = crate::ops::Host::kernel();
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;
+    if let Some(held) = &held_brief {
+        held.write()?;
+    }
     let crate::ops::Report::RequestTransfer(report) = &applied.report else {
         unreachable!("a transfer request reports its transfer")
     };
@@ -2670,7 +2554,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         let fleet =
             <crate::state::FleetState as crate::state::Record>::view(&ctx.path, &snapshot.doc)?;
         let watch = ctx.settings.watch.get()?;
-        let succession = ctx.settings.engine.succession.get()?;
+        let succession = ctx.settings.controller.succession.get()?;
         let readers = LaneReaders::kernel();
         // The accounts judge over the fleet's own state and the kernel's
         // identity reader: the marks, the overseer walk and the wall
@@ -2732,7 +2616,6 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             walk: &walk,
             wall_pick: &wall_pick,
             relaunch: &relaunch,
-            succeed: &succeed_through_runner,
             memory: &pane_memory,
         };
         let context_record = ctx
@@ -2769,9 +2652,9 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 succession,
                 preference: ctx
                     .settings
-                    .engine
-                    .controller_preference_set
-                    .then_some(ctx.settings.engine.controller_preference.as_str()),
+                    .controller
+                    .preference_set
+                    .then_some(ctx.settings.controller.preference.as_str()),
                 now: tick.wall,
                 transfer: &transfer,
                 context_record: Some(&context_record),

@@ -27,9 +27,8 @@ use serde_json::{Value, json};
 
 use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
 use super::{
-    Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
-    overseer_target_of, pending_observation, read_brief, read_intent, read_overseer, refused, up,
-    watch_companion,
+    Run, Spec, Target, build_launch, check_directory, check_program, idle, overseer_target_of,
+    pending_observation, read_brief, read_intent, read_overseer, refused, up, watch_companion,
 };
 use crate::error::{Error, Result};
 use crate::ops::{RequestTransfer, StartController, overseer_target};
@@ -312,8 +311,6 @@ struct Successor {
     /// The launch clears the harness's home variable (`LaunchHome.cleared`).
     cleared: bool,
     account: Option<PathBuf>,
-    /// The handoff the held brief names where the request names no brief.
-    handoff: Option<String>,
     cwd: PathBuf,
     model: Option<String>,
     effort: Option<String>,
@@ -371,7 +368,7 @@ impl Successor {
                 harness,
                 pending
                     .permission
-                    .map_or_else(|| settings.engine.permission.get(), Ok)?,
+                    .map_or_else(|| settings.launch.permission.get(), Ok)?,
                 &pending.extra_args,
             ),
         )?;
@@ -450,7 +447,6 @@ impl Successor {
             named: homes.named,
             cleared: homes.cleared,
             account: homes.account,
-            handoff: pending.handoff.clone(),
             cwd,
             model: pending.model.clone(),
             effort: pending.effort.clone(),
@@ -484,7 +480,7 @@ impl Successor {
                 cwd: &self.cwd,
                 brief: None,
                 permission: self.permission,
-                question_tool: settings.engine.question_tool.get()?.for_controller(),
+                question_tool: settings.controller.question_tool.get()?.for_controller(),
                 compaction,
                 session_id: match &self.resume {
                     Some(_) => None,
@@ -789,7 +785,13 @@ pub(super) fn transfer_effect(
     intent_id: &str,
     r: &RequestTransfer,
 ) -> Result<EffectOutcome> {
-    succeed(run, intent_id, Mode::Transfer, r.brief_file.as_deref())
+    succeed(
+        run,
+        intent_id,
+        Mode::Transfer,
+        r.brief_file.as_deref(),
+        r.session.as_deref(),
+    )
 }
 
 pub(super) fn start_effect(
@@ -797,14 +799,35 @@ pub(super) fn start_effect(
     intent_id: &str,
     r: &StartController,
 ) -> Result<EffectOutcome> {
-    succeed(run, intent_id, Mode::Start, r.brief_file.as_deref())
+    succeed(
+        run,
+        intent_id,
+        Mode::Start,
+        r.brief_file.as_deref(),
+        r.session.as_deref(),
+    )
 }
 
-fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Result<EffectOutcome> {
+fn succeed(
+    run: &Run,
+    intent_id: &str,
+    mode: Mode,
+    brief: Option<&Path>,
+    named_session: Option<&str>,
+) -> Result<EffectOutcome> {
     let intent = read_intent(run.engine.path, intent_id)?;
     let mut operation = super::lane_operation::open(run, &intent)?;
     let overseer = read_overseer(run.engine.path)?;
-    let doc_session = fleet_tmux_session(run.engine.path)?;
+    // The session the predecessor's recorded pane stands in, read only where
+    // neither the request nor the setting names one.
+    let predecessor_session = match (named_session, run.engine.settings.tmux_session.as_deref()) {
+        (None, None) => overseer
+            .extra
+            .get("pane")
+            .and_then(Value::as_str)
+            .and_then(|pane| operation.pane_session(pane)),
+        _ => None,
+    };
 
     // --- Preconditions, all before retirement. A failure here is `failed`,
     // the predecessor in control, no waiting runner opened. ---
@@ -824,10 +847,11 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // The successor's window opens on the fleet server, so the home a pane
     // there inherits is read before the successor's home is resolved; an
     // environment that cannot be read refuses, never a guess.
-    let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
-        Ok(resolved) => resolved,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
-    };
+    let (server, session) =
+        match operation.fleet_server(named_session, predecessor_session.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+        };
     let served = match pending.harness.as_deref().and_then(Harness::parse) {
         Some(harness @ (Harness::Claude | Harness::Codex)) if pending.account.is_none() => {
             match agent_runtime::effects::server_home(&server, &session, harness) {
@@ -893,26 +917,18 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         Ok(command) => command,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
-    // A controller opens on the brief its request names, else on the
-    // takeover brief naming its handoff, held for this intent.
-    let held = match brief {
-        Some(brief) => match read_brief(brief) {
-            Ok(_) => brief.to_path_buf(),
-            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
-        },
-        None => {
-            let handoff = successor
-                .handoff
-                .as_deref()
-                .unwrap_or(crate::ops::successor::HANDOFF);
-            let text = crate::ops::successor::brief(successor.harness, handoff);
-            match operation.hold_brief(&text) {
-                Ok(path) => path,
-                Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
-            }
-        }
+    // A controller opens on the brief its request names; the request was
+    // admitted only with one.
+    let Some(held) = brief else {
+        return Ok(failed_before_retirement_refused(
+            operation,
+            &refused("brief-missing", &[("field", "brief_file")]),
+        ));
     };
-    let brief = Some(held.as_path());
+    if let Err(e) = read_brief(held) {
+        return Ok(failed_before_retirement_refused(operation, &e));
+    }
+    let brief = Some(held);
 
     // --- Prepare the waiting runner: open its window and bring it to its
     // composer. It has no controller-mail authority, since the fleet record
@@ -1052,7 +1068,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         AccountRead::Unread { cause } => Some(cause),
     };
     let (turns_before, session) =
-        match deliver_brief(&mut operation, &successor, &pane, &opened, &held)? {
+        match deliver_brief(&mut operation, &successor, &pane, &opened, held)? {
             Ok(delivered) => delivered,
             Err(undelivered) => {
                 return waiting.unready(

@@ -245,26 +245,14 @@ impl Succession {
     }
 }
 
-/// The engine's settings: the launch's bounds, posture and binaries, the
-/// detached job's claim bound, and the hand-over's switch, session and
-/// preference.
+/// The engine's settings: the session a window opens in, the launch's
+/// bounds and binaries, and the detached job's claim bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineSettings {
     pub tmux_session: Option<String>,
     pub verify: Judged<Duration>,
     pub claim: Judged<Duration>,
-    pub question_tool: Judged<QuestionToolSetting>,
-    pub permission: Judged<Permission>,
     pub harness_binaries: Judged<BTreeMap<Harness, PathBuf>>,
-    pub succession: Judged<Succession>,
-    /// The succession's preference entries; an empty value reads as the
-    /// default, as this reader takes every key.
-    pub controller_preference: String,
-    /// Whether the setting names the succession's preference, an empty
-    /// value included: unset, a context mark's succession walks the
-    /// controller's own entry alone, since a context handoff replaces the
-    /// session and not its harness or model.
-    pub controller_preference_set: bool,
 }
 
 impl EngineSettings {
@@ -273,14 +261,27 @@ impl EngineSettings {
             tmux_session: values.get(TMUX_SESSION_KEY).map(str::to_owned),
             verify: values.secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS),
             claim: values.secs(JOB_CLAIM_SECS_KEY, DEFAULT_CLAIM_SECS),
-            question_tool: Judged::word(
-                QUESTION_TOOL_KEY,
-                values.get(QUESTION_TOOL_KEY),
-                &[
-                    ("off", QuestionToolSetting::Off),
-                    ("overseer", QuestionToolSetting::Overseer),
-                ],
+            harness_binaries: Judged::of(
+                HARNESS_BINARIES_KEY,
+                match values.get(HARNESS_BINARIES_KEY) {
+                    None => Ok(BTreeMap::new()),
+                    Some(text) => harness_binaries(text).ok_or(text),
+                },
             ),
+        }
+    }
+}
+
+/// The launch's posture, which every launch reads, a lane's and a
+/// controller's: `bypass`, or `native` with the caller's own words.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchSettings {
+    pub permission: Judged<Permission>,
+}
+
+impl LaunchSettings {
+    pub fn read(values: &Layered) -> LaunchSettings {
+        LaunchSettings {
             permission: Judged::word(
                 LAUNCH_PERMISSION_KEY,
                 values.get(LAUNCH_PERMISSION_KEY),
@@ -289,12 +290,37 @@ impl EngineSettings {
                     ("native", Permission::Native),
                 ],
             ),
-            harness_binaries: Judged::of(
-                HARNESS_BINARIES_KEY,
-                match values.get(HARNESS_BINARIES_KEY) {
-                    None => Ok(BTreeMap::new()),
-                    Some(text) => harness_binaries(text).ok_or(text),
-                },
+        }
+    }
+}
+
+/// The hand-over's settings: a controller launch's question dialog, the
+/// switch a succession is asked under, and the preference the successor
+/// walk takes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ControllerSettings {
+    pub question_tool: Judged<QuestionToolSetting>,
+    pub succession: Judged<Succession>,
+    /// The succession's preference entries; an empty value reads as the
+    /// default, as this reader takes every key.
+    pub preference: String,
+    /// Whether the setting names the succession's preference, an empty
+    /// value included: unset, a context mark's succession walks the
+    /// controller's own entry alone, since a context handoff replaces the
+    /// session and not its harness or model.
+    pub preference_set: bool,
+}
+
+impl ControllerSettings {
+    pub fn read(values: &Layered) -> ControllerSettings {
+        ControllerSettings {
+            question_tool: Judged::word(
+                QUESTION_TOOL_KEY,
+                values.get(QUESTION_TOOL_KEY),
+                &[
+                    ("off", QuestionToolSetting::Off),
+                    ("overseer", QuestionToolSetting::Overseer),
+                ],
             ),
             succession: Judged::word(
                 SUCCESSION_KEY,
@@ -303,11 +329,11 @@ impl EngineSettings {
             ),
             // A preference set empty names no entry, which the controller
             // launch refuses; unset is the default.
-            controller_preference: values
+            preference: values
                 .raw(CONTROLLER_PREFERENCE_KEY)
                 .unwrap_or(DEFAULT_CONTROLLER_PREFERENCE)
                 .to_owned(),
-            controller_preference_set: values.raw(CONTROLLER_PREFERENCE_KEY).is_some(),
+            preference_set: values.raw(CONTROLLER_PREFERENCE_KEY).is_some(),
         }
     }
 }

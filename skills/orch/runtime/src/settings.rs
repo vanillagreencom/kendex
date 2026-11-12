@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::settings::{
-    self as shared, AccountSettings, EngineSettings, FileRead, Judged, Keys, Roots,
+    self as shared, AccountSettings, ControllerSettings, EngineSettings, FileRead, Judged, Keys,
+    LaunchSettings, Roots,
 };
 
 use crate::archive::ArchiveRoot;
@@ -492,6 +493,10 @@ pub struct Settings {
     pub reconcile_gh_cli: PathBuf,
     pub state_dir: PathBuf,
     pub engine: EngineSettings,
+    /// The launch's posture, a lane's and a controller's.
+    pub launch: LaunchSettings,
+    /// The hand-over's question dialog, switch and successor preference.
+    pub controller: ControllerSettings,
     pub close_grace: Judged<Duration>,
     pub watch: Judged<WatchSettings>,
     /// The tracker duties' team, which the report and the admission read too.
@@ -986,6 +991,8 @@ pub fn load(
         store,
         review,
         engine: EngineSettings::read(&values),
+        launch: LaunchSettings::read(&values),
+        controller: ControllerSettings::read(&values),
         close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS),
         watch,
         linear_team: get(LINEAR_TEAM_KEY).map(str::to_owned),
@@ -1174,11 +1181,11 @@ mod tests {
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
         assert_eq!(
-            settings.engine.permission.get().unwrap(),
+            settings.launch.permission.get().unwrap(),
             Permission::Bypass
         );
         assert_eq!(
-            settings.engine.question_tool.get().unwrap(),
+            settings.controller.question_tool.get().unwrap(),
             QuestionToolSetting::Off
         );
         assert_eq!(
@@ -1220,7 +1227,10 @@ mod tests {
             settings.agent_runtime,
             roots.project.join(AGENT_RUNTIME_DEFAULT)
         );
-        assert_eq!(settings.engine.succession.get().unwrap(), Succession::On);
+        assert_eq!(
+            settings.controller.succession.get().unwrap(),
+            Succession::On
+        );
         assert_eq!(settings.lane_cap.get().unwrap(), 4);
         assert_eq!(settings.cloud_lane_cap.get().unwrap(), 10);
         assert_eq!(settings.claim_store, roots.common.join(CLAIM_STORE_DEFAULT));
@@ -1295,7 +1305,10 @@ mod tests {
                 external_triage: Audit::Off,
             }
         );
-        assert_eq!(settings.engine.succession.get().unwrap(), Succession::Off);
+        assert_eq!(
+            settings.controller.succession.get().unwrap(),
+            Succession::Off
+        );
         assert_eq!(settings.lane_cap.get().unwrap(), 7);
         assert_eq!(settings.cloud_lane_cap.get().unwrap(), 2);
         assert_eq!(settings.claim_store, PathBuf::from("/var/watch/claims"));
@@ -1306,16 +1319,16 @@ mod tests {
         let relative = load(&roots, &env(&[(CLAIM_STATE_DIR_KEY, "tmp/w")]), &FLAGS).unwrap();
         assert_eq!(relative.claim_store, roots.project.join("tmp/w/claims"));
         assert_eq!(
-            settings.engine.permission.get().unwrap(),
+            settings.launch.permission.get().unwrap(),
             Permission::Native
         );
         assert_eq!(
-            settings.engine.question_tool.get().unwrap(),
+            settings.controller.question_tool.get().unwrap(),
             QuestionToolSetting::Overseer
         );
         assert_eq!(
             settings
-                .engine
+                .controller
                 .question_tool
                 .get()
                 .unwrap()
@@ -1416,10 +1429,10 @@ mod tests {
             s.close_grace.get().map(drop),
             s.engine.claim.get().map(drop),
             s.watch.get().map(drop),
-            s.engine.question_tool.get().map(drop),
-            s.engine.permission.get().map(drop),
+            s.controller.question_tool.get().map(drop),
+            s.launch.permission.get().map(drop),
             s.engine.harness_binaries.get().map(drop),
-            s.engine.succession.get().map(drop),
+            s.controller.succession.get().map(drop),
             s.marks.wall_minutes.get().map(drop),
             s.marks.memory_pct.get().map(drop),
             s.marks.context_pct.get().map(drop),

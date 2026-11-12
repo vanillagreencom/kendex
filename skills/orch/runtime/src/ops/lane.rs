@@ -32,8 +32,7 @@ use super::accounts;
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
-    Effect, Standing, TargetMoved, lane_at, lane_doc_mut, lanes, new_intent, open_intent,
-    push_intent, string_or_null,
+    Effect, Standing, TargetMoved, lane_at, lane_doc_mut, lanes, open_intent, string_or_null,
 };
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
@@ -44,6 +43,7 @@ use agent_runtime::accounts::{PickAnswer, PickRequest};
 use agent_runtime::intent::Intent;
 use agent_runtime::intent::{EffectOp, Phase, PrincipalKeys, Role};
 use agent_runtime::journal::{self, Env, RecordOutcome, intents};
+use agent_runtime::journal::{new_intent, push_intent};
 
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
@@ -1159,7 +1159,7 @@ pub(super) fn launch_lane(
     // reads them.
     let allow_all = r.allow_all(
         host.accounts
-            .map(|s| s.engine.permission.get())
+            .map(|s| s.launch.permission.get())
             .transpose()?,
     );
     let brief = match &r.brief_file {

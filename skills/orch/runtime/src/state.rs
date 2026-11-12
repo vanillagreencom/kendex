@@ -535,19 +535,6 @@ impl Lane {
     }
 }
 
-/// The command of the owner whose lifecycle keeps a controller record, as
-/// the record's `succession` names it: a list of words with at least one.
-/// The transfer's refusal and the watch read it here alike, so a value
-/// neither can run names no owner to either.
-pub fn succession_command(value: Option<&Value>) -> Option<Vec<String>> {
-    value?
-        .as_array()?
-        .iter()
-        .map(|word| word.as_str().map(str::to_owned))
-        .collect::<Option<Vec<String>>>()
-        .filter(|words| !words.is_empty())
-}
-
 /// What the tracker judged the lane's item: shipped, or ended any other
 /// way. The judge stays the tracker package's; the close op takes its
 /// verdict as evidence.

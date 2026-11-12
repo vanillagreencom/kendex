@@ -70,7 +70,7 @@ fn de_pid<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D:
 }
 
 /// The one failure announcement an intent makes: the keyed line the fleet
-/// log holds under `item: overseer`, an `orch-runtime: <note> op=<op>
+/// log holds under `item: overseer`, a `<opener>: <note> op=<op>
 /// intent=<id> outcome=<outcome>` row, and how the owner notice went. The outcome's own
 /// write records the notice `owed`, with its row; the send follows, and a
 /// later write marks it `sent`, `unsent:<cause>` where the mailbox CLI

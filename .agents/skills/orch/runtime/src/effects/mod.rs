@@ -147,6 +147,7 @@ fn engine_run<'a>(
     clock: &'a dyn Clock,
 ) -> agent_runtime::effects::Run<'a> {
     agent_runtime::effects::Run {
+        speaker: "orch-runtime",
         path,
         settings: &settings.engine,
         state_dir: settings.state_dir.clone(),
@@ -835,7 +836,7 @@ fn watch_companion<'w>(run: &Run, words: &'w [String]) -> Result<Companion<'w>> 
 fn build_launch(settings: &Settings, spec: &Spec) -> Result<(LaunchIntent, LaunchCommand)> {
     let permission = spec
         .permission
-        .map_or_else(|| settings.engine.permission.get(), Ok)?;
+        .map_or_else(|| settings.launch.permission.get(), Ok)?;
     if permission == Permission::Native
         && let Some(word) = spec.harness.bypass_word_in(spec.extra_args)
     {

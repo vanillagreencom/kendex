@@ -384,7 +384,7 @@ fn prepare_launch(
         r.model.as_deref(),
         kept.as_ref(),
         &cwd,
-        agent_runtime::launch::full_bypass(harness, settings.engine.permission.get()?, &permission),
+        agent_runtime::launch::full_bypass(harness, settings.launch.permission.get()?, &permission),
     )?;
     let floor = match (route, &homes.sessions) {
         (Route::Resume { session_id, .. }, _) => SessionFloor::Fixed(session_id.clone()),
@@ -996,7 +996,7 @@ fn open_and_confirm(
 /// environment.
 fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet> {
     let doc_session = fleet_tmux_session(run.engine.path)?;
-    let (server, session) = operation.fleet_server(doc_session.as_deref())?;
+    let (server, session) = operation.fleet_server(None, doc_session.as_deref())?;
     let served = match (Harness::parse(&r.harness), &r.account) {
         (Some(harness @ (Harness::Codex | Harness::Claude)), None) => {
             agent_runtime::effects::server_home(&server, &session, harness)?
@@ -1123,7 +1123,7 @@ fn hosted_launch(
         return failed(operation, "host-request-incomplete");
     };
     let doc_session = fleet_tmux_session(run.engine.path)?;
-    let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
+    let (server, session) = match operation.fleet_server(None, doc_session.as_deref()) {
         Ok(found) => found,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e)))),
     };
@@ -2143,7 +2143,8 @@ fn judge_opened(
         };
         // The session the launch resolved, never the one tmux reports for
         // the pane, which in a grouped session may be the other's name.
-        let session = operation.fleet_session(fleet_tmux_session(run.engine.path)?.as_deref())?;
+        let session =
+            operation.fleet_session(None, fleet_tmux_session(run.engine.path)?.as_deref())?;
         let mut outcome = launch_outcome(
             operation,
             harness,

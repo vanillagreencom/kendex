@@ -1463,11 +1463,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     locking,
                 );
             }
-            let request: Request = serde_json::from_value(value).map_err(decoded)?;
+            let mut request: Request = serde_json::from_value(value).map_err(decoded)?;
             // The target's kind is the precondition of every operation,
             // checked before anything is read: a verification must not
             // reach GitHub for a target it could never record on.
             ops::target_kind(&path, &request)?;
+            // An overseer's start or transfer opens on the overseer's own
+            // handoff and takeover brief where the request names none.
+            let held_brief = ops::successor::overseer_defaults(&mut request, &path, &settings)?;
             // What the settings refuse before any transition: a succession
             // under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
@@ -1568,6 +1571,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 )?)?);
             }
             let applied = persist(&path, &request, &env, locking, &settings)?;
+            if let Some(held) = &held_brief {
+                held.write()?;
+            }
             // Every refusal from here on comes after the request's intent was
             // persisted: it names that intent, which stands for the reconcile,
             // so a caller never reads it as nothing done.

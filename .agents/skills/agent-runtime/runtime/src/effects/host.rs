@@ -486,6 +486,20 @@ pub fn poll_until<T>(
     }
 }
 
+/// The session a window opens in, first of the request's, the setting's
+/// and the opener's fallback, else `tmux-session-unresolved`.
+fn session_of(
+    named: Option<&str>,
+    setting: Option<&str>,
+    fallback: Option<&str>,
+) -> Result<String> {
+    named
+        .or(setting)
+        .or(fallback)
+        .map(str::to_owned)
+        .ok_or_else(|| Error::refused("tmux-session-unresolved", &[]))
+}
+
 /// Whether `pane_id` on `server` is one tmux may name: `%` then digits.
 fn is_pane_id(id: &str) -> bool {
     id.strip_prefix('%')
@@ -493,24 +507,37 @@ fn is_pane_id(id: &str) -> bool {
 }
 
 impl Operation<'_> {
-    /// The session a fleet window opens in: the one the settings name, else
-    /// the fleet record's `tmux.session`.
-    pub fn fleet_session(&self, doc_session: Option<&str>) -> Result<String> {
-        self.run
-            .settings
-            .tmux_session
-            .as_deref()
-            .or(doc_session)
-            .map(str::to_owned)
-            .ok_or_else(|| Error::refused("tmux-session-unresolved", &[]))
+    /// The session a window opens in: the one the opener's request names,
+    /// else the one the settings name, else `fallback` (the opener's own:
+    /// a lane's fleet record's `tmux.session`, a controller's predecessor's
+    /// session), else `tmux-session-unresolved`.
+    pub fn fleet_session(&self, named: Option<&str>, fallback: Option<&str>) -> Result<String> {
+        session_of(named, self.run.settings.tmux_session.as_deref(), fallback)
     }
 
-    /// The tmux server a fleet window opens on and the session it opens in:
-    /// the socket the runtime's own `$TMUX` names or the user's default, as
-    /// `lib/tmux-server.sh` resolves it, and the session the settings name,
-    /// else the fleet record's `tmux.session`.
-    pub fn fleet_server(&self, doc_session: Option<&str>) -> Result<(Server, String)> {
-        let session = self.fleet_session(doc_session)?;
+    /// The session the pane `id` stands in on the server the runtime's own
+    /// socket names; none where that pane or server cannot be read.
+    pub fn pane_session(&self, id: &str) -> Option<String> {
+        let server = tmux::server(&tmux::ambient_socket().ok()?).ok()?;
+        match tmux::pane_state(&server, id) {
+            crate::reading::Reading::Live(tmux::PaneState::Running(fields)) => {
+                Some(fields.pane.session)
+            }
+            crate::reading::Reading::Live(tmux::PaneState::Dead(pane)) => Some(pane.session),
+            crate::reading::Reading::Gone | crate::reading::Reading::Unreadable { .. } => None,
+        }
+    }
+
+    /// The tmux server a window opens on and the session it opens in: the
+    /// socket the runtime's own `$TMUX` names or the user's default, as
+    /// `lib/tmux-server.sh` resolves it, and the session [`fleet_session`]
+    /// resolves, which must stand: kendex creates no session.
+    pub fn fleet_server(
+        &self,
+        named: Option<&str>,
+        fallback: Option<&str>,
+    ) -> Result<(Server, String)> {
+        let session = self.fleet_session(named, fallback)?;
         let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
         if !tmux::session_present(&server, &session)? {
@@ -1639,7 +1666,6 @@ pub fn heal_controller(
         model: word("model"),
         effort: word("effort"),
         cwd: word("cwd"),
-        succession: None,
         session_rows: word("session_rows").map(PathBuf::from),
         // The heal names no posture: the same pane keeps the recorded one.
         permission: None,
@@ -1995,7 +2021,6 @@ pub fn register_controller(
         model,
         effort,
         cwd: Some(cwd),
-        succession: None,
         session_rows: Some(rows),
         permission,
         extra_args,
@@ -2024,6 +2049,22 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A window opens in the session the opener's request names, over the
+    /// setting's, over the opener's fallback (a lane's fleet record's, a
+    /// controller's predecessor's); with none named,
+    /// `tmux-session-unresolved`.
+    #[test]
+    fn the_requests_session_comes_before_the_settings_before_the_openers_fallback() {
+        let named = Some("asked");
+        let setting = Some("set");
+        let fallback = Some("predecessor");
+        assert_eq!(session_of(named, setting, fallback).unwrap(), "asked");
+        assert_eq!(session_of(None, setting, fallback).unwrap(), "set");
+        assert_eq!(session_of(None, None, fallback).unwrap(), "predecessor");
+        let err = session_of(None, None, None).unwrap_err();
+        assert_eq!(err.key(), "tmux-session-unresolved");
+    }
 
     /// The words each harness spells its launch choices with, as its own
     /// launch writes them and as a person types them by hand.

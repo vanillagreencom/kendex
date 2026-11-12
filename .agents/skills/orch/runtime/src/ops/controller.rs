@@ -21,13 +21,12 @@ use agent_runtime::protocol::Outcome;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{Effect, Request, TargetMoved, new_intent, null_held, push_intent, string_or_null};
+use super::{Effect, Request, TargetMoved, null_held, string_or_null};
 use crate::error::{Error, Result};
-use agent_runtime::journal::{self, Env, RecordOutcome, intents};
+use agent_runtime::journal::{self, Env, RecordOutcome, intents, new_intent, push_intent};
 use agent_runtime::settings::Succession;
 
 use crate::settings::Settings;
-use crate::state::{self};
 use agent_runtime::intent::EffectOp;
 use agent_runtime::intent::Intent;
 
@@ -81,6 +80,11 @@ pub struct RequestTransfer {
     /// field: the effect carries it to the launch.
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
+    /// The tmux session the successor opens in: the opener's, over
+    /// `AGENT_RUNTIME_TMUX_SESSION`, over the session the predecessor's pane
+    /// stands in. It must stand: kendex creates no session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// Why the succession is asked for; `live` when left out.
     #[serde(default)]
     pub cause: TransferCause,
@@ -215,6 +219,12 @@ pub struct StartController {
     pub controller: Pending,
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
+    /// The tmux session the controller opens in: the opener's, over
+    /// `AGENT_RUNTIME_TMUX_SESSION`, over the session a recorded
+    /// predecessor's pane stands in. It must stand: kendex creates no
+    /// session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
     /// The fleet watch's launch words: `orch-runtime watch run --file
     /// <fleet state>` with its flags, as the request names them. The effect
     /// launches them detached through its own job launcher once the
@@ -252,14 +262,37 @@ pub struct StopRequested {
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     judge_effect_settings(request, settings)?;
     if let Request::RequestTransfer(_) = request
-        && settings.engine.succession.get()? == Succession::Off
+        && settings.controller.succession.get()? == Succession::Off
     {
         return Err(Error::SuccessionOff);
+    }
+    let named = match request {
+        Request::RequestTransfer(r) => Some((&r.successor, &r.brief_file)),
+        Request::StartController(r) => Some((&r.controller, &r.brief_file)),
+        _ => None,
+    };
+    if let Some((pending, brief_file)) = named {
+        brief_named(pending, brief_file.as_deref())?;
     }
     if let Request::RequestTransfer(r) = request
         && r.cause == TransferCause::Live
     {
         handoff_current(r)?;
+    }
+    Ok(())
+}
+
+/// A controller opens on the brief its opener names and the handoff its
+/// pending names; the hand-over holds no default of either, so a start or
+/// transfer naming none is refused `brief-missing` naming the field, before
+/// any intent.
+fn brief_named(pending: &Pending, brief_file: Option<&Path>) -> Result<()> {
+    let missing = |field: &str| agent_runtime::Error::refused("brief-missing", &[("field", field)]);
+    if brief_file.is_none() {
+        return Err(missing("brief_file").into());
+    }
+    if pending.handoff.is_none() {
+        return Err(missing("handoff").into());
     }
     Ok(())
 }
@@ -274,10 +307,10 @@ pub fn judge_effect_settings(request: &Request, settings: &Settings) -> Result<(
     let effect = |controller_launch: bool, job: bool| -> Result<()> {
         settings.engine.verify.get()?;
         settings.close_grace.get()?;
-        settings.engine.permission.get()?;
+        settings.launch.permission.get()?;
         settings.engine.harness_binaries.get()?;
         if controller_launch {
-            settings.engine.question_tool.get()?;
+            settings.controller.question_tool.get()?;
         }
         if job {
             settings.engine.claim.get()?;
@@ -385,20 +418,6 @@ fn refuse_off(path: &Path, current: &Overseer) -> Result<()> {
     Ok(())
 }
 
-/// A controller whose record names its own succession command belongs to
-/// that owner's lifecycle: a transfer refuses `succession-owned` naming the
-/// command, so orch never opens a successor another owner records.
-fn refuse_owned(current: &Overseer) -> Result<()> {
-    match state::succession_command(current.extra.get("succession")) {
-        None => Ok(()),
-        Some(command) => Err(agent_runtime::Error::refused(
-            "succession-owned",
-            &[("command", &json!(command).to_string())],
-        )
-        .into()),
-    }
-}
-
 /// An account directory as `lane_claims_canon` compares two: resolved
 /// through the filesystem where it exists, else the spelling with its
 /// trailing slashes dropped.
@@ -430,11 +449,7 @@ fn handoff_current(r: &RequestTransfer) -> Result<()> {
         Value::String(s) => s.clone(),
         _ => "unknown".to_owned(),
     };
-    let named = r
-        .successor
-        .handoff
-        .clone()
-        .unwrap_or_else(|| super::successor::HANDOFF.to_owned());
+    let named = r.successor.handoff.clone().unwrap_or_default();
     let dir = r
         .successor
         .cwd
@@ -553,7 +568,6 @@ pub(super) fn request_transfer(
     // first.
     no_other_controller_intent(&intents, EffectOp::RequestTransfer, &target)?;
     refuse_off(path, &current)?;
-    refuse_owned(&current)?;
     check_cause(r, &current)?;
     // A model recovery's binding, judged in the same transition that
     // installs the pending, so a recovery whose authorization no longer
@@ -756,14 +770,11 @@ fn record_transfer_outcome(
             if let Some(home) = &r.home {
                 record::set(record, "home", home.as_str());
             }
-            // The handoff the successor's brief names, the default where the
-            // request named none, which the watch's recoveries name again.
-            let handoff = pending
-                .get("handoff")
-                .and_then(Value::as_str)
-                .unwrap_or(crate::ops::successor::HANDOFF)
-                .to_owned();
-            record::set(record, "handoff", handoff);
+            // The handoff the successor's brief names, which the watch's
+            // recoveries name again.
+            if let Some(handoff) = pending.get("handoff").and_then(Value::as_str) {
+                record::set(record, "handoff", handoff.to_owned());
+            }
             // The watch a start launched or found claimed; a succession
             // carries none and the field stands as it was.
             if let Some(watch) = &r.watch {
@@ -1180,16 +1191,88 @@ mod tests {
             unreachable!("transfer builds a request-transfer")
         };
         dead.cause = TransferCause::Dead;
-        admit(&Request::RequestTransfer(dead), &on).unwrap();
-        admit(&start(), &off).unwrap();
+        admit(&briefed(Request::RequestTransfer(dead)), &on).unwrap();
+        admit(&briefed(start()), &off).unwrap();
         admit(&stop(), &off).unwrap();
         admit(&launch("KEN-1"), &off).unwrap();
+    }
+
+    /// `request` whose pending names the handoff its brief names.
+    fn handed(mut request: Request) -> Request {
+        match &mut request {
+            Request::RequestTransfer(r) => {
+                r.successor.handoff = Some("tmp/handoffs/OVERSEER-HANDOFF.md".to_owned());
+            }
+            _ => unreachable!("handed names a transfer's handoff"),
+        }
+        request
+    }
+
+    /// `request` naming a brief file and its pending a handoff.
+    fn briefed(mut request: Request) -> Request {
+        let (pending, brief_file) = match &mut request {
+            Request::RequestTransfer(r) => (&mut r.successor, &mut r.brief_file),
+            Request::StartController(r) => (&mut r.controller, &mut r.brief_file),
+            _ => unreachable!("briefed names a start or a transfer"),
+        };
+        pending.handoff = Some("tmp/handoffs/H.md".to_owned());
+        *brief_file = Some(PathBuf::from("/r/brief.md"));
+        request
+    }
+
+    /// The hand-over holds no default brief and no default handoff: a start
+    /// or a dead transfer naming no brief file, or whose pending names no
+    /// handoff, is refused `brief-missing` naming the field before any
+    /// intent; named both, it is admitted.
+    #[test]
+    fn a_start_or_transfer_naming_no_brief_or_handoff_is_refused_brief_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = agent_runtime::settings::Roots {
+            project: dir.path().to_path_buf(),
+            common: dir.path().to_path_buf(),
+        };
+        let flags = crate::settings::Flags {
+            state_dir: None,
+            private_env: false,
+        };
+        let settings = crate::settings::load(&roots, &[], &flags).unwrap();
+        let Request::RequestTransfer(mut dead) = transfer(expected()) else {
+            unreachable!("transfer builds a request-transfer")
+        };
+        dead.cause = TransferCause::Dead;
+        for request in [start(), Request::RequestTransfer(dead)] {
+            let named = briefed(request.clone());
+            admit(&named, &settings).unwrap();
+            let mut no_brief = named.clone();
+            match &mut no_brief {
+                Request::RequestTransfer(r) => r.brief_file = None,
+                Request::StartController(r) => r.brief_file = None,
+                _ => unreachable!(),
+            }
+            let mut no_handoff = named.clone();
+            match &mut no_handoff {
+                Request::RequestTransfer(r) => r.successor.handoff = None,
+                Request::StartController(r) => r.controller.handoff = None,
+                _ => unreachable!(),
+            }
+            for (unnamed, field) in [(no_brief, "brief_file"), (no_handoff, "handoff")] {
+                let err = admit(&unnamed, &settings).unwrap_err();
+                assert_eq!(err.key(), "brief-missing", "{}: {err:?}", request.name());
+                assert!(
+                    err.to_string()
+                        .contains(&format!("(\"field\", \"{field}\")")),
+                    "{}: {err}",
+                    request.name()
+                );
+            }
+        }
     }
 
     fn start() -> Request {
         Request::StartController(Box::new(StartController {
             controller: successor(),
             brief_file: None,
+            session: None,
             watch: Some(vec![
                 "oversee-watch".to_owned(),
                 "--state".to_owned(),
@@ -1787,7 +1870,7 @@ mod tests {
         fs::write(&path, &text).unwrap();
         let before = object(&path)["overseer"].as_object().unwrap().clone();
         assert!(before.contains_key("exit") && before.contains_key("model_check"));
-        let id = intend(&path, &transfer(expected()));
+        let id = intend(&path, &handed(transfer(expected())));
         let applied = run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
         let Report::RecordOutcome(r) = &applied.report else {
             panic!()
@@ -1809,8 +1892,7 @@ mod tests {
             "model": "gpt-5.5-codex",
             "effort": "high",
             "cwd": "/r",
-            // The handoff the successor's brief named, the default where the
-            // pending named none.
+            // The handoff the successor's pending named.
             "handoff": "tmp/handoffs/OVERSEER-HANDOFF.md",
             // The bound session the confirmation carries, as the heal appends
             // it: the predecessor's was dropped above, so the successor's own
@@ -1832,7 +1914,7 @@ mod tests {
         // as the number `ol_record_write` writes (`$start | tonumber`); one
         // that bound no session writes none.
         fs::write(&path, &text).unwrap();
-        let id = intend(&path, &transfer(expected()));
+        let id = intend(&path, &handed(transfer(expected())));
         run(
             &path,
             &confirmed_with(&id, Some(identity("%20", 7000)), Some(1_769_600_000)),
@@ -1853,12 +1935,14 @@ mod tests {
         let mut classed = successor();
         classed.class = Some("gpt".into());
         classed.cwd = None;
+        classed.handoff = Some("tmp/handoffs/OVERSEER-HANDOFF.md".to_owned());
         let id = intend(
             &path,
             &Request::RequestTransfer(Box::new(RequestTransfer {
                 expected: expected(),
                 successor: classed,
                 brief_file: None,
+                session: None,
                 cause: TransferCause::Live,
                 exclude_account: None,
                 handoff_session_id: None,
@@ -2268,6 +2352,7 @@ mod tests {
                 expected: expected(),
                 successor: pi,
                 brief_file: None,
+                session: None,
                 cause: TransferCause::Live,
                 exclude_account: None,
                 handoff_session_id: None,

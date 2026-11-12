@@ -41,11 +41,98 @@ pub fn brief(harness: Harness, handoff: &str) -> String {
     }
 }
 
+/// What an overseer adds to a controller start or transfer that names no
+/// handoff or brief: the default handoff, and the takeover brief naming it,
+/// a file in the fleet state's `intents/` named by its own checksum, so the
+/// same brief is one file however often it is asked. The request names the
+/// file at once; the caller writes it ([`HeldBrief::write`]) only once the
+/// request's intent stands, so a refusal writes nothing. The hand-over holds
+/// no default of its own and refuses `brief-missing`; these are the
+/// overseer's. A harness outside the four is refused by its name first,
+/// since no brief is spelled for it. Where neither the request nor
+/// `AGENT_RUNTIME_TMUX_SESSION` names a session, the session the fleet's
+/// lanes open in (the record's `tmux.session`) is the request's.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the request's one read of the fleet state, the session its lanes open in"
+)]
+pub fn overseer_defaults(
+    request: &mut crate::ops::Request,
+    path: &Path,
+    settings: &Settings,
+) -> Result<Option<HeldBrief>> {
+    let (pending, brief_file, session) = match request {
+        crate::ops::Request::RequestTransfer(r) => {
+            (&mut r.successor, &mut r.brief_file, &mut r.session)
+        }
+        crate::ops::Request::StartController(r) => {
+            (&mut r.controller, &mut r.brief_file, &mut r.session)
+        }
+        _ => return Ok(None),
+    };
+    if session.is_none() && settings.engine.tmux_session.is_none() {
+        *session = crate::state::load(path)?.and_then(|snapshot| {
+            snapshot
+                .doc
+                .get("tmux")
+                .and_then(|t| t.get("session"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    }
+    let handoff = pending
+        .handoff
+        .get_or_insert_with(|| HANDOFF.to_owned())
+        .clone();
+    if brief_file.is_some() {
+        return Ok(None);
+    }
+    let Some(word) = pending.harness.as_deref() else {
+        return Ok(None);
+    };
+    let text = format!("{}\n", brief(Harness::named(word)?, &handoff));
+    let file = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("intents")
+        .join(format!(
+            "overseer-{}.brief",
+            agent_runtime::record::cksum(text.as_bytes())
+        ));
+    *brief_file = Some(file.clone());
+    Ok(Some(HeldBrief { file, text }))
+}
+
+/// The takeover brief [`overseer_defaults`] named, to write once the
+/// request's intent stands.
+pub struct HeldBrief {
+    file: std::path::PathBuf,
+    text: String,
+}
+
+impl HeldBrief {
+    /// Write the brief as a private staged file renamed over its name.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the overseer's takeover brief's one writer: its own staged file renamed over the brief its checksum names"
+    )]
+    pub fn write(&self) -> Result<()> {
+        let held = |e: std::io::Error| agent_runtime::Error::io("write-brief", &self.file, e);
+        let dir = self.file.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(dir).map_err(held)?;
+        let staged = dir.join(format!(".overseer-brief.{}", std::process::id()));
+        std::fs::write(&staged, &self.text)
+            .and_then(|()| std::fs::rename(&staged, &self.file))
+            .map_err(held)?;
+        Ok(())
+    }
+}
+
 /// The posture a successor launches under: the one it carries, else the
 /// settings', so its record names the posture the next walk reads.
 pub fn posture(pending: &mut Pending, settings: &Settings) -> Result<()> {
     if pending.permission.is_none() {
-        pending.permission = Some(settings.engine.permission.get()?);
+        pending.permission = Some(settings.launch.permission.get()?);
     }
     Ok(())
 }
@@ -107,7 +194,7 @@ fn walk_request(
         MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
         MarkKind::Context => (
             Vec::new(),
-            (!settings.engine.controller_preference_set).then(String::new),
+            (!settings.controller.preference_set).then(String::new),
         ),
         MarkKind::Memory => (Vec::new(), None),
     };
@@ -150,7 +237,7 @@ pub fn successor(
     // that found no room: no wait for headroom could open anything. A mark's
     // succession still walks the caller's own entry.
     if mark.is_none()
-        && Preference::parse(&settings.engine.controller_preference, Scope::Overseer)
+        && Preference::parse(&settings.controller.preference, Scope::Overseer)
             .is_ok_and(|preference| preference.entries.is_empty())
     {
         return Err(refused(
@@ -211,7 +298,7 @@ pub fn successor(
             let mut pending = match &recorded {
                 None => {
                     let mut pending = Caller::default().successor_of(chosen);
-                    pending.permission = Some(settings.engine.permission.get()?);
+                    pending.permission = Some(settings.launch.permission.get()?);
                     pending
                 }
                 Some((caller, _, _)) => {

@@ -74,9 +74,8 @@ pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
 
 /// The keys of the session that ended, which a different session's record
 /// leaves out: the native session id, the harness process and its model
-/// check, the recorded exit, the pending it just opened, the succession
-/// command of the owner that recorded it, and the display line a released
-/// launcher wrote for it.
+/// check, the recorded exit, the pending it just opened, and the display
+/// line a released launcher wrote for it.
 pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "session_id",
     "harness_pid",
@@ -84,7 +83,6 @@ pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "model_check",
     "exit",
     "pending",
-    "succession",
     "launch_line",
 ];
 
@@ -185,14 +183,6 @@ pub struct AdoptController {
     pub effort: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
-    /// The command of the owner that replaces this controller where another
-    /// lifecycle keeps its record: a Jarvis session registers its own
-    /// `jarvis-session succeed --home HOME`. Carried on the record as
-    /// `succession`; a controller whose record names one is never
-    /// succeeded by `request-transfer`, so no second owner opens a
-    /// successor the first does not record.
-    #[serde(default)]
-    pub succession: Option<Vec<String>>,
     /// The file the pane's own harness writes its session rows to, which
     /// the watch judges the controller's death and wall from.
     #[serde(default)]
