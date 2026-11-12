@@ -306,6 +306,8 @@ redirection_rows() {
   local cmd cwd
   for cmd in \
     'rm -f 2>/dev/null -- cli.md' \
+    'rm -f 2>|/dev/null cli.md' \
+    'rm -f 2>| /dev/null cli.md' \
     'rm 2> /dev/null cli.md' \
     'rm cli.md >/dev/null 2>&1' \
     'rm 2>&1 cli.md' \
@@ -321,6 +323,10 @@ redirection_rows() {
   delete_row reviewer-test "$SCRATCH" "git -C $REPO 2>/dev/null rm cli.md" "delete=$REPO/cli.md"
   delete_row reviewer-test "$REPO" "git -C $DELETE_SCRATCH &> /dev/null rm x.log" pass
   delete_row reviewer-test "$REPO" "rm 2> /dev/null -rf -- $DELETE_SCRATCH" pass
+  for cwd in "$REPO" ''; do
+    delete_row reviewer-test "$cwd" "rm -rf 2>|/dev/null -- $DELETE_SCRATCH" pass
+    delete_row reviewer-test "$cwd" "rm -rf 2>| /dev/null -- $DELETE_SCRATCH" pass
+  done
 }
 redirection_rows
 
@@ -332,6 +338,18 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     "refused for reviewer-test in $REPO: rm 2> /dev/null cli.md"
 fi
 
+# Restoring the old separator expression must expose both clobber forms.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control clobber-pipe-split "$HOOK" \
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '    | gsub("[;|()`]|(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    HOOK redirection_rows \
+    "refused for reviewer-test in $REPO: rm -f 2>|/dev/null cli.md" \
+    "refused for reviewer-test in $REPO: rm -f 2>| /dev/null cli.md"
+fi
+
 # Keep the control on the incident row: its old transform preserves the
 # newline instead of joining it, while retaining the other normalizations.
 continuation_control_row() {
@@ -339,7 +357,7 @@ continuation_control_row() {
 }
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control continuation-not-joined "$HOOK" \
-    '    | gsub("[;|()`]|(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
     refuse payload invalid-json' \
     '  bare=$(printf '\''%s\n'\'' "$COMMAND" | jq -Rr '\''explode | map(select(. != 34 and . != 39 and . != 92)) | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'')' \
     HOOK continuation_control_row
@@ -347,7 +365,7 @@ fi
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control git-boundary-ignored "$HOOK" \
-    '    | gsub("[;|()`]|(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
+    '    | gsub("[;()`]|(?<!>)\\||(?<![<>])&(?!>)"; "\n")'\'' 2>/dev/null) ||
     refuse payload invalid-json' \
     '  bare=$COMMAND' HOOK git_boundary_rows \
     "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH --version; rm cli.md" \
