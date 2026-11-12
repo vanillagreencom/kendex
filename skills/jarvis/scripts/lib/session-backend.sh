@@ -224,6 +224,10 @@ case "$verb" in
     pick_args=(pick --harness "$harness" --json)
     [[ -z "$model" ]] || pick_args+=(--native-model "$model")
     [[ -z "$4" ]] || pick_args+=(--lane "$4")
+    [[ -z "$8" ]] || pick_args+=(--max-pct "$8")
+    # A short task on a named account is judged on its projected wall, as the
+    # chooser judges every account; lanes takes --projected only with --lane.
+    [[ -z "$4" || -z "$8" ]] || pick_args+=(--projected)
     picked="$("$SCRIPT_DIR/lanes" "${pick_args[@]}")" || exit "$?"
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
     setup="$(harness_setup_check "$harness" "$account")" || exit 1

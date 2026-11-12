@@ -118,7 +118,8 @@ class Task(Session):
                                            "--home", self.home, "--id", self.path.stem,
                                            "--outcome", "succeeded"]) + ".")
                     prepared = json.loads(self.backend("task-prepare", args.harness, args.model, args.effort,
-                                                       args.account or "", self.home, brief, cwd).stdout)
+                                                       args.account or "", self.home, brief, cwd,
+                                                       "100" if args.short else "").stdout)
                     if "refused" in prepared:
                         raise Refusal(prepared["refused"], "fix=" + prepared["fix"])
                     record.update(harness=prepared["harness"], model=prepared["model"],
@@ -275,6 +276,9 @@ def main():
     launch.add_argument("--effort", default="high")
     launch.add_argument("--account")
     launch.add_argument("--browser", action="store_true")
+    launch.add_argument("--short", action="store_true",
+                        help="A task of a few minutes: the account pick admits room up to the wall"
+                             " (lanes pick --max-pct 100). The seat reserve and the projected wall still apply.")
     complete = verbs.add_parser("complete")
     complete.add_argument("--outcome", choices=("succeeded", "failed"), required=True)
     for verb in (launch, complete, verbs.add_parser("cleanup"), verbs.add_parser("status")):
