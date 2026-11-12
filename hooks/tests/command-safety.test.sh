@@ -1619,8 +1619,10 @@ history_rows() {
       malformed) printf 'OTHER = false\n' >>"$repo/kendex.settings.toml" ;;
       *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
     esac
-    command=$(jq -nc "$command_json") || exit 1
+    command=$(jq -nc --arg repo "$repo" "$command_json") || exit 1
     case "$shape" in
+      # A directory in no worktree; a row names the project as \($repo).
+      outside) mkdir -p "$scratch/outside"; payload=$(jq -nc --argjson command "$command" --arg cwd "$scratch/outside" '{cwd:$cwd,tool_input:{command:$command}}') ;;
       copilot-object) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
       copilot-string) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:({command:$command}|tojson)}') ;;
       *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
@@ -1786,8 +1788,18 @@ filtered-history|no-lazy-fetch|^$|shell|"git log -p \u007c grep '^NAME='"|2|refu
 quoted-example|no-lazy-fetch|^$|shell|"printf '%s' 'git log -p --all'"|0|silent|-
 quoted-heredoc|no-lazy-fetch|^$|shell|"cat <<'EOF'\ngit log -p\nEOF"|0|silent|-
 later-option|no-lazy-fetch|^$|shell|"git status; echo --stat -Sneedle"|0|silent|-
-unseen-program|no-lazy-fetch|^$|shell|"wrapper.sh git log -p"|0|silent|-
-unknown-launcher|no-lazy-fetch|^$|shell|"timeout 5 git log -p"|0|silent|-
+unseen-program|no-lazy-fetch|^$|shell|"wrapper.sh git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+unknown-launcher|no-lazy-fetch|^$|shell|"timeout 5 git log -p --all"|2|refused=history-policy|missing-no-lazy-fetch
+launcher-path|no-lazy-fetch|^$|shell|"nice -n 5 /usr/bin/git log --stat"|2|refused=history-policy|missing-no-lazy-fetch
+launcher-expanding|no-lazy-fetch|^$|shell|"timeout 5 git \"$OPTIONS\" log"|2|refused=history-policy|unresolved-git-argv
+launcher-fenced|no-lazy-fetch|^$|shell|"timeout 5 git --no-lazy-fetch log -1 HEAD"|0|silent|-
+outside-target|no-lazy-fetch|^$|outside|"git -C \($repo) log -p --all"|2|refused=history-policy|missing-no-lazy-fetch
+outside-chain|no-lazy-fetch|^$|outside|"git -C .. -C project log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-later-target|no-lazy-fetch|^$|outside|"git -C .. log -p; git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-launcher|no-lazy-fetch|^$|outside|"timeout 5 git -C \($repo) log -p"|2|refused=history-policy|missing-no-lazy-fetch
+outside-fenced|no-lazy-fetch|^$|outside|"git -C \($repo) --no-lazy-fetch log -p --all"|0|silent|-
+outside-off|off|^$|outside|"git -C \($repo) log -p --all"|0|silent|-
+outside-pattern|off|blocked|outside|"git -C \($repo) log blocked"|0|silent|-
 fetch|no-lazy-fetch|^$|shell|"git fetch --all"|0|silent|-
 argv-refusal|no-lazy-fetch|^$|argv|["git","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
 argv-fenced|no-lazy-fetch|^$|argv|["git","--no-lazy-fetch","log","-p"]|0|silent|-

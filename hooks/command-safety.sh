@@ -15,29 +15,56 @@ set -euo pipefail
 # Git owns object access. A harness permission pattern cannot distinguish a
 # global native fence from a path or option operand. Consume only the argv
 # the existing producer selected; never search shell text for history words.
-# Native option semantics: Git v2.46.0 Documentation/git.txt and git.c.
-history_git_argv() {
-  local cursor=$pos value fenced=""
+# Native option: Git v2.45.0 git.c. The fence first holds for diff prefetch
+# in Git v2.45.1, whose promisor-remote.c fetch_objects honours it.
+# A refused read records its -C chain: outside a worktree that chain alone
+# names the project whose policy judges it. Git takes -C only detached.
+history_git_argv() { # START
+  local cursor=$1 value fenced="" reason="" dirs
+  dirs=()
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
-    [ "${arg_kinds[$cursor]}" = literal ] || { history_reason=unresolved-git-argv; return; }
+    [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; break; }
     case "$value" in
       --no-lazy-fetch) fenced=1 ;;
       -C | -c | --git-dir | --work-tree | --namespace | --config-env)
         cursor=$((cursor + 1))
-        [ "${arg_kinds[$cursor]:-}" = literal ] || { history_reason=unresolved-git-argv; return; } ;;
+        [ "${arg_kinds[$cursor]:-}" = literal ] || { reason=unresolved-git-argv; break; }
+        [ "$value" != -C ] || dirs[${#dirs[@]}]=${args[$cursor]} ;;
       -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=*) ;;
       -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
-      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path) return ;;
-      -*) history_reason=unresolved-git-argv; return ;;
+      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path) break ;;
+      -*) reason=unresolved-git-argv; break ;;
       *)
         case "$value" in
           log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
-            [ -n "$fenced" ] || history_reason=missing-no-lazy-fetch ;;
+            [ -n "$fenced" ] || reason=missing-no-lazy-fetch ;;
         esac
-        return ;;
+        break ;;
     esac
     cursor=$((cursor + 1))
+  done
+  [ -n "$reason" ] || return 0
+  history_reason=$reason
+  history_target_reasons[${#history_target_reasons[@]}]=$reason
+  history_target_dirs=(${history_target_dirs[@]+"${history_target_dirs[@]}"} ${dirs[@]+"${dirs[@]}"})
+  history_target_ends[${#history_target_ends[@]}]=${#history_target_dirs[@]}
+}
+
+# A launcher the matcher does not resolve, such as timeout 5 or nice -n 5,
+# can run any later literal git word as its command, so the first one is
+# judged as a Git head. A shell, eval or source receiver's later words are
+# its source, forwarded heads or positional data, judged where it runs them.
+history_launched_git() {
+  local receiver receiver_pattern receiver_option receiver_named cursor
+  [ "${program:-}" != opaque ] || return 0
+  environment_receiver "${program:-}"
+  [ "$receiver" != shell ] || return 0
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]##*/}" = git ]; then
+      history_git_argv $((cursor + 1))
+      return 0
+    fi
   done
 }
 
@@ -128,7 +155,7 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
-    [ "${program:-}" != git ] || history_git_argv
+    if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
@@ -1294,6 +1321,8 @@ fields="$(jq -er '
 # Set by the escape arms, which refuse what they cannot decode.
 dump_reason=""
 history_reason=""
+history_target_reasons=(); history_target_dirs=(); history_target_ends=()
+history_roots=(); history_root_reasons=()
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
@@ -1318,7 +1347,22 @@ if [ "$root_status" -ne 0 ]; then
     at="${at%/*}"
     [ -n "$at" ] || at=/
   done
-  exit 0
+  # Outside a worktree only a refused read's own -C chain names a project.
+  # Git resolves that chain from this directory exactly as the read would.
+  # The project pattern stays inactive here.
+  start=0
+  for ((target=0; target<${#history_target_ends[@]}; target++)); do
+    end=${history_target_ends[$target]}
+    chain=(-C "$cwd")
+    for ((j=start; j<end; j++)); do chain[${#chain[@]}]=-C; chain[${#chain[@]}]=${history_target_dirs[$j]}; done
+    if [ "$end" -gt "$start" ] && root="$(git "${chain[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+      history_roots[${#history_roots[@]}]=$root
+      history_root_reasons[${#history_root_reasons[@]}]=${history_target_reasons[$target]}
+    fi
+    start=$end
+  done
+  [ "${#history_roots[@]}" -gt 0 ] || exit 0
+  root=${history_roots[0]}
 fi
 
 lib=
@@ -1384,15 +1428,26 @@ cd -- "$root" || refuse cwd "$root"
 # left a host's root volume read-only. skills/commit-guards'
 # kendex.settings.toml.example declares the same value.
 default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
-history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)" || refuse settings unreadable "$history_policy"
-case "$history_policy" in
-  off) ;;
-  no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
-  *)
-    # An invalid selection leaves only this advisory check unavailable. The
-    # independently readable project pattern must still get its decision.
-    refuse settings invalid-history-policy ;;
-esac
+history_judge() { # REASON: judged against the current directory's settings
+  history_reason=$1
+  history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)" || refuse settings unreadable "$history_policy"
+  case "$history_policy" in
+    off) ;;
+    no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
+    *)
+      # An invalid selection leaves only this advisory check unavailable. The
+      # independently readable project pattern must still get its decision.
+      refuse settings invalid-history-policy ;;
+  esac
+}
+if [ "${#history_roots[@]}" -gt 0 ]; then
+  for ((target=0; target<${#history_roots[@]}; target++)); do
+    cd -- "${history_roots[$target]}" || refuse cwd "${history_roots[$target]}"
+    history_judge "${history_root_reasons[$target]}"
+  done
+  exit 0
+fi
+history_judge "$history_reason"
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
