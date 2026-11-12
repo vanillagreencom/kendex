@@ -1923,6 +1923,46 @@ fn a_window_in_a_grouped_session_reads_the_same_for_a_lane_and_a_controller() {
     );
 }
 
+/// The controller's pane its server keeps dead after the harness exited,
+/// alone in the fleet session, is the death the overseer duty reads and
+/// never a window of the stray sweep: the controller record names it.
+#[test]
+fn a_kept_dead_controller_alone_in_its_session_reads_dead_and_is_no_stray() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_kept_dead("overseer", dir.path());
+    server.close_birth_window();
+    assert_eq!(server.session_panes(), vec![pane.clone()]);
+    let window = String::from_utf8_lossy(
+        &support::tmux(
+            &server.socket,
+            &["display-message", "-p", "-t", &pane, "#{window_id}"],
+        )
+        .stdout,
+    )
+    .trim()
+    .to_owned();
+    fleet.set_overseer(overseer_at(&server, &pane, &window, dir.path()));
+    let state = fleet.read();
+    lane_driver!(server, fleet, lane_readers, lanes_pass);
+    let swept = lanes_pass.pass(&state);
+    assert!(
+        !event_lines(&swept)
+            .iter()
+            .any(|l| l.starts_with("EVENT stray-window")),
+        "{:?}",
+        lines(&swept)
+    );
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    assert_eq!(
+        lines(&driver.pass(&state)),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=1 succession=on source=pane"
+        )]
+    );
+}
+
 /// The owner's alerts a row records by notice file, refused while
 /// `refusing` is set.
 struct Alerts {

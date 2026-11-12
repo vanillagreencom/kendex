@@ -153,7 +153,7 @@ REAL_TMUX="$(command -v tmux)"
 REAL_PS="$(command -v ps)"
 cat > "$PROBE_BIN/tmux" <<STUB
 #!/bin/sh
-if [ "\$*" = 'list-panes -a -F #{pid} #{start_time} #{pane_id}' ]; then
+if [ "\$*" = 'list-panes -a -F #{pid} #{start_time} #{pane_id} #{pane_dead}' ]; then
   echo pane-list-read=failed >&2
   exit 2
 fi

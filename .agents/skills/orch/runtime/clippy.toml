@@ -18,6 +18,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::tmux::kill_pane", reason = "an effect closes a pane only through the operation handle's token" },
     { path = "agent_runtime::host::tmux::kill_window", reason = "an effect closes a window only through the operation handle's token" },
     { path = "agent_runtime::host::tmux::kill_server", reason = "no effect ends a tmux server" },
+    { path = "agent_runtime::host::tmux::keep_on_exit", reason = "an effect keeps a pane past its process only through the operation handle's token" },
     { path = "agent_runtime::host::tmux::new_window", reason = "an effect opens a window only through the operation handle, its acquisition written first" },
     { path = "agent_runtime::host::tmux::send_line", reason = "an effect types into a pane only through the operation handle's token" },
     { path = "agent_runtime::host::tmux::send_key", reason = "an effect sends a key only through the operation handle's token" },

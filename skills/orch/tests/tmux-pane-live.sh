@@ -131,6 +131,27 @@ done <<EOF
 EOF
 assert_eq "$(live_rc "$LIB" "$LIVE" "$S" "%1" "$LIVE $S %11")" "1" "a pane id is matched whole, never as a prefix of another"
 
+# The answer and TMUX_PANE_DEAD for SERVER, START and PANE over LISTING, whose
+# rows carry tmux's dead flag fourth. With READ2 and LISTING2, a second call
+# in the same shell under that process read and list answers instead, so a
+# flag one call set is seen surviving into the next.
+dead_of() { # LIB SERVER START PANE LISTING [READ2 LISTING2]
+  printf '%s' "$5" > "$PANES"
+  TMPDIR="$TMP_ROOT" PATH="$STUB_BIN:$PATH" bash -c '. "$1"; rc=0; tmux_pane_live "$2" "$3" "$4" || rc=$?
+    if [ -n "$5" ]; then printf "%s" "$6" > "$7"; rc=0; TMUX_TEST_PS="$5" tmux_pane_live "$2" "$3" "$4" || rc=$?; fi
+    echo "$rc|$TMUX_PANE_DEAD"' \
+    _ "$1" "$2" "$3" "$4" "${6:-}" "${7:-}" "$PANES"
+}
+while IFS='|' read -r want flag start listing read2 listing2 label; do
+  assert_eq "$(dead_of "$LIB" "$LIVE" "$start" %9 "$listing" "$read2" "$listing2")" "$want|$flag" "$label"
+done <<EOF
+0|1|$S|$LIVE $S %9 1|||a pane its server keeps after its process exited is listed, with the dead flag
+0||$S|$LIVE $S %9 0|||a running pane is listed with no dead flag
+0|1||$LIVE $E %9 1|||with no start, a kept pane on the server this shell reaches carries the dead flag
+1||$E|$LIVE $S %9 1|||a kept pane under another start is not the recorded one and carries no flag
+1||$S|$LIVE $S %9 1|absent|$LIVE $S %9 1|a later call that ends before the pane list carries no flag from an earlier one
+EOF
+
 # The answer where the server this shell reaches holds no session, so tmux
 # refuses the pane list with `no current target`, and display-message reads
 # that server's pid as ANSWER, `-` for no answer.
@@ -238,6 +259,19 @@ assert_eq "$(start_of "$MUTANT_LIB" "$LIVE" "4242 $S")" "$S/0" \
 mutant_lib start-any-shape "    '' | *[!0-9]*) return 1 ;;" "    '' | *[!0-9]*) ;;"
 assert_eq "$(start_of "$MUTANT_LIB" "$LIVE" "$LIVE ")" "/0" \
   "control: without the digits test an empty start binds the record"
+
+mutant_lib dead-unread '    TMUX_PANE_DEAD=1' '    :'
+assert_eq "$(dead_of "$MUTANT_LIB" "$LIVE" "$S" %9 "$LIVE $S %9 1")" "0|" \
+  "control: without the dead flag a kept pane reads as a running one"
+
+mutant_lib dead-stale '  TMUX_PANE_DETAIL="" TMUX_PANE_DEAD=""' '  TMUX_PANE_DETAIL=""'
+assert_eq "$(dead_of "$MUTANT_LIB" "$LIVE" "$S" %9 "$LIVE $S %9 1" absent "$LIVE $S %9 1")" "1|1" \
+  "control: without the clear on entry a call that ends early carries an earlier call's flag"
+
+mutant_lib dead-unmatched '  TMUX_PANE_DEAD=""
+  [ "${panes%% *}" = "$1" ] || return 2' '  [ "${panes%% *}" = "$1" ] || return 2'
+assert_eq "$(dead_of "$MUTANT_LIB" "$LIVE" "$E" %9 "$LIVE $S %9 1")" "1|1" \
+  "control: without the clear on an unmatched key a pane that is not the recorded one carries the flag"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

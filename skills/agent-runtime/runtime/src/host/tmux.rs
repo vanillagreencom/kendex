@@ -741,6 +741,20 @@ pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Keep the pane on its server once its process exits (`remain-on-exit`, a
+/// pane option, so a pane split beside it ends as it would): the pane then
+/// reads [`PaneState::Dead`] and its window and session stand until a caller
+/// closes the window.
+pub fn keep_on_exit(pane: &Pane) -> Result<()> {
+    confirm(&pane.server)?;
+    tmux(
+        Some(&pane.server.socket),
+        "set-option",
+        &["set-option", "-p", "-t", &pane.id, "remain-on-exit", "on"],
+    )?;
+    Ok(())
+}
+
 /// Close the pane's whole window, for a caller that owns the window: every
 /// pane in it goes.
 pub fn kill_window(pane: &Pane) -> Close {

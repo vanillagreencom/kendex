@@ -1683,7 +1683,7 @@ lm_peer_reader() {
   [ -z "$socket" ] || export TMUX="$socket,$server,0"
   tmux_pane_live "$server" "$start" "$pane" "$socket" || rc=$?
   case "$rc" in
-    0) ;;
+    0) [ "$TMUX_PANE_DEAD" != 1 ] || lm_reader_report no-reader "$ROOT" cause=pane-dead ;;
     1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;
     *) lm_reader_report reader-unjudged "$ROOT" cause=server "$TMUX_PANE_DETAIL" ;;
   esac

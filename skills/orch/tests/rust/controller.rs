@@ -1470,6 +1470,116 @@ fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     );
 }
 
+/// A controller the real `start-controller` opens and publishes on the
+/// runner's server: its pane.
+fn started_controller(runner: &Runner) -> String {
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": pending(runner.state_dir()),
+    })));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// End the published controller's harness as a crash does, by the identity
+/// its record names, and wait for its pane to stand dead or to go.
+fn crash_controller(server: &Server, runner: &Runner, pane: &str) {
+    let pid = runner.fleet()["overseer"]["harness_pid"]
+        .as_u64()
+        .expect("the published identity");
+    let out = std::process::Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    wait_until("the harness's pane ended", SETTLE, || {
+        server.pane_dead(pane) || !server.panes().iter().any(|p| p == pane)
+    });
+}
+
+/// A session whose one window is the controller's, its creator's own window
+/// closed after the start, outlives the controller's harness: the published
+/// pane is kept dead, so the watch reads the death and its recovery opens
+/// the successor in that same session, then closes the dead window, and the
+/// successor's window stands alone.
+#[test]
+fn a_controller_alone_in_its_session_outlives_its_harness_and_is_recovered_there() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let predecessor = started_controller(&runner);
+    server.close_birth_window();
+    assert_eq!(server.session_panes(), vec![predecessor.clone()]);
+    crash_controller(&server, &runner, &predecessor);
+    let intent = watched_transfer(&runner);
+    assert_eq!(intent["cause"], "dead", "{intent}");
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let successor = runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(successor, predecessor);
+    assert_eq!(
+        server.session_panes(),
+        vec![successor],
+        "the dead window is closed and the successor's alone stands"
+    );
+}
+
+/// A completed hand-over leaves one controller window: the predecessor's
+/// pane, kept past its harness, has its window closed by the retirement,
+/// and the successor's window stands alone in the session.
+#[test]
+fn a_completed_hand_over_closes_the_kept_predecessor_and_leaves_one_controller_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let predecessor = started_controller(&runner);
+    server.close_birth_window();
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    runner.write_fleet(&fleet);
+    let record = runner.fleet()["overseer"].clone();
+    runner.transfer_started(&request_for(&record, runner.state_dir(), "live"));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let successor = runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_ne!(successor, predecessor);
+    assert_eq!(
+        server.session_panes(),
+        vec![successor],
+        "the predecessor's window is gone and one controller window stands"
+    );
+}
+
+/// An explicit stop of a published controller leaves no controller window:
+/// the pane kept past its harness has its window closed by the stop, and
+/// the session holds its creator's window alone.
+#[test]
+fn a_stop_closes_the_kept_controller_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let birth = server.session_panes();
+    started_controller(&runner);
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(server.session_panes(), birth, "no controller window stands");
+}
+
 /// The first launch of a controller on a fleet that recorded none publishes
 /// generation 1 with the runner's identity; a start over a controller whose
 /// identity reads live fails `overseer-live` before anything opens.

@@ -509,6 +509,52 @@ impl Server {
         }
     }
 
+    /// The session's creator closing the window the session was born with,
+    /// its first, once a window the runtime opened stands after it, a second
+    /// session holding the server as a person's server holds others: the
+    /// fleet session then holds only the windows the runtime opened.
+    pub fn close_birth_window(&self) {
+        let panes = self.session_panes();
+        assert!(
+            panes.len() > 1,
+            "a window stands after the first: {panes:?}"
+        );
+        let held = tmux(&self.socket, &["new-session", "-d", "-s", "bystander"]);
+        assert!(held.status.success(), "new-session: {}", stderr(&held));
+        let closed = tmux(&self.socket, &["kill-window", "-t", &panes[0]]);
+        assert!(closed.status.success(), "kill-window: {}", stderr(&closed));
+    }
+
+    /// The panes of the fleet session alone, in window order; none where the
+    /// session is gone.
+    pub fn session_panes(&self) -> Vec<String> {
+        let out = tmux(
+            &self.socket,
+            &[
+                "list-panes",
+                "-s",
+                "-t",
+                &format!("={}", self.session),
+                "-F",
+                "#{pane_id}",
+            ],
+        );
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Whether the pane stands on the server kept dead after its process
+    /// exited.
+    pub fn pane_dead(&self, pane: &str) -> bool {
+        let out = tmux(
+            &self.socket,
+            &["display-message", "-p", "-t", pane, "#{pane_dead}"],
+        );
+        out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "1"
+    }
+
     pub fn panes(&self) -> Vec<String> {
         let out = tmux(&self.socket, &["list-panes", "-a", "-F", "#{pane_id}"]);
         String::from_utf8_lossy(&out.stdout)

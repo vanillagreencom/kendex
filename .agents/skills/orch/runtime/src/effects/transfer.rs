@@ -1642,6 +1642,18 @@ fn publish(
             }
         }
     }
+    // The controller's pane outlives its harness from here, past the last
+    // poll of it: with no other window in its session, the dead pane is what
+    // keeps the session the dead-overseer recovery opens the successor in. A
+    // pane that cannot be kept is said on the outcome; it closes with its
+    // harness.
+    let kept = match operation.standing_pane(pane.clone()) {
+        Ok(token) => operation
+            .keep_pane(&token)
+            .err()
+            .map(|e| e.key().to_owned()),
+        Err(_) => Some("pane-not-standing".to_owned()),
+    };
     let observation = json!({
         "retired": true,
         "retired_by": by,
@@ -1649,15 +1661,20 @@ fn publish(
         "note": "successor-confirmed",
     });
     match operation.publish(Published::Successor, opened, &identity, observation)? {
-        Ok(outcome) => Ok(outcome.with_wire(Wire {
-            launch: Some(runner_wire(opened, Some(identity.identity()))),
-            session_id,
-            server_start: Some(opened.server_start),
-            server_socket: Some(opened.socket.clone()),
-            home: Some(successor.home.display().to_string()),
-            watch: watch_job,
-            ..Wire::default()
-        })),
+        Ok(mut outcome) => {
+            if let Some(cause) = kept {
+                outcome.annotate("pane_kept", json!(cause));
+            }
+            Ok(outcome.with_wire(Wire {
+                launch: Some(runner_wire(opened, Some(identity.identity()))),
+                session_id,
+                server_start: Some(opened.server_start),
+                server_socket: Some(opened.socket.clone()),
+                home: Some(successor.home.display().to_string()),
+                watch: watch_job,
+                ..Wire::default()
+            }))
+        }
         Err(operation) => Ok(unconfirmed_after_retirement(
             *operation,
             opened,

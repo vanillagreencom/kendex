@@ -1224,6 +1224,20 @@ impl Operation<'_> {
         Ok(close)
     }
 
+    /// Keep the standing pane on its server once its harness exits. A
+    /// controller's pane is kept so the session it holds outlives the
+    /// harness: the dead-overseer recovery opens the successor in that
+    /// session, and the retirement closes the dead pane's window. Only a
+    /// pane nothing of the effect polls again is kept, since the polls read
+    /// a kept pane as unreadable, never gone.
+    pub(in crate::effects) fn keep_pane(
+        &self,
+        pane: &Standing<Pane>,
+    ) -> std::result::Result<(), agent_runtime::Error> {
+        self.check_pane_token(pane)?;
+        tmux::keep_on_exit(pane.key())
+    }
+
     /// Close the window of the set's standing pane on the server
     /// [`Self::observe_lane_pane`] reads it on: one
     /// present is killed by its token; one gone stands no more; none standing

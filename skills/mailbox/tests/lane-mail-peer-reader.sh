@@ -26,7 +26,9 @@ TMP_ROOT="$(mktemp -d)" || { echo "lane-mail-peer-reader: scratch=mktemp-failed"
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane-mail-peer-reader: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-peer-reader: scratch=resolve-failed" >&2; exit 1; }
 LIVE=""
-trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
+# The private tmux server of the kept-pane rows, on its own socket.
+REAL_SOCK="$TMP_ROOT/real.sock"
+trap '[ -z "$LIVE" ] || kill "$LIVE" 2>/dev/null; [ ! -S "$REAL_SOCK" ] || tmux -S "$REAL_SOCK" kill-server 2>/dev/null; rm -rf -- "${TMP_ROOT:?}"' EXIT
 
 # shellcheck source=../../orch/tests/lib/assertions.sh
 source "$REPO_ROOT/skills/orch/tests/lib/assertions.sh"
@@ -339,6 +341,38 @@ assert_eq "$RC ${OUT%% id=*} $(first_err)" \
   "0 lane-mail: sent item=overseer lane-mail: reader-unjudged=$REMOTE_ROOT cause=hosted" \
   "a hosted peer's reader is unjudged" "$TMP_ROOT/err"
 
+# A real tmux server on its own socket, reading no configuration: its first
+# window runs a process, and its second holds a pane the server keeps after
+# its process exited (`remain-on-exit`), which the pane list still names. The
+# peer's record names one pane or the other by that server's pid, start and
+# socket, and the real script runs with the real tmux on PATH.
+real_tmux() { tmux -S "$REAL_SOCK" -f /dev/null "$@"; }
+real_tmux new-session -d -s fleet -x 80 -y 24 'exec sleep 600'
+REAL_RUNNING="$(real_tmux display-message -p -t =fleet: '#{pane_id}')"
+REAL_DEAD="$(real_tmux new-window -d -P -F '#{pane_id}' -t =fleet: 'read line; exit 3')"
+real_tmux set-option -p -t "$REAL_DEAD" remain-on-exit on
+real_tmux send-keys -t "$REAL_DEAD" Enter
+for _ in $(seq 1 100); do
+  [ "$(real_tmux display-message -p -t "$REAL_DEAD" '#{pane_dead}')" != 1 ] || break
+  sleep 0.05
+done
+[ "$(real_tmux display-message -p -t "$REAL_DEAD" '#{pane_dead}')" = 1 ] ||
+  { echo "lane-mail-peer-reader: the kept pane never ended" >&2; exit 1; }
+read -r REAL_PID REAL_START <<<"$(real_tmux display-message -p '#{pid} #{start_time}')"
+real_send() { # PANE TEXT
+  record "{\"server\":\"$REAL_PID\",\"server_start\":$REAL_START,\"pane\":\"$1\",\"server_socket\":\"$REAL_SOCK\"}"
+  printf '%s\n' "$2" > "$TMP_ROOT/msg.txt"
+  RC=0
+  OUT="$(cd "$TMP_ROOT/sender" && env -u TMUX -u TMUX_PANE -u ORCH_STATE_DIR \
+    "${LANE_MAIL_BIN:-$LANE_MAIL}" peer send --repo "$PEER" --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
+}
+real_send "$REAL_RUNNING" 'Running pane.'
+assert_eq "$RC ${OUT%% id=*} $(first_err)" "0 lane-mail: sent item=overseer " \
+  "a recorded pane its real server runs a process in names its reader" "$TMP_ROOT/err"
+real_send "$REAL_DEAD" 'Kept pane.'
+assert_eq "$RC ${OUT%% id=*} $(first_err)" "0 lane-mail: sent item=overseer lane-mail: no-reader=$PEER cause=pane-dead" \
+  "a recorded pane its real server keeps after its process exited names no reader" "$TMP_ROOT/err"
+
 # --- must-fail controls ------------------------------------------------------
 # mutant NAME OLD NEW: a private lane-mail with OLD, which occurs once,
 # replaced by NEW, beside links to the shipped rest; LANE_MAIL_BIN runs it.
@@ -453,6 +487,10 @@ printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
 send 'Bad start.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the start test a start that is not epoch seconds is judged as a server's"
+
+mutant dead-reads '    0) [ "$TMUX_PANE_DEAD" != 1 ] || lm_reader_report no-reader "$ROOT" cause=pane-dead ;;' '    0) ;;'
+real_send "$REAL_DEAD" 'Kept pane control.'
+assert_eq "$(first_err)" "" "control: without the dead flag's test a pane its server keeps after its process exited reads as the reader"
 
 mutant hosted-silent '    lm_reader_report reader-unjudged "$ROOT" cause=hosted' '    :'
 hosted_send 'Hosted control.'

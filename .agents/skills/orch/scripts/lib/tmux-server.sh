@@ -89,12 +89,17 @@ tmux_server_start() { # PANE SERVER
 # absence cannot judge that server. A server holding no session lists no pane,
 # so it is judged by its pid alone: SERVER in that state, such as a server
 # still exiting after its last session closed, reads as listing no PANE.
-# TMUX_PANE_DETAIL holds a failed read's cause.
+# TMUX_PANE_DETAIL holds a failed read's cause. TMUX_PANE_DEAD is 1 where the
+# pane answered 0 is one its server keeps after its process exited
+# (`remain-on-exit`), and empty after every other call: a kept pane is still
+# listed, so the answer stays 0, and a caller that needs a running process,
+# such as the mailbox's reader, reads the flag.
 TMUX_PANE_DETAIL=""
+TMUX_PANE_DEAD=""
 tmux_pane_live() { # SERVER START PANE [SOCKET]
-  local comm panes table pid name err detail cleanup rc=0 read_rc=0 cleanup_rc=0 nl='
+  local comm panes listing table pid name err detail cleanup rc=0 read_rc=0 cleanup_rc=0 nl='
 '
-  TMUX_PANE_DETAIL=""
+  TMUX_PANE_DETAIL="" TMUX_PANE_DEAD=""
   err="$(mktemp 2>&1)" || rc=$?
   if [ "$rc" -ne 0 ]; then
     TMUX_PANE_DETAIL="process-read server=$1 operation=scratch status=$rc${err:+$'\n'$err}"
@@ -127,7 +132,7 @@ tmux_pane_live() { # SERVER START PANE [SOCKET]
     tmux*) ;;
     *) return 1 ;;
   esac
-  panes="$(LC_ALL=C tmux list-panes -a -F '#{pid} #{start_time} #{pane_id}' 2>&1)" || rc=$?
+  panes="$(LC_ALL=C tmux list-panes -a -F '#{pid} #{start_time} #{pane_id} #{pane_dead}' 2>&1)" || rc=$?
   # tmux refuses list-panes -a with exactly this message when the server holds
   # no session (cmd-find.c, cmd_find_target). display-message needs no target
   # there, so its #{pid} stands in for the list's server field below, and its
@@ -145,6 +150,16 @@ tmux_pane_live() { # SERVER START PANE [SOCKET]
     TMUX_PANE_DETAIL="pane-list-read server=$1 status=$rc${panes:+$'\n'$panes}"
     return 2
   fi
+  # The key a record names is a row's first three fields; the fourth is the
+  # pane's dead flag.
+  listing="$panes"
+  panes="$(cut -d ' ' -f 1-3 <<<"$listing")" || {
+    TMUX_PANE_DETAIL="pane-list-read server=$1 operation=cut"
+    return 2
+  }
+  if awk -v s="$1" -v p="$3" '$1 == s && $3 == p && $4 == 1 { f = 1 } END { exit !f }' <<<"$listing"; then
+    TMUX_PANE_DEAD=1
+  fi
   if [ -n "$2" ]; then
     case "$nl$panes$nl" in
       *"$nl$1 $2 $3$nl"*) return 0 ;;
@@ -152,6 +167,7 @@ tmux_pane_live() { # SERVER START PANE [SOCKET]
   elif awk -v s="$1" -v p="$3" '$1 == s && $3 == p { f = 1 } END { exit !f }' <<<"$panes"; then
     return 0
   fi
+  TMUX_PANE_DEAD=""
   [ "${panes%% *}" = "$1" ] || return 2
   return 1
 }
