@@ -106,7 +106,8 @@
 # `:nightly`, true only where its own glob or the declaration comparison
 # selects it; then true for every lane where a changed non-declaration path
 # no base lane claims lies outside the docs set, save one change-class's
-# last unread-paths record names and the shipped queue list does not; then
+# last unread-paths record names that is not declared text, a path git
+# quotes or on the shipped queue list; then
 # true where a changed path
 # matches one of the lane's base globs or the declaration comparison selects
 # that lane, and false everywhere else. A deferred

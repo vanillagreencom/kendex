@@ -14,8 +14,9 @@
 # workflow that passes none.
 # The base commit's HARNESS_CI_UNREAD_PATHS, blank-separated globs read from
 # its settings tables alone, never the environment, names paths no lane
-# reads: a changed path it matches, outside the docs set, not declared text
-# and not on the shipped queue list, that no lane claims turns no lane on.
+# reads: a changed path it matches, outside the docs set, not declared text,
+# not a path git quotes and not on the shipped queue list, that no lane
+# claims turns no lane on.
 # Every verdict prints its globs on one `unread-paths:` line, bare where it
 # is unset or blank, after all this script relays from tools that read the
 # head, so the change-class action's lane producer, lib/change-class.sh,
