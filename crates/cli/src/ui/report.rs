@@ -2,7 +2,7 @@
 //! uses the same components as the rest of the report; the plain prefix
 //! is data, never parsed to choose a component.
 
-use super::components::Escaped;
+use super::components::{Escaped, TableCell};
 use super::modes::Look;
 use super::{Span, Status, Style, Target, escaped};
 use kendex_core::apply::{DescriptionPart, PlannedOp};
@@ -124,13 +124,18 @@ impl Style {
     }
 
     /// A titled table rich; plain, the headerless columns a script reads.
-    pub fn report_table(
+    /// No rows draw nothing in either rendering: a verb with something to
+    /// say about an empty list says it itself.
+    pub fn report_table<C: TableCell>(
         &self,
         title: &str,
         headers: &[&str],
-        rows: &[Vec<String>],
+        rows: &[Vec<C>],
         plain: PlainColumns,
     ) -> Vec<String> {
+        if rows.is_empty() {
+            return Vec::new();
+        }
         match self.look {
             Look::Rich { .. } => {
                 let mut lines = self.section(title, rows.len(), Status::Notice);
@@ -140,7 +145,11 @@ impl Style {
             Look::Plain => {
                 let rows: Vec<Vec<String>> = rows
                     .iter()
-                    .map(|row| row.iter().map(|cell| escaped(cell)).collect())
+                    .map(|row| {
+                        row.iter()
+                            .map(|cell| Escaped::from(cell.spans().as_slice()).joined())
+                            .collect()
+                    })
                     .collect();
                 let widths: Vec<usize> = (0..headers.len())
                     .map(|column| match plain {
@@ -444,6 +453,20 @@ mod tests {
                 "  hook   界界界界界界界界界  1 bytes",
             ]
         );
+    }
+
+    #[test]
+    fn report_table_without_rows_draws_nothing() {
+        let headers = ["kind", "name"];
+        for style in [plain(), rich(80)] {
+            for columns in [PlainColumns::Padded, PlainColumns::Joined] {
+                assert!(
+                    style
+                        .report_table::<String>("packages", &headers, &[], columns)
+                        .is_empty()
+                );
+            }
+        }
     }
 
     #[test]

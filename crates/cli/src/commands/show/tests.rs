@@ -93,7 +93,7 @@ fn inspection_show_snapshots() {
 }
 
 #[test]
-fn inspection_show_wraps_links_and_file_paths() {
+fn inspection_show_wraps_links_and_keeps_a_spaceless_file_path_whole() {
     let long = "path-part-".repeat(15);
     let meta = detail::PackageMeta {
         source: long.clone(),
@@ -112,15 +112,7 @@ fn inspection_show_wraps_links_and_file_paths() {
             fallback: vec![],
         },
     };
-    let files = [detail::PackageFile {
-        path: long,
-        size: 42,
-        is_readme: false,
-    }];
-    let drawn = metadata(&rich(80), &meta)
-        .into_iter()
-        .chain(file_list(&rich(80), &files))
-        .collect::<Vec<_>>();
+    let drawn = metadata(&rich(80), &meta);
     assert!(
         drawn.iter().all(|line| visible_width(line) <= 80),
         "{drawn:?}"
@@ -129,6 +121,24 @@ fn inspection_show_wraps_links_and_file_paths() {
         metadata(&plain(), &meta)
             .iter()
             .any(|line| visible_width(line) > 80)
+    );
+    // A file path with no space, wider than the line, stays whole on one
+    // line, and the table runs past the width.
+    let files = [detail::PackageFile {
+        path: long.clone(),
+        size: 42,
+        is_readme: false,
+    }];
+    assert_eq!(
+        tagged(&file_list(&rich(80), &files)),
+        [
+            String::new(),
+            "<1;36>files</>  <90>1</>".to_owned(),
+            format!("  <1;90>path</>{}<1;90>size</>", " ".repeat(148)),
+            format!("  <90>{}</>", "─".repeat(157)),
+            format!("  {long}  42"),
+            format!("{}bytes", " ".repeat(154)),
+        ]
     );
 }
 

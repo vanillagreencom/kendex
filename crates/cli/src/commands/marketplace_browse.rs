@@ -4,8 +4,9 @@
 use kendex_core::env::Env;
 use kendex_core::source_ops;
 
-use super::{CliResult, answer, out, resolve_scopes};
+use super::{CliResult, answer, resolve_scopes};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Cell, Style};
 
 type BrowseRow = (
     kendex_core::model::Scope,
@@ -62,20 +63,43 @@ pub fn run_browse(
         }))?);
         return Ok(());
     }
-    for (scope, marketplace, package) in rows {
-        let summary = package
-            .summary
-            .map(|text| format!("  — {text}"))
-            .unwrap_or_default();
-        out(&format!(
-            "{}  {marketplace}::{}  ({}) [{}]{summary}",
-            scope.label(),
-            package.name,
-            package.kind.name(),
-            install_state(&package.state),
-        ));
-    }
+    let style = ui::style();
+    ui::stderr(&style.header(
+        "marketplace browse",
+        marketplace.as_deref().unwrap_or("every subscription"),
+    ));
+    let cells: Vec<Vec<Cell>> = rows.into_iter().map(package_cells).collect();
+    ui::stdout(&listing(&style, &cells));
     Ok(())
+}
+
+/// One package's cells. The summary carries its own dash, so a plain row
+/// stays the line scripts read.
+fn package_cells((scope, marketplace, package): BrowseRow) -> Vec<Cell> {
+    vec![
+        Cell::default().copy(scope.label()),
+        format!("{marketplace}::{}", package.name).into(),
+        format!(
+            "({}) [{}]",
+            package.kind.name(),
+            install_state(&package.state)
+        )
+        .into(),
+        package
+            .summary
+            .map(|text| format!("— {text}"))
+            .unwrap_or_default()
+            .into(),
+    ]
+}
+
+fn listing(style: &Style, cells: &[Vec<Cell>]) -> Vec<String> {
+    style.report_table(
+        "packages",
+        &["scope", "package", "kind", "summary"],
+        cells,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
 fn install_state(state: &kendex_core::source::browse::InstallState) -> &'static str {
@@ -89,3 +113,6 @@ fn install_state(state: &kendex_core::source::browse::InstallState) -> &'static 
         InstallState::Unknown => "unknown",
     }
 }
+
+#[cfg(test)]
+mod tests;

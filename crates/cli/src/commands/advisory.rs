@@ -7,7 +7,6 @@ use kendex_core::engine::{CatalogSource, ItemSafety, SafetyTarget};
 use kendex_core::model::ItemKind;
 use kendex_core::quality::{AuditResult, Finding, Severity, place_within};
 
-use super::say;
 use crate::ui::{self, Span, Status, Style};
 
 /// How much of a scored plan a report draws.
@@ -281,26 +280,41 @@ fn safety_block(row: &ItemSafety, listing: Listing) -> SafetyBlock {
 /// path within the catalog, empty for a repository that is one skill: its
 /// path is the catalog, so the score line leaves it out.
 ///
-/// Severity leads the finding as a word, never as a colour: the line has
-/// to carry it for a reader who has no colour, and this printer emits
-/// none.
-pub fn print_advisory(kind: ItemKind, name: &str, path: &str, advisory: &AuditResult) {
+/// Severity leads the finding as a word, never as a colour alone: the line
+/// has to carry it for a reader who has no colour.
+///
+/// The score is a row in the colour of the worst finding, as a plan's
+/// safety block draws it, and each finding a detail under it. Plain keeps
+/// the `safety: ` line and the indented findings.
+pub fn advisory_lines(
+    style: &Style,
+    kind: ItemKind,
+    name: &str,
+    path: &str,
+    advisory: &AuditResult,
+) -> Vec<String> {
     let at = match path {
         "" => String::new(),
         path => format!(" at {path}"),
     };
-    say(&format!(
-        "safety: {} {}{at} scores {}/100",
-        kind.name(),
-        name,
-        advisory.safety.score
-    ));
+    let mut lines = style.report_row(
+        standing(advisory).status(),
+        &[Span::Prose(&format!(
+            "safety: {} {}{at} scores {}/100",
+            kind.name(),
+            name,
+            advisory.safety.score
+        ))],
+        "",
+    );
     for line in finding_lines(&advisory.findings, &[], None, false) {
-        say(&format!("  [{}] {}", line.severity.name(), line.text));
+        let text = format!("[{}] {}", line.severity.name(), line.text);
+        lines.extend(style.report_detail(&[Span::Prose(&text)], "  "));
     }
     if let Some(unread) = unread_line(advisory) {
-        say(&format!("  {unread}"));
+        lines.extend(style.report_detail(&[Span::Prose(&unread)], "  "));
     }
+    lines
 }
 
 /// Where this finding is cited, and at which line of it.

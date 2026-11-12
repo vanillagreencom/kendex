@@ -2,9 +2,10 @@ use clap::Subcommand;
 use kendex_core::env::Env;
 use kendex_core::source_ops;
 
-use super::engine_common::apply_report;
-use super::{CliResult, answer, out, resolve_scopes, say, scope_label};
+use super::engine_common::{AfterFailed, apply_report_accounted};
+use super::{CliResult, answer, resolve_scopes, scope_label};
 use crate::scope::ScopeFilter;
+use crate::ui::{self, Cell, Span, Status, Style};
 
 #[derive(Subcommand)]
 pub enum MarketplaceCommand {
@@ -159,13 +160,17 @@ fn run_unsubscribe(
     scope: Option<String>,
 ) -> CliResult {
     use kendex_core::engine::detach;
+    let style = ui::style();
+    ui::stderr(&style.header("marketplace unsubscribe", name));
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
 
     let manifest = kendex_core::engine::ops::manifest_for_mutation(env, &scope)?;
     let closure = detach::closure(env, &scope, name, &manifest)?;
 
-    match (remove_packages, keep_packages) {
+    // Each arm ends once its first write has landed, on how the steps
+    // after it went: the unsubscribe is said whatever they did.
+    let after: CliResult = match (remove_packages, keep_packages) {
         (false, false) if !closure.items.is_empty() => {
             return Err(format!(
                 "'{name}' has {} package(s) installed — pass --remove-packages to remove them or --keep-packages to keep them as your own copies",
@@ -174,26 +179,51 @@ fn run_unsubscribe(
             .into());
         }
         // A bare plan: keeping moves tables, and takes no package away.
+        // Its re-sync is a second transaction, which can fail with the
+        // first one already on disk.
         (_, true) => {
             let plan = detach::source(env, &scope, name)?;
             kendex_core::apply::execute(env, &plan)?;
+            detach::resync_kept(env, &scope)
+                .map_err(Into::into)
+                .and_then(|resync| apply_report_accounted(env, &resync, None))
+                .and_then(|wrote| wrote.after.map_err(AfterFailed::into_error))
         }
         (_, false) => {
             let report = detach::remove(env, &scope, name, discard_edits)?;
-            apply_report(env, &report)?;
+            apply_report_accounted(env, &report, None)?
+                .after
+                .map_err(AfterFailed::into_error)
         }
-    }
-    if keep_packages {
-        let resync = detach::resync_kept(env, &scope)?;
-        apply_report(env, &resync)?;
-    }
-    let kept = if keep_packages { "kept" } else { "removed" };
-    say(&format!(
-        "{}: unsubscribed from '{name}', {} {kept}",
-        scope_label(&scope),
-        closure.items.len()
+    };
+    ui::stderr(&unsubscribed(
+        &style,
+        &scope,
+        name,
+        closure.items.len(),
+        keep_packages,
     ));
-    Ok(())
+    after
+}
+
+/// The landed unsubscribe: from what, and how many of its packages went
+/// or stayed.
+fn unsubscribed(
+    style: &Style,
+    scope: &kendex_core::model::Scope,
+    name: &str,
+    packages: usize,
+    kept: bool,
+) -> Vec<String> {
+    let kept = if kept { "kept" } else { "removed" };
+    style.report_row(
+        Status::Done,
+        &[Span::Prose(&format!(
+            "{}: unsubscribed from '{name}', {packages} {kept}",
+            scope_label(scope),
+        ))],
+        "",
+    )
 }
 
 fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliResult {
@@ -209,24 +239,46 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
         }))?);
         return Ok(());
     }
-    for row in rows {
-        let what = row.repo.or(row.path).unwrap_or_default();
-        let rev = row.rev.map(|rev| format!(" @ {rev}")).unwrap_or_default();
-        let counted = match row.counts {
-            Some(counts) => {
-                let total: usize = counts.values().sum();
-                format!("{total} package(s)")
-            }
-            None => "not downloaded yet".to_owned(),
-        };
-        let state = if row.enabled { "" } else { "  (switched off)" };
-        out(&format!(
-            "{}  {}  {what}{rev}  [{counted}]{state}",
-            row.scope.label(),
-            row.name,
-        ));
-    }
+    let style = ui::style();
+    let count = rows.len();
+    ui::stderr(&style.header(
+        "marketplace list",
+        &format!("{count} subscription{}", if count == 1 { "" } else { "s" }),
+    ));
+    let cells: Vec<Vec<Cell>> = rows.into_iter().map(subscription_cells).collect();
+    ui::stdout(&subscriptions(&style, &cells));
     Ok(())
+}
+
+/// One subscription's cells. The revision rides with its source and the
+/// switch with its count, each with its own spacing, so a plain row stays
+/// the line scripts read.
+fn subscription_cells(row: source_ops::SubscriptionRow) -> Vec<Cell> {
+    let what = row.repo.or(row.path).unwrap_or_default();
+    let rev = row.rev.map(|rev| format!(" @ {rev}")).unwrap_or_default();
+    let counted = match row.counts {
+        Some(counts) => {
+            let total: usize = counts.values().sum();
+            format!("{total} package(s)")
+        }
+        None => "not downloaded yet".to_owned(),
+    };
+    let state = if row.enabled { "" } else { "  (switched off)" };
+    vec![
+        Cell::default().copy(row.scope.label()),
+        row.name.into(),
+        Cell::default().copy(what).prose(rev),
+        format!("[{counted}]{state}").into(),
+    ]
+}
+
+fn subscriptions(style: &Style, cells: &[Vec<Cell>]) -> Vec<String> {
+    style.report_table(
+        "subscriptions",
+        &["scope", "name", "from", "packages"],
+        cells,
+        ui::report::PlainColumns::Joined,
+    )
 }
 
 fn run_subscribe(
@@ -236,33 +288,62 @@ fn run_subscribe(
     global: bool,
     scope: Option<String>,
 ) -> CliResult {
+    let style = ui::style();
+    ui::stderr(&style.header("marketplace subscribe", reference));
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
-    let subscribed = source_ops::subscribe(env, &scope, reference, name)?;
+    let subscribed = {
+        let _reading = ui::spinner("reading the marketplace");
+        source_ops::subscribe(env, &scope, reference, name)?
+    };
     for note in &subscribed.report.notes {
-        say(note);
+        ui::stderr(&style.report_row(Status::Notice, &[Span::Prose(note)], ""));
     }
-    apply_report(env, &subscribed.report)?;
+    // The manifest change is accepted once this returns; what fails after
+    // it is said under the subscription, never in its place.
+    let wrote = apply_report_accounted(env, &subscribed.report, None)?;
     // Subscribing fetches so counts can land; a failure costs the
     // counts, never the subscription.
     if let Ok(Some(manifest)) =
         kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(env, &scope))
         && let Some(decl) = manifest.sources.get(&subscribed.name)
         && let Some(repo) = decl.repo.clone()
-        && let Err(error) = kendex_core::remote::sync(env, &repo, decl.rev.as_deref())
+        && let Err(error) = {
+            let _downloading = ui::spinner("downloading the marketplace");
+            kendex_core::remote::sync(env, &repo, decl.rev.as_deref())
+        }
     {
-        say(&format!("warning: not downloaded yet ({})", error));
+        ui::stderr(&style.report_warning(&format!("not downloaded yet ({})", error)));
     }
-    say(&format!(
-        "{}: subscribed to '{}' ({})",
-        scope_label(&scope),
-        subscribed.name,
-        subscribed.reference
-    ));
-    if let Some(lead) = subscribed.lead {
-        say(&format!("package: {}", lead));
-    }
+    ui::stderr(&subscribed_lines(&style, &scope, &subscribed));
+    wrote.after.map_err(AfterFailed::into_error)?;
     Ok(())
+}
+
+/// The landed subscription, and the package its reference pointed at.
+fn subscribed_lines(
+    style: &Style,
+    scope: &kendex_core::model::Scope,
+    subscribed: &source_ops::Subscribed,
+) -> Vec<String> {
+    let mut lines = style.report_row(
+        Status::Done,
+        &[Span::Prose(&format!(
+            "{}: subscribed to '{}' ({})",
+            scope_label(scope),
+            subscribed.name,
+            subscribed.reference
+        ))],
+        "",
+    );
+    if let Some(lead) = &subscribed.lead {
+        lines.extend(style.report_row(
+            Status::Notice,
+            &[Span::Prose("package: "), Span::Command(lead)],
+            "",
+        ));
+    }
+    lines
 }
 
 pub fn run(env: &Env, command: MarketplaceCommand) -> CliResult {
@@ -307,6 +388,8 @@ pub fn run(env: &Env, command: MarketplaceCommand) -> CliResult {
                 Some(dir) => dir,
                 None => std::env::current_dir()?,
             };
+            let style = ui::style();
+            ui::stderr(&style.header("marketplace check", &dir.display().to_string()));
             super::check_catalog::run(&dir, true, false)?;
         }
         MarketplaceCommand::New {
@@ -356,3 +439,6 @@ pub fn run(env: &Env, command: MarketplaceCommand) -> CliResult {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

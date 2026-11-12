@@ -172,6 +172,9 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
+    // The cells on `line`, kept as pieces join it: measuring the whole
+    // line again for each piece is quadratic in a long table cell.
+    let mut used = 0;
     let mut room = first.max(1);
     // Whether a space separates the next piece from the one before it:
     // the spans are one text, so a space at a span's edge is still a space.
@@ -184,7 +187,7 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                 // The space a prose span left pending is the prose's own;
                 // the verbatim text's spaces are its content.
                 if spaced && !line.is_empty() {
-                    match cells(&line) + 1 > room {
+                    match used + 1 > room {
                         true => {
                             lines.push(std::mem::take(&mut line));
                             room = rest.max(1);
@@ -193,33 +196,36 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
                     }
                 }
                 push_cells(&mut line, &mut lines, &mut room, rest, text);
+                used = cells(&line);
                 spaced = false;
                 continue;
             }
         };
-        let pieces: Vec<&str> = match whole {
-            true => vec![text],
-            false => text.split(' ').collect(),
-        };
-        for (at, piece) in pieces.into_iter().enumerate() {
+        for (at, piece) in pieces(span).into_iter().enumerate() {
             spaced |= at > 0;
             if piece.is_empty() {
                 continue;
             }
-            let used = cells(&line);
+            let width = cells(piece);
             let gap = usize::from(used > 0 && spaced);
-            if used > 0 && used + gap + cells(piece) > room {
+            if used > 0 && used + gap + width > room {
                 lines.push(std::mem::take(&mut line));
+                used = 0;
                 room = rest.max(1);
             } else if gap == 1 {
                 line.push(' ');
+                used += 1;
             }
             spaced = false;
-            if whole {
+            // A piece that fits joins whole; only a word wider than the
+            // room breaks by cells.
+            if whole || used + width <= room {
                 line.push_str(piece);
+                used += width;
                 continue;
             }
             push_cells(&mut line, &mut lines, &mut room, rest, piece);
+            used = cells(&line);
         }
         spaced |= !whole && text.ends_with(' ');
     }
@@ -227,6 +233,25 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
         lines.push(line);
     }
     lines
+}
+
+/// The pieces of `span` that [`wrap`] keeps on one line wherever the room
+/// holds them: a prose word, a whole command, a verbatim character.
+fn pieces<'a>(span: &Span<'a>) -> Vec<&'a str> {
+    match *span {
+        Span::Prose(text) => text.split(' ').collect(),
+        Span::Command(text) => vec![text],
+        Span::Verbatim(text) => text
+            .char_indices()
+            .map(|(at, c)| &text[at..at + c.len_utf8()])
+            .collect(),
+    }
+}
+
+/// The cells of the widest piece [`wrap`] never breaks within `spans`: a
+/// room this wide draws every word and every command whole.
+pub(super) fn unbroken(spans: &[Span<'_>]) -> usize {
+    spans.iter().flat_map(pieces).map(cells).max().unwrap_or(0)
 }
 
 /// `text` onto `line` a character at a time, ending the line where the
