@@ -1662,8 +1662,7 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 #                program imports by its dotted module path; in any other
 #                run it is a path of no role
 #   suite        a member of the tree's whole set: tests/*.sh but
-#                run-all.sh, and tests/*.test.mjs where no run-all.sh runs
-#                the set
+#                run-all.sh, and tests/*.test.mjs
 #   doc          a file under references/ and any other .md file: a
 #                skill's SKILL.md, README.md, workflows/ and schemas/
 #   settings-example in a DEV_VALIDATE_SCOPED=true run only, a skill's
@@ -1701,10 +1700,7 @@ path_role() { # DIR REL
       echo test-program
       ;;
     *:tests/*.sh) echo suite ;;
-    *:tests/*.test.mjs)
-      if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
-      echo suite
-      ;;
+    *:tests/*.test.mjs) echo suite ;;
     hooks:*.md) echo doc ;;
     hooks:*/*) return 1 ;;
     hooks:*.sh) echo script ;;
@@ -2766,15 +2762,14 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     suite_runs+=("$run")
     suite_scripts+=("$suite_script")
   done
-  # Bash defers this guard's trap while a foreground runner stops children.
-  # The active runner therefore reports its current and later batteries.
-  suite_index=0
-  suite_later=""
+  # Bash defers this guard's trap while a foreground runner stops children,
+  # so the active runner reports its own selection; otherwise each entry of
+  # suite_runs holds what its tree has not started.
   active_runner=0
   unstarted_suites() {
     local t pending
     [ "$active_runner" -eq 0 ] || return 0
-    for ((pending = suite_index; pending < ${#suite_runs[@]}; pending++)); do
+    for ((pending = 0; pending < ${#suite_runs[@]}; pending++)); do
       while IFS= read -r t; do
         [ -n "$t" ] || continue
         printf 'guard-note: unstarted-suite=%s\n' "$t"
@@ -2791,6 +2786,8 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
     done <<<"$run"
   done
   npm_available=unchecked
+  pool_args=()
+  pool_filters=()
   for ((suite_index = 0; suite_index < ${#suite_trees[@]}; suite_index++)); do
     d=${suite_trees[suite_index]}
     run=${suite_runs[suite_index]}
@@ -2815,23 +2812,16 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       [ -z "$suite_out" ] || printf '%s\n' "$suite_out"
       continue
     fi
-    suite_later=""
-    for ((pending = suite_index + 1; pending < ${#suite_runs[@]}; pending++)); do
-      suite_later+="${suite_runs[pending]}"$'\n'
-    done
-    filters=()
-    while IFS= read -r t; do
-      [ -n "$t" ] || continue
-      t="${t##*/}"
-      t="${t%.test.mjs}"
-      filters+=("=${t%.sh}")
-    done <<<"$run"
     if [ -n "$release_version" ]; then
+      filters=()
+      while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        t="${t##*/}"
+        filters+=("=${t%.sh}")
+      done <<<"$run"
       # --local replaces PATH with a checkout build. The release leg uses
-      # its inherited release PATH; orch's native entry keeps its ALONE policy.
-      release_args=()
-      [ "$d" = skills/orch ] || release_args=(--battery "$d/tests")
-      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" ${release_args[@]+"${release_args[@]}"} ${filters[@]+"${filters[@]}"} || {
+      # its inherited release PATH.
+      bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --battery "$d/tests" ${filters[@]+"${filters[@]}"} || {
         printf 'catalog-release: version=%s leg=package-suites package=%s suite=%s\n' "$release_version" "$d" "$d/tests"
         printf '%s\n' 'catalog-release: remedy=release-engine' \
           'Release the engine first, then raise min_kendex. See app-deploy Catalog compatibility.'
@@ -2840,33 +2830,49 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       suite_runs[suite_index]=""
       continue
     fi
-    if [ -f "$d/tests/run-all.sh" ]; then
-      # Family aliases can expand these filters; the runner publishes its selection.
-      echo "=== $d/tests/run-all.sh" ${filters[@]+"${filters[@]}"}
-      active_runner=1
-      RUN_ALL_PENDING_SUITES="$run"$'\n'"$suite_later" bash "$d/tests/run-all.sh" --local ${filters[@]+"${filters[@]}"} || say suite "$d/tests/run-all.sh"
-      suite_runs[suite_index]=""
-      active_runner=0
-      continue
-    fi
-    # The loop walks an array by position, so a suite that reads stdin cannot
-    # take entries from the list. The child gets no stdin: a suite that reads
-    # it must not wait on the terminal of a guard run by hand.
-    direct_suites=()
-    while IFS= read -r t; do direct_suites+=("$t"); done <<<"$run"
-    for ((direct_index = 0; direct_index < ${#direct_suites[@]}; direct_index++)); do
-      t=${direct_suites[direct_index]}
-      # One assignment, so the signal report sees a complete remainder.
-      direct_later=""
-      for ((pending = direct_index + 1; pending < ${#direct_suites[@]}; pending++)); do
-        direct_later+="${direct_suites[pending]}"$'\n'
-      done
-      suite_runs[suite_index]=$direct_later
+    # A shell suite joins the one pool call below. The runner discovers no
+    # .test.mjs suite, so each runs here by itself, with no stdin: a suite
+    # that reads it must not wait on the terminal of a guard run by hand.
+    shell_run=""
+    direct_run=""
+    while IFS= read -r t; do
       [ -f "$t" ] || continue
+      case "$t" in
+        *.test.mjs) direct_run+="$t"$'\n' ;;
+        *) shell_run+="$t"$'\n' ;;
+      esac
+    done <<<"$run"
+    while [ -n "$direct_run" ]; do
+      t=${direct_run%%$'\n'*}
+      direct_run=${direct_run#*$'\n'}
+      # One assignment, so the signal report sees a complete remainder.
+      suite_runs[suite_index]=$shell_run$direct_run
       echo "=== $t"
       bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" --local --suite "$t" </dev/null || say suite "$t"
     done
+    suite_runs[suite_index]=$shell_run
+    [ -n "$shell_run" ] || continue
+    pool_args+=(--battery "$d/tests")
+    while IFS= read -r t; do
+      [ -n "$t" ] || continue
+      t="${t##*/}"
+      # Base names repeat across trees, so each filter names its tree.
+      pool_filters+=("=$d:${t%.sh}")
+    done <<<"$shell_run"
   done
+  # One pool over the whole selected union: no tree waits on another's
+  # slowest suite, and every shell suite shares the runner's nproc workers.
+  if [ "${#pool_args[@]}" -gt 0 ]; then
+    pool_pending=""
+    for run in "${suite_runs[@]}"; do pool_pending+=$run; done
+    # Family aliases can expand these filters; the runner publishes its selection.
+    echo "=== skills/orch/tests/run-all.sh ${pool_args[*]} ${pool_filters[*]}"
+    active_runner=1
+    RUN_ALL_PENDING_SUITES=$pool_pending bash "$TOOLS_DIR/../skills/orch/tests/run-all.sh" "${pool_args[@]}" --local "${pool_filters[@]}" </dev/null ||
+      say suite skills/orch/tests/run-all.sh
+    suite_runs=()
+    active_runner=0
+  fi
   trap - TERM INT HUP
 fi
 [ -n "$suite_selection" ] || suite_selection=all

@@ -39,11 +39,15 @@
 # `--battery DIR`, given first, runs the suites in DIR in place of this
 # directory's, under the same filters, pool and report; tools/tests/run-all.sh
 # runs that tree's suites this way. The ALONE list below names this
-# directory's suites; with --battery, the suites each `--alone NAME` after it
-# names are the ones that run alone.
+# directory's suites and other trees' of this repository, and holds each
+# wherever its directory is a battery; with --battery, the suites each
+# `--alone NAME` after it names run alone too.
 #
 # Each argument is a substring of a suite's base name, or, written `=name`,
-# the whole of one. A bare one selects, one written `!name` rejects, and a
+# the whole of one; `=TREE:name` is that one in the battery whose tree is
+# TREE, its parent directory relative to its repository root, such as
+# `skills/jarvis`, so one pool call can name a base name two trees share.
+# A bare one selects, one written `!name` rejects, and a
 # file runs when it matches a selector — or none was given — and matches no
 # rejector. Two runs whose arguments are
 # a set and that set negated therefore partition the battery: every suite
@@ -193,6 +197,11 @@ unset ORCH_STATE_DIR ORCH_LANE_HOST ORCH_TMUX_SESSION \
   ORCH_USER_MODE ORCH_DECISION_MODE ORCH_MERGE_AUTONOMY \
   ORCH_LANE_OUTPUT ORCH_QUESTION_TOOL ORCH_COMPACTION_OVERRIDES
 
+# Physical directories from here, so this directory and each --battery one
+# compare equal to themselves however the caller reached them: tools/guard
+# calls this file through its own path and names batteries from git's
+# toplevel.
+set -P
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_TEST_DIR="$TEST_DIR"
 
@@ -204,12 +213,45 @@ ALONE=(
   open-terminal-lane      # the lane-tree stub holds the picked account for 2s
   oversee_watch_lifecycle # a takeover case waits 10s for the takeover line
 )
+# Other trees' suites, each a path from the repository root this file sits
+# in, so a pool of any batteries holds them; CI's per-tree --alone arguments
+# name the same suites.
+ALONE+=(
+  skills/commit-guards/tests/terminal-paths.test        # the watchdog's caller window
+  tools/tests/bash32-parse.test
+  hooks/tests/lane-mail-usage.test                      # the pending-reading row's real hook wait
+  skills/linear/tests/mutation-isolation.test           # a fixture's short cap
+  skills/linear/tests/interrupt.test                    # a real signal window
+  skills/bot-instructions/tests/fsutil.test             # parent deadlines on bounded reads
+  skills/bot-instructions/tests/globs.test              # parent deadlines on matching
+  skills/worktree/tests/worktree_session_guard_lifecycle # the held mutex before the outer timeout
+  skills/slack/tests/mailbox.test
+  skills/slack/tests/reload.test
+  skills/slack/tests/socket.test
+  skills/github/tests/bounded-signal.test
+  skills/github/tests/pr-merge.test
+  skills/github/tests/pr-view.test
+  skills/github/tests/native-contracts.test
+  skills/harness-ci/tests/wiring-errors.test
+  skills/reviewer/tests/mutation-stability.test
+  skills/second-opinion/tests/cli-failure-gate.test
+  skills/second-opinion/tests/detached-run.test
+  skills/second-opinion/tests/execution-fallback.test
+  skills/second-opinion/tests/process-tree.test
+)
 
+# Whole physical paths, so a --battery run holds each wherever its directory
+# is one of the batteries, and a same-named suite in another battery is not
+# held. The repository root is the one the caller's path to this file names.
+SUITE_ROOT="$(cd -L "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)" || exit 1
+for ((i=0; i<${#ALONE[@]}; i++)); do
+  case "${ALONE[i]}" in
+    */*) ALONE[i]="$SUITE_ROOT/${ALONE[i]}.sh" ;;
+    *) ALONE[i]="$ORCH_TEST_DIR/${ALONE[i]}.sh" ;;
+  esac
+done
 TEST_DIRS=("$TEST_DIR")
 if [ "${1-}" = --battery ]; then
-  # Another battery's wrapper names its own, so a suite there sharing a name
-  # with one above is not held back.
-  ALONE=()
   TEST_DIRS=()
   while [ "${1-}" = --battery ]; do
     TEST_DIR="$(cd "$2" && pwd)" || exit 1
@@ -220,8 +262,6 @@ if [ "${1-}" = --battery ]; then
       shift 2
     done
   done
-else
-  for ((i=0; i<${#ALONE[@]}; i++)); do ALONE[i]="$TEST_DIR/${ALONE[i]}.sh"; done
 fi
 # The verdict line names the tree whose tests/ the battery is.
 BATTERY="$(basename "$(dirname "$TEST_DIR")")"
@@ -337,7 +377,6 @@ shard_of() { # BASE
 OUT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/orch-run-all.XXXXXX")" ||
   { echo "run-all.sh: mktemp failed; no directory to hold suite output" >&2; exit 1; }
 trap 'rm -rf -- "$OUT_DIR"' EXIT
-SUITE_ROOT="$(cd "$ORCH_TEST_DIR/../../.." && pwd -P)" || exit 1
 CLEAN_PATH=""
 CHECKOUT_PATH=""
 # The kendex tools/ci-job-set gives the suite at PATH, relative to SUITE_ROOT,
@@ -436,9 +475,23 @@ matches() { # BASE FILTER
     esac
   fi
   case "$2" in
+    =*:*) battery_tree && [ "${2%%:*}" = "=$BATTERY_TREE" ] && matches "$1" "=${2#*:}" ;;
     =*) [ "$1" = "${2#=}" ] ;;
     *) case "$1" in *"$2"*) return 0 ;; *) return 1 ;; esac ;;
   esac
+}
+
+# BATTERY_TREE: TEST_DIR's parent relative to the root of the repository
+# holding it, read once per battery. git refuses that read in a checkout
+# another user owns; a qualified filter it cannot place would drop its suite
+# without a word, so the run stops there.
+BATTERY_TREE_OF=""
+battery_tree() {
+  [ "$BATTERY_TREE_OF" != "$TEST_DIR" ] || return 0
+  BATTERY_TREE="$(cd -- "$TEST_DIR/.." && root="$(git rev-parse --show-toplevel)" &&
+    here="$(pwd -P)" && printf '%s' "${here#"$root"/}")" ||
+    { echo "run-all.sh: battery-tree=unread battery=$TEST_DIR" >&2; exit 1; }
+  BATTERY_TREE_OF=$TEST_DIR
 }
 
 # Bash 3.2 under `set -u` errors on "${arr[@]}" when arr is empty, so each

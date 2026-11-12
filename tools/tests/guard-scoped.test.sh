@@ -16,6 +16,10 @@ done
 printf 'printf "named\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/open-terminal.test.sh"
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
+# run-all.sh reds a suite that exits 0 with no row; a nonzero exit still reds.
+for f in "$R"/skills/orch/tests/*.sh; do
+  { printf 'echo "pass: 1   fail: 0"\n'; cat "$f"; } > "$f.rowed" && mv "$f.rowed" "$f"
+done
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm launch
@@ -67,9 +71,9 @@ mkdir -p "$R/skills/demo/references" "$R/.agents/skills/demo/references"
 printf '# Guide\n' > "$R/skills/demo/references/guide.md"
 cp "$R/skills/demo/references/guide.md" "$R/.agents/skills/demo/references/guide.md"
 printf '# Skills\n' > "$R/skills/AGENTS.md"
-printf 'cat "$PWD/skills/demo/references/guide.md" >/dev/null\nprintf "doc-source\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/doc-source.sh"
-printf 'cat "$PWD/skills/AGENTS.md" >/dev/null\nprintf "doc-outside\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/doc-outside.sh"
-printf 'cat "$PWD/.agents/skills/demo/references/guide.md" >/dev/null\nprintf "doc-render\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/doc-render.sh"
+printf 'cat "$PWD/skills/demo/references/guide.md" >/dev/null\nprintf "doc-source\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/doc-source.sh"
+printf 'cat "$PWD/skills/AGENTS.md" >/dev/null\nprintf "doc-outside\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/doc-outside.sh"
+printf 'cat "$PWD/.agents/skills/demo/references/guide.md" >/dev/null\nprintf "doc-render\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/orch/tests/doc-render.sh"
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm docs
@@ -133,8 +137,8 @@ git -C "$R" checkout -q -- skills/demo .agents/skills/demo
 jq -n '[".agents/skills/demo/SKILL.md", ".agents/skills/demo/kendex.settings.toml.example",
   ".agents/skills/demo/references/guide.md", ".agents/skills/demo/scripts/tool", ".claude/skills/demo"]' \
   > "$R/.kendex-generated.json"
-printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-reader\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/inventory-reader.sh"
-printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-orch\\n" >> "$SUITE_LOG"\n' > "$R/skills/orch/tests/inventory-orch.sh"
+printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-reader\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/inventory-reader.sh"
+printf 'cat "$PWD/.kendex-generated.json" >/dev/null\nprintf "inventory-orch\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/orch/tests/inventory-orch.sh"
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm inventory
@@ -186,7 +190,7 @@ printf 'SOURCE = "skills/pyreach/scripts/lib/other.py"\n' > "$R/skills/pyreach/t
 printf 'import mod_test\n' > "$R/skills/pyreach/tests/importer_test.py"
 printf 'from mod_test import SOURCE\n' > "$R/skills/pyreach/tests/from_test.py"
 for name in mod other importer from; do
-  printf 'python3 -B "$PWD/skills/pyreach/tests/%s_test.py"\nprintf "%s\\n" >> "$SUITE_LOG"\n' "$name" "$name" \
+  printf 'python3 -B "$PWD/skills/pyreach/tests/%s_test.py"\nprintf "%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" "$name" \
     > "$R/skills/pyreach/tests/$name-wrapper.sh"
 done
 git -C "$R" add -A
@@ -238,21 +242,21 @@ mkdir -p "$R/skills/settings/tests" "$R/skills/area/tests" "$R/skills/second-opi
 printf '[env]\n# keys: SECOND_OPINION_<NAME>_CMD SECOND_OPINION_<NAME>_MODEL\n' > "$R/skills/second-opinion/kendex.settings.toml.example"
 printf '[env]\nFIXTURE_READ_KEY = "a"\n' > "$R/skills/settings/kendex.settings.toml.example"
 printf '[env]\n# FIXTURE_AREA_KEY = "b"\n' > "$R/skills/area/kendex.settings.toml.example"
-printf 'grep -q FIXTURE_READ_KEY "$PWD/kendex.settings.toml"\nprintf "reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/reader.sh"
-printf 'own=$(mktemp -d)\nprintf "[env]\\nOWN = \\"1\\"\\n" > "$own/kendex.settings.toml"\nrm -rf "$own"\nprintf "writer\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/writer.sh"
-printf '# Inputs: skills/settings/kendex.settings.toml.example\nprintf "example-noted\\n" >> "$SUITE_LOG"\n' > "$R/skills/settings/tests/example-noted.sh"
+printf 'grep -q FIXTURE_READ_KEY "$PWD/kendex.settings.toml"\nprintf "reader\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/settings/tests/reader.sh"
+printf 'own=$(mktemp -d)\nprintf "[env]\\nOWN = \\"1\\"\\n" > "$own/kendex.settings.toml"\nrm -rf "$own"\nprintf "writer\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/settings/tests/writer.sh"
+printf '# Inputs: skills/settings/kendex.settings.toml.example\nprintf "example-noted\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/settings/tests/example-noted.sh"
 for name in one two; do
-  printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/area/tests/$name.sh"
-  printf 'printf "review-%s\\n" >> "$SUITE_LOG"\n' "$name" > "$R/skills/second-opinion/tests/$name.sh"
+  printf 'printf "%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" > "$R/skills/area/tests/$name.sh"
+  printf 'printf "review-%s\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' "$name" > "$R/skills/second-opinion/tests/$name.sh"
 done
 mkdir -p "$R/skills/keyed/tests/lib" "$R/.agents/skills/keyed"
 printf '[env]\nFIXTURE_OLD_KEY = "a"\n' > "$R/skills/keyed/kendex.settings.toml.example"
 cp "$R/skills/keyed/kendex.settings.toml.example" "$R/.agents/skills/keyed/kendex.settings.toml.example"
 printf 'KEYS = ("FIXTURE_OLD_KEY", "FIXTURE_NEW_KEY")\n' > "$R/skills/keyed/tests/lib/world.py"
-printf 'python3 -B "$PWD/skills/keyed/tests/lib/world.py"\nprintf "keyed-reader\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/reader.sh"
-printf 'printf "keyed-other\\n" >> "$SUITE_LOG"\n' > "$R/skills/keyed/tests/other.sh"
-printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-copy.sh"
-printf '# Inputs: kendex.settings.toml, skills/demo/scripts/demo.sh\nprintf "listed\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/settings-listed.sh"
+printf 'python3 -B "$PWD/skills/keyed/tests/lib/world.py"\nprintf "keyed-reader\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/keyed/tests/reader.sh"
+printf 'printf "keyed-other\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/skills/keyed/tests/other.sh"
+printf '# Inputs: kendex.settings.toml\ncat "$PWD/kendex.settings.toml" >/dev/null\nprintf "copy\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/settings-copy.sh"
+printf '# Inputs: kendex.settings.toml, skills/demo/scripts/demo.sh\nprintf "listed\\n" >> "$SUITE_LOG"\necho "pass: 1   fail: 0"\n' > "$R/tools/tests/settings-listed.sh"
 git -C "$R" add -A
 entry_points_executable
 git -C "$R" commit -qm settings
@@ -348,85 +352,29 @@ else
   bad 'control changes the example line comparison'
 fi
 
-# A tree with no run-all.sh runs each suite through guard's direct loop, and
-# a suite or its child may read stdin. Here a-reader reads stdin, whole or
-# one line, and every suite names the changed script. A suite named by
-# SIGNAL_SUITE sends the guard TERM once it has logged, so the guard's signal
-# report names what it had not started.
-mkdir -p "$R/skills/stdin/scripts" "$R/skills/stdin/tests"
-printf '#!/usr/bin/env bash\n:\n' > "$R/skills/stdin/scripts/tool"
-for name in a-reader b-later c-later d-later; do
-  {
-    printf '"$PWD/skills/stdin/scripts/tool"\n'
-    [ "$name" != a-reader ] || printf 'case "$READ_MODE" in whole) cat >/dev/null ;; line) read -r _ || : ;; esac\n'
-    printf 'printf "%s\\n" >> "$SUITE_LOG"\n' "$name"
-    printf '[ "$SIGNAL_SUITE" != %s ] || kill -TERM "$GUARD_PID"\n' "$name"
-  } > "$R/skills/stdin/tests/$name.sh"
-done
-git -C "$R" add -A
-entry_points_executable
-git -C "$R" commit -qm stdin
-BASE="$(git -C "$R" rev-parse HEAD)"
-stdin_row() { # GUARD ROW: run the normal range over a changed tool; fails naming what differs
-  local guard=$1 name read_mode signal want_rc want_ran want_left rc=0 out ran left
-  IFS='|' read -r name read_mode signal want_rc want_ran want_left <<<"$2"
-  printf '# changed\n' >> "$R/skills/stdin/scripts/tool"
-  : > "$SUITE_LOG"
-  out="$(cd "$R" && READ_MODE="$read_mode" SIGNAL_SUITE="$signal" SUITE_LOG="$SUITE_LOG" \
-    bash -c 'export GUARD_PID=$$; exec "$0" --range "$1"' "$guard" "$BASE" 2>&1)" || rc=$?
-  git -C "$R" checkout -q -- skills/stdin/scripts/tool
-  ran="$(sort "$SUITE_LOG" | tr '\n' ' ')"
-  left="$(sed -n 's#^guard-note: unstarted-suite=skills/stdin/tests/\(.*\)\.sh$#\1#p' <<<"$out" | tr '\n' ' ')"
-  [ "$rc" = "$want_rc" ] && [ "$ran" = "$want_ran" ] && [ "$left" = "$want_left" ] && return 0
-  ROW_DETAIL="$name: rc=$rc ran=$ran unstarted=$left out=$out"
-  return 1
-}
-# name | a-reader's read | suite that signals | exit | suites run | suites reported unstarted
-STDIN_ROWS=(
-  'whole-read|whole||0|a-reader b-later c-later d-later |'
-  'one-line|line||0|a-reader b-later c-later d-later |'
-  'one-line-then-signal|line|c-later|143|a-reader b-later c-later |d-later '
-)
-for row in "${STDIN_ROWS[@]}"; do
-  stdin_row "$GUARD" "$row" \
-    && ok "direct loop: ${row%%|*} runs or reports every selected suite" \
-    || bad "direct loop: ${row%%|*} runs or reports every selected suite" "$ROW_DETAIL"
-done
-# The loop shape before this guarantee: the list on the loop's stdin, which
-# the child inherits, and a remainder kept by stripping up to each entry
-# read. Every row must fail against it.
-if mutant_guard '/^    direct_suites=()$/d
-s/^    while IFS= read -r t; do direct_suites+=("\$t"); done <<<"\$run"$/    while IFS= read -r t; do/
-/^    for ((direct_index = 0; /d
-/^      t=\${direct_suites\[direct_index\]}$/d
-/^      # One assignment, so the signal report sees a complete remainder\.$/,/^      suite_runs\[suite_index\]=\$direct_later$/c\
-      suite_runs[suite_index]=${suite_runs[suite_index]#*"$t"}
-s#--local --suite "\$t" </dev/null ||#--local --suite "$t" ||#
-/--local --suite "\$t" ||/{
-n
-s/^    done$/    done <<<"$run"/
-}'; then
-  for row in "${STDIN_ROWS[@]}"; do
-    stdin_row "$MUTANT_TOOLS/guard" "$row" \
-      && bad "control: the stdin-fed loop breaks direct loop row ${row%%|*}" \
-      || ok "control: the stdin-fed loop breaks direct loop row ${row%%|*}"
-  done
-else
-  bad 'control restores the stdin-fed direct loop'
-fi
-
 # A real cancellation must also name suites in batteries not yet entered.
 # Each phase holds on its FIFO; the parent sends TERM only once its
 # non-blocking writer open proves a holder is there, then releases the hold.
 printf 'source "$PWD/skills/orch/scripts/open-terminal"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
 printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
-mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$TMP/serial-bin"
-cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
-cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
-cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
-cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
-cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+mkdir -p "$TMP/serial-bin"
+printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+# A .test.mjs suite runs by itself before the pool call, beside its tree's
+# shell suites; the node stub holds it in the standalone phase.
+printf '// reads skills/orch/scripts/open-terminal\n' > "$R/skills/orch/tests/direct.test.mjs"
+printf '#!/usr/bin/env bash\nif [ "$PHASE" = standalone ] && [ "$1" = --test ]; then read -r line < "$FIFO"; fi\n' > "$TMP/serial-bin/node"
+chmod +x "$TMP/serial-bin/node"
+# The guard runs the runner beside it, so the loading hold below needs a
+# guard whose runner is a copy: a root linking every package but that one file.
+CANCEL="$TMP/cancel-root"
+mkdir -p "$CANCEL/skills/orch/tests"
+cp -R "$MUTANT_TOOLS" "$CANCEL/tools"
+cp "$GUARD" "$CANCEL/tools/guard"
+ln -s "$REPO/.agents" "$CANCEL/.agents"
+for entry in "$REPO"/skills/*; do [ "${entry##*/}" = orch ] || ln -s "$entry" "$CANCEL/skills/${entry##*/}"; done
+for entry in "$REPO"/skills/orch/*; do [ "${entry##*/}" = tests ] || ln -s "$entry" "$CANCEL/skills/orch/${entry##*/}"; done
+for entry in "$REPO"/skills/orch/tests/*; do [ "${entry##*/}" = run-all.sh ] || ln -s "$entry" "$CANCEL/skills/orch/tests/${entry##*/}"; done
+cp "$REPO/skills/orch/tests/run-all.sh" "$CANCEL/skills/orch/tests/run-all.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
@@ -434,7 +382,7 @@ entry_points_executable
 git -C "$R" commit -qm cancellation
 BASE="$(git -C "$R" rev-parse HEAD)"
 printf '# changed\n' >> "$R/skills/orch/scripts/open-terminal"
-if python3 - "$R" "$GUARD" "$BASE" "$TMP" <<'PY'
+if python3 - "$R" "$CANCEL/tools/guard" "$BASE" "$TMP" <<'PY'
 import errno
 import os
 from pathlib import Path
@@ -444,11 +392,8 @@ import sys
 import time
 
 repo, guard, base, scratch = sys.argv[1:]
-runner = Path(repo) / "skills/orch/tests/run-all.sh"
+runner = Path(guard).parent.parent / "skills/orch/tests/run-all.sh"
 runner_text = runner.read_text()
-# The phase holds below rewrite the runner. They are harness, not a change
-# under test: a changed run-all.sh selects its tree's whole set.
-subprocess.run(["git", "update-index", "--skip-worktree", "skills/orch/tests/run-all.sh"], cwd=repo, check=True)
 grace_text = (Path(guard).parent.parent / "skills/orch/scripts/lib/job-unit.sh").read_text()
 grace = int(next(line.split("=", 1)[1] for line in grace_text.splitlines()
                  if line.startswith("JOB_UNIT_KILL_GRACE=")))
@@ -472,16 +417,24 @@ read -r line < "$FIFO"
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
                 "skills/orch/tests/open-terminal.test.sh", "tools/tests/later.sh"]
-complete_plan = ["hooks/tests/startup.sh", *packages, *shell_suites]
+standalone = "skills/orch/tests/direct.test.mjs"
+suites = [*shell_suites[:1], standalone, *shell_suites[1:]]
+complete_plan = ["hooks/tests/startup.sh", *packages, *suites]
+# Every shell suite waits for the one pool call after the packages, the hooks
+# suite first; once that call has found them it names each <tree>--<name>.
+pooled = ["hooks/tests/startup.sh", *shell_suites]
+pool_names = [Path(p).parts[-3] + "--" + Path(p).stem for p in pooled]
 # Each row stops a different execution state. The fallback consumes these
 # machine-read suite paths, including later package batteries.
 for phase, expected in (
-    ("npm", [packages[1], *shell_suites]),
-    ("standalone", [*packages, *shell_suites]),
-    ("npm-probe", [*packages, *shell_suites]),
-    ("npm-later", shell_suites),
-    ("loading", shell_suites),
-    ("running", ["helper", "open-terminal.test", "tools/tests/later.sh"]),
+    ("npm", [pooled[0], packages[1], *suites]),
+    # The .test.mjs suite holds: its tree's shell suites and every other
+    # tree's wait for the pool call.
+    ("standalone", pooled),
+    ("npm-probe", complete_plan),
+    ("npm-later", [pooled[0], *suites]),
+    ("loading", pooled),
+    ("running", pool_names[2:]),
 ):
   fifo = Path(scratch) / (phase + "-hold")
   os.mkfifo(fifo)
@@ -489,10 +442,11 @@ for phase, expected in (
   if phase == "loading":
     # The runner owns the TERM trap this row reads, so its hold ignores TERM:
     # the signal stays pending in the runner until the parent releases the
-    # hold, the worst order a hold entered around the signal can take.
+    # hold, the worst order a hold entered around the signal can take. The
+    # pool call holds, not the .test.mjs suite's direct run before it.
     marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
     assert text.count(marker) == 1
-    text = text.replace(marker, 'sh -c \'trap "" TERM; read -r line < "$FIFO"\'\n' + marker)
+    text = text.replace(marker, 'case "$*" in --battery*) sh -c \'trap "" TERM; read -r line < "$FIFO"\' ;; esac\n' + marker)
   runner.write_text(text)
   env = dict(os.environ, DEV_VALIDATE_SCOPED="true", FIFO=str(fifo), PHASE=phase,
              PATH=str(Path(scratch) / "serial-bin") + os.pathsep + os.environ["PATH"])
@@ -525,7 +479,6 @@ for phase, expected in (
         queued = [line.removeprefix("guard-note: unstarted-suite=") for line in output.splitlines()
                   if line.startswith("guard-note: unstarted-suite=")]
         assert queued == expected, output
-        assert (queued == [packages[1], *shell_suites]) == (phase == "npm"), output
         assert not unstarted, output
     else:
         assert unstarted == ["unstarted suite=" + name for name in expected], output

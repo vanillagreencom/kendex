@@ -628,6 +628,9 @@ main() {
 
 	printf '\n%d controls, %d failing, %d orphaned\n' \
 		"$total" "$FAILURES" "$orphans"
+	# The row skills/orch/tests/run-all.sh counts: tools/guard pools this
+	# battery with the tree's suites, and that runner reds a rowless pass.
+	printf 'pass: %d   fail: %d\n' "$((total - FAILURES))" "$((FAILURES + orphans))"
 	[[ "$FAILURES" -eq 0 && "$orphans" -eq 0 ]]
 }
 
