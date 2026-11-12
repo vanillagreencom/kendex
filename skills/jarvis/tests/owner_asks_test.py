@@ -254,7 +254,7 @@ class OwnerAsksContract(unittest.TestCase):
         ]
         for host, failure, key in failures:
             with self.subTest(host=host, failure=type(failure).__name__):
-                target = owner_asks.watch.Destination("ssh:remote" if host else "local", host)
+                target = owner_asks.watch.Destination("ssh:remote" if host else "local", host, None)
                 if host:
                     dependency = patch.object(owner_asks.forward, "host_call", return_value=failure)
                 else:
@@ -270,6 +270,34 @@ class OwnerAsksContract(unittest.TestCase):
                 self.assertEqual(record["destination"], target.key + ":" + str(self.home))
                 self.assertEqual(record["key"], key)
                 self.assertNotIn(secret, lines[0])
+
+    def test_mailbox_delivery_preserves_destination_account(self):
+        session = self.owner.session
+        session.env["JARVIS_BASH"] = BASH
+        session.deadline = owner_asks.time.monotonic() + 10
+        mail = self.home / ".agents/skills/mailbox/scripts/lane-mail"
+        mail.parent.mkdir(parents=True)
+        mail.touch()
+        cases = [
+            ("local", None, {}),
+            ("ssh:remote", "remote", {"JARVIS_REMOTE_HOSTS": "remote"}),
+            ("ssh:control", "control", {"JARVIS_CONTROL_HOST": "control", "JARVIS_CONTROL_USER": "overseer"}),
+        ]
+        for destination, host, settings in cases:
+            with self.subTest(destination=destination):
+                sources = owner_asks.Sources(session, dict(settings, JARVIS_MAIN_HOST=""))
+                route = {"source": "mailbox", "destination": destination, "host": host,
+                         "root": str(self.home), "ask": "original"}
+                result = subprocess.CompletedProcess([], 0, "lane-mail: sent item=overseer id=reply\n", "")
+                with patch.object(owner_asks.watch, "run", return_value=result) as transport:
+                    self.assertEqual(sources.send(route, "Owner reply", "delivery"), "reply")
+                argv = list(map(str, transport.call_args.args[0]))
+                if host:
+                    self.assertEqual(argv[:2], ["ssh", host])
+                    self.assertEqual("sudo -n -H -u overseer -- bash -l -c" in argv[2], host == "control")
+                else:
+                    self.assertEqual(argv[:2], [BASH, str(mail)])
+                self.assertEqual(transport.call_args.kwargs["operation"], "host-send" if host else "local-send")
 
     def test_control_rejects_receipt_and_page_cap_regressions(self):
         # Keep the mutant outside the worktree and acquire only its own
@@ -419,7 +447,7 @@ import owner_asks
 from session import Session
 session=Session(sys.argv[2])
 session.deadline=time.monotonic()+14
-result=owner_asks.Sources(session,{}).call(owner_asks.watch.Destination('local',None),sys.argv[3],
+result=owner_asks.Sources(session,{}).call(owner_asks.watch.Destination('local',None,None),sys.argv[3],
  'slack','slack',['post','--root',sys.argv[3],'--text',sys.argv[4],'--mention'],check=False)
 print(json.dumps([result.returncode,result.stdout,result.stderr]))
 '''
