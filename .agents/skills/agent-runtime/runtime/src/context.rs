@@ -6,9 +6,12 @@
 //! launch's compaction overrides, a window a hook payload named) comes in
 //! as an argument.
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde_json::{Map, Value};
 
@@ -318,6 +321,187 @@ fn pi_enabled(file: &Path) -> Result<Option<Value>, SettingsUnread> {
         .cloned())
 }
 
+/// The script `node` runs to read Pi's own model registry from the install
+/// the `pi` it is handed runs.
+const PI_REGISTRY_WINDOW: &str = include_str!("pi-registry-window.mjs");
+
+/// The window Pi's own model registry holds for `model`, spelled
+/// `provider/id`: read by the `node` on `path` through the SDK of the first
+/// `pi` there, offline and against the Pi user directory `agent_dir`,
+/// within `bound`. `None` where `model` names no provider, `path` holds no
+/// `pi` or no `node`, the read fails or outlasts the bound, or it prints no
+/// whole window. The read takes about a second, so a caller runs it only
+/// where nothing it already holds names a window.
+pub fn pi_registry_window(
+    model: &str,
+    agent_dir: &Path,
+    path: &OsStr,
+    bound: Duration,
+) -> Option<u64> {
+    let (provider, id) = model.split_once('/')?;
+    let pi = std::env::split_paths(path)
+        .map(|dir| dir.join("pi"))
+        .find(|candidate| {
+            std::fs::metadata(candidate)
+                .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+        })?;
+    let output = crate::host::run_with(
+        "node",
+        "pi-registry-window",
+        &[
+            "--input-type=module",
+            "--eval",
+            PI_REGISTRY_WINDOW,
+            "--",
+            pi.to_str()?,
+            provider,
+            id,
+        ],
+        &[
+            ("PATH", path),
+            ("PI_OFFLINE", OsStr::new("1")),
+            ("PI_CODING_AGENT_DIR", agent_dir.as_os_str()),
+        ],
+        None,
+        bound,
+    )
+    .ok()?;
+    String::from_utf8_lossy(&output.stdout)
+        .trim_end_matches('\n')
+        .parse::<u64>()
+        .ok()
+        .filter(|window| *window > 0)
+}
+
+/// The share of a Copilot session's window at which its CLI starts
+/// compacting. Copilot has no switch that turns its automatic compaction
+/// off, so a reading's point is this share of the window it names.
+pub const COPILOT_COMPACTION_PCT: u64 = 80;
+
+/// The capacity source the reading Copilot's context extension hands over
+/// is recorded under: a record carrying another is no reading of the
+/// extension's.
+pub const COPILOT_EXTENSION_SOURCE: &str =
+    "80% of tokenLimit, Copilot's backgroundCompactionThreshold default";
+
+/// The capacity source of a reading taken from a session's status-line
+/// record.
+pub const COPILOT_STATUS_LINE_SOURCE: &str =
+    "80% of context_window_size, from the Copilot statusLine session record";
+
+/// The status-line record's refresh bound in seconds: a record older than
+/// this is one the CLI stopped refreshing, which would read as a session
+/// with room for as long as it stood.
+pub const COPILOT_RECORD_MAX_AGE: u64 = 120;
+
+/// A Copilot session's status-line record: the figures the CLI handed its
+/// `statusLine` command, as `copilot-statusline` stored them under the
+/// account directory, each `None` or empty where the CLI sent none or sent
+/// a value of another type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotRecord {
+    pub tokens: Option<u64>,
+    /// The whole window, before the compaction share is taken of it.
+    pub window: Option<u64>,
+    pub model: String,
+    pub allow_all: Option<bool>,
+}
+
+/// The status-line record of `session` under the account directory `home`,
+/// answered only where every binding it holds agrees: its own session id,
+/// its account directory, the transcript where `transcript` names one, and
+/// a stamp no more than [`COPILOT_RECORD_MAX_AGE`] seconds before `now` and
+/// none after it. `Err` names the first binding that did not agree:
+/// `unbound` (a session id outside the alphabet that keeps the path under
+/// its directory), `missing`, `unreadable` (no record of this form),
+/// `wrong-session`, `wrong-account`, `wrong-transcript`, `stale`.
+pub fn copilot_record(
+    home: &Path,
+    session: &str,
+    transcript: &str,
+    now: u64,
+) -> Result<CopilotRecord, &'static str> {
+    let bound = !matches!(session, "" | "." | "..")
+        && session
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if !bound {
+        return Err("unbound");
+    }
+    let path = home.join("lane-status").join(format!("{session}.json"));
+    if !std::fs::metadata(&path).is_ok_and(|meta| meta.is_file()) {
+        return Err("missing");
+    }
+    let text = std::fs::read_to_string(&path).map_err(|_| "unreadable")?;
+    let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&text) else {
+        return Err("unreadable");
+    };
+    let (Some(recorded), Some(account), Some(written)) = (
+        record.get("session_id").and_then(Value::as_str),
+        record.get("copilot_home").and_then(Value::as_str),
+        record.get("written_at").and_then(Value::as_f64),
+    ) else {
+        return Err("unreadable");
+    };
+    if recorded != session {
+        return Err("wrong-session");
+    }
+    if home.to_str() != Some(account) {
+        return Err("wrong-account");
+    }
+    if !transcript.is_empty() && word(&record, "transcript_path") != transcript {
+        return Err("wrong-transcript");
+    }
+    let age = now as f64 - written.floor();
+    if !(0.0..=COPILOT_RECORD_MAX_AGE as f64).contains(&age) {
+        return Err("stale");
+    }
+    let status = record.get("status").unwrap_or(&Value::Null);
+    let whole = |value: &Value| {
+        value
+            .as_f64()
+            .filter(|n| *n >= 0.0)
+            .map(|n| n.floor() as u64)
+    };
+    Ok(CopilotRecord {
+        tokens: whole(&status["context_window"]["current_context_tokens"]),
+        window: whole(&status["context_window"]["context_window_size"]),
+        model: status["model"]["id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned(),
+        allow_all: status["allow_all_enabled"].as_bool(),
+    })
+}
+
+impl CopilotRecord {
+    /// The reading the record gives: its tokens judged against the share of
+    /// its window Copilot compacts at; `Unread` where it carries no token
+    /// count, which is never read as zero.
+    pub fn usage(&self) -> Usage {
+        match self.tokens {
+            None => Usage::Unread,
+            Some(tokens) => Usage::Measured {
+                tokens,
+                window: self
+                    .window
+                    .map(|w| w.saturating_mul(COPILOT_COMPACTION_PCT) / 100),
+                model: self.model.clone(),
+            },
+        }
+    }
+
+    /// The stop the record establishes for a session whose launch
+    /// `granted` the allow-all mode: `allow-all-blocked-by-policy` where
+    /// the CLI reports it off. Enterprise managed settings can withdraw the
+    /// grant mid-run, and every tool call then waits on a prompt nobody at
+    /// the pane answers; a launch without the grant reports it off by
+    /// design, so it names none.
+    pub fn stop_cause(&self, granted: bool) -> Option<&'static str> {
+        (granted && self.allow_all == Some(false)).then_some("allow-all-blocked-by-policy")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,5 +713,157 @@ mod tests {
             Ok(measured(5000, None, "claude-opus-5-5"))
         );
         assert!(read_file(&dir.join("absent"), |t| claude(t, false)).is_err());
+    }
+
+    /// A status-line record in the form `copilot-statusline` writes it under
+    /// the account `home` for `s1`, stamped `written`.
+    fn status_record(home: &Path, written: Value, status: Value) -> Value {
+        serde_json::json!({"session_id": "s1", "transcript_path": "/t/s1/events.jsonl",
+            "copilot_home": home.display().to_string(), "written_at": written, "status": status})
+    }
+
+    #[test]
+    fn a_copilot_status_line_record_answers_only_where_every_binding_agrees() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("account");
+        let file = home.join("lane-status").join("s1.json");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let now = 1_000_000;
+        let status = serde_json::json!({"session_id": "s1", "model": {"id": "claude-opus-5"},
+            "context_window": {"current_context_tokens": 400_000.7, "context_window_size": 1_000_000},
+            "allow_all_enabled": false});
+        let read =
+            |session: &str, transcript: &str| copilot_record(&home, session, transcript, now);
+        assert_eq!(read("s1", ""), Err("missing"));
+        assert_eq!(read("..", ""), Err("unbound"));
+        assert_eq!(read("s/1", ""), Err("unbound"));
+        let fresh = status_record(&home, Value::from(now - 120), status.clone());
+        let with = |key: &str, value: &str| {
+            let mut record = fresh.clone();
+            record[key] = Value::from(value);
+            record.to_string()
+        };
+        let rows: &[(String, &str, Result<(), &str>)] = &[
+            ("not json".to_owned(), "", Err("unreadable")),
+            (
+                serde_json::json!({"session_id": "s1"}).to_string(),
+                "",
+                Err("unreadable"),
+            ),
+            (fresh.to_string(), "", Ok(())),
+            (fresh.to_string(), "/t/s1/events.jsonl", Ok(())),
+            (
+                fresh.to_string(),
+                "/t/s2/events.jsonl",
+                Err("wrong-transcript"),
+            ),
+            (with("written_at", "1000000"), "", Err("unreadable")),
+            (with("session_id", "s2"), "", Err("wrong-session")),
+            (with("copilot_home", "/other"), "", Err("wrong-account")),
+            (
+                status_record(&home, Value::from(now - 121), status.clone()).to_string(),
+                "",
+                Err("stale"),
+            ),
+            (
+                status_record(&home, Value::from(now + 1), status.clone()).to_string(),
+                "",
+                Err("stale"),
+            ),
+        ];
+        for (text, transcript, want) in rows {
+            std::fs::write(&file, text).unwrap();
+            assert_eq!(
+                read("s1", transcript).map(|_| ()),
+                *want,
+                "{text} {transcript}"
+            );
+        }
+        std::fs::write(&file, fresh.to_string()).unwrap();
+        let mode = |bits| std::fs::set_permissions(&file, std::fs::Permissions::from_mode(bits));
+        mode(0o000).unwrap();
+        assert_eq!(
+            read("s1", ""),
+            Err("unreadable"),
+            "a record that cannot be read"
+        );
+        mode(0o600).unwrap();
+        let record = read("s1", "").unwrap();
+        assert_eq!(
+            record.usage(),
+            measured(400_000, Some(800_000), "claude-opus-5")
+        );
+        assert_eq!(record.stop_cause(true), Some("allow-all-blocked-by-policy"));
+        assert_eq!(record.stop_cause(false), None);
+        let bare = status_record(
+            &home,
+            Value::from(now),
+            serde_json::json!({"context_window": {"current_context_tokens": "9"}}),
+        );
+        std::fs::write(&file, bare.to_string()).unwrap();
+        let record = read("s1", "").unwrap();
+        assert_eq!(record.usage(), Usage::Unread);
+        assert_eq!(record.stop_cause(true), None);
+    }
+
+    /// `pi` and `node` stand-ins in `dir`, in the contract the released
+    /// suite's stub install fixes: `node` is handed the `pi` on the path,
+    /// the provider and the id, offline, under the Pi user directory
+    /// `agent`, and prints the registry's window as one whole number, here
+    /// `answer`'s, for `anthropic/claude-opus-5-5` alone.
+    fn registry_stand_ins(dir: &Path, agent: &Path, answer: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        let pi = dir.join("pi");
+        let node = format!(
+            "#!/bin/sh\nfor a; do p3=$p2; p2=$p1; p1=$a; done\n[ \"$p3\" = '{}' ] && [ \"$p2\" = anthropic ] && [ \"$p1\" = claude-opus-5-5 ] && [ \"$PI_OFFLINE\" = 1 ] && [ \"$PI_CODING_AGENT_DIR\" = '{}' ] && {answer}\nexit 0\n",
+            pi.display(),
+            agent.display()
+        );
+        crate::host::write_executable(&pi, "#!/bin/sh\nexit 0\n");
+        crate::host::write_executable(&dir.join("node"), node);
+    }
+
+    #[test]
+    fn pis_registry_window_is_the_answer_of_node_over_the_pi_on_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = dir.path().join("agent");
+        let bin = dir.path().join("bin");
+        let model = "anthropic/claude-opus-5-5";
+        let window = |asked: &str, bound: Duration| {
+            pi_registry_window(asked, &agent, bin.as_os_str(), bound)
+        };
+        let bound = Duration::from_secs(5);
+        let rows: &[(&str, &str, Option<u64>)] = &[
+            ("echo 1000000", model, Some(1_000_000)),
+            ("echo 1000000", "claude-opus-5-5", None),
+            ("echo 0", model, None),
+            ("echo 1e6", model, None),
+            ("true", model, None),
+        ];
+        for (answer, asked, want) in rows {
+            registry_stand_ins(&bin, &agent, answer);
+            assert_eq!(window(asked, bound), *want, "{answer} {asked}");
+        }
+        // With no `pi` on the path no `node` runs, even one that would answer.
+        registry_stand_ins(&bin, &agent, "echo 1000000");
+        crate::host::write_executable(&bin.join("node"), "#!/bin/sh\necho 1000000\n");
+        std::fs::remove_file(bin.join("pi")).unwrap();
+        assert_eq!(window(model, bound), None, "no pi");
+        registry_stand_ins(&bin, &agent, "echo 1000000");
+        std::fs::remove_file(bin.join("node")).unwrap();
+        assert_eq!(window(model, bound), None, "no node");
+        // A registry that would answer only after the bound is stopped there.
+        // The path the read is handed holds the stand-ins alone, so the pause
+        // names its program by its own path.
+        let sleep = ["/bin/sleep", "/usr/bin/sleep"]
+            .into_iter()
+            .find(|p| Path::new(p).is_file())
+            .expect("a sleep program");
+        registry_stand_ins(&bin, &agent, &format!("{sleep} 2 && echo 1000000"));
+        assert_eq!(
+            window(model, Duration::from_millis(300)),
+            None,
+            "past the bound"
+        );
     }
 }

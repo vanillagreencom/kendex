@@ -139,6 +139,13 @@ impl Payload {
         })
     }
 
+    /// The field `name` as the payload holds it, `None` where it holds none:
+    /// the agent scan reads Claude's task registry and Codex's call id,
+    /// whose own forms it judges.
+    pub fn field(&self, name: &str) -> Option<&Value> {
+        self.value.get(name)
+    }
+
     /// The command the call about to run carries, where each harness
     /// carries it: `tool_input.command`, or Copilot's `toolArgs.command`,
     /// whose `toolArgs` arrives as an object or as one JSON-encoded string.
@@ -226,6 +233,13 @@ impl Leads {
 
     fn file(&self, session: &str) -> Option<PathBuf> {
         (!session.is_empty()).then(|| self.dir.join(session))
+    }
+
+    /// The marker the context extension leaves while a reading of
+    /// `session` is on its way to the record; none for a payload naming no
+    /// session.
+    pub fn pending(&self, session: &str) -> Option<PathBuf> {
+        (!session.is_empty()).then(|| self.usage.join(session))
     }
 
     /// Whether `session` is a lead this install recorded.

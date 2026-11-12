@@ -43,10 +43,6 @@ use crate::harness::Harness;
 /// launch installs into the lane's Copilot home.
 const EXTENSION: &str = include_str!("copilot-lane-context.mjs");
 
-/// The age past which a status-line session record is stale, in seconds,
-/// the bound the record's readers apply.
-const STATUS_LINE_MAX_AGE_S: u64 = 120;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Route {
@@ -758,7 +754,10 @@ fn status_line(home: &Path) -> std::result::Result<(), &'static str> {
         return Err("command-missing");
     }
     let interval = line["refreshInterval"].as_f64().ok_or("refresh-interval")?;
-    if interval.fract() != 0.0 || interval <= 0.0 || interval >= STATUS_LINE_MAX_AGE_S as f64 {
+    if interval.fract() != 0.0
+        || interval <= 0.0
+        || interval >= crate::context::COPILOT_RECORD_MAX_AGE as f64
+    {
         return Err("refresh-interval");
     }
     Ok(())

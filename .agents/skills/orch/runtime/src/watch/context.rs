@@ -28,6 +28,7 @@ use agent_runtime::reading::Reading;
 use serde_json::Value;
 
 use super::hosted::{self, Answer, Files};
+use crate::marker::CONTEXT_RECORD;
 use crate::state::Lane;
 
 /// A record older than this with a later Stop row is stale
@@ -47,6 +48,9 @@ pub struct ContextRecord {
     /// The window the adapter named, where it named one.
     pub window: Option<u64>,
     pub model: Option<String>,
+    /// Where the window came from, where it is not the window the harness
+    /// itself reported as its capacity.
+    pub capacity_source: Option<String>,
     pub session_id: Option<String>,
     pub pane_key: Option<String>,
     /// Why a turn end took no reading, where it took none.
@@ -87,11 +91,40 @@ impl ContextRecord {
             tokens,
             window,
             model: text("model"),
+            capacity_source: text("capacity_source"),
             session_id: text("session_id"),
             pane_key: text("pane_key"),
             gap,
             at: text("at"),
         })
+    }
+
+    /// The one writer of a session's record: `context.json` in `mailbox`,
+    /// through a file renamed over it so no reader meets half a record,
+    /// with the whole percent of the window used beside the reading.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the session's context record is a mailbox file no state store holds; this is its one writer, through the record module's atomic replace"
+    )]
+    pub fn write_to(&self, mailbox: &Path) -> Result<(), String> {
+        let used_pct = match (self.tokens, self.window) {
+            (Some(tokens), Some(window)) if window > 0 => Some(tokens.saturating_mul(100) / window),
+            _ => None,
+        };
+        let value = serde_json::json!({
+            "harness": self.harness,
+            "model": self.model,
+            "tokens": self.tokens,
+            "window": self.window,
+            "used_pct": used_pct,
+            "capacity_source": self.capacity_source,
+            "session_id": self.session_id,
+            "pane_key": self.pane_key,
+            "gap": self.gap,
+            "at": self.at,
+        });
+        agent_runtime::record::replace_atomically(&mailbox.join(CONTEXT_RECORD), &value)
+            .map_err(|e| e.to_string())
     }
 
     /// The `TOKENS:WINDOW` word the marks judge (`overseer::judge_marks`)
@@ -418,6 +451,7 @@ mod tests {
             tokens: Some(tokens),
             window,
             model: model.map(str::to_owned),
+            capacity_source: None,
             session_id: None,
             pane_key: None,
             gap: None,

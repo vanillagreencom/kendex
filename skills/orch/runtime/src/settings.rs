@@ -209,6 +209,9 @@ pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
 /// The share of the context window a reading is due strictly past, held
 /// to the judge's ceiling.
 pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
+/// The tokens an attached launch keeps below the context mark for the
+/// returns still to come.
+pub const HANDOFF_AGENT_RESERVE_KEY: &str = "ORCH_HANDOFF_AGENT_RESERVE_TOKENS";
 const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
 const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
 // The provider's account keys.
@@ -290,6 +293,7 @@ const READ_KEYS: &[&str] = &[
     OVERSEER_WALL_MINUTES_KEY,
     OVERSEER_MEMORY_PCT_KEY,
     HANDOFF_CONTEXT_PCT_KEY,
+    HANDOFF_AGENT_RESERVE_KEY,
     WATCH_TAIL_LINES_KEY,
     WATCH_PREPARE_SECS_KEY,
     DIRECTIVE_UNREAD_SECS_KEY,
@@ -583,6 +587,9 @@ pub struct MarkSettings {
     pub wall_minutes: Judged<u32>,
     pub memory_pct: Judged<Option<u32>>,
     pub context_pct: Judged<u32>,
+    /// The attached-launch reserve as written, unset where empty: its one
+    /// consumer, the attached-launch check, judges it.
+    pub agent_reserve: Option<String>,
 }
 
 /// The state verbs' settings: the takeover window and the row bound of the
@@ -872,6 +879,7 @@ pub fn load(
                     n => Ok(n),
                 }),
         },
+        agent_reserve: get(HANDOFF_AGENT_RESERVE_KEY).map(str::to_owned),
     };
     // A cloud repository entry names an account and an `owner/repo` in
     // GitHub's own alphabet; one nobody can read is refused, never dropped,

@@ -78,12 +78,29 @@ impl World {
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&lane).unwrap();
         repository(&lane, ITEM);
-        World {
+        let world = World {
             _dir: dir,
             root,
             home,
             lane,
+        };
+        fs::create_dir_all(world.stand_ins()).unwrap();
+        for name in ["node", "pi"] {
+            write_executable(
+                &world.stand_ins().join(name),
+                format!(
+                    "#!/bin/sh\nprintf '{name}: no stand-in answers: %s\\n' \"$*\" >&2\nexit 4\n"
+                ),
+            );
         }
+        world
+    }
+
+    /// The directory first on the verb's `PATH`: `node` and `pi` stand-ins
+    /// that refuse unless a row plants an answer, so no row reaches a real
+    /// Pi install or its registry.
+    fn stand_ins(&self) -> PathBuf {
+        self.root.join("stand-ins")
     }
 
     /// The install directory of `harness` under the scratch root.
@@ -166,6 +183,7 @@ impl World {
             .current_dir(dir)
             .env("PWD", dir)
             .env("HOME", &self.home)
+            .env("PATH", tool_path(&[&self.stand_ins()]))
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -314,7 +332,6 @@ fn a_launched_lane_with_nothing_to_hold_passes_every_arm_with_nothing_written() 
         ("claude", &["usage"], &cwd),
         ("claude", &["row", "SessionStart"], "{}"),
         ("copilot", &["start"], copilot),
-        ("copilot", &[], copilot),
     ];
     for (harness, args, payload) in rows {
         let out = world.turn(harness, args, payload);
@@ -1598,4 +1615,937 @@ fn a_hold_the_record_cannot_take_is_not_made() {
             dir.join("sent-count").display()
         )
     );
+}
+
+// --- the handoff marks -----------------------------------------------------
+
+/// The variables a row adds to the verb's environment.
+type Env<'a> = &'a [(&'a str, &'a str)];
+
+/// A Claude Code usage line as the session writes it, summing to `tokens`.
+fn claude_usage(model: &str, tokens: u64) -> Value {
+    json!({"type": "assistant", "message": {"model": model, "usage": {
+        "input_tokens": 1, "cache_read_input_tokens": tokens - 8,
+        "cache_creation_input_tokens": 0, "output_tokens": 7}}})
+}
+
+/// Claude's measured background `Agent` call and its launch result, the
+/// result record stamped with `session` where one is named.
+fn claude_launch(id: &str, session: Option<&str>) -> Vec<Value> {
+    let call = format!("call-{id}");
+    let mut result = json!({"type": "user", "toolUseResult": null, "message": {"role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": call,
+            "content": format!("Async agent launched successfully. agentId: {id}"), "is_error": false}]}});
+    if let Some(session) = session {
+        result["sessionId"] = json!(session);
+    }
+    vec![
+        json!({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": call, "name": "Agent", "input": {"run_in_background": true}}]}}),
+        result,
+    ]
+}
+
+/// A task notification Claude Code appends to a tool call's result.
+fn claude_notification(id: &str, status: &str) -> Vec<Value> {
+    vec![
+        json!({"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": format!("bash-{id}"), "name": "Bash", "input": {"command": "true"}}]}}),
+        json!({"type": "user", "message": {"role": "user", "content": [{"type": "tool_result",
+            "tool_use_id": format!("bash-{id}"), "is_error": false,
+            "content": format!("done\n<task-notification><task-id>{id}</task-id><status>{status}</status></task-notification>")}]}}),
+    ]
+}
+
+impl World {
+    /// A session file of `lines` under the scratch root.
+    fn transcript(&self, name: &str, lines: &[Value]) -> PathBuf {
+        let path = self.root.join(name);
+        let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn record(&self) -> Value {
+        let path = self.mail_root().join(ITEM).join("context.json");
+        serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
+    }
+}
+
+/// The record a lane's turn end leaves, and the context mark judged on it:
+/// a reading below the mark passes and is recorded; one strictly past the
+/// share of the window, or at the token cap, is held with the commands that
+/// record the handoff; a share out of its form is held on the setting; and a
+/// reading with no verified window below the cap is reported unmeasured.
+#[test]
+fn a_lane_turn_end_records_its_reading_and_is_held_past_the_context_mark() {
+    let world = World::launched();
+    let off = ("DISABLE_AUTO_COMPACT", "1");
+    let rows: &[(u64, Env, i32, &str)] = &[
+        (1_000, &[off], 0, ""),
+        (180_000, &[off], 0, ""),
+        (180_001, &[off], 2, "lane-mail-check: context=180001"),
+        (
+            100_001,
+            &[off, ("ORCH_HANDOFF_CONTEXT_PCT", "50")],
+            2,
+            "lane-mail-check: context=100001",
+        ),
+        (400_000, &[], 2, "lane-mail-check: context=400000"),
+        (
+            1_000,
+            &[],
+            0,
+            "lane-mail-check: window-unread=claude-haiku-5-5",
+        ),
+        (
+            1_000,
+            &[("ORCH_HANDOFF_CONTEXT_PCT", "101")],
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101",
+        ),
+        (
+            1_000,
+            &[("ORCH_HANDOFF_CONTEXT_PCT", "0")],
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=0",
+        ),
+    ];
+    for (tokens, env, code, first) in rows {
+        let row = format!("{tokens} {env:?}");
+        let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", *tokens)]);
+        let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
+        let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, env);
+        assert_eq!(out.code, *code, "{row}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{row}");
+        if out.first().starts_with("lane-mail-check: setting-range") {
+            continue;
+        }
+        let record = world.record();
+        assert_eq!(record["tokens"], json!(tokens), "{row}");
+        assert_eq!(record["session_id"], json!("s1"), "{row}");
+        let window = if env.contains(&off) {
+            json!(200_000)
+        } else {
+            Value::Null
+        };
+        assert_eq!(record["window"], window, "{row}");
+    }
+    // A record that cannot be written is reported and the reading still
+    // judged; an install naming no harness reads no context and says so.
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 1_000)]);
+    let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
+    let record = world.mail_root().join(ITEM).join("context.json");
+    fs::remove_file(&record).unwrap();
+    fs::create_dir_all(record.join("held")).unwrap();
+    let out = world.turn_in(&world.lane, &world.hooks("claude"), &[], &payload, &[off]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: context-unrecorded={}", record.display())
+    );
+    fs::remove_dir_all(&record).unwrap();
+    let unlisted = world.root.join("install").join("hooks");
+    let out = world.turn_in(&world.lane, &unlisted, &[], &payload, &[off]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: harness-unlisted={}", unlisted.display())
+    );
+    assert!(!record.exists());
+    // The refusal names the commands that record the handoff, the state
+    // file's directory and the item's init on its branch, and the attached
+    // agents the Stop payload's registry still names out.
+    let transcript = world.transcript("t.jsonl", &[claude_usage("claude-haiku-5-5", 400_000)]);
+    let payload = json!({"session_id": "s1", "transcript_path": transcript,
+        "background_tasks": [{"type": "subagent", "id": "a1", "status": "running"},
+            {"type": "shell", "id": "b1", "status": "running"}]})
+    .to_string();
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    let state_dir = world.lane.join("tmp");
+    assert!(
+        out.stderr
+            .contains("lane-mail-check: attached-agent=a1 status=running output=unknown"),
+        "{}",
+        out.stderr
+    );
+    assert!(!out.stderr.contains("attached-agent=b1"), "{}", out.stderr);
+    assert!(!out.stderr.contains("agents=unknown"), "{}", out.stderr);
+    let init = format!(
+        "--state-dir {} init {ITEM} --branch {ITEM}\n",
+        state_dir.display()
+    );
+    assert!(out.stderr.contains(&init), "{}", out.stderr);
+    let set = format!("--state-dir {} set {ITEM} handoff '", state_dir.display());
+    let record = out
+        .stderr
+        .lines()
+        .find_map(|line| {
+            line.split_once(&set)
+                .map(|(_, word)| word.trim_end_matches('\''))
+        })
+        .unwrap_or_else(|| panic!("no handoff command: {}", out.stderr));
+    let record: Value = serde_json::from_str(record).unwrap();
+    assert_eq!(record["context"]["decision"]["tokens"], json!(400_000));
+    assert_eq!(record["context"]["decision"]["cap_mark"], json!(400_000));
+    assert_eq!(record["context"]["source"]["session_id"], json!("s1"));
+}
+
+/// A lane whose handoff record stands is handing itself off and is never
+/// held, whatever its reading; a transcript named and unreadable is held,
+/// and a usage line the adapter cannot read is reported and passed.
+#[test]
+fn a_standing_handoff_passes_and_an_unreadable_transcript_is_held() {
+    let world = World::launched();
+    let past = world.transcript("t.jsonl", &[claude_usage("m", 400_000)]);
+    let state = world
+        .lane
+        .join("tmp")
+        .join(format!("workflow-state-{ITEM}.json"));
+    fs::create_dir_all(state.parent().unwrap()).unwrap();
+    fs::write(&state, json!({"handoff": {"remaining": ["x"]}}).to_string()).unwrap();
+    let payload = json!({"transcript_path": past}).to_string();
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "{}", out.stderr);
+    // A state file that cannot be read passes a turn end with the gap named
+    // and refuses an attached launch on that input.
+    fs::write(&state, "not json").unwrap();
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: handoff-unreadable={}", state.display())
+    );
+    let launch = json!({"transcript_path": past, "tool_name": "Agent"}).to_string();
+    let out = world.turn("claude", &["halt"], &launch);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: agent-input=unreadable");
+    assert!(
+        out.stderr
+            .contains("\nlane-mail-check: detached-route=orch-job-runner\n"),
+        "{}",
+        out.stderr
+    );
+    fs::remove_file(&state).unwrap();
+
+    let missing = world.root.join("missing.jsonl");
+    let payload = json!({"transcript_path": missing}).to_string();
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: transcript=unreadable");
+
+    let unread = world.transcript(
+        "u.jsonl",
+        &[json!({"type": "assistant", "message": {"model": "m", "usage": {"other": 1}}})],
+    );
+    let payload = json!({"transcript_path": unread}).to_string();
+    let out = world.turn("claude", &[], &payload);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: usage-unread={}", unread.display())
+    );
+}
+
+/// An attached launch below both marks passes; at the context mark it is
+/// refused with the handoff; past the mark less the reserve it is refused
+/// while an agent the lead launched is out and passes once a record proves
+/// that agent ended. A reserve out of its form is held on the setting.
+#[test]
+fn an_attached_launch_keeps_the_reserve_only_while_an_agent_may_be_out() {
+    let world = World::launched();
+    let off = ("DISABLE_AUTO_COMPACT", "1");
+    let launched = claude_launch("a1", None);
+    let ended: Vec<Value> = launched
+        .iter()
+        .cloned()
+        .chain(claude_notification("a1", "completed"))
+        .collect();
+    let none: Vec<Value> = Vec::new();
+    let rows: &[(u64, &[Value], Env, i32, &str)] = &[
+        (20_000, &launched, &[off], 0, ""),
+        (30_000, &none, &[off], 0, ""),
+        (
+            30_000,
+            &launched,
+            &[off],
+            2,
+            "lane-mail-check: agent-reserve=Agent tokens=30000 reserve=150000",
+        ),
+        (30_000, &ended, &[off], 0, ""),
+        (
+            30_000,
+            &launched,
+            &[off, ("ORCH_HANDOFF_AGENT_RESERVE_TOKENS", "0")],
+            0,
+            "",
+        ),
+        (
+            30_000,
+            &launched,
+            &[off, ("ORCH_HANDOFF_AGENT_RESERVE_TOKENS", "1e5")],
+            2,
+            "lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=1e5",
+        ),
+        (
+            180_001,
+            &none,
+            &[off],
+            2,
+            "lane-mail-check: agent-launch=Agent tokens=180001",
+        ),
+        (
+            20_000,
+            &launched,
+            &[off, ("ORCH_HANDOFF_AGENT_RESERVE_TOKENS", "400000")],
+            2,
+            "lane-mail-check: agent-reserve=Agent tokens=20000 reserve=400000",
+        ),
+        (
+            1_000,
+            &none,
+            &[],
+            2,
+            "lane-mail-check: agent-input=context-unmeasured",
+        ),
+    ];
+    for (tokens, agents, env, code, first) in rows {
+        let row = format!("{tokens} {} {env:?}", agents.len());
+        let mut lines = agents.to_vec();
+        lines.push(claude_usage("claude-haiku-5-5", *tokens));
+        let transcript = world.transcript("t.jsonl", &lines);
+        let payload = json!({"session_id": "s1", "transcript_path": transcript,
+            "tool_name": "Agent", "tool_input": {}})
+        .to_string();
+        let out = world.turn_in(
+            &world.lane,
+            &world.hooks("claude"),
+            &["halt"],
+            &payload,
+            env,
+        );
+        assert_eq!(out.code, *code, "{row}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{row}");
+        if first.contains("agent-reserve") {
+            assert!(
+                out.stderr
+                    .contains("lane-mail-check: attached-agent=a1 status=running output=unknown"),
+                "{row}: {}",
+                out.stderr
+            );
+            assert!(!out.stderr.contains(" handoff '"), "{row}: {}", out.stderr);
+        }
+    }
+    let other = world.transcript("t.jsonl", &[claude_usage("m", 1_000)]);
+    let payload = json!({"transcript_path": other, "tool_name": "Read"}).to_string();
+    let out = world.turn("claude", &["halt"], &payload);
+    assert_eq!((out.code, out.stderr.as_str()), (0, ""), "no launch tool");
+    // A launch with no reading to judge is refused on the gap that left it.
+    let empty = world.transcript("e.jsonl", &[]);
+    for (payload, gap) in [
+        (json!({"tool_name": "Agent"}), "transcript-unnamed"),
+        (
+            json!({"tool_name": "Agent", "transcript_path": empty}),
+            "usage-absent",
+        ),
+    ] {
+        let out = world.turn("claude", &["halt"], &payload.to_string());
+        assert_eq!(out.code, 2, "{gap}: {}", out.stderr);
+        assert_eq!(out.first(), format!("lane-mail-check: agent-input={gap}"));
+    }
+}
+
+/// A Pi lane's reading takes a window only where Pi's settings turn its
+/// compaction off: the one the payload names, else the one its own record
+/// holds for the same session and model. Settings that cannot be read are
+/// reported and judged as compaction on.
+#[test]
+fn a_pi_reading_takes_its_window_from_the_payload_or_its_own_record() {
+    let world = World::launched();
+    let hooks = world.root.join("install").join(".pi/kendex/hooks");
+    let agent = world.root.join("pi-agent");
+    fs::create_dir_all(&agent).unwrap();
+    let pi = |tokens: u64| {
+        json!({"type": "message", "message": {"role": "assistant", "model": "m", "provider": "p",
+            "usage": {"input": 1, "output": 7, "cacheRead": tokens - 8, "cacheWrite": 0}}})
+    };
+    let transcript = world.transcript("pi.jsonl", &[pi(950)]);
+    let record = world.mail_root().join(ITEM).join("context.json");
+    let dir = agent.display().to_string();
+    let env = [("PI_CODING_AGENT_DIR", dir.as_str())];
+    let held = json!({"harness": "pi", "model": "p/m", "tokens": 1, "window": 1000,
+        "session_id": "s1", "pane_key": null, "gap": null, "at": "2026-11-11T00:00:00Z"})
+    .to_string();
+    let rows: &[(&str, Option<u64>, bool, i32, &str)] = &[
+        (
+            r#"{"compaction":{"enabled":false}}"#,
+            None,
+            true,
+            2,
+            "lane-mail-check: context=950",
+        ),
+        (
+            r#"{"compaction":{"enabled":false}}"#,
+            Some(2000),
+            true,
+            0,
+            "",
+        ),
+        (
+            r#"{"compaction":{"enabled":false}}"#,
+            None,
+            false,
+            0,
+            "lane-mail-check: window-unread=p/m",
+        ),
+        ("{}", None, true, 0, "lane-mail-check: window-unread=p/m"),
+        (
+            "not json",
+            None,
+            true,
+            0,
+            "lane-mail-check: compaction-unread=pi",
+        ),
+    ];
+    for (settings, window, recorded, code, first) in rows {
+        let row = format!("{settings} {window:?} {recorded}");
+        fs::write(agent.join("settings.json"), settings).unwrap();
+        if *recorded {
+            fs::write(&record, &held).unwrap();
+        } else {
+            let _ = fs::remove_file(&record);
+        }
+        let mut payload = json!({"session_id": "s1", "transcript_path": transcript});
+        if let Some(window) = window {
+            payload["context_window"] = json!(window);
+        }
+        let out = world.turn_in(&world.lane, &hooks, &[], &payload.to_string(), &env);
+        assert_eq!(out.code, *code, "{row}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{row}");
+    }
+    // Neither the payload nor the record names a window: Pi's own registry
+    // is read through the `node` and the `pi` first on the turn end's PATH,
+    // the window it names is recorded, and a registry that names none
+    // leaves the window unread.
+    fs::write(
+        agent.join("settings.json"),
+        r#"{"compaction":{"enabled":false}}"#,
+    )
+    .unwrap();
+    let payload = json!({"session_id": "s1", "transcript_path": transcript}).to_string();
+    let rows: &[(&str, i32, &str, Value)] = &[
+        ("echo 1000", 2, "lane-mail-check: context=950", json!(1000)),
+        ("true", 0, "lane-mail-check: window-unread=p/m", json!(null)),
+    ];
+    for (answer, code, first, window) in rows {
+        let _ = fs::remove_file(&record);
+        world.pi_registry(&agent, answer);
+        let out = world.turn_in(&world.lane, &hooks, &[], &payload, &env);
+        assert_eq!(out.code, *code, "{answer}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{answer}");
+        assert_eq!(world.record()["window"], *window, "{answer}");
+    }
+}
+
+impl World {
+    /// A `node` stand-in first on the verb's `PATH` in the contract the
+    /// released suite's stub install fixes: handed the `pi` first on that
+    /// `PATH`, the provider and the id of `p/m`, offline, under the Pi user
+    /// directory `agent`, it runs `answer`, which prints the registry's
+    /// window as one whole number or nothing; any other call is refused.
+    fn pi_registry(&self, agent: &Path, answer: &str) {
+        let pi = self.stand_ins().join("pi");
+        let node = format!(
+            "#!/bin/sh\nfor a; do p3=$p2; p2=$p1; p1=$a; done\n[ \"$p3\" = '{}' ] && [ \"$p2\" = p ] && [ \"$p1\" = m ] && [ \"$PI_OFFLINE\" = 1 ] && [ \"$PI_CODING_AGENT_DIR\" = '{}' ] || exit 4\n{answer}\n",
+            pi.display(),
+            agent.display()
+        );
+        write_executable(&self.stand_ins().join("node"), node);
+    }
+}
+
+/// A helper last put out by a record of another session than the one the
+/// payload names is no helper this session can wait for: it keeps the
+/// reserve, and the refusal names the handoff instead of a wait.
+#[test]
+fn a_helper_from_another_session_keeps_the_reserve_unobserved() {
+    let world = World::launched();
+    let env = [("DISABLE_AUTO_COMPACT", "1")];
+    for (launched_in, first) in [
+        (
+            "s1",
+            "lane-mail-check: agent-reserve=Agent tokens=30000 reserve=150000",
+        ),
+        (
+            "s0",
+            "lane-mail-check: agent-unobserved=Agent tokens=30000 reserve=150000",
+        ),
+    ] {
+        let mut lines = claude_launch("a1", Some(launched_in));
+        lines.push(claude_usage("claude-haiku-5-5", 30_000));
+        let transcript = world.transcript("t.jsonl", &lines);
+        let payload =
+            json!({"session_id": "s1", "transcript_path": transcript, "tool_name": "Agent"})
+                .to_string();
+        let out = world.turn_in(
+            &world.lane,
+            &world.hooks("claude"),
+            &["halt"],
+            &payload,
+            &env,
+        );
+        assert_eq!(out.code, 2, "{launched_in}: {}", out.stderr);
+        assert_eq!(out.first(), first, "{launched_in}");
+        let names_handoff = out.stderr.contains(&format!(" set {ITEM} handoff '"));
+        assert_eq!(names_handoff, launched_in == "s0", "{}", out.stderr);
+    }
+}
+
+/// Codex's rollout: a spawned agent is out until a full listing reads it
+/// returned, and the refusal tells the lead to list agents after its wait.
+#[test]
+fn a_codex_launch_keeps_the_reserve_until_a_listing_reads_the_agent_returned() {
+    let world = World::launched();
+    let overrides = json!({"harness": "codex", "settings": {
+        "model_auto_compact_token_limit": "1000000",
+        "model_auto_compact_token_limit_scope": "body_after_prefix",
+        "model_post_turn_compact_threshold_percent": "0"}})
+    .to_string();
+    let env = [("ORCH_COMPACTION_OVERRIDES", overrides.as_str())];
+    let item = |kind: &str, fields: Value| {
+        let mut payload = fields;
+        payload["type"] = json!(kind);
+        json!({"type": "response_item", "payload": payload})
+    };
+    let spawned = vec![
+        json!({"type": "turn_context", "payload": {"model": "gpt-5"}}),
+        item(
+            "function_call",
+            json!({"name": "spawn_agent", "call_id": "c1", "arguments": "{}"}),
+        ),
+        item(
+            "function_call_output",
+            json!({"call_id": "c1", "output": "{\"task_name\":\"/root/a1\"}"}),
+        ),
+    ];
+    let listed: Vec<Value> = spawned
+        .iter()
+        .cloned()
+        .chain([
+            item("function_call", json!({"name": "list_agents", "call_id": "c2", "arguments": "{}"})),
+            item(
+                "function_call_output",
+                json!({"call_id": "c2", "output": "{\"agents\":[{\"agent_name\":\"/root/a1\",\"agent_status\":\"completed\"}]}"}),
+            ),
+        ])
+        .collect();
+    let count = json!({"type": "event_msg", "payload": {"type": "token_count", "info": {
+        "last_token_usage": {"total_tokens": 260_000}, "model_context_window": 1_000_000}}});
+    for (lines, code) in [(spawned, 2), (listed, 0)] {
+        let mut lines = lines;
+        lines.push(count.clone());
+        let transcript = world.transcript("r.jsonl", &lines);
+        let payload = json!({"session_id": "s1", "transcript_path": transcript,
+            "tool_name": "spawn_agent", "tool_use_id": "c9"})
+        .to_string();
+        let out = world.turn_in(
+            &world.lane,
+            &world.hooks("codex"),
+            &["halt"],
+            &payload,
+            &env,
+        );
+        assert_eq!(out.code, code, "{}", out.stderr);
+        if code == 2 {
+            assert_eq!(
+                out.first(),
+                "lane-mail-check: agent-reserve=spawn_agent tokens=260000 reserve=150000"
+            );
+            assert!(out.stderr.contains("Call list_agents"), "{}", out.stderr);
+            assert!(
+                out.stderr.contains(
+                    "lane-mail-check: attached-agent=/root/a1 status=running output=unknown"
+                ),
+                "{}",
+                out.stderr
+            );
+        }
+    }
+}
+
+// --- the Copilot readings ----------------------------------------------------
+
+impl World {
+    /// The account directory a Copilot lane runs on, as `COPILOT_HOME`.
+    fn copilot_home(&self) -> PathBuf {
+        self.root.join("copilot-account")
+    }
+
+    /// A status-line record for `s1` written by the shipped
+    /// `copilot-statusline` from the object the CLI hands it: `tokens` of a
+    /// `window`, `transcript` bound where named, `allow_all` where named.
+    fn status_line(
+        &self,
+        tokens: u64,
+        window: u64,
+        transcript: Option<&Path>,
+        allow_all: Option<bool>,
+    ) {
+        let mut status = json!({"session_id": "s1", "model": {"id": "claude-opus-5"},
+            "context_window": {"current_context_tokens": tokens, "context_window_size": window}});
+        if let Some(transcript) = transcript {
+            status["transcript_path"] = json!(transcript);
+        }
+        if let Some(allow_all) = allow_all {
+            status["allow_all_enabled"] = json!(allow_all);
+        }
+        let scripts = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+        let out = program("bash")
+            .args(["-c", r#"printf '%s' "$2" | "$1/copilot-statusline""#, "_"])
+            .arg(scripts)
+            .arg(status.to_string())
+            .env("COPILOT_HOME", self.copilot_home())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+
+    /// The transcript Copilot writes for `s1` under the account's store.
+    fn copilot_transcript(&self) -> PathBuf {
+        self.copilot_home().join("session-state/s1/events.jsonl")
+    }
+
+    /// The status-line record's own file.
+    fn status_record(&self) -> PathBuf {
+        self.copilot_home().join("lane-status").join("s1.json")
+    }
+
+    /// A reading recorded in the lane's mailbox as the usage arm records the
+    /// extension's: `capacity` the share it compacts at, for `session`,
+    /// under `source`.
+    fn extension_reading(&self, tokens: Option<u64>, capacity: u64, session: &str, source: &str) {
+        let gap = if tokens.is_none() {
+            json!("pane-unrecorded")
+        } else {
+            Value::Null
+        };
+        let record = json!({"harness": "copilot", "model": null, "tokens": tokens,
+            "window": capacity, "capacity_source": source, "session_id": session,
+            "pane_key": null, "gap": gap, "at": "2026-11-11T00:00:00Z"});
+        fs::write(
+            self.mail_root().join(ITEM).join("context.json"),
+            record.to_string(),
+        )
+        .unwrap();
+    }
+
+    /// A Copilot lead's turn end of `s1`, its transcript under the account's
+    /// store, with `env` added to the account's `COPILOT_HOME`.
+    fn copilot_stop(&self, env: Env) -> Out {
+        let transcript = self.copilot_transcript();
+        let payload =
+            json!({"sessionId": "s1", "transcriptPath": transcript, "timestamp": 1}).to_string();
+        let home = self.copilot_home().display().to_string();
+        let mut env = env.to_vec();
+        env.push(("COPILOT_HOME", home.as_str()));
+        self.turn_in(&self.lane, &self.hooks("copilot"), &[], &payload, &env)
+    }
+}
+
+const EXTENSION: &str = "80% of tokenLimit, Copilot's backgroundCompactionThreshold default";
+
+/// The keyed lines of an answer's stderr.
+fn keyed(out: &Out) -> String {
+    out.stderr
+        .lines()
+        .filter(|l| l.starts_with("lane-mail-check: "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// A status-line row: the record's tokens and window, the transcript it is
+/// bound to and its allow-all report, the variables the turn end runs
+/// with, its first line and its decision.
+type StatusRow<'a> = (u64, u64, &'a Path, Option<bool>, Env<'a>, &'a str, &'a str);
+
+/// A Copilot lane with no extension reading is read from its fresh
+/// status-line record, judged on the share of its window Copilot compacts
+/// at and recorded; a record of another transcript, a stale one or none
+/// leaves the context unmeasured and passes; a policy that took the
+/// granted allow-all mode is reported beside the judgement.
+#[test]
+fn a_copilot_lane_with_no_extension_reading_is_judged_on_its_status_line_record() {
+    let world = World::launched();
+    let gap = |reason: &str| {
+        format!(
+            "lane-mail-check: reading-unrecorded={}\nlane-mail-check: session-record={reason}",
+            world.mail_root().join(ITEM).join("context.json").display()
+        )
+    };
+    let out = world.copilot_stop(&[]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(keyed(&out), gap("missing"));
+    let transcript = world.copilot_transcript();
+    let other = world.root.join("session-state/s2/events.jsonl");
+    let grant: Env = &[("COPILOT_ALLOW_ALL", "true")];
+    let policy = "lane-mail-check: stop-cause=allow-all-blocked-by-policy";
+    let rows: &[StatusRow] = &[
+        (100_000, 1_000_000, &transcript, None, &[], "", ""),
+        (
+            400_000,
+            1_000_000,
+            &transcript,
+            None,
+            &[],
+            "lane-mail-check: context=400000",
+            "block",
+        ),
+        (
+            150_000,
+            200_000,
+            &transcript,
+            None,
+            &[],
+            "lane-mail-check: context=150000",
+            "block",
+        ),
+        (140_000, 200_000, &transcript, None, &[], "", ""),
+        (
+            100_000,
+            1_000_000,
+            &other,
+            None,
+            &[],
+            "wrong-transcript",
+            "",
+        ),
+        (
+            100_000,
+            1_000_000,
+            &transcript,
+            Some(false),
+            grant,
+            policy,
+            "",
+        ),
+        (100_000, 1_000_000, &transcript, Some(false), &[], "", ""),
+    ];
+    for (tokens, window, bound, allow_all, env, first, decision) in rows {
+        let row = format!("{tokens} {window} {bound:?} {allow_all:?} {env:?}");
+        world.status_line(*tokens, *window, Some(bound), *allow_all);
+        let out = world.copilot_stop(env);
+        assert_eq!(out.code, 0, "{row}: {}", out.stderr);
+        if !first.is_empty() && !first.contains(' ') {
+            assert_eq!(keyed(&out), gap(first), "{row}");
+            continue;
+        }
+        assert_eq!(out.first(), *first, "{row}");
+        let answer = if decision.is_empty() {
+            Value::Null
+        } else {
+            out.json()["decision"].clone()
+        };
+        let want = if decision.is_empty() {
+            Value::Null
+        } else {
+            json!(decision)
+        };
+        assert_eq!(answer, want, "{row}");
+        let record = world.record();
+        assert_eq!(
+            [
+                &record["harness"],
+                &record["tokens"],
+                &record["window"],
+                &record["model"],
+                &record["capacity_source"]
+            ],
+            [
+                &json!("copilot"),
+                &json!(tokens),
+                &json!(window * 80 / 100),
+                &json!("claude-opus-5"),
+                &json!("80% of context_window_size, from the Copilot statusLine session record")
+            ],
+            "{row}"
+        );
+    }
+    // A record the status line stopped refreshing is never read as room.
+    world.status_line(400_000, 1_000_000, Some(&transcript), None);
+    let mut record: Value =
+        serde_json::from_str(&fs::read_to_string(world.status_record()).unwrap()).unwrap();
+    record["written_at"] = json!(1);
+    fs::write(world.status_record(), record.to_string()).unwrap();
+    let out = world.copilot_stop(&[]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(keyed(&out), gap("stale"));
+}
+
+/// The extension's reading of this session is read first and never
+/// overridden by the status-line record; one of another session and a gap
+/// record give way to it. A flagged automatic compaction holds the turn end
+/// whatever the reading, a record that stands and cannot be read is held,
+/// and a reading still on its way leaves the context unmeasured.
+#[test]
+fn a_copilot_lanes_extension_reading_comes_first_and_its_compaction_flag_holds() {
+    let world = World::launched();
+    let transcript = world.copilot_transcript();
+    // The extension's reading stands alone where no status-line record
+    // answers.
+    world.extension_reading(Some(720_001), 800_000, "s1", EXTENSION);
+    let out = world.copilot_stop(&[]);
+    assert_eq!(out.first(), "lane-mail-check: context=720001");
+    world.status_line(400_000, 1_000_000, Some(&transcript), None);
+    let held = "lane-mail-check: context=400000";
+    let rows: &[(Option<u64>, &str, &str, &str)] = &[
+        (Some(100_000), "s1", EXTENSION, ""),
+        (
+            Some(720_001),
+            "s1",
+            EXTENSION,
+            "lane-mail-check: context=720001",
+        ),
+        (Some(100_000), "s0", EXTENSION, held),
+        (None, "s1", "pane-unrecorded", held),
+    ];
+    for (tokens, session, source, first) in rows {
+        let row = format!("{tokens:?} {session} {source}");
+        world.extension_reading(*tokens, 800_000, session, source);
+        let out = world.copilot_stop(&[]);
+        assert_eq!(out.code, 0, "{row}: {}", out.stderr);
+        assert_eq!(out.first(), *first, "{row}");
+    }
+    let record = world.mail_root().join(ITEM).join("context.json");
+    fs::write(&record, "not json").unwrap();
+    let out = world.copilot_stop(&[]);
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: record={}", record.display())
+    );
+    assert_eq!(out.json()["decision"], json!("block"));
+    fs::remove_file(&record).unwrap();
+    // The compaction flag: this session's holds whatever the reading, and
+    // the handoff it names records the compaction; one of another session,
+    // or of none, flags nothing.
+    world.status_line(100_000, 1_000_000, Some(&transcript), None);
+    let flag = world.mail_root().join(ITEM).join("compaction.json");
+    let flags = [
+        (json!("s1"), "lane-mail-check: compacted=auto"),
+        (json!("s0"), ""),
+        (Value::Null, ""),
+    ];
+    for (session, first) in flags {
+        let planted = json!({"harness": "copilot", "trigger": "auto", "session_id": session,
+            "pane_key": null, "at": "2026-11-11T00:00:00Z"});
+        fs::write(&flag, planted.to_string()).unwrap();
+        let out = world.copilot_stop(&[]);
+        assert_eq!(out.code, 0, "{session}: {}", out.stderr);
+        assert_eq!(out.first(), first, "{session}");
+        if !first.is_empty() {
+            assert!(
+                out.stderr.contains(r#""compacted":true"#),
+                "{session}: {}",
+                out.stderr
+            );
+        }
+    }
+    // A flag that stands and cannot be read as one is held.
+    fs::write(&flag, "[]").unwrap();
+    let out = world.copilot_stop(&[]);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: record={}", flag.display())
+    );
+    fs::remove_file(&flag).unwrap();
+    fs::create_dir(&flag).unwrap();
+    let out = world.copilot_stop(&[]);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: record={}", flag.display())
+    );
+    fs::remove_dir(&flag).unwrap();
+    // A reading still on its way: its pending marker outlasts the wait, and
+    // the record past the mark is not judged in its place.
+    world.status_line(400_000, 1_000_000, Some(&transcript), None);
+    let marker = world.usage().join("s1");
+    plant(&marker);
+    let out = world.copilot_stop(&[]);
+    assert_eq!((out.code, out.stdout.as_str()), (0, ""), "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: reading-pending={}", marker.display())
+    );
+    // A payload naming no session has no reading on its way, whatever
+    // markers other sessions left.
+    let home = world.copilot_home().display().to_string();
+    let out = world.turn_in(
+        &world.lane,
+        &world.hooks("copilot"),
+        &[],
+        r#"{"timestamp":1}"#,
+        &[("COPILOT_HOME", home.as_str())],
+    );
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: reading-unrecorded={}", record.display())
+    );
+}
+
+/// A Copilot lead's attached launch: refused on the gap where no reading
+/// stands, and past the mark less the reserve refused unobserved, since no
+/// record of Copilot's names an attached agent's return.
+#[test]
+fn a_copilot_attached_launch_is_refused_on_a_gap_and_unobserved_past_the_reserve() {
+    let world = World::launched();
+    world.lead("s1");
+    let home = world.copilot_home().display().to_string();
+    let payload = json!({"sessionId": "s1", "toolName": "task", "timestamp": 1}).to_string();
+    let launch = || {
+        world.turn_in(
+            &world.lane,
+            &world.hooks("copilot"),
+            &["halt"],
+            &payload,
+            &[("COPILOT_HOME", home.as_str())],
+        )
+    };
+    let out = launch();
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    let record = world.mail_root().join(ITEM).join("context.json");
+    assert_eq!(
+        out.first(),
+        format!("lane-mail-check: reading-unrecorded={}", record.display())
+    );
+    assert!(
+        out.stderr
+            .contains("\nlane-mail-check: agent-input=session-record\n"),
+        "{}",
+        out.stderr
+    );
+    world.status_line(30_000, 200_000, None, None);
+    let out = launch();
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(
+        out.first(),
+        "lane-mail-check: agent-unobserved=task tokens=30000 reserve=150000"
+    );
+    assert!(
+        out.stderr.contains("agent-roster=unread harness=copilot"),
+        "{}",
+        out.stderr
+    );
+    // A flagged automatic compaction leaves no reading to judge the launch on.
+    let flag = json!({"harness": "copilot", "trigger": "auto", "session_id": "s1",
+        "pane_key": null, "at": "2026-11-11T00:00:00Z"});
+    fs::write(
+        world.mail_root().join(ITEM).join("compaction.json"),
+        flag.to_string(),
+    )
+    .unwrap();
+    let out = launch();
+    assert_eq!(out.code, 2, "{}", out.stderr);
+    assert_eq!(out.first(), "lane-mail-check: agent-input=usage-absent");
 }

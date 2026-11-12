@@ -147,6 +147,89 @@ pub enum Said {
     /// The reader's events listing ended other than with its answer.
     Events(String),
     EventsEnvelope,
+    // The handoff marks' lines (`marks`): a lane's own words, each refusal
+    // carrying the instruction that records the handoff.
+    /// The settings the marks are judged under could not be loaded.
+    HandoffUnanswered,
+    /// The workflow state file whose handoff could not be read.
+    HandoffUnreadable(String),
+    /// A setting the marks read that could not be read, as `KEY`.
+    Setting {
+        key: &'static str,
+        instruction: String,
+    },
+    /// A setting outside its form, as `KEY=VALUE`.
+    SettingRange {
+        value: String,
+        instruction: String,
+    },
+    TranscriptUnreadable {
+        transcript: String,
+        instruction: String,
+    },
+    TranscriptUnread {
+        transcript: String,
+        instruction: String,
+    },
+    /// The transcript whose last usage line the adapter does not read.
+    UsageUnread(String),
+    /// The model, or the harness, whose compaction point is unverified.
+    WindowUnread(String),
+    /// The harness whose compaction settings could not be read.
+    CompactionUnread(&'static str),
+    /// An install naming no harness an adapter reads.
+    HarnessUnlisted(PathBuf),
+    /// The record a reading could not be written to.
+    ContextUnrecorded(PathBuf),
+    /// The context mark reached.
+    Context {
+        tokens: u64,
+        window: Option<u64>,
+        mark: u32,
+        instruction: String,
+    },
+    /// An attached launch, as `TOOL tokens=N`, at the context mark.
+    AgentLaunch {
+        value: String,
+        instruction: String,
+    },
+    /// An attached launch past the reserve while an agent is out.
+    AgentReserve {
+        value: String,
+        rows: String,
+        codex: bool,
+    },
+    /// An attached launch past the reserve with the roster unread.
+    AgentUnobserved {
+        value: String,
+        rows: String,
+        instruction: String,
+    },
+    /// An input the attached launch is judged on is unavailable.
+    AgentInput {
+        value: String,
+        instruction: String,
+    },
+    /// A Copilot reading handed to its usage run and not yet recorded,
+    /// named by the pending marker that still stands.
+    ReadingPending(PathBuf),
+    /// No Copilot reading stands in this record, and the status-line record
+    /// did not answer either.
+    ReadingUnrecorded(PathBuf),
+    /// Why the status-line record did not answer for this session.
+    SessionRecord(&'static str),
+    /// The stop a Copilot session's status-line record establishes.
+    StopCause(&'static str),
+    /// A context record or compaction flag that stands and cannot be read.
+    RecordUnread {
+        path: PathBuf,
+        instruction: String,
+    },
+    /// Copilot began compacting the session automatically before a reading
+    /// past the mark reached a turn end.
+    Compacted {
+        instruction: String,
+    },
 }
 
 /// The commands a lane is told to route a question or a report through,
@@ -197,6 +280,28 @@ impl Said {
             }
             Said::Events(status) => ("events", status.clone()),
             Said::EventsEnvelope => ("events", "envelope".to_owned()),
+            Said::HandoffUnanswered => ("handoff-unanswered", "settings".to_owned()),
+            Said::HandoffUnreadable(file) => ("handoff-unreadable", file.clone()),
+            Said::Setting { key, .. } => ("setting", (*key).to_owned()),
+            Said::SettingRange { value, .. } => ("setting-range", value.clone()),
+            Said::TranscriptUnreadable { .. } => ("transcript", "unreadable".to_owned()),
+            Said::TranscriptUnread { .. } => ("transcript", "unread".to_owned()),
+            Said::UsageUnread(transcript) => ("usage-unread", transcript.clone()),
+            Said::WindowUnread(model) => ("window-unread", model.clone()),
+            Said::CompactionUnread(harness) => ("compaction-unread", (*harness).to_owned()),
+            Said::HarnessUnlisted(dir) => ("harness-unlisted", dir.display().to_string()),
+            Said::ContextUnrecorded(path) => ("context-unrecorded", path.display().to_string()),
+            Said::Context { tokens, .. } => ("context", tokens.to_string()),
+            Said::AgentLaunch { value, .. } => ("agent-launch", value.clone()),
+            Said::AgentReserve { value, .. } => ("agent-reserve", value.clone()),
+            Said::AgentUnobserved { value, .. } => ("agent-unobserved", value.clone()),
+            Said::AgentInput { value, .. } => ("agent-input", value.clone()),
+            Said::ReadingPending(marker) => ("reading-pending", marker.display().to_string()),
+            Said::ReadingUnrecorded(record) => ("reading-unrecorded", record.display().to_string()),
+            Said::SessionRecord(reason) => ("session-record", (*reason).to_owned()),
+            Said::StopCause(cause) => ("stop-cause", (*cause).to_owned()),
+            Said::RecordUnread { path, .. } => ("record", path.display().to_string()),
+            Said::Compacted { .. } => ("compacted", "auto".to_owned()),
         }
     }
 
@@ -342,6 +447,97 @@ impl Said {
                 "the lane mailbox reader's events listing exited {status}, so whether this lane sent anything this turn is unknown; the turn ends unjudged rather than held, because nothing a lane does at its turn end repairs its mailbox:"
             ),
             Said::EventsEnvelope => "an envelope the lane mailbox reader's events listing printed could not be read, so whether this lane sent anything this turn is unknown; the turn ends unjudged rather than held, because nothing a lane does at its turn end repairs its mailbox:".to_owned(),
+            Said::HandoffUnanswered => "the handoff marks are judged under this checkout's orch settings, and those settings could not be loaded; both marks are unjudged while that stands, and this turn end is passed rather than held, because the same settings place the one command that records a handoff. Check the settings files, .env.local first. The loader's words are below.".to_owned(),
+            Said::HandoffUnreadable(file) => format!(
+                "the workflow state at {file} could not be read, so whether this lane has already handed off is unknown; this turn end is passed unjudged rather than held, because the handoff record would be written into that same file and a refusal naming a write that cannot land could never be cleared. Repair or remove it. Anything its reader wrote is below."
+            ),
+            Said::Setting { key, instruction } => format!(
+                "the effective value of {key} could not be read, so the handoff mark it sets is unknown. Recording the handoff ends this refusal:\n{instruction}"
+            ),
+            Said::SettingRange { value, instruction } => format!(
+                "{value} is not a whole number in the range the mark it sets is judged in, so the mark cannot be judged; set it to a number in range. Recording the handoff also ends this refusal:\n{instruction}"
+            ),
+            Said::TranscriptUnreadable {
+                transcript,
+                instruction,
+            } => format!(
+                "the payload's transcript_path {transcript} is not a readable file, so this lane's context use is unknown; refusing rather than letting it run past its handoff mark. Recording the handoff ends this refusal:\n{instruction}"
+            ),
+            Said::TranscriptUnread {
+                transcript,
+                instruction,
+            } => format!(
+                "the transcript {transcript} could not be read, so this lane's context use is unknown. Recording the handoff ends this refusal:\n{instruction}"
+            ),
+            Said::UsageUnread(transcript) => format!(
+                "the last usage line in {transcript} carries none of the field names this harness's adapter reads a token count from, so the context mark is not judged and this gap is reported rather than held; an unread figure is never summed to zero and read as room, and the account mark is judged as usual"
+            ),
+            Said::WindowUnread(model) => format!(
+                "the adapter read this session's tokens but could not verify its compaction point from the effective settings and window for {model}. The reading is below the independent token cap. The percentage mark is unmeasured, and the account mark is judged as usual"
+            ),
+            Said::CompactionUnread(harness) => format!(
+                "the {harness} compaction settings could not be read. The token cap is still judged; the percentage mark has no verified point:"
+            ),
+            Said::HarnessUnlisted(dir) => format!(
+                "{} is no hook directory of a harness the orch adapters read a transcript for, so this session's context is not read and the context mark is not judged, and no Pi turn row is written, so a Pi lane running this install reads unjudged in oversee-watch and lanes state; the gap is reported rather than held",
+                dir.display()
+            ),
+            Said::ContextUnrecorded(path) => format!(
+                "this session's context reading could not be written to {}, so lanes context and oversee-succeed still hold the reading before it; the mark itself is judged on the reading this hook took:",
+                path.display()
+            ),
+            Said::Context {
+                tokens,
+                window,
+                mark,
+                instruction,
+            } => format!(
+                "this lane requires handoff under the shared context rule: tokens used={tokens}, effective capacity={}. Handoff is required at 400000 tokens used, or strictly past {mark} percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n{instruction}",
+                window.map(|w| w.to_string()).unwrap_or_default()
+            ),
+            Said::AgentLaunch { value, instruction } => format!(
+                "The attached launch {value} reaches the context mark. Use the orch job runner in waiter-launch.md, Launch, or a separate session.\n{instruction}"
+            ),
+            Said::AgentReserve { value, rows, codex } => format!(
+                "The attached launch {value} reaches the context mark less its result reserve, held while an attached agent of this session is still out. The context mark itself is not reached, so no handoff is due: wait in this turn for each attached agent below to return, using the harness wait or result tool.{} Then launch; or use the orch job runner in waiter-launch.md, Launch, or a separate session.{}",
+                if *codex {
+                    " Call list_agents with no path filter after the wait returns."
+                } else {
+                    ""
+                },
+                lined(rows)
+            ),
+            Said::AgentUnobserved {
+                value,
+                rows,
+                instruction,
+            } => format!(
+                "The attached launch {value} reaches the context mark less its result reserve, and whether an attached agent of this session is still out cannot be read here, so no wait this hook can observe clears it. The context mark itself is not reached. Use the orch job runner in waiter-launch.md, Launch, or a separate session.{}{}",
+                lined(rows),
+                lined(instruction)
+            ),
+            Said::AgentInput { value, instruction } => format!(
+                "The attached launch cannot be judged because {value} is unavailable. Repair that input, or use the orch job runner in waiter-launch.md, Launch, or a separate session.\n{instruction}"
+            ),
+            Said::ReadingPending(marker) => format!(
+                "a context reading of this Copilot session was handed to its usage hook run and is not recorded yet, since its pending marker {} still stands after 5 seconds: the run is still going, or it failed, which the session timeline names under a kendex-lane-context: or lane-mail-check: warning. So this turn end judges the context unmeasured, never the earlier record as room; the gap is reported rather than held, and the next reading recorded removes the marker.",
+                marker.display()
+            ),
+            Said::ReadingUnrecorded(record) => format!(
+                "no context reading of this Copilot session stands in {}, and the statusLine session record its fallback reads did not answer either, as the session-record line with this one names, so its context is unmeasured and the context mark is not judged; the gap is reported rather than held, and never read as room. The first reader is the kendex-lane-context Copilot extension open-terminal installs in the lane's COPILOT_HOME, which records a reading at each model call of the session. A `kendex-lane-context:` or `lane-mail-check:` warning in the session timeline is the gap that reader met. None means the extension did not run: check that <COPILOT_HOME>/extensions/kendex-lane-context/extension.mjs stands, that enabledFeatureFlags.EXTENSIONS is true in that home's settings.json, and Copilot's own log.",
+                record.display()
+            ),
+            Said::SessionRecord(reason) => format!(
+                "this Copilot session has no context reading from the kendex-lane-context extension, so it is read from the record its statusLine command, copilot-statusline, writes under the account directory, and that record did not answer for this session: {reason}. The context mark is not judged and the gap is reported rather than held; the account mark is judged as usual. Set statusLine in the account's settings.json to run copilot-statusline with a refreshInterval under two minutes."
+            ),
+            Said::StopCause(_) => "this Copilot session's record reports allow_all_enabled false: enterprise managed settings, for its account or for its machine, block the allow-all mode, so every tool call waits on a permission prompt nobody answers. The orch copilot-runtime reference names the remedy".to_owned(),
+            Said::RecordUnread { path, instruction } => format!(
+                "the context record {} could not be read, so whether this Copilot session is past its handoff mark is unknown; refusing rather than letting it run on. Recording the handoff ends this refusal:\n{instruction}",
+                path.display()
+            ),
+            Said::Compacted { instruction } => format!(
+                "this lane requires handoff: Copilot began compacting this session automatically, its preCompact hook naming trigger auto, before a context reading past the handoff mark reached a turn end. Nothing after that compaction is trusted, so start no new work and write the handoff from durable state, the workflow state, git and the PR, never from the conversation the compaction summarised. No handoff record stands. Then end the session, so the next one continues the work.\n{instruction}"
+            ),
         }
     }
 
@@ -356,6 +552,15 @@ impl Said {
             text.push_str(cause);
         }
         text
+    }
+}
+
+/// `text` on a line of its own, nothing where it is empty.
+fn lined(text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!("\n{text}")
     }
 }
 

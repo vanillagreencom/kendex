@@ -4,15 +4,19 @@
 //! stderr, the harness's exit status. A turn end that finds nothing to hold
 //! passes at exit 0 with nothing written.
 
+mod agents;
 pub mod answer;
 pub mod identity;
 pub mod mail;
+mod marks;
 pub mod payload;
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use agent_runtime::clock::SystemClock;
+use agents::Deadline;
 use answer::{Harness, Said};
 use identity::Lane;
 use payload::{Caller, Leads, Payload};
@@ -178,6 +182,11 @@ struct Turn {
     stderr: String,
     /// The cursor move a refusal carrying mail makes once written.
     ack: Option<Box<mail::Ack>>,
+    /// The install the hook runs from, as the harness named it.
+    hook_dir: PathBuf,
+    /// The run's deadline, counted from its start: the agent scan and any
+    /// wait keep within it.
+    deadline: Deadline<'static>,
 }
 
 impl Turn {
@@ -256,6 +265,8 @@ pub fn run(
         reported: false,
         stderr: String::new(),
         ack: None,
+        hook_dir: hook_dir.to_path_buf(),
+        deadline: Deadline::start(&SystemClock),
     };
     match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),
@@ -425,9 +436,9 @@ fn judged(
         if lane.item.is_some() {
             mail::question_tool_check(turn, vars, lane, payload)?;
         }
-        attached_launch_check()?;
+        marks::attached_launch_check(turn, lane, vars, payload)?;
     }
-    handoff_check()?;
+    marks::handoff_check(turn, arm, lane, vars, payload)?;
     mail::idle_check(turn, vars, arm, lane, continued)
 }
 
@@ -476,16 +487,5 @@ fn overseer_tool_check() -> Flow {
 
 /// Where a model switch is recorded or handed off; it records nothing.
 fn model_switch() -> Flow {
-    Ok(())
-}
-
-/// Where an attached launch past the context mark is refused; it refuses
-/// none.
-fn attached_launch_check() -> Flow {
-    Ok(())
-}
-
-/// Where the handoff marks are judged; it holds nothing.
-fn handoff_check() -> Flow {
     Ok(())
 }

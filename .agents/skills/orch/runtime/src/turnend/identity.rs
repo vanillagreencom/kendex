@@ -185,7 +185,7 @@ impl Lane {
         clippy::disallowed_methods,
         reason = "the turn end's one read of the branch a lane's root has checked out, `git symbolic-ref` through the one runner; it acts on nothing"
     )]
-    fn branch(&self, turn: &mut Turn) -> Flow<String> {
+    pub(super) fn branch(&self, turn: &mut Turn) -> Flow<String> {
         let root = self.root.display().to_string();
         let command = format!("-C {root} symbolic-ref -q --short HEAD");
         let env = [("LC_ALL", OsStr::new("C"))];

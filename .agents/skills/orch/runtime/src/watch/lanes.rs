@@ -1434,20 +1434,6 @@ pub fn copilot_home(settings: &Settings) -> Option<PathBuf> {
         })
 }
 
-/// A session id as the Copilot CLI spells one, the alphabet that keeps a
-/// record's path under its directory.
-fn session_id_bound(id: &str) -> bool {
-    !(id.is_empty() || id == "." || id == "..")
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-}
-
-/// The status line's refresh bound: a record older than this is one the CLI
-/// stopped refreshing, which would read as a session with room for as long
-/// as it stood.
-const COPILOT_RECORD_MAX_AGE: u64 = 120;
-
 /// The policy note of a Copilot lane's line (`lane-asking`,
 /// `idle-after-return`), for a running record whose launch granted
 /// allow-all (`allow_all` true): what the session's status-line record
@@ -1456,7 +1442,7 @@ const COPILOT_RECORD_MAX_AGE: u64 = 120;
 /// nobody at the pane answers, so `stop-cause=allow-all-blocked-by-policy`
 /// where the CLI reports `allow_all_enabled` false, and
 /// `session-record=<reason>` where no record answers for the session:
-/// [`copilot_record`]'s reasons, or `worktree-unmatched` and
+/// [`agent_runtime::context::copilot_record`]'s reasons, or `worktree-unmatched` and
 /// `store-unreadable` from the store read that binds a record naming no
 /// session id. The record is read under the record's `account`, else the
 /// `home` its confirmed launch ran under, else the watch's own Copilot home
@@ -1502,60 +1488,12 @@ fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
             }
         }
     };
-    match copilot_record(&home, &session, pass.now) {
-        Ok(Some(cause)) => Some(format!("stop-cause={cause}")),
-        Ok(None) => None,
+    match agent_runtime::context::copilot_record(&home, &session, "", pass.now) {
+        Ok(record) => record
+            .stop_cause(true)
+            .map(|cause| format!("stop-cause={cause}")),
         Err(reason) => Some(format!("session-record={reason}")),
     }
-}
-
-/// The stop cause a session's status-line record establishes for a launch
-/// that granted allow-all: `Ok(Some)` the cause, `Ok(None)` a record that
-/// reports the grant standing or says nothing of it, `Err` the first
-/// binding that did not agree (the record's own session id, its account
-/// directory, its freshness).
-fn copilot_record(
-    home: &Path,
-    session: &str,
-    now: u64,
-) -> Result<Option<&'static str>, &'static str> {
-    if !session_id_bound(session) {
-        return Err("unbound");
-    }
-    let path = home.join("lane-status").join(format!("{session}.json"));
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("missing"),
-        Err(_) => return Err("unreadable"),
-    };
-    let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&text) else {
-        return Err("unreadable");
-    };
-    let (Some(recorded), Some(account), Some(written)) = (
-        record.get("session_id").and_then(Value::as_str),
-        record.get("copilot_home").and_then(Value::as_str),
-        record.get("written_at").and_then(Value::as_u64),
-    ) else {
-        return Err("unreadable");
-    };
-    if recorded != session {
-        return Err("wrong-session");
-    }
-    if home.to_str() != Some(account) {
-        return Err("wrong-account");
-    }
-    if written > now || now - written > COPILOT_RECORD_MAX_AGE {
-        return Err("stale");
-    }
-    Ok(
-        match record
-            .get("status")
-            .and_then(|s| s.get("allow_all_enabled"))
-        {
-            Some(Value::Bool(false)) => Some("allow-all-blocked-by-policy"),
-            Some(_) | None => None,
-        },
-    )
 }
 
 /// The wall: the `usage-limit` row keyed to the identity it was judged for,
