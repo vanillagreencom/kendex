@@ -18,13 +18,13 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::Env;
 use crate::effects::{self, JobHandle, SidecarRead};
 use crate::error::{Error, Result};
 use crate::state::{
     self, Authorization, AuthorizedBy, ItemState, Record, Stage, StageKind, StageOutcome,
     SummaryComment, ValidateJob,
 };
+use agent_runtime::journal::Env;
 
 /// The round kinds `begin-round` mints. A CI round keys its cleanup entries
 /// in `round_prunes` and opens no stage: its fix runs as a dev round's work.

@@ -84,6 +84,11 @@ pub enum Error {
     IntentDuplicate { id: String },
     #[error("intent {id} already ended as {outcome:?}")]
     IntentComplete { id: String, outcome: Outcome },
+    /// A claim of an intent whose effect already recorded a phase: the
+    /// prior owner opened something, so a second owner would be a second
+    /// effect.
+    #[error("intent {id} has started under its owner")]
+    IntentStarted { id: String },
     /// A progress write names the obligation set at a revision the record no
     /// longer holds: another handle or process replaced the set since the
     /// writer read it, so the writer's view is stale and it acts on nothing.
@@ -177,6 +182,7 @@ impl Error {
             Error::IntentUnknown { .. } => "intent-unknown",
             Error::IntentDuplicate { .. } => "intent-duplicate",
             Error::IntentComplete { .. } => "intent-complete",
+            Error::IntentStarted { .. } => "intent-started",
             Error::SetReplaced { .. } => "set-replaced",
             Error::OutcomeInvalid { .. } => "outcome-invalid",
             Error::OwnerUnreadable { .. } => "owner-unreadable",

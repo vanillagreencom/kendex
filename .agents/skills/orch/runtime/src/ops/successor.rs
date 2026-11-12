@@ -479,7 +479,7 @@ pub fn write_handoff(
     body: &Path,
     handoff: &Path,
     keep_prior: bool,
-    env: &crate::ops::Env,
+    env: &agent_runtime::journal::Env,
 ) -> Result<Value> {
     use std::io::Write;
     let shown = handoff.display().to_string();

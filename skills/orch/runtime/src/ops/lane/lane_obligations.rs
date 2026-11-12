@@ -8,11 +8,10 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::super::controller::{Progress, ProgressRecorded, yielded_to};
-use super::super::intents;
 use crate::error::{Error, Result};
-use crate::state::Intent;
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::Owner;
+use agent_runtime::journal::{Progress, ProgressRecorded, intents, yielded_to};
 use agent_runtime::record::{self, Document};
 
 /// The intent member the lane set is recorded under.

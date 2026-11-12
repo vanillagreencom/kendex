@@ -281,7 +281,7 @@ impl LaneDriver<'_> {
             roster: &roster,
             repos: &self.repos,
         };
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: self.now,
             now_nanos: u128::from(self.now) * 1_000_000_000,
             nonce: 1,

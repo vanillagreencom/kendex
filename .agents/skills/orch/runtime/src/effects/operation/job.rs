@@ -43,11 +43,11 @@ use serde_json::{Value, json};
 use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Bootstrap, Operation, POLL, Reading, Run, Word, fleet_view, read_intent};
 use crate::error::{Error, Result};
-use crate::ops::{self, ClaimIntent, RecordProgress};
-use crate::state::Intent;
 use agent_runtime::controller::WatchJob;
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::{EffectOp, Obligation, Role};
 use agent_runtime::intent::{Notice, Owner};
+use agent_runtime::journal::{ClaimIntent, RecordProgress};
 use agent_runtime::record;
 
 /// What the caller of a transfer or a stop gets back at once: the effect
@@ -2023,7 +2023,7 @@ pub(super) fn remove_files(state_dir: &Path, intent_id: &str) {
 /// or its effect began under its first owner) ends the job before it opens
 /// anything.
 pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
-    ops::write_claim(
+    agent_runtime::journal::write_claim(
         run.path,
         &ClaimIntent {
             intent_id: intent_id.to_owned(),
@@ -2032,6 +2032,7 @@ pub fn claim(run: &Run, intent_id: &str) -> Result<()> {
         run.locking,
     )
     .map(drop)
+    .map_err(Error::from)
 }
 
 /// The announcement a failed or unconfirmed outcome of a job's operation
@@ -2117,7 +2118,7 @@ fn mark_notice(
     mark: String,
     while_owner: Option<Owner>,
 ) -> Result<()> {
-    ops::write_progress(
+    agent_runtime::journal::write_progress(
         run.path,
         &RecordProgress {
             intent_id: intent.id.clone(),
@@ -2284,7 +2285,7 @@ fn owner_notice(program: &Path, root: &Path, file: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::Request;
+    use crate::ops::{self, Request};
 
     /// The slice a unit is started in and the caps it copies, from the
     /// cgroup file the kernel writes and the cgroup's limit files: a pane
@@ -2482,7 +2483,7 @@ mod tests {
             },
         )
         .unwrap();
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2712,7 +2713,7 @@ mod tests {
             },
         )
         .unwrap();
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2831,7 +2832,7 @@ mod tests {
             },
         )
         .unwrap();
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -2970,7 +2971,7 @@ mod tests {
             pid: 77,
             start: "ticks:77".into(),
         };
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -3090,7 +3091,7 @@ mod tests {
             pid: 88,
             start: "ticks:88".into(),
         };
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -3123,7 +3124,7 @@ mod tests {
             &Request::ClaimIntent(ClaimIntent {
                 intent_id: intent.id.clone(),
             }),
-            &ops::Env {
+            &agent_runtime::journal::Env {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },
@@ -3202,7 +3203,7 @@ mod tests {
             pid: 88,
             start: "ticks:88".into(),
         };
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -3235,7 +3236,7 @@ mod tests {
             &Request::ClaimIntent(ClaimIntent {
                 intent_id: intent.id.clone(),
             }),
-            &ops::Env {
+            &agent_runtime::journal::Env {
                 owner: Some(claimant.clone()),
                 ..env.clone()
             },

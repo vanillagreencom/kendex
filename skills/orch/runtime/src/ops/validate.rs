@@ -20,7 +20,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::Env;
 use super::item::{self, AcceptResult, Attempt, RecordValidationAdmission};
 use super::proof;
 use crate::effects::Launch;
@@ -28,6 +27,7 @@ use crate::error::{Error, Result};
 use crate::state::{
     ItemState, Proof, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob, ValidateMode,
 };
+use agent_runtime::journal::Env;
 
 /// The validation run's steps, tagged by `step`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

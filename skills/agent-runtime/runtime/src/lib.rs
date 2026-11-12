@@ -13,6 +13,7 @@ pub mod error;
 pub mod harness;
 pub mod host;
 pub mod intent;
+pub mod journal;
 pub mod launch;
 pub mod observe;
 pub mod process;

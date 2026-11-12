@@ -32,7 +32,7 @@ use agent_runtime::host::{self, Place};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Env, Request, Verdict as CiVerdict, VerifyPr, verify_pr};
+use super::{Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
 use crate::state::{self, Stage, StageKind};
 use crate::validate::files::RunFile;
@@ -41,6 +41,7 @@ use crate::verify::wire::{
 };
 use crate::verify::{self, Answer, Bucket, Budget, Gh, Status};
 use agent_runtime::clock::Clock;
+use agent_runtime::journal::Env;
 
 /// The github package's program under the project's install, whose
 /// `pr-threads` reads the review threads.

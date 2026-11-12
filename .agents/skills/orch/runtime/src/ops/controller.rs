@@ -14,27 +14,24 @@ use agent_runtime::controller::{
     OVERSEER_COMPARE_KEYS, Overseer, PREDECESSOR_SESSION_KEYS, Pending, SUCCESSOR_BINDING_KEYS,
     SUCCESSOR_IDENTITY_KEYS, TransferCause,
 };
-use agent_runtime::intent::{Notice, Owner};
 use agent_runtime::record::{self, Document, Locking};
 use std::path::{Path, PathBuf};
 
-use agent_runtime::launch::Permission;
-use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::{
-    Effect, Env, RecordOutcome, Request, TargetMoved, intents, new_intent, null_held, push_intent,
-    same_open_intent, string_or_null,
-};
+use super::{Effect, Request, TargetMoved, new_intent, null_held, push_intent, string_or_null};
 use crate::effects::Recorded;
 use crate::error::{Error, Result};
+use agent_runtime::controller::{AdoptController, AdoptionRead, ControllerAdopted};
+use agent_runtime::journal::{self, Env, RecordOutcome, intents};
 use agent_runtime::settings::Succession;
 
 use crate::settings::Settings;
-use crate::state::{self, Intent};
-use agent_runtime::intent::{EffectOp, ObligationRecord, Phase};
+use crate::state::{self};
+use agent_runtime::intent::EffectOp;
+use agent_runtime::intent::Intent;
 
 /// The overseer record the requester saw: the succession compare-and-swap
 /// set. A key left out compares as `null`, which is what
@@ -238,72 +235,6 @@ pub struct ControllerStarted {
     pub effect: Effect,
 }
 
-/// Bind a controller this runtime did not launch: the pane a person opened
-/// it in, on the fleet server (or the one `socket` names), and what the
-/// person knows of its launch. The identity is read in that pane by the
-/// effects, never taken from the caller.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AdoptController {
-    pub pane: String,
-    #[serde(default)]
-    pub socket: Option<PathBuf>,
-    pub harness: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub account: Option<String>,
-    #[serde(default)]
-    pub home: Option<String>,
-    #[serde(default)]
-    pub model: Option<String>,
-    #[serde(default)]
-    pub effort: Option<String>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    /// The command of the owner that replaces this controller where another
-    /// lifecycle keeps its record: a Jarvis session registers its own
-    /// `jarvis-session succeed --home HOME`. Carried on the record as
-    /// `succession`; a controller whose record names one is never
-    /// succeeded by `request-transfer`, so no second owner opens a
-    /// successor the first does not record.
-    #[serde(default)]
-    pub succession: Option<Vec<String>>,
-    /// The file the pane's own harness writes its session rows to, which
-    /// the watch judges the controller's death and wall from.
-    #[serde(default)]
-    pub session_rows: Option<PathBuf>,
-    /// The permission posture the session runs under and its own permission
-    /// words, which the next succession launches with.
-    #[serde(default)]
-    pub permission: Option<Permission>,
-    #[serde(default)]
-    pub extra_args: Option<Vec<String>>,
-}
-
-/// What the effects read of the pane an adoption names, handed to the
-/// transition: the harness identity in its foreground and the server and
-/// window the pane is on.
-#[derive(Debug, Clone, PartialEq)]
-pub struct AdoptionRead {
-    pub identity: Identity,
-    pub server: u64,
-    pub server_start: u64,
-    pub socket: String,
-    pub window: String,
-    /// Whether the record already names this pane on this server
-    /// (`ol_owns`): the record is healed, not replaced.
-    pub same: bool,
-}
-
-/// A controller bound.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ControllerAdopted {
-    pub generation: u64,
-    /// True when the record already named this pane and was healed in
-    /// place; false when the record was written for this session.
-    pub healed: bool,
-}
-
 /// Retire the recorded controller exactly and record `off`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StopController {}
@@ -313,64 +244,6 @@ pub struct StopController {}
 pub struct StopRequested {
     pub generation: u64,
     pub effect: Effect,
-}
-
-/// Take the owner lease of an open intent whose effect has not started: the
-/// detached job's first act, before it opens anything.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ClaimIntent {
-    pub intent_id: String,
-}
-
-/// The intent under its new owner.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IntentClaimed {
-    pub intent: Intent,
-}
-
-/// Write an effect's progress into its intent before the wait that follows:
-/// the phase where one moved and the obligation set as it stands, each
-/// written on an open intent alone.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RecordProgress {
-    pub intent_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase: Option<Phase>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub obligations: Option<ObligationRecord>,
-    /// The owner the launcher-side handle writes under: the write is a no-op
-    /// once another owner holds the intent, so a job that claimed between the
-    /// launcher's last read and its write keeps its own set; `apply` retries
-    /// the transition on a conflicting snapshot. `None` writes always.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub while_owner: Option<Owner>,
-    /// The failure announcement a job's outcome made, written after the
-    /// outcome's own write applied:
-    /// the fleet-log row is appended in this write and the notice recorded on
-    /// the intent, once; an intent that carries one takes no second.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notice: Option<Notice>,
-}
-
-/// The intent as the progress write left it, and what the store did with
-/// the write.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ProgressRecorded {
-    pub intent: Intent,
-    pub progress: Progress,
-}
-
-/// What the store did with a progress write: recorded it; accepted it as
-/// the intent already stood, so the revision did not move; or yielded it to
-/// the owner that holds the intent now, writing nothing, where the request
-/// named `while_owner` and the intent is another's. An unchanged set under
-/// the recorded owner is accepted, never yielded.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Progress {
-    Recorded,
-    Unchanged,
-    Yielded { owner: Owner },
 }
 
 /// What the settings admit before any transition runs: the keys the
@@ -668,7 +541,7 @@ pub(super) fn request_transfer(
     let generation = current.generation.unwrap_or(0);
     let target = overseer_target(generation);
     let intents = intents(path, doc)?;
-    if let Some(intent) = same_open_intent(&intents, EffectOp::RequestTransfer, &target)? {
+    if let Some(intent) = journal::open_intent(&intents, EffectOp::RequestTransfer, &target)? {
         return Ok(TransferRequested {
             generation,
             pending: current.pending.unwrap_or_else(|| r.successor.clone()),
@@ -741,7 +614,7 @@ pub(super) fn start_controller(
     let generation = current.as_ref().and_then(|o| o.generation).unwrap_or(0);
     let target = overseer_target(generation);
     let intents = intents(path, doc)?;
-    if let Some(intent) = same_open_intent(&intents, EffectOp::StartController, &target)? {
+    if let Some(intent) = journal::open_intent(&intents, EffectOp::StartController, &target)? {
         return Ok(ControllerStarted {
             generation,
             effect: Effect::Reconciled { intent },
@@ -776,7 +649,7 @@ pub(super) fn stop_controller(
     let generation = current.generation.unwrap_or(0);
     let target = overseer_target(generation);
     let intents = intents(path, doc)?;
-    if let Some(intent) = same_open_intent(&intents, EffectOp::StopController, &target)? {
+    if let Some(intent) = journal::open_intent(&intents, EffectOp::StopController, &target)? {
         return Ok(StopRequested {
             generation,
             effect: Effect::Reconciled { intent },
@@ -788,177 +661,6 @@ pub(super) fn stop_controller(
     Ok(StopRequested {
         generation,
         effect: Effect::Persisted { intent },
-    })
-}
-
-/// Hand an open, not yet started intent to the process asking: its owner
-/// becomes this `Env`'s. An intent that ended refuses
-/// `intent-complete`; one whose effect recorded a phase refuses
-/// `intent-started`, since its prior owner opened something a second owner
-/// would open again.
-pub(super) fn claim_intent(
-    path: &Path,
-    doc: &mut Document,
-    r: &ClaimIntent,
-    env: &Env,
-) -> Result<IntentClaimed> {
-    let owner = env
-        .owner
-        .clone()
-        .ok_or(Error::Runtime(agent_runtime::Error::OwnerUnreadable {
-            op: "claim-intent",
-        }))?;
-    let intents = intents(path, doc)?;
-    let index = intents
-        .iter()
-        .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| {
-            Error::Runtime(agent_runtime::Error::IntentUnknown {
-                id: r.intent_id.clone(),
-            })
-        })?;
-    let mut intent = intents[index].clone();
-    if !intent.open() {
-        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
-            id: intent.id.clone(),
-            outcome: intent.outcome,
-        }));
-    }
-    if intent.phase.is_some() {
-        return Err(Error::IntentStarted {
-            id: intent.id.clone(),
-        });
-    }
-    intent.handed_from = intent.owner.replace(owner.clone());
-    // The job the launcher was asked for is this claimant: its handle and
-    // its unread record are settled by the claim itself, and the job's own
-    // owner lease is what a reconcile reads from here. A set the claim
-    // changed is a replaced set: its revision moves, so a token the launcher
-    // minted before the claim acts no more.
-    if let Some(obligations) = &mut intent.obligations
-        && obligations.discharge_where(ObligationRecord::is_job, "claimed") > 0
-    {
-        obligations.revision += 1;
-    }
-    let rows = record::array_mut(path, doc, "intents")?;
-    let row = record::element_mut(path, rows, index, "intents")?;
-    record::set(row, "owner", serde_json::to_value(&owner)?);
-    if let Some(handed_from) = &intent.handed_from {
-        record::set(row, "handed_from", serde_json::to_value(handed_from)?);
-    }
-    if let Some(obligations) = &intent.obligations {
-        record::set(row, "obligations", serde_json::to_value(obligations)?);
-    }
-    Ok(IntentClaimed { intent })
-}
-
-/// The claimant a write made under `while_owner` yields to: the owner the
-/// intent records now, where it is not the one the writer read. A
-/// launcher-side handle writes only while it still owns the intent: a job
-/// that claimed between the launcher's last read and the write keeps its own
-/// record, read under the store lock. The one owner guard of every progress
-/// write of an intent's members.
-pub(super) fn yielded_to(intent: &Intent, while_owner: Option<&Owner>) -> Option<Owner> {
-    let expected = while_owner?;
-    (intent.owner.as_ref() != Some(expected))
-        .then(|| intent.owner.clone().unwrap_or_else(|| expected.clone()))
-}
-
-/// Write an effect's progress. The phase and the
-/// obligation set go onto an open intent, refusing `intent-complete` on a
-/// closed one as a phase write always has; the sent mark goes onto the
-/// notice the outcome's write recorded owed, once: a second write finds it
-/// recorded and changes nothing. A write that leaves the document as it was
-/// is written nowhere.
-pub(super) fn record_progress(
-    path: &Path,
-    doc: &mut Document,
-    r: &RecordProgress,
-) -> Result<ProgressRecorded> {
-    let intents = intents(path, doc)?;
-    let index = intents
-        .iter()
-        .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| {
-            Error::Runtime(agent_runtime::Error::IntentUnknown {
-                id: r.intent_id.clone(),
-            })
-        })?;
-    let mut intent = intents[index].clone();
-    if let Some(owner) = yielded_to(&intent, r.while_owner.as_ref()) {
-        return Ok(ProgressRecorded {
-            intent,
-            progress: Progress::Yielded { owner },
-        });
-    }
-    // A write that carries only a notice mark is a continuation of the
-    // intent's recorded outcome, taken on the closed intent; the store's
-    // content comparison still holds the mark.
-    let continuation = r.phase.is_none() && r.obligations.is_none();
-    if !continuation && !intent.open() {
-        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
-            id: intent.id.clone(),
-            outcome: intent.outcome,
-        }));
-    }
-    let before = doc.clone();
-    // The notice the outcome's write recorded `owed`, or one whose send got
-    // no answer, is marked with how its send went; a notice already marked
-    // otherwise, or none recorded, is left as it is, so a second sender
-    // changes nothing.
-    if let Some(notice) = &r.notice
-        && intent
-            .notice
-            .as_ref()
-            .is_some_and(|n| n.owed() || n.unanswered())
-    {
-        intent.notice = Some(notice.clone());
-    }
-    let rows = record::array_mut(path, doc, "intents")?;
-    let row = record::element_mut(path, rows, index, "intents")?;
-    if let Some(notice) = &intent.notice
-        && r.notice.is_some()
-    {
-        record::set(row, "notice", serde_json::to_value(notice)?);
-    }
-    if let Some(phase) = &r.phase {
-        intent.phase = Some(phase.clone());
-        record::set(row, "phase", serde_json::to_value(phase)?);
-    }
-    if let Some(obligations) = &r.obligations {
-        // The compare-and-swap on the set: the write
-        // names the revision its handle read the set at, and a record that
-        // holds another was replaced by another handle or process since, so
-        // the write is refused and the handle acts on nothing. A write that
-        // changes the set replaces it: the store assigns the next revision;
-        // the same set keeps its revision.
-        let mut next = obligations.clone();
-        if let Some(current) = &intent.obligations
-            && current.revision != next.revision
-        {
-            return Err(Error::Runtime(agent_runtime::Error::SetReplaced {
-                id: intent.id.clone(),
-                expected: next.revision,
-                found: current.revision,
-            }));
-        }
-        next.revision = match &intent.obligations {
-            Some(current) if current.same_set(&next) => current.revision,
-            Some(current) => current.revision + 1,
-            None => 1,
-        };
-        intent.obligations = Some(next.clone());
-        record::set(row, "obligations", serde_json::to_value(&next)?);
-    }
-    if record::same_document(path, doc, &before)? {
-        return Ok(ProgressRecorded {
-            intent,
-            progress: Progress::Unchanged,
-        });
-    }
-    Ok(ProgressRecorded {
-        intent,
-        progress: Progress::Recorded,
     })
 }
 
@@ -978,7 +680,7 @@ pub(crate) fn apply_adoption(
     read: &Recorded<AdoptionRead>,
     locking: Locking,
 ) -> Result<ControllerAdopted> {
-    super::journal_kind(path, "adopt-controller")?;
+    journal::journal_kind(path, "adopt-controller")?;
     let snapshot = super::loaded(path)?;
     let mut doc = snapshot.doc.clone();
     let adopted = adopt_controller(path, &mut doc, r, read.evidence())?;
@@ -1325,6 +1027,9 @@ mod tests {
     use agent_runtime::intent::{LaunchIdentity, Notice};
     use std::fs;
 
+    use agent_runtime::intent::ObligationRecord;
+    use agent_runtime::journal::{ClaimIntent, Progress, RecordProgress};
+    use agent_runtime::process::Identity;
     use agent_runtime::protocol::Outcome;
     use serde_json::{Value, json};
 
@@ -1827,7 +1532,7 @@ mod tests {
         let before = fs::read_to_string(&path).unwrap();
         let err = crate::ops::apply(&path, &claim(&id), &job, LOCK).unwrap_err();
         assert!(
-            matches!(&err, Error::IntentStarted { id: i } if *i == id),
+            matches!(&err, Error::Runtime(agent_runtime::Error::IntentStarted { id: i }) if *i == id),
             "{err:?}"
         );
         assert_eq!(fs::read_to_string(&path).unwrap(), before);

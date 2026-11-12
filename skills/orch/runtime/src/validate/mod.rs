@@ -21,12 +21,13 @@ use crate::error::{Error, Result};
 use crate::ops::validate::{
     RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
 };
-use crate::ops::{self, Env, Report, Request};
+use crate::ops::{self, Report, Request};
 use crate::settings::Settings;
 use crate::state::{
     self, ItemState, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob, ValidateMode,
 };
 use crate::verify::Gh;
+use agent_runtime::journal::Env;
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;

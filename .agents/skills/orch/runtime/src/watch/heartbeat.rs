@@ -41,14 +41,15 @@ use agent_runtime::clock;
 
 use crate::verify::wire::Pull;
 
+use crate::ops::Host;
 use crate::ops::accounts::{
     self, PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
 };
-use crate::ops::{Env, Host};
 use crate::settings::Settings;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
+use agent_runtime::journal::Env;
 
 /// The host word of a lane record with no host.
 const LOCAL: &str = "local";

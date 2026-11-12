@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::ops::Env;
 use crate::state::Lane;
+use agent_runtime::journal::Env;
 
 /// The one word a credit reads as when the account's credit could not be
 /// read or carried no credit body.
@@ -335,7 +335,7 @@ impl MailCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::Env;
+    use agent_runtime::journal::Env;
 
     const FLEET: &str = include_str!("../../../tests/rust/fixtures/workflow-state-oversee.json");
 

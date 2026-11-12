@@ -26,7 +26,7 @@ use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::state::Intent;
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::{EffectOp, Obligation, ObligationRecord, OpenedPane, Phase, Role};
 
 use super::{pid_value, predecessor_identity};
@@ -1809,21 +1809,15 @@ mod tests {
             owner: None,
             outcome: agent_runtime::protocol::Outcome::NotStarted,
             completed_at: None,
-            lane_since: None,
-            selection: None,
             original_pending: None,
             cause: None,
             handed_from: None,
-            exclude_account: None,
             watch: None,
-            close: None,
-            cycle: None,
             notice: None,
             phase: None,
             obligations: Some(set.record.clone()),
             observation: None,
             reconciled: None,
-            observed_status: None,
             observed_generation: None,
             extra: Default::default(),
         };

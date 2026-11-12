@@ -26,16 +26,22 @@ use super::operation::{
 };
 use super::{Run, Target, fleet, lane_for_intent, launch_intent_of, pane_harness, read_intent};
 use crate::error::Result;
-use crate::state::{CloseGround, Intent, Lane, TerminalVerdict};
+use crate::state::{CloseGround, Lane, LaneMembers, TerminalVerdict};
 use crate::watch::hosted::{Asked, HostClosed};
+use agent_runtime::intent::Intent;
 
 /// `stale` is what the reconcile of the same request already read stale,
 /// counted no second time here.
 pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.engine.path, intent_id)?;
     let intent = read_intent(run.engine.path, intent_id)?;
+    let members = LaneMembers::of(run.engine.path, &intent)?;
     let overseer = fleet(run.engine.path)?.overseer;
-    let harness = pane_harness(&lane, launch_intent_of(run.engine.path, &item)?.as_ref());
+    let harness = pane_harness(
+        run.engine.path,
+        &lane,
+        launch_intent_of(run.engine.path, &item)?.as_ref(),
+    )?;
     // The lane's recorded handles as the durable set, read from the intent
     // where it stands, else bootstrapped from the lane's launch record and
     // written before the first signal. This is the one read of the launch
@@ -48,8 +54,8 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
         target: harness
             .map(|h| Target::new(&run.settings.engine.harness_binaries, h))
             .transpose()?,
-        ground: intent.close.as_ref(),
-        cycle: intent.cycle.as_ref().map(|row| &row.cycle),
+        ground: members.close.as_ref(),
+        cycle: members.cycle.as_ref().map(|row| &row.cycle),
         overseer: overseer.as_ref(),
     };
     // A lane whose stamp or launch keys are not the intent's is a moved lane
@@ -700,7 +706,10 @@ pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcom
                 return Ok(hold(operation, observation));
             }
         }
-        if owes_close_out(intent.close.as_ref(), &lane) {
+        if owes_close_out(
+            LaneMembers::of(run.engine.path, intent)?.close.as_ref(),
+            &lane,
+        ) {
             observation["close_out"] = json!("owed");
             return Ok(hold(operation, observation));
         }

@@ -22,11 +22,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::proof::{self, Hop};
-use super::{Env, findings, loaded};
+use super::{findings, loaded};
 use crate::error::{Error, Result};
 use crate::settings::{self, Settings};
 use crate::state;
 use crate::validate::files::RunFile;
+use agent_runtime::journal::Env;
 
 /// The bound on the push and on the publication's validation: a pre-push
 /// hook may run the project's whole battery.

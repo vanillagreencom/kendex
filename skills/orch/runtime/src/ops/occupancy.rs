@@ -45,8 +45,9 @@ use super::admission::{AdmissionReads, Clis};
 use agent_runtime::settings::Judged;
 
 use crate::settings::Settings;
-use crate::state::{Intent, Lane, LaneStatus};
+use crate::state::{Lane, LaneStatus};
 use agent_runtime::intent::EffectOp;
+use agent_runtime::intent::Intent;
 
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
 /// item's worktree on this machine. The cloud cap counts it, not the lane

@@ -14,12 +14,13 @@ use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Sent};
 use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
-use crate::ops::{self, Env, ReconcileRound, Request, job_ended};
+use crate::ops::{self, ReconcileRound, Request, job_ended};
 use crate::send::Keyed;
 use crate::settings::Settings;
 use crate::state::{
     self, FleetState, ItemState, Lane, Record, Stage, StageKind, StageOutcome, Stop, ValidateJob,
 };
+use agent_runtime::journal::Env;
 
 /// How long the mailbox program is given to take the notice.
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);

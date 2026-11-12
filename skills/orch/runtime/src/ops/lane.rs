@@ -32,15 +32,17 @@ use super::accounts::{self, PickAnswer, PickRequest};
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
-    Effect, Env, RecordOutcome, Standing, TargetMoved, intents, lane_at, lane_doc_mut, lanes,
-    new_intent, no_open_intent, open_intent, push_intent, same_open_intent, string_or_null,
+    Effect, Standing, TargetMoved, lane_at, lane_doc_mut, lanes, new_intent, open_intent,
+    push_intent, string_or_null,
 };
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, Intent, Lane, LaneStatus, Reservation, Selection, TerminalVerdict,
+    self, CloseGround, Lane, LaneMembers, LaneStatus, Reservation, Selection, TerminalVerdict,
 };
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::{EffectOp, Phase, PrincipalKeys, Role};
+use agent_runtime::journal::{self, Env, RecordOutcome, intents};
 
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
@@ -984,7 +986,7 @@ pub(super) fn launch_lane(
     } else {
         occupancy::occupancy(&lanes, &intents, replacing, env.now_secs, host, cap)
     };
-    if let Some(intent) = same_open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
+    if let Some(intent) = journal::open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
         let index = position.ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
@@ -1209,9 +1211,13 @@ pub(super) fn launch_lane(
         }
     };
     let mut intent = new_intent(EffectOp::LaunchLane, &r.item, env)?;
-    intent.lane_since = Some(at);
-    intent.selection = Some(r.selection(position.is_some()));
-    intent.exclude_account = r.exclude_account.as_deref().map(canonical_account);
+    LaneMembers {
+        lane_since: Some(at),
+        selection: Some(r.selection(position.is_some())),
+        exclude_account: r.exclude_account.as_deref().map(canonical_account),
+        ..LaneMembers::default()
+    }
+    .write(&mut intent.extra)?;
     push_intent(path, doc, &intent)?;
     Ok(LaneLaunched {
         lane: lane_at(path, doc, index)?,
@@ -1234,7 +1240,7 @@ pub(super) fn adopt_session(
         .ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
-    no_open_intent(&intents(path, doc)?, &r.item)?;
+    journal::no_open_intent(&intents(path, doc)?, &r.item)?;
     let previous = &lanes[index];
     match previous.status {
         LaneStatus::Running => {
@@ -1410,9 +1416,13 @@ pub(super) fn close_owned_resources(
     };
     let ground = close_ground(&lane, r, host)?;
     let mut intent = new_intent(EffectOp::CloseOwnedResources, &r.item, env)?;
-    intent.lane_since = lane.session_since.clone();
-    intent.close = Some(ground);
-    intent.cycle = r.cycle.clone();
+    LaneMembers {
+        lane_since: lane.session_since.clone(),
+        close: Some(ground),
+        cycle: r.cycle.clone(),
+        ..LaneMembers::default()
+    }
+    .write(&mut intent.extra)?;
     push_intent(path, doc, &intent)?;
     Ok(CloseRequested {
         lane,
@@ -1517,7 +1527,7 @@ pub(super) fn park_lane(
         .ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
         })?;
-    no_open_intent(&intents(path, doc)?, &r.item)?;
+    journal::no_open_intent(&intents(path, doc)?, &r.item)?;
     let lane = &lanes[index];
     // A park stops a hosted sandbox with its disk kept; a local lane has
     // none, as `close-lane`'s park refuses it.
@@ -1669,13 +1679,14 @@ pub(super) fn intent_lane(
         return Ok(IntentTarget::Moved { observed: None });
     };
     let lane = &lanes[index];
+    let since = LaneMembers::of(path, intent)?.lane_since;
     let recorded = intent.obligations.as_ref().map(|record| PrincipalKeys {
-        since: intent.lane_since.clone(),
+        since: since.clone(),
         keys: record.principal_keys(Role::Harness),
     });
     let moved = match keys.or(recorded.as_ref()) {
         Some(keys) => lane_moved(lane, keys),
-        None => lane.session_since != intent.lane_since,
+        None => lane.session_since != since,
     } || (intent.op == EffectOp::LaunchLane && lane.status == LaneStatus::Done);
     if moved {
         return Ok(IntentTarget::Moved {
@@ -1683,6 +1694,33 @@ pub(super) fn intent_lane(
         });
     }
     Ok(IntentTarget::Current { index })
+}
+
+/// Note on a lane intent the status its lane read when the lane had moved
+/// under it: on the intent as the outcome reports it, and on its row where a
+/// status was read. orch's arm is the one writer of the member.
+pub(super) fn observe_status(
+    path: &Path,
+    doc: &mut Document,
+    intent: &mut Intent,
+    observed: Option<LaneStatus>,
+) -> Result<()> {
+    let mut members = LaneMembers::of(path, intent)?;
+    members.observed_status = observed;
+    members.write(&mut intent.extra)?;
+    if observed.is_some() {
+        let rows = record::array_mut(path, doc, "intents")?;
+        let index = rows
+            .iter()
+            .position(|row| row.get("id").and_then(Value::as_str) == Some(intent.id.as_str()))
+            .ok_or_else(|| {
+                Error::Runtime(agent_runtime::Error::IntentUnknown {
+                    id: intent.id.clone(),
+                })
+            })?;
+        members.write(record::element_mut(path, rows, index, "intents")?)?;
+    }
+    Ok(())
 }
 
 /// Record the fleet's tmux session where none is recorded yet, the
@@ -1742,6 +1780,7 @@ pub(super) fn record_launch_outcome(
     index: usize,
     recorded: &mut TargetMoved,
 ) -> Result<()> {
+    let selection = LaneMembers::of(path, intent)?.selection;
     match r.outcome {
         Outcome::Confirmed => {
             if let Some(session) = &r.tmux_session {
@@ -1751,7 +1790,7 @@ pub(super) fn record_launch_outcome(
             // The whole selection, null where the request named none: the
             // session that runs is this request's, so no account, model or
             // effort of the earlier session survives into its record.
-            if let Some(selection) = &intent.selection {
+            if let Some(selection) = &selection {
                 record::set(lane, "harness", selection.harness.as_str());
                 for (key, value) in [
                     ("account", &selection.account),
@@ -1898,6 +1937,7 @@ pub(super) fn record_close_outcome(
     index: usize,
     recorded: &mut TargetMoved,
 ) -> Result<()> {
+    let members = LaneMembers::of(path, intent)?;
     match r.outcome {
         Outcome::Confirmed => {
             let mut row = json!({
@@ -1906,7 +1946,7 @@ pub(super) fn record_close_outcome(
                 "item": intent.target,
             });
             let lane = lane_doc_mut(path, doc, index)?;
-            match &intent.close {
+            match &members.close {
                 Some(CloseGround::NoLanding { reason, source, .. }) => {
                     record::set(lane, "status", LaneStatus::Stopped.word());
                     row["text"] =
@@ -1941,7 +1981,7 @@ pub(super) fn record_close_outcome(
                         record::set(lane, "kept_mail", mail);
                     }
                     row["text"] = json!(format!("lane closed; intent {}", intent.id));
-                    match &intent.close {
+                    match &members.close {
                         Some(CloseGround::Terminal { verdict, source }) => {
                             row["verdict"] = serde_json::to_value(verdict)?;
                             row["source"] = json!(source);
@@ -1955,8 +1995,8 @@ pub(super) fn record_close_outcome(
                 }
             }
             let cloud = cloud_close_row(lane, &intent.target, at);
-            let cycle = intent.cycle.as_ref().map(|c| c.rows(&intent.target, at));
-            if let Some(cycle_row) = &intent.cycle {
+            let cycle = members.cycle.as_ref().map(|c| c.rows(&intent.target, at));
+            if let Some(cycle_row) = &members.cycle {
                 record::set(lane, "cycle", cycle_row.cycle.clone());
             }
             let log = record::array_mut(path, doc, "fleet_log")?;
@@ -2159,9 +2199,15 @@ mod tests {
         // The id is the op, the target and the call's own stamp.
         assert_eq!(intent.id, "launch-lane:KEN-4468:1769700000123456789-4242");
         assert_eq!(intent.outcome, Outcome::NotStarted);
-        assert_eq!(intent.lane_since.as_deref(), Some("2026-01-29T15:20:00Z"));
         assert_eq!(
-            intent.selection,
+            LaneMembers::of(&path, intent)
+                .unwrap()
+                .lane_since
+                .as_deref(),
+            Some("2026-01-29T15:20:00Z")
+        );
+        assert_eq!(
+            LaneMembers::of(&path, intent).unwrap().selection,
             Some(Selection {
                 harness: "claude".into(),
                 account: Some("/a/a1".into()),
@@ -2919,7 +2965,13 @@ mod tests {
         let Effect::Persisted { intent } = &l.effect else {
             panic!()
         };
-        assert_eq!(intent.exclude_account.as_deref(), Some(spent.as_str()));
+        assert_eq!(
+            LaneMembers::of(&path, intent)
+                .unwrap()
+                .exclude_account
+                .as_deref(),
+            Some(spent.as_str())
+        );
     }
 
     /// A relaunch keeps every field
@@ -3363,9 +3415,22 @@ mod tests {
             panic!()
         };
         assert_eq!(intent.op, EffectOp::CloseOwnedResources);
-        assert_eq!(intent.lane_since.as_deref(), Some("2026-01-29T15:20:00Z"));
-        assert_eq!(intent.selection, None, "a close carries no selection");
-        assert_eq!(intent.close, Some(CloseGround::Exited));
+        assert_eq!(
+            LaneMembers::of(&path, intent)
+                .unwrap()
+                .lane_since
+                .as_deref(),
+            Some("2026-01-29T15:20:00Z")
+        );
+        assert_eq!(
+            LaneMembers::of(&path, intent).unwrap().selection,
+            None,
+            "a close carries no selection"
+        );
+        assert_eq!(
+            LaneMembers::of(&path, intent).unwrap().close,
+            Some(CloseGround::Exited)
+        );
         let again = run(&path, &close("KEN-4468")).unwrap();
         let Report::CloseOwnedResources(c) = &again.report else {
             panic!()
@@ -3445,7 +3510,7 @@ mod tests {
             panic!()
         };
         assert_eq!(
-            intent.close,
+            LaneMembers::of(&path, intent).unwrap().close,
             Some(CloseGround::Terminal {
                 verdict: TerminalVerdict::Canceled,
                 source: "linear".into()
@@ -3472,7 +3537,10 @@ mod tests {
         let Effect::Persisted { intent } = &c.effect else {
             panic!()
         };
-        assert_eq!(intent.close, Some(CloseGround::Exited));
+        assert_eq!(
+            LaneMembers::of(&path, intent).unwrap().close,
+            Some(CloseGround::Exited)
+        );
     }
 
     /// A confirmed close removes `pending_pr`,
@@ -3575,7 +3643,7 @@ mod tests {
             panic!()
         };
         assert_eq!(
-            intent.close,
+            LaneMembers::of(&path, intent).unwrap().close,
             Some(CloseGround::NoLanding {
                 reason: "diagnosis-complete".into(),
                 source: "overseer".into(),

@@ -26,8 +26,9 @@ mod support;
 
 use std::process::Output;
 
+use agent_runtime::journal::Env;
 use orch_runtime::error::Error;
-use orch_runtime::ops::{Env, Request, VerifyHead, VerifyPr, apply};
+use orch_runtime::ops::{Request, VerifyHead, VerifyPr, apply};
 use serde_json::{Map, Value, json};
 use tempfile::TempDir;
 

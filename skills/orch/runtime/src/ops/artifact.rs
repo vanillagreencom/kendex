@@ -16,12 +16,13 @@ use agent_runtime::host::{self, Place};
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 
-use super::{Env, proof};
+use super::proof;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, ItemState, Stage, StageKind, ValidateMode};
 use crate::validate::files::{self, RunFile};
 use agent_runtime::clock::Clock;
+use agent_runtime::journal::Env;
 
 #[derive(Debug, Subcommand)]
 pub enum DevReturn {

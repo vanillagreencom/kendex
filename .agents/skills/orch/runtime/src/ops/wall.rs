@@ -23,8 +23,8 @@ use agent_runtime::clock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::Env;
 use crate::error::Result;
+use agent_runtime::journal::Env;
 
 /// POSIX `cksum`: CRC-32 over the bytes then over the byte count, least
 /// significant byte first until none is left, complemented (POSIX.1-2017,

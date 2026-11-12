@@ -16,9 +16,10 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 use agent_runtime::clock::SystemClock;
+use agent_runtime::journal::Env;
 use orch_runtime::effects;
 use orch_runtime::error::{Error, Result};
-use orch_runtime::ops::{self, Env, Request};
+use orch_runtime::ops::{self, Request};
 use orch_runtime::protocol::{self, Reply};
 use orch_runtime::schedule;
 use orch_runtime::settings::{self, Flags, Settings};
@@ -2488,12 +2489,12 @@ const JOB_ANSWER_MARGIN: std::time::Duration = std::time::Duration::from_secs(60
 /// The intent an `--effect-exit` call reads its status from: the outcome
 /// its effect recorded here, or its job's as last read.
 enum Settled {
-    Recorded(state::Intent),
-    Job(state::Intent),
+    Recorded(agent_runtime::intent::Intent),
+    Job(agent_runtime::intent::Intent),
 }
 
 impl Settled {
-    fn intent(&self) -> &state::Intent {
+    fn intent(&self) -> &agent_runtime::intent::Intent {
         match self {
             Settled::Recorded(intent) | Settled::Job(intent) => intent,
         }

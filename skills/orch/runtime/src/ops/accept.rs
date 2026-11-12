@@ -30,9 +30,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::item::AcceptResult;
-use super::{Applied, Env, Report, Request, apply};
+use super::{Applied, Report, Request, apply};
 use crate::error::Result;
 use crate::state::{self, Attachment, SummaryComment};
+use agent_runtime::journal::Env;
 
 /// How long one tracker call may take.
 const POST_TIMEOUT: Duration = Duration::from_secs(120);

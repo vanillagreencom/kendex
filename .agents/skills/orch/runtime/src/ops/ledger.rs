@@ -10,11 +10,11 @@ use agent_runtime::clock;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::Env;
 use super::findings::added_entries;
 use super::store::{array_at, one_value, stamp};
 use crate::error::{Error, Result};
 use crate::state;
+use agent_runtime::journal::Env;
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()

@@ -26,8 +26,9 @@ use super::{
 };
 use crate::error::{Error, Result};
 use crate::ops::accounts::usage::Credential;
-use crate::ops::{self, AdoptController, AdoptionRead, ControllerAdopted};
-use crate::state::Intent;
+use crate::ops::{self};
+use agent_runtime::controller::{AdoptController, AdoptionRead, ControllerAdopted};
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
 
 /// What a recorded pane reads as on its own server: present as `P` (the

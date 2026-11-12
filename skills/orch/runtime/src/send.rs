@@ -23,9 +23,10 @@ use crate::ops::mail::{
     Credit, DirectiveSend, DirectiveSendRecorded, DirectiveWrite, KeyedSend, RecordDirectiveSend,
     SendResult, Word, owed,
 };
-use crate::ops::{self, Env, Report, Request};
+use crate::ops::{self, Report, Request};
 use crate::settings::Settings;
 use crate::state;
+use agent_runtime::journal::Env;
 
 /// The directory under the state directory where a send keeps its receipt
 /// between the program's answer and the mark.

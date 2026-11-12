@@ -33,13 +33,15 @@ use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::{
-    self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, OutcomeWritten, Progress,
-    RecordLaneProgress, Report, Request,
+    self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, RecordLaneProgress, Report,
+    Request,
 };
 use crate::settings::Settings;
-use crate::state::{Intent, Lane};
+use crate::state::{Lane, LaneMembers};
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::Owner;
 use agent_runtime::intent::{EffectOp, PrincipalKeys, Role};
+use agent_runtime::journal::{OutcomeWritten, Progress};
 use agent_runtime::record::Locking;
 
 pub(super) use worktree::WorktreeRelease;
@@ -226,9 +228,8 @@ pub(super) fn open<'a>(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a
     let bootstrap = match intent.op {
         EffectOp::LaunchLane => Bootstrap::Phase {
             principal: Role::Harness,
-            harness: intent
+            harness: LaneMembers::of(run.engine.path, intent)?
                 .selection
-                .as_ref()
                 .and_then(|s| Harness::parse(&s.harness)),
         },
         EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
@@ -288,7 +289,7 @@ impl<'a> LaneOperation<'a> {
             run,
             engine,
             lane: LaneObligations::of(recorded.unwrap_or_default()),
-            lane_since: intent.lane_since.clone(),
+            lane_since: LaneMembers::of(run.engine.path, intent)?.lane_since,
             while_owner: intent.owner.clone(),
         };
         if owed {
@@ -683,7 +684,7 @@ pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Outcome
         .map(|record| record.standing.iter().map(standing_value).collect())
         .unwrap_or_default();
     let keys = PrincipalKeys {
-        since: intent.lane_since.clone(),
+        since: LaneMembers::of(run.engine.path, &intent)?.lane_since,
         keys: outcome.principal_keys().to_vec(),
     };
     operation::apply_outcome_with(&run.engine, outcome, |wire| {
@@ -724,7 +725,7 @@ pub(super) fn persist_close(run: &Run, close: &ops::CloseOwnedResources) -> Resu
 pub(super) fn apply_request(
     path: &Path,
     request: &Request,
-    env: &ops::Env,
+    env: &agent_runtime::journal::Env,
     locking: Locking,
 ) -> Result<Applied> {
     let host = ops::Host::kernel();

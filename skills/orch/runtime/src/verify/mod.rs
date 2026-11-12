@@ -54,9 +54,10 @@ use agent_runtime::host;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::ops::{self, Applied, Env, RecordVerification, Request, Verdict, VerifyHead};
+use crate::ops::{self, Applied, RecordVerification, Request, Verdict, VerifyHead};
 use crate::state;
 use agent_runtime::clock::Clock;
+use agent_runtime::journal::Env;
 
 pub(crate) use evidence::required_contexts;
 use judge::Judgement;

@@ -17,12 +17,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use agent_runtime::controller::{Overseer, TransferCause};
-use agent_runtime::intent::{
-    EffectOp, LaunchIdentity, Notice, ObligationRecord, Owner, Phase, Reconciled,
-};
-use agent_runtime::protocol::Outcome;
+use agent_runtime::controller::Overseer;
+use agent_runtime::intent::{Intent, LaunchIdentity, Notice};
 use agent_runtime::record::{self, Document, FLEET_FILE_NAME, field};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -660,122 +658,81 @@ pub struct Selection {
     pub relaunch: bool,
 }
 
-/// The persisted intent of one external effect: written before the effect
-/// starts, its `outcome` written after. The id is
-/// `<op>:<target>:<nanos>-<nonce>`, the operation's word, its target and
-/// the stamp the caller's `Env` minted for the call, so two intents on one
-/// target never share an id whatever the file holds. One intent per
-/// target may be open; a repeated request of the same operation finds it
-/// and reconciles, a request of another operation on the target refuses.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Intent {
-    pub id: String,
-    pub op: EffectOp,
-    pub target: String,
-    pub created_at: String,
-    /// The process that persisted the intent; a reconcile
-    /// that finds it live defers to it. An intent may carry none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<Owner>,
-    pub outcome: Outcome,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub completed_at: Option<String>,
+/// The members of an intent row that are a lane's: orch's one typed view of
+/// them, read from and written to the members the intent's frame keeps as
+/// written. A lane intent's own writes go through [`LaneMembers::write`]; no
+/// other code reads or writes these keys of an intent.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LaneMembers {
     /// The lane's `session_since` when a lane intent was written; a lane
     /// relaunched since carries another, and the outcome is stale.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane_since: Option<String>,
     /// What a launch intent writes on the lane when its outcome confirms.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<Selection>,
-    /// The `overseer.pending` a transfer request overwrote, put back when
-    /// the transfer fails.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub original_pending: Option<Value>,
-    /// Why a transfer was asked for; a reconcile reads it to know what
-    /// proves the predecessor terminal. Absent on the other
-    /// operations and on a transfer recorded without one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cause: Option<TransferCause>,
-    /// The owner that persisted the intent and handed it to the detached
-    /// job that now owns it, written by the claim: the job
-    /// lets that process answer and exit before it retires the pane the
-    /// process asked from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handed_from: Option<Owner>,
     /// The account a wall relaunch must not run on, canonical, recorded on
     /// the launch intent that refused it. Absent elsewhere.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude_account: Option<String>,
-    /// The fleet watch's launch line a start carries: `orch-runtime watch
-    /// run` and its arguments, which the start's effect
-    /// launches through the job launcher once the controller's lane is
-    /// confirmed, and a reconcile launches again where no watch claims.
-    /// Absent on the other operations and on a start whose caller holds
-    /// the watch's start.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch: Option<Vec<String>>,
     /// What authorized a close; its confirmed outcome
     /// moves the lane as that ground allows. Absent on the other operations
     /// and on a close recorded without one, which ends the lane
     /// as done.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close: Option<CloseGround>,
     /// The merge cycle a close writes on its lane when it confirms.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle: Option<CycleRow>,
-    /// The failure the detached job's outcome announced:
-    /// the fleet-log row and the owner notice,
-    /// sent once per intent and recorded here so a repeated
-    /// reconcile of the same outcome emits nothing again. Absent until an
-    /// outcome of a transfer or a stop failed or stayed unconfirmed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notice: Option<Notice>,
-    /// How far the effect got, written before each wait; a
-    /// reconciliation completes the effect from it. Absent until the effect
-    /// has opened something.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub phase: Option<Phase>,
-    /// The obligations the effect stands under: every
-    /// handle it acquired, written before the wait that follows the
-    /// acquisition, with the discharges made so far and whether anything was
-    /// signalled. Every later step and every reconcile reads this set and
-    /// never rebuilds it from the lane or the phase. Absent on an intent
-    /// recorded without it; its next step writes it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub obligations: Option<ObligationRecord>,
-    /// What the effect last observed of its target: the pane it opened or
-    /// found, the process and screen it read, and for a succession whether
-    /// the predecessor was retired. A reconciliation re-observes from it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observation: Option<Value>,
-    /// Set when the intent was closed because its target's record moved
-    /// under it, with the status or generation the record then read; the
-    /// outcome word stays what the effect reported.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reconciled: Option<Reconciled>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The lane status an outcome read when the lane had moved under its
+    /// intent.
     pub observed_status: Option<LaneStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_generation: Option<u64>,
-    /// Members the intent's frame does not own, such as the lane
-    /// operation's own obligation set, kept as written across every write
-    /// of the frame.
-    #[serde(flatten)]
-    pub extra: serde_json::Map<String, Value>,
 }
 
-impl Intent {
-    /// Whether the effect may still be in flight: its outcome is not final
-    /// and no reconciliation closed it.
-    pub fn open(&self) -> bool {
-        if self.reconciled.is_some() {
-            return false;
-        }
-        match self.outcome {
-            Outcome::NotStarted | Outcome::Unconfirmed => true,
-            Outcome::Confirmed | Outcome::Failed => false,
+impl LaneMembers {
+    /// The lane members `intent` records. A member that is not its type
+    /// refuses `record-shape` naming it.
+    pub fn of(path: &Path, intent: &Intent) -> Result<LaneMembers> {
+        let row = &intent.extra;
+        Ok(LaneMembers {
+            lane_since: field(path, row, "lane_since")?,
+            selection: field(path, row, "selection")?,
+            exclude_account: field(path, row, "exclude_account")?,
+            close: field(path, row, "close")?,
+            cycle: field(path, row, "cycle")?,
+            observed_status: field(path, row, "observed_status")?,
+        })
+    }
+
+    /// Write the members onto `row`, an intent's kept members or its row in
+    /// the record: a member set is written in place, or appended where the
+    /// row lacks it; a member unset removes a value the row holds. A view
+    /// written back unchanged leaves the row as it was.
+    pub fn write(&self, row: &mut Document) -> Result<()> {
+        put(row, "lane_since", self.lane_since.as_ref())?;
+        put(row, "selection", self.selection.as_ref())?;
+        put(row, "exclude_account", self.exclude_account.as_ref())?;
+        put(row, "close", self.close.as_ref())?;
+        put(row, "cycle", self.cycle.as_ref())?;
+        put(row, "observed_status", self.observed_status.as_ref())
+    }
+}
+
+/// Write one member: a value the row already holds as the same member, in
+/// whatever spelling, is left as it is.
+fn put<T>(row: &mut Document, key: &str, value: Option<&T>) -> Result<()>
+where
+    T: Serialize + DeserializeOwned + PartialEq,
+{
+    let held = row
+        .get(key)
+        .filter(|held| !held.is_null())
+        .and_then(|held| serde_json::from_value::<T>(held.clone()).ok());
+    if held.as_ref() == value {
+        return Ok(());
+    }
+    match value {
+        Some(value) => record::set(row, key, serde_json::to_value(value)?),
+        None => {
+            record::delete(row, key);
         }
     }
+    Ok(())
 }
 
 /// The verdict words the watch rebuilds its acknowledged triage keys from.
@@ -845,10 +802,17 @@ pub fn load(path: &Path) -> Result<Option<Snapshot>> {
     };
     let kind = Kind::of_path(path);
     if kind == Kind::Fleet {
-        // The one field a fleet read refuses the whole file on.
-        field::<Vec<String>>(path, &doc, "launch_queue")?;
+        queue_read(path, &doc)?;
     }
     Ok(Some(Snapshot { kind, doc }))
+}
+
+/// The one field a fleet read refuses the whole file on: a `launch_queue`
+/// entry that is not a string refuses `record-shape`. Every fleet
+/// transition reads it before it moves the record.
+pub fn queue_read(path: &Path, doc: &Document) -> Result<()> {
+    field::<Vec<String>>(path, doc, "launch_queue")?;
+    Ok(())
 }
 
 fn validate(path: &Path, snapshot: &Snapshot) -> Result<()> {

@@ -26,8 +26,9 @@ use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
-use super::{Env, loaded};
+use super::loaded;
 use agent_runtime::error::ShapeReason;
+use agent_runtime::journal::Env;
 
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Noticed};

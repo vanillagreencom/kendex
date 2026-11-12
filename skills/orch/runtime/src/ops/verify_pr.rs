@@ -18,11 +18,12 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Applied, Env, VerifyHead};
+use super::{Applied, VerifyHead};
 use crate::error::{Error, Result};
 use crate::state;
 use crate::verify::wire::PullRequestState;
 use crate::verify::{self, Caller, CheckReport, Gh, Status};
+use agent_runtime::journal::Env;
 
 /// Verify a pull request's current head where it stands and record the
 /// verdict. `repo` is `owner/name` and `pr` the pull request's number;

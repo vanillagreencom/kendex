@@ -94,7 +94,9 @@ impl From<&Error> for Refusal {
                 pair("op", (*op).to_owned()),
                 pair("target", target.clone()),
             ],
-            Error::IntentUnknown { id } | Error::IntentDuplicate { id } => {
+            Error::IntentUnknown { id }
+            | Error::IntentDuplicate { id }
+            | Error::IntentStarted { id } => {
                 vec![pair("intent_id", id.clone())]
             }
             Error::IntentComplete { id, outcome } => vec![

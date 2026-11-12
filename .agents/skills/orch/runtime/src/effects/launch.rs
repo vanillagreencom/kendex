@@ -34,8 +34,9 @@ use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch, accounts};
 use crate::settings::{LaneOutput, Settings};
-use crate::state::{self, Intent, Lane};
+use crate::state::{self, Lane, LaneMembers};
 use crate::watch::hosted::{self, Launch, PaneKind};
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::{OpenedPane, Phase};
 
 pub(super) mod gate;
@@ -868,7 +869,9 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     }
     // Whether the launch re-enters a standing record, as the transition
     // judged it: the provider then reuses the worktree it holds.
-    let relaunch = intent.selection.as_ref().is_some_and(|s| s.relaunch);
+    let relaunch = LaneMembers::of(run.engine.path, intent)?
+        .selection
+        .is_some_and(|s| s.relaunch);
     let mut outcome = match surface {
         Surface::Local(fleet) => local_launch(run, operation, r, fleet, &route)?,
         Surface::Hosted(provider) => {
@@ -2049,7 +2052,7 @@ fn judge_opened(
         }
         Observed::Present(pane) => pane,
     };
-    let Some(harness) = pane_harness(lane, Some(intent)) else {
+    let Some(harness) = pane_harness(run.engine.path, lane, Some(intent))? else {
         return Ok(launch_pane_unconfirmed(
             operation,
             opened,

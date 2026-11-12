@@ -14,8 +14,9 @@ use agent_runtime::clock;
 use agent_runtime::host;
 use serde_json::{Map, Value, json};
 
-use super::{Env, findings, ledger, loaded, progress, reviewers};
+use super::{findings, ledger, loaded, progress, reviewers};
 use agent_runtime::error::ShapeReason;
+use agent_runtime::journal::Env;
 
 use crate::error::{Error, Result};
 use crate::settings::StoreSettings;

@@ -206,11 +206,6 @@ pub enum Error {
         "pane {pane} does not hold the harness: {reading}; open the harness in that pane, or run the request from the pane that holds it"
     )]
     PaneNotHarness { pane: String, reading: String },
-    /// A claim of an intent whose effect already recorded a phase: the
-    /// prior owner opened something, so a second owner would be a second
-    /// effect.
-    #[error("intent {id} has started under its owner")]
-    IntentStarted { id: String },
     /// The detached job that runs a transfer or a stop could not be started;
     /// the request is recorded `failed` and the controller keeps control.
     #[error("intent {intent}: the detached job could not be launched: {cause}")]
@@ -596,7 +591,6 @@ impl Error {
             Error::RecoveryUnbound { .. } => "recovery-unbound",
             Error::OverseerUnreadable { .. } => "overseer-unreadable",
             Error::PaneNotHarness { .. } => "pane-not-harness",
-            Error::IntentStarted { .. } => "intent-started",
             Error::JobLaunchFailed { .. } => "job-launch-failed",
             Error::JobUnclaimed { .. } => "job-unclaimed",
             Error::Persisted { error, .. } => error.key(),
@@ -768,7 +762,6 @@ impl Error {
             Error::PaneNotHarness { pane, reading } => {
                 vec![pair("pane", pane.clone()), pair("reading", reading.clone())]
             }
-            Error::IntentStarted { id } => vec![pair("intent_id", id.clone())],
             Error::JobLaunchFailed { intent, .. } | Error::JobUnclaimed { intent } => {
                 vec![pair("intent_id", intent.clone())]
             }

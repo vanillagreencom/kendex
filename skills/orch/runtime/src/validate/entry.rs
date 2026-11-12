@@ -1,10 +1,10 @@
 //! The catalog validation entry and its text protocol.
 use super::{StartRequest, files, run};
 use crate::error::{Error, Result};
-use crate::ops::Env;
 use crate::settings::{self, Settings};
 use crate::state::ValidateMode;
 use agent_runtime::clock::SystemClock;
+use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 use clap::Args as ClapArgs;
 use std::fs;

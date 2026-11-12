@@ -18,10 +18,11 @@ use super::lane::{self, RecordSurfaceLane};
 use super::ledger::{self, RecordOverseerLedger};
 use super::progress::{self, RecordDevReturn, RecordPrProgress, RecordRoute};
 use super::reviewers::{self, PanelKind, RecordAgents, RecordPanel};
-use super::{Env, item, loaded, qa, store};
+use super::{item, loaded, qa, store};
 use crate::error::{Error, Result};
 use crate::settings::StoreSettings;
 use crate::state::Kind;
+use agent_runtime::journal::Env;
 
 /// One named record write, tagged by `op`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

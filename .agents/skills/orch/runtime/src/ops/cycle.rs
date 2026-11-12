@@ -1560,7 +1560,7 @@ pub fn rollup_logged(
     fleet: &Path,
     locking: record::Locking,
     store: &crate::settings::StoreSettings,
-    env: &super::Env,
+    env: &agent_runtime::journal::Env,
 ) -> Result<Vec<String>> {
     let lines = rollup(fleet, false)?;
     let file = fleet.with_file_name(format!(".cycle-rollup.{}.json", std::process::id()));

@@ -12,6 +12,7 @@
   ".agents/skills/agent-runtime/runtime/src/host/mod.rs",
   ".agents/skills/agent-runtime/runtime/src/host/tmux.rs",
   ".agents/skills/agent-runtime/runtime/src/intent.rs",
+  ".agents/skills/agent-runtime/runtime/src/journal.rs",
   ".agents/skills/agent-runtime/runtime/src/launch.rs",
   ".agents/skills/agent-runtime/runtime/src/lib.rs",
   ".agents/skills/agent-runtime/runtime/src/main.rs",

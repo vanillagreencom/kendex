@@ -16,8 +16,8 @@ use agent_runtime::clock;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::Env;
 use crate::error::Result;
+use agent_runtime::journal::Env;
 
 fn field<'a>(record: &'a Value, key: &str) -> Option<&'a str> {
     record.get(key).and_then(Value::as_str)

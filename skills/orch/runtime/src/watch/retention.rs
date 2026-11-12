@@ -41,10 +41,11 @@ use crate::error::Result;
 use crate::mailbox::Mailbox;
 use crate::ops::WORKTREE_KEPT;
 use crate::ops::prune::{Dropped, PlannedRows, PruneRecords};
-use crate::ops::{Env, Report, Request};
+use crate::ops::{Report, Request};
 use crate::settings::Settings;
 use crate::state;
 use crate::watch::{Body, Paths, Produced, Runner, Tick, events};
+use agent_runtime::journal::Env;
 
 /// Every status word a lane record reads as ended under: `done`, which a
 /// close writes, and `closed`, which records of an earlier vintage carry.
@@ -417,7 +418,8 @@ const INTENT_FILES: &[fn(&Path, &str) -> PathBuf] = &[
 fn intent_files(dir: &Path, intents: &[Value], cutoff: u64) -> Result<Vec<Unit>> {
     let mut out = Vec::new();
     for row in intents {
-        let Ok(intent) = serde_json::from_value::<state::Intent>(row.clone()) else {
+        let Ok(intent) = serde_json::from_value::<agent_runtime::intent::Intent>(row.clone())
+        else {
             continue;
         };
         if intent.open() {

@@ -2315,7 +2315,7 @@ pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchP
 /// [`crate::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-lane`
 /// intent, since the chain's status is its launch's and no other launch of
 /// the item runs while the marker stands.
-fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a crate::state::Intent> {
+fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a agent_runtime::intent::Intent> {
     fleet
         .intents
         .iter()
@@ -2585,7 +2585,7 @@ pub fn marks_verb(
 pub fn run_transfer(
     path: &Path,
     settings: &Settings,
-    env: &crate::ops::Env,
+    env: &agent_runtime::journal::Env,
     locking: agent_runtime::record::Locking,
     clock: &dyn agent_runtime::clock::Clock,
     mut request: RequestTransfer,
@@ -2624,7 +2624,7 @@ pub fn register(
     runner: &mut Runner<'_>,
     path: &Path,
     settings: &Settings,
-    env: &crate::ops::Env,
+    env: &agent_runtime::journal::Env,
     locking: agent_runtime::record::Locking,
     slot: Slot,
 ) {
@@ -2739,7 +2739,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             .join("tmp/lane-mail/overseer")
             .join("context.json");
         let alert = |file: &str, text: &str| owner_alert::send(&ctx.settings, file, text);
-        let env = crate::ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: tick.wall,
             now_nanos: u128::from(tick.wall) * 1_000_000_000,
             nonce: ctx.nonce,

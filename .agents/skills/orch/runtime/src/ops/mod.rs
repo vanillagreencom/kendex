@@ -66,10 +66,9 @@ pub use accept::{SummaryPost, accept};
 pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
 pub(crate) use controller::apply_adoption;
 pub use controller::{
-    AdoptController, AdoptionRead, ClaimIntent, ControllerAdopted, ControllerStarted, DeathCause,
-    IntentClaimed, OverseerExpected, Progress, ProgressRecorded, RecordProgress, RequestTransfer,
-    StartController, StopController, StopRequested, TransferRequested, admit,
-    judge_effect_settings, overseer_target,
+    ControllerStarted, DeathCause, OverseerExpected, RequestTransfer, StartController,
+    StopController, StopRequested, TransferRequested, admit, judge_effect_settings,
+    overseer_target,
 };
 pub use item::{
     AcceptResult, Attempt, BeginRound, EndSource, HandoffRecorded, HandoffResumed, OpenRun,
@@ -97,129 +96,24 @@ pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
 pub use verify_pr::{PrVerified, VerifyPr};
 pub use verify_review::{ReviewVerified, VerifyReview};
 
-use agent_runtime::intent::{LaunchIdentity, Notice, Owner, Reconciled};
+use agent_runtime::intent::Reconciled;
 use agent_runtime::record::{self, Document, Locking};
 use std::path::Path;
 
-use agent_runtime::clock;
 use agent_runtime::protocol::Outcome;
 use lane::IntentTarget;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
-use crate::state::{self, Intent, Kind, Lane, Snapshot};
-use agent_runtime::intent::{EffectOp, PrincipalKeys};
-
-/// The clock and nonce an operation stamps with, supplied by the caller so
-/// a transition is a pure function of the record and this value. One call
-/// mints one `Env`; the stamp it yields names the round or intent that call
-/// creates, so two calls never share one.
-#[derive(Debug, Clone)]
-pub struct Env {
-    pub now_secs: u64,
-    pub now_nanos: u128,
-    pub nonce: u32,
-    /// The identity of the process persisting an intent, read through
-    /// agent-runtime's one identity reader. `None` where the caller could not
-    /// read it; an operation that persists an intent then refuses
-    /// `owner-unreadable`.
-    pub owner: Option<Owner>,
-}
-
-impl Env {
-    /// The round token `begin-round` mints: `<nanoseconds since the
-    /// epoch>-<random>`. An intent id ends in the same stamp.
-    pub fn round_id(&self) -> String {
-        format!("{}-{}", self.now_nanos, self.nonce)
-    }
-
-    /// The ISO 8601 UTC stamp every record field carries.
-    pub fn iso(&self) -> String {
-        clock::iso_utc(self.now_secs)
-    }
-}
-
-/// Record how an effect ended. On `confirmed` the intent's transition
-/// completes: a launched lane runs, a closed lane is done, a succession
-/// publishes the pending successor. A confirmed transfer's `launch` is the
-/// successor's: its pane on its server is required, since the published
-/// record is that session's own.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RecordOutcome {
-    pub intent_id: String,
-    pub outcome: Outcome,
-    #[serde(default)]
-    pub launch: Option<LaunchIdentity>,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    /// The start of the tmux server `launch` names, which a confirmed
-    /// transfer records as the successor's `server_start`. `launch.start`
-    /// is the harness process start, not this. Left out, the record is
-    /// unstarted: the successor's watch start owns and fills it, and
-    /// `oversee register` from that pane writes the next generation.
-    #[serde(default)]
-    pub server_start: Option<u64>,
-    /// The socket of the server `launch` names, recorded as the successor's
-    /// `server_socket` and on the kept runner, so a later observation reaches
-    /// that server by name.
-    #[serde(default)]
-    pub server_socket: Option<String>,
-    /// The record's `window`: `<session>:<title>` on a lane, the tmux window
-    /// id on the overseer.
-    #[serde(default)]
-    pub window: Option<String>,
-    /// The tmux session a confirmed lane launch opened in; the fleet records
-    /// the first as `tmux.session`, as the first launch does.
-    #[serde(default)]
-    pub tmux_session: Option<String>,
-    /// The home a confirmed successor or local lane runs its sessions under,
-    /// as its launch prepared it: written over the pending's, or as the
-    /// lane's `home`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub home: Option<String>,
-    /// That launch named no home, written as the lane's `home_implicit`.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub home_implicit: bool,
-    /// The fleet watch a confirmed start launched or found claimed, written as
-    /// the record's `overseer.watch`; a succession carries none and keeps the
-    /// field as it stands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub watch: Option<agent_runtime::controller::WatchJob>,
-    /// The root a confirmed lane's files are read under, where its host
-    /// named one: a hosted lane's worktree on its host, a cloud lane's
-    /// worktree the launch made.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mail_root: Option<String>,
-    /// What the effect observed, kept on the intent for a reconciliation.
-    #[serde(default)]
-    pub observation: Option<Value>,
-    /// The owner the launcher-side handle closes under: the outcome is a no-op
-    /// once another owner holds the intent, so a job that claimed keeps its
-    /// own record; the transition is retried on a conflicting snapshot and
-    /// answers the claimant's state. `None` records always.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub while_owner: Option<Owner>,
-    /// The keys a terminal carries for its target's record: the lane arms
-    /// move the lane only while its launch names nothing but these and its
-    /// stamp is the intent's; otherwise the intent closes `intent-stale` and
-    /// the lane is left as found. An outcome without them is judged by the
-    /// intent's own recorded set, else by its stamp alone.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub principal_keys: Option<PrincipalKeys>,
-    /// The announcement a failed or unconfirmed outcome of a transfer or a
-    /// stop owes: recorded `owed` with the outcome, its fleet-log row appended
-    /// in the same write, where the intent carries none yet; the send is the
-    /// continuation the recording boundary runs after the write. Ignored on
-    /// every other operation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub notice: Option<Notice>,
-    /// The obligation set's revision as the writer read it: the store refuses
-    /// the outcome where the record's set holds another, so a terminal never
-    /// closes over a set another handle replaced. `None` compares nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub set_revision: Option<u64>,
-}
+use crate::state::{self, Kind, Lane, Snapshot};
+use agent_runtime::controller::{AdoptController, ControllerAdopted};
+use agent_runtime::intent::EffectOp;
+use agent_runtime::intent::Intent;
+use agent_runtime::journal::{
+    self, ClaimIntent, Env, IntentClaimed, OutcomeWritten, ProgressRecorded, RecordOutcome,
+    RecordProgress,
+};
 
 /// One operation request, tagged by `op`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -412,18 +306,6 @@ pub struct OutcomeRecorded {
     pub reconciled: Option<Reconciled>,
 }
 
-/// What the journal's outcome write recorded: the intent as written, whether
-/// this write moved the record, why the intent closed apart from its own
-/// outcome, and what the operation's arm reported of the target record it
-/// moved, as the arm wrote it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutcomeWritten {
-    pub intent: Intent,
-    pub recorded_now: bool,
-    pub reconciled: Option<Reconciled>,
-    pub target: Map<String, Value>,
-}
-
 /// What orch's arm moved on its target's record: the lane as written, or
 /// the controller record's generation.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -586,33 +468,12 @@ fn reread_on_record_changed(request: &Request) -> bool {
     }
 }
 
-/// One attempt of a write: the record read, `transition` applied to the
-/// document, `between` run, and the document committed through the state
-/// module's write check against the snapshot it read.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the one store write of every request and journal write: the transition's document committed through the state module's write check"
-)]
-fn commit<T>(
-    path: &Path,
-    locking: Locking,
-    between: &dyn Fn(),
-    transition: impl Fn(&mut Document) -> Result<T>,
-) -> Result<T> {
-    let snapshot = loaded(path)?;
-    let mut doc = snapshot.doc.clone();
-    let report = transition(&mut doc)?;
-    between();
-    record::store(path, &snapshot.doc, &doc, locking)?;
-    Ok(report)
-}
-
 /// [`apply_host`] with `between` run after the transition and before the
 /// store on each attempt: the seam a test uses to land another writer's
 /// commit in the gap. Production passes a no-op.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the lane and path admissions' fleet launch lock, held around their one write"
+    reason = "the journal's one store write of every request, and the lane and path admissions' fleet launch lock, held around their one write"
 )]
 fn apply_interleaved(
     path: &Path,
@@ -624,9 +485,12 @@ fn apply_interleaved(
 ) -> Result<Applied> {
     let kind = target_kind(path, request)?;
     let transition = || -> Result<Applied> {
-        let report = commit(path, locking, between, |doc| match kind {
+        let report = journal::commit(path, locking, between, |doc| match kind {
             Kind::Item => item_transition(path, doc, request, env),
-            Kind::Fleet => fleet_transition(path, doc, request, env, host),
+            Kind::Fleet => {
+                state::queue_read(path, doc)?;
+                fleet_transition(path, doc, request, env, host)
+            }
         })?;
         Ok(Applied { kind, report })
     };
@@ -647,106 +511,6 @@ fn apply_interleaved(
         return record::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()
-}
-
-/// The part of an outcome's transition the intent's operation owns: the
-/// target record the outcome moves, judged against the record's target as
-/// it stands now. It answers the staleness the intent closes with, `None`
-/// where its target is the intent's own; a target that moved notes what it
-/// observed on `intent` and answers `IntentStale` on a terminal word
-/// (`terminal`), so the handles an unconfirmed outcome's set still holds
-/// keep their reader. What it moved it reports into the map, the outcome
-/// report's `target`.
-pub type OutcomeArm = fn(
-    &Path,
-    &mut Document,
-    &mut Intent,
-    &RecordOutcome,
-    &str,
-    bool,
-    &mut Map<String, Value>,
-) -> Result<Option<Reconciled>>;
-
-/// The fleet journal a library write acts on: any other file refuses
-/// `op-kind` naming `op`.
-fn journal_kind(path: &Path, op: &'static str) -> Result<()> {
-    let kind = Kind::of_path(path);
-    if kind != Kind::Fleet {
-        return Err(Error::OpKind {
-            op,
-            path: path.to_path_buf(),
-            kind,
-            wanted: Kind::Fleet,
-        });
-    }
-    Ok(())
-}
-
-/// The journal's progress write: the phase, the obligation set or the
-/// notice's mark on one intent, revision-checked against the set the writer
-/// read and conditional on its owner. A write made under an owner is read
-/// again while the store refuses `record-changed`, so a claim that landed
-/// in the gap is answered with the claimant's state.
-pub fn write_progress(
-    path: &Path,
-    r: &RecordProgress,
-    locking: Locking,
-) -> Result<ProgressRecorded> {
-    journal_kind(path, "record-progress")?;
-    let attempt = || {
-        commit(path, locking, &|| {}, |doc| {
-            controller::record_progress(path, doc, r)
-        })
-    };
-    if r.while_owner.is_some() {
-        record::reread(attempt, Error::key)
-    } else {
-        attempt()
-    }
-}
-
-/// The journal's claim of an intent's owner lease for the caller, read
-/// again while the store refuses `record-changed`: the first store can meet
-/// the launcher's own write that lands the instant the job starts.
-pub fn write_claim(
-    path: &Path,
-    r: &ClaimIntent,
-    env: &Env,
-    locking: Locking,
-) -> Result<IntentClaimed> {
-    journal_kind(path, "claim-intent")?;
-    record::reread(
-        || {
-            commit(path, locking, &|| {}, |doc| {
-                controller::claim_intent(path, doc, r, env)
-            })
-        },
-        Error::key,
-    )
-}
-
-/// The journal's outcome write: the intent closed or held with how its
-/// effect ended, and `arm` moving the target record in the same locked
-/// transition. A write made under an owner is read again while the store
-/// refuses `record-changed`.
-pub fn write_outcome(
-    path: &Path,
-    r: &RecordOutcome,
-    env: &Env,
-    locking: Locking,
-    arm: OutcomeArm,
-) -> Result<OutcomeWritten> {
-    journal_kind(path, "record-outcome")?;
-    let attempt = || {
-        commit(path, locking, &|| {}, |doc| {
-            record_outcome(path, doc, r, env, arm)
-        })
-    };
-    if r.while_owner.is_some() {
-        record::reread(attempt, Error::key)
-    } else {
-        attempt()
-    }
 }
 
 /// The precondition every operation shares: the state file at `path` is
@@ -897,7 +661,7 @@ pub fn fleet_transition(
         Request::StopController(r) => Ok(Report::StopController(Box::new(
             controller::stop_controller(path, doc, r, env)?,
         ))),
-        Request::ClaimIntent(r) => Ok(Report::ClaimIntent(Box::new(controller::claim_intent(
+        Request::ClaimIntent(r) => Ok(Report::ClaimIntent(Box::new(journal::claim_intent(
             path, doc, r, env,
         )?))),
         Request::AdoptController(_) => Err(Error::OpNotTransition { op: request.name() }),
@@ -905,7 +669,7 @@ pub fn fleet_transition(
             lane::close_owned_resources(path, doc, r, env, host()?)?,
         ))),
         Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(OutcomeRecorded::of(
-            record_outcome(path, doc, r, env, outcome_arm)?,
+            journal::record_outcome(path, doc, r, env, outcome_arm)?,
         )?))),
         Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(lane::record_phase(
             path, doc, r,
@@ -914,7 +678,7 @@ pub fn fleet_transition(
             lane::record_lane_progress(path, doc, r)?,
         ))),
         Request::RecordProgress(r) => Ok(Report::RecordProgress(Box::new(
-            controller::record_progress(path, doc, r)?,
+            journal::record_progress(path, doc, r)?,
         ))),
         Request::RecordDirectiveSend(r) => Ok(Report::RecordDirectiveSend(
             mail::record_directive_send(path, doc, r, env)?,
@@ -955,10 +719,6 @@ fn lanes(path: &Path, doc: &Document) -> Result<Vec<Lane>> {
     Ok(record::field(path, doc, "lanes")?.unwrap_or_default())
 }
 
-fn intents(path: &Path, doc: &Document) -> Result<Vec<Intent>> {
-    Ok(record::field(path, doc, "intents")?.unwrap_or_default())
-}
-
 fn lane_at(path: &Path, doc: &Document, index: usize) -> Result<Lane> {
     let lanes = lanes(path, doc)?;
     lanes.into_iter().nth(index).ok_or_else(|| {
@@ -987,67 +747,21 @@ enum Standing {
     Supersedable(Intent),
 }
 
-/// The standing open intent on `target` against the operation `op` asks for.
-/// Every pair of operations refuses `intent-open`, except a close over an open
-/// launch, which supersedes it: a hung launch would otherwise have neither a
-/// close nor a relaunch.
+/// The standing open intent on `target` against the operation `op` asks for:
+/// a close over an open launch supersedes it, since a hung launch would
+/// otherwise have neither a close nor a relaunch; every other pair is the
+/// journal's one-open-intent rule.
 fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standing> {
-    let Some(intent) = intents.iter().find(|i| i.target == target && i.open()) else {
-        return Ok(Standing::Clear);
-    };
-    match (intent.op, op) {
-        (EffectOp::LaunchLane, EffectOp::LaunchLane)
-        | (EffectOp::CloseOwnedResources, EffectOp::CloseOwnedResources)
-        | (EffectOp::RequestTransfer, EffectOp::RequestTransfer)
-        | (EffectOp::StartController, EffectOp::StartController)
-        | (EffectOp::StopController, EffectOp::StopController) => {
-            Ok(Standing::Same(intent.clone()))
-        }
-        (EffectOp::LaunchLane, EffectOp::CloseOwnedResources) => {
-            Ok(Standing::Supersedable(intent.clone()))
-        }
-        // Every other pair, the three controller operations on one
-        // overseer among them: one controller operation at a time.
-        (EffectOp::CloseOwnedResources, EffectOp::LaunchLane)
-        | (
-            EffectOp::LaunchLane | EffectOp::CloseOwnedResources,
-            EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController,
-        )
-        | (EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController, _) => {
-            Err(Error::Runtime(agent_runtime::Error::IntentOpen {
-                intent: intent.id.clone(),
-                op: intent.op.word(),
-                target: target.to_owned(),
-            }))
-        }
+    let first = intents.iter().find(|i| i.target == target && i.open());
+    if op == EffectOp::CloseOwnedResources
+        && let Some(launch) = first.filter(|i| i.op == EffectOp::LaunchLane)
+    {
+        return Ok(Standing::Supersedable(launch.clone()));
     }
-}
-
-/// The same operation's open intent on `target`, to reconcile; any other
-/// operation's refuses.
-fn same_open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Option<Intent>> {
-    match open_intent(intents, op, target)? {
-        Standing::Clear => Ok(None),
-        Standing::Same(intent) => Ok(Some(intent)),
-        Standing::Supersedable(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
-            intent: intent.id.clone(),
-            op: intent.op.word(),
-            target: target.to_owned(),
-        })),
-    }
-}
-
-/// Any open intent on `target` refuses an operation that has no intent of
-/// its own.
-fn no_open_intent(intents: &[Intent], target: &str) -> Result<()> {
-    match intents.iter().find(|i| i.target == target && i.open()) {
-        Some(intent) => Err(Error::Runtime(agent_runtime::Error::IntentOpen {
-            intent: intent.id.clone(),
-            op: intent.op.word(),
-            target: target.to_owned(),
-        })),
-        None => Ok(()),
-    }
+    Ok(match journal::open_intent(intents, op, target)? {
+        None => Standing::Clear,
+        Some(intent) => Standing::Same(intent),
+    })
 }
 
 /// Append `intent`, refusing `intent-duplicate` when a row already carries
@@ -1087,20 +801,14 @@ fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
         owner: Some(owner),
         outcome: Outcome::NotStarted,
         completed_at: None,
-        lane_since: None,
-        selection: None,
         original_pending: None,
         cause: None,
         handed_from: None,
-        exclude_account: None,
         watch: None,
-        close: None,
-        cycle: None,
         phase: None,
         obligations: None,
         observation: None,
         reconciled: None,
-        observed_status: None,
         observed_generation: None,
         extra: Default::default(),
         notice: None,
@@ -1119,176 +827,6 @@ fn null_held(doc: &mut Document, key: &str) {
     if doc.contains_key(key) {
         record::set(doc, key, Value::Null);
     }
-}
-
-/// Close an intent with how its effect ended and move the record the
-/// intent's operation transitions through `arm`. A target whose record
-/// moved under the intent closes the intent `intent-stale` and moves
-/// nothing, whatever the outcome reports.
-fn record_outcome(
-    path: &Path,
-    doc: &mut Document,
-    r: &RecordOutcome,
-    env: &Env,
-    arm: OutcomeArm,
-) -> Result<OutcomeWritten> {
-    if r.outcome == Outcome::NotStarted {
-        return Err(Error::Runtime(agent_runtime::Error::OutcomeInvalid {
-            outcome: r.outcome,
-        }));
-    }
-    let at = env.iso();
-    let intents = intents(path, doc)?;
-    let index = intents
-        .iter()
-        .position(|i| i.id == r.intent_id)
-        .ok_or_else(|| {
-            Error::Runtime(agent_runtime::Error::IntentUnknown {
-                id: r.intent_id.clone(),
-            })
-        })?;
-    let mut intent = intents[index].clone();
-    // The launcher-side handle closes only while it still owns the intent: a
-    // job that claimed between the launcher's last read and this write keeps
-    // its own record; `apply` retries this transition on a conflicting
-    // snapshot, so the owner read here is the one the write commits against.
-    if r.while_owner.is_some() && intent.owner != r.while_owner {
-        return Ok(OutcomeWritten {
-            intent,
-            recorded_now: false,
-            reconciled: None,
-            target: Map::new(),
-        });
-    }
-    if !intent.open() {
-        if intent.outcome == r.outcome {
-            return Ok(OutcomeWritten {
-                intent,
-                recorded_now: false,
-                reconciled: None,
-                target: Map::new(),
-            });
-        }
-        return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
-            id: intent.id.clone(),
-            outcome: intent.outcome,
-        }));
-    }
-    // The set as the writer read it: a terminal over a set another handle
-    // replaced since is refused, the same answer a progress write on that set
-    // gets.
-    if let Some(read) = r.set_revision {
-        let found = intent.obligations.as_ref().map_or(0, |o| o.revision);
-        if read != found {
-            return Err(Error::Runtime(agent_runtime::Error::SetReplaced {
-                id: intent.id.clone(),
-                expected: read,
-                found,
-            }));
-        }
-    }
-    // The document as read, kept to compare the patched one against: an
-    // outcome that changes nothing, a reconcile reading what the last one
-    // read, must not move the file.
-    let before = doc.clone();
-    let mut recorded = OutcomeWritten {
-        intent: intent.clone(),
-        recorded_now: true,
-        reconciled: None,
-        target: Map::new(),
-    };
-    // A reconcile that found the owner still live, or could not read it, wrote
-    // this outcome to record only its observation and defer to the owner: it
-    // moves no record and marks no staleness, whatever the target now reads.
-    let owner_live = matches!(
-        r.observation
-            .as_ref()
-            .and_then(|o| o.get("note"))
-            .and_then(Value::as_str),
-        Some(agent_runtime::intent::OWNER_LIVE | agent_runtime::intent::OWNER_UNREAD)
-    );
-    // A target that moved under the intent closes it only on a terminal word:
-    // an `unconfirmed` outcome keeps the intent open, with the generation or
-    // status it observed noted, so the handles its set still holds have a
-    // reader on the next reconcile; its receipt and job files stay with it.
-    let terminal = matches!(r.outcome, Outcome::Confirmed | Outcome::Failed);
-    let stale = if owner_live {
-        None
-    } else {
-        arm(
-            path,
-            doc,
-            &mut intent,
-            r,
-            &at,
-            terminal,
-            &mut recorded.target,
-        )?
-    };
-    intent.outcome = r.outcome;
-    intent.reconciled = stale;
-    if let Some(observation) = &r.observation {
-        intent.observation = Some(observation.clone());
-    }
-    if !intent.open() {
-        intent.completed_at = Some(at.clone());
-    }
-    // The one failure announcement of a job's intent, recorded with the
-    // outcome that owes it: a fleet-log row under the job's kind and item, and
-    // the notice `owed` on the intent, so the send that follows has a record
-    // to continue from and a repeated outcome owes nothing again. A start held
-    // on its watch takes the same; a lane's intent takes no row.
-    if let Some(notice) = &r.notice
-        && intent.notice.is_none()
-        && matches!(
-            intent.op,
-            EffectOp::RequestTransfer | EffectOp::StopController | EffectOp::StartController
-        )
-    {
-        record::array_mut(path, doc, "fleet_log")?.push(serde_json::json!({
-            "at": at,
-            "kind": "close",
-            "item": "overseer",
-            "text": notice.text,
-        }));
-        intent.notice = Some(Notice {
-            key: notice.key.clone(),
-            text: notice.text.clone(),
-            to: notice.to.clone(),
-            owner: agent_runtime::intent::NOTICE_OWED.to_owned(),
-        });
-    }
-    let rows = record::array_mut(path, doc, "intents")?;
-    let row = record::element_mut(path, rows, index, "intents")?;
-    record::set(row, "outcome", serde_json::to_value(r.outcome)?);
-    if let Some(notice) = &intent.notice
-        && r.notice.is_some()
-    {
-        record::set(row, "notice", serde_json::to_value(notice)?);
-    }
-    if let Some(completed_at) = &intent.completed_at {
-        record::set(row, "completed_at", completed_at.as_str());
-    }
-    if let Some(observation) = &r.observation {
-        record::set(row, "observation", observation.clone());
-    }
-    if let Some(reconciled) = stale {
-        record::set(row, "reconciled", serde_json::to_value(reconciled)?);
-    }
-    if let Some(status) = intent.observed_status {
-        record::set(row, "observed_status", status.word());
-    }
-    if let Some(generation) = intent.observed_generation {
-        record::set(row, "observed_generation", generation);
-    }
-    // An outcome that left the document as it was is recorded nowhere, and the
-    // store then writes nothing.
-    if record::same_document(path, doc, &before)? {
-        recorded.recorded_now = false;
-    }
-    recorded.reconciled = stale;
-    recorded.intent = intent;
-    Ok(recorded)
 }
 
 /// orch's arms of an outcome's transition, by the intent's operation: the
@@ -1318,7 +856,7 @@ pub fn outcome_arm(
                     None
                 }
                 IntentTarget::Moved { observed } => {
-                    intent.observed_status = observed;
+                    lane::observe_status(path, doc, intent, observed)?;
                     terminal.then_some(Reconciled::IntentStale)
                 }
             }
@@ -1823,7 +1361,12 @@ mod tests {
                         intent.reconciled,
                         Some(agent_runtime::intent::Reconciled::IntentStale)
                     );
-                    assert_eq!(intent.observed_status, Some(LaneStatus::Done));
+                    assert_eq!(
+                        crate::state::LaneMembers::of(p, intent)
+                            .unwrap()
+                            .observed_status,
+                        Some(LaneStatus::Done)
+                    );
                 },
             },
             // A lane relaunched under an open close intent. The close's

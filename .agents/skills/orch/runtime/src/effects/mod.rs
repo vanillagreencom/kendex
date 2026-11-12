@@ -4,7 +4,7 @@
 //! A transition persists an intent and returns [`crate::ops::Effect`]; this
 //! module turns that intent into a real launch, stop or succession on the
 //! fleet's tmux server through `agent-runtime`, observes how far it got, and
-//! applies a [`crate::ops::RecordOutcome`] with the outcome it saw. It starts
+//! applies a [`agent_runtime::journal::RecordOutcome`] with the outcome it saw. It starts
 //! no process of its own beyond that crate's one runner, reads process and
 //! native-session identity only through it, and never kills by name: a stop
 //! whose recorded identity no longer matches records `unconfirmed`, never a
@@ -91,11 +91,14 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::ops::{self, AdoptController, Applied, Effect, Env, OutcomeRecorded, Report, Request};
+use crate::ops::{self, Applied, Effect, OutcomeRecorded, Report, Request};
 use crate::settings::Settings;
-use crate::state::{self, Intent, Lane};
+use crate::state::{self, Lane, LaneMembers};
 use agent_runtime::clock::Clock;
+use agent_runtime::controller::AdoptController;
 use agent_runtime::intent::EffectOp;
+use agent_runtime::intent::Intent;
+use agent_runtime::journal::Env;
 use agent_runtime::record::Locking;
 
 use operation::{
@@ -277,7 +280,7 @@ pub struct ReconcileRun {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum ControllerHeal {
-    Healed(ops::ControllerAdopted),
+    Healed(agent_runtime::controller::ControllerAdopted),
     Refused { refusal: String, detail: String },
 }
 
@@ -634,7 +637,8 @@ pub fn register_controller(
         locking,
     )?;
     // The command's reply names the adoption as the dispatcher reports it.
-    let adopted: ops::ControllerAdopted = serde_json::from_value(reply["adopted"].take())?;
+    let adopted: agent_runtime::controller::ControllerAdopted =
+        serde_json::from_value(reply["adopted"].take())?;
     reply["adopted"] = serde_json::to_value(ops::adoption_applied(adopted))?;
     // A record proven to name this pane keeps fields the request left out,
     // so the coverage is judged on the record as written.
@@ -1188,10 +1192,14 @@ fn launch_intent_of(path: &Path, item: &str) -> Result<Option<Intent>> {
 /// Which harness runs the lane's pane: the one its launch intent selected,
 /// which the lane records only once that launch confirms, else the lane's
 /// own word; a lane relaunched keeps its earlier word until then.
-fn pane_harness(lane: &Lane, launch: Option<&Intent>) -> Option<Harness> {
-    launch
-        .and_then(|i| i.selection.as_ref())
+fn pane_harness(path: &Path, lane: &Lane, launch: Option<&Intent>) -> Result<Option<Harness>> {
+    let selection = match launch {
+        Some(intent) => LaneMembers::of(path, intent)?.selection,
+        None => None,
+    };
+    Ok(selection
+        .as_ref()
         .map(|s| s.harness.as_str())
         .or(lane.harness.as_deref())
-        .and_then(Harness::parse)
+        .and_then(Harness::parse))
 }

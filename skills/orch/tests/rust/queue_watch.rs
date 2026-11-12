@@ -17,7 +17,7 @@ use std::time::{Duration, Instant, SystemTime};
 mod support;
 
 use agent_runtime::clock::Clock;
-use orch_runtime::ops::Env;
+use agent_runtime::journal::Env;
 use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
 use serde_json::{Map, Value, json};
 use support::{FakeClock, fixtures, tool_path, write_executable};

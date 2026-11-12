@@ -90,12 +90,15 @@ pub use window::{OpenRefusal, Polled, Recovered, TurnConfirm, opening_observatio
 use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
 use crate::error::{Error, Result};
-use crate::ops::{self, Env, OutcomeArm, OutcomeWritten, Progress, RecordOutcome, RecordProgress};
-use crate::state::{self, Intent};
+use crate::state::{self};
 use agent_runtime::clock::Clock;
 use agent_runtime::controller::Overseer;
+use agent_runtime::intent::Intent;
 use agent_runtime::intent::LaunchIdentity;
 use agent_runtime::intent::{EffectOp, Obligation, OpenedPane, Phase, Role};
+use agent_runtime::journal::{
+    Env, OutcomeArm, OutcomeWritten, Progress, RecordOutcome, RecordProgress,
+};
 use agent_runtime::record::Locking;
 use agent_runtime::settings::{EngineSettings, Judged};
 
@@ -120,7 +123,7 @@ pub struct Run<'a> {
     pub env: &'a Env,
     pub locking: Locking,
     pub clock: &'a dyn Clock,
-    pub outcome_arm: OutcomeArm,
+    pub outcome_arm: OutcomeArm<Error>,
 }
 
 impl Run<'_> {
@@ -474,7 +477,7 @@ impl<'a> Operation<'a> {
     /// route. An unchanged set the recorded owner still holds is accepted, not
     /// yielded.
     fn write(&mut self) -> Result<()> {
-        let r = ops::write_progress(
+        let r = agent_runtime::journal::write_progress(
             self.run.path,
             &RecordProgress {
                 intent_id: self.intent_id.clone(),
@@ -737,7 +740,7 @@ pub fn apply_outcome_with(
             .as_ref()
             .is_some_and(|recorded| recorded.same_set(&record_after))
     {
-        let r = ops::write_progress(
+        let r = agent_runtime::journal::write_progress(
             run.path,
             &RecordProgress {
                 intent_id: outcome.intent_id.clone(),
@@ -757,7 +760,13 @@ pub fn apply_outcome_with(
             Progress::Unchanged | Progress::Yielded { .. } => {}
         }
     }
-    let r = ops::write_outcome(run.path, &outcome, run.env, run.locking, run.outcome_arm)?;
+    let r = agent_runtime::journal::write_outcome(
+        run.path,
+        &outcome,
+        run.env,
+        run.locking,
+        run.outcome_arm,
+    )?;
     // The notice the record owes and the closed intent's files are this
     // writer's only while the intent is still its own: a launcher whose
     // intent a job claimed leaves the claimant's notices and files to
@@ -856,7 +865,7 @@ mod tests {
     use agent_runtime::process;
 
     use super::*;
-    use crate::ops::Request;
+    use crate::ops::{self, Request};
 
     fn sleeper() -> (std::process::Child, Identity) {
         let child = std::process::Command::new("/bin/sleep")
@@ -885,7 +894,12 @@ mod tests {
     fn close_fixture(
         dir: &Path,
         standing: Value,
-    ) -> (crate::settings::Settings, ops::Env, PathBuf, Intent) {
+    ) -> (
+        crate::settings::Settings,
+        agent_runtime::journal::Env,
+        PathBuf,
+        Intent,
+    ) {
         let roots = agent_runtime::settings::Roots {
             project: dir.into(),
             common: dir.into(),
@@ -899,7 +913,7 @@ mod tests {
             },
         )
         .unwrap();
-        let env = ops::Env {
+        let env = agent_runtime::journal::Env {
             now_secs: 1_769_700_000,
             now_nanos: 1_769_700_000_000_000_000,
             nonce: 77,
@@ -1223,13 +1237,13 @@ mod tests {
         )
         .unwrap();
         let token = handle.standing_process(&id).expect("the process stands");
-        let claimant = ops::Env {
+        let claimant = agent_runtime::journal::Env {
             owner: Some(new.clone()),
             ..env.clone()
         };
         ops::apply(
             &path,
-            &Request::ClaimIntent(ops::ClaimIntent {
+            &Request::ClaimIntent(agent_runtime::journal::ClaimIntent {
                 intent_id: intent.id.clone(),
             }),
             &claimant,

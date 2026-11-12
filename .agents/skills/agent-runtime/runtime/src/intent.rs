@@ -1,14 +1,16 @@
-//! The intent row's parts that name no lane field or worktree: the
-//! operation, how far its effect got, the obligation set it stands under,
+//! The intent row's frame and its parts, which name no lane field or
+//! worktree: the operation, how far its effect got, the obligation set it stands under,
 //! the process that persisted an intent, the identity of what a launch
 //! opened, the failure notice an intent makes and why a reconcile closed it,
 //! in the shape the fleet record holds them.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
+use crate::controller::TransferCause;
 use crate::harness::Harness;
 use crate::process::Identity;
+use crate::protocol::Outcome;
 
 /// The observation note a reconcile writes when it found the intent's owner
 /// still live and deferred to it. The outcome records only
@@ -623,5 +625,102 @@ impl ObligationRecord {
                 | Obligation::JobGroup(_)
                 | Obligation::JobPgid { .. }
         )
+    }
+}
+
+/// The persisted intent of one external effect: written before the effect
+/// starts, its `outcome` written after. The id is
+/// `<op>:<target>:<nanos>-<nonce>`, the operation's word, its target and
+/// the stamp the caller's `Env` minted for the call, so two intents on one
+/// target never share an id whatever the file holds. One intent per
+/// target may be open; a repeated request of the same operation finds it
+/// and reconciles, a request of another operation on the target refuses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Intent {
+    pub id: String,
+    pub op: EffectOp,
+    pub target: String,
+    pub created_at: String,
+    /// The process that persisted the intent; a reconcile
+    /// that finds it live defers to it. An intent may carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Owner>,
+    pub outcome: Outcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    /// The `overseer.pending` a transfer request overwrote, put back when
+    /// the transfer fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_pending: Option<Value>,
+    /// Why a transfer was asked for; a reconcile reads it to know what
+    /// proves the predecessor terminal. Absent on the other
+    /// operations and on a transfer recorded without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<TransferCause>,
+    /// The owner that persisted the intent and handed it to the detached
+    /// job that now owns it, written by the claim: the job
+    /// lets that process answer and exit before it retires the pane the
+    /// process asked from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handed_from: Option<Owner>,
+    /// The companion's launch line a start carries: the program and its
+    /// arguments, which the start's effect
+    /// launches through the job launcher once the controller's lane is
+    /// confirmed, and a reconcile launches again where no companion claims.
+    /// Absent on the other operations and on a start whose caller holds
+    /// the companion's start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watch: Option<Vec<String>>,
+    /// The failure the detached job's outcome announced:
+    /// the fleet-log row and the owner notice,
+    /// sent once per intent and recorded here so a repeated
+    /// reconcile of the same outcome emits nothing again. Absent until an
+    /// outcome of a transfer or a stop failed or stayed unconfirmed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<Notice>,
+    /// How far the effect got, written before each wait; a
+    /// reconciliation completes the effect from it. Absent until the effect
+    /// has opened something.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<Phase>,
+    /// The obligations the effect stands under: every
+    /// handle it acquired, written before the wait that follows the
+    /// acquisition, with the discharges made so far and whether anything was
+    /// signalled. Every later step and every reconcile reads this set and
+    /// never rebuilds it from the lane or the phase. Absent on an intent
+    /// recorded without it; its next step writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub obligations: Option<ObligationRecord>,
+    /// What the effect last observed of its target: the pane it opened or
+    /// found, the process and screen it read, and for a succession whether
+    /// the predecessor was retired. A reconciliation re-observes from it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<Value>,
+    /// Set when the intent was closed because its target's record moved
+    /// under it, with the status or generation the record then read; the
+    /// outcome word stays what the effect reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciled: Option<Reconciled>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_generation: Option<u64>,
+    /// Members the frame does not own, which the program that records
+    /// them reads and writes through its own view of the row: kept as
+    /// written across every write of the frame, after the frame's own
+    /// members where the whole row is written.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl Intent {
+    /// Whether the effect may still be in flight: its outcome is not final
+    /// and no reconciliation closed it.
+    pub fn open(&self) -> bool {
+        if self.reconciled.is_some() {
+            return false;
+        }
+        match self.outcome {
+            Outcome::NotStarted | Outcome::Unconfirmed => true,
+            Outcome::Confirmed | Outcome::Failed => false,
+        }
     }
 }

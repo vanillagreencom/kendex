@@ -411,7 +411,7 @@ impl Reader<'_> {
 pub fn restack(
     worktree: &std::path::Path,
     base: &str,
-    env: &crate::ops::Env,
+    env: &agent_runtime::journal::Env,
 ) -> crate::error::Result<(String, i32)> {
     use crate::validate::files;
     use agent_runtime::host::{self, Place};

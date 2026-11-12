@@ -1,12 +1,15 @@
 //! The controller record's parts: the successor a succession is about to
 //! open, the keys a succession writes, compares and drops, the record as a
-//! succession reads it, the watch job it names and why a succession was
-//! asked for.
+//! succession reads it, the watch job it names, why a succession was
+//! asked for, and the adoption of a controller this runtime did not launch.
+
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use crate::launch::Permission;
+use crate::process::Identity;
 
 /// The successor a succession is about to open, `overseer.pending`: the
 /// identity fields the record carries, the typed launch fields the runtime
@@ -158,4 +161,70 @@ impl TransferCause {
             TransferCause::RefusedRecovery => "refused-recovery",
         }
     }
+}
+
+/// Bind a controller this runtime did not launch: the pane a person opened
+/// it in, on the fleet server (or the one `socket` names), and what the
+/// person knows of its launch. The identity is read in that pane by the
+/// effects, never taken from the caller.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AdoptController {
+    pub pane: String,
+    #[serde(default)]
+    pub socket: Option<PathBuf>,
+    pub harness: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub account: Option<String>,
+    #[serde(default)]
+    pub home: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    /// The command of the owner that replaces this controller where another
+    /// lifecycle keeps its record: a Jarvis session registers its own
+    /// `jarvis-session succeed --home HOME`. Carried on the record as
+    /// `succession`; a controller whose record names one is never
+    /// succeeded by `request-transfer`, so no second owner opens a
+    /// successor the first does not record.
+    #[serde(default)]
+    pub succession: Option<Vec<String>>,
+    /// The file the pane's own harness writes its session rows to, which
+    /// the watch judges the controller's death and wall from.
+    #[serde(default)]
+    pub session_rows: Option<PathBuf>,
+    /// The permission posture the session runs under and its own permission
+    /// words, which the next succession launches with.
+    #[serde(default)]
+    pub permission: Option<Permission>,
+    #[serde(default)]
+    pub extra_args: Option<Vec<String>>,
+}
+
+/// What the effects read of the pane an adoption names, handed to the
+/// transition: the harness identity in its foreground and the server and
+/// window the pane is on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AdoptionRead {
+    pub identity: Identity,
+    pub server: u64,
+    pub server_start: u64,
+    pub socket: String,
+    pub window: String,
+    /// Whether the record already names this pane on this server
+    /// (`ol_owns`): the record is healed, not replaced.
+    pub same: bool,
+}
+
+/// A controller bound.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControllerAdopted {
+    pub generation: u64,
+    /// True when the record already named this pane and was healed in
+    /// place; false when the record was written for this session.
+    pub healed: bool,
 }

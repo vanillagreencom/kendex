@@ -76,12 +76,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::occupancy::{self, ChargeReason, Host};
-use super::{Env, intents, lane_at, lane_doc_mut, lanes};
+use super::{lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::Settings;
-use crate::state::{self, Intent, Lane, LaneStatus, RebaseObligation};
+use crate::state::{self, Lane, LaneStatus, RebaseObligation};
 use crate::verify::wire::{Nullable, Optional, Pull, PullFile};
 use crate::verify::{Answer, Gh};
+use agent_runtime::intent::Intent;
+use agent_runtime::journal::{Env, intents};
 
 /// The item as its tracker reports it: the body the Location paths are
 /// read from, and what eligibility is judged on.
