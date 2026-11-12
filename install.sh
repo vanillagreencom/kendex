@@ -107,13 +107,15 @@ trap 'rm -rf "$work"' EXIT
 # argument, skips the caller's .curlrc, where location-trusted or verbose
 # would send the token on or print it. A 401 is the token, not the release,
 # and stops the install by name rather than reading as a missing asset.
+# The HTTP status is left in http_status for download's retry.
+http_status=""
 github_api() {
-  local url="$1" out="$2" status rc
+  local url="$1" out="$2" rc
   shift 2
-  status="$(printf 'header = "Authorization: Bearer %s"\n' "$github_token" \
+  http_status="$(printf 'header = "Authorization: Bearer %s"\n' "$github_token" \
     | curl -q -K - -fL --proto '=https' -o "$out" -w '%{http_code}' "$@" "$url")" && return 0
   rc=$?
-  [ "$status" != 401 ] || {
+  [ "$http_status" != 401 ] || {
     message github-token-rejected "$url" "GitHub refused KENDEX_GITHUB_TOKEN." >&2
     exit 1
   }
@@ -148,12 +150,46 @@ release_asset() {
 # download under the same tag; any other address gets no token. An asset
 # the release does not hold answers 22, curl's code for the 404 the
 # github.com address would have returned.
+#
+# A temporary error from GitHub, HTTP 408, 429, 500, 502, 503 or 504, is
+# tried again, up to download_attempts tries download_retry_secs apart. The
+# status decides, not curl's exit code: curl reports a 504 as 22 on a Linux
+# runner and as a receive error, 56, on a macOS one, and its own --retry
+# passes over 56. GitHub's release downloads answer such errors to some
+# requests while a request in the same second succeeds (merge-group run
+# 42568537011: one catalog job's command download got a 504, its sibling's
+# succeeded), so a later try lands. A try carries no time limit, since a
+# slow link fetching the AppImage is not a failure, so the retries add at
+# most 70 s of waiting to the tries themselves; each 504 those CI runs got
+# took 11 s. Nothing else is retried: a 404 or a refused connection fails
+# at once.
+download_attempts=8
+download_retry_secs=10
 release_tag=""
 download() {
+  local attempt=1 rc
+  while :; do
+    rc=0
+    download_once "$1" "$2" || rc=$?
+    [ "$rc" -ne 0 ] || return 0
+    case "$http_status" in
+      408|429|500|502|503|504) ;;
+      *) return "$rc" ;;
+    esac
+    [ "$attempt" -lt "$download_attempts" ] || return "$rc"
+    message download-retry "$http_status" \
+      "The server answered $http_status for $1; trying again in $download_retry_secs s." >&2
+    sleep "$download_retry_secs"
+    attempt=$((attempt + 1))
+  done
+}
+
+download_once() {
   local url="$1" out="$2" tag asset
+  http_status=""
   tag="${url#"https://github.com/$repo/releases/download/"}"
   if [ -z "$github_token" ] || [ "$tag" = "$url" ]; then
-    curl -fSL --proto '=https' -o "$out" "$url"
+    http_status="$(curl -fSL --proto '=https' -w '%{http_code}' -o "$out" "$url")"
     return
   fi
   tag="${tag%%/*}"
