@@ -25,15 +25,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{
-    Applied, Effect, Env, OutcomeRecorded, RecordOutcome, Report, Request, intents, new_intent,
-    null_held, push_intent, same_open_intent, string_or_null,
+    Effect, Env, RecordOutcome, Request, TargetMoved, intents, new_intent, null_held, push_intent,
+    same_open_intent, string_or_null,
 };
 use crate::effects::Recorded;
 use crate::error::{Error, Result};
 use agent_runtime::settings::Succession;
 
 use crate::settings::Settings;
-use crate::state::{self, EffectOp, Intent, ObligationRecord, Phase};
+use crate::state::{self, Intent};
+use agent_runtime::intent::{EffectOp, ObligationRecord, Phase};
 
 /// The overseer record the requester saw: the succession compare-and-swap
 /// set. A key left out compares as `null`, which is what
@@ -976,16 +977,13 @@ pub(crate) fn apply_adoption(
     r: &AdoptController,
     read: &Recorded<AdoptionRead>,
     locking: Locking,
-) -> Result<Applied> {
-    let kind = super::target_kind(path, &Request::AdoptController(Box::new(r.clone())))?;
+) -> Result<ControllerAdopted> {
+    super::journal_kind(path, "adopt-controller")?;
     let snapshot = super::loaded(path)?;
     let mut doc = snapshot.doc.clone();
     let adopted = adopt_controller(path, &mut doc, r, read.evidence())?;
     record::store(path, &snapshot.doc, &doc, locking)?;
-    Ok(Applied {
-        kind,
-        report: Report::AdoptController(Box::new(adopted)),
-    })
+    Ok(adopted)
 }
 
 /// The record a hand-opened controller's adoption writes, or heals. The
@@ -1124,7 +1122,7 @@ pub(super) fn record_controller_outcome(
     intent: &Intent,
     r: &RecordOutcome,
     at: &str,
-    recorded: &mut OutcomeRecorded,
+    recorded: &mut TargetMoved,
 ) -> Result<()> {
     match intent.op {
         EffectOp::RequestTransfer | EffectOp::StartController => {
@@ -1157,7 +1155,7 @@ fn record_transfer_outcome(
     doc: &mut Document,
     intent: &Intent,
     r: &RecordOutcome,
-    recorded: &mut OutcomeRecorded,
+    recorded: &mut TargetMoved,
 ) -> Result<()> {
     match r.outcome {
         Outcome::Confirmed => {
@@ -1804,7 +1802,7 @@ mod tests {
             "owner-unreadable"
         );
         // A phase recorded: the prior owner opened something.
-        let opened = state::OpenedPane {
+        let opened = agent_runtime::intent::OpenedPane {
             pane: "%12".into(),
             server: 41020,
             server_start: 1_769_590_000,
@@ -1822,7 +1820,7 @@ mod tests {
             &path,
             &Request::RecordPhase(crate::ops::RecordPhase {
                 intent_id: id.clone(),
-                phase: state::Phase::WindowOpened { opened },
+                phase: agent_runtime::intent::Phase::WindowOpened { opened },
             }),
         )
         .unwrap();
@@ -1852,11 +1850,11 @@ mod tests {
         let path = fleet_file(dir.path());
         let id = intend(&path, &transfer(expected()));
         let set = |revision: u64| ObligationRecord {
-            standing: vec![crate::state::Held {
-                obligation: crate::state::Obligation::JobSidecar {
+            standing: vec![agent_runtime::intent::Held {
+                obligation: agent_runtime::intent::Obligation::JobSidecar {
                     record: "/fleet/intents/transfer.job".to_owned(),
                 },
-                role: Some(crate::state::Role::Job),
+                role: Some(agent_runtime::intent::Role::Job),
                 harness: None,
             }],
             discharged: Vec::new(),
@@ -1873,7 +1871,7 @@ mod tests {
                 notice: None,
             }))
         };
-        let progress = |applied: Applied| match applied.report {
+        let progress = |applied: crate::ops::Applied| match applied.report {
             Report::RecordProgress(r) => r,
             _ => panic!("a progress report"),
         };
@@ -1932,11 +1930,11 @@ mod tests {
             .clone();
         // The launcher, still naming the intent's original owner, writes a
         // different set and then a failed outcome: both are no-ops.
-        let sidecar = || crate::state::Held {
-            obligation: crate::state::Obligation::JobSidecar {
+        let sidecar = || agent_runtime::intent::Held {
+            obligation: agent_runtime::intent::Obligation::JobSidecar {
                 record: "/fleet/intents/transfer.job".to_owned(),
             },
-            role: Some(crate::state::Role::Job),
+            role: Some(agent_runtime::intent::Role::Job),
             harness: None,
         };
         let launcher_set = ObligationRecord {
@@ -2064,11 +2062,11 @@ mod tests {
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
-                standing: vec![crate::state::Held {
-                    obligation: crate::state::Obligation::JobSidecar {
+                standing: vec![agent_runtime::intent::Held {
+                    obligation: agent_runtime::intent::Obligation::JobSidecar {
                         record: "/fleet/intents/transfer.job".to_owned(),
                     },
-                    role: Some(crate::state::Role::Job),
+                    role: Some(agent_runtime::intent::Role::Job),
                     harness: None,
                 }],
                 ..Default::default()
@@ -2108,7 +2106,7 @@ mod tests {
         assert!(
             stored.obligations.as_ref().is_none_or(|o| !o
                 .standing_obligations()
-                .any(|o| matches!(o, crate::state::Obligation::JobSidecar { .. }))),
+                .any(|o| matches!(o, agent_runtime::intent::Obligation::JobSidecar { .. }))),
             "the launcher's set never landed over the claim: {stored:?}"
         );
         assert!(once.get(), "the claim landed in the gap");
@@ -2133,11 +2131,11 @@ mod tests {
             intent_id: id.clone(),
             phase: None,
             obligations: Some(ObligationRecord {
-                standing: vec![crate::state::Held {
-                    obligation: crate::state::Obligation::JobSidecar {
+                standing: vec![agent_runtime::intent::Held {
+                    obligation: agent_runtime::intent::Obligation::JobSidecar {
                         record: "/fleet/intents/transfer.job".to_owned(),
                     },
-                    role: Some(crate::state::Role::Job),
+                    role: Some(agent_runtime::intent::Role::Job),
                     harness: None,
                 }],
                 ..Default::default()
@@ -2177,7 +2175,10 @@ mod tests {
         assert!(
             obligations.discharged.iter().any(|d| {
                 d.by == "claimed"
-                    && matches!(d.obligation, crate::state::Obligation::JobSidecar { .. })
+                    && matches!(
+                        d.obligation,
+                        agent_runtime::intent::Obligation::JobSidecar { .. }
+                    )
             }),
             "the launcher's sidecar handle is discharged by the claim: {obligations:?}"
         );
@@ -2237,10 +2238,7 @@ mod tests {
             1,
         );
         fs::write(&path, &healed_from).unwrap();
-        let applied = apply_adoption(&path, &request, &read(true), LOCK).unwrap();
-        let Report::AdoptController(a) = &applied.report else {
-            panic!()
-        };
+        let a = apply_adoption(&path, &request, &read(true), LOCK).unwrap();
         assert!(a.healed);
         assert_eq!(a.generation, 3);
         let after = object(&path)["overseer"].clone();
@@ -2274,10 +2272,7 @@ mod tests {
         // Replace: another session's record goes, the new one is written
         // at the next generation with the request's identity.
         fs::write(&path, fixtures::FLEET).unwrap();
-        let applied = apply_adoption(&path, &request, &read(false), LOCK).unwrap();
-        let Report::AdoptController(a) = &applied.report else {
-            panic!()
-        };
+        let a = apply_adoption(&path, &request, &read(false), LOCK).unwrap();
         assert!(!a.healed);
         assert_eq!(a.generation, 4);
         let after = object(&path)["overseer"].clone();

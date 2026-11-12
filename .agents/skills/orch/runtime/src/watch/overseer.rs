@@ -2319,7 +2319,7 @@ fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a crate::state:
     fleet
         .intents
         .iter()
-        .filter(|i| i.op == crate::state::EffectOp::LaunchLane && i.target == item)
+        .filter(|i| i.op == agent_runtime::intent::EffectOp::LaunchLane && i.target == item)
         .max_by(|a, b| a.created_at.cmp(&b.created_at))
 }
 

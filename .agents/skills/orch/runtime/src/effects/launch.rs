@@ -34,8 +34,9 @@ use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch, accounts};
 use crate::settings::{LaneOutput, Settings};
-use crate::state::{self, Intent, Lane, OpenedPane, Phase};
+use crate::state::{self, Intent, Lane};
 use crate::watch::hosted::{self, Launch, PaneKind};
+use agent_runtime::intent::{OpenedPane, Phase};
 
 pub(super) mod gate;
 

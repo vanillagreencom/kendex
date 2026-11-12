@@ -105,10 +105,11 @@ use agent_runtime::clock;
 use agent_runtime::protocol::Outcome;
 use lane::IntentTarget;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
-use crate::state::{self, EffectOp, Intent, Kind, Lane, PrincipalKeys, Snapshot};
+use crate::state::{self, Intent, Kind, Lane, Snapshot};
+use agent_runtime::intent::{EffectOp, PrincipalKeys};
 
 /// The clock and nonce an operation stamps with, supplied by the caller so
 /// a transition is a pure function of the record and this value. One call
@@ -411,6 +412,58 @@ pub struct OutcomeRecorded {
     pub reconciled: Option<Reconciled>,
 }
 
+/// What the journal's outcome write recorded: the intent as written, whether
+/// this write moved the record, why the intent closed apart from its own
+/// outcome, and what the operation's arm reported of the target record it
+/// moved, as the arm wrote it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutcomeWritten {
+    pub intent: Intent,
+    pub recorded_now: bool,
+    pub reconciled: Option<Reconciled>,
+    pub target: Map<String, Value>,
+}
+
+/// What orch's arm moved on its target's record: the lane as written, or
+/// the controller record's generation.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TargetMoved {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<Box<Lane>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<u64>,
+}
+
+impl OutcomeRecorded {
+    /// The dispatcher's report of the journal's outcome write.
+    pub fn of(written: OutcomeWritten) -> Result<OutcomeRecorded> {
+        let moved: TargetMoved = serde_json::from_value(Value::Object(written.target))?;
+        Ok(OutcomeRecorded {
+            intent: written.intent,
+            recorded_now: written.recorded_now,
+            lane: moved.lane,
+            generation: moved.generation,
+            reconciled: written.reconciled,
+        })
+    }
+}
+
+/// The command's reply to the journal's outcome write.
+pub fn outcome_applied(written: OutcomeWritten) -> Result<Applied> {
+    Ok(Applied {
+        kind: Kind::Fleet,
+        report: Report::RecordOutcome(Box::new(OutcomeRecorded::of(written)?)),
+    })
+}
+
+/// The command's reply to an adoption.
+pub fn adoption_applied(adopted: ControllerAdopted) -> Applied {
+    Applied {
+        kind: Kind::Fleet,
+        report: Report::AdoptController(Box::new(adopted)),
+    }
+}
+
 /// The typed result of one committed transition, tagged like its request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "kebab-case")]
@@ -540,19 +593,18 @@ fn reread_on_record_changed(request: &Request) -> bool {
     clippy::disallowed_methods,
     reason = "the one store write of every request and journal write: the transition's document committed through the state module's write check"
 )]
-fn commit(
+fn commit<T>(
     path: &Path,
-    kind: Kind,
     locking: Locking,
     between: &dyn Fn(),
-    transition: impl Fn(&mut Document) -> Result<Report>,
-) -> Result<Applied> {
+    transition: impl Fn(&mut Document) -> Result<T>,
+) -> Result<T> {
     let snapshot = loaded(path)?;
     let mut doc = snapshot.doc.clone();
     let report = transition(&mut doc)?;
     between();
     record::store(path, &snapshot.doc, &doc, locking)?;
-    Ok(Applied { kind, report })
+    Ok(report)
 }
 
 /// [`apply_host`] with `between` run after the transition and before the
@@ -572,10 +624,11 @@ fn apply_interleaved(
 ) -> Result<Applied> {
     let kind = target_kind(path, request)?;
     let transition = || -> Result<Applied> {
-        commit(path, kind, locking, between, |doc| match kind {
+        let report = commit(path, locking, between, |doc| match kind {
             Kind::Item => item_transition(path, doc, request, env),
             Kind::Fleet => fleet_transition(path, doc, request, env, host),
-        })
+        })?;
+        Ok(Applied { kind, report })
     };
     if reread_on_record_changed(request) {
         // The owner the transition compared is the one the store commits
@@ -602,7 +655,8 @@ fn apply_interleaved(
 /// where its target is the intent's own; a target that moved notes what it
 /// observed on `intent` and answers `IntentStale` on a terminal word
 /// (`terminal`), so the handles an unconfirmed outcome's set still holds
-/// keep their reader.
+/// keep their reader. What it moved it reports into the map, the outcome
+/// report's `target`.
 pub type OutcomeArm = fn(
     &Path,
     &mut Document,
@@ -610,12 +664,12 @@ pub type OutcomeArm = fn(
     &RecordOutcome,
     &str,
     bool,
-    &mut OutcomeRecorded,
+    &mut Map<String, Value>,
 ) -> Result<Option<Reconciled>>;
 
 /// The fleet journal a library write acts on: any other file refuses
 /// `op-kind` naming `op`.
-fn journal_kind(path: &Path, op: &'static str) -> Result<Kind> {
+fn journal_kind(path: &Path, op: &'static str) -> Result<()> {
     let kind = Kind::of_path(path);
     if kind != Kind::Fleet {
         return Err(Error::OpKind {
@@ -625,7 +679,7 @@ fn journal_kind(path: &Path, op: &'static str) -> Result<Kind> {
             wanted: Kind::Fleet,
         });
     }
-    Ok(kind)
+    Ok(())
 }
 
 /// The journal's progress write: the phase, the obligation set or the
@@ -633,13 +687,15 @@ fn journal_kind(path: &Path, op: &'static str) -> Result<Kind> {
 /// read and conditional on its owner. A write made under an owner is read
 /// again while the store refuses `record-changed`, so a claim that landed
 /// in the gap is answered with the claimant's state.
-pub fn write_progress(path: &Path, r: &RecordProgress, locking: Locking) -> Result<Applied> {
-    let kind = journal_kind(path, "record-progress")?;
+pub fn write_progress(
+    path: &Path,
+    r: &RecordProgress,
+    locking: Locking,
+) -> Result<ProgressRecorded> {
+    journal_kind(path, "record-progress")?;
     let attempt = || {
-        commit(path, kind, locking, &|| {}, |doc| {
-            Ok(Report::RecordProgress(Box::new(
-                controller::record_progress(path, doc, r)?,
-            )))
+        commit(path, locking, &|| {}, |doc| {
+            controller::record_progress(path, doc, r)
         })
     };
     if r.while_owner.is_some() {
@@ -652,14 +708,17 @@ pub fn write_progress(path: &Path, r: &RecordProgress, locking: Locking) -> Resu
 /// The journal's claim of an intent's owner lease for the caller, read
 /// again while the store refuses `record-changed`: the first store can meet
 /// the launcher's own write that lands the instant the job starts.
-pub fn write_claim(path: &Path, r: &ClaimIntent, env: &Env, locking: Locking) -> Result<Applied> {
-    let kind = journal_kind(path, "claim-intent")?;
+pub fn write_claim(
+    path: &Path,
+    r: &ClaimIntent,
+    env: &Env,
+    locking: Locking,
+) -> Result<IntentClaimed> {
+    journal_kind(path, "claim-intent")?;
     record::reread(
         || {
-            commit(path, kind, locking, &|| {}, |doc| {
-                Ok(Report::ClaimIntent(Box::new(controller::claim_intent(
-                    path, doc, r, env,
-                )?)))
+            commit(path, locking, &|| {}, |doc| {
+                controller::claim_intent(path, doc, r, env)
             })
         },
         Error::key,
@@ -676,13 +735,11 @@ pub fn write_outcome(
     env: &Env,
     locking: Locking,
     arm: OutcomeArm,
-) -> Result<Applied> {
-    let kind = journal_kind(path, "record-outcome")?;
+) -> Result<OutcomeWritten> {
+    journal_kind(path, "record-outcome")?;
     let attempt = || {
-        commit(path, kind, locking, &|| {}, |doc| {
-            Ok(Report::RecordOutcome(Box::new(record_outcome(
-                path, doc, r, env, arm,
-            )?)))
+        commit(path, locking, &|| {}, |doc| {
+            record_outcome(path, doc, r, env, arm)
         })
     };
     if r.while_owner.is_some() {
@@ -847,12 +904,8 @@ pub fn fleet_transition(
         Request::CloseOwnedResources(r) => Ok(Report::CloseOwnedResources(Box::new(
             lane::close_owned_resources(path, doc, r, env, host()?)?,
         ))),
-        Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(record_outcome(
-            path,
-            doc,
-            r,
-            env,
-            outcome_arm,
+        Request::RecordOutcome(r) => Ok(Report::RecordOutcome(Box::new(OutcomeRecorded::of(
+            record_outcome(path, doc, r, env, outcome_arm)?,
         )?))),
         Request::RecordPhase(r) => Ok(Report::RecordPhase(Box::new(lane::record_phase(
             path, doc, r,
@@ -1078,7 +1131,7 @@ fn record_outcome(
     r: &RecordOutcome,
     env: &Env,
     arm: OutcomeArm,
-) -> Result<OutcomeRecorded> {
+) -> Result<OutcomeWritten> {
     if r.outcome == Outcome::NotStarted {
         return Err(Error::Runtime(agent_runtime::Error::OutcomeInvalid {
             outcome: r.outcome,
@@ -1100,22 +1153,20 @@ fn record_outcome(
     // its own record; `apply` retries this transition on a conflicting
     // snapshot, so the owner read here is the one the write commits against.
     if r.while_owner.is_some() && intent.owner != r.while_owner {
-        return Ok(OutcomeRecorded {
+        return Ok(OutcomeWritten {
             intent,
             recorded_now: false,
-            lane: None,
-            generation: None,
             reconciled: None,
+            target: Map::new(),
         });
     }
     if !intent.open() {
         if intent.outcome == r.outcome {
-            return Ok(OutcomeRecorded {
+            return Ok(OutcomeWritten {
                 intent,
                 recorded_now: false,
-                lane: None,
-                generation: None,
                 reconciled: None,
+                target: Map::new(),
             });
         }
         return Err(Error::Runtime(agent_runtime::Error::IntentComplete {
@@ -1140,12 +1191,11 @@ fn record_outcome(
     // outcome that changes nothing, a reconcile reading what the last one
     // read, must not move the file.
     let before = doc.clone();
-    let mut recorded = OutcomeRecorded {
+    let mut recorded = OutcomeWritten {
         intent: intent.clone(),
         recorded_now: true,
-        lane: None,
-        generation: None,
         reconciled: None,
+        target: Map::new(),
     };
     // A reconcile that found the owner still live, or could not read it, wrote
     // this outcome to record only its observation and defer to the owner: it
@@ -1165,7 +1215,15 @@ fn record_outcome(
     let stale = if owner_live {
         None
     } else {
-        arm(path, doc, &mut intent, r, &at, terminal, &mut recorded)?
+        arm(
+            path,
+            doc,
+            &mut intent,
+            r,
+            &at,
+            terminal,
+            &mut recorded.target,
+        )?
     };
     intent.outcome = r.outcome;
     intent.reconciled = stale;
@@ -1244,9 +1302,11 @@ pub fn outcome_arm(
     r: &RecordOutcome,
     at: &str,
     terminal: bool,
-    recorded: &mut OutcomeRecorded,
+    target: &mut Map<String, Value>,
 ) -> Result<Option<Reconciled>> {
-    Ok(match intent.op {
+    let mut moved = TargetMoved::default();
+    let recorded = &mut moved;
+    let stale = match intent.op {
         EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
             match lane::intent_lane(path, doc, intent, r.principal_keys.as_ref())? {
                 IntentTarget::Current { index } => {
@@ -1273,7 +1333,11 @@ pub fn outcome_arm(
                 terminal.then_some(Reconciled::IntentStale)
             }
         }
-    })
+    };
+    if let Value::Object(moved) = serde_json::to_value(moved)? {
+        *target = moved;
+    }
+    Ok(stale)
 }
 
 #[cfg(test)]
@@ -1290,7 +1354,8 @@ mod tests {
     use super::testing::*;
     use super::*;
     use crate::error::Error;
-    use crate::state::{self, EffectOp, LaneStatus, fixtures};
+    use crate::state::{self, LaneStatus, fixtures};
+    use agent_runtime::intent::EffectOp;
 
     #[test]
     fn a_request_on_the_other_kind_of_file_refuses_before_reading() {

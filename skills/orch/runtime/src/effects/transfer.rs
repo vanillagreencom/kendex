@@ -39,7 +39,8 @@ use super::{
 use crate::error::{Error, Result};
 use crate::ops::{RequestTransfer, StartController, overseer_target};
 use crate::settings::Settings;
-use crate::state::{BoundSession, EffectOp, Intent, OpenedPane, Phase};
+use crate::state::Intent;
+use agent_runtime::intent::{BoundSession, EffectOp, OpenedPane, Phase};
 
 /// Which controller lifetime a succession effect serves: a transfer retires
 /// the recorded predecessor; a start has none to retire and refuses over a

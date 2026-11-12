@@ -26,7 +26,8 @@ use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::state::{self, EffectOp, Intent, Obligation, ObligationRecord, OpenedPane, Phase, Role};
+use crate::state::Intent;
+use agent_runtime::intent::{EffectOp, Obligation, ObligationRecord, OpenedPane, Phase, Role};
 
 use super::{pid_value, predecessor_identity};
 
@@ -256,7 +257,7 @@ impl Obligations {
             record: ObligationRecord {
                 standing: standing
                     .into_iter()
-                    .map(|obligation| state::Held {
+                    .map(|obligation| agent_runtime::intent::Held {
                         obligation,
                         role: Some(role),
                         harness: harness.filter(|_| role == Role::Harness),
@@ -377,7 +378,11 @@ impl Obligations {
         launch: Option<&LaunchIdentity>,
         harness: Option<Harness>,
     ) -> Obligations {
-        Obligations::of(state::launch_obligations(launch), Role::Harness, harness)
+        Obligations::of(
+            agent_runtime::intent::launch_obligations(launch),
+            Role::Harness,
+            harness,
+        )
     }
 
     /// What the overseer record names, under the predecessor role: its pane
@@ -410,7 +415,7 @@ impl Obligations {
     /// or already discharged is not added again.
     pub(super) fn add(&mut self, obligation: Obligation, role: Role, harness: Option<Harness>) {
         if !self.record.holds(&obligation) {
-            self.record.standing.push(state::Held {
+            self.record.standing.push(agent_runtime::intent::Held {
                 obligation,
                 role: Some(role),
                 harness: harness.filter(|_| role == Role::Harness),
@@ -485,7 +490,7 @@ impl Obligations {
             record: record.display().to_string(),
         };
         if !self.record.stands(&sidecar) {
-            self.record.standing.push(state::Held {
+            self.record.standing.push(agent_runtime::intent::Held {
                 obligation: sidecar,
                 role: Some(Role::Job),
                 harness: None,
@@ -1534,7 +1539,7 @@ mod tests {
 
     fn opening(asked: bool, pane: Option<&str>) -> Phase {
         Phase::Opening {
-            opening: crate::state::Opening {
+            opening: agent_runtime::intent::Opening {
                 server: 4242,
                 server_start: 1,
                 server_process_start: None,
@@ -1798,7 +1803,7 @@ mod tests {
         assert!(set.unsignalled().is_none());
         let intent = Intent {
             id: "i".to_owned(),
-            op: crate::state::EffectOp::CloseOwnedResources,
+            op: agent_runtime::intent::EffectOp::CloseOwnedResources,
             target: "KEN-1".to_owned(),
             created_at: String::new(),
             owner: None,
@@ -1937,7 +1942,7 @@ mod tests {
         );
         set.add(Obligation::Process(wake.clone()), Role::Auxiliary, None);
         assert_eq!(set.harness_identity(), Some(harness.clone()));
-        let keys = crate::state::PrincipalKeys {
+        let keys = agent_runtime::intent::PrincipalKeys {
             since: Some("2026-01-29T15:20:00Z".to_owned()),
             keys: set.record().principal_keys(Role::Harness),
         };

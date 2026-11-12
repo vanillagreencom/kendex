@@ -32,15 +32,15 @@ use super::accounts::{self, PickAnswer, PickRequest};
 use super::admission::{self, Admission, ScopeRange};
 use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
-    Effect, Env, OutcomeRecorded, RecordOutcome, Standing, intents, lane_at, lane_doc_mut, lanes,
+    Effect, Env, RecordOutcome, Standing, TargetMoved, intents, lane_at, lane_doc_mut, lanes,
     new_intent, no_open_intent, open_intent, push_intent, same_open_intent, string_or_null,
 };
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
 use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
-    self, CloseGround, EffectOp, Intent, Lane, LaneStatus, Phase, PrincipalKeys, Reservation, Role,
-    Selection, TerminalVerdict,
+    self, CloseGround, Intent, Lane, LaneStatus, Reservation, Selection, TerminalVerdict,
 };
+use agent_runtime::intent::{EffectOp, Phase, PrincipalKeys, Role};
 
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
@@ -1649,7 +1649,7 @@ pub(super) enum IntentTarget {
 /// alone never decides, since a record may carry whole seconds.
 pub fn lane_moved(lane: &Lane, keys: &PrincipalKeys) -> bool {
     lane.session_since != keys.since
-        || state::launch_obligations(lane.launch.as_ref())
+        || agent_runtime::intent::launch_obligations(lane.launch.as_ref())
             .iter()
             .any(|named| !keys.keys.contains(named))
 }
@@ -1740,7 +1740,7 @@ pub(super) fn record_launch_outcome(
     r: &RecordOutcome,
     at: &str,
     index: usize,
-    recorded: &mut OutcomeRecorded,
+    recorded: &mut TargetMoved,
 ) -> Result<()> {
     match r.outcome {
         Outcome::Confirmed => {
@@ -1896,7 +1896,7 @@ pub(super) fn record_close_outcome(
     r: &RecordOutcome,
     at: &str,
     index: usize,
-    recorded: &mut OutcomeRecorded,
+    recorded: &mut TargetMoved,
 ) -> Result<()> {
     match r.outcome {
         Outcome::Confirmed => {
@@ -2127,7 +2127,8 @@ mod tests {
     use crate::error::Error;
     use crate::ops::occupancy::{ChargeReason, ChargeSource};
     use crate::ops::{Effect, Report, Request, apply_on};
-    use crate::state::{self, EffectOp, LaneStatus, Phase, fixtures};
+    use crate::state::{LaneStatus, fixtures};
+    use agent_runtime::intent::{EffectOp, Phase};
     use agent_runtime::settings::Judged;
 
     #[test]
@@ -3252,7 +3253,7 @@ mod tests {
         let path = fleet_file(dir.path());
         fs::write(&path, fixtures::FLEET).unwrap();
         let id = intend(&path, &transfer(expected()));
-        let opened = state::OpenedPane {
+        let opened = agent_runtime::intent::OpenedPane {
             pane: "%12".into(),
             server: 41020,
             server_start: 1_769_590_000,
@@ -3266,7 +3267,7 @@ mod tests {
             home: None,
             home_implicit: false,
         };
-        let session = state::BoundSession {
+        let session = agent_runtime::intent::BoundSession {
             session_id: "0f6e".into(),
             file: "/h/projects/-w/0f6e.jsonl".into(),
         };

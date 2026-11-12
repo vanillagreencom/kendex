@@ -93,8 +93,9 @@ use serde_json::{Value, json};
 use crate::error::{Error, Result};
 use crate::ops::{self, AdoptController, Applied, Effect, Env, OutcomeRecorded, Report, Request};
 use crate::settings::Settings;
-use crate::state::{self, EffectOp, Intent, Lane};
+use crate::state::{self, Intent, Lane};
 use agent_runtime::clock::Clock;
+use agent_runtime::intent::EffectOp;
 use agent_runtime::record::Locking;
 
 use operation::{
@@ -127,14 +128,15 @@ impl<'a> Run<'a> {
     /// The recording boundary an outcome's operation names: a lane
     /// intent's is the lane operation's, a controller intent's the engine's.
     fn apply_outcome(&self, outcome: EffectOutcome) -> Result<Applied> {
-        match outcome.op() {
+        let written = match outcome.op() {
             EffectOp::LaunchLane | EffectOp::CloseOwnedResources => {
                 lane_operation::apply_outcome(self, outcome)
             }
             EffectOp::RequestTransfer | EffectOp::StartController | EffectOp::StopController => {
                 operation::apply_outcome(&self.engine, outcome)
             }
-        }
+        }?;
+        ops::outcome_applied(written)
     }
 }
 
@@ -600,7 +602,7 @@ pub fn runner_recorded(intent: &Intent) -> bool {
     intent
         .phase
         .as_ref()
-        .and_then(state::Phase::opened)
+        .and_then(agent_runtime::intent::Phase::opened)
         .is_some_and(|opened| opened.identity.is_some())
 }
 
@@ -612,7 +614,7 @@ pub fn adopt_controller(
     settings: &Settings,
     locking: Locking,
 ) -> Result<Applied> {
-    operation::adopt_controller(path, r, &settings.engine, locking)
+    operation::adopt_controller(path, r, &settings.engine, locking).map(ops::adoption_applied)
 }
 
 /// Register the controller a person opened by hand in the caller's own
@@ -631,6 +633,9 @@ pub fn register_controller(
         &settings.roots.common,
         locking,
     )?;
+    // The command's reply names the adoption as the dispatcher reports it.
+    let adopted: ops::ControllerAdopted = serde_json::from_value(reply["adopted"].take())?;
+    reply["adopted"] = serde_json::to_value(ops::adoption_applied(adopted))?;
     // A record proven to name this pane keeps fields the request left out,
     // so the coverage is judged on the record as written.
     let recorded = fleet(path)?.overseer;
@@ -720,7 +725,7 @@ fn supersede_launch(
             .and_then(|o| o.get("observed"))
             .and_then(Value::as_str)
             == Some("present");
-        let (cloud, answer_by) = if let Some(state::Phase::CloudCreate {
+        let (cloud, answer_by) = if let Some(agent_runtime::intent::Phase::CloudCreate {
             worktree,
             answer_by,
         }) = &launch.intent.phase
@@ -729,7 +734,9 @@ fn supersede_launch(
         } else {
             (None, None)
         };
-        let preparing = if let Some(state::Phase::Preparing { step, at }) = &launch.intent.phase {
+        let preparing = if let Some(agent_runtime::intent::Phase::Preparing { step, at }) =
+            &launch.intent.phase
+        {
             Some(json!({"step": step, "at": at}))
         } else {
             None
@@ -981,12 +988,7 @@ pub fn reconcile(
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
     let controller = match operation::heal_controller(path, &settings.engine, locking) {
         Ok(None) => None,
-        Ok(Some(applied)) => {
-            let Report::AdoptController(adopted) = applied.report else {
-                unreachable!("the heal reports its adoption")
-            };
-            Some(ControllerHeal::Healed(*adopted))
-        }
+        Ok(Some(adopted)) => Some(ControllerHeal::Healed(adopted)),
         Err(e) => Some(ControllerHeal::Refused {
             refusal: e.key().to_owned(),
             detail: e.to_string(),
@@ -1063,12 +1065,15 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
         Reading::Gone => {}
     }
     let outcome = match intent.op {
-        state::EffectOp::LaunchLane => launch::reconcile_launch(run, &intent)?,
-        state::EffectOp::CloseOwnedResources => stop::reconcile_close(run, &intent)?,
-        state::EffectOp::RequestTransfer | state::EffectOp::StartController => {
+        agent_runtime::intent::EffectOp::LaunchLane => launch::reconcile_launch(run, &intent)?,
+        agent_runtime::intent::EffectOp::CloseOwnedResources => {
+            stop::reconcile_close(run, &intent)?
+        }
+        agent_runtime::intent::EffectOp::RequestTransfer
+        | agent_runtime::intent::EffectOp::StartController => {
             transfer::reconcile_transfer(run, &intent)?
         }
-        state::EffectOp::StopController => transfer::reconcile_stop(run, &intent)?,
+        agent_runtime::intent::EffectOp::StopController => transfer::reconcile_stop(run, &intent)?,
     };
     let stale = outcome.stale_read();
     Ok(Reconciled {

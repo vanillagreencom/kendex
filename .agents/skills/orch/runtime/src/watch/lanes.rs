@@ -73,7 +73,8 @@ use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
 use crate::settings::{self, Settings, WallRelaunch, WatchSettings};
-use crate::state::{self, FleetState, Lane, LaneStatus, Phase};
+use crate::state::{self, FleetState, Lane, LaneStatus};
+use agent_runtime::intent::Phase;
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.

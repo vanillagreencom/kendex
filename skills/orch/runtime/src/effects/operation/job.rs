@@ -44,8 +44,9 @@ use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Bootstrap, Operation, POLL, Reading, Run, Word, fleet_view, read_intent};
 use crate::error::{Error, Result};
 use crate::ops::{self, ClaimIntent, RecordProgress};
-use crate::state::{EffectOp, Intent, Obligation, Role};
+use crate::state::Intent;
 use agent_runtime::controller::WatchJob;
+use agent_runtime::intent::{EffectOp, Obligation, Role};
 use agent_runtime::intent::{Notice, Owner};
 use agent_runtime::record;
 
@@ -1127,9 +1128,8 @@ fn fail(
             "job": "possibly-started",
         }))
     };
-    let applied = super::apply_outcome(run, outcome)?;
-    if let ops::Report::RecordOutcome(r) = &applied.report
-        && let Some(owner) = &r.intent.owner
+    let r = super::apply_outcome(run, outcome)?;
+    if let Some(owner) = &r.intent.owner
         && owner != handed_from
     {
         return Ok(JobStarted {
@@ -3036,8 +3036,8 @@ mod tests {
         // nowhere, the owed notice sent once and marked.
         let retry =
             Operation::open(&run, &current, Bootstrap::controller(current.op).unwrap()).unwrap();
-        let applied = super::super::apply_outcome(&run, outcome(retry)).unwrap();
-        assert!(matches!(applied.report, ops::Report::RecordOutcome(ref r) if !r.recorded_now));
+        let written = super::super::apply_outcome(&run, outcome(retry)).unwrap();
+        assert!(!written.recorded_now);
         assert_eq!(sent_calls(), 1, "the owed notice is sent once");
         let marked = read_intent(&path, &intent.id).unwrap().notice.unwrap();
         assert_eq!(

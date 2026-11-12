@@ -19,7 +19,7 @@ use super::host::{Foreground, Observed, Recorded, SessionFloor, unanswering};
 use super::obligations::{Discharge, Obligations, PaneEnd, PaneRef, ReceiptEnd};
 use super::{Close, Operation, POLL, Pane, Server, receipt};
 use crate::error::Result;
-use crate::state::{Obligation, Opening, Phase, Role};
+use agent_runtime::intent::{Obligation, Opening, Phase, Role};
 
 /// Why a window did not open with its line typed. `Refused` is a host refusal before the
 /// launcher was asked, nothing of the effect's standing; `Unanswered` is a

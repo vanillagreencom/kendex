@@ -33,12 +33,13 @@ use super::{Run, lane_for_intent, read_intent};
 use crate::error::{Error, Result};
 use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::{
-    self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, Progress, RecordLaneProgress,
-    Report, Request,
+    self, Applied, CLOUD_KIND, LaneObligation, LaneObligationRecord, OutcomeWritten, Progress,
+    RecordLaneProgress, Report, Request,
 };
 use crate::settings::Settings;
-use crate::state::{EffectOp, Intent, Lane, PrincipalKeys, Role};
+use crate::state::{Intent, Lane};
 use agent_runtime::intent::Owner;
+use agent_runtime::intent::{EffectOp, PrincipalKeys, Role};
 use agent_runtime::record::Locking;
 
 pub(super) use worktree::WorktreeRelease;
@@ -676,7 +677,7 @@ fn note_cause(outcome: &mut EffectOutcome, cause: Option<&str>) {
 /// `untouched`, and the keys the store's moved-lane judgement takes, the
 /// lane's stamp the intent was written at with the keys the engine's set
 /// recorded under the harness role.
-pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
+pub(super) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<OutcomeWritten> {
     let intent = read_intent(run.engine.path, outcome.intent_id())?;
     let rows: Vec<Value> = LaneObligationRecord::of(run.engine.path, &intent)?
         .map(|record| record.standing.iter().map(standing_value).collect())

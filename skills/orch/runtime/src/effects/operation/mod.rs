@@ -90,11 +90,12 @@ pub use window::{OpenRefusal, Polled, Recovered, TurnConfirm, opening_observatio
 use obligations::{Discharge, Obligations, PaneRef, Terminal};
 
 use crate::error::{Error, Result};
-use crate::ops::{self, Applied, Env, OutcomeArm, Progress, RecordOutcome, RecordProgress, Report};
-use crate::state::{self, EffectOp, Intent, Obligation, OpenedPane, Phase, Role};
+use crate::ops::{self, Env, OutcomeArm, OutcomeWritten, Progress, RecordOutcome, RecordProgress};
+use crate::state::{self, Intent};
 use agent_runtime::clock::Clock;
 use agent_runtime::controller::Overseer;
 use agent_runtime::intent::LaunchIdentity;
+use agent_runtime::intent::{EffectOp, Obligation, OpenedPane, Phase, Role};
 use agent_runtime::record::Locking;
 use agent_runtime::settings::{EngineSettings, Judged};
 
@@ -473,7 +474,7 @@ impl<'a> Operation<'a> {
     /// route. An unchanged set the recorded owner still holds is accepted, not
     /// yielded.
     fn write(&mut self) -> Result<()> {
-        let applied = ops::write_progress(
+        let r = ops::write_progress(
             self.run.path,
             &RecordProgress {
                 intent_id: self.intent_id.clone(),
@@ -484,9 +485,6 @@ impl<'a> Operation<'a> {
             },
             self.run.locking,
         )?;
-        let Report::RecordProgress(r) = &applied.report else {
-            unreachable!("record-progress returns its own report")
-        };
         match &r.progress {
             Progress::Recorded => {
                 if let Some(record) = &r.intent.obligations {
@@ -701,7 +699,7 @@ impl<'a> Operation<'a> {
 
 /// The engine's recording boundary for its own operations: an outcome
 /// applied with no caller's arm.
-pub fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
+pub fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<OutcomeWritten> {
     apply_outcome_with(run, outcome, |_| {})
 }
 
@@ -727,7 +725,7 @@ pub fn apply_outcome_with(
     run: &Run,
     outcome: EffectOutcome,
     arm: impl FnOnce(&mut RecordOutcome),
-) -> Result<Applied> {
+) -> Result<OutcomeWritten> {
     let record_after = outcome.record.clone();
     let while_owner = outcome.while_owner.clone();
     let mut outcome = outcome.wire();
@@ -739,7 +737,7 @@ pub fn apply_outcome_with(
             .as_ref()
             .is_some_and(|recorded| recorded.same_set(&record_after))
     {
-        let applied = ops::write_progress(
+        let r = ops::write_progress(
             run.path,
             &RecordProgress {
                 intent_id: outcome.intent_id.clone(),
@@ -750,33 +748,29 @@ pub fn apply_outcome_with(
             },
             run.locking,
         )?;
-        if let Report::RecordProgress(r) = &applied.report {
-            match &r.progress {
-                Progress::Recorded => {
-                    outcome.set_revision = r.intent.obligations.as_ref().map(|o| o.revision);
-                }
-                // A yielded set write leaves the outcome's own write to
-                // yield by the same owner comparison.
-                Progress::Unchanged | Progress::Yielded { .. } => {}
+        match &r.progress {
+            Progress::Recorded => {
+                outcome.set_revision = r.intent.obligations.as_ref().map(|o| o.revision);
             }
+            // A yielded set write leaves the outcome's own write to
+            // yield by the same owner comparison.
+            Progress::Unchanged | Progress::Yielded { .. } => {}
         }
     }
-    let applied = ops::write_outcome(run.path, &outcome, run.env, run.locking, run.outcome_arm)?;
-    if let Report::RecordOutcome(r) = &applied.report {
-        // The notice the record owes and the closed intent's files are this
-        // writer's only while the intent is still its own: a launcher whose
-        // intent a job claimed leaves the claimant's notices and files to
-        // the claimant.
-        let ours = while_owner.is_none() || r.intent.owner == while_owner;
-        if ours {
-            job::deliver_owed(run, &r.intent, while_owner.clone())?;
-            if !r.intent.open() {
-                receipt::remove(&run.receipt_path(&r.intent.id));
-                job::remove_files(&run.state_dir, &r.intent.id);
-            }
+    let r = ops::write_outcome(run.path, &outcome, run.env, run.locking, run.outcome_arm)?;
+    // The notice the record owes and the closed intent's files are this
+    // writer's only while the intent is still its own: a launcher whose
+    // intent a job claimed leaves the claimant's notices and files to
+    // the claimant.
+    let ours = while_owner.is_none() || r.intent.owner == while_owner;
+    if ours {
+        job::deliver_owed(run, &r.intent, while_owner.clone())?;
+        if !r.intent.open() {
+            receipt::remove(&run.receipt_path(&r.intent.id));
+            job::remove_files(&run.state_dir, &r.intent.id);
         }
     }
-    Ok(applied)
+    Ok(r)
 }
 
 impl EffectOutcome {
@@ -1151,7 +1145,7 @@ mod tests {
         .unwrap();
         let minted_at = handle.revision();
         let token = handle.standing_process(&id).expect("the process stands");
-        let mut replaced: state::ObligationRecord = serde_json::from_value(json!({
+        let mut replaced: agent_runtime::intent::ObligationRecord = serde_json::from_value(json!({
             "standing": [], "discharged": [], "signalled": true
         }))
         .unwrap();

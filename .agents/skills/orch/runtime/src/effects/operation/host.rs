@@ -26,8 +26,9 @@ use super::{
 };
 use crate::error::{Error, Result};
 use crate::ops::accounts::usage::Credential;
-use crate::ops::{self, AdoptController, AdoptionRead, Applied};
-use crate::state::{self, BoundSession, Intent, Obligation, OpenedPane, Phase, Role};
+use crate::ops::{self, AdoptController, AdoptionRead, ControllerAdopted};
+use crate::state::Intent;
+use agent_runtime::intent::{BoundSession, Obligation, OpenedPane, Phase, Role};
 
 /// What a recorded pane reads as on its own server: present as `P` (the
 /// pane, or the standing token for it), gone with the cause (the pane by
@@ -771,14 +772,20 @@ impl Operation<'_> {
             }
         };
         match &self.phase {
-            Some(state::Phase::Opening { opening }) => push(PathBuf::from(&opening.socket)),
+            Some(agent_runtime::intent::Phase::Opening { opening }) => {
+                push(PathBuf::from(&opening.socket))
+            }
             Some(
-                state::Phase::WindowOpened { opened }
-                | state::Phase::Delivering { opened, .. }
-                | state::Phase::Delivered { opened, .. }
-                | state::Phase::IdentityRead { opened, .. },
+                agent_runtime::intent::Phase::WindowOpened { opened }
+                | agent_runtime::intent::Phase::Delivering { opened, .. }
+                | agent_runtime::intent::Phase::Delivered { opened, .. }
+                | agent_runtime::intent::Phase::IdentityRead { opened, .. },
             ) => push(PathBuf::from(&opened.socket)),
-            Some(state::Phase::CloudCreate { .. } | state::Phase::Preparing { .. }) | None => {}
+            Some(
+                agent_runtime::intent::Phase::CloudCreate { .. }
+                | agent_runtime::intent::Phase::Preparing { .. },
+            )
+            | None => {}
         }
         // A socket that cannot be named is no candidate: a key no socket
         // answers for is read by its server's pid.
@@ -1496,7 +1503,7 @@ pub fn adopt_controller(
     r: &AdoptController,
     settings: &EngineSettings,
     locking: Locking,
-) -> Result<Applied> {
+) -> Result<ControllerAdopted> {
     let overseer = fleet_view(path)?.overseer;
     let harness = Harness::named(&r.harness)?;
     if !is_pane_id(&r.pane) {
@@ -1600,7 +1607,7 @@ pub fn heal_controller(
     path: &Path,
     settings: &EngineSettings,
     locking: Locking,
-) -> Result<Option<Applied>> {
+) -> Result<Option<ControllerAdopted>> {
     let body = fleet_view(path)?;
     let Some(overseer) = body.overseer else {
         return Ok(None);
@@ -2010,10 +2017,10 @@ pub fn register_controller(
         permission,
         extra_args,
     };
-    let applied = adopt_controller(path, &request, settings, locking)?;
+    let adopted = adopt_controller(path, &request, settings, locking)?;
     Ok((
         json!({
-            "adopted": applied,
+            "adopted": adopted,
             "pane": pane,
             "window": fields.pane.window,
             "server": server.pid,

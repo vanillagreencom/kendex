@@ -71,8 +71,9 @@ pub fn diagnostic_line(error: &Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{EffectOp, LaneStatus};
+    use crate::state::LaneStatus;
     use agent_runtime::error::ShapeReason;
+    use agent_runtime::intent::EffectOp;
 
     #[test]
     fn refusals_open_with_their_key_and_fields() {
