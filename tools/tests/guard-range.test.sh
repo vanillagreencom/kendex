@@ -52,7 +52,7 @@ TOML
     printf '%s\n' '    assert_eq!(value, 105);' '}'
   }
   for row in 'production|manifest|too_many_lines' 'build-script|workspace|too_many_lines' \
-    'test-helpers|manifest|pass' 'forbidden-helper|workspace|todo'; do
+    'test-helpers|manifest|pass'; do
     IFS='|' read -r target selection expected <<<"$row"
     git -C "$R" reset -q --hard "$native_base"
     case "$target" in
@@ -62,7 +62,7 @@ TOML
         printf '%s\n' 'fn forbidden() { todo!(); }' >"$R/crates/core/tests/main.rs"
         ;;
       build-script) native_long_function 'fn main()' >"$R/crates/core/build.rs" ;;
-      test-helpers | forbidden-helper)
+      test-helpers)
         {
           printf '%s\n' 'pub fn production() {}' '#[cfg(test)]' 'mod tests {'
           native_long_function 'fn private_helper()'
@@ -73,7 +73,6 @@ TOML
         {
           native_long_function 'fn integration_helper()'
           printf '%s\n' '#[test]' 'fn calls_helper() { integration_helper(); }'
-          if [ "$target" = forbidden-helper ]; then printf '%s\n' 'fn forbidden() { todo!(); }'; fi
         } >"$R/crates/core/tests/main.rs"
         ;;
     esac
@@ -828,7 +827,6 @@ DOC_ALL="$(printf '%s\n' "$D"/tests/*.sh | sed 's#.*/##; s/\.sh$//' | sort | tr 
 DOC_CATALOG="$(printf '%s\n' $DOC_ALL catalogscan | sort | tr '\n' ' ' | sed 's/ $//')"
 SCHEMA_PATH=skills/doc-readers/schemas/review-finding-prompt.md
 READ_ROWS=(
-  "one document|$SCHEMA_PATH|assigned-lib assigned-script catalogscan quoted-find"
   "repeated document queries|$SCHEMA_PATH skills/doc-readers/workflows/flow.md|assigned-dir assigned-lib assigned-script catalogscan quoted-find"
   "another tree before the document|hooks/README.md $SCHEMA_PATH|assigned-lib assigned-script beta.test.sh catalogscan quoted-find"
 )

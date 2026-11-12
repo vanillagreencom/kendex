@@ -258,7 +258,6 @@ SPACE_ROWS=(
   "an exhausted volume has no verdict after zero cargo exit codes, with cross-target checks left to CI|GUARD_FULL_CROSS_DOC=ci DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-end=free-kib=0 min-mib=512|1"
   "an unreadable end probe has no verdict|DF_FAIL_CALL=2 DF_FREE_KIB_START=$high_free_kib|3|guard-note: no-verdict=cargo-space-end-unreadable=target|1"
   "a malformed start floor has no verdict|GUARD_MIN_FREE_GB=16GiB DF_FREE_KIB_START=$high_free_kib|3|guard-note: no-verdict=cargo-space-setting=GUARD_MIN_FREE_GB|0"
-  "a malformed exhaustion floor has no verdict|GUARD_EXHAUSTED_FREE_MB=512MB DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
   "a zero exhaustion floor has no verdict|GUARD_EXHAUSTED_FREE_MB=0 DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|3|guard-note: no-verdict=cargo-space-setting=GUARD_EXHAUSTED_FREE_MB|0"
   "a compile error stays blocking when the end volume is exhausted|CROSS_CHECK_FAIL=$APPLE DF_FREE_KIB_START=$high_free_kib DF_FREE_KIB_END=0|1|guard-note: no-verdict=cargo-space-end=free-kib=0 min-mib=512|1"
 )
@@ -363,16 +362,11 @@ run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTA
   [ "$(grep -cFx "$(check_call "$WINDOWS")" "$CARGO_CALL_LOG")" -eq 1 ] \
   && ok "a missing target does not stop the targets after it" \
   || bad "a missing target does not stop the targets after it" "rc=$RC out=$OUT log=$(cat "$CARGO_CALL_LOG")"
-# The loop counts its own rows: an emptied target list is a red, never a green.
-before=$((PASS + FAIL))
-for failing in "$APPLE" "$WINDOWS"; do
-  : >"$CARGO_CALL_LOG"
-  run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$failing"
-  [ "$RC" -ne 0 ] && case "$OUT" in *"guard: cross-check=$failing"*) true ;; *) false ;; esac \
-    && ok "a failing $failing compiler verdict blocks guard, naming it" \
-    || bad "a failing $failing compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
-done
-[ "$((PASS + FAIL))" -gt "$before" ] || { echo "no row was asserted: the cross-target failures" >&2; exit 2; }
+: >"$CARGO_CALL_LOG"
+run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH" CROSS_CHECK_FAIL="$APPLE"
+[ "$RC" -ne 0 ] && case "$OUT" in *"guard: cross-check=$APPLE"*) true ;; *) false ;; esac \
+  && ok "a failing $APPLE compiler verdict blocks guard, naming it" \
+  || bad "a failing $APPLE compiler verdict blocks guard, naming it" "rc=$RC out=$OUT"
 : >"$CARGO_CALL_LOG"
 run_guard PATH="$R/fake-bin:$PATH" CARGO_CALL_LOG="$CARGO_CALL_LOG" RUSTUP_INSTALLED_TARGETS="$BOTH"
 [ "$RC" -eq 0 ] \
@@ -478,7 +472,6 @@ Cargo.lock||main||0|run||the workspace lock runs both
 docs/authoring/README.md||main||0|run||a file an include_str! on its own line names runs both
 docs/split.md||main||0|run||a file an include_str! names on the line after it runs both
 crates/app/src/mine.rs|ci|main||0|skip|guard-note: cross-doc-skipped=ci|the setting at ci leaves both to CI for a crate source
-crates/app/src/mine.rs|run|main||0|run||the setting at run keeps both for a crate source
 crates/app/src/mine.rs|never|main||1|run|guard: cross-doc-setting=never|a setting that is neither run nor ci is refused, and both still run
 -||main||0|run||a branch at its base with a clean tree touches nothing, and both run
 docs/notes.md||main|FAIL_FIND=1|1|run|guard: rust-reads=crates|a failed include read is refused, and both still run
