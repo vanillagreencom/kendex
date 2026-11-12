@@ -15,29 +15,80 @@ set -euo pipefail
 # Git owns object access. A harness permission pattern cannot distinguish a
 # global native fence from a path or option operand. Consume only the argv
 # the existing producer selected; never search shell text for history words.
-# Native option semantics: Git v2.46.0 Documentation/git.txt and git.c.
-history_git_argv() {
-  local cursor=$pos value fenced=""
+# Native option: Git v2.45.0 git.c. The fence first holds for diff prefetch
+# in Git v2.45.1, whose promisor-remote.c fetch_objects honours it. The
+# global options below are handle_options in git.c at v2.45.1 and master:
+# Git refuses any other one, and takes -C only detached.
+# Each refused read is one record of its reason and its -C chain. Outside a
+# worktree that chain alone names the project whose policy judges the read.
+# A launched git word may be data rather than the program, and since Git
+# refuses any unlisted option, such an option there ends its judgment.
+history_git_argv() { # START [launched]
+  local cursor=$1 launched=${2:-} value fenced="" reason="" state=relative words=() tildes=() dirs=()
   while [ "$cursor" -lt "${#args[@]}" ]; do
     value=${args[$cursor]}
-    [ "${arg_kinds[$cursor]}" = literal ] || { history_reason=unresolved-git-argv; return; }
+    [ "${arg_kinds[$cursor]}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
     case "$value" in
       --no-lazy-fetch) fenced=1 ;;
-      -C | -c | --git-dir | --work-tree | --namespace | --config-env)
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env | --shallow-file | --attr-source)
         cursor=$((cursor + 1))
-        [ "${arg_kinds[$cursor]:-}" = literal ] || { history_reason=unresolved-git-argv; return; } ;;
-      -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=*) ;;
-      -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
-      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path) return ;;
-      -*) history_reason=unresolved-git-argv; return ;;
+        [ "${arg_kinds[$cursor]:-}" = literal ] || { reason=unresolved-git-argv; state=unknown; break; }
+        if [ "$value" = -C ]; then words[${#words[@]}]=${args[$cursor]}; tildes[${#tildes[@]}]=${arg_unquoted[$cursor]}; fi ;;
+      -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=* | --attr-source=*) ;;
+      -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --no-literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
+      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path | --list-cmds=*) break ;;
+      -*) [ -n "$launched" ] || { reason=unresolved-git-argv; state=unknown; }; break ;;
       *)
         case "$value" in
           log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
-            [ -n "$fenced" ] || history_reason=missing-no-lazy-fetch ;;
+            [ -n "$fenced" ] || reason=missing-no-lazy-fetch ;;
         esac
-        return ;;
+        break ;;
     esac
     cursor=$((cursor + 1))
+  done
+  # An env -S escape, expansion or comment has no decoder here.
+  [ -n "$reason" ] || [ -z "${split_undecoded:-}" ] || reason=unresolved-git-argv
+  [ -n "$reason" ] || return 0
+  # The shell expands ~ or ~/ against HOME when the tokenizer found that
+  # prefix unquoted, and a glob or brace word, before Git sees it; any other
+  # expanding or tilde form leaves the chain unknown.
+  for ((cursor=0; cursor<${#words[@]}; cursor++)); do
+    value=${words[$cursor]}
+    case "$value" in
+      '~' | '~/'*) if [ -n "${tildes[$cursor]}" ] && [ -n "${HOME:-}" ]; then value=$HOME${value#\~}; else state=unknown; fi ;;
+      '~'*) state=unknown ;;
+    esac
+    case "$value" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'*) state=unknown ;; esac
+    [ "$state" != relative ] || [[ $value != /* ]] || state=absolute
+    dirs[cursor]=$value
+  done
+  history_record "$reason" "$state" ${dirs[@]+"${dirs[@]}"}
+}
+
+# The one carrier of the history decision. STATE says how the -C chain
+# resolves: absolute, relative to the payload directory, or unknown.
+history_record() { # REASON STATE [DIR...]
+  local record=${#history_reasons[@]}
+  history_reasons[record]=$1; history_states[record]=$2; shift 2
+  history_dirs=(${history_dirs[@]+"${history_dirs[@]}"} "$@")
+  history_ends[record]=${#history_dirs[@]}
+}
+
+# A launcher the matcher does not resolve, such as timeout 5 or nice -n 5,
+# can run any later literal git word as its command, and an earlier one can
+# be the launcher's own operand, as in doas -u git git log, so every one is
+# judged as a Git head. A shell, eval or source receiver's later words are
+# its source, forwarded heads or positional data, judged where it runs them.
+history_launched_git() {
+  local receiver receiver_pattern receiver_option receiver_named cursor
+  [ "${program:-}" != opaque ] || return 0
+  environment_receiver "${program:-}"
+  [ "$receiver" != shell ] || return 0
+  for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${args[$cursor]##*/}" = git ]; then
+      history_git_argv $((cursor + 1)) launched
+    fi
   done
 }
 
@@ -128,7 +179,12 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
-    [ "${program:-}" != git ] || history_git_argv
+    if [ "${program:-}" = git ]; then history_git_argv "$pos"; else history_launched_git; fi
+    # A directory change moves any relative -C chain the hook resolves from
+    # the payload directory, wherever it stands, since a loop can run it
+    # first. A launcher's own directory option, such as env -C or sudo -D, is
+    # resolved as if absent: launcher option grammars are not modelled here.
+    case "${program:-}" in cd | pushd | popd) history_dir_changed=1 ;; esac
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
@@ -263,7 +319,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
     case "$state" in
       name) state=body; continue ;;
       body | loop | conditional)
-        if [ "${arg_kinds[$cursor]}" = literal ] && [ -n "${arg_unquoted[$cursor]}" ]; then
+        if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
           case "$value:$state" in '{:body' | do:loop) state=head ;; esac
         fi
         continue ;;
@@ -272,7 +328,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
         state=head ;;
     esac
     if [[ $value =~ $name_re ]] && [[ $value == *=* ]]; then continue; fi
-    if [ "${arg_kinds[$cursor]}" = literal ] && [ -n "${arg_unquoted[$cursor]}" ]; then
+    if [ "${arg_kinds[$cursor]}" = literal ] && [ "${arg_unquoted[$cursor]}" = 1 ]; then
       case "$value" in
         if | then | elif | else | while | until | do | '{' | '!')
           syntax_head=1; continue ;;
@@ -641,8 +697,18 @@ relative_targeting() { # collect | judge; environment_dump owns the stage facts
   return 1
 }
 
+# A word's quoting, which the tokenizer stores per word: 1 when no byte is
+# quoted, escaped or expanded, ~ when only bytes after its leading ~/ are,
+# and empty otherwise. Bash expands a tilde prefix, the bytes up to the first
+# unquoted /, when none of them is quoted, so a 1 or ~ word starting ~/ is
+# expanded. Called where a quote, escape or expansion first touches the word.
+word_quoted() {
+  [ -z "$bare" ] || [[ $word != '~/'* ]] || tilde='~'
+  bare=""
+}
+
 environment_dump() { # command kind; arguments are already decoded data
-  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
+  local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 tilde="" quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
   local mode pattern_count pattern filter_ok stage=0 text text_length span span_re comment_span options_ended null_output syntax_head program_pos stdin_program source_pos script_operand data_source piped_source="" deferred_piped_source fallback_sources listing language
   local receiver receiver_pattern receiver_option receiver_named
@@ -654,6 +720,9 @@ environment_dump() { # command kind; arguments are already decoded data
   local single_span_re="^[^']+" ansi_span_re="^[^'\\\\]+" double_span_re='^[^"\\$`]+' comment_span_re=$'^[^\n]+'
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() stage_fallback=() executable_texts=() executable_stages=()
   local private_inputs=() executable_kinds=() literal_kinds=() escaped_input
+  # Per source: split text with an escape, expansion or comment this hook
+  # does not decode.
+  local split_undecoded=""
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() executable_contexts=()
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
@@ -705,9 +774,9 @@ environment_dump() { # command kind; arguments are already decoded data
       # Keep the fixed environment check's conservative evidence on that input.
       if [ "$1" = env-split ]; then
         case "$c" in
-          '\') history_reason=unresolved-git-argv ;;
-          '$') [ "$quote" = "'" ] || history_reason=unresolved-git-argv ;;
-          '#') [ -n "$quote$active" ] || history_reason=unresolved-git-argv ;;
+          '\') split_undecoded=1 ;;
+          '$') [ "$quote" = "'" ] || split_undecoded=1 ;;
+          '#') [ -n "$quote$active" ] || split_undecoded=1 ;;
         esac
       fi
       if [ "$quote" = ansi ]; then
@@ -734,7 +803,7 @@ environment_dump() { # command kind; arguments are already decoded data
       if [ "$c" = '\' ]; then
         if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
         i=$((i + 1))
-        [ "$next" = $'\n' ] || { bare=""; quoted=1; }
+        [ "$next" = $'\n' ] || { word_quoted; quoted=1; }
         if [ "$quote" = '"' ]; then
           case "$next" in '"' | '\' | '$' | '`' | $'\n') ;; *) word=$word$c ;; esac
         fi
@@ -744,8 +813,8 @@ environment_dump() { # command kind; arguments are already decoded data
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
       if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
-        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
-        word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
+        if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+        word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""; compound=1; needs_target=""
         n=${#closers[@]}
         if [ "$c" = '`' ] && [ "$n" -gt 0 ] && [ "${closers[$((n - 1))]}" = '`' ]; then
           quote=${saved_quotes[$((n - 1))]}; unset 'closers[n-1]' 'saved_quotes[n-1]'
@@ -766,7 +835,7 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       case "$c" in
-        "'" | '"') quote=$c; active=1; bare=""; quoted=1; continue ;;
+        "'" | '"') quote=$c; active=1; word_quoted; quoted=1; continue ;;
         '$')
           case "$next" in
             "'" | '"')
@@ -777,7 +846,7 @@ environment_dump() { # command kind; arguments are already decoded data
               i=$((i + 1)) ;;
             *) [ "$kind" = ansi-escaped ] || kind=unknown; word=$word$c ;;
           esac
-          active=1; bare=""; continue ;;
+          active=1; word_quoted; continue ;;
         '#')
           if [ -z "$active" ]; then
             if [[ ${text:$i} =~ $comment_span_re ]]; then
@@ -805,10 +874,10 @@ environment_dump() { # command kind; arguments are already decoded data
             active=""
           fi
           if [ -n "$active" ]; then
-            unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
+            unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind
             needs_target=""
           fi
-          word=""; active=""; kind=literal; bare=1; quoted=""
+          word=""; active=""; kind=literal; bare=1; tilde=""; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
@@ -860,9 +929,11 @@ environment_dump() { # command kind; arguments are already decoded data
         *) word=$word$c; active=1 ;;
       esac
     done
-    if [ -n "$quote" ] && [ "$1" = env-split ]; then history_reason=unresolved-git-argv; fi
+    if [ -n "$quote" ] && [ "$1" = env-split ]; then split_undecoded=1; fi
+    # Undecoded split text can also hide the git word itself.
+    [ -z "$split_undecoded" ] || history_record unresolved-git-argv unknown
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
-    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
+    if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=${bare:-$tilde}; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
   for ((j=0; j<${#appended_args[@]}; j++)); do
     tokens[${#tokens[@]}]=${appended_args[$j]}
@@ -1046,7 +1117,7 @@ environment_dump() { # command kind; arguments are already decoded data
            [ "${#stage_args[@]}" -eq 3 ] && [ "$candidate" -eq 2 ] && [ "${#starts[@]}" -eq 1 ] &&
            [ "$start" -eq 0 ] && [ "$end" -eq 3 ] && [ "${stage_kinds[1]}" = literal ] &&
            [ "$program_pos" = 0 ] && [ "${stage_kinds[$candidate]}" = literal ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ -z "$input_redirect$output" ]; then continue; fi
+           [ "${stage_unquoted[$candidate]}" != 1 ] && [ -z "$input_redirect$output" ]; then continue; fi
         # Waiter launchers execute forwarded argv, so each operand is judged
         # as a possible head by the one producer, beside its own operands.
         limit=${#stage_args[@]}
@@ -1065,7 +1136,7 @@ environment_dump() { # command kind; arguments are already decoded data
         # a design question for this forwarded-form rule, not a case patch
         # (Jarvis ruling, KEN-4728).
         if { [ -n "$script_string" ] || [ "$candidate" -gt "$((script_pos + 1))" ]; } && [ -z "$output" ] &&
-           [ -z "${stage_unquoted[$candidate]}" ] && [ "$producer_end" -le 1 ]; then
+           [ "${stage_unquoted[$candidate]}" != 1 ] && [ "$producer_end" -le 1 ]; then
           code=${#executable_texts[@]}
           executable_texts[code]=${stage_args[$candidate]}; executable_stages[code]=$stage
           executable_kinds[code]=${stage_kinds[$candidate]}; executable_contexts[code]=forwarded
@@ -1187,7 +1258,7 @@ refuse() { # KEY VALUE [CAUSE]
         printf 'command-safety: reason=%s\n' "$history_reason"
         echo "COMMAND_SAFETY_HISTORY_POLICY requires the literal global --no-lazy-fetch option before each reached Git history or diff subcommand"
         echo "submit literal Git global options and put --no-lazy-fetch before the subcommand, for example: git --no-lazy-fetch log -1 --oneline HEAD"
-        echo "use a Git build that supports that native option; counts, refs, paths, formats and GIT_NO_LAZY_FETCH alone grant no exception" ;;
+        echo "use Git 2.45.1 or later, the first release whose diff prefetch honours that option; counts, refs, paths, formats and GIT_NO_LAZY_FETCH alone grant no exception" ;;
       refused=environment-dump)
         # An undecoded escape is refused as unknown, not as a recognized read,
         # so it gets its own reason and remedy.
@@ -1293,7 +1364,10 @@ fields="$(jq -er '
 } <<<"$fields"$'\t'
 # Set by the escape arms, which refuse what they cannot decode.
 dump_reason=""
+# The judged record's reason, which the history refusal names.
 history_reason=""
+history_reasons=(); history_states=(); history_dirs=(); history_ends=(); history_dir_changed=""
+history_roots=(); history_root_reasons=(); outside=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
@@ -1318,32 +1392,78 @@ if [ "$root_status" -ne 0 ]; then
     at="${at%/*}"
     [ -n "$at" ] || at=/
   done
-  exit 0
+  # Outside a worktree only a refused read's own -C chain names a project,
+  # and Git resolves that chain from the payload directory. A chain the hook
+  # cannot read whole, or a relative one in a command that changes directory,
+  # names no project it can resolve and is not judged. The project pattern
+  # stays inactive here.
+  outside=1
+  start=0
+  for ((record=0; record<${#history_ends[@]}; record++)); do
+    end=${history_ends[$record]}
+    chain=(-C "$cwd")
+    for ((j=start; j<end; j++)); do chain[${#chain[@]}]=-C; chain[${#chain[@]}]=${history_dirs[$j]}; done
+    case "${history_states[$record]}:$history_dir_changed" in
+      absolute:* | relative:)
+        if [ "$end" -gt "$start" ] && target_root="$(git "${chain[@]}" rev-parse --show-toplevel 2>/dev/null)"; then
+          history_roots[${#history_roots[@]}]=$target_root
+          history_root_reasons[${#history_root_reasons[@]}]=${history_reasons[$record]}
+        fi ;;
+    esac
+    start=$end
+  done
+  [ "${#history_roots[@]}" -gt 0 ] || exit 0
+  # The hook enters the payload directory first and reads nothing there; it
+  # reads each target's policy after entering that target's root.
+  root=$cwd
 fi
 
-lib=
 hook_dir="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd)" || refuse hook unlocatable
-at="$hook_dir"
-levels=0
-# Registered hook layouts keep the scope's skills one or two directories
-# above hooks. A wider walk can reach executable files outside the install.
-while [ "$levels" -lt 3 ] && [ "$at" != "$root" ] && [ "$at" != / ]; do
-  candidate="$at/skills/commit-guards/scripts/lib"
-  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then
-    lib="$candidate"
+# The support library is the hook's own install's, found from where the hook
+# sits and never from a directory the payload names, so a command cannot
+# choose the code this hook sources. The harness root holding hooks/, or
+# kendex/hooks/ for Pi, may keep native skills/ beside it. A registered
+# project layout names the install scope whose shared .agents/skills come
+# next: <scope>/.claude, .codex, .github or .gemini /hooks, or
+# <scope>/.pi/kendex/hooks. HOME's shared .agents/skills come last, which is
+# where a global install keeps them: a harness root in no such form, such
+# as ~/.copilot or ~/.pi/agent, and a registered one whose scope is HOME
+# itself, such as ~/.claude/hooks. A harness home that CODEX_HOME,
+# COPILOT_HOME or PI_CODING_AGENT_DIR moves is a global root even where its
+# name is a project layout's, such as CODEX_HOME=/data/.codex, so a hook in
+# that home's hooks directory reads no scope. Codex and the Pi carrier run
+# the hook with the variable they found it by. Without it, such a hook looks
+# like a project install, and a scope holding no loader still reaches HOME's.
+scope=""
+case "$hook_dir" in
+  */.pi/kendex/hooks) scope=${hook_dir%/.pi/kendex/hooks} ;;
+  */.claude/hooks | */.codex/hooks | */.github/hooks | */.gemini/hooks) scope=${hook_dir%/*/hooks} ;;
+esac
+[ "$scope" != "${HOME:-}" ] || scope=""
+# Pi's own reading of its variable: trimmed, a leading ~ expanded against
+# HOME, used only when absolute (pi_global_root, crates/core/src/harness/pi.rs).
+pi_root=${PI_CODING_AGENT_DIR:-}
+pi_root=${pi_root#"${pi_root%%[![:space:]]*}"}
+pi_root=${pi_root%"${pi_root##*[![:space:]]}"}
+case "$pi_root" in \~ | \~/*) pi_root=${HOME:+$HOME${pi_root#\~}} ;; esac
+case "$pi_root" in /*) ;; *) pi_root="" ;; esac
+hook_real="$(cd -P -- "$hook_dir" && pwd -P)" || refuse hook unlocatable
+for configured in "${CODEX_HOME:+$CODEX_HOME/hooks}" "${COPILOT_HOME:+$COPILOT_HOME/hooks}" "${pi_root:+$pi_root/kendex/hooks}"; do
+  if [ -n "$configured" ] && [ "$(cd -P -- "$configured" 2>/dev/null && pwd -P)" = "$hook_real" ]; then
+    scope=""
     break
   fi
-  at="${at%/*}"
-  [ -n "$at" ] || at=/
-  levels=$((levels + 1))
+done
+install_roots=("${hook_dir%/hooks}")
+case "$hook_dir" in */kendex/hooks) install_roots[1]=${hook_dir%/kendex/hooks} ;; esac
+[ -z "$scope" ] || install_roots[${#install_roots[@]}]="$scope/.agents"
+lib=""
+for at in "${install_roots[@]}"; do
+  candidate="$at/skills/commit-guards/scripts/lib"
+  if [ -f "$candidate/common.sh" ] && [ -f "$candidate/settings.sh" ]; then lib=$candidate; break; fi
 done
 if [ -z "$lib" ]; then
-  # Choose the shared scope once. A global hook can use HOME's installed
-  # dependency, but cannot source a project selected by the payload.
-  case "$hook_dir" in
-    "$root"/*) lib="$root/.agents/skills/commit-guards/scripts/lib" ;;
-    *) lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}" ;;
-  esac
+  lib="${HOME:+$HOME/.agents/skills/commit-guards/scripts/lib}"
 fi
 [ -f "$lib/common.sh" ] && [ -f "$lib/settings.sh" ] || refuse settings no-loader
 GG_CHECK=command-safety
@@ -1384,15 +1504,33 @@ cd -- "$root" || refuse cwd "$root"
 # left a host's root volume read-only. skills/commit-guards'
 # kendex.settings.toml.example declares the same value.
 default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
-history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)" || refuse settings unreadable "$history_policy"
-case "$history_policy" in
-  off) ;;
-  no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
-  *)
-    # An invalid selection leaves only this advisory check unavailable. The
-    # independently readable project pattern must still get its decision.
-    refuse settings invalid-history-policy ;;
-esac
+history_judge() { # REASON: judged against the current directory's settings
+  history_reason=$1
+  if ! history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)"; then
+    # A -C target's unreadable settings warn once every other target has
+    # been judged, so a later refusal is not lost to this warning.
+    [ -z "$outside" ] || { history_unread=$history_policy; return 0; }
+    refuse settings unreadable "$history_policy"
+  fi
+  case "$history_policy" in
+    off) ;;
+    no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
+    *)
+      # An invalid selection leaves only this advisory check unavailable. The
+      # independently readable project pattern must still get its decision.
+      refuse settings invalid-history-policy ;;
+  esac
+}
+if [ "${#history_roots[@]}" -gt 0 ]; then
+  history_unread=""
+  for ((target=0; target<${#history_roots[@]}; target++)); do
+    cd -- "${history_roots[$target]}" || refuse cwd "${history_roots[$target]}"
+    history_judge "${history_root_reasons[$target]}"
+  done
+  [ -z "$history_unread" ] || refuse settings unreadable "$history_unread"
+  exit 0
+fi
+history_judge "${history_reasons[0]:-}"
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
