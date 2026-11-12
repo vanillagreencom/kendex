@@ -141,6 +141,72 @@ pub fn invalidate(env: &Env, scope: &Scope) -> Result<()> {
     }
 }
 
+/// The one field every snapshot schema has carried: whose it is. Enough
+/// to judge a snapshot this build no longer reads.
+#[derive(Deserialize)]
+struct Owner {
+    scope: String,
+}
+
+/// Drop the snapshot and copies memo of every project scope whose root no
+/// longer exists, so the folder does not grow with each project a person
+/// deletes. Both are derived, so nothing a person wrote is lost. What
+/// stays: the global scope's files, a file that is no snapshot, and a
+/// root whose existence fails to read: only not-found is gone. Returns
+/// notes, as [`super::refresh::refresh_stale`] does.
+pub(crate) fn prune_gone_projects(env: &Env) -> Vec<String> {
+    let dir = env.drift_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => return vec![format!("{}: not read ({error})", dir.display())],
+    };
+    let mut notes = Vec::new();
+    for entry in entries {
+        let path = match entry {
+            Ok(entry) if entry.file_type().is_ok_and(|kind| kind.is_file()) => entry.path(),
+            Ok(_) => continue,
+            Err(error) => {
+                notes.push(format!("{}: not read ({error})", dir.display()));
+                continue;
+            }
+        };
+        let text = match read_if_exists(&path) {
+            Ok(Some(text)) => text,
+            Ok(None) => continue,
+            Err(error) => {
+                notes.push(error.to_string());
+                continue;
+            }
+        };
+        let Ok(Owner { scope: label }) = serde_json::from_str::<Owner>(&text) else {
+            continue;
+        };
+        if label == Scope::Global.label() {
+            continue;
+        }
+        let root = PathBuf::from(&label);
+        match root.try_exists() {
+            Ok(true) => continue,
+            Ok(false) => {}
+            Err(error) => {
+                notes.push(format!("{label}: not checked for removal ({error})"));
+                continue;
+            }
+        }
+        let scope = Scope::Project { root };
+        for removed in [
+            invalidate(env, &scope),
+            super::copies::invalidate(env, &scope),
+        ] {
+            if let Err(error) = removed {
+                notes.push(format!("{label}: drift file not removed ({error})"));
+            }
+        }
+    }
+    notes
+}
+
 /// Derive the scope's snapshot from the deep reads and store it. This is
 /// the expensive path — mirrors, plans, scoring — and it belongs exactly
 /// where callers are already paying for that work.

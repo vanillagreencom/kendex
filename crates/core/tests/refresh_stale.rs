@@ -2,7 +2,8 @@
 //! job itself: it finishes the plan over unrecorded copies a check's
 //! deadline cut short, and derives a drift snapshot only for a scope with
 //! a remote source, since a scope of path sources has no verdict a fetch
-//! could move.
+//! could move, and drops the drift files of a project whose directory is
+//! gone.
 #![cfg(unix)]
 
 use crate::test_util;
@@ -107,4 +108,59 @@ fn a_scope_of_path_sources_gets_no_snapshot_from_the_job() {
         "no remote source, no snapshot"
     );
     assert!(w.home.join("app/kendex.toml").is_file());
+}
+
+/// The job drops the derived files of a project whose directory is gone,
+/// a snapshot this build no longer reads included, and nothing else: not
+/// the global scope's, not a live project's, not a file that is no
+/// snapshot, and not a project whose existence fails to read.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_job_drops_the_drift_files_of_a_gone_project_and_nothing_else() {
+    let w = world();
+    let blocker = w.home.join("a-file");
+    fs::write(&blocker, "").unwrap();
+    let project = |root: PathBuf| Scope::Project { root };
+    // (row, scope, schema, gone afterwards)
+    let rows = [
+        ("gone project", project(w.home.join("deleted")), 4, true),
+        (
+            "gone project, old schema",
+            project(w.home.join("older")),
+            1,
+            true,
+        ),
+        ("global", Scope::Global, 4, false),
+        ("live project", w.scope.clone(), 4, false),
+        (
+            "existence unreadable",
+            project(blocker.join("app")),
+            4,
+            false,
+        ),
+    ];
+    for (_, scope, schema, _) in &rows {
+        let snapshot = serde_json::json!({ "schema": schema, "scope": scope.label() });
+        fs::create_dir_all(w.env.drift_dir()).unwrap();
+        fs::write(
+            drift::snapshot::snapshot_path(&w.env, scope),
+            snapshot.to_string(),
+        )
+        .unwrap();
+        fs::write(drift::copies::memo_path(&w.env, scope), "{}").unwrap();
+    }
+    let not_a_snapshot = w.env.drift_dir().join("0123456789abcdef.json");
+    fs::write(&not_a_snapshot, "{\"schema\": 4}").unwrap();
+
+    drift::refresh::refresh_stale(&w.env, &[]);
+
+    for (row, scope, _, gone) in &rows {
+        for file in [
+            drift::snapshot::snapshot_path(&w.env, scope),
+            drift::copies::memo_path(&w.env, scope),
+        ] {
+            assert_eq!(!file.exists(), *gone, "{row}: {}", file.display());
+        }
+    }
+    assert!(not_a_snapshot.is_file(), "a file that is no snapshot stays");
 }

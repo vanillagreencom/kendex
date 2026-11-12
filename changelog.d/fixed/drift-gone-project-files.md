@@ -1,0 +1,1 @@
+- The background refresh now removes the drift snapshot and copies memo of a project whose folder was deleted, so kendex's drift data folder no longer grows with every project you remove.
