@@ -633,6 +633,13 @@ impl Lane {
         let cloud = Some(crate::ops::CLOUD_KIND);
         self.kind.as_deref() == cloud || self.host.as_deref() == cloud
     }
+
+    /// Whether the lane's sandbox is a provider's, which the provider's own
+    /// close ends: a record naming a host that is not the cloud kind.
+    pub fn provider_hosted(&self) -> bool {
+        self.host.as_deref().is_some_and(|h| !h.is_empty())
+            && self.kind.as_deref() != Some(crate::ops::CLOUD_KIND)
+    }
 }
 
 /// What the tracker judged the lane's item: shipped, or ended any other
@@ -671,6 +678,10 @@ pub enum CloseGround {
         source: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         interrupt: bool,
+        /// The wait a park asked for, whose sandbox stop follows this
+        /// close: the park stays owed on the lane until that stop confirms.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        park: Option<crate::ops::ParkWait>,
     },
     /// The close judged the lane ended while its item stays open: its merge
     /// cycle stands and its work is over (its worktree gone, or a local
@@ -689,10 +700,16 @@ pub const HOST_ABSENT: &str = "host-absent";
 
 /// The lane field, and the failed launch's observation member it is
 /// written from, that names a sandbox its provider answered as started or
-/// created and no close has confirmed gone (`standing`): the lane keeps its
-/// slot until a confirmed close or a confirmed launch.
+/// created, or that a no-landing close kept, and no close or park has
+/// confirmed gone (`standing`): the lane keeps its slot until a confirmed
+/// close, park or launch.
 pub const SANDBOX: &str = "sandbox";
 pub const STANDING: &str = "standing";
+
+/// The lane field holding the wait a park asked for whose sandbox stop has
+/// not confirmed: a stopped lane whose sandbox stands because its park
+/// failed, told apart from one an operator kept.
+pub const PARK_OWED: &str = "park_owed";
 
 impl CloseGround {
     /// Whether the ground is a terminal close of a sandbox its provider no

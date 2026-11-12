@@ -2608,7 +2608,8 @@ fn a_close_reads_its_lane_on_the_controllers_recorded_server() {
 
 /// `keep-sandbox` on a hosted lane its provider reads exited ends the
 /// attempt and keeps the sandbox: nothing is stopped or closed through the
-/// provider, the record reads stopped with its work kept.
+/// provider, the record reads stopped with its work kept, its sandbox
+/// standing and no park owed.
 #[test]
 fn a_kept_sandbox_retires_the_attempt_and_asks_the_provider_for_no_stop_or_close() {
     let mut fleet = Fleet::hosted(4);
@@ -2619,8 +2620,11 @@ fn a_kept_sandbox_retires_the_attempt_and_asks_the_provider_for_no_stop_or_close
     let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1", "mode": "keep-sandbox"}));
     let result = &answer["result"];
     assert_eq!(result["word"], "stopped", "{answer}");
-    assert_eq!(fleet.lane("KEN-1")["status"], "stopped");
-    assert_eq!(fleet.lane("KEN-1")["cycle"], json!({"pr": 7}));
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "stopped");
+    assert_eq!(lane["cycle"], json!({"pr": 7}));
+    assert_eq!(lane["sandbox"], "standing", "{lane}");
+    assert!(lane.get("park_owed").is_none(), "{lane}");
     assert_eq!(
         fleet.provider_calls(),
         ["status --item KEN-1 --harness claude"]
@@ -3266,8 +3270,8 @@ fn park_pull() -> Value {
 
 impl Fleet {
     /// A hosted world a park of KEN-1 is judged in: the lane's linked
-    /// worktree on the provider's disk at head `h2` on `ken-1` with its
-    /// clean status file, the `gh` fixture first on `PATH` answering the
+    /// worktree on the provider's disk at head `h2` on `ken-1`, pushed to
+    /// `origin`, with its clean status file, the `gh` fixture first on `PATH` answering the
     /// pull requests planted, and the reducer fixture, silent on `o/r`.
     fn park_world() -> Fleet {
         let mut fleet = Fleet::hosted(4);
@@ -3292,6 +3296,7 @@ impl Fleet {
             "ref: refs/heads/ken-1\n",
         );
         fleet.disk("/w/main/.git/refs/heads/ken-1", "h2\n");
+        fleet.disk("/w/main/.git/refs/remotes/origin/ken-1", "h2\n");
         fleet.disk(
             "/w/ken-1/tmp/park-status.json",
             r#"{"head":"h2","branch":"ken-1","porcelain":"","at":"2026-01-29T16:00:00Z"}"#,
@@ -3343,12 +3348,15 @@ impl Fleet {
 /// A park is admitted by its pull request alone, judged before anything is
 /// signalled: the provider's sandbox check, the pull request open on the
 /// lane's own head and branch (read through the provider's `cat`, loose or
-/// packed, else the item's recorded branch), its clean status file bound to
+/// packed, else the item's recorded branch), a head read there named by the
+/// sandbox's `origin` remote-tracking ref, its clean status file bound to
 /// that head, the queue or an armed and clean merge, and the reducer silent
 /// on it; a dependency park reads the dependency in its own repository,
 /// which the fleet must watch, and none of the lane's own checks. Each
 /// refusal names its reason and stops nothing; an admitted park stops the
-/// harness through the provider, then the sandbox, and records the park.
+/// harness through the provider, then the sandbox, and records the park; a
+/// sandbox stop that fails leaves the record stopped with its sandbox
+/// standing and the park owed.
 #[test]
 fn a_park_is_judged_before_anything_is_signalled() {
     let park = |pr: Value| json!({"op": "close-lane", "item": "KEN-1", "mode": {"park": pr}});
@@ -3533,6 +3541,26 @@ fn a_park_is_judged_before_anything_is_signalled() {
             },
             Some("worktree-unread"),
         ),
+        // A head its sandbox's remote-tracking ref does not name would be
+        // stranded with the agent that can push it stopped.
+        (
+            "a dependency, head unpushed",
+            park(json!({"until_pr": 9, "until_repo": "o/r"})),
+            |f| {
+                f.disk("/w/main/.git/refs/remotes/origin/ken-1", "h1\n");
+                f.plant_pull(9, park_pull());
+            },
+            Some("unpushed"),
+        ),
+        (
+            "a dependency, no remote branch",
+            park(json!({"until_pr": 9, "until_repo": "o/r"})),
+            |f| {
+                f.undisk("/w/main/.git/refs/remotes/origin/ken-1");
+                f.plant_pull(9, park_pull());
+            },
+            Some("unpushed"),
+        ),
         (
             "the sandbox stop refused",
             park(json!({"pr": 7})),
@@ -3554,6 +3582,8 @@ fn a_park_is_judged_before_anything_is_signalled() {
                 let lane = fleet.lane("KEN-1");
                 assert_eq!(lane["status"], "parked", "{case}");
                 assert_eq!(lane["parked"]["head"], "h2", "{case}: {lane}");
+                assert!(lane.get("sandbox").is_none(), "{case}: {lane}");
+                assert!(lane.get("park_owed").is_none(), "{case}: {lane}");
                 if case == "a watched dependency" {
                     assert_eq!(lane["parked"]["until_repo"], "other/repo", "{case}: {lane}");
                 }
@@ -3570,7 +3600,10 @@ fn a_park_is_judged_before_anything_is_signalled() {
             }
             Some("park-failed") => {
                 assert_eq!(answer["refusal"]["key"], "park-failed", "{case}: {answer}");
-                assert_eq!(fleet.lane("KEN-1")["status"], "stopped", "{case}");
+                let lane = fleet.lane("KEN-1");
+                assert_eq!(lane["status"], "stopped", "{case}");
+                assert_eq!(lane["sandbox"], "standing", "{case}: {lane}");
+                assert_eq!(lane["park_owed"], json!({"pr": 7}), "{case}: {lane}");
             }
             Some(reason) => {
                 assert_eq!(answer["refusal"]["key"], "park-refused", "{case}: {answer}");
@@ -3579,6 +3612,16 @@ fn a_park_is_judged_before_anything_is_signalled() {
                     reason,
                     "{case}: {answer}"
                 );
+                if reason == "unpushed" {
+                    let fields = refusal_fields(&answer);
+                    let remote = if case.ends_with("no remote branch") {
+                        "absent"
+                    } else {
+                        "h1"
+                    };
+                    assert_eq!(fields["head"], "h2", "{case}: {answer}");
+                    assert_eq!(fields["remote"], remote, "{case}: {answer}");
+                }
                 assert!(!stopped, "{case}: nothing is signalled: {calls:?}");
                 assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
             }

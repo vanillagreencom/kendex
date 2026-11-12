@@ -353,6 +353,13 @@ struct Landing {
     comment: Option<String>,
 }
 
+/// A hosted lane's worktree as its sandbox's disk reads it.
+struct LaneHead {
+    head: String,
+    branch: String,
+    remote: Option<String>,
+}
+
 /// Why the close completes a merged item's boxes on `ground`, and whether
 /// its tracker read the item Done, or `None` where it completes none: its
 /// worktree or sandbox gone (`gone`, or the merged ground, which the close
@@ -1170,6 +1177,7 @@ impl Close<'_> {
                     reason: "keep-sandbox".to_owned(),
                     source: "close-lane".to_owned(),
                     interrupt: true,
+                    park: self.park().cloned(),
                 }),
                 None,
             ),
@@ -1273,7 +1281,8 @@ impl Close<'_> {
     /// The one reading that admits a park, made before anything is
     /// signalled: the provider's check, the pull request open on the lane's
     /// own head and branch (a queue park) or the dependency open in a
-    /// watched repository, the lane's clean-status record bound to that
+    /// watched repository, a head read from the worktree pushed to its
+    /// sandbox's `origin`, the lane's clean-status record bound to that
     /// head, and for a queue park the merge queue holding it, or auto-merge
     /// armed with GitHub reading it CLEAN, and the github skill's reducer
     /// silent on it.
@@ -1302,8 +1311,27 @@ impl Close<'_> {
             ));
         }
         let dependency = wait.until_pr.is_some();
+        // A head read from the worktree is the sandbox's alone until its
+        // remote-tracking ref names it: the park would strand it with the
+        // agent that can push it stopped. The pull request's head, taken
+        // where the worktree is unread, is the remote's.
         let (head, branch, source) = match self.lane_head() {
-            Ok((head, branch)) => (head, branch, "worktree"),
+            Ok(LaneHead {
+                head,
+                branch,
+                remote,
+            }) => {
+                if remote.as_deref() != Some(head.as_str()) {
+                    return Err(self.park_refused(
+                        "unpushed",
+                        &[
+                            ("head", &head),
+                            ("remote", remote.as_deref().unwrap_or("absent")),
+                        ],
+                    ));
+                }
+                (head, branch, "worktree")
+            }
             Err(()) if dependency => return Err(self.park_refused("worktree-unread", &[])),
             Err(()) => match self.recorded_branch() {
                 Some(branch) => (pull.head_ref_oid.clone(), branch, "workflow-state"),
@@ -1427,10 +1455,14 @@ impl Close<'_> {
         }
     }
 
-    /// The lane's checked-out head and branch, read through the provider's
-    /// `cat`: the worktree's `.git` file, its HEAD, then the branch ref,
-    /// loose or packed. A read that fails, or a detached head, is `Err`.
-    fn lane_head(&self) -> std::result::Result<(String, String), ()> {
+    /// The lane's checked-out head and branch, and the commit its sandbox's
+    /// `origin` remote-tracking ref names for that branch (`None` where the
+    /// sandbox holds no such ref), read through the provider's `cat`: the
+    /// worktree's `.git` file, its HEAD, then each ref, loose or packed. A
+    /// read that fails, a detached head or a head ref absent is `Err`. Git
+    /// moves the remote-tracking ref only on a push or fetch that reached
+    /// the remote, so its equality with the head proves the head pushed.
+    fn lane_head(&self) -> std::result::Result<LaneHead, ()> {
         let root = self.lane.mail_root.as_deref().unwrap_or("");
         let cat = |path: &str| match hosted::fetch(self.scripts, self.host, self.item(), path) {
             HostAnswer::Live(text) => Ok(Some(text)),
@@ -1443,21 +1475,25 @@ impl Close<'_> {
         let head = cat(&format!("{}/HEAD", git_dir.display()))?.ok_or(())?;
         let reference = head.trim().strip_prefix("ref: ").ok_or(())?;
         let branch = reference.strip_prefix("refs/heads/").ok_or(())?.to_owned();
-        let sha = match cat(&format!("{}/{reference}", common.display()))? {
-            Some(text) => text.trim().to_owned(),
-            None => cat(&format!("{}/packed-refs", common.display()))?
-                .ok_or(())?
-                .lines()
-                .find_map(|l| {
-                    let (sha, name) = l.split_once(' ')?;
-                    (name == reference).then(|| sha.to_owned())
-                })
-                .ok_or(())?,
+        let commit_of = |name: &str| -> std::result::Result<Option<String>, ()> {
+            let sha = match cat(&format!("{}/{name}", common.display()))? {
+                Some(text) => Some(text.trim().to_owned()),
+                None => cat(&format!("{}/packed-refs", common.display()))?.and_then(|packed| {
+                    packed.lines().find_map(|l| {
+                        let (sha, ref_name) = l.split_once(' ')?;
+                        (ref_name == name).then(|| sha.to_owned())
+                    })
+                }),
+            };
+            Ok(sha.filter(|s| !s.is_empty()))
         };
-        if sha.is_empty() {
-            return Err(());
-        }
-        Ok((sha, branch))
+        let head = commit_of(reference)?.ok_or(())?;
+        let remote = commit_of(&format!("refs/remotes/origin/{branch}"))?;
+        Ok(LaneHead {
+            head,
+            branch,
+            remote,
+        })
     }
 
     /// The branch the item's own workflow state recorded, for a queue park

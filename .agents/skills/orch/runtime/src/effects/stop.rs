@@ -559,13 +559,6 @@ impl Close<'_> {
     }
 }
 
-/// Whether the lane's sandbox is a provider's, which the provider's own
-/// close ends: a record naming a host that is not the cloud kind.
-fn provider_hosted(lane: &Lane) -> bool {
-    lane.host.as_deref().is_some_and(|h| !h.is_empty())
-        && lane.kind.as_deref() != Some(crate::ops::CLOUD_KIND)
-}
-
 /// Whether a close on `ground` owes a close-out only its finish discharges:
 /// the item's files on the tracker's terminal verdict, the provider's close
 /// of a hosted sandbox on any ground but `no-landing`. Neither leaves a
@@ -581,7 +574,7 @@ fn owes_close_out(ground: Option<&CloseGround>, lane: &Lane) -> bool {
 /// hosted lane's close on any ground but `no-landing`, which keeps it, and
 /// a host-absent close, which has none to close.
 fn provider_closes(ground: Option<&CloseGround>, lane: &Lane) -> bool {
-    provider_hosted(lane)
+    lane.provider_hosted()
         && !matches!(ground, Some(CloseGround::NoLanding { .. }))
         && !ground.is_some_and(CloseGround::host_absent)
 }

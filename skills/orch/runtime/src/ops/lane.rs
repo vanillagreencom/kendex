@@ -288,12 +288,15 @@ pub struct Terminal {
 /// An explicit disposition that ends the attempt with no landing while the
 /// item stays open. `interrupt` stops the harness mid-turn, its idle proof
 /// not asked for: the session it runs is unusable, as after a model switch.
+/// `park` is the wait of the park whose sandbox stop follows the close.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoLanding {
     pub reason: String,
     pub source: String,
     #[serde(default)]
     pub interrupt: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub park: Option<ParkWait>,
 }
 
 /// Ask for a lane's owned processes and window to be closed. Without a
@@ -1450,6 +1453,7 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
                 reason: disposition.reason.clone(),
                 source: disposition.source.clone(),
                 interrupt: disposition.interrupt,
+                park: disposition.park.clone(),
             }),
         },
         (None, None) => match reading {
@@ -1676,6 +1680,7 @@ pub(super) fn park_lane(
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, "status", LaneStatus::Parked.word());
             record::set(lane, "parked", Value::Object(parked));
+            sandbox_ended(lane);
             record::delete(lane, "pending_pr");
             if let Some(reservation) = &r.reservation {
                 record::set(lane, "reservation", serde_json::to_value(reservation)?);
@@ -1954,7 +1959,7 @@ pub(super) fn record_launch_outcome(
                 record::set(lane, "mail_root", mail_root.as_str());
             }
             record::set(lane, "status", LaneStatus::Running.word());
-            record::delete(lane, state::SANDBOX);
+            sandbox_ended(lane);
             record::set(lane, "running_at", at);
             record::set(lane, "launch", serde_json::to_value(&r.launch)?);
             record::set(lane, "session_id", string_or_null(&r.session_id));
@@ -2073,6 +2078,13 @@ fn cloud_close_logged(doc: &Document, item: &str, lane: &Document) -> bool {
         })
 }
 
+/// The lane's sandbox no longer stands as kept: a confirmed park, launch or
+/// close moved it, and no park is owed on it.
+fn sandbox_ended(lane: &mut Document) {
+    record::delete(lane, state::SANDBOX);
+    record::delete(lane, state::PARK_OWED);
+}
+
 /// The close arms of `record-outcome` on the lane at `index`, judged
 /// current by the caller. `confirmed` on an exited or terminal ground reads
 /// the lane done and drops the PR identities and the reservation a close
@@ -2098,10 +2110,24 @@ pub(super) fn record_close_outcome(
                 "kind": "close",
                 "item": intent.target,
             });
+            let hosted = lanes(path, doc)?[index].provider_hosted();
             let lane = lane_doc_mut(path, doc, index)?;
             match &members.close {
-                Some(CloseGround::NoLanding { reason, source, .. }) => {
+                Some(CloseGround::NoLanding {
+                    reason,
+                    source,
+                    park,
+                    ..
+                }) => {
                     record::set(lane, "status", LaneStatus::Stopped.word());
+                    // A kept sandbox bills until a confirmed park, launch or
+                    // close ends it, whoever kept it.
+                    if hosted {
+                        record::set(lane, state::SANDBOX, state::STANDING);
+                    }
+                    if let Some(wait) = park {
+                        record::set(lane, state::PARK_OWED, serde_json::to_value(wait)?);
+                    }
                     row["text"] =
                         json!(format!("attempt retired, no landing; intent {}", intent.id));
                     row["disposition"] = json!("no-landing");
@@ -2113,7 +2139,7 @@ pub(super) fn record_close_outcome(
                 )
                 | None => {
                     record::set(lane, "status", LaneStatus::Done.word());
-                    record::delete(lane, state::SANDBOX);
+                    sandbox_ended(lane);
                     record::delete(lane, "pending_pr");
                     record::delete(lane, "parked");
                     record::delete(lane, "reservation");
@@ -3746,6 +3772,7 @@ mod tests {
                 reason: "diagnosis".into(),
                 source: "overseer".into(),
                 interrupt: false,
+                park: None,
             }),
             ended: None,
             identity: None,
@@ -3886,6 +3913,7 @@ mod tests {
                 reason: "diagnosis-complete".into(),
                 source: "overseer".into(),
                 interrupt: false,
+                park: None,
             }),
             ended: None,
             identity: None,
@@ -3921,6 +3949,7 @@ mod tests {
                 reason: "diagnosis-complete".into(),
                 source: "overseer".into(),
                 interrupt: false,
+                park: None,
             })
         );
         run(&path, &outcome(&intent.id, Outcome::Confirmed)).unwrap();
