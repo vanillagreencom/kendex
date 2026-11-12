@@ -13,16 +13,7 @@ const FRAMED: [&[&str]; 1] = [&["trash", "empty", "--yes"]];
 /// frame has to keep printing plain lines on a terminal, not block glyphs
 /// hanging off a gutter nobody drew. A verb built from the design system's
 /// components is one of them: it draws its own layout and never a frame.
-const UNFRAMED: [&[&str]; 12] = [
-    &[
-        "remove",
-        "commit-guards",
-        "--no-sweep",
-        "--scope",
-        "project",
-    ],
-    &["update-pi", "--check"],
-    &["update-pi"],
+const UNFRAMED: [&[&str]; 9] = [
     &["verify", "--scope", "project"],
     &["check", "--scope", "project"],
     &["refresh", "-y", "--scope", "project"],

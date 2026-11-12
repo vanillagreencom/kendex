@@ -452,9 +452,10 @@ fn unmanaged_paths_with_spaces_stay_on_one_output_line() {
 }
 
 /// The writing verbs converted from the frame, `remove` and `update-pi`:
-/// `NO_COLOR` and `TERM=dumb` print what a pipe gets on both streams, a
-/// rich run at 80 columns draws its rows marked and within 80 cells, and
-/// every rendering exits the same. Each run writes, so each starts from
+/// no frame character in a pipe or on a terminal, `NO_COLOR` and
+/// `TERM=dumb` print what a pipe gets on both streams, a rich run at 80
+/// columns draws its rows marked and within 80 cells, and every rendering
+/// exits the same. Each run writes, so each starts from
 /// the fixture rebuilt at the same paths, which keeps a line from one run
 /// comparable with the next.
 #[test]
@@ -532,12 +533,24 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
         };
         let piped = run("auto", &[]);
         assert!(!piped.2.is_empty(), "{args:?}: nothing said");
+        let piped_both = format!("{}{}", piped.1, piped.2);
+        let in_pipe: Vec<char> = FRAMING
+            .into_iter()
+            .filter(|symbol| piped_both.contains(*symbol))
+            .collect();
+        assert!(in_pipe.is_empty(), "{args:?} put {in_pipe:?} in a pipe");
         for extra in [[("NO_COLOR", "1")], [("TERM", "dumb")]] {
             assert_eq!(run("pretty", &extra), piped, "{args:?}: {extra:?}");
         }
         let rich = run("pretty", &[]);
         assert_eq!(rich.0, piped.0, "{args:?}: presentation changed the exit");
         let drawn = format!("{}{}", rich.1, rich.2);
+        // A converted verb draws no frame; tables use the separator alone.
+        let framed: Vec<char> = FRAMING
+            .into_iter()
+            .filter(|symbol| *symbol != '─' && drawn.contains(*symbol))
+            .collect();
+        assert!(framed.is_empty(), "{args:?} drew {framed:?}: {rich:?}");
         assert!(
             drawn.contains('\u{1b}'),
             "{args:?}: no rich rendering: {rich:?}"
