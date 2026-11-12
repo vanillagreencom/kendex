@@ -5,7 +5,7 @@ Writing rules and finished examples for repository markdown and documentation HT
 ## Features
 
 - Supply a plain writing standard with examples.
-- State the repository layout every repository converges on.
+- Offer a default repository layout for a repository with no established structure.
 - Define the purpose and contents of each document type, and ship one finished example per type with a contrast drawn from a real failure.
 - Sort internal design claims into a decision record, an architecture doc, or the code, its tests and the tracker; sort help, procedures and reference contracts by document type.
 - Guide a focused edit to existing text, and a rewrite that extracts first and then writes from a blank page.
