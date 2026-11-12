@@ -105,6 +105,7 @@ pub(crate) fn rebase_links(
     sealed: &SealedSource,
     rendered_dir: &Path,
     install_root: &Path,
+    retain_alias: bool,
 ) -> (Files, Vec<super::RenderWarning>) {
     let mut warnings = Vec::new();
     let files = files
@@ -119,6 +120,7 @@ pub(crate) fn rebase_links(
                         rendered: &rendered_dir.join(&rel),
                         install_root,
                     },
+                    retain_alias,
                     |target| {
                         if target.starts_with(source_dir) {
                             return true;
@@ -256,7 +258,7 @@ pub(crate) fn authored_form(
 /// The tree with SKILL.md's text rewritten by `rewrite`, every other file
 /// as it is; a SKILL.md that is not text is left as it is, for the
 /// validators to name.
-fn with_skill_text(mut files: Files, rewrite: impl Fn(&str) -> String) -> Files {
+pub(crate) fn with_skill_text(mut files: Files, rewrite: impl Fn(&str) -> String) -> Files {
     for (rel, bytes) in &mut files {
         if rel == Path::new(SKILL_FILE)
             && let Ok(text) = std::str::from_utf8(bytes)
@@ -286,7 +288,7 @@ pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files
     Ok(with_instructions(sealed, source_dir, None)?.0.into_files())
 }
 
-fn with_instructions(
+pub(crate) fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
     instructions: Option<&str>,
@@ -390,7 +392,7 @@ mod tests {
         for (rendered, text) in rows {
             let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
             let (rebased, warnings) =
-                rebase_links(files.clone(), &source, &sealed, &rendered, &root);
+                rebase_links(files.clone(), &source, &sealed, &rendered, &root, true);
             assert_eq!(rebased, files);
             assert!(warnings.is_empty());
         }

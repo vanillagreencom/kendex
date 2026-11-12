@@ -206,7 +206,21 @@ fn marketplace_origins(
     // What an unedited install holds, which for a skill is less than the
     // package: its render leaves out the top-level tests, evaluation sets
     // and maintainer notes. The origin still imports the whole package.
-    let Some(source_hash) = installed_hash(&sealed, package.kind, &path) else {
+    let lock = crate::lock::load(&crate::lock::lock_path(env, &row.scope)).ok();
+    let recorded_hash = observed_path(observed, row)
+        .and_then(|installed| {
+            crate::library::record_at(
+                env,
+                &row.scope,
+                lock.as_ref()?,
+                (package.kind, &package.name),
+                installed,
+            )
+            .ok()
+        })
+        .and_then(|entry| entry.rendered_hash.clone());
+    let Some(source_hash) = recorded_hash.or_else(|| installed_hash(&sealed, package.kind, &path))
+    else {
         return unreachable(license);
     };
     let mut origins = vec![OriginRead {

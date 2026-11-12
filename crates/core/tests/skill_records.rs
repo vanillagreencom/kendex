@@ -396,3 +396,120 @@ fn a_held_install_keeps_the_link_it_recorded() {
         "the held install's link came off with nothing replacing it"
     );
 }
+
+#[test]
+fn captured_skills_keep_installed_targets_and_consumer_instructions() {
+    use kendex_core::author::import::{CandidateGroup, inventory};
+    use kendex_core::engine::fork;
+    use kendex_core::model::{HarnessId, ItemKind};
+    for beside in [false, true] {
+        let f = fixture();
+        let catalog = f.project.join("vendor/catalog");
+        let authored = "---\nname: ship\ndescription: ship\n---\n[memory](../../memory/x.md)\n[sibling](../other/SKILL.md)\n";
+        put(&catalog.join("skills/ship/SKILL.md"), authored);
+        put(
+            &catalog.join("skills/other/SKILL.md"),
+            "---\nname: other\ndescription: other\n---\n",
+        );
+        put(&catalog.join("memory/x.md"), "Memory.\n");
+        put(&f.project.join("docs/guide.md"), "Guide.\n");
+        put(
+            &f.project.join("kendex.toml"),
+            "schema = 7\n[sources.cat]\npath = 'vendor/catalog'\n[install]\nharnesses = ['codex']\nmethod = 'copy'\n[skills.ship]\nsource = 'cat'\n[skills.other]\nsource = 'cat'\n[skill-instructions]\nship = '[direct](../../../docs/guide.md) {{shared-text:guide}}'\n[shared-text]\nguide = '[shared](../../../docs/guide.md)'\n",
+        );
+        apply_now(&f);
+        let installed = f.project.join(".agents/skills/ship/SKILL.md");
+        let text = fs::read_to_string(&installed).unwrap();
+        assert!(text.contains("[direct](../../../docs/guide.md) [shared](../../../docs/guide.md)"));
+        let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
+        let ship = candidates.iter().find(|c| c.name == "ship").unwrap();
+        assert!(
+            ship.origins
+                .iter()
+                .any(|o| matches!(o.group, CandidateGroup::Marketplace { .. }))
+        );
+        assert!(
+            !ship
+                .origins
+                .iter()
+                .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
+        );
+        fs::write(&installed, format!("{text}User edit.\n")).unwrap();
+        let candidates = inventory(&f.env, std::slice::from_ref(&f.scope)).unwrap();
+        assert!(
+            candidates
+                .iter()
+                .find(|c| c.name == "ship")
+                .unwrap()
+                .origins
+                .iter()
+                .any(|o| matches!(o.group, CandidateGroup::Edited { .. }))
+        );
+        let plan = if beside {
+            fork::fork_beside(
+                &f.env,
+                &f.scope,
+                ItemKind::Skill,
+                "ship",
+                HarnessId::Codex,
+                "my-ship",
+                None,
+            )
+            .unwrap()
+        } else {
+            fork::fork(&f.env, &f.scope, ItemKind::Skill, "ship", HarnessId::Codex).unwrap()
+        };
+        apply::execute(&f.env, &plan).unwrap();
+        apply_now(&f);
+        let name = if beside { "my-ship" } else { "ship" };
+        let directory = f.project.join(".agents/skills").join(name);
+        let text = fs::read_to_string(directory.join("SKILL.md")).unwrap();
+        assert!(text.contains("User edit."));
+        assert!(text.contains("[sibling](../../../.agents/skills/other/SKILL.md)"));
+        assert_eq!(
+            fs::canonicalize(directory.join("../other/SKILL.md")).unwrap(),
+            fs::canonicalize(f.project.join(".agents/skills/other/SKILL.md")).unwrap()
+        );
+        assert!(text.contains("[memory](../../../vendor/catalog/memory/x.md)"));
+        // Absorb an additional edit through the same capture owner.
+        fs::write(directory.join("SKILL.md"), format!("{text}Second edit.\n")).unwrap();
+        apply_now(&f);
+        apply_now(&f);
+        assert!(
+            fs::read_to_string(directory.join("SKILL.md"))
+                .unwrap()
+                .contains("[sibling](../../../.agents/skills/other/SKILL.md)")
+        );
+    }
+}
+
+#[test]
+fn replacing_an_in_place_alias_with_a_copy_rebases_external_targets() {
+    let f = fixture();
+    let source = f.project.join(".agents/skills/ship");
+    put(
+        &source.join("SKILL.md"),
+        "---\nname: ship\ndescription: ship\n---\n[notes](../../notes.md)\n",
+    );
+    put(&f.project.join(".agents/notes.md"), "Notes.\n");
+    let manifest = "schema = 7\n[install]\nharnesses = ['claude']\nmethod = 'symlink'\n[skills.ship]\nsource = 'in-place'\n";
+    put(&f.project.join("kendex.toml"), manifest);
+    apply_now(&f);
+    let destination = f.project.join(".claude/skills/ship");
+    assert!(destination.is_symlink());
+    put(
+        &f.project.join("kendex.toml"),
+        &manifest.replace("'symlink'", "'copy'"),
+    );
+    apply_now(&f);
+    assert!(!destination.is_symlink());
+    assert!(
+        fs::read_to_string(destination.join("SKILL.md"))
+            .unwrap()
+            .contains("[notes](../../../.agents/notes.md)")
+    );
+    assert_eq!(
+        fs::canonicalize(destination.join("../../../.agents/notes.md")).unwrap(),
+        fs::canonicalize(f.project.join(".agents/notes.md")).unwrap()
+    );
+}
