@@ -18,7 +18,9 @@ import unittest
 from unittest.mock import patch
 
 from fixtures.harness import native_launcher, shorten_account_settle
+from fixtures.tmux_scope import isolate
 
+isolate()
 ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
 REAL_KENDEX = os.environ.get("JARVIS_TEST_REAL_KENDEX", shutil.which("kendex"))
