@@ -101,6 +101,8 @@ STORY='> **Story:** Refresh keeps the installed render current in a linked workt
 WHY='> **Why this matters:** The owner can use the updated instructions.'
 OUTCOME="$(printf '%s\n\n%s\n\n%s' "$STORY" "$WHY" '## Context')"
 REACH_LINE='**Reached by**: running `kendex refresh` in a linked worktree'
+# Create bodies carry the supersession record last, so no line number moves.
+SUPERSESSION_LINE='**Supersession**: none found; searched: refresh, linked worktree'
 SOURCE_LINE='**Source**: review of owner/repo#47'
 body() { printf '%s\n' "$@" >"$TMP_ROOT/body.md"; }
 
@@ -231,7 +233,7 @@ for operation in create update bulk-update; do
     update) opening_args=(issues update CC-1) ;;
     bulk-update) opening_args=(issues bulk-update CC-1 CC-2) ;;
   esac
-  candidate="$STORY"$'\n\n## Done when\n\n'"$REACH_LINE"
+  candidate="$STORY"$'\n\n## Done when\n\n'"$REACH_LINE"$'\n'"$SUPERSESSION_LINE"
   run_linear "${opening_args[@]}" --description "$candidate"
   assert_opening_refused "$operation with a missing quoted Why through its entry point"
 done
@@ -246,11 +248,11 @@ assert_ne 'the symptom rule still refuses review-born priority-2 without symptom
 
 echo "=== create: the opening line ==="
 # A refused opening must remain one JSON record even beside a long header.
-body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME" '' "$(pad '**Symptom**: ' 501)"
+body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME" '' "$(pad '**Symptom**: ' 501)" "$SUPERSESSION_LINE"
 run_linear issues create --title "Source first" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "a create opening with a **Source**: line"
 
-body '' '' 'Reached by: kendex apply' '' "$OUTCOME"
+body '' '' 'Reached by: kendex apply' '' "$OUTCOME" "$SUPERSESSION_LINE"
 run_linear issues create --title "Reach first" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "a create whose first non-empty line is Reached by:" 3
 
@@ -323,11 +325,11 @@ assert_advised "a 501-character owner action over the unchanged stored body" iss
 
 echo "=== create: the header length ==="
 LONG="$(pad '**Symptom**: ' 501)"
-body "$OUTCOME" '' "$SOURCE_LINE" "$LONG" "$REACH_LINE"
+body "$OUTCOME" '' "$SOURCE_LINE" "$LONG" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Long symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create with a 501-character **Symptom**: line" issueCreate "issue-header-length 8 501"
 
-body "$OUTCOME" '' "$(pad '**Symptom**: ' 500)" "$REACH_LINE"
+body "$OUTCOME" '' "$(pad '**Symptom**: ' 500)" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Edge symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create with a 500-character header line" issueCreate
 
@@ -335,13 +337,13 @@ assert_advised "a create with a 500-character header line" issueCreate
 # Counted by repetition, not ${#}, which counts bytes under a C locale.
 WIDE='**Symptom**: '
 for _ in $(seq 450); do WIDE+="é"; done
-body "$OUTCOME" '' "$WIDE" "$REACH_LINE"
+body "$OUTCOME" '' "$WIDE" "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Wide symptom" --description-file "$TMP_ROOT/body.md"
 assert_advised "a create whose header is under 500 characters and over 500 bytes" issueCreate
 
 body "$OUTCOME" '' 'The work is complete when refresh writes the render.' \
   '' '## Done when' '' '- [ ] Refresh writes the render.' \
-  '' '## Filing record' '' "$SOURCE_LINE" '**Symptom**: the render stayed stale' "$REACH_LINE"
+  '' '## Filing record' '' "$SOURCE_LINE" '**Symptom**: the render stayed stale' "$REACH_LINE" "$SUPERSESSION_LINE"
 run_linear issues create --title "Template body" --description-file "$TMP_ROOT/body.md"
 assert_advised "a template-shaped create" issueCreate
 
@@ -353,7 +355,7 @@ while IFS='|' read -r operation expected; do
     update) detail_args=(issues update CC-1); mutation=issueUpdate ;;
     bulk-update) detail_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
   esac
-  run_linear "${detail_args[@]}" --description "$DETAIL_OPENING"$'\n\n'"$REACH_LINE"
+  run_linear "${detail_args[@]}" --description "$DETAIL_OPENING"$'\n\n'"$REACH_LINE"$'\n'"$SUPERSESSION_LINE"
   assert_written "$operation with machine detail in the opening" "$mutation"
   assert_eq "$operation advises once per written issue" "$(detail_advisory)" "$(printf "$expected")"
 done <<'ROWS'
@@ -440,7 +442,8 @@ while IFS='|' read -r operation trigger deadline rule; do
     bulk-update) box_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
   esac
   description="$(printf '%s\n' "$OUTCOME" "$REACH_LINE" '## Done when' \
-    "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline")"
+    "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: $trigger; Deadline: $deadline" \
+    '' "$SUPERSESSION_LINE")"
   run_linear "${box_args[@]}" --description "$description"
   if [ "$rule" = valid ]; then
     assert_advised "$operation accepts $trigger with $deadline" "$mutation"
@@ -462,13 +465,14 @@ ROWS
 
 # A missing opening beside a refused box leaves the box refusal alone on stderr.
 run_linear issues create --title "Post-merge check" --description "$(printf '%s\n' "$SOURCE_LINE" "$REACH_LINE" '## Done when' \
-  "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: merge; Deadline: set at merge")"
+  "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: merge; Deadline: set at merge" \
+  '' "$SUPERSESSION_LINE")"
 assert_ne "a missing opening beside an invalid deadline is refused" "$RC" 0
 assert_unwritten "a missing opening beside an invalid deadline"
 assert_jq "the refusal is the one stderr record" "$ERR" '.rule == "post-merge-deadline" and .box == 1'
 
 echo "=== the reach guard's key holds this guard too ==="
-body "$SOURCE_LINE" "$REACH_LINE"
+body "$SOURCE_LINE" "$REACH_LINE" "$SUPERSESSION_LINE"
 REACH=unset
 run_linear issues create --title "Default key" --description-file "$TMP_ROOT/body.md"
 assert_opening_refused "with no LINEAR_REQUIRE_REACH key a create opening with a header"

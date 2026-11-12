@@ -26,6 +26,8 @@ Work that ships in one PR is a leaf work item with an internal checklist, never 
 
 **Reached by**: [REACH]
 
+**Supersession**: [SUPERSESSION]
+
 **Research**: [RESEARCH_REF]
 
 **Decision [DXXX]**: [DECISION_PATH]
@@ -44,7 +46,7 @@ The one Done-when box is the parent's whole checklist. When the last child is Do
 3. Record dependencies under linear SKILL.md § Blocked Label vs Issue Relations.
 4. Label the parent with the project's multi-agent label (for example `agent:multi`) when children span 2+ agent domains.
 5. A coordination-only parent carries no estimate. Clear it with `issues update [ISSUE_ID] --clear-estimate`; Linear stores "no estimate" and formatters render it as `0`.
-6. Drop any header line with no value; `**Reached by**` is filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping).
-7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`.
+6. Drop any header line with no value; `**Reached by**` and `**Supersession**` are filled or the parent is not created ([issue-description-template.md](issue-description-template.md) § Field Mapping).
+7. A coordination parent has no defect of its own, so its `[REACH]` is the run that produced it — the roadmap layer, the audit, or the merge-pr rebundle that detached its children — named as that run, not as a defect. Such a parent is structural and never `--review-born`. Its `[SUPERSESSION]` comes from the comparison that run made; a merge-pr rebundle parent takes pending children from the item being merged, so it records `re-scoped [ISSUE_ID]` for that item.
 8. After any hierarchy change, regenerate Story, Why this matters and Sub-Issues from the current children. Link each child identifier.
 9. The opening and filing headers follow [issue-description-template.md](issue-description-template.md) § Field Mapping and § Rules. Keep filing headers under Filing record, in the same order, with a blank line between each field and around every section heading. Synthesize the opening from all children. Add Evidence after Context only when it holds source facts.

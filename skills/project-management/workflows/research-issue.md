@@ -9,6 +9,7 @@ Create a research issue, prepare its assets, and delegate execution to the resea
 | `topic`, `questions`, `domains`, `project`, `type` | Caller | Yes |
 | `blocked_issue` | Caller — the issue this research unblocks | No (spikes have none) |
 | `prior_research` | Caller — findings extracted inline | No |
+| `supersession` | Caller — the record of its prior-work search, in the [audit-output.md](../schemas/audit-output.md) § ISSUE Mode form | Yes |
 | `consultation_agent_name` | Caller — an agent that already holds the context | No |
 | `researcher_agent_name` | Caller — an existing researcher session | No |
 | `auto_execute` | Caller, default true | No |
@@ -48,7 +49,7 @@ Write the description to a file, then:
 
 `--state "Backlog"` is mandatory, never the team-default Triage.
 
-`[REACH]` is the ask, run, or decision that raised the question. Fill Story and Why this matters from the topic and caller's questions, following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
+`[REACH]` is the ask, run, or decision that raised the question. `[SUPERSESSION]` is the caller's `supersession`. Fill Story and Why this matters from the topic and caller's questions, following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
 
 ```markdown
 > **Story:** [Who needs this research.] [What they cannot decide today.] [What the findings let them decide, and its consequence.]
@@ -58,6 +59,8 @@ Write the description to a file, then:
 ## Filing record
 
 **Reached by**: [REACH]
+
+**Supersession**: [SUPERSESSION]
 
 ## Summary
 [1-2 sentences on TOPIC]

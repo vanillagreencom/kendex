@@ -91,7 +91,7 @@ scripts/linear.sh issues create \
   --priority [PRIORITY] --estimate [ESTIMATE] --description-file [PATH]
 ```
 
-`[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` line. `[VALIDATED_LABELS]` is the full set project-management's `references/labels.md` § Creates Carry the Full Set selects, validated by step 2 of § Labels, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
+`[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` and `Supersession:` lines. `[VALIDATED_LABELS]` is the full set project-management's `references/labels.md` § Creates Carry the Full Set selects, validated by step 2 of § Labels, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
 
 ## Task discovery
 

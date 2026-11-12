@@ -35,8 +35,9 @@ LINEAR_AGENT_LABELS = "agent:maintainer, agent:researcher, agent:multi, agent:hu
 
 # Non-empty makes `issues create` hold the presence half of the creation bar
 # in the project-management skill's SKILL.md, § Disposition → **Name what
-# reaches it**: it refuses a body with no `Reached by:` line, and a
-# `--review-born --priority 2` body with no `Symptom:` line. What those lines
+# reaches it**: it refuses a body with no `Reached by:` line or no
+# `Supersession:` record, and a `--review-born --priority 2` body with no
+# `Symptom:` line. What those lines
 # say is the author's to judge. Creation is the chokepoint, since
 # `Tracked: <ID>` needs only an issue to exist. Empty = guard off.
 LINEAR_REQUIRE_REACH = "1"

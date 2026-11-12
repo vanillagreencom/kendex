@@ -16,13 +16,15 @@ Infer the research type from the description and answers.
 
 Infer the affected domains from the topic and answers by matching component paths (project-configurable); do not ask the user to confirm them. State each domain and why in the § 4 report.
 
-Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`), then search it. Without an unambiguous assignable label, skip the lookup and continue — do not query a hard-coded fallback label.
+Look for prior research: resolve `RESEARCH_WORKFLOW_LABEL` from the project taxonomy and the live inventory (`labels list --max --format=safe`), then search it. Without an unambiguous assignable label, skip the prior-research lookup — do not query a hard-coded fallback label — and run the same search without `--label` for the record below only.
 
 ```bash
 .agents/skills/linear/scripts/linear.sh issues list --label "[RESEARCH_WORKFLOW_LABEL]" --max --search "[TOPIC_KEYWORDS]"
 ```
 
 On a match, read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md`, `[RESEARCH_DOCS_PATH]` being the research directory [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) defines, and extract its full findings — summary, bullets, go/no-go — as `PRIOR_RESEARCH` for the handoff. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts).
+
+This search is the research issue's `supersession` record, in the [audit-output.md](../schemas/audit-output.md) § ISSUE Mode form: each open match the new issue supersedes, duplicates or re-scopes with that action and its identifier, else `none found; searched: [TOPIC_KEYWORDS]`.
 
 ## 3. Hand Off
 
@@ -34,7 +36,7 @@ The research issue's project comes from the project map, read as [tpm-audit § 1
 
 Type follows domain count: one domain is Targeted, two or more Pervasive. Strategic (initiative-level, 10+ issues) requires the user to say so.
 
-Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `auto_execute` as the caller passed it (roadmap-plan § 1 always passes it; a standalone spike defaults to true), and no `blocked_issue`.
+Run `⤵ workflows/research-issue.md § 1-5 → § 4` with `topic` (§ 1), `questions` (§ 1), `domains` (§ 2), `project` (above), `type`, `prior_research` (§ 2, or empty), `supersession` (§ 2), `auto_execute` as the caller passed it (roadmap-plan § 1 always passes it; a standalone spike defaults to true), and no `blocked_issue`.
 
 ## 4. Report
 
