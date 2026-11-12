@@ -4014,7 +4014,7 @@ pct_valid() { [[ "$1" =~ ^[0-9]{1,3}$ ]] && (( 10#$1 <= 100 )); }
 # those before any configuration is read, off these arms and no second copy.
 parse_argv() {
 	# Every default this parser owns is set HERE, never above the loader: the
-	# settings [env] table assigns any name and .env.local is sourced as shell, so
+	# settings [env] table and .env.local each assign any name they hold, so
 	# a default above the load is whatever the checkout left there for every
 	# option the caller did not pass. Settings reach the script through their own
 	# ORCH_* names, resolved after the load.
@@ -4145,8 +4145,8 @@ parse_argv() {
 	USAGE_MAX_AGE=$((10#$USAGE_MAX_AGE))
 }
 
-# `.env.local` is sourced as shell, so anything answering without doing lane
-# work answers before the loader runs: the dry run is the real parser in a
+# The loader assigns any name `.env.local` holds, so anything answering
+# without doing lane work answers before the loader runs: the dry run is the real parser in a
 # subshell, so nothing it assigns survives to be clobbered, and 9 is the only
 # status meaning it reached the end.
 parse_rc=0

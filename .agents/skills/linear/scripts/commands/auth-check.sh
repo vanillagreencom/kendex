@@ -58,10 +58,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Which file this project keeps its secrets in, resolved through the one
-# owner of that question. Reading .env.local by name would source a file no
-# package loads once a project names another one: stale shell content runs
-# on this account, and both the provenance and the advice below would point
-# a person at a file that decides nothing. Unconditional, because common.sh
+# owner of that question. Reading .env.local by name would read a file no
+# package loads once a project names another one: its stale values would
+# decide here, and both the provenance and the advice below would point a
+# person at a file that decides nothing. Unconditional, because common.sh
 # exits when no repository resolves, and a name this refuses is one no
 # package would load either.
 kendex_private_env_file private_env_file "$PROJECT_ROOT" || exit 1

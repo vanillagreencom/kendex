@@ -78,12 +78,12 @@ PEER="$TMP_ROOT/peer"
 # The peer's fleet record: `none` for no state file, `bad` for a state file
 # its reader cannot parse, `bad-settings` for settings their loader refuses,
 # and otherwise the `.overseer` object itself. Every peer carries a private
-# env file that writes SENTINEL when it is sourced.
-SENTINEL="$TMP_ROOT/sourced"
+# env file that moves its state directory away from the record, so a reader
+# that loads it finds no record.
 record() { # none|bad|bad-settings|JSON
-  rm -rf -- "${PEER:?}" "$SENTINEL"
+  rm -rf -- "${PEER:?}"
   checkout peer
-  printf 'touch %q\n' "$SENTINEL" > "$PEER/.env.local"
+  printf 'ORCH_STATE_DIR=private-state\n' > "$PEER/.env.local"
   case "$1" in
     none) ;;
     bad-settings) printf '[env]\nX = unquoted\n' > "$PEER/kendex.settings.toml" ;;
@@ -120,7 +120,6 @@ send() { peer_call send "$@"; }
 first_err() { awk 'NR == 1' "$TMP_ROOT/err"; }
 err_lines() { wc -l < "$TMP_ROOT/err" | tr -d ' '; }
 fix_lines() { grep -c '^fix=.*oversee register' "$TMP_ROOT/err" || :; }
-sourced() { if [ -e "$SENTINEL" ]; then echo sourced; else echo unsourced; fi; }
 live_record() {
   record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
   printf '%s %s %%9\n' "$LIVE" "$START" > "$PANES"
@@ -139,7 +138,7 @@ while IFS='|' read -r rec listing first fix label socket; do
   send "$label"
   assert_eq "$RC ${OUT%% id=*} lines=$LINES" "0 lane-mail: sent item=overseer lines=1" \
     "the note lands and its receipt prints: $label" "$TMP_ROOT/err"
-  assert_eq "$(first_err) fix=$(fix_lines) $(sourced)" "${first/#-/} fix=$fix unsourced" "$label" "$TMP_ROOT/err"
+  assert_eq "$(first_err) fix=$(fix_lines)" "${first/#-/} fix=$fix" "$label" "$TMP_ROOT/err"
 done <<EOF
 {"window":"@1"}|-|lane-mail: no-reader=$PEER cause=unnamed|1|a record naming no server and pane names no reader
 {"server":"$LIVE","server_start":$START,"pane":"9"}|$LIVE $START %9|lane-mail: no-reader=$PEER cause=unnamed|1|a pane not spelled %N names no reader
@@ -166,10 +165,8 @@ while IFS='|' read -r verb args; do
     RC=0
     OUT="$(cd "$PEER" && env -u TMUX -u TMUX_PANE -u ORCH_STATE_DIR \
       "$LANE_MAIL" send --item overseer --directive --file "$TMP_ROOT/msg.txt" 2>"$TMP_ROOT/err")" || RC=$?
-    env_result=sourced
   else
     peer_call "$verb" 'No local reader.' $args
-    env_result=unsourced
   fi
   error="$(first_err)"
   route=missing
@@ -177,8 +174,8 @@ while IFS='|' read -r verb args; do
   case "$error" in *owner-note*) route=consumer-tool ;; esac
   appended=absent
   [ ! -e "$PEER/tmp/lane-mail/overseer/to-lane.jsonl" ] || appended=present
-  assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) $(sourced) route=$route mailbox=$appended" \
-    "2  lane-mail: overseer-absent=$PEER lines=1 $env_result route=register mailbox=absent" \
+  assert_eq "$RC $OUT ${error%% no overseer*} lines=$(err_lines) route=$route mailbox=$appended" \
+    "2  lane-mail: overseer-absent=$PEER lines=1 route=register mailbox=absent" \
     "a missing record refuses without appending: $verb $args" "$TMP_ROOT/err"
 done <<EOF
 send|
@@ -364,7 +361,9 @@ assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=unnamed" \
 mutant sources-peer '"$ORCH_SCRIPTS/workflow-state" --no-private-env "$@"' '"$ORCH_SCRIPTS/workflow-state" "$@"'
 live_record
 send 'Sourced.'
-assert_eq "$(sourced)" "sourced" "control: a reader loading the peer's full ladder runs its private env file"
+error="$(first_err)"
+assert_eq "${error%% no overseer*}" "lane-mail: overseer-absent=$PEER" \
+  "control: a reader loading the peer's full ladder takes its private state directory"
 
 mutant sender-state-dir '(cd -- "$root" && env -u ORCH_STATE_DIR ' '(cd -- "$root" && env '
 live_record

@@ -634,7 +634,7 @@ fn a_save_that_neither_stores_nor_names_writes_nothing() {
 }
 
 /// The shell loaders read `.kendex/settings.toml` after the root settings
-/// file, so a private file named there is the one every package sources.
+/// file, so a private file named there is the one every package reads.
 /// Reading only the root file would show and write one file while the
 /// packages read another, and the credential would be unavailable to them.
 #[test]

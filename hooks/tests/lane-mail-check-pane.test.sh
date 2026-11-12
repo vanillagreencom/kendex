@@ -60,10 +60,15 @@ while IFS='|' read -r shape; do
       mv "$LANE/tmp/lane-mail" "$LANE/mail.saved"
       ;;
     private-env)
+      # The checkout's private file names a state directory whose record
+      # does match this session: a reader that loads it finds a controller.
+      bind_overseer claude "$OVERSEER_HOME_DIR" s1
+      mkdir -p "$LANE/private-state"
+      cp -- "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee)" "$LANE/private-state/"
       bind_overseer claude "$OVERSEER_HOME_DIR" other
-      printf '[env]\nKENDEX_ENV_FILE = "marker.sh"\n' > "$LANE/kendex.settings.toml"
-      printf 'printf executed > "%s"\n' "$LANE/env-executed" > "$LANE/marker.sh"
-      git -C "$LANE" add kendex.settings.toml marker.sh
+      printf '[env]\nKENDEX_ENV_FILE = "private.env"\n' > "$LANE/kendex.settings.toml"
+      printf 'ORCH_STATE_DIR=private-state\n' > "$LANE/private.env"
+      git -C "$LANE" add kendex.settings.toml private.env
       install_hook "$TEST_DIR/../session-start-row.sh" "$LANE/.claude/hooks/session-start-row.sh"
       ;;
   esac
@@ -103,8 +108,9 @@ while IFS='|' read -r shape; do
   esac
   run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",hook_event_name:"SessionStart",transcript_path:$p}')"
   if [ "$shape" = private-env ]; then
-    assert_eq "$([ -e "$LANE/env-executed" ] && echo executed || echo absent)" absent \
-      'private-env: missing-pane SessionStart never sources checkout shell'
+    ROWS="$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl"
+    assert_eq "RC=$RC rows=$([ -f "$ROWS" ] && echo present || echo absent)" 'RC=0 rows=absent' \
+      'private-env: missing-pane SessionStart never reads the checkout private file'
     continue
   fi
   ROWS="$LANE/tmp/lane-mail/overseer/session-$OVERSEER_SERVER-${OVERSEER_PANE#%}.jsonl"
@@ -199,7 +205,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${SESSION_ROWS_LIB_VARIANT:-}" ] &&
       "$kind: control reaches its contract assertion"
   done <<'CONTROLS'
 carrier|codex-row|codex-row: first row visibly reports unjudged identity
-private-env|private-env|private-env: missing-pane SessionStart never sources checkout shell
+private-env|private-env|private-env: missing-pane SessionStart never reads the checkout private file
 CONTROLS
 fi
 

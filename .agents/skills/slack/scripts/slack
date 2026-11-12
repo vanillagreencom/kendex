@@ -43,9 +43,9 @@ fi
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
 project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
-# The private env file is sourced as shell, so its plain `KEY=value` lines
-# are shell variables; the relay reads os.environ, so they reach it only
-# exported.
+# The loader assigns the private env file's plain `KEY=value` lines as shell
+# variables, as the shell would; the relay reads os.environ, so they reach it
+# only exported.
 set -a
 if ! kendex_load_project_env "$project"; then
   refuse "settings-unreadable=$project" "a settings file of this checkout could not be loaded; the lines above say which"

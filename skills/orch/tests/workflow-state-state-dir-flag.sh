@@ -90,7 +90,7 @@ assert_file_exists "$sd_env_only/workflow-state-issue-env.json" \
   "ORCH_STATE_DIR still works without --state-dir (back-compat)"
 
 # A project file must never outrank the flag. The loader assigns any name a
-# settings [env] table or a sourced .env.local gives it, so parsing the command
+# settings [env] table or a .env.local line gives it, so parsing the command
 # line BEFORE the load left whatever the parser stored open to being replaced by
 # configuration — an argument the caller passed directly, losing to a file.
 #

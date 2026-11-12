@@ -1737,15 +1737,17 @@ with open(sys.argv[1], "ab") as out:
             os.mkfifo(ready)
             os.mkfifo(release)
             private = self.home / ".env.local"
+            # The private file is data, so bash's own startup file blocks the load.
+            blocker = self.root / "settings-blocker.sh"
+            blocker.write_text('printf ready > '+shlex.quote(str(ready))+'\nread -r ack < '+shlex.quote(str(release))+'\n')
             for invalid in (False, True):
-                private.write_text('printf ready > '+shlex.quote(str(ready))+'\nread -r ack < '+
-                    shlex.quote(str(release))+'\nexport SLACK_JARVIS_SESSION_FILE=late-hold\n'+
+                private.write_text('export SLACK_JARVIS_SESSION_FILE=late-hold\n'+
                     ('export SLACK_JARVIS_SESSION_MAX_AGE=bad\n' if invalid else ''))
                 permission = [True]
                 read_fd = os.open(ready, os.O_RDONLY | os.O_NONBLOCK)
                 release_fd = os.open(release, os.O_RDWR | os.O_NONBLOCK)
                 try:
-                    with ThreadPoolExecutor(max_workers=1) as work:
+                    with ThreadPoolExecutor(max_workers=1) as work, patch.dict(os.environ, BASH_ENV=str(blocker)):
                         pending = work.submit(self.module.presence_roots, lambda: permission[0])
                         try:
                             self.assertTrue(select.select([read_fd], [], [], 30)[0])

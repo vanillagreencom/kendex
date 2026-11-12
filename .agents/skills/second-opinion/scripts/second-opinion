@@ -386,8 +386,8 @@ Exit codes:
      after missing artifact, restart only once the original process ends; keep completed artifact on replay/runtime-removal failure; otherwise act on replayed worker cause
 HELP
 }
-# Help is answered before project configuration is read: sourcing a repo's
-# .env.local under --help would execute repository-controlled shell code. The
+# Help is answered before project configuration is read: loading a repo's
+# settings and .env.local under --help would take repository-controlled values. The
 # option parser treats -h/--help at any position as help, so the same scan
 # decides here.
 for _arg in "$@"; do
@@ -443,7 +443,7 @@ if ! PROJECT_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)
   esac
   unset _git_diag
 fi
-# Source project config/secrets. .env.local overrides public settings; the
+# Load project config/secrets. .env.local overrides public settings; the
 # caller's own environment (set or set-but-empty) outranks every project file —
 # kendex_load_project_env snapshots and re-asserts it.
 # shellcheck source=lib/kendex-env.sh

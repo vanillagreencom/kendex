@@ -6,8 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Help is answered before the libraries load: common.sh sources the repo's
-# .env.local as shell code and resolves API auth, and help needs neither.
+# Help is answered before the libraries load: common.sh loads the repo's
+# settings and .env.local and resolves API auth, and help needs neither.
 show_help() {
     cat <<'EOF'
 Issue Operations

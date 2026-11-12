@@ -42,7 +42,7 @@ while IFS='|' read -r name layer expected; do
     esac
     case "$layer" in
         private|environment)
-            printf 'printf "loader-note\\n"\nORCH_ARCHIVE_ROOT="%s"\n' "$project/private archive" > "$project/.env.local" ;;
+            printf 'ORCH_ARCHIVE_ROOT="%s"\n' "$project/private archive" > "$project/.env.local" ;;
         empty) printf '[env]\nORCH_ARCHIVE_ROOT = ""\n' > "$project/kendex.settings.toml" ;;
     esac
     args=("PATH=$PATH" "HOME=$project/home")

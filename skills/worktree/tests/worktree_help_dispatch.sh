@@ -31,16 +31,16 @@ assert_eq() {
 }
 
 # --- fixtures -----------------------------------------------------------------
-# One checkout whose .env.local records being sourced, one directory outside
+# One checkout whose .env.local the loader refuses, so a row that loads it
+# shows the refusal (a `valid` row gets a file that loads), one directory outside
 # any repository (the ceiling keeps git from finding this repository above
-# it), and an empty PATH for the row that runs without git. The marker is
-# cleared before every row. Every row runs under LC_ALL=C: two rows quote
+# it), and an empty PATH for the row that runs without git. Every row runs
+# under LC_ALL=C: two rows quote
 # git's own account of a missing repository, which git translates.
 
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO"
 git -C "$REPO" init -q -b main
-printf 'touch "%s/env-executed"\n' "$TMP_ROOT" >"$REPO/.env.local"
 NOREPO="$TMP_ROOT/norepo"
 mkdir -p "$NOREPO" "$TMP_ROOT/empty-bin"
 export GIT_CEILING_DIRECTORIES="$TMP_ROOT"
@@ -71,13 +71,20 @@ run() {
   case "$envspec" in
     -) ;;
     nogit) env_words=("PATH=$TMP_ROOT/empty-bin") ;;
+    valid) ;;
     *) echo "UNKNOWN-ENV: $envspec" >&2; exit 2 ;;
   esac
-  rm -f "$TMP_ROOT/env-executed"
+  if [[ "$envspec" == valid ]]; then
+    printf 'WORKTREE_HELP_PROBE=valid\n' >"$REPO/.env.local"
+  else
+    printf 'not an assignment\n' >"$REPO/.env.local"
+  fi
   (cd "$cwd" && env LC_ALL=C ${env_words[@]+"${env_words[@]}"} "$WORKTREE_SCRIPT" "${argv[@]}" >"$TMP_ROOT/out" 2>"$TMP_ROOT/err") || rc=$?
   out="$(head -1 "$TMP_ROOT/out")"
-  printf 'rc=%s out=%s err=%s env=%s' "$rc" "${out:--}" "$(alias_text <"$TMP_ROOT/err")" \
-    "$([[ -e "$TMP_ROOT/env-executed" ]] && printf sourced || printf -)"
+  local loaded=-
+  if grep -qxF "kendex-env: private-env-line file=$REPO/.env.local lineno=1" "$TMP_ROOT/err"; then loaded=read; fi
+  grep -v -e '^kendex-env: private-env-line ' -e '^::error::' "$TMP_ROOT/err" >"$TMP_ROOT/err.records" || [[ $? -eq 1 ]]
+  printf 'rc=%s out=%s err=%s env=%s' "$rc" "${out:--}" "$(alias_text <"$TMP_ROOT/err.records")" "$loaded"
 }
 
 # --- the expected text ----------------------------------------------------------
@@ -120,7 +127,8 @@ claude-cleanup --help^repo^-^claude-cleanup --help^0^worktree-help: hooks^-^-
 --help after a positional prints the remove help^repo^-^remove CC-1 --help^0^worktree-help: remove^-^-
 --help after a flag prints the cleanup help^repo^-^cleanup --stale --help^0^worktree-help: cleanup^-^-
 -h after a positional prints the push help^repo^-^push some-id -h^0^worktree-help: push^-^-
-an unknown command is refused after the config loads, with the usage index naming every command^repo^-^definitely-not-a-command^1^-^unknown-command^sourced
+the config loads before an unknown command is refused^repo^-^definitely-not-a-command^1^-^-^read
+an unknown command is refused after the config loads, with the usage index naming every command^repo^valid^definitely-not-a-command^1^-^unknown-command^-
 list --help needs no repository^norepo^-^list --help^0^worktree-help: list^-^-
 path --help needs no repository^norepo^-^path --help^0^worktree-help: path^-^-
 exists --help needs no repository^norepo^-^exists --help^0^worktree-help: path^-^-
@@ -129,7 +137,7 @@ the top-level help needs no repository^norepo^-^--help^0^worktree-help: commands
 list outside a repository refuses once, naming the cwd, git'"'"'s account and a recovery with no subcommand^norepo^-^list^1^-^no-repo^-
 remove outside a repository refuses the same way^norepo^-^remove ISSUE-GONE^1^-^no-repo^-
 list without git on PATH quotes git'"'"'s own account^tests^nogit^list^1^-^no-git^-
-check with an argument is a usage error^repo^-^check some-id^1^-^check-arg^sourced
+check with an argument is a usage error^repo^valid^check some-id^1^-^check-arg^-
 '
 
 echo "=== worktree help dispatch runs before repository and env initialization ==="

@@ -514,7 +514,7 @@ assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-53 handoff "
   "RC=2 first=lane-mail-check: transcript=unreadable named=1" \
   "a transcript the payload names and nothing can read is refused, with the record that clears it"
 
-# The settings loader sources .env.local as shell, and every orch script this
+# The loader refuses a .env.local line it cannot read, and every orch script this
 # hook runs loads it. A file a person has broken therefore stops the state read
 # first, with a status the verb never gives, so the gap is reported with the
 # loader's own words and the turn ends rather than the lane being held on a
@@ -525,7 +525,7 @@ new_handoff_lane handoff_setting_unreadable KEN-78
 printf 'this is ( not shell\n' > "$LANE/.env.local"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'kendex-env: private-env-line' "$ERR_FILE")" \
   "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1" \
   "a settings file that will not load is reported with the loader's words and the turn ends"
 

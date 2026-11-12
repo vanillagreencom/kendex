@@ -1018,8 +1018,8 @@ EOF
 }
 
 # Every help form is answered here, before git resolution and before any
-# project env file is read: a sourced .env.local statement must never run
-# under --help, and help must work outside a repository. The scan covers every
+# project env file is read: no .env.local value may load under --help, nor a
+# line the loader refuses stop it, and help must work outside a repository. The scan covers every
 # argv position — enumerating positions is how this class leaks.
 case "${1:-}" in
   --help|-h|help) print_worktree_usage; exit 0 ;;

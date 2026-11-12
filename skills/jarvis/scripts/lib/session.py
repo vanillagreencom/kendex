@@ -20,6 +20,7 @@ import sys
 import tempfile
 import time
 import traceback
+import unicodedata
 import uuid
 
 
@@ -1379,6 +1380,22 @@ class Arguments(argparse.ArgumentParser):
         raise SystemExit(2)
 
 
+def private_value_problem(value):
+    """Why VALUE cannot be written as KEY='VALUE' in the private env file, or None.
+
+    The settings loader reads that file as data: a single-quoted value holds
+    every byte but an apostrophe, and one line ends it. The app's credential
+    save refuses the same values (crates/core/src/settings_secret/env_file.rs).
+    """
+    if "\n" in value or "\r" in value:
+        return "line-break"
+    if "'" in value:
+        return "apostrophe"
+    if any(unicodedata.category(char) == "Cc" for char in value):
+        return "control-character"
+    return None
+
+
 def main_host(args):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import watch
@@ -1386,6 +1403,11 @@ def main_host(args):
     value = args.set if args.set is not None else ""
     if not args.get and watch.role({"JARVIS_MAIN_HOST": value}).kind == "invalid":
         print("jarvis-session: main-host=refused cause=setting-invalid", file=sys.stderr)
+        return 2
+    problem = None if args.get else private_value_problem(value)
+    if problem:
+        print("jarvis-session: main-host=refused cause=value-unwritable key=JARVIS_MAIN_HOST problem=" + problem,
+              file=sys.stderr)
         return 2
     # Read the selected path and this one value through the same owner as
     # watch.config. Private-file diagnostics can contain other secret values.
@@ -1471,11 +1493,11 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
                              (b"not a git repository (or any ", b"not a working tree")):
                     raise Refusal(cause)
             cause = "private-file-unwritable"
-            # A final assignment preserves arbitrary Bash, including multiline
-            # secrets. Follow the loader's supported file symlink layout.
+            # A final single-quoted assignment the loader reads as written.
+            # Follow the loader's supported file symlink layout.
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "ab") as stream:
-                stream.write(("\nJARVIS_MAIN_HOST=" + shlex.quote(value) + "\n").encode("utf-8"))
+                stream.write(("\nJARVIS_MAIN_HOST='" + value + "'\n").encode("utf-8"))
         print(json.dumps({"JARVIS_MAIN_HOST": value}))
         return 0
     except Refusal as refusal:
