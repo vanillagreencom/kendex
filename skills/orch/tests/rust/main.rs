@@ -62,6 +62,223 @@ fn version_prints_the_protocol_reply() {
     );
 }
 
+/// `orch-runtime ready` in `root` under `env`, its stdout lines and exit.
+fn ready_in(root: &Path, args: &[&str], env: &[(&str, &std::ffi::OsStr)]) -> (Vec<String>, i32) {
+    let mut command = support::isolated();
+    command.arg("ready").args(args).current_dir(root);
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let out = command.output().unwrap();
+    let lines = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    (lines, out.status.code().unwrap_or(-1))
+}
+
+/// `orch-runtime ready` judges every duty's programs on this computer:
+/// agent-runtime's real wrapper finding its key unbuilt names orch's setup,
+/// a mailbox program and a worktree program that are gone name the
+/// packages' install, a missing `tmux` names its install for every duty
+/// that opens or reads a pane, and a duty that lacks nothing reads `ready`;
+/// it exits 1 while any is unready, 0 once every one stands, and a duty
+/// asked by name is answered alone.
+#[test]
+fn ready_names_what_each_duty_lacks_and_its_fix() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let wrapper = packages.join("agent-runtime/scripts/agent-runtime");
+    let no_tmux = std::ffi::OsString::from(support::path_without(&root.join("bin"), "tmux"));
+    let cache = root.join("cache");
+    let gone = root.join("gone");
+    let (lines, code) = ready_in(
+        &root,
+        &[],
+        &[
+            ("PATH", &no_tmux),
+            ("ORCH_AGENT_RUNTIME", wrapper.as_os_str()),
+            ("AGENT_RUNTIME_CACHE", cache.as_os_str()),
+            ("LANE_MAIL_CLI", gone.as_os_str()),
+            ("WORKTREE_CLI", gone.as_os_str()),
+        ],
+    );
+    assert_eq!(code, 1, "{lines:?}");
+    let setup = lines
+        .first()
+        .and_then(|l| l.strip_prefix("unready duty=watch program=agent-runtime cause=unbuilt fix="))
+        .unwrap_or_else(|| panic!("{lines:?}"));
+    assert!(
+        setup.ends_with("/.agents/skills/orch/scripts/setup"),
+        "the fix is orch's one setup: {setup}"
+    );
+    assert_eq!(
+        lines[1..],
+        [
+            "unready duty=watch program=lane-mail cause=absent fix=kendex-apply",
+            "unready duty=watch program=tmux cause=absent fix=install-tmux",
+            "unready duty=launch program=tmux cause=absent fix=install-tmux",
+            "unready duty=controller program=tmux cause=absent fix=install-tmux",
+            "unready duty=job program=tmux cause=absent fix=install-tmux",
+            "unready duty=register program=tmux cause=absent fix=install-tmux",
+            "ready duty=ci-proof",
+            "ready duty=reconcile-items",
+            "unready duty=prune program=worktree cause=absent fix=kendex-apply",
+        ]
+    );
+    let path = std::ffi::OsString::from(support::tool_path(&[]));
+    let lane_mail = packages.join("mailbox/scripts/lane-mail");
+    let worktree = packages.join("worktree/scripts/worktree");
+    let ready_env = [
+        ("PATH", path.as_os_str()),
+        ("ORCH_AGENT_RUNTIME", support::agent_runtime().as_os_str()),
+        ("LANE_MAIL_CLI", lane_mail.as_os_str()),
+        ("WORKTREE_CLI", worktree.as_os_str()),
+    ];
+    let (lines, code) = ready_in(&root, &[], &ready_env);
+    assert_eq!(code, 0, "{lines:?}");
+    assert_eq!(
+        lines,
+        [
+            "ready duty=watch",
+            "ready duty=launch",
+            "ready duty=controller",
+            "ready duty=job",
+            "ready duty=register",
+            "ready duty=ci-proof",
+            "ready duty=reconcile-items",
+            "ready duty=prune",
+        ]
+    );
+    let (lines, code) = ready_in(&root, &["--duty", "prune"], &ready_env);
+    assert_eq!((lines, code), (vec!["ready duty=prune".to_owned()], 0));
+}
+
+/// The judge's other answers, each a duty asked alone: a runtime whose
+/// wrapper is gone names the packages' install; a wrapper that answers
+/// neither built nor unbuilt reads `unanswered` and names orch's setup; a
+/// mailbox program that is not executable names the packages' install; and
+/// a job on a computer with neither `systemd-run` nor `setsid` names the
+/// one its launcher falls to.
+#[test]
+fn ready_names_a_gone_or_silent_runtime_a_closed_program_and_no_job_runner() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let packages = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let lane_mail = packages.join("mailbox/scripts/lane-mail");
+    let built = support::fixtures().join("agent-runtime-built/agent-runtime");
+    let path = std::ffi::OsString::from(support::tool_path(&[]));
+    let watch = |runtime: &Path, mail: &Path| {
+        ready_in(
+            &root,
+            &["--duty", "watch"],
+            &[
+                ("PATH", path.as_os_str()),
+                ("ORCH_AGENT_RUNTIME", runtime.as_os_str()),
+                ("LANE_MAIL_CLI", mail.as_os_str()),
+            ],
+        )
+    };
+    let (lines, code) = watch(&root.join("gone"), &lane_mail);
+    assert_eq!(
+        (lines, code),
+        (
+            vec![
+                "unready duty=watch program=agent-runtime cause=absent fix=kendex-apply".to_owned()
+            ],
+            1
+        )
+    );
+    let silent = root.join("silent");
+    fs::write(&silent, "#!/bin/sh\nexit 2\n").unwrap();
+    fs::set_permissions(&silent, fs::Permissions::from_mode(0o755)).unwrap();
+    let (lines, code) = watch(&silent, &lane_mail);
+    assert_eq!(code, 1, "{lines:?}");
+    let [line] = lines.as_slice() else {
+        panic!("one line: {lines:?}")
+    };
+    assert!(
+        line.strip_prefix("unready duty=watch program=agent-runtime cause=unanswered fix=")
+            .is_some_and(|fix| fix.ends_with("/.agents/skills/orch/scripts/setup")),
+        "{line}"
+    );
+    let closed = root.join("closed-lane-mail");
+    fs::write(&closed, "#!/bin/sh\n").unwrap();
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o644)).unwrap();
+    let (lines, code) = watch(&built, &closed);
+    assert_eq!(
+        (lines, code),
+        (
+            vec![
+                "unready duty=watch program=lane-mail cause=not-executable fix=kendex-apply"
+                    .to_owned()
+            ],
+            1
+        )
+    );
+    let bin = root.join("no-runner");
+    let no_runner = std::ffi::OsString::from(support::path_without(&bin, "setsid"));
+    let _ = fs::remove_file(bin.join("systemd-run"));
+    let (lines, code) = ready_in(&root, &["--duty", "job"], &[("PATH", &no_runner)]);
+    assert_eq!(
+        (lines, code),
+        (
+            vec!["unready duty=job program=setsid cause=absent fix=install-setsid".to_owned()],
+            1
+        )
+    );
+}
+
+/// `args` run in a fresh `root` on a search path without `absent`.
+fn without(absent: &str, args: &[&str]) -> (PathBuf, tempfile::TempDir, Output) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = fs::canonicalize(dir.path()).unwrap();
+    let path = support::path_without(&root.join("bin"), absent);
+    let mut command = support::isolated();
+    command
+        .args(["--state-dir", &root.display().to_string()])
+        .args(args)
+        .current_dir(&root)
+        .env("PATH", path);
+    let out = command.output().unwrap();
+    (root, dir, out)
+}
+
+/// Each duty that reads before it acts asks first: `register` with no
+/// `tmux` refuses before it makes the fleet's file, and `ci-proof` and
+/// `reconcile-items` with no `gh` refuse before any read, each naming the
+/// program and its install.
+#[test]
+fn a_duty_whose_program_is_missing_refuses_before_it_reads_or_writes() {
+    let (root, _dir, out) = without("tmux", &["register", "--fleet"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: unready duty=register program=tmux cause=absent fix=install-tmux"
+    );
+    assert!(
+        fs::symlink_metadata(root.join(agent_runtime::record::FLEET_FILE_NAME)).is_err(),
+        "register made the fleet's file before it asked"
+    );
+    let (_root, _dir, out) = without(
+        "gh",
+        &["ci-proof", "7", &"a".repeat(40), "--repo", "owner/repo"],
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: unready duty=ci-proof program=gh cause=absent fix=install-gh"
+    );
+    let (_root, _dir, out) = without("gh", &["reconcile-items"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        first_stderr_line(&out),
+        "orch-runtime: unready duty=reconcile-items program=gh cause=absent fix=install-gh"
+    );
+}
+
 #[test]
 fn inspect_reads_an_unstamped_file_as_an_item_without_writing() {
     let dir = tempfile::tempdir().unwrap();

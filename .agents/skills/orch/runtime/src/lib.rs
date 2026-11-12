@@ -31,6 +31,7 @@ pub mod ops;
 pub mod policy;
 pub mod proof;
 pub mod protocol;
+pub mod ready;
 pub mod repo;
 pub mod schedule;
 pub mod send;

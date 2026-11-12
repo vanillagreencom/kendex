@@ -569,18 +569,18 @@ pub struct Settings {
     pub lane_output: Judged<LaneOutput>,
 }
 
-/// The setups every orch launch builds its directory's install through
-/// before the window: orch's own, then the agent-runtime its scripts run,
-/// the sibling they reach as `../../agent-runtime`.
-const LAUNCH_SETUPS: &[&str] = &[
-    ".agents/skills/orch/scripts/setup",
-    ".agents/skills/orch/scripts/../../agent-runtime/scripts/setup",
-];
+/// orch's one setup under an install's root: it builds the agent-runtime
+/// its scripts run, then orch-runtime. The fix every unbuilt runtime names.
+pub const ORCH_SETUP: &str = ".agents/skills/orch/scripts/setup";
+
+/// The setup every orch launch prepares its directory's install through
+/// before the window: orch's one.
+const LAUNCH_SETUPS: &[&str] = &[ORCH_SETUP];
 
 impl Settings {
     /// What every orch launch's preparation is handed: the homes an
     /// accountless launch inherits, as this load read them, and orch's
-    /// setups.
+    /// one setup.
     pub fn inherited(&self) -> agent_runtime::effects::prepare::Inherited<'_> {
         agent_runtime::effects::prepare::Inherited {
             copilot_home: self.copilot_home.as_deref(),

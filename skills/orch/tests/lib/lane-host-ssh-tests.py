@@ -154,8 +154,11 @@ esac
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
-        # The runtime's setup on the host: the clone's binary already built.
+        # orch's setup on the host, the clone's binaries already built: its
+        # two lines in the order it builds them, orch-runtime's last, the one
+        # the create's record names.
         self.executable(scripts / "setup", '''#!/usr/bin/env bash
+printf 'agent-runtime-setup: key=fixture binary=/cache/bin/agent-runtime-fixture\n'
 printf 'orch-runtime-setup: key=fixture binary=/cache/bin/orch-runtime-fixture\n'
 ''')
         # append takes its lock through the clone's own installed lock library.

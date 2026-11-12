@@ -1,0 +1,10 @@
+#!/bin/sh
+# An agent-runtime whose sources are built, as orch's readiness judge reads
+# one: `version` answers; every other verb is unplanted and refuses, so a
+# row whose world plants no answer reaches no pane through it.
+if [ "${1:-}" = version ]; then
+  printf '{"protocol":"agent-runtime-v1","ok":true,"result":{}}\n'
+  exit 0
+fi
+printf 'agent-runtime fixture: %s unplanted\n' "$*" >&2
+exit 1

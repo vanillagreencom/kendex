@@ -1885,6 +1885,25 @@ mod prune {
         assert_eq!(answer(&lane, &out, "1-1").0, "pruned");
     }
 
+    /// A prune whose worktree program is gone refuses `unready` naming the
+    /// package's install before it writes its round's `pruning` mark.
+    #[test]
+    fn a_prune_with_no_worktree_program_refuses_before_its_mark() {
+        let lane = Lane::new("KEN-1", "ken-1", Some("KEN-1"));
+        lane.lane_record("1-1");
+        let gone = lane.root.join("gone/worktree");
+        let out = lane.prune("dev", "80", &[("WORKTREE_CLI", gone.to_str().unwrap())]);
+        assert_eq!(exit(&out), Some(1), "{}", stderr(&out));
+        assert_eq!(
+            stderr(&out).lines().next(),
+            Some("orch-runtime: unready duty=prune program=worktree cause=absent fix=kendex-apply")
+        );
+        assert!(
+            lane.read()["round_prunes"].get("1-1").is_none(),
+            "the round's mark was written before the prune asked"
+        );
+    }
+
     #[test]
     fn a_ci_round_records_under_its_own_token_and_keeps_the_dev_round() {
         let lane = Lane::new("KEN-1", "ken-1", Some("KEN-1"));

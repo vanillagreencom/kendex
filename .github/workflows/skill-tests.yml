@@ -809,7 +809,6 @@ jobs:
           set -euo pipefail
           cache="$RUNNER_TEMP/agent-runtime"
           echo "AGENT_RUNTIME_CACHE=$cache" >>"$GITHUB_ENV"
-          AGENT_RUNTIME_CACHE="$cache" skills/agent-runtime/scripts/setup
           AGENT_RUNTIME_CACHE="$cache" skills/orch/scripts/setup
 
       # ---- shard: review-gate — the heavyweight review-gate suites alone ----
@@ -2418,7 +2417,6 @@ jobs:
             export PATH="$RUNNER_TEMP/release-suite-tools/node_modules/.bin:$PATH";
           fi;
           export AGENT_RUNTIME_CACHE="$RUNNER_TEMP/agent-runtime";
-          skills/agent-runtime/scripts/setup;
           skills/orch/scripts/setup;
         fi;
         tools/guard --released-packages "$HOME/.local/bin/kendex" --part {0} --range "$CATALOG_BASE"', matrix.part) || '' }}

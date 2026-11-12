@@ -208,8 +208,8 @@ for defect in tracked untracked; do
   assert_eq "$rc:$out" "$expected" "$defect cleanup control rejects data loss"
 done
 
-# Every mode ends by building the checkout's own install: its orch and
-# agent-runtime packages' real setup, over agent-runtime's planted cargo,
+# Every mode ends by building the checkout's own install: orch's one real
+# setup, agent-runtime's runtime then orch's, over agent-runtime's planted cargo,
 # into a private cache. The install is the two source packages linked where
 # an apply puts them; no kendex.toml, so refresh and verify skip.
 PACKAGES="$(cd -- "$DIR/../.." && pwd -P)"
@@ -227,8 +227,8 @@ installed() { # SCRIPT TAG JUDGE — the build after a merge, then a failing bui
   rc=0
   out="$(cd -- "$W" && PATH="$SCRATCH/cargo-bin:$PATH" AGENT_RUNTIME_CACHE="$cache" FAKE_CARGO_LOG="$log" ORCH_POST_MERGE_CMD='' bash "$1" 2>"$SCRATCH/error")" || rc=$?
   out="$(printf '%s\n' "$out" | sed -n 's/^\(post-merge: [a-z-]*=[a-z0-9]*\).*/\1/p; s/^\([a-z-]*-setup\): key=.*/\1/p' | tr '\n' ',')"
-  "$3" "$rc:$out" '0:post-merge: sync-base=0,post-merge: command=skipped,post-merge: refresh=skipped,post-merge: verify=skipped,orch-runtime-setup,agent-runtime-setup,post-merge: setup=0,' "$2: the install's two runtimes are built last" "$SCRATCH/error" || return 1
-  "$3" "$(sed 's/.*--manifest-path //' "$log" | tr '\n' ',')" "$PACKAGES/orch/runtime/Cargo.toml,$PACKAGES/agent-runtime/runtime/Cargo.toml," "$2: each package's own runtime is the one built" || return 1
+  "$3" "$rc:$out" '0:post-merge: sync-base=0,post-merge: command=skipped,post-merge: refresh=skipped,post-merge: verify=skipped,agent-runtime-setup,orch-runtime-setup,post-merge: setup=0,' "$2: the install's two runtimes are built last" "$SCRATCH/error" || return 1
+  "$3" "$(sed 's/.*--manifest-path //' "$log" | tr '\n' ',')" "$PACKAGES/agent-runtime/runtime/Cargo.toml,$PACKAGES/orch/runtime/Cargo.toml," "$2: each package's own runtime is the one built" || return 1
   "$3" "$(cd -- "$cache/bin" && ls | sed 's/-[0-9a-f]*$//' | tr '\n' ',')" 'agent-runtime,orch-runtime,' "$2: both binaries stand in the cache" || return 1
   rm -rf -- "${cache:?}"
   rc=0

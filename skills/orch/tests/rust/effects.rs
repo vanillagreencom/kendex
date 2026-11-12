@@ -5899,10 +5899,11 @@ fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_
 }
 
 /// The launch directory's own install, its orch and agent-runtime packages
-/// linked where an apply puts them, built through their real setup over
-/// agent-runtime's planted cargo into the row's cache before the window
-/// opens, so the lane's first turn end can read its mail; a build that fails
-/// refuses the launch with no window and no marker.
+/// linked where an apply puts them, prepared through orch's one real setup
+/// (agent-runtime's runtime, then orch's) over agent-runtime's planted
+/// cargo into the row's cache before the window opens, so the lane's first
+/// turn end can read its mail; a build that fails refuses the launch with no
+/// window and no marker.
 #[test]
 fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_opens_none() {
     let dir = tempfile::tempdir().unwrap();
@@ -5949,8 +5950,8 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
     assert!(
         observation["detail"]
             .as_str()
-            .is_some_and(|line| line.starts_with("orch-runtime-setup: build-failed status=1 key=")),
-        "the setup's own refusal: {report}"
+            .is_some_and(|line| line.starts_with("agent-runtime-setup: build-failed status=1 key=")),
+        "the setup's own refusal, its first build's: {report}"
     );
     assert_eq!(server.panes().len(), 1, "no window opened");
     assert_eq!(marker_of(&root, "KEN-B"), None, "no marker written");
@@ -5983,9 +5984,36 @@ fn a_launch_builds_its_installs_runtimes_before_the_window_and_a_failed_build_op
             .iter()
             .map(|m| canonical(Path::new(m)))
             .collect::<Vec<_>>(),
-        [canonical(&orch), canonical(&orch), canonical(&agent)],
-        "the failed orch build, then each package's own runtime"
+        [canonical(&agent), canonical(&agent), canonical(&orch)],
+        "the failed agent-runtime build, then each package's own runtime, agent-runtime first"
     );
+}
+
+/// A lane's launch on a computer with no `tmux` refuses `unready` naming
+/// its install before its intent persists: the fleet's record holds no
+/// intent and no window opens.
+#[test]
+fn a_launch_with_no_tmux_refuses_before_its_intent_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let path = path_without(&dir.path().join("no-tmux"), "tmux");
+    let out = runner.op_fleet_env(
+        &launch_request("KEN-R", runner.state_dir()),
+        &[("PATH", &path)],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out).lines().next(),
+        Some("orch-runtime: unready duty=launch program=tmux cause=absent fix=install-tmux")
+    );
+    assert_eq!(
+        runner.fleet()["intents"].as_array().map_or(0, Vec::len),
+        0,
+        "an intent persisted before the launch asked"
+    );
+    assert_eq!(server.panes().len(), 1, "no window opened");
 }
 
 /// The hosted launch's world: the provider fixture as the project's

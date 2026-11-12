@@ -622,6 +622,16 @@ impl Wake {
             &args,
             self.settings.engine.verify.get()? + ANSWER_MARGIN,
         )?;
+        // agent-runtime unbuilt under a running watch: the watch's one
+        // `unready` report, which ends it.
+        if crate::ready::setup_required(output.status.code()) {
+            return Err(crate::ready::unbuilt(
+                crate::ready::Duty::Watch,
+                "agent-runtime",
+                &self.settings,
+            )
+            .refusal());
+        }
         let reply: Value = serde_json::from_slice(&output.stdout).map_err(|_| {
             Error::Runtime(agent_runtime::Error::External {
                 program: "agent-runtime",

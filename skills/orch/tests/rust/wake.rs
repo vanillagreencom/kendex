@@ -1061,3 +1061,70 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
         std::fs::read_to_string(&typed)
     );
 }
+
+/// A running watch whose agent-runtime answers setup-required in the middle
+/// of the wake's pass (its wrapper finding the key unbuilt, as after an
+/// update) ends with one `unready` refusal naming orch's setup and releases
+/// its claim: the helper is asked once, no failure line is counted, nothing
+/// is typed, and no watch stays on the installation. The world is the
+/// row's own: its private server, its mailbox fixture, its claim.
+#[test]
+fn a_running_watch_whose_agent_runtime_answers_setup_required_ends_with_one_unready_report() {
+    let tools = tempfile::tempdir().unwrap();
+    let calls = tools.path().join("calls");
+    let helper = tools.path().join("agent-runtime");
+    write_executable(
+        &helper,
+        format!(
+            "#!/bin/sh\nif [ \"${{1:-}}\" = version ]; then echo '{{\"ok\":true}}'; exit 0; fi\nprintf '%s\\n' \"$1\" >> '{}'\nprintf 'agent-runtime: setup-required key=k run=/elsewhere/setup\\n' >&2\nexit 69\n",
+            calls.display()
+        ),
+    );
+    let fleet = Fleet::with_agent_runtime(&helper);
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+    unread(&[("KEN-1", "m-1")])
+        .store(&fleet.paths.baseline)
+        .unwrap();
+    let clock = FakeClock::new();
+    let identity = me();
+    let runner = fleet.runner(&clock);
+    let ended = run_driven(runner, &clock, &fleet.paths, &identity, || {
+        let bound = Instant::now() + secs(15);
+        while std::fs::metadata(&calls).is_err() || std::fs::metadata(&fleet.paths.pid).is_ok() {
+            assert!(
+                Instant::now() < bound,
+                "the watch held its claim on an unbuilt agent-runtime"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    });
+    let err = ended.expect_err("the watch ended on its own");
+    assert_eq!(
+        orch_runtime::protocol::diagnostic_line(&err),
+        format!(
+            "orch-runtime: unready duty=watch program=agent-runtime cause=unbuilt fix={}",
+            fleet
+                .settings
+                .roots
+                .project
+                .join(".agents/skills/orch/scripts/setup")
+                .display()
+        )
+    );
+    assert_eq!(
+        std::fs::read_to_string(&calls).unwrap().lines().count(),
+        1,
+        "asked once, then the end"
+    );
+    assert!(
+        !fleet
+            .log_lines()
+            .iter()
+            .any(|l| l.contains("watch-step-failed")),
+        "{:?}",
+        fleet.log_lines()
+    );
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "nothing typed");
+}

@@ -1362,14 +1362,7 @@ fn resolve(
                 group_leader(settings).display(),
             ));
         }
-        use std::os::unix::fs::PermissionsExt;
-        let perl = std::env::var_os("PATH").is_some_and(|path| {
-            std::env::split_paths(&path).any(|dir| {
-                fs::metadata(dir.join("perl"))
-                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-            })
-        });
-        if !perl {
+        if crate::ready::on_path("perl").is_none() {
             return Err(files::unreadable("missing-command", "commands=perl"));
         }
     }

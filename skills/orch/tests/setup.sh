@@ -61,7 +61,7 @@ done
 bin="$(awk '/^\[\[bin\]\]/ { in_bin = 1; next } /^\[/ { in_bin = 0 } in_bin && /^name = / { gsub(/^name = "|"$/, ""); print; exit }' "$manifest")"
 [ -n "$bin" ] || { echo "fake cargo: no [[bin]] name in $manifest" >&2; exit 101; }
 mkdir -p "$CARGO_TARGET_DIR/release"
-printf '#!/bin/sh\necho "fake-binary argv=$*"\n' >"$CARGO_TARGET_DIR/release/$bin"
+printf '#!/bin/sh\necho "fake-binary argv=$*"\nexit "${FAKE_BINARY_EXIT:-0}"\n' >"$CARGO_TARGET_DIR/release/$bin"
 chmod 755 "$CARGO_TARGET_DIR/release/$bin"
 CARGO
 chmod 755 "$TMP_ROOT/bin/cargo"
@@ -78,32 +78,87 @@ run() { # CACHE CMD ARGS... — stdout to $OUT, stderr to $ERR, status to $RC
   ERR="$(cat "$TMP_ROOT/err")"
 }
 calls() { wc -l <"$FAKE_CARGO_LOG" | tr -d ' '; }
-key_of() { # OUT — the key the success line names
-  local line="$1"
+key_of() { # OUT — the key the last success line, orch-runtime's, names
+  local line="${1##*$'\n'}"
   line="${line#*key=}"
   printf '%s' "${line%% *}"
 }
 
 CACHE="$TMP_ROOT/cache"
 
-# --- setup builds once through agent-runtime's builder ---------------------
+# --- setup builds both runtimes, agent-runtime first, orch's line last -----
 run "$CACHE" "$SETUP"
 assert_eq "$RC" 0 'first setup exits 0' "$TMP_ROOT/err"
 KEY="$(key_of "$OUT")"
+AKEY="$(key_of "${OUT%%$'\n'*}")"
 assert_eq "${#KEY}" 64 'the key is one sha256 hex'
 case "$KEY" in *[!0-9a-f]*) fail 'the key is lower-case hex' "$KEY" ;; *) pass 'the key is lower-case hex' ;; esac
-assert_eq "$OUT" "orch-runtime-setup: key=$KEY binary=$CACHE/bin/orch-runtime-$KEY" 'setup prints the one machine line under the orch-runtime name'
-if [ -x "$CACHE/bin/orch-runtime-$KEY" ]; then pass 'the keyed binary is executable'; else fail 'the keyed binary is executable'; fi
-assert_eq "$(calls)" 1 'one cargo call'
+assert_eq "$OUT" "agent-runtime-setup: key=$AKEY binary=$CACHE/bin/agent-runtime-$AKEY"$'\n'"orch-runtime-setup: key=$KEY binary=$CACHE/bin/orch-runtime-$KEY" 'setup prints agent-runtime'"'"'s line, then orch-runtime'"'"'s last'
+if [ -x "$CACHE/bin/orch-runtime-$KEY" ] && [ -x "$CACHE/bin/agent-runtime-$AKEY" ]; then pass 'both keyed binaries are executable'; else fail 'both keyed binaries are executable'; fi
+assert_eq "$(calls)" 2 'one cargo call per runtime'
+assert_eq "$(sed 's/.*--manifest-path //' "$FAKE_CARGO_LOG" | tr '\n' ',')" "$AGENT/runtime/Cargo.toml,$ORCH/runtime/Cargo.toml," 'agent-runtime builds first, then orch-runtime'
 assert_contains "$(cat "$FAKE_CARGO_LOG")" "build --release --locked --manifest-path $ORCH/runtime/Cargo.toml" 'cargo builds the locked release of the orch runtime manifest'
-assert_eq "$(ls -A "$CACHE/bin")" "orch-runtime-$KEY" 'bin/ holds the binary and no temporary'
+assert_eq "$(ls -A "$CACHE/bin" | tr '\n' ' ')" "agent-runtime-$AKEY orch-runtime-$KEY " 'bin/ holds the two binaries and no temporary'
 if [ -d "$CACHE/build/orch-runtime/$KEY" ]; then pass 'the build lands under the name and the key'; else fail 'the build lands under the name and the key'; fi
+assert_eq "${ERR##*$'\n'}" 'fake-binary argv=ready' 'setup ends by printing the built orch-runtime'"'"'s readiness answer on stderr'
 
 # --- the same key again builds nothing ------------------------------------
+FIRST="$OUT"
 run "$CACHE" "$SETUP"
 assert_eq "$RC" 0 'repeated setup exits 0' "$TMP_ROOT/err"
-assert_eq "$OUT" "orch-runtime-setup: key=$KEY binary=$CACHE/bin/orch-runtime-$KEY" 'repeated setup prints the same line'
-assert_eq "$(calls)" 1 'repeated setup calls cargo no second time'
+assert_eq "$OUT" "$FIRST" 'repeated setup prints the same two lines'
+assert_eq "$(calls)" 2 'repeated setup calls cargo no second time'
+
+# --- an unready duty leaves the setup's exit the builds' -------------------
+FAKE_BINARY_EXIT=1 run "$CACHE" "$SETUP"
+assert_eq "$RC" 0 'a readiness answer of 1 leaves the setup exiting 0, its builds'"'"''
+assert_eq "${ERR##*$'\n'}" 'fake-binary argv=ready' 'the unready answer is printed all the same'
+
+# --- --detach starts both builds and answers the worse ---------------------
+# agent-runtime built and orch-runtime's binary gone: with --hold on a
+# standing path the built one answers 0 and the started one 3, and the
+# setup answers 3, both lines printed in the build order.
+cp -R "$CACHE" "$TMP_ROOT/cache-detach"
+rm -f -- "$TMP_ROOT/cache-detach/bin/orch-runtime-$KEY"
+: >"$TMP_ROOT/held"
+run "$TMP_ROOT/cache-detach" "$SETUP" --detach --hold "$TMP_ROOT/held"
+assert_eq "$RC" 3 'a detached setup holding a building runtime answers 3, the worse'
+assert_eq "${OUT%% key=*}" 'agent-runtime-setup:' 'the detached setup answers agent-runtime first'
+assert_contains "${OUT##*$'\n'}" "orch-runtime-setup: runtime-building key=$KEY" 'the detached setup starts orch-runtime'"'"'s build last'
+for _ in $(seq 200); do [ ! -x "$TMP_ROOT/cache-detach/bin/orch-runtime-$KEY" ] || break; sleep 0.1; done
+if [ -x "$TMP_ROOT/cache-detach/bin/orch-runtime-$KEY" ]; then pass 'the detached build places orch-runtime'; else fail 'the detached build places orch-runtime'; fi
+for _ in $(seq 200); do [ -e "$TMP_ROOT/cache-detach/build/orch-runtime/$KEY.lock" ] || break; sleep 0.1; done
+
+# --- a detached setup answers a refusal over a held build over a served one -
+# agent-runtime's builder planted beside a copy of the setup as a stub that
+# logs which runtime it was asked for and answers as told: each build starts
+# whatever the other answered, and the setup answers the worse.
+STUB="$TMP_ROOT/stub"
+mkdir -p "$STUB/orch/scripts" "$STUB/agent-runtime/scripts"
+cp -p "$ORCH/scripts/setup" "$STUB/orch/scripts/setup"
+cat >"$STUB/agent-runtime/scripts/setup" <<'BUILDER'
+#!/usr/bin/env bash
+set -eu
+runtime=agent-runtime
+for arg in "$@"; do [ "$arg" != --runtime ] || runtime=orch-runtime; done
+printf '%s\n' "$runtime" >>"$STUB_LOG"
+[ "$runtime" = orch-runtime ] || exit "$STUB_AGENT_EXIT"
+exit "$STUB_ORCH_EXIT"
+BUILDER
+chmod 755 "$STUB/agent-runtime/scripts/setup"
+detached() { # AGENT_EXIT ORCH_EXIT — the stub setup's detached answer in $RC, the builds it asked in $BUILDS
+  : >"$TMP_ROOT/stub.log"
+  STUB_LOG="$TMP_ROOT/stub.log" STUB_AGENT_EXIT="$1" STUB_ORCH_EXIT="$2" run "$TMP_ROOT/cache-stub" "$STUB/orch/scripts/setup" --detach
+  BUILDS="$(tr '\n' ' ' <"$TMP_ROOT/stub.log")"
+}
+detached 1 3
+assert_eq "$RC" 1 'a detached setup answers agent-runtime'"'"'s refusal over orch-runtime'"'"'s held build'
+assert_eq "$BUILDS" 'agent-runtime orch-runtime ' 'a refused agent-runtime build still starts orch-runtime'"'"'s'
+detached 3 0
+assert_eq "$RC" 3 'a detached setup answers agent-runtime'"'"'s held build over orch-runtime'"'"'s served one'
+assert_eq "$BUILDS" 'agent-runtime orch-runtime ' 'a held agent-runtime build still starts orch-runtime'"'"'s'
+detached 3 2
+assert_eq "$RC" 2 'a detached setup answers orch-runtime'"'"'s refusal over agent-runtime'"'"'s held build'
 
 # --- --offline reaches cargo ----------------------------------------------
 run "$TMP_ROOT/cache-offline" "$SETUP" --offline
@@ -138,9 +193,11 @@ assert_eq "$(calls)" "$before" 'wrapper calls cargo never'
 if [ ! -e "$TMP_ROOT/cache-empty" ]; then pass 'wrapper writes no cache'; else fail 'wrapper writes no cache'; fi
 
 # --- a failed build leaves bin/ empty --------------------------------------
+before="$(calls)"
 FAKE_CARGO_EXIT=1 run "$TMP_ROOT/cache-failed" "$SETUP"
 assert_eq "$RC" 1 'failed build exits 1'
-assert_contains "$ERR" "orch-runtime-setup: build-failed status=1 key=$KEY" 'failed build refuses with its key'
+assert_contains "$ERR" "agent-runtime-setup: build-failed status=1 key=$AKEY" 'failed build refuses with its key'
+assert_eq "$(calls)" "$((before + 1))" 'a failed agent-runtime build ends the setup before orch-runtime'"'"'s'
 assert_contains "$ERR" 'fake cargo: build failed' "cargo's stderr passes through"
 assert_eq "$OUT" '' 'failed build prints no success line'
 assert_eq "$(ls -A "$TMP_ROOT/cache-failed/bin")" '' 'bin/ holds nothing after a failed build'

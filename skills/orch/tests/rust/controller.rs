@@ -1709,8 +1709,8 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
 
 /// A controller's start builds its directory's own install before its
 /// window, through the preparation a lane's launch shares: the orch and
-/// agent-runtime packages linked where an apply puts them, their real setup
-/// over agent-runtime's planted cargo. A build that fails is `failed` before
+/// agent-runtime packages linked where an apply puts them, orch's one real
+/// setup over agent-runtime's planted cargo. A build that fails is `failed` before
 /// retirement with the setup's refusal, nothing opened.
 #[test]
 fn a_controller_start_whose_install_does_not_build_opens_nothing() {
@@ -1754,10 +1754,109 @@ fn a_controller_start_whose_install_does_not_build_opens_nothing() {
     assert!(
         observation["fields"]["detail"]
             .as_str()
-            .is_some_and(|line| line.starts_with("orch-runtime-setup: build-failed status=1 key=")),
-        "the setup's own refusal: {report}"
+            .is_some_and(|line| line.starts_with("agent-runtime-setup: build-failed status=1 key=")),
+        "the setup's own refusal, its first build's: {report}"
     );
     assert_eq!(server.panes().len(), 1, "nothing opened");
+}
+
+/// A controller's start on a computer with no `tmux` refuses `unready`
+/// naming its install before it claims: the fleet's record is as it was
+/// and no window opens.
+#[test]
+fn a_controller_start_with_no_tmux_refuses_before_it_claims() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let record = runner.state_dir().join("workflow-state-oversee.json");
+    let before = std::fs::read_to_string(&record).unwrap();
+    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), "tmux");
+    let out = runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+        }),
+        &[("PATH", &no_tmux)],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(
+        stderr(&out).lines().next(),
+        Some("orch-runtime: unready duty=controller program=tmux cause=absent fix=install-tmux")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&record).unwrap(),
+        before,
+        "the start claimed before it asked"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+}
+
+/// A transfer and a stop on a computer with no `tmux` each refuse `unready`
+/// naming its install before either claims: the fleet's record is as it
+/// was, no job request is written, the row's planted `setsid` launches no
+/// job, and the predecessor still runs. A job a broken admission started is
+/// ended before the row judges, so the row leaves nothing behind.
+#[test]
+fn a_transfer_or_a_stop_with_no_tmux_refuses_before_any_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    let (sleepers, log) = sleeper_world(runner.state_dir());
+    let no_tmux = path_without(&runner.state_dir().join("no-tmux"), "tmux");
+    runner.env.extend([
+        (
+            "PATH".to_owned(),
+            format!("{}:{no_tmux}", sleepers.display()),
+        ),
+        ("SETSID_LOG".to_owned(), log.display().to_string()),
+        ("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()),
+    ]);
+    let record = runner.state_dir().join("workflow-state-oversee.json");
+    let before = std::fs::read_to_string(&record).unwrap();
+    for (name, request) in [
+        ("transfer", transfer_request(&server, runner.state_dir())),
+        ("stop", json!({"op": "stop-controller"})),
+    ] {
+        let out = runner.op_fleet(&request);
+        end_standing_jobs(&runner);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", stderr(&out));
+        assert_eq!(
+            stderr(&out).lines().next(),
+            Some("orch-runtime: unready duty=job program=tmux cause=absent fix=install-tmux"),
+            "{name}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            before,
+            "{name}: claimed before it asked"
+        );
+        assert!(
+            !runner.state_dir().join("intents").exists(),
+            "{name}: a job request was written"
+        );
+        assert_eq!(launches(&log), 0, "{name}: a job was launched");
+    }
+    assert!(live(predecessor.pid()));
+}
+
+/// End every job group the fleet's open intents record as standing.
+fn end_standing_jobs(runner: &Runner) {
+    let fleet = runner.fleet();
+    let standing = fleet["intents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|intent| intent["obligations"]["standing"].as_array())
+        .flatten()
+        .filter(|o| o["kind"] == "job-group")
+        .filter_map(|o| o["pid"].as_u64());
+    for pid in standing {
+        end_sleeper(pid as u32);
+    }
 }
 
 /// An adoption records the harness identity read in the pane's foreground,
@@ -5302,6 +5401,13 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     );
     let env = vec![
         ("ORCH_SECURITY_ALERTS".to_owned(), "off".to_owned()),
+        (
+            "ORCH_AGENT_RUNTIME".to_owned(),
+            fixtures()
+                .join("agent-runtime-built/agent-runtime")
+                .display()
+                .to_string(),
+        ),
         (
             "OVERSEE_WATCH_REPORT".to_owned(),
             report.display().to_string(),

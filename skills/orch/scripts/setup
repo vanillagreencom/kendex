@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
-# Build the orch-runtime binary from the shipped sources into the user cache,
-# through agent-runtime's setup route: the one builder of a shipped runtime
-# crate, keyed on this crate's inputs and on agent-runtime's, which the
-# runtime's Cargo.toml declares by path. Every argument passes through;
-# `setup --help` there is the contract. agent-runtime is the required sibling
-# beside this package (<skills>/agent-runtime); a copy outside that layout is
-# refused here, exit 2, before anything is read or built:
+# Prepare this orch installation: build every runtime its duties run, from
+# the shipped sources into the user cache, through agent-runtime's setup
+# route, the one builder of a shipped runtime crate. agent-runtime builds
+# first, then orch-runtime, keyed on its own inputs and on agent-runtime's,
+# which the runtime's Cargo.toml declares by path; each prints its line, so
+# orch's line is the last a caller reads. Every argument passes to both
+# builds; `setup --help` there is the contract. Without --detach a failed
+# build ends the setup with its exit, and once both stand the setup prints
+# `orch-runtime ready`'s lines on stderr (`ready duty=D`, or `unready duty=D
+# program=P cause=C fix=F`), its exit still the builds'; with --detach both
+# builds start and the setup answers the worse exit (a refusal, then a held
+# build, then 0).
+# agent-runtime is the required sibling beside this package
+# (<skills>/agent-runtime); a copy outside that layout is refused here,
+# exit 2, before anything is read or built:
 #   orch-runtime-setup: dependency-absent skill=agent-runtime path=<setup>
 set -euo pipefail
 
@@ -15,4 +23,29 @@ if [ ! -x "$builder" ]; then
   printf 'orch-runtime-setup: dependency-absent skill=agent-runtime path=%s\n' "$builder" >&2
   exit 2
 fi
-exec "$builder" --runtime "$here/../runtime" --name orch-runtime "$@"
+detach=0
+for arg in "$@"; do
+  [ "$arg" != --detach ] || detach=1
+done
+if [ "$detach" -eq 0 ]; then
+  "$builder" "$@"
+  "$builder" --runtime "$here/../runtime" --name orch-runtime "$@"
+  # What each duty needs on this computer, on stderr after the two build
+  # lines; the setup's exit stays the builds'.
+  "$here/orch-runtime" ready >&2 || :
+  exit 0
+fi
+# worse A B: the answer of two detached builds, a refusal over a held
+# build (3) over a served one (0).
+worse() {
+  case "$1:$2" in
+    0:*) printf '%s' "$2" ;;
+    *:0 | *:3) printf '%s' "$1" ;;
+    *) printf '%s' "$2" ;;
+  esac
+}
+agent=0
+"$builder" "$@" || agent=$?
+orch=0
+"$builder" --runtime "$here/../runtime" --name orch-runtime "$@" || orch=$?
+exit "$(worse "$agent" "$orch")"

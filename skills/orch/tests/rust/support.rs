@@ -305,6 +305,27 @@ pub fn isolated_row(name: &str) -> bool {
     false
 }
 
+/// A test child's `PATH` on which `absent` alone is missing: `bin` made to
+/// hold a link to every other program [`tool_path`] names, the first of
+/// each name, so the isolated tools still stand ahead of the inherited path.
+pub fn path_without(bin: &Path, absent: &str) -> String {
+    std::fs::create_dir_all(bin).unwrap();
+    let path = tool_path(&[]);
+    for dir in std::env::split_paths(&path) {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            if name == absent || std::fs::symlink_metadata(bin.join(&name)).is_ok() {
+                continue;
+            }
+            std::os::unix::fs::symlink(entry.path(), bin.join(&name)).unwrap();
+        }
+    }
+    bin.display().to_string()
+}
+
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -907,9 +928,10 @@ impl Runner {
 
     /// The runner's environment on `command`: the fleet server and session,
     /// the stub harness, the quiet mailbox and validation stubs (a row
-    /// plants asks through `LANE_MAIL_ASKS` in `env`), the bound, the tools
-    /// and the runner's own entries; the same for a child that is not the
-    /// binary itself, such as the detached line the wall route starts.
+    /// plants asks through `LANE_MAIL_ASKS` in `env`), an agent-runtime the
+    /// readiness judge reads built, the bound, the tools and the runner's
+    /// own entries; the same for a child that is not the binary itself,
+    /// such as the detached line the wall route starts.
     pub fn apply_env(&self, command: &mut Command) {
         command
             .env("TMUX", format!("{},0,0", self.server_socket.display()))
@@ -921,6 +943,10 @@ impl Runner {
             .env(
                 "LANE_MAIL_CLI",
                 fixtures().join("lane-mail-quiet/lane-mail"),
+            )
+            .env(
+                "ORCH_AGENT_RUNTIME",
+                fixtures().join("agent-runtime-built/agent-runtime"),
             )
             .env(
                 "AGENT_RUNTIME_ACCOUNT_STATE_DIR",

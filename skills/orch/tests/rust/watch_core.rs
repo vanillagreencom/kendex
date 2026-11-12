@@ -1753,8 +1753,9 @@ fn link_fixture(fixture: &str, at: &Path) {
 /// no token file it would print its credential line), `gh` as the fixture
 /// that answers the credential ladder (`bin/gh`, its status from
 /// `bin/gh.auth-status`, absent for 0, every other call refused) and the
-/// github skill under the directory's install layout, where the ladder is.
-/// `bin` is first on `PATH`, so a row's own fakes go there too.
+/// github skill under the directory's install layout, where the ladder is,
+/// and an agent-runtime the readiness judge reads built (`version` alone
+/// answers). `bin` is first on `PATH`, so a row's own fakes go there too.
 fn watch_env(command: &mut Command, dir: &Path) {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -1763,6 +1764,10 @@ fn watch_env(command: &mut Command, dir: &Path) {
     isolation_env(command);
     command
         .env("PATH", tool_path(&[&bin]))
+        .env(
+            "ORCH_AGENT_RUNTIME",
+            fixtures().join("agent-runtime-built/agent-runtime"),
+        )
         .env("LANE_MAIL_CLI", lane_mail())
         .env("ORCH_SECURITY_ALERTS", "off")
         .current_dir(dir);
@@ -1928,6 +1933,55 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
         let status = status.output().unwrap();
         assert!(status.status.success(), "{key}: {}", stderr(&status));
     }
+}
+
+/// The watch wakes the overseer through agent-runtime, so it asks first:
+/// agent-runtime's real wrapper finding its key unbuilt (an empty cache),
+/// `watch run` refuses `unready` naming orch's setup before the credential
+/// ladder runs and before any claim, event line or alert.
+#[test]
+fn a_watch_run_on_an_unbuilt_agent_runtime_refuses_before_the_ladder_and_any_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let mut command = watch_run_command(&state_dir, &["--interval", "240", "--max-loops", "1"]);
+    command
+        .env(
+            "ORCH_AGENT_RUNTIME",
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../agent-runtime/scripts/agent-runtime"),
+        )
+        .env("AGENT_RUNTIME_CACHE", state_dir.join("cache"));
+    let out = bounded_output(
+        command.spawn().unwrap(),
+        secs(30),
+        "the watch ran on with agent-runtime unbuilt",
+    );
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert_eq!(
+        err.lines().next(),
+        Some(
+            format!(
+                "orch-runtime: unready duty=watch program=agent-runtime cause=unbuilt fix={}",
+                state_dir
+                    .join(".agents/skills/orch/scripts/setup")
+                    .display()
+            )
+            .as_str()
+        ),
+        "{err}"
+    );
+    let paths = paths_in(&state_dir);
+    assert!(
+        std::fs::metadata(&paths.pid).is_err() && std::fs::metadata(&paths.log).is_err(),
+        "the watch claimed before it asked"
+    );
+    assert!(
+        std::fs::metadata(state_dir.join("bin/gh.log")).is_err(),
+        "the credential ladder ran before the watch asked"
+    );
 }
 
 /// The ladder's refusal is its last line, after any warning it printed

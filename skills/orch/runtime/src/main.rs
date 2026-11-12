@@ -19,6 +19,7 @@ use orch_runtime::effects;
 use orch_runtime::error::{Error, Result};
 use orch_runtime::ops::{self, Request};
 use orch_runtime::protocol::{self, Reply};
+use orch_runtime::ready;
 use orch_runtime::schedule;
 use orch_runtime::settings::{self, Flags, Settings};
 use orch_runtime::state;
@@ -47,6 +48,15 @@ struct Cli {
 enum Verb {
     /// Print the protocol and crate version.
     Version,
+    /// Whether what each duty needs is ready on this computer, one line per
+    /// duty on stdout: `ready duty=D`, or `unready duty=D program=P cause=C
+    /// fix=F` per program it lacks; exit 1 where a duty asked about is
+    /// unready.
+    Ready {
+        /// A duty asked about (repeatable; default every duty).
+        #[arg(long = "duty")]
+        duties: Vec<String>,
+    },
     DevReturn {
         #[arg(long)]
         text: bool,
@@ -1376,6 +1386,27 @@ fn replied(value: serde_json::Value, status: i32) -> Result<serde_json::Value> {
     Ok(value)
 }
 
+/// The `ready` verb: the readiness lines of `duties` (every duty where
+/// none is named) on stdout, the process exiting 1 where one is unready.
+fn ready_verb(duties: &[String], flags: &Flags) -> Result<serde_json::Value> {
+    let settings = resolve_settings(flags)?;
+    let asked = if duties.is_empty() {
+        ready::Duty::DUTIES.to_vec()
+    } else {
+        duties
+            .iter()
+            .map(|name| ready::Duty::from_word(name))
+            .collect::<Result<Vec<_>>>()?
+    };
+    let (lines, all_ready) = ready::report(&asked, &settings)?;
+    let mut out = std::io::stdout().lock();
+    for line in lines {
+        let _ = writeln!(out, "{line}");
+    }
+    drop(out);
+    std::process::exit(if all_ready { 0 } else { 1 });
+}
+
 /// A detached job's launch as its verb answers it: exit 0 started, 75
 /// possibly started, 1 `job-launch-failed` with nothing started.
 fn launched(
@@ -1419,6 +1450,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "crate": env!("CARGO_PKG_VERSION"),
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
+        Verb::Ready { duties } => ready_verb(&duties, &flags)?,
         Verb::State { op } => state_verb(op, &flags, locking)?,
         Verb::Archive { op } => orch_runtime::archive::verb(op, &resolve_settings(&flags)?)?,
         Verb::Report {
@@ -1792,6 +1824,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             merged,
         } => {
             let settings = resolve_settings(&flags)?;
+            ready::admit(ready::Duty::ReconcileItems, &settings)?;
             watch::tracker::reconcile_items::repository(&settings.roots.project)?;
             serde_json::to_value(watch::tracker::reconcile_items::run(
                 &settings,
@@ -1892,6 +1925,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::CiProof { pr, head, repo } => {
             let settings = resolve_settings(&flags)?;
+            ready::admit(ready::Duty::CiProof, &settings)?;
             match verify::ci_proof::refresh_verb(&settings, &pr, &head, &repo) {
                 Ok(line) => {
                     let _ = writeln!(std::io::stdout().lock(), "{line}");
@@ -2011,6 +2045,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::Register { target, account } => {
             let settings = resolve_settings(&flags)?;
+            ready::admit(ready::Duty::Register, &settings)?;
             let path = target_path(&target, &settings);
             match std::fs::metadata(&path) {
                 Ok(_) => {}
@@ -2292,6 +2327,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             reach: _,
         } => {
             if !credential_selected {
+                ready::admit(ready::Duty::Watch, &settings)?;
                 return Err(reexec_with_github_auth(&settings));
             }
             watch::github::install_sign_in(&settings.roots.project);

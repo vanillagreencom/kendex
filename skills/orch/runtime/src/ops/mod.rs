@@ -511,10 +511,21 @@ fn apply_interleaved(
     transition()
 }
 
-/// What the settings admit before any transition runs: the keys the
-/// request's live effect reads ([`judge_effect_settings`]), then a start's
-/// or a transfer's own admission, the hand-over's.
+/// What the settings admit before any transition runs: the programs the
+/// request's duty needs on this computer ([`crate::ready`]), the keys its
+/// live effect reads ([`judge_effect_settings`]), then a start's or a
+/// transfer's own admission, the hand-over's.
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
+    let duty = match request {
+        Request::LaunchLane(_) => Some(crate::ready::Duty::Launch),
+        Request::StartController(_) => Some(crate::ready::Duty::Controller),
+        Request::RequestTransfer(_) | Request::StopController(_) => Some(crate::ready::Duty::Job),
+        Request::PruneRound(_) => Some(crate::ready::Duty::Prune),
+        _ => None,
+    };
+    if let Some(duty) = duty {
+        crate::ready::admit(duty, settings)?;
+    }
     judge_effect_settings(request, settings)?;
     match request {
         Request::RequestTransfer(r) => controller::admit_transfer(r, &settings.controller)?,

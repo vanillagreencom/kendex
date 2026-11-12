@@ -1132,7 +1132,7 @@ fn hosted_command(
     let line = format!("{} {}", created.prefix, shell_quote(&shell_line));
     // The client by the path this process finds it at: the pane's shell
     // runs it, and its search path is the fleet server's, not this one's.
-    let program = on_path("ssh")
+    let program = crate::ready::on_path("ssh")
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "ssh".to_owned());
     Ok(LaunchCommand {
@@ -1152,15 +1152,6 @@ fn hosted_command(
         cwd: PathBuf::from(&r.mail_root),
         brief_arg: None,
         brief_path: None,
-    })
-}
-
-/// The file `name` resolves to on this process's search path, if any.
-fn on_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path)
-            .map(|dir| dir.join(name))
-            .find(|candidate| std::fs::metadata(candidate).is_ok_and(|m| m.is_file()))
     })
 }
 

@@ -25,7 +25,10 @@
 //! so a standing failure does not wake the session it follows every pass;
 //! a run with no failure ends the count. Only the runner's own records
 //! failing (the log, the baseline, the claim, the stop request) end the
-//! run, `watch-record`, which releases the claim.
+//! run, `watch-record`, which releases the claim; and a duty whose program
+//! answers that this installation cannot serve it (agent-runtime unbuilt
+//! under a running watch) ends the run with that one `unready` refusal,
+//! the claim released, so no watch stays on an unusable installation.
 //!
 //! The runner reconciles every open intent on the long cadence through the
 //! existing `reconcile` request, which is read-only toward a live or
@@ -514,6 +517,7 @@ impl Thread<'_, '_> {
                 // its lines and rows with the cause, and its pass is stamped.
                 let (mut produced, stamped) = match body(&tick) {
                     Ok(produced) => (produced, true),
+                    Err(cause) if crate::ready::is_unready(&cause) => return Err(cause),
                     Err(cause) => (
                         Produced {
                             failed: Some(cause.to_string()),
