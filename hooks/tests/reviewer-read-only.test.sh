@@ -260,6 +260,39 @@ delete_rows() {
 }
 delete_rows
 
+# Both Git-option forms stop at the same boundary, including on Pi where
+# the payload omits cwd. None of these command fields is executed.
+git_boundary_rows() {
+  local cmd cwd
+  for cmd in \
+    "git -C $DELETE_SCRATCH --version; rm cli.md" \
+    "git -C $DELETE_SCRATCH; rm cli.md" \
+    "git -C $DELETE_SCRATCH --version| rm cli.md" \
+    "git -C $DELETE_SCRATCH --version& rm cli.md" \
+    "git -C $DELETE_SCRATCH --version && rm cli.md" \
+    "git -C $DELETE_SCRATCH --version"$'\nrm cli.md' \
+    "git -C '$DELETE_SCRATCH;other' rm cli.md" \
+    "git -C $DELETE_SCRATCH --work-tree $DELETE_SCRATCH; rm cli.md" \
+    "git -C $DELETE_SCRATCH --git-dir $DELETE_SCRATCH| rm cli.md"; do
+    for cwd in "$REPO" ''; do
+      delete_row reviewer-test "$cwd" "$cmd" "delete=$REPO/cli.md"
+    done
+  done
+  delete_row reviewer-test "$REPO" "git -C $DELETE_SCRATCH rm x.log" pass
+  delete_row reviewer-test "$SCRATCH" "git -C $REPO rm cli.md" "delete=$REPO/cli.md"
+}
+git_boundary_rows
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control git-boundary-ignored "$HOOK" \
+    '    | map(if . == 59 or . == 38 or . == 124 then 10 else . end) | implode'\'' 2>/dev/null) ||
+    refuse payload invalid-json' \
+    '  bare=$COMMAND' HOOK git_boundary_rows \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH --version; rm cli.md" \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH; rm cli.md" \
+    "refused for reviewer-test in $REPO: git -C $DELETE_SCRATCH --version| rm cli.md"
+fi
+
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   skill_load_control delete-allowed "$HOOK" \
     '    [ -n "$CWD" ] || CWD=$PWD' \
