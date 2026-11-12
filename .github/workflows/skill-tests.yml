@@ -732,12 +732,12 @@ jobs:
 
       # The rest, refresh, jarvis and orch-rest consumers need this
       # checkout's kendex: tools/ci-job-set's CHECKOUT_KENDEX_SHARDS. macOS
-      # retains the binary-dependent skips. The orch, hook and rest legs build
-      # the package runtimes on both runners, in the step after kendex's.
+      # retains the binary-dependent skips. The orch, hook, rest and slack legs
+      # build the package runtimes on both runners, in the step after kendex's.
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # stable; upstream has no vX.Y.Z release
         with:
           toolchain: stable
-        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest'
+        if: ((matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis' || matrix.shard == 'mailbox') && runner.os == 'Linux') || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'slack'
       # The keychain store links dbus, as every cargo job below installs.
       - name: System dependencies for the keychain store
         if: (matrix.shard == 'rest' || matrix.shard == 'refresh' || matrix.shard == 'orch-rest' || matrix.shard == 'jarvis') && runner.os == 'Linux'
@@ -768,7 +768,8 @@ jobs:
       # and lane-mail-session.sh of `mailbox`, room-check.test.sh of `rest`'s
       # second-opinion battery, and Jarvis's presence (the hook's world),
       # forward, owner-unanswered and watch-loop (`lane-mail compact`) suites:
-      # in `jarvis` on Linux and in `rest` on macOS. These legs build both
+      # in `jarvis` on Linux and in `rest` on macOS. Slack's mailbox-read and
+      # notice suites run `lane-mail compact` too. These legs build both
       # package runtimes ahead of their suites into one cache that every later
       # step reads through AGENT_RUNTIME_CACHE, whatever HOME a suite sets.
       # scripts/setup places each binary at bin/<name>-<key> there, its key
@@ -782,7 +783,7 @@ jobs:
       # 46 s for agent-runtime on macOS (run 43100964025); orch-runtime's is
       # unmeasured.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux')
+        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
         with:
           workspaces: |
             skills/agent-runtime/runtime
@@ -803,7 +804,7 @@ jobs:
           key: package-runtimes
           save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       - name: the package runtimes, built
-        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux')
+        if: matrix.shard == 'orch-oversee' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (matrix.shard == 'mailbox' && runner.os == 'Linux') || matrix.shard == 'slack'
         run: |
           set -euo pipefail
           cache="$RUNNER_TEMP/agent-runtime"

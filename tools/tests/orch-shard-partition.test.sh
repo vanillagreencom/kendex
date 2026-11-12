@@ -1549,7 +1549,8 @@ check "must-fail: a build step dropping jarvis names the leg whose picker rows w
 # lane-mail.sh, lane-mail-compact.sh and lane-mail-session.sh,
 # second-opinion's room-check.test.sh and Jarvis's presence.test.sh (the
 # hook's world) and its forward, owner-unanswered and watch-loop suites
-# (`lane-mail compact`) run it, so a leg owning one of those suites on either
+# (`lane-mail compact`), and Slack's mailbox-read.test.sh and notice.test.sh
+# (`lane-mail compact` too) run it, so a leg owning one of those suites on either
 # runner builds both runtimes first, read from that step's real `if:`. The runtimes' own Rust targets run in one step, the
 # orch-rest Linux leg's, wherever the changes job's `runtimes` line is not
 # false.
@@ -1580,7 +1581,8 @@ runtime_suites() { # OWNERS OUT ; the `shard<tab>path` rows of OWNERS whose suit
       skills/orch/tests/* | hooks/tests/* | skills/second-opinion/tests/room-check.test.sh | \
       skills/mailbox/tests/lane-mail-session.sh | skills/mailbox/tests/lane-mail.sh | skills/mailbox/tests/lane-mail-compact.sh | \
       skills/jarvis/tests/presence.test.sh | skills/jarvis/tests/forward.test.sh | \
-      skills/jarvis/tests/owner-unanswered.test.sh | skills/jarvis/tests/watch-loop.test.sh)
+      skills/jarvis/tests/owner-unanswered.test.sh | skills/jarvis/tests/watch-loop.test.sh | \
+      skills/slack/tests/mailbox-read.test.sh | skills/slack/tests/notice.test.sh)
         printf '%s\t%s\n' "$shard" "$path" >> "$2" ;;
     esac
   done < "$1"
@@ -1589,11 +1591,11 @@ suite_owners "$WORKFLOW" files > "$TMP/runtime-owners"
 suite_owners "$WORKFLOW" files 3 > "$TMP/runtime-owners-macos"
 runtime_suites "$TMP/runtime-owners" "$TMP/runtime-suites"
 runtime_suites "$TMP/runtime-owners-macos" "$TMP/runtime-suites-macos"
-check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, jarvis, mailbox and rest" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail jarvis mailbox orch-dev orch-oversee orch-rest orch-state rest)" \
+check "the Linux legs owning a suite that runs orch-runtime are the four orch legs, both hook legs, jarvis, mailbox, rest and slack" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail jarvis mailbox orch-dev orch-oversee orch-rest orch-state rest slack)" \
   "$(cut -f1 "$TMP/runtime-suites" | sort -u)"
-check "the macOS legs owning a suite that runs orch-runtime are three orch legs, both hook legs and rest" \
-  "$(printf '%s\n' guards-hooks guards-hooks-tail orch-oversee orch-rest orch-state rest)" \
+check "the macOS legs owning a suite that runs orch-runtime are three orch legs, both hook legs, rest and slack" \
+  "$(printf '%s\n' guards-hooks guards-hooks-tail orch-oversee orch-rest orch-state rest slack)" \
   "$(cut -f1 "$TMP/runtime-suites-macos" | sort -u)"
 check "every leg owning a suite that runs orch-runtime builds the package runtimes first" "" \
   "$(unbuilt_runtime_legs "$WORKFLOW" Linux "$TMP/runtime-suites"; unbuilt_runtime_legs "$WORKFLOW" macOS "$TMP/runtime-suites-macos")"

@@ -38,8 +38,11 @@
 #         runner=systemd|setsid
 #         unit=UNIT            where runner=systemd
 #         pid=PID              where runner=setsid: the job's pid and its
-#         start=ticks:N        kernel start, read by the launcher before it
-#                              returns; the runner line carries both too
+#         start=START          kernel start, read by the launcher before it
+#                              returns, in the orch runtime's form for the
+#                              host: ticks:N from /proc, lstart:TEXT from
+#                              `ps` where there is no /proc; the runner line
+#                              carries both too
 #         status=WORD          where a launch-failed path after this
 #                              pre-write ended the launch and read its
 #                              process group empty: the word the runtime
@@ -234,6 +237,13 @@ job_unit_record_ended() { # RECORD STATUS
   } > "$1.part" && mv -- "$1.part" "$1"
 }
 
+# Whether this host's kernel table is /proc, which Linux mounts and macOS
+# lacks. The two readers below take /proc where it answers and `ps`
+# elsewhere, the reads the orch runtime makes on each host.
+job_unit_proc_table() {
+  [[ -d /proc/self ]]
+}
+
 # Whether the process group PGID reads empty in the kernel's own table: no
 # running process names it as its group, zombies left out, since they run
 # nothing and their parents reap them. Three answers:
@@ -241,10 +251,25 @@ job_unit_record_ended() { # RECORD STATUS
 # member still runs; 2 where the table, or a row of a process that still
 # stands, cannot be read or parsed, so an unreadable row is unknown and
 # never reads as a member gone. A row gone between the listing and the read
-# is a process that exited, no member.
+# is a process that exited, no member. Where there is no /proc the table is
+# one `ps` listing, read to its last row before it is judged, so a row the
+# loop could not read is unknown there too.
 job_unit_group_empty() { # PGID
-  local stat row rest fields unknown=0
-  [[ -d /proc/self ]] || return 2
+  local stat row rest fields unknown=0 table whole=0
+  if ! job_unit_proc_table; then
+    table="$(LC_ALL=C ps -A -o pgid= -o stat= 2>/dev/null)" && [[ -n "$table" ]] || return 2
+    while read -r -a fields; do
+      [[ "${fields[*]:-}" != . ]] || { whole=1; break; }
+      if [[ ! "${fields[0]:-}" =~ ^[0-9]+$ || -z "${fields[1]:-}" ]]; then
+        unknown=1
+        continue
+      fi
+      [[ "${fields[0]}" == "$1" ]] || continue
+      [[ "${fields[1]}" == Z* ]] || return 1
+    done <<<"$table"$'\n.'
+    [[ "$whole" -eq 1 && "$unknown" -eq 0 ]] || return 2
+    return 0
+  fi
   for stat in /proc/[0-9]*/stat; do
     { IFS= read -r row < "$stat"; } 2>/dev/null || { [[ ! -e "$stat" ]] || unknown=1; continue; }
     rest="${row##*)}"
@@ -259,13 +284,26 @@ job_unit_group_empty() { # PGID
   return 0
 }
 
-# The one reader of a process's kernel row: its state and its start in clock
-# ticks, from /proc/PID/stat, the fields after the command name's closing
-# parenthesis so a name with spaces moves nothing. Prints `STATE ticks:N`;
-# status 1 where the row cannot be read or the start is not a number, and
-# nothing is ever manufactured in its place.
+# The one reader of a process's kernel row: its state and its start, in the
+# form the orch runtime records on this host. From /proc/PID/stat the start
+# is `ticks:N`, clock ticks read from the fields after the command name's
+# closing parenthesis so a name with spaces moves nothing. Elsewhere `ps`
+# answers both, the start as `lstart:TEXT` in the C locale and UTC with its
+# blanks squeezed, as the runtime reads it there. Prints `STATE START`;
+# status 1 where the row cannot be read or carries no start, and nothing is
+# ever manufactured in its place.
 job_unit_proc_identity() { # PID
   local row rest
+  if ! job_unit_proc_table; then
+    row="$(LC_ALL=C TZ=UTC ps -o stat= -o lstart= -p "$1" 2>/dev/null)" || return 1
+    # shellcheck disable=SC2086
+    set -- $row
+    [[ $# -ge 2 ]] || return 1
+    rest="${1:0:1}"
+    shift
+    printf '%s lstart:%s' "$rest" "$*"
+    return 0
+  fi
   row="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1
   rest="${row##*)}"
   # shellcheck disable=SC2086
@@ -403,8 +441,8 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   # The job is this launch's own background child under setsid, which execs
   # it in a session of its own without forking (no -f), so $! is the job's
   # pid. The launcher reads the child's start from the kernel table itself
-  # and records the identity, pid and `/proc` start in clock ticks as the
-  # runtime's identity reader records it, before it returns:
+  # and records the identity, pid and start in the form the runtime's
+  # identity reader records on this host, before it returns:
   # no child writes its own identity and none is manufactured. A child that
   # has already exited when its row is read is a launch that failed, by its
   # status; a row that cannot be read ends the child and refuses the launch,

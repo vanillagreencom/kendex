@@ -14,6 +14,13 @@ SK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd -P)"
 SK_RUN_FROM=""
 SK_FAKE="$SK_ROOT/skills/slack/tests/lib/fake_slack.py"
 SK_LANE_MAIL="$SK_ROOT/skills/mailbox/scripts/lane-mail"
+# `lane-mail compact` files the rows it drops through the orch runtime, found
+# in the cache the packages' set-up fills for this checkout's sources. A probe
+# runs the real lane-mail under `env -i` with a HOME of its own, so it is
+# handed this one cache by name.
+AGENT_RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SK_ROOT/skills/agent-runtime/scripts/lib/key.sh")" ||
+  { printf 'slack-tests: runtime-cache=unresolved\n' >&2; exit 1; }
+export AGENT_RUNTIME_CACHE
 SK_TOKEN="test-token-$$"
 SK_APP_TOKEN="test-app-token-$$"
 OWNER="brad@example.test"

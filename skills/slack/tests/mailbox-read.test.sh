@@ -16,7 +16,7 @@ if [ "$format" = bound-reader ]; then
 fi
 PROBE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$ROOT" || PROBE_RC=$?
 if [ "$format" = bound-reader ]; then
   sk_assert_red "$PROBE_RC" 0 'control: importing the historical bound reader fails the same output probe'
@@ -46,7 +46,7 @@ while IFS='|' read -r mode shape; do
   fi
   PROBE_RC=0
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
     python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$WORK_ROOT" "$MAIN_ROOT" \
     >"$SK_TMP/linked-$mode-$shape.log" 2>&1 || PROBE_RC=$?
   if [ "$mode" = production ]; then
@@ -70,7 +70,7 @@ sk_store_fixture "$CONTROL" 'def read_events(box, jq_defs, previous, receipts=Fa
     return rows, receipt'
 PROBE_RC=0
 env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
   python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$CONTROL" \
   >"$SK_TMP/numbering-control.log" 2>&1 || PROBE_RC=$?
 sk_assert_red "$PROBE_RC" 0 'control: physical numbering fails the same output-equivalence assertion'
@@ -80,7 +80,7 @@ while IFS='|' read -r name pattern replacement; do
   sk_store_mutant "$CONTROL" "$pattern" "$replacement"
   PROBE_RC=0
   env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
-    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+    GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" AGENT_RUNTIME_CACHE="$AGENT_RUNTIME_CACHE" \
     python3 "$SK_ROOT/skills/slack/tests/lib/mailbox_read_probe.py" "${SK_BIN%/*}/lib" "$CONTROL" \
     >"$SK_TMP/$name-control.log" 2>&1 || PROBE_RC=$?
   sk_assert_red "$PROBE_RC" 0 "$name: removing the reader rule fails the same probe"
