@@ -4,6 +4,7 @@
   ".agents/skills/agent-runtime/runtime/Cargo.lock",
   ".agents/skills/agent-runtime/runtime/Cargo.toml",
   ".agents/skills/agent-runtime/runtime/clippy.toml",
+  ".agents/skills/agent-runtime/runtime/src/accounts/batch.rs",
   ".agents/skills/agent-runtime/runtime/src/accounts/cache.rs",
   ".agents/skills/agent-runtime/runtime/src/accounts/here.rs",
   ".agents/skills/agent-runtime/runtime/src/accounts/listing.rs",

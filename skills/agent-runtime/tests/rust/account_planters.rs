@@ -263,6 +263,20 @@ pub fn provider_line(row: &Value, account: &str) -> String {
             c["resets_at"].as_str().unwrap_or("")
         ));
     }
+    if row["harness"] == json!("codex") && row["credits"].is_object() {
+        let c = &row["credits"];
+        let fact = |key: &str| if c[key] == json!(true) { 1 } else { 0 };
+        fields.push(format!("credit-remaining={}", c["balance"]));
+        fields.push(format!("credit-available={}", fact("has_credits")));
+        fields.push(format!(
+            "credit-overage-limit-reached={}",
+            fact("overage_limit_reached")
+        ));
+        fields.push(format!(
+            "credit-spend-control-reached={}",
+            fact("spend_control_reached")
+        ));
+    }
     for (key, name) in [
         ("plan_ends", "plan-ends"),
         ("plan-ends", "plan-ends"),

@@ -23,7 +23,8 @@
 //! reported line, never a silent absence. An account `AGENT_RUNTIME_ACCOUNT_EXCLUDE`
 //! names is measured like any other and refused by that word for every
 //! lane pick and launch, from this machine's listing, a provider's rows or
-//! the owner's statement; an overseer's own pick reads its figures.
+//! the owner's statement; an overseer's own pick reads its figures. Both
+//! kinds of account kept from workers read `reserve` to a reader.
 //!
 //! A listing that could not be read whole admits nothing: no pick, and a
 //! roster line saying `unread`. A provider's `plan-ends` that names no
@@ -56,6 +57,7 @@ use crate::clock;
 use crate::harness::Harness;
 use crate::settings::{self, AccountSettings};
 
+pub mod batch;
 pub mod cache;
 pub mod here;
 pub mod listing;
@@ -337,10 +339,20 @@ impl AccountRow {
         })
     }
 
-    /// The account's status word: the provider's reservation first, then
-    /// a provider's end nobody can read, then the earlier of the machine's
-    /// and the provider's stated ends.
+    /// The word a reader is shown: an account kept from workers reads
+    /// `reserve`, whether the provider reserved it or the owner's exclusion
+    /// names it; any other its stated word.
     pub fn word(&self) -> Word {
+        if self.excluded {
+            return Word::Reserve;
+        }
+        self.stated()
+    }
+
+    /// The account's stated word, what a pick is refused by: the
+    /// provider's reservation first, then a provider's end nobody can read,
+    /// then the earlier of the machine's and the provider's stated ends.
+    fn stated(&self) -> Word {
         if self.reserved {
             return Word::Reserve;
         }
@@ -372,14 +384,14 @@ impl AccountRow {
 
     /// Whether the stated end has come: `today` is the UTC day.
     pub fn ended(&self, today: &str) -> bool {
-        matches!(self.word(), Word::Retired { date, .. } if date.as_str() <= today)
+        matches!(self.stated(), Word::Retired { date, .. } if date.as_str() <= today)
     }
 
     /// The word's own verdict on a pick today: the one
     /// rule the judge, a named pick's answer and the delegated pick's
     /// exclusions read.
     pub fn standing(&self, today: &str) -> Standing {
-        match self.word() {
+        match self.stated() {
             Word::Pick => Standing::Open,
             Word::Reserve => Standing::Reserved,
             Word::PlanEndInvalid { value } => Standing::EndUnread { value },
@@ -478,8 +490,8 @@ impl Roster {
         })
     }
 
-    /// The `account <fields>` line of each record, with the status word
-    /// after the fields where it is not `pick`, and under the roster one
+    /// The `account <fields>` line of each record, with the word a reader
+    /// is shown after the fields where it is not `pick`, and under the roster one
     /// `account-end-contradicted` line per account whose stated end has
     /// come while its credential still answers and one
     /// `account-plan-end-invalid` line per account whose provider end
@@ -494,7 +506,7 @@ impl Roster {
             })
             .collect();
         for row in &self.rows {
-            match row.word() {
+            match row.stated() {
                 Word::Retired { date, source } if row.ended(today) && row.answers() => {
                     lines.push(format!(
                         "account-end-contradicted {} config_dir={} ends={date} source={} status={}",
@@ -1089,6 +1101,48 @@ fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
     }
 }
 
+/// What a row's own reading answers before its word and its seat: an ended
+/// plan a full wall, a grant pool its grant's verdict, a Codex balance above
+/// the floor lifting a window wall, else the wall against `max`. The one
+/// rule the judge and the listing's verdict read, so a roster line and a
+/// pick cannot disagree about one reading.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reads {
+    PlanEnded,
+    Grant(&'static str),
+    Credits,
+    Wall(&'static str),
+}
+
+impl Reads {
+    pub(crate) fn of(
+        row: &AccountRow,
+        wall: Option<f64>,
+        max: f64,
+        grant: Option<&Grant>,
+        codex_floor: f64,
+    ) -> Reads {
+        let verdict = wall_verdict(wall, max);
+        if row.plan_ended() {
+            Reads::PlanEnded
+        } else if let Some(grant) = grant {
+            Reads::Grant(grant.verdict)
+        } else if verdict == "walled" && credit_room(row, codex_floor) {
+            Reads::Credits
+        } else {
+            Reads::Wall(verdict)
+        }
+    }
+
+    pub(crate) fn verdict(self) -> &'static str {
+        match self {
+            Reads::PlanEnded => "walled",
+            Reads::Grant(verdict) | Reads::Wall(verdict) => verdict,
+            Reads::Credits => "room",
+        }
+    }
+}
+
 /// `credit_room($credit_floor)`: a Codex account whose credit balance
 /// OpenAI spends once the plan windows are reached, strictly above the
 /// floor, with the three flags as the reader printed them. The credits
@@ -1568,28 +1622,27 @@ fn judge(
     } else {
         max
     };
-    let ordinary = wall_verdict(judged_wall, max);
-    let plan = wall_verdict(judged_wall.map(|w| w + kept), limit);
     let grant = grant(row, settings.cloud_credit_floor as f64, now);
-    let mut credits = false;
-    let verdict = match row.standing(today) {
+    let reads = Reads::of(
+        row,
+        judged_wall,
+        max,
+        grant.as_ref(),
+        settings.codex_credit_floor as f64,
+    );
+    let standing = row.standing(today);
+    let credits = reads == Reads::Credits && standing == Standing::Open;
+    let verdict = match standing {
         Standing::Reserved => "reserved",
         Standing::Retired { .. } => "retired",
         Standing::EndUnread { .. } => "plan-end-invalid",
-        Standing::Open => {
-            if row.plan_ended() {
-                "walled"
-            } else if let Some(grant) = &grant {
-                grant.verdict
-            } else if ordinary == "walled" && credit_room(row, settings.codex_credit_floor as f64) {
-                credits = true;
-                "room"
-            } else if seat && plan == "walled" {
-                "seat-reserve"
-            } else {
-                plan
-            }
-        }
+        Standing::Open => match reads {
+            Reads::Wall(_) if seat => match wall_verdict(judged_wall.map(|w| w + kept), limit) {
+                "walled" => "seat-reserve",
+                plan => plan,
+            },
+            Reads::PlanEnded | Reads::Grant(_) | Reads::Credits | Reads::Wall(_) => reads.verdict(),
+        },
     };
     let verdict = match &facts.cloud_repo {
         Some(admitted) if !admitted.contains(&row.config_dir) => "cloud-repo-unset",
@@ -1627,6 +1680,35 @@ fn judge(
     }
 }
 
+/// The verdict of an account a request's exclusion covers.
+const EXCLUDED: &str = "excluded";
+
+/// Whether `req` leaves the account out by name: `--exclude-lane`'s
+/// directories, and the owner's exclusion, which keeps an account from
+/// every lane, never from its overseer: an overseer's own marks and walk
+/// read its figures.
+fn left_out(row: &AccountRow, req: &PickRequest) -> bool {
+    req.exclude.iter().any(|d| wall::canon(d) == row.canon) || (row.excluded && !req.for_overseer)
+}
+
+/// One named account judged for `req`: the judgement, its verdict
+/// `excluded` where the request leaves the account out by name, whatever
+/// was read of it. The one judgement a named pick answers and a supplied
+/// batch reports per row.
+pub fn judge_one(
+    row: &AccountRow,
+    req: &PickRequest,
+    facts: &FleetFacts,
+    settings: &AccountSettings,
+    now: u64,
+) -> Judged {
+    let mut judged = judge(row, req, facts, settings, &today(now), now);
+    if left_out(row, req) {
+        judged.verdict = EXCLUDED.to_owned();
+    }
+    judged
+}
+
 /// The pick over `rows`: the candidates are the configured rows billed
 /// under the launch's harness and spending its pool, the directories
 /// `--exclude-lane` names and the accounts `AGENT_RUNTIME_ACCOUNT_EXCLUDE` names left
@@ -1661,27 +1743,20 @@ pub fn pick(
     let rows = &resolve(rows, billed, model, req.admit_unread_scope);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
-    // The owner's exclusion keeps an account from every lane, never from
-    // its overseer: an overseer's own marks and walk read its figures.
-    let excluded_dirs: Vec<String> = req.exclude.iter().map(|d| wall::canon(d)).collect();
-    let excluded =
-        |r: &AccountRow| excluded_dirs.contains(&r.canon) || (r.excluded && !req.for_overseer);
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
-        let mut judged = match rows.iter().find(|r| r.canon == canon && candidate(r)) {
-            Some(row) => judge(row, req, facts, settings, &today, now),
-            None if grant_pool => judge(
+        let judged = match rows.iter().find(|r| r.canon == canon && candidate(r)) {
+            Some(row) => judge_one(row, req, facts, settings, now),
+            None if grant_pool => judge_one(
                 &unmeasured_row(lane, pool, settings),
                 req,
                 facts,
                 settings,
-                &today,
                 now,
             ),
             None => return PickAnswer::NoRecord,
         };
-        if excluded(&judged.row) {
-            judged.verdict = "excluded".to_owned();
+        if judged.verdict == EXCLUDED {
             return PickAnswer::Excluded(judged);
         }
         return named_answer(judged, &today);
@@ -1689,7 +1764,7 @@ pub fn pick(
     let candidates = rows.iter().filter(|r| candidate(r)).count();
     let judged: Vec<Judged> = rows
         .iter()
-        .filter(|r| candidate(r) && r.configured && !excluded(r))
+        .filter(|r| candidate(r) && r.configured && !left_out(r, req))
         .map(|r| judge(r, req, facts, settings, &today, now))
         .collect();
     let mut room: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "room").collect();

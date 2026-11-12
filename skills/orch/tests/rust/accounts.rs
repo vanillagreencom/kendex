@@ -748,6 +748,21 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     });
     assert_eq!(named["answer"], json!("reserved"), "{named}");
     assert_eq!(named["record"]["alias"], json!("held"));
+    // Measured and listed: the reserved row's roster line keeps its
+    // figures, its word after them.
+    let roster = world.roster();
+    let held = roster["lines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .find(|l| l.starts_with("account held "))
+        .unwrap_or_else(|| panic!("no line for the reserved row: {roster}"));
+    assert!(
+        held.contains(" status=ok verdict=room headroom_pct=95 ")
+            && held.ends_with(" word=reserve"),
+        "{held}"
+    );
     let log = world.host_log();
     assert!(
         !log.is_empty()
@@ -815,6 +830,92 @@ fn the_earlier_of_the_providers_and_the_settings_stated_ends_is_the_accounts_end
         lines.contains("source=provider") && lines.contains("source=AGENT_RUNTIME_ACCOUNT_RETIRE"),
         "each end named by its source: {roster}"
     );
+}
+
+/// The provider's row of an account of `harness` at `used` percent of the
+/// window that harness states: a Copilot seat's month, every other kind's
+/// week.
+fn provider_kind(alias: &str, harness: &str, used: u64) -> Value {
+    let mut row = through_host(measured(alias, used, 0));
+    row["harness"] = json!(harness);
+    row["session_5h_pct"] = Value::Null;
+    if harness == "copilot" {
+        row["monthly_pct"] = row["weekly_pct"].take();
+        row["resets"]["monthly"] = row["resets"]["weekly"].take();
+        row["headroom_pct"] = Value::Null;
+    }
+    row
+}
+
+/// A provider's `plan-ends` ends an account of every kind it names: a
+/// Codex account and a Copilot seat whose end is today are retired on the
+/// roster with their figures kept, never the chooser's lane though they
+/// have the most room, and refused by their word when named.
+#[test]
+fn a_providers_plan_end_retires_an_account_of_every_kind() {
+    let today = accounts::today(now());
+    for harness in ["codex", "copilot"] {
+        let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+        world.write_fleet(Vec::new(), None);
+        world.plant_capabilities("fleet-vm", SSH_LINE);
+        let mut ending = provider_kind("ending", harness, 5);
+        ending["plan-ends"] = json!(today);
+        world.plant_host_listing("fleet-vm", &[ending, provider_kind("other", harness, 60)]);
+        let roster = world.roster();
+        let row = roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!("ending"))
+            .unwrap_or_else(|| panic!("{harness}: no row: {roster}"));
+        assert_eq!(
+            row["word"],
+            json!(format!("retired:{today}")),
+            "{harness}: {roster}"
+        );
+        assert_eq!(
+            row["record"]["headroom_pct"],
+            json!(95),
+            "{harness}: {roster}"
+        );
+        let req = PickRequest::new(Harness::named(harness).unwrap());
+        let chosen_row = world.pick(&req);
+        assert_eq!(
+            chosen(&chosen_row).as_deref(),
+            Some("/home/me/.other"),
+            "{harness}: {chosen_row}"
+        );
+        let named = world.pick(&PickRequest {
+            lane: Some("/home/me/.ending".to_owned()),
+            ..req
+        });
+        assert_eq!(named["answer"], json!("retired"), "{harness}: {named}");
+    }
+}
+
+/// A provider's Codex row past its week is spent on its credit where the
+/// balance it states is above the floor (5000), the chooser's lane on the
+/// `credits` bucket; at a balance under the floor it is walled.
+#[test]
+fn a_providers_codex_row_past_its_week_is_spent_on_a_credit_above_the_floor() {
+    for (balance, answer) in [(6000, "lane"), (4000, "none")] {
+        let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+        world.write_fleet(Vec::new(), None);
+        world.plant_capabilities("fleet-vm", SSH_LINE);
+        let mut row = provider_kind("spent", "codex", 100);
+        row["credits"] = json!({"has_credits": true, "overage_limit_reached": false,
+            "spend_control_reached": false, "balance": balance});
+        world.plant_host_listing("fleet-vm", &[row]);
+        let reply = world.pick(&PickRequest::new(Harness::Codex));
+        assert_eq!(reply["answer"], json!(answer), "{balance}: {reply}");
+        if answer == "lane" {
+            assert_eq!(
+                reply["record"]["binding_bucket"],
+                json!("credits"),
+                "{reply}"
+            );
+        }
+    }
 }
 
 /// `lanes`' `host_row_or_local`: the listing carries this machine's reading

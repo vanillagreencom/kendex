@@ -25,7 +25,7 @@ use serde_json::{Map, Value, json};
 use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
 use super::renewal;
 use super::usage::{self, CopilotLogin, Credential, FIVE_HOURS_S, Rounding};
-use super::{AccountRow, TAG, WINDOWS, credit_room, grant, wall_verdict};
+use super::{AccountRow, Reads, TAG, WINDOWS, grant};
 use super::{Env, wall};
 use crate::settings::{AccountSettings, CopilotPool};
 
@@ -1283,49 +1283,44 @@ fn same_reset(a: &Value, b: &Value) -> bool {
     }
 }
 
-/// The row's verdict and pool: its binding window judged against
-/// `AGENT_RUNTIME_ACCOUNT_MAX_PCT`, a Codex balance above the floor lifting a window
-/// wall, an ended plan a full wall, and a grant pool judged on the grant
-/// by the expires-first rule, so the listing and the judge cannot disagree
-/// about a grant at the floor.
+/// The row's verdict and pool: its own reading judged against
+/// `AGENT_RUNTIME_ACCOUNT_MAX_PCT` by the judge's rule ([`Reads`]), its
+/// figures restated where a grant or a Codex balance is what it spends.
 pub fn finish(ctx: &Ctx, row: &mut Value, pool: &str) {
     row["pool"] = json!(pool);
     row["verdict"] = json!("unmeasured");
     let Some(parsed) = AccountRow::parse(row, ctx.accounts) else {
         return;
     };
-    let max = f64::from(ctx.accounts.max_pct);
-    let wall = row["wall"].as_f64();
-    if parsed.plan_ended() {
-        row["verdict"] = json!("walled");
-        return;
-    }
-    if pool == "cloud-credit" || pool == "api-credit" {
-        let Some(grant) = grant(&parsed, ctx.accounts.cloud_credit_floor as f64, ctx.now) else {
-            return;
-        };
-        if let Some(share) = grant.share {
-            row["headroom_pct"] = json!(share);
-            integral(&mut row["headroom_pct"]);
+    let grant = grant(&parsed, ctx.accounts.cloud_credit_floor as f64, ctx.now);
+    let reads = Reads::of(
+        &parsed,
+        row["wall"].as_f64(),
+        f64::from(ctx.accounts.max_pct),
+        grant.as_ref(),
+        ctx.accounts.codex_credit_floor as f64,
+    );
+    row["verdict"] = json!(reads.verdict());
+    match (reads, grant) {
+        (Reads::Grant(verdict), Some(grant)) => {
+            if let Some(share) = grant.share {
+                row["headroom_pct"] = json!(share);
+                integral(&mut row["headroom_pct"]);
+                row["binding_bucket"] = json!("credits");
+                row["binding_resets_at"] = Value::Null;
+            }
+            if verdict != "room" {
+                row["refusal"] = json!({"cause": pool, "retry_at": Value::Null});
+            }
+        }
+        (Reads::Credits, _) => {
             row["binding_bucket"] = json!("credits");
-            row["binding_resets_at"] = Value::Null;
+            row["usage_rate_state"] = json!("credits");
+            row["usage_rate_pct_per_min"] = Value::Null;
+            row["projected_wall_minutes"] = Value::Null;
         }
-        row["verdict"] = json!(grant.verdict);
-        if grant.verdict != "room" {
-            row["refusal"] = json!({"cause": pool, "retry_at": Value::Null});
-        }
-        return;
+        (Reads::PlanEnded | Reads::Grant(_) | Reads::Wall(_), _) => {}
     }
-    let verdict = wall_verdict(wall, max);
-    if verdict == "walled" && credit_room(&parsed, ctx.accounts.codex_credit_floor as f64) {
-        row["verdict"] = json!("room");
-        row["binding_bucket"] = json!("credits");
-        row["usage_rate_state"] = json!("credits");
-        row["usage_rate_pct_per_min"] = Value::Null;
-        row["projected_wall_minutes"] = Value::Null;
-        return;
-    }
-    row["verdict"] = json!(verdict);
 }
 
 #[cfg(test)]

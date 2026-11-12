@@ -120,13 +120,13 @@ fn seat(path: &Path) -> Result<Option<String>> {
 
 /// What a reading here judges beside the rows: the seat of the record the
 /// caller named (else of the fleet orch read) and the charges counted.
-struct Beside {
+pub(super) struct Beside {
     seat: Option<String>,
     counted: Counted,
 }
 
 impl Beside {
-    fn read(project: &Path, record: Option<&Path>) -> Result<Beside> {
+    pub(super) fn read(project: &Path, record: Option<&Path>) -> Result<Beside> {
         let counted = count(project, record)?;
         let seat = match record.or(counted.fleet.as_deref()) {
             Some(path) => seat(path)?,
@@ -135,7 +135,7 @@ impl Beside {
         Ok(Beside { seat, counted })
     }
 
-    fn facts(&self, rows: &[AccountRow]) -> FleetFacts {
+    pub(super) fn facts(&self, rows: &[AccountRow]) -> FleetFacts {
         let mut seats: Vec<String> = rows
             .iter()
             .filter(|r| r.seat)

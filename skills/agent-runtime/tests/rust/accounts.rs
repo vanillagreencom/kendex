@@ -265,6 +265,34 @@ impl World {
         command.args(["accounts", "roster"]);
         World::reply(command)
     }
+
+    /// `accounts judge --record` over the batch `lines` with `flags`, read
+    /// from a file in the world, or from stdin where `stdin` is set: the
+    /// reply's `result`.
+    fn judge(&self, lines: &str, flags: &[&str], stdin: bool) -> Value {
+        let mut command = self.command();
+        command.args(["accounts", "judge", "--record"]);
+        command.arg(self.fleet_path()).args(flags);
+        if !stdin {
+            let file = self.path().join("batch.txt");
+            std::fs::write(&file, lines).unwrap();
+            command.arg("--rows").arg(file);
+            return World::reply(command);
+        }
+        command
+            .args(["--rows", "-"])
+            .stdin(std::process::Stdio::piped());
+        command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = command.spawn().unwrap();
+        std::io::Write::write_all(&mut child.stdin.take().unwrap(), lines.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["ok"], json!(true), "{reply}");
+        reply["result"].clone()
+    }
 }
 
 /// The instant every row plants its stamps against, read once per process:
@@ -1822,6 +1850,10 @@ fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refus
         "the excluded account is measured: {lines:?}"
     );
     assert!(
+        lines[0].as_str().unwrap().ends_with(" word=reserve"),
+        "an account kept from workers reads as a reserved one: {lines:?}"
+    );
+    assert!(
         lines[1]
             .as_str()
             .unwrap()
@@ -1845,6 +1877,7 @@ fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refus
     assert_eq!(excluded["answer"], json!("excluded"), "{excluded}");
     assert_eq!(excluded["exit"], json!(3));
     assert_eq!(excluded["record"]["excluded"], json!(true));
+    assert_eq!(excluded["record"]["word"], json!("reserve"));
     // An overseer on the excluded home reads its figures: its own pick, the
     // one its marks ask, judges the account and refuses nothing by the
     // owner's lane exclusion.
@@ -1860,6 +1893,126 @@ fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refus
     assert_eq!(retired["answer"], json!("retired"), "{retired}");
     assert_eq!(retired["record"]["retired"], json!(true));
     assert_eq!(retired["record"]["retire_date"], json!(today));
+}
+
+/// One Codex row's credit facts as the provider line states them.
+fn codex_credit(balance: u64) -> String {
+    format!(
+        "credit-remaining={balance}\tcredit-available=1\tcredit-overage-limit-reached=0\tcredit-spend-control-reached=0"
+    )
+}
+
+/// A batch someone else measured is judged by the one judge, one entry per
+/// line in order, its line number the text's: a Codex week spent is room on
+/// a credit above the floor (5000) and walled below it; a provider's
+/// reserve and a non-Claude plan end refuse by their words with the figures
+/// kept; a line nobody can read is its own `unreadable` entry and the lines
+/// beside it are judged; the owner's exclusion refuses for a lane and not
+/// for the controller's own question.
+#[test]
+fn a_supplied_batch_is_judged_line_by_line_by_the_one_judge() {
+    let today = accounts::today(now());
+    let world = World::new(&[("AGENT_RUNTIME_ACCOUNT_EXCLUDE", "xclaude")]);
+    world.write_fleet(Vec::new(), None);
+    let week = stamp(now() + 60 * 3600);
+    let lines = [
+        format!(
+            "account=/home/me/.credit\tharness=codex\tweekly-pct=100\tweekly-resets={week}\t{}",
+            codex_credit(6000)
+        ),
+        format!(
+            "account=/home/me/.floor\tharness=codex\tweekly-pct=100\tweekly-resets={week}\t{}",
+            codex_credit(4000)
+        ),
+        String::new(),
+        "account=/home/me/.held\tharness=claude\tweekly-pct=10\treserved=1".to_owned(),
+        format!("account=/home/me/.ending\tharness=codex\tweekly-pct=10\tplan-ends={today}"),
+        "account=/home/me/.broken\tharness=claude\tweekly-pct=abc".to_owned(),
+        "account=/home/me/.xclaude\tharness=claude\tweekly-pct=20".to_owned(),
+    ]
+    .join("\n");
+    let reply = world.judge(&lines, &[], false);
+    let rows = reply["rows"].as_array().unwrap();
+    let ended = format!("retired:{today}");
+    // line, account, verdict, word, binding bucket, headroom
+    let table: [(u64, &str, &str, &str, &str, Value); 6] = [
+        (1, "/home/me/.credit", "room", "pick", "credits", json!(0)),
+        (2, "/home/me/.floor", "walled", "pick", "weekly", json!(0)),
+        (
+            4,
+            "/home/me/.held",
+            "reserved",
+            "reserve",
+            "weekly",
+            json!(90),
+        ),
+        (
+            5,
+            "/home/me/.ending",
+            "retired",
+            &ended,
+            "weekly",
+            json!(90),
+        ),
+        (6, "/home/me/.broken", "unreadable", "", "", Value::Null),
+        (
+            7,
+            "/home/me/.xclaude",
+            "excluded",
+            "reserve",
+            "weekly",
+            json!(80),
+        ),
+    ];
+    assert_eq!(rows.len(), table.len(), "{reply}");
+    for (entry, (line, account, verdict, word, bucket, headroom)) in rows.iter().zip(table) {
+        assert_eq!(entry["line"], json!(line), "{entry}");
+        assert_eq!(entry["account"], json!(account), "{entry}");
+        assert_eq!(entry["verdict"], json!(verdict), "{entry}");
+        if verdict == "unreadable" {
+            assert_eq!(entry["field"], json!("weekly-pct"), "{entry}");
+            continue;
+        }
+        assert_eq!(entry["word"], json!(word), "{entry}");
+        assert_eq!(entry["record"]["verdict"], json!(verdict), "{entry}");
+        assert_eq!(entry["record"]["binding_bucket"], json!(bucket), "{entry}");
+        assert_eq!(entry["record"]["headroom_pct"], headroom, "{entry}");
+        assert_eq!(
+            entry["record"]["measured_through"],
+            json!("supplied"),
+            "{entry}"
+        );
+    }
+    let own = world.judge(&lines, &["--for-controller"], false);
+    assert_eq!(own["rows"][5]["verdict"], json!("room"), "{own}");
+}
+
+/// The listing's verdict of a reading this machine took and the judge's
+/// verdict of the same figures supplied are one: a Codex week spent with a
+/// credit above the floor is room on the credit in both, below it walled
+/// in both.
+#[test]
+fn a_reading_this_machine_took_and_the_same_figures_supplied_read_one_verdict() {
+    for (balance, verdict, bucket) in [(6000, "room", "credits"), (4000, "walled", "weekly")] {
+        let mut world = World::new(&[]);
+        world.write_fleet(Vec::new(), None);
+        let mut row = measured("lcodex", 100, 0);
+        row["harness"] = json!("codex");
+        row["credits"] = json!({"has_credits": true, "unlimited": false,
+            "overage_limit_reached": false, "spend_control_reached": false, "balance": balance});
+        world.plant_listing(std::slice::from_ref(&row));
+        let local = &world.roster()["rows"][0]["record"];
+        let supplied = world.judge(&provider_line(&row, &world.dir("lcodex")), &[], true);
+        let supplied = &supplied["rows"][0]["record"];
+        for record in [local, supplied] {
+            assert_eq!(record["verdict"], json!(verdict), "{balance}: {record}");
+            assert_eq!(
+                record["binding_bucket"],
+                json!(bucket),
+                "{balance}: {record}"
+            );
+        }
+    }
 }
 
 // --- token renewal -------------------------------------------------------------------------------

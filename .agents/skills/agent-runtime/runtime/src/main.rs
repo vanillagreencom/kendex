@@ -297,6 +297,27 @@ enum AccountsOp {
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
+    /// A batch someone else measured, in the provider `accounts` line form,
+    /// each line judged as `pick --account` judges an account now; one
+    /// reply entry per line, in order.
+    Judge {
+        /// The batch's file; `-` reads it from stdin.
+        #[arg(long)]
+        rows: PathBuf,
+        /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
+        max_pct: Option<u32>,
+        /// The headroom the caller's own judgement triggers at.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        min_headroom_pct: Option<u32>,
+        /// Judge seats as ordinary accounts: the controller's own question.
+        #[arg(long)]
+        for_controller: bool,
+        /// The fleet record whose controller member is a seat and whose
+        /// lanes are charged; orch's own fleet where unset.
+        #[arg(long)]
+        record: Option<PathBuf>,
+    },
 }
 
 /// The settings a reading takes: the account keys, the records' root, the
@@ -502,6 +523,24 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                     .reply(),
             )
         }
+        AccountsOp::Judge {
+            rows,
+            max_pct,
+            min_headroom_pct,
+            for_controller,
+            record,
+        } => accounts::batch::judge(
+            &env,
+            &loaded.project,
+            record.as_deref(),
+            &rows,
+            accounts::batch::Question {
+                max_pct,
+                min_headroom_pct,
+                for_controller,
+            },
+            now,
+        ),
     }
 }
 

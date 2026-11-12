@@ -14,16 +14,16 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::Duration;
 
-use agent_runtime::accounts::cache;
-use agent_runtime::accounts::listing::{Ctx, Emit, Provider, Reading, Usage, alias, emit, finish};
+use agent_runtime::accounts::listing::{Ctx, Provider};
 use agent_runtime::accounts::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
 use agent_runtime::accounts::{
     self, AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, Roster, TAG, names, wall,
 };
+use agent_runtime::accounts::{batch, cache};
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::occupancy::{self, ChargeSource, Host};
 use crate::settings::{ProviderSettings, Settings};
@@ -175,11 +175,7 @@ fn provider_rows(
         if !fresh {
             return None;
         }
-        let reset = rows
-            .lines()
-            .filter_map(|line| provider_line(line).ok())
-            .find_map(|line| cache::consumed_reset(&line.buckets, ctx.now));
-        if let Some(reset) = reset {
+        if let Some(reset) = batch::consumed_reset(&rows, ctx.now) {
             ctx.notes.push(format!(
                 "usage-cache-reset account={host} resets-at={reset}"
             ));
@@ -273,237 +269,12 @@ fn provider_rows(
             ctx.notes.push(format!("host-accounts-absent host={host}"));
             (Vec::new(), None)
         }
-        Ok((_, rows)) => (host_rows(ctx, &rows, host_pool), None),
+        Ok((_, rows)) => (batch::host_rows(ctx, &rows, host_pool), None),
         Err(cause) => {
             ctx.notes.push(cause.clone());
             (Vec::new(), Some(cause))
         }
     }
-}
-
-/// A non-negative decimal with at most two places, the protocol's dollar
-/// field.
-fn dollars(text: &str) -> Option<f64> {
-    let (whole, fraction) = match text.split_once('.') {
-        Some((w, f)) => (w, Some(f)),
-        None => (text, None),
-    };
-    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
-    if !digits(whole) || fraction.is_some_and(|f| !digits(f) || f.len() > 2) {
-        return None;
-    }
-    text.parse().ok()
-}
-
-/// One provider `accounts` line read: its fields, and its windows in the
-/// bucket shape every reading takes.
-struct ProviderLine {
-    fields: Map<String, Value>,
-    account: String,
-    harness: Harness,
-    buckets: Value,
-    credit_fields: bool,
-}
-
-struct Unreadable {
-    account: String,
-    field: &'static str,
-}
-
-/// One provider line: `account` and `harness` required, the percentages
-/// whole numbers 0 to 100, the four credit fields together on a
-/// `harness=pi` row with no `monthly-pct`.
-fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
-    let mut fields: Map<String, Value> = Map::new();
-    for field in line.split('\t').filter(|f| !f.is_empty()) {
-        let (key, value) = field.split_once('=').unwrap_or((field, ""));
-        fields.insert(key.to_owned(), Value::from(value));
-    }
-    let get = |key: &str| {
-        fields
-            .get(key)
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned()
-    };
-    let account = get("account");
-    let harness = Harness::parse(&get("harness"));
-    let mut bad: Option<&'static str> = None;
-    let mut pcts: [(&'static str, Option<u64>); 3] = [
-        ("weekly-pct", None),
-        ("model-pct", None),
-        ("monthly-pct", None),
-    ];
-    for (key, value) in &mut pcts {
-        let text = get(key);
-        if text.is_empty() {
-            continue;
-        }
-        match text.parse::<u64>() {
-            Ok(n) if text.len() <= 3 && n <= 100 => *value = Some(n),
-            Ok(_) | Err(_) => bad = bad.or(Some(key)),
-        }
-    }
-    if account.is_empty() {
-        bad = bad.or(Some("account"));
-    }
-    if harness.is_none() {
-        bad = bad.or(Some("harness"));
-    }
-    let credit_fields = [
-        "credit-limit",
-        "credit-spent",
-        "credit-remaining",
-        "credit-expires",
-    ]
-    .iter()
-    .any(|k| fields.contains_key(*k));
-    let limit = dollars(&get("credit-limit"));
-    let remaining = dollars(&get("credit-remaining"));
-    if credit_fields {
-        if harness != Some(Harness::Pi)
-            || fields.contains_key("monthly-pct")
-            || limit.is_none_or(|l| l <= 0.0)
-            || remaining.is_none()
-            || clock::epoch_secs(&get("credit-expires")).is_none()
-        {
-            bad = bad.or(Some("credit-fields"));
-        }
-        if dollars(&get("credit-spent")).is_none() {
-            bad = bad.or(Some("credit-spent"));
-        }
-    }
-    let (None, Some(harness)) = (bad, harness) else {
-        return Err(Unreadable {
-            account,
-            field: bad.unwrap_or("harness"),
-        });
-    };
-    let nz = |key: &str| {
-        let v = get(key);
-        if v.is_empty() {
-            Value::Null
-        } else {
-            Value::from(v)
-        }
-    };
-    let [weekly, model, monthly] = pcts.map(|(_, v)| v);
-    let credits = credit_fields.then(|| {
-        json!({
-            "unit": "usd",
-            "limit_dollars": limit,
-            "used_dollars": dollars(&get("credit-spent")),
-            "remaining_dollars": remaining,
-            "resets_at": get("credit-expires"),
-            "locked_reason": Value::Null,
-        })
-    });
-    let buckets = json!({
-        "weekly_pct": weekly,
-        "model_pct": model,
-        "monthly_pct": monthly,
-        "credits": credits.unwrap_or(Value::Null),
-        "model_label": nz("model-label"),
-        "model_buckets": match model {
-            None => json!([]),
-            Some(pct) => json!([{"label": nz("model-label"), "pct": pct, "resets_at": nz("model-resets")}]),
-        },
-        "resets": {"weekly": nz("weekly-resets"), "model": nz("model-resets"),
-                   "monthly": nz("monthly-resets")},
-    });
-    Ok(ProviderLine {
-        fields,
-        account,
-        harness,
-        buckets,
-        credit_fields,
-    })
-}
-
-/// The provider's rows as records: a row a field of which cannot be read
-/// is left out with a note rather than listed on a guess, since a
-/// percentage nobody can parse must not be judged as room. The provider's
-/// words `plan-ends`, `reserved` and `seat` are carried as written where
-/// non-empty; this listing judges none of them.
-fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
-    let mut out = Vec::new();
-    for line in rows.lines().filter(|l| !l.is_empty()) {
-        let ProviderLine {
-            fields,
-            account,
-            harness,
-            buckets,
-            credit_fields,
-        } = match provider_line(line) {
-            Ok(parsed) => parsed,
-            Err(Unreadable { account, field }) => {
-                let named = if account.is_empty() {
-                    "<unnamed>"
-                } else {
-                    account.as_str()
-                };
-                ctx.notes.push(format!(
-                    "host-account-invalid account={named} field={field}"
-                ));
-                continue;
-            }
-        };
-        let get = |key: &str| {
-            fields
-                .get(key)
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let status = match get("status") {
-            s if s.is_empty() => "ok".to_owned(),
-            s => s,
-        };
-        let mut words = Map::new();
-        for (key, name) in [
-            ("plan-ends", "plan_ends"),
-            ("reserved", "reserved"),
-            ("seat", "seat"),
-        ] {
-            let value = get(key);
-            if !value.is_empty() {
-                words.insert(name.to_owned(), Value::from(value));
-            }
-        }
-        let grant = credit_fields || get("detail").starts_with("api-credit-");
-        let pool = match harness {
-            Harness::Pi if grant => "api-credit",
-            Harness::Pi | Harness::Copilot => "copilot",
-            Harness::Claude if host_pool == "cloud-credit" => "cloud-credit",
-            Harness::Claude | Harness::Codex => "plan",
-        };
-        let alias = alias(ctx.accounts, &account);
-        let mut row = emit(
-            ctx,
-            &Emit {
-                alias: &alias,
-                harness,
-                dir: &account,
-                through: "host",
-                reading: Reading {
-                    status,
-                    detail: get("detail"),
-                    plan: String::new(),
-                    usage: Some(Usage::Provider(buckets)),
-                    age: None,
-                    prior: None,
-                    // The provider's protocol states no time a figure was
-                    // read, so no fall of it can follow a wall's sighting;
-                    // a record of this spelling here is this machine's.
-                    fall: None,
-                },
-                words: Some(words),
-            },
-        );
-        finish(ctx, &mut row, pool);
-        out.push(row);
-    }
-    out
 }
 
 struct Hosts<'a> {
@@ -829,67 +600,4 @@ pub fn pick_fleet(
         };
     }
     accounts::pick(&rows, req, &facts, &accounts, now)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_providers_row_is_read_field_by_field_and_dropped_on_one_nobody_can_parse() {
-        let dir = tempfile::tempdir().unwrap();
-        let settings = crate::settings::load(
-            &agent_runtime::settings::Roots {
-                project: dir.path().to_path_buf(),
-                common: dir.path().to_path_buf(),
-            },
-            &[],
-            &crate::settings::Flags {
-                state_dir: Some(dir.path().to_path_buf()),
-                private_env: false,
-            },
-        )
-        .unwrap();
-        let env = Env {
-            account_state: &agent_runtime::settings::Judged::of(
-                "state",
-                Ok(dir.path().to_path_buf()),
-            ),
-            ..env(&settings)
-        };
-        let accounts = settings.accounts.get().unwrap();
-        let mut ctx = Ctx::new(&env, &accounts, 1_800_000_000).unwrap();
-        ctx.serve_max_age = 300;
-        let rows = host_rows(
-            &mut ctx,
-            "account=/h/.a\tharness=claude\tstatus=refused\tdetail=http-403-permission_error\n\
-             account=/h/.b\tharness=claude\tsession-5h-pct=4\tweekly-pct=9\tplan-ends=2027-01-31\treserved=1\tseat=1\n\
-             account=/h/.c\tharness=claude\tweekly-pct=abc\n\
-             harness=claude\tweekly-pct=8\n\
-             account=/h/.d\tharness=claude\n\
-             account=/h/.p\tharness=pi\tcredit-limit=200.00\tcredit-spent=50.00\tcredit-remaining=150\tcredit-expires=2027-02-01T00:00:00Z\n",
-            "plan",
-        );
-        assert_eq!(rows.len(), 4, "{rows:?}");
-        assert_eq!(rows[0]["status"], json!("refused"));
-        assert_eq!(rows[0]["detail"], json!("http-403-permission_error"));
-        assert_eq!(rows[0].get("plan_ends"), None);
-        assert_eq!(rows[1]["status"], json!("ok"));
-        assert_eq!(rows[1]["detail"], Value::Null);
-        assert_eq!(rows[1]["headroom_pct"], json!(91));
-        assert_eq!(rows[1]["plan_ends"], json!("2027-01-31"));
-        assert_eq!(rows[1]["seat"], json!("1"));
-        assert_eq!(rows[1]["verdict"], json!("room"));
-        assert_eq!(rows[2]["status"], json!("no_usage_data"));
-        assert_eq!(rows[3]["pool"], json!("api-credit"));
-        assert_eq!(rows[3]["verdict"], json!("room"));
-        assert_eq!(rows[3]["headroom_pct"], json!(75));
-        assert_eq!(
-            ctx.notes,
-            vec![
-                "host-account-invalid account=/h/.c field=weekly-pct",
-                "host-account-invalid account=<unnamed> field=account"
-            ]
-        );
-    }
 }
