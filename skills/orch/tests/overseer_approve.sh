@@ -94,7 +94,7 @@ esac
 # Reader API calls use separate evidence so the existing approval-call
 # assertions keep their scope. The reader itself judges the Copilot body.
 case "$*" in
-  'api user --jq .login')
+  'api user --include --jq .login')
     if [[ "$credential" == fixture_lane ]]; then echo 'lane-app[bot]'; else echo 'overseer-app[bot]'; fi
     exit 0 ;;
   'api graphql '*)

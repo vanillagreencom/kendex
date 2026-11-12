@@ -33,7 +33,7 @@ case "$*" in
     fi
     exit 0
     ;;
-  'api user --jq .login')
+  'api user --include --jq .login')
     if [[ "${GH_TOKEN:-}${GITHUB_TOKEN:-}" == stale || "${MODE:-}" == auth-dead ]]; then
       echo 'auth failed' >&2; exit 1
     fi

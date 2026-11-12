@@ -13,13 +13,18 @@ json_error() {
     local message="$2"
     local detail="${3:-}"
     local exit_code="${4:-1}"
+    local auth_source="${5:-}"
+    local auth_failure="${6:-}"
 
     jq -nc \
         --arg status "$status" \
         --arg error "$message" \
         --arg detail "$detail" \
         --argjson exit_code "$exit_code" \
-        '{status: $status, error: $error, detail: $detail, exit_code: $exit_code, number: null}'
+        --arg auth_source "$auth_source" \
+        --arg auth_failure "$auth_failure" \
+        '{status: $status, error: $error, detail: $detail, exit_code: $exit_code, number: null}
+        + (if $auth_source == "" then {} else {auth_source: $auth_source, auth_failure: $auth_failure} end)'
 }
 
 emit_error_result() {
@@ -32,7 +37,7 @@ emit_error_result() {
     if [ -n "$detail" ]; then
         printf '%s\n' "$detail" >&2
     fi
-    json_error "$status" "$message" "$detail" "$exit_code"
+    json_error "$@"
 }
 
 classify_gh_error() {
@@ -79,7 +84,13 @@ Errors:
   unsupported_flag, or gh_error. bad_timeout exits 2 and names the
   KENDEX_GITHUB_*_TIMEOUT setting whose value is not a number of seconds to
   one decimal place; nothing ran. Raw gh/op detail is preserved in stderr and
-  the JSON detail field.
+  the JSON detail field. An auth_error or auth_timeout from the auth preflight
+  also carries auth_source, the credential tried, and auth_failure, its
+  category (rejected_credential, permission_refusal, server_failure, timeout
+  or unknown). auth_source is the token the router selected (GH_TOKEN,
+  GITHUB_TOKEN or GH_BOT_TOKEN), else the variable gh read (GH_TOKEN, then
+  GITHUB_TOKEN), else keyring; it is unknown when the preflight left no
+  record.
 
 Examples:
   github.sh pr-view              # View PR for current branch
@@ -155,9 +166,11 @@ main() {
     kendex_github_auth_status_capture "$auth_timeout" "$auth_out" "$auth_err" || auth_status=$?
     if [ "$auth_status" -ne 0 ]; then
         local auth_detail
+        local auth_source="${KENDEX_GITHUB_AUTH_SOURCE:-unknown}"
+        local auth_failure="${KENDEX_GITHUB_AUTH_FAILURE:-unknown}"
         auth_detail="$(cat "$auth_out" "$auth_err" 2>/dev/null | head -c 1000)"
         if [ "$auth_status" -eq 124 ]; then
-            emit_error_result "auth_timeout" "GitHub auth preflight timed out after ${auth_timeout}s" "$auth_detail" 124
+            emit_error_result "auth_timeout" "GitHub auth preflight timed out after ${auth_timeout}s" "$auth_detail" 124 "$auth_source" "$auth_failure"
             exit 124
         fi
         if [ -n "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}" ]; then
@@ -165,7 +178,7 @@ main() {
             emit_error_result "$KENDEX_GITHUB_TOKEN_ERROR_TYPE" "${KENDEX_GITHUB_TOKEN_ERROR:-GitHub token resolution failed}" "$token_detail" 3
             exit 3
         fi
-        emit_error_result "auth_error" "GitHub auth preflight failed" "$auth_detail" 3
+        emit_error_result "auth_error" "GitHub auth preflight failed" "$auth_detail" 3 "$auth_source" "$auth_failure"
         exit 3
     fi
 

@@ -336,8 +336,8 @@ requests() {
   local out="" line kind
   while IFS= read -r line; do
     case "$line" in
-      "api user --jq .login") kind=user ;;
-      "api installation/repositories --jq .total_count") kind=installation ;;
+      "api user --include --jq .login") kind=user ;;
+      "api installation/repositories --include --jq .total_count") kind=installation ;;
       "auth status") kind=keyring ;;
       "pr view "*) kind=pr-view ;;
       *) kind="other:$line" ;;

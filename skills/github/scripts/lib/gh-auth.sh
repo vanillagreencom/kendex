@@ -43,19 +43,93 @@ kendex_github_has_env_token() {
 # check of that same value, in this shell or in the command script the
 # github.sh router execs, asks gh nothing. Any other value, a refused one
 # included, is asked again.
+#
+# A failed check leaves its record (_kendex_github_record_auth_failure). The
+# source is the router's exported selection, since once the router copies a
+# selection into GH_TOKEN that name no longer says where the value came from.
+# With no selection, it is the variable the check read: GH_TOKEN, which gh
+# prefers, else GITHUB_TOKEN.
 _kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
   local auth_timeout="$1" stdout_file="$2" stderr_file="$3" status=0 detail=""
-  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+  local token="${GH_TOKEN:-${GITHUB_TOKEN:-}}" source=GITHUB_TOKEN
+  [[ -z "${GH_TOKEN:-}" ]] || source=GH_TOKEN
   if [[ -n "$token" && "$token" == "${KENDEX_GITHUB_VALIDATED_TOKEN:-}" ]]; then
     return 0
   fi
-  kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api user --jq '.login' || status=$?
+  _kendex_github_api_probe "$auth_timeout" "$stdout_file" "$stderr_file" user '.login' || status=$?
+  if [[ "$status" -ne 0 ]] && detail="$(<"$stderr_file")" && _kendex_github_is_integration_refusal "$detail"; then
+    status=0
+    _kendex_github_api_probe "$auth_timeout" "$stdout_file" "$stderr_file" installation/repositories '.total_count' || status=$?
+  fi
   if [[ "$status" -ne 0 ]]; then
-    detail="$(<"$stderr_file")" || return "$status"
-    _kendex_github_is_integration_refusal "$detail" || return "$status"
-    kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count' || return
+    _kendex_github_record_auth_failure "${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-$source}" "$status" "$_KENDEX_GITHUB_API_FAILURE"
+    return "$status"
   fi
   export KENDEX_GITHUB_VALIDATED_TOKEN="$token"
+}
+
+# The record of the last failed credential check in this shell, for the
+# person who repairs the credential: KENDEX_GITHUB_AUTH_SOURCE is the source
+# tried (GH_TOKEN, GITHUB_TOKEN, GH_BOT_TOKEN or keyring) and
+# KENDEX_GITHUB_AUTH_FAILURE its category (rejected_credential,
+# permission_refusal, server_failure, timeout or unknown). Neither holds the
+# token or gh's output. 124 is the bounded runner's kill at the deadline;
+# any other failure takes CATEGORY. pr-view reports both.
+_kendex_github_record_auth_failure() { # SOURCE STATUS CATEGORY
+  local failure="$3"
+  [[ "$2" -ne 124 ]] || failure=timeout
+  KENDEX_GITHUB_AUTH_SOURCE="$1"
+  KENDEX_GITHUB_AUTH_FAILURE="$failure"
+}
+
+# Run `gh api ENDPOINT --jq QUERY` under the bound with --include, which gh's
+# manual documents as printing the response's status line and headers ahead
+# of the body; the stderr gh prints for a failed call is not documented.
+# STDOUT_FILE takes the body alone, the bytes gh prints without --include
+# (measured on gh 2.102.0), so a caller's detail is unchanged.
+#
+# _KENDEX_GITHUB_API_FAILURE takes the category of the status: 401
+# rejected_credential, 403 permission_refusal, 5xx server_failure, anything
+# else, no status line included, unknown. A rate-limited 403 is unknown: the
+# credential is valid and only throttled. GitHub's rate-limit documentation
+# marks the primary limit by `x-ratelimit-remaining: 0`, and a secondary limit
+# by a `retry-after` header when present, else by an error message naming it.
+_kendex_github_api_probe() { # SECONDS STDOUT_FILE STDERR_FILE ENDPOINT QUERY
+  local raw status=0 line head_bytes=0 code="" limited=0
+  _KENDEX_GITHUB_API_FAILURE=unknown
+  raw="$(mktemp)" || return 1
+  kendex_github_run_bounded_capture "$1" "$raw" "$3" gh api "$4" --include --jq "$5" || status=$?
+  # ${#line} counts bytes for the body's offset only in the C locale; set
+  # after gh runs, so gh keeps the caller's locale.
+  local LC_ALL=C
+  {
+    if IFS= read -r line && [[ "$line" =~ ^HTTP/[0-9.]+\ ([0-9][0-9][0-9]) ]]; then
+      code="${BASH_REMATCH[1]}"
+      head_bytes=$((${#line} + 1))
+      while IFS= read -r line; do
+        head_bytes=$((head_bytes + ${#line} + 1))
+        line="${line%$'\r'}"
+        [[ -n "$line" ]] || break
+        case "$line" in
+          [Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]:*) limited=1 ;;
+          [Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Mm][Aa][Ii][Nn][Ii][Nn][Gg]:\ 0) limited=1 ;;
+        esac
+      done
+    fi
+  } <"$raw"
+  if ! tail -c "+$((head_bytes + 1))" "$raw" >"$2"; then
+    [[ "$status" -ne 0 ]] || status=1
+  fi
+  if [[ "$code" == 403 && "$limited" -eq 0 ]] && grep -qi 'secondary rate limit' "$raw"; then
+    limited=1
+  fi
+  rm -f -- "$raw"
+  case "$code" in
+    401) _KENDEX_GITHUB_API_FAILURE=rejected_credential ;;
+    403) [[ "$limited" -eq 1 ]] || _KENDEX_GITHUB_API_FAILURE=permission_refusal ;;
+    5[0-9][0-9]) _KENDEX_GITHUB_API_FAILURE=server_failure ;;
+  esac
+  return "$status"
 }
 
 # gh's answer to an installation token on an endpoint only a user reaches.
@@ -117,7 +191,14 @@ kendex_github_auth_status_capture() {
     return $?
   fi
 
-  kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh auth status
+  # gh auth status documents its exit status, and its `--json hosts` output a
+  # state and a message per account, but no HTTP status. So a keyring record
+  # names a timeout and leaves every other cause unknown.
+  kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh auth status || {
+    local status=$?
+    _kendex_github_record_auth_failure keyring "$status" unknown
+    return "$status"
+  }
 }
 
 kendex_github_keyring_auth_status() {
