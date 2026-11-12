@@ -27,7 +27,7 @@ use crate::error::{Error, Result};
 use crate::marker;
 use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::settings::{LaneOutput, Settings};
-use crate::state::{self, Lane, LaneMembers};
+use crate::state::{self, Lane, LaneMembers, SANDBOX, STANDING};
 use crate::watch::hosted::{self, Launch, PaneKind};
 use agent_runtime::effects::prepare::{
     Kept, Spec, Unready, accountless_kept, build_launch, check_directory, check_program, gate,
@@ -611,7 +611,13 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
         Surface::Local(fleet) => local_launch(run, operation, r, fleet, &route)?,
         Surface::Hosted(provider) => {
             let parked = relaunch && parked_last(&lane);
-            hosted_launch(run, operation, r, provider, relaunch, parked)?
+            let mut stands = false;
+            let mut outcome =
+                hosted_launch(run, operation, r, provider, relaunch, parked, &mut stands)?;
+            if stands {
+                outcome.annotate(SANDBOX, json!(STANDING));
+            }
+            outcome
         }
         Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
     };
@@ -811,6 +817,8 @@ fn parked_last(lane: &Lane) -> bool {
         == Some("parked")
 }
 
+/// `stands` is set once the provider answered a start or a create: the
+/// sandbox stands from then, whatever later step fails.
 fn hosted_launch(
     run: &Run,
     mut operation: Operation,
@@ -818,6 +826,7 @@ fn hosted_launch(
     provider: &str,
     relaunch: bool,
     parked: bool,
+    stands: &mut bool,
 ) -> Result<EffectOutcome> {
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
@@ -877,12 +886,23 @@ fn hosted_launch(
     // A parked lane's sandbox is stopped with its disk kept: the provider's
     // start brings it back before `create --relaunch` resumes the harness on
     // that disk. A provider answers `sandbox-started` for a sandbox already
-    // up, so a relaunch after a start that failed asks it again.
-    if parked
-        && let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
-            hosted::start(&scripts, provider, &r.item)
-    {
-        return failed(operation, &format!("host-start-failed {cause}"));
+    // up, so a relaunch after a start that failed asks it again. Each ask is
+    // recorded before it is made, so a launch cut after it leaves a step
+    // its reconcile holds.
+    if parked {
+        operation.record_phase(Phase::Preparing {
+            step: HOST_START.to_owned(),
+            at: provider.to_owned(),
+        })?;
+        match hosted::start(&scripts, provider, &r.item) {
+            Ok(()) => *stands = true,
+            Err(hosted::Asked::Failed(cause)) => {
+                return failed(operation, &format!("host-start-failed {cause}"));
+            }
+            Err(hosted::Asked::Unknown(cause)) => {
+                return Ok(preparing_held(operation, HOST_START, provider, &cause));
+            }
+        }
     }
     operation.record_phase(Phase::Preparing {
         step: HOST_CREATE.to_owned(),
@@ -891,6 +911,7 @@ fn hosted_launch(
     let mut created = hosted::create(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     );
+    *stands |= created.is_ok();
     if let Ok(made) = &created
         && made.preparing
         && let Err(asked) = hosted::wait(&scripts, provider, &r.item)
@@ -900,14 +921,11 @@ fn hosted_launch(
     let created = match created {
         Ok(created) => created,
         Err(hosted::Asked::Failed(cause)) => return failed(operation, &cause),
-        // The provider may hold the item. Its create reuses the worktree it
-        // holds, so the launch fails and the next launch's create settles
-        // what this one may have left: nothing is held for a person.
+        // The provider may hold the item: the launch stays held, and keeps
+        // its slot, until a close supersedes it and confirms the sandbox
+        // gone.
         Err(hosted::Asked::Unknown(cause)) => {
-            return Ok(operation.settle(
-                Word::Failed,
-                json!({"note": format!("{HOST_CREATE}-unknown"), "cause": cause, "at": provider}),
-            ));
+            return Ok(preparing_held(operation, HOST_CREATE, provider, &cause));
         }
     };
     if let Harness::Pi = harness
@@ -1428,6 +1446,7 @@ const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
 
 /// The preparation steps a launch records before asking, each read as
 /// `<step>-unknown` where its answer is lost.
+const HOST_START: &str = "host-start";
 const HOST_CREATE: &str = "host-create";
 const WORKTREE_CREATE: &str = "worktree-create";
 const WORKTREE_PUSH: &str = "worktree-push";
@@ -1679,7 +1698,24 @@ fn marker_reading(lane: &Lane) -> Option<Value> {
 /// `confirmed` with the identity read; any other reading is `unconfirmed`
 /// with that reading and the pane marked present, which a close may
 /// supersede.
+///
+/// A hosted lane's launch past its preparation had its sandbox created:
+/// whatever the reconcile reads of its window, the sandbox stands, which
+/// its outcome carries for the record.
 pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
+    let (lane, _) = lane_for_intent(run.engine.path, &intent.id)?;
+    let created = matches!(surface_of(lane.host.as_deref()), Surface::Hosted(_))
+        && intent.phase.as_ref().is_some_and(|phase| {
+            phase.opened().is_some() || matches!(phase, Phase::Opening { .. })
+        });
+    let mut outcome = reconcile_window(run, intent)?;
+    if created {
+        outcome.annotate(SANDBOX, json!(STANDING));
+    }
+    Ok(outcome)
+}
+
+fn reconcile_window(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.engine.path, &intent.id)?;
     let mut operation = super::lane_operation::open(run, intent)?;
     // Every standing handle is read by its own key first.
@@ -1716,20 +1752,15 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
             })));
         }
         // A preparation asked and never answered, its asking process ended
-        // included, may stand. A hosted provider's create reuses what it
-        // holds, so that launch fails and the next create settles it; a
-        // worktree step is held until a close.
+        // included, may stand: a provider's started or created sandbox, a
+        // worktree. The launch is held, and keeps its slot, until a close
+        // supersedes it.
         Phase::Preparing { step, at } => {
-            let observation = json!({
+            return Ok(operation.hold(json!({
                 "reconcile": "launch",
                 "note": format!("{step}-unknown"),
                 "at": at,
-            });
-            return Ok(if step == HOST_CREATE {
-                operation.settle(Word::Failed, observation)
-            } else {
-                operation.hold(observation)
-            });
+            })));
         }
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
             Recovered::Adopted {

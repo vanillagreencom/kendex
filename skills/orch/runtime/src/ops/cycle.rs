@@ -73,7 +73,7 @@ fn interval(value: &Value) -> Value {
 }
 
 /// The record a close writes for `delivery`, with the lines it prints, or the
-/// refusal that leaves the lane with no cycle; the close goes on either way.
+/// refusal, which holds the close until a disposal gives the record up.
 pub fn recorded(
     settings: &Settings,
     gh: &Path,

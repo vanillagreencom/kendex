@@ -1487,6 +1487,83 @@ fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
     }
 }
 
+/// A terminal close whose landing the recorder cannot write is held, never
+/// made without its cycle: through the real tracker duty and `pr-timeline`
+/// over the `gh` fixture, a hosted parked lane whose item ended at its
+/// merge, the timeline unanswered, stays parked with nothing said and its
+/// hold under the close's row; the next pass asks the timeline again with
+/// the same cause and keeps the row as it was (its line said once); once
+/// the timeline answers, the cycle is written with the close.
+#[test]
+fn a_terminal_close_over_an_unrecorded_landing_is_held_until_its_cycle_records() {
+    if !isolated_row("a_terminal_close_over_an_unrecorded_landing_is_held_until_its_cycle_records")
+    {
+        return;
+    }
+    let mut world = World::new();
+    let lane = cycle_lane(&world, true);
+    world.write_fleet(
+        &json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [lane]}),
+    );
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": []}));
+    world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [
+        {"identifier": "KEN-1", "state": {"type": "completed"}, "description": "## Done when\n- [x] Done\n  Evidence: yes\n", "children": {"nodes": []}}
+    ]}}}));
+    quiet_github(&mut world);
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+        json!({ "body": [merged_pull(7, "ken-1")] }),
+    );
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+    );
+    installed_cycle_recorder(&world);
+    let clock = FakeClock::new();
+    let mut body = tracker::body(world.context(world.settings(&[]), None));
+    let mut baseline = Baseline::default();
+    let timeline_reads = || {
+        world
+            .gh_calls()
+            .iter()
+            .filter(|c| c.contains("-F number=7 -f gate="))
+            .count()
+    };
+    let held_row = |produced: &Produced| {
+        produced.changes.iter().any(|c| {
+            matches!(c, Change::Set { kind, identity, .. }
+                if kind == tracker::TERMINAL_CLOSE_ROW && identity == "KEN-1")
+        })
+    };
+
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(rendered(&first), Vec::<String>::new());
+    assert!(held_row(&first), "the hold is kept under the close's row");
+    assert_eq!(world.fleet()["lanes"][0]["status"], "parked");
+    let reads = timeline_reads();
+    assert!(reads > 0, "{:?}", world.gh_calls());
+
+    let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    assert_eq!(rendered(&second), Vec::<String>::new());
+    assert!(!held_row(&second), "the same cause is said once");
+    assert!(timeline_reads() > reads, "the held close is asked again");
+    assert_eq!(world.fleet()["lanes"][0]["status"], "parked");
+
+    world.gh("graphql number=7 cursor=", timeline_seven());
+    let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
+    let said = rendered(&third);
+    assert_eq!(
+        said.last().map(String::as_str),
+        Some("EVENT lane-closed KEN-1"),
+        "{said:?}"
+    );
+    let lane = world.fleet()["lanes"][0].clone();
+    assert_eq!(lane["status"], "done", "{lane}");
+    assert_eq!(lane["cycle"]["pr"], json!(7), "{lane}");
+}
+
 #[test]
 fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
     let harness = Owned::sleep();
@@ -2610,10 +2687,11 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
 
 /// The GitHub duty's refusal leaves the tracker's pass standing, each
 /// lane's end read on its own. Through the runner with both duties: every
-/// gh read fails, the tracker's triage lines and the Linear lane's close
-/// land, the GitHub lane stays stopped with no verdict, the tracker's
-/// partial failure is one counted line after its news, and the GitHub
-/// duty's failure line names `step=github`.
+/// gh read fails, the tracker's triage lines land, the Linear lane whose
+/// merges the failed read could not name stays stopped with its close held
+/// (its landing unrecorded), the GitHub lane stays stopped with no verdict,
+/// the tracker's partial failure is one counted line after its news, and
+/// the GitHub duty's failure line names `step=github`.
 #[test]
 fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
     let mut world = World::new();
@@ -2680,11 +2758,10 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
             "EVENT triage KEN-1",
             "EVENT triage KEN-2",
             "EVENT triage KEN-4",
-            "EVENT lane-closed KEN-1",
             "EVENT watch-step-failed step=tracker count=1",
             "EVENT watch-step-failed step=github count=1"
         ],
-        "the tracker's news and close stand; each refusal is its own counted line"
+        "the tracker's news stands; each refusal is its own counted line"
     );
     let latest = shared.lock().unwrap();
     assert!(
@@ -2717,10 +2794,10 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
         Some(json!("stopped")),
         "no close for the unread item"
     );
-    assert_ne!(
+    assert_eq!(
         status_of("KEN-1"),
         Some(json!("stopped")),
-        "the Linear lane's close landed"
+        "a landing the merged read could not name holds the Linear lane's close"
     );
 }
 

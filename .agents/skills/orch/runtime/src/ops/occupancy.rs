@@ -144,6 +144,9 @@ pub enum ChargeReason {
     Session,
     /// An explicit reservation stands and has not lapsed.
     Reservation,
+    /// A sandbox its provider answered as started or created stands, its
+    /// launch failed after, and no close has confirmed it gone.
+    Sandbox,
     /// Ownership could not be established: an unreadable identity, a record
     /// in flight with no identity, or a reservation with no readable term.
     /// Protected, never released.
@@ -289,6 +292,13 @@ pub(super) fn lane_charge(
     // alone cannot release a still-authorized launcher.
     if lane.status == LaneStatus::Preparing && launch_open {
         return Some(charge(ChargeReason::Preparing, None));
+    }
+    if lane
+        .extra
+        .get(crate::state::SANDBOX)
+        .is_some_and(|s| s == crate::state::STANDING)
+    {
+        return Some(charge(ChargeReason::Sandbox, None));
     }
     // A record in flight that names no identity claims execution this
     // reader cannot prove or disprove: protected. A stopped, parked or done

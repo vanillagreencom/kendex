@@ -299,6 +299,39 @@ pub enum AuthorizedBy {
     OwnerDirective,
 }
 
+/// A landing whose outcome the close could not record, given up by an
+/// authority with its reason: the one way a close ends a lane over a merge
+/// cycle it could not write or merged boxes it could not settle. It names
+/// what it gives up, and the close writes it once, as the fleet log's
+/// `landing-disposed` row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LandingDisposal {
+    #[serde(flatten)]
+    pub authority: Authorization,
+    pub reason: String,
+    pub of: Disposed,
+}
+
+/// What a landing's disposal gives up: the merge cycle's record, the merged
+/// item's box completion, or both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Disposed {
+    Record,
+    Boxes,
+    Both,
+}
+
+impl Disposed {
+    pub fn record(self) -> bool {
+        matches!(self, Disposed::Record | Disposed::Both)
+    }
+
+    pub fn boxes(self) -> bool {
+        matches!(self, Disposed::Boxes | Disposed::Both)
+    }
+}
+
 /// The item's Completion Summary comment on the tracker, the
 /// item's `summary_comment`: the
 /// comment's id, the stamp of the acceptance's last post, and the
@@ -655,6 +688,13 @@ pub enum CloseGround {
 /// lists no sandbox for the item.
 pub const HOST_ABSENT: &str = "host-absent";
 
+/// The lane field, and the failed launch's observation member it is
+/// written from, that names a sandbox its provider answered as started or
+/// created and no close has confirmed gone (`standing`): the lane keeps its
+/// slot until a confirmed close or a confirmed launch.
+pub const SANDBOX: &str = "sandbox";
+pub const STANDING: &str = "standing";
+
 impl CloseGround {
     /// Whether the ground is a terminal close of a sandbox its provider no
     /// longer holds.
@@ -734,6 +774,9 @@ pub struct LaneMembers {
     pub close: Option<CloseGround>,
     /// The merge cycle a close writes on its lane when it confirms.
     pub cycle: Option<CycleRow>,
+    /// The landing a close gave up, written as its fleet-log row when it
+    /// confirms.
+    pub disposed: Option<LandingDisposal>,
     /// The lane status an outcome read when the lane had moved under its
     /// intent.
     pub observed_status: Option<LaneStatus>,
@@ -750,6 +793,7 @@ impl LaneMembers {
             exclude_account: field(path, row, "exclude_account")?,
             close: field(path, row, "close")?,
             cycle: field(path, row, "cycle")?,
+            disposed: field(path, row, "disposed")?,
             observed_status: field(path, row, "observed_status")?,
         })
     }
@@ -764,6 +808,7 @@ impl LaneMembers {
         put(row, "exclude_account", self.exclude_account.as_ref())?;
         put(row, "close", self.close.as_ref())?;
         put(row, "cycle", self.cycle.as_ref())?;
+        put(row, "disposed", self.disposed.as_ref())?;
         put(row, "observed_status", self.observed_status.as_ref())
     }
 }

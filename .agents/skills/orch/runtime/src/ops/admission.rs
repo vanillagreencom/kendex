@@ -593,7 +593,7 @@ fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
             _,
         )) => Holding::Live,
         Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
-        Some((ChargeReason::Reservation, _)) | None => Holding::Yields,
+        Some((ChargeReason::Reservation | ChargeReason::Sandbox, _)) | None => Holding::Yields,
     }
 }
 

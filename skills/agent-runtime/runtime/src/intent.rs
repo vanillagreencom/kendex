@@ -343,13 +343,12 @@ pub enum Phase {
         answer_by: Option<String>,
     },
     /// Written before a launch asks a preparation whose answer can be lost:
-    /// a hosted provider's `create` (`step` `host-create`, `at` the host;
-    /// the `wait` after it included), a cloud lane's worktree `create` and
-    /// branch `push` (`worktree-create` at the claim root, `worktree-push`
-    /// at the worktree). Its effect may stand though nothing answered. A
-    /// reconcile fails a hosted create, since the provider's next create
-    /// reuses what it holds, and holds a worktree step until a close
-    /// settles it.
+    /// a hosted provider's `start` and `create` (`step` `host-start` or
+    /// `host-create`, `at` the host; the `wait` after a create included), a
+    /// cloud lane's worktree `create` and branch `push` (`worktree-create`
+    /// at the claim root, `worktree-push` at the worktree). Its effect may
+    /// stand though nothing answered, so a reconcile holds every step until
+    /// a close settles it.
     Preparing { step: String, at: String },
 }
 

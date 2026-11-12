@@ -116,12 +116,26 @@ fn box_list(boxes: &[u64]) -> String {
         .join(",")
 }
 
+/// What a completion left: settled, with the close's note where one is
+/// owed (`None` for an item already Verifying or Done with no open branch
+/// box, the lane's own completion standing), or boxes left open, with the
+/// one comment the item takes once the lane ends over them. The comment is
+/// never posted here: a close refused over open boxes is asked again, and
+/// a tracker write no repeat may make twice is made by the close that ends
+/// the lane.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Completion {
+    Settled(Option<String>),
+    Unsettled {
+        note: String,
+        comment: Option<String>,
+    },
+}
+
 /// Complete `item`'s branch-provable boxes from `merged`'s evidence
-/// section: the close's note, or `None` for an item already Verifying or
-/// Done with no open branch box, the lane's own completion standing. An
-/// item the tracker reads Done (`done`) is read by no duty again, so a
-/// completion that left its boxes unticked, held or unknown with no comment
-/// is named in the one comment there.
+/// section. A box the section gives no evidence for is named in the item's
+/// comment; an item the tracker reads Done (`done`) is read by no duty
+/// again, so any other completion it leaves open is named there too.
 pub fn complete(
     settings: &Settings,
     gh: &Path,
@@ -129,35 +143,48 @@ pub fn complete(
     merged: &Merged<'_>,
     cause: Cause,
     done: bool,
-) -> Option<String> {
-    match settle(settings, gh, item, merged, cause)? {
-        Outcome::Said(note) => Some(note),
-        Outcome::Unsettled(note) if done => {
-            let text = format!(
-                "## Done-when boxes left open at close\n\n\
-                 The close completed no box of this Done item from the merged pull request \
-                 {}#{}: `{note}`. No duty reads a Done item again: complete its branch-provable \
-                 boxes through merge-pr's completion step.\n\n\
-                 ticked-by=close cause={}\n",
-                merged.repo,
-                merged.pr,
-                cause.word()
-            );
-            let posted = match RunDir::create(&settings.state_dir) {
-                Ok(run) => post_comment(settings, &run, item, &text),
-                Err(_) => "failed",
-            };
-            Some(format!("{note} comment={posted}"))
+) -> Completion {
+    match settle(settings, gh, item, merged, cause) {
+        None => Completion::Settled(None),
+        Some(Outcome::Ticked(note)) => Completion::Settled(Some(note)),
+        Some(Outcome::Unevidenced { note, comment }) => Completion::Unsettled {
+            note,
+            comment: Some(comment),
+        },
+        Some(Outcome::Unsettled(note)) => {
+            let comment = done.then(|| {
+                format!(
+                    "## Done-when boxes left open at close\n\n\
+                     The close completed no box of this Done item from the merged pull request \
+                     {}#{}: `{note}`. No duty reads a Done item again: complete its branch-provable \
+                     boxes through merge-pr's completion step.\n\n\
+                     ticked-by=close cause={}\n",
+                    merged.repo,
+                    merged.pr,
+                    cause.word()
+                )
+            });
+            Completion::Unsettled { note, comment }
         }
-        Outcome::Unsettled(note) => Some(note),
     }
 }
 
-/// What a completion left, as the close's note says it.
+/// The item's one comment, `text`: `posted`, `failed` or `unknown`.
+pub fn post(settings: &Settings, item: &str, text: &str) -> &'static str {
+    match RunDir::create(&settings.state_dir) {
+        Ok(run) => post_comment(settings, &run, item, text),
+        Err(_) => "failed",
+    }
+}
+
+/// What a completion read.
 enum Outcome {
-    /// The boxes ticked, or a comment that names the open ones posted.
-    Said(String),
-    /// Boxes left unticked, held or unknown with nothing posted.
+    /// The boxes ticked.
+    Ticked(String),
+    /// Open boxes the merged pull request gives no evidence for, ticked
+    /// none, with the comment that names them.
+    Unevidenced { note: String, comment: String },
+    /// Boxes left unticked, held or unknown.
     Unsettled(String),
 }
 
@@ -204,12 +231,8 @@ fn settle(
         Evidence::Lines(lines) => ("evidence-partial", lines),
     };
     let (with, without): (Vec<u64>, Vec<u64>) = open.iter().partition(|b| lines.contains_key(b));
-    let run = match RunDir::create(&settings.state_dir) {
-        Ok(run) => run,
-        Err(e) => return unsettled(&format!("boxes-unticked cause=run-dir-failed error={e}")),
-    };
     if !without.is_empty() {
-        let text = format!(
+        let comment = format!(
             "## Done-when boxes left open at close\n\n\
              The merged pull request {}#{} gives no `{HEADING}` line for box {}, so the close ticked \
              no box: `issues complete` ticks every open branch-provable box or none.\n\n\
@@ -223,12 +246,15 @@ fn settle(
             box_list(&without),
             cause.word()
         );
-        let posted = post_comment(settings, &run, item, &text);
-        return Some(Outcome::Said(format!(
-            "boxes-unticked cause={word} boxes={} comment={posted}",
-            box_list(&without)
-        )));
+        return Some(Outcome::Unevidenced {
+            note: format!("boxes-unticked cause={word} boxes={}", box_list(&without)),
+            comment,
+        });
     }
+    let run = match RunDir::create(&settings.state_dir) {
+        Ok(run) => run,
+        Err(e) => return unsettled(&format!("boxes-unticked cause=run-dir-failed error={e}")),
+    };
     let merge = match &pull.merge_commit_sha {
         Nullable::Present(sha) => format!(" as {sha}"),
         Nullable::Absent | Nullable::Null => String::new(),
@@ -268,7 +294,7 @@ fn settle(
     }
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     match run_linear(settings, "complete", &args) {
-        Ok(out) if out.status.success() => Some(Outcome::Said(format!(
+        Ok(out) if out.status.success() => Some(Outcome::Ticked(format!(
             "boxes-ticked by=close cause={} boxes={}",
             cause.word(),
             box_list(&with)

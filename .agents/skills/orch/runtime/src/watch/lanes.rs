@@ -38,7 +38,8 @@
 //! `status=none` kind (a cloud session) by its pull request alone; a hosted
 //! lane's status file and records are read through the provider, and a merged
 //! hosted lane whose worktree the host no longer has is closed through
-//! `close-lane` at its `lane-exited` or `lane-idle` line.
+//! `close-lane` at its `lane-exited` or `lane-idle` line, or once per screen
+//! on any other reading.
 
 // Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
@@ -76,7 +77,7 @@ use agent_runtime::intent::Phase;
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
 /// when the lane leaves the fleet record.
-const LANE_ROWS: [&str; 8] = [
+const LANE_ROWS: [&str; 9] = [
     "lane-exited",
     "lane-asking",
     "lane-idle",
@@ -85,6 +86,7 @@ const LANE_ROWS: [&str; 8] = [
     "lane-unreadable",
     "start-stalled",
     hosted::CLOSE_PENDING_ROW,
+    hosted::LEFT_ROW,
 ];
 
 /// Lines kept above the banner in a usage-limit block.
@@ -833,46 +835,27 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
 /// One lane judged as the observation duty judges it, for the close: its
 /// host read first where its kind declares a status verb or its own pane,
 /// then its recorded pane; a host whose capability line cannot be read
-/// leaves it unjudged with the cause. The provider's status and capture
-/// reads both answered where `answered` says so.
-pub(crate) struct Judged {
-    pub state: LaneState,
-    /// Whether a verb host's status and capture reads both answered, the
-    /// proof a merged-and-gone unjudged lane closes on there.
-    pub answered: bool,
-}
-
-/// `socket` is the one the controller record names, where the lane's server
-/// is looked for first, as the observation duty looks.
+/// leaves it unjudged with the cause. `socket` is the one the controller
+/// record names, where the lane's server is looked for first, as the
+/// observation duty looks.
 pub(crate) fn judge(
     settings: &Settings,
     lane: &Lane,
     socket: Option<&Path>,
     account_room: Option<bool>,
-) -> Judged {
+) -> LaneState {
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
-    let (host, answered) = match hosts.of(lane) {
-        Err(cause) => (
-            HostRead {
-                status: Some(Err(cause)),
-                screen: None,
-                rows: None,
-            },
-            false,
-        ),
-        Ok(caps) => {
-            let read = HostRead::of(&scripts, lane, caps);
-            let answered =
-                !matches!(read.status, Some(Err(_))) && !matches!(read.screen, Some(Err(_)));
-            (read, answered)
-        }
+    let host = match hosts.of(lane) {
+        Err(cause) => HostRead {
+            status: Some(Err(cause)),
+            screen: None,
+            rows: None,
+        },
+        Ok(caps) => HostRead::of(&scripts, lane, caps),
     };
     let readers = Readers::kernel();
-    Judged {
-        state: read_lane(lane, &readers, socket, host, account_room).state,
-        answered,
-    }
+    read_lane(lane, &readers, socket, host, account_room).state
 }
 
 /// The non-blank lines of `block`, the last `cap` of them.
@@ -1248,6 +1231,13 @@ fn observe_one(
         | LaneState::Idle { .. }
         | LaneState::Unjudged { .. } => (obs.state.clone(), WallReading::Clear),
     };
+    if !matches!(
+        state,
+        LaneState::Gone | LaneState::Exited | LaneState::Idle { .. }
+    ) {
+        let key = format!("{pane_key}|{}", hash_of(&slice));
+        hosted::close_left(obs.lane, pass, hosts, &key, out);
+    }
     match &state {
         LaneState::Gone => {
             // A window gone because the relaunch the route started is still

@@ -4458,6 +4458,70 @@ fn a_merged_hosted_lane_whose_work_left_nothing_on_its_host_is_closed_at_lane_ex
     assert!(std::fs::metadata(&marker).is_err());
 }
 
+/// A merged hosted lane read at work is closed once its work left its host:
+/// its pane on the fleet server drawn at the harness's working hint and its
+/// provider's status verb reading it running, the GitHub duty's merged row
+/// standing and the host answering its `.git` absent, the first pass asks
+/// the close verb with the merge as the delivery, `lane-closed` with its
+/// archive line; the next pass, the same screen, asks nothing again.
+#[test]
+fn a_merged_hosted_lane_read_working_is_closed_once_its_work_left_its_host() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        "printf '✻ Working… (esc to interrupt)\\n'; exec sleep 600",
+    );
+    let mut lane = hosted_lane("KEN-1", "gh-1", "/remote/KEN-1");
+    lane["launch"] = json!({"pane": pane, "server": server.pid});
+    fleet.set_lanes(vec![lane]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    let mut answers = no_handoff("KEN-1");
+    answers.extend(
+        [
+            ("capabilities", ok(SSH_LINE)),
+            ("status --item KEN-1 --harness claude", ok("running\n")),
+            ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
+            ("touch --item KEN-1", ok("")),
+        ]
+        .map(|(argv, answer)| (argv.to_owned(), answer)),
+    );
+    world.plant_host_owned(&answers);
+    world.plant_close(json!({
+        "KEN-1": verb_reply("KEN-1", "closed", json!({"host_close": "kept=/archive/KEN-1"})),
+    }));
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.baseline.apply(Change::Set {
+        kind: "merged".into(),
+        identity: "KEN-1".into(),
+        value: "o/r#7".into(),
+    });
+    let first = driver.pass(&state);
+    let said = lines(&first);
+    assert!(
+        said.contains(&"EVENT lane-closed KEN-1".to_owned()),
+        "{said:?}"
+    );
+    assert_eq!(
+        world.close_log(),
+        vec![close_call(
+            &driver.state_dir,
+            r#"{"delivery":{"pr":{"pr":7,"repo":"o/r"}},"item":"KEN-1","op":"close-lane"}"#
+        )]
+    );
+    let second = driver.pass(&state);
+    assert!(
+        !lines(&second).contains(&"EVENT lane-closed KEN-1".to_owned()),
+        "{:?}",
+        lines(&second)
+    );
+    assert_eq!(world.close_log().len(), 1, "one ask per screen");
+}
+
 /// A close the tracker's quota refusal deferred has its `lane-exited` line
 /// already reported, so the deferred close keeps `close-pending` as
 /// `lane-exited|<pane key>`; the next pass, its line still reported under

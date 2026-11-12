@@ -320,6 +320,10 @@ pub struct CloseOwnedResources {
     /// (`ops::cycle`), with the fleet-log rows it prints.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cycle: Option<state::CycleRow>,
+    /// The landing the close gave up, the fleet-log row it writes when it
+    /// confirms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disposed: Option<state::LandingDisposal>,
 }
 
 /// The reading an ended close rests on.
@@ -356,6 +360,17 @@ pub struct CloseLane {
     /// records, and the delivery a merged-and-gone close rests on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delivery: Option<Delivery>,
+    /// What the caller decided of a landing the close could not record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<Landing>,
+}
+
+/// A caller's decision on a landing: `disposed` gives up the record or the
+/// boxes the close could not settle, under its authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Landing {
+    pub disposed: state::LandingDisposal,
 }
 
 /// What the close does: end the lane (`close`), end its harness and keep
@@ -1494,6 +1509,7 @@ pub(super) fn close_owned_resources(
         lane_since: lane.session_since.clone(),
         close: Some(ground),
         cycle: r.cycle.clone(),
+        disposed: r.disposed.clone(),
         ..LaneMembers::default()
     }
     .write(&mut intent.extra)?;
@@ -1923,6 +1939,7 @@ pub(super) fn record_launch_outcome(
                 record::set(lane, "mail_root", mail_root.as_str());
             }
             record::set(lane, "status", LaneStatus::Running.word());
+            record::delete(lane, state::SANDBOX);
             record::set(lane, "running_at", at);
             record::set(lane, "launch", serde_json::to_value(&r.launch)?);
             record::set(lane, "session_id", string_or_null(&r.session_id));
@@ -1941,6 +1958,13 @@ pub(super) fn record_launch_outcome(
         Outcome::Failed => {
             let lane = lane_doc_mut(path, doc, index)?;
             record::set(lane, "status", LaneStatus::Stopped.word());
+            if r.observation
+                .as_ref()
+                .and_then(|o| o.get(state::SANDBOX))
+                .is_some_and(|s| s == state::STANDING)
+            {
+                record::set(lane, state::SANDBOX, state::STANDING);
+            }
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Unconfirmed => {
@@ -2074,6 +2098,7 @@ pub(super) fn record_close_outcome(
                 )
                 | None => {
                     record::set(lane, "status", LaneStatus::Done.word());
+                    record::delete(lane, state::SANDBOX);
                     record::delete(lane, "pending_pr");
                     record::delete(lane, "parked");
                     record::delete(lane, "reservation");
@@ -2113,10 +2138,17 @@ pub(super) fn record_close_outcome(
             if let Some(cycle_row) = &members.cycle {
                 record::set(lane, "cycle", cycle_row.cycle.clone());
             }
+            let disposed = members.disposed.as_ref().map(|d| {
+                json!({
+                    "at": at, "kind": "landing-disposed", "item": intent.target,
+                    "by": d.authority.by, "id": d.authority.id, "reason": d.reason, "of": d.of,
+                })
+            });
             let log = record::array_mut(path, doc, "fleet_log")?;
             log.push(row);
             log.extend(cloud);
             log.extend(cycle.into_iter().flatten());
+            log.extend(disposed);
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed | Outcome::Unconfirmed | Outcome::NotStarted => {}
@@ -3656,6 +3688,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            disposed: None,
         });
         let err = apply_on(&path, &both, &env(), LOCK, &kernel(4)).unwrap_err();
         assert_eq!(err.key(), "close-ground-ambiguous");
@@ -3674,6 +3707,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            disposed: None,
         });
         let Report::CloseOwnedResources(c) = apply_on(&path, &terminal, &env(), LOCK, &kernel(4))
             .unwrap()
@@ -3745,6 +3779,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            disposed: None,
         });
         let id = intend(&path, &terminal);
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -3793,6 +3828,7 @@ mod tests {
             ended: None,
             identity: None,
             cycle: None,
+            disposed: None,
         });
         let unread = |_: &Identity| Reading::Unreadable {
             cause: "stat-unreadable",

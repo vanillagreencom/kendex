@@ -2166,11 +2166,21 @@ impl Fleet {
             .push((format!("LANE_HOST_STUB_{name}"), value.to_owned()));
     }
 
-    /// The tracker's answer for `item`: its state type.
+    /// The tracker's answer for `item`: its state type, and an item with no
+    /// open Done-when box past the lane's own completion, so a close owes
+    /// its boxes nothing.
     fn plant_tracker(&self, item: &str, state: &str) {
-        let reply = json!({"issues bulk-get": {"body": {"issues": {"nodes": [
-            {"identifier": item, "state": {"type": state}, "description": "", "children": {"nodes": []}}
-        ]}}}});
+        let name = if state == "completed" {
+            "Done"
+        } else {
+            "Verifying"
+        };
+        let reply = json!({
+            "issues bulk-get": {"body": {"issues": {"nodes": [
+                {"identifier": item, "state": {"type": state}, "description": "", "children": {"nodes": []}}
+            ]}}},
+            "issues get": {"body": {"issue": {"description": "", "state": {"name": name, "type": state}}}},
+        });
         std::fs::write(self.state_dir().join("linear.json"), reply.to_string()).unwrap();
     }
 
@@ -2204,7 +2214,7 @@ fn hosted_lane(item: &str) -> Value {
         "item": item, "window": format!("fleet:{item}"), "harness": "claude",
         "host": provider(), "kind": "ssh", "mail_root": REMOTE_ROOT, "status": "running",
         "launched_at": "2026-01-29T15:00:00Z", "session_since": "2026-01-29T15:00:00Z",
-        "cycle": {"pr": 7},
+        "cycle": {"pr": 7}, "repo": "o/r",
     })
 }
 
@@ -2230,15 +2240,39 @@ type CloseCase = (
 /// the real dispatcher between: the harness stopped through `lane-host
 /// stop`, the item's files archived and removed, then the provider's close,
 /// `--merged` since the record carries the merge, and the mailbox read under
-/// the record's host. The provider's close answer decides the close: an
-/// archive line or `closed=absent` closes the lane with that line on the
-/// observation, none reads `kept=none`; a refusal, a failure or no answer
-/// leaves the lane running and the close unconfirmed with what it read, the
-/// item's files already gone.
+/// the record's host. The provider's close answer and its `list` after it
+/// decide the close: an archive line or `closed=absent` with no row listed
+/// for the item, or only an `available` one, closes the lane with that line
+/// on the observation, none reads `kept=none`; a row still listed holds the
+/// close `standing` with the row's state, a list that fails holds it
+/// `unconfirmed`; a refusal, a failure or no answer of the close itself
+/// leaves the lane running and the close unconfirmed with what it read, no
+/// list asked, the item's files already gone.
 #[test]
 fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_items_files() {
-    let rows: [CloseCase; 6] = [
+    let rows: [CloseCase; 9] = [
         ("kept", &[], "closed", "kept=/srv/archive/KEN-1", "done"),
+        (
+            "listed standing",
+            &[("LIST", "o/r/KEN-1\thosted\t-\tlane.example")],
+            "unconfirmed",
+            "standing",
+            "running",
+        ),
+        (
+            "list failed",
+            &[("LIST_STATUS", "1")],
+            "unconfirmed",
+            "unconfirmed",
+            "running",
+        ),
+        (
+            "listed available",
+            &[("LIST", "o/r/KEN-1\tavailable\t-\tlane.example")],
+            "closed",
+            "kept=/srv/archive/KEN-1",
+            "done",
+        ),
         (
             "absent",
             &[("CLOSE_LINE", "closed=absent item=KEN-1")],
@@ -2294,12 +2328,23 @@ fn a_hosted_close_stops_through_its_provider_and_closes_its_sandbox_after_the_it
         if case == "refused" {
             assert_eq!(result["observation"]["path"], "/srv/clone", "{result}");
         }
+        if case == "listed standing" {
+            assert_eq!(result["observation"]["listed"], "hosted", "{result}");
+            assert_eq!(
+                result["observation"]["closed"], "kept=/srv/archive/KEN-1",
+                "{result}"
+            );
+        }
         assert_eq!(fleet.lane("KEN-1")["status"], status, "{case}");
         assert!(
             std::fs::symlink_metadata(&item_state).is_err(),
             "{case}: the item's files left before the provider's close"
         );
-        assert_eq!(fleet.provider_calls(), RUNNING_CLOSE, "{case}");
+        let mut calls = RUNNING_CLOSE.to_vec();
+        if !matches!(case, "refused" | "failed" | "unanswered") {
+            calls.push("list");
+        }
+        assert_eq!(fleet.provider_calls(), calls, "{case}");
         let mail = fleet.mail_log();
         assert!(!mail.is_empty(), "{case}: the mailbox was read");
         let host = provider();
@@ -2397,9 +2442,10 @@ fn a_hosted_lane_whose_merge_landed_and_worktree_left_ends_with_its_items_files_
         notes.contains(&"stop-skipped item=KEN-1 harness=claude cause=worktree-removed"),
         "{notes:?}"
     );
+    let calls = fleet.provider_calls();
     assert_eq!(
-        fleet.provider_calls().last().map(String::as_str),
-        Some("close --item KEN-1")
+        calls[calls.len().saturating_sub(2)..],
+        ["close --item KEN-1", "list"]
     );
     assert!(
         std::fs::symlink_metadata(&item_state).is_ok(),
@@ -2484,8 +2530,8 @@ fn a_merged_hosted_lane_whose_worktree_stands_is_done_once_its_items_record_left
                     "{case}: {calls:?}"
                 );
                 assert_eq!(
-                    calls.last().map(String::as_str),
-                    Some("close --item KEN-1"),
+                    calls[calls.len().saturating_sub(2)..],
+                    ["close --item KEN-1", "list"],
                     "{case}"
                 );
                 assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
@@ -2909,7 +2955,9 @@ fn a_close_refuses_each_read_that_does_not_answer_by_its_key() {
             vec![("step", "list")],
         ),
         (
-            CloseCase2::new("provider status unread", vec![hosted_lane("KEN-1")]),
+            // Unmerged: a merged lane whose work left its host closes
+            // whatever its screen reads.
+            CloseCase2::new("provider status unread", vec![without("cycle")]),
             "lane-live",
             vec![("state", "unjudged")],
         ),
@@ -3070,13 +3118,13 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             CloseCase2::new("stopped", vec![with("status", json!("stopped"))]),
             "closed",
             "done",
-            vec!["close --item KEN-1 --merged"],
+            vec!["close --item KEN-1 --merged", "list"],
         ),
         (
             CloseCase2::new("parked", vec![parked_lane.clone()]),
             "closed",
             "done",
-            vec!["close --item KEN-1 --merged"],
+            vec!["close --item KEN-1 --merged", "list"],
         ),
         (
             CloseCase2::new("parked, park asked", vec![parked_lane.clone()]),
@@ -3104,6 +3152,7 @@ fn a_close_answers_a_record_by_what_it_already_is() {
             vec![
                 "status --item KEN-1 --harness claude",
                 "close --item KEN-1 --merged",
+                "list",
             ],
         ),
     ];
@@ -4773,9 +4822,12 @@ impl Fleet {
 /// merged pull request's `## Done-when evidence` section proves ticked by
 /// the close, through the linear package's own `issues complete`, each
 /// Evidence line citing the merge and the close's cause, and the state the
-/// command sets. A box the section gives no evidence for ticks nothing:
-/// one comment names the boxes with and without evidence. An item the lane
-/// completed is left alone.
+/// command sets. A box the section gives no evidence for ticks nothing and
+/// refuses the close `boxes-unsettled` with nothing moved and nothing
+/// posted; a close whose disposal gives the boxes up then ends the lane,
+/// posts the one comment that names the boxes with and without evidence,
+/// and writes its `landing-disposed` row. An item the lane completed is
+/// left alone.
 #[test]
 fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not() {
     let proved = "## Summary\n- work\n\n## Done-when evidence\n1: tests/a.rs first_row\n2: tests/a.rs second_row\n\n## Test Plan\n- rows\n";
@@ -4828,7 +4880,7 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
             state: "Verifying",
             ticked: false,
             body: one,
-            note: Some("boxes-unticked cause=evidence-partial boxes=2 comment=posted"),
+            note: Some("boxes-unticked cause=evidence-partial boxes=2"),
             after: "Verifying",
             comment: Some(("with evidence: 1", "without evidence: 2")),
             absent: false,
@@ -4838,7 +4890,7 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
             state: "Verifying",
             ticked: false,
             body: "## Summary\n- work\n",
-            note: Some("boxes-unticked cause=evidence-absent boxes=1,2 comment=posted"),
+            note: Some("boxes-unticked cause=evidence-absent boxes=1,2"),
             after: "Verifying",
             comment: Some(("with evidence: none", "without evidence: 1,2")),
             absent: false,
@@ -4864,7 +4916,37 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
             fleet.answer("LIST", "lane.example:/srv/other/ken-9\tbusy");
         }
         let before = fleet.issue()["description"].clone();
-        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let mut request = json!({"op": "close-lane", "item": "KEN-1"});
+        let open = case.comment.is_some();
+        if open {
+            let answer = fleet.close(request.clone());
+            assert_eq!(
+                answer["refusal"]["key"], "boxes-unsettled",
+                "{name}: {answer}"
+            );
+            let fields = refusal_fields(&answer);
+            let cause = case.note.unwrap().split_whitespace().nth(1).unwrap();
+            assert_eq!(
+                format!("cause={}", fields["cause"]),
+                cause,
+                "{name}: {fields:?}"
+            );
+            assert_eq!(fleet.lane("KEN-1")["status"], "running", "{name}");
+            assert!(
+                fleet.sent("commentCreate").is_empty(),
+                "{name}: nothing posted"
+            );
+            assert!(
+                !fleet
+                    .provider_calls()
+                    .iter()
+                    .any(|l| l.starts_with("stop ")),
+                "{name}: a refused close stops nothing"
+            );
+            request["landing"] = json!({"disposed": {"by": "overseer", "id": "1769700000-9-31",
+                "reason": "the lane wrote no evidence", "of": "boxes"}});
+        }
+        let answer = fleet.close(request);
         let result = &answer["result"];
         assert_eq!(result["word"], "closed", "{name}: {answer}");
         let notes: Vec<&str> = result["notes"]
@@ -4874,7 +4956,26 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
             .filter_map(Value::as_str)
             .filter(|n| n.starts_with("boxes-"))
             .collect();
-        assert_eq!(notes, case.note.into_iter().collect::<Vec<_>>(), "{name}");
+        let mut want: Vec<&str> = case.note.into_iter().collect();
+        if open {
+            want.push("boxes-comment=posted");
+        }
+        assert_eq!(notes, want, "{name}");
+        let disposed: Vec<Value> = fleet.fleet()["fleet_log"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["kind"] == "landing-disposed")
+            .cloned()
+            .collect();
+        if open {
+            assert_eq!(disposed.len(), 1, "{name}: {disposed:?}");
+            assert_eq!(disposed[0]["of"], "boxes", "{name}");
+            assert_eq!(disposed[0]["by"], "overseer", "{name}");
+            assert_eq!(disposed[0]["id"], "1769700000-9-31", "{name}");
+        } else {
+            assert!(disposed.is_empty(), "{name}: {disposed:?}");
+        }
         let issue = fleet.issue();
         assert_eq!(issue["state"]["name"], case.after, "{name}: {issue}");
         let description = issue["description"].as_str().unwrap();
@@ -4942,31 +5043,6 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
     );
     assert_eq!(fleet.issue()["state"]["name"], "Done", "{answer}");
 
-    // A Done item is read by no duty again: a completion whose pull request
-    // GitHub does not hold is named in one comment there.
-    let fleet = Fleet::boxes_world("Done", &done_when(false), proved);
-    std::fs::write(fleet.state_dir().join("bin/gh.json"), "{}").unwrap();
-    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
-    assert_eq!(answer["result"]["word"], "closed", "{answer}");
-    let notes: Vec<&str> = answer["result"]["notes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(Value::as_str)
-        .filter(|n| n.starts_with("boxes-"))
-        .collect();
-    assert_eq!(
-        notes,
-        ["boxes-unticked cause=pr-missing comment=posted"],
-        "{answer}"
-    );
-    let comments = fleet.sent("commentCreate");
-    assert_eq!(comments.len(), 1, "{comments:?}");
-    let body = comments[0]["variables"]["input"]["body"].as_str().unwrap();
-    assert!(body.contains("boxes-unticked cause=pr-missing"), "{body}");
-
-    // A write Linear answers with a 5xx may have landed: the completion's
-    // and the comment's are unknown, never failed.
     let box_notes = |answer: &Value| -> Vec<String> {
         answer["result"]["notes"]
             .as_array()
@@ -4977,51 +5053,349 @@ fn a_merged_items_proved_boxes_are_ticked_by_the_close_where_its_lane_could_not(
             .map(str::to_owned)
             .collect()
     };
-    for (state, body, operation, note) in [
+    let disposed = |request: &mut Value| {
+        request["landing"] = json!({"disposed": {"by": "owner-directive", "id": "d-1",
+            "reason": "boxes completed by hand", "of": "boxes"}});
+    };
+
+    // A completion left open refuses the close by its state and cause, with
+    // nothing posted; a Done item is read by no duty again, so the close its
+    // disposal ends names the completion in one comment there. A write
+    // Linear answers with a 5xx may have landed: it is unknown, never failed.
+    for (case, state, body, operation, refusal, notes) in [
         (
-            "Verifying",
+            "its pull request absent from GitHub",
+            "Done",
             proved,
-            "UpdateIssue",
-            "boxes-unknown cause=unconfirmed",
+            None,
+            ("unticked", "pr-missing"),
+            ["boxes-unticked cause=pr-missing", "boxes-comment=posted"],
         ),
         (
+            "its completion unconfirmed",
+            "Verifying",
+            proved,
+            Some("UpdateIssue"),
+            ("unknown", "unconfirmed"),
+            ["boxes-unknown cause=unconfirmed", ""],
+        ),
+        (
+            "its comment unconfirmed",
             "Done",
             one,
-            "CreateComment",
-            "boxes-unticked cause=evidence-partial boxes=2 comment=unknown",
+            Some("CreateComment"),
+            ("unticked", "evidence-partial"),
+            [
+                "boxes-unticked cause=evidence-partial boxes=2",
+                "boxes-comment=unknown",
+            ],
         ),
     ] {
         let fleet = Fleet::boxes_world(state, &done_when(false), body);
-        let path = fleet.state_dir().join("bin/linear-api.json");
-        let mut world: Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        world["codes"] = json!({ operation: 502 });
-        std::fs::write(&path, world.to_string()).unwrap();
-        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
-        assert_eq!(box_notes(&answer), [note], "{operation}: {answer}");
+        if operation.is_none() {
+            std::fs::write(fleet.state_dir().join("bin/gh.json"), "{}").unwrap();
+        }
+        if let Some(operation) = operation {
+            let path = fleet.state_dir().join("bin/linear-api.json");
+            let mut world: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            world["codes"] = json!({ operation: 502 });
+            std::fs::write(&path, world.to_string()).unwrap();
+        }
+        let mut request = json!({"op": "close-lane", "item": "KEN-1"});
+        let answer = fleet.close(request.clone());
+        assert_eq!(
+            answer["refusal"]["key"], "boxes-unsettled",
+            "{case}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (fields["state"].as_str(), fields["cause"].as_str()),
+            refusal,
+            "{case}"
+        );
+        assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
+        assert!(fleet.sent("commentCreate").is_empty(), "{case}");
+        disposed(&mut request);
+        let answer = fleet.close(request);
+        assert_eq!(answer["result"]["word"], "closed", "{case}: {answer}");
+        let want: Vec<&str> = notes.into_iter().filter(|n| !n.is_empty()).collect();
+        assert_eq!(box_notes(&answer), want, "{case}: {answer}");
+        if case == "its pull request absent from GitHub" {
+            let comments = fleet.sent("commentCreate");
+            assert_eq!(comments.len(), 1, "{comments:?}");
+            let body = comments[0]["variables"]["input"]["body"].as_str().unwrap();
+            assert!(body.contains("boxes-unticked cause=pr-missing"), "{body}");
+        }
     }
 
-    // A provider close that fails leaves the close unconfirmed, which the
-    // watch asks again: the comment waits for the close that confirms, and
-    // is posted once.
+    // A provider close that fails leaves the close unconfirmed, which is
+    // asked again: the comment waits for the close that confirms, and is
+    // posted once.
     let mut fleet = Fleet::boxes_world("Verifying", &done_when(false), one);
     fleet.answer("CLOSE_STATUS", "1");
+    let mut request = json!({"op": "close-lane", "item": "KEN-1"});
+    disposed(&mut request);
     for _ in 0..2 {
-        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let answer = fleet.close(request.clone());
         assert_eq!(answer["result"]["word"], "unconfirmed", "{answer}");
         assert!(
-            !answer["result"]["notes"]
-                .as_array()
-                .unwrap()
+            !box_notes(&answer)
                 .iter()
-                .filter_map(Value::as_str)
-                .any(|n| n.starts_with("boxes-")),
+                .any(|n| n.starts_with("boxes-comment")),
             "{answer}"
         );
     }
     assert_eq!(fleet.sent("commentCreate"), Vec::<Value>::new());
     fleet.answer("CLOSE_STATUS", "0");
-    let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+    let answer = fleet.close(request);
     assert_eq!(answer["result"]["word"], "closed", "{answer}");
     assert_eq!(fleet.sent("commentCreate").len(), 1, "{answer}");
+}
+
+// --- a landing the close cannot record ------------------------------------------
+
+/// A delivery whose merge cycle the recorder cannot write refuses the close
+/// `cycle-unrecorded` with nothing moved: the lane running, no provider
+/// stop or close asked, its item's files standing. A disposal that gives up
+/// the boxes alone still refuses; one that gives up the record ends the
+/// lane with the cause noted, a direct delivery's boxes noted unread, and
+/// one `landing-disposed` row naming the authority and what it gave up.
+#[test]
+fn a_landing_the_close_cannot_record_holds_the_lane_until_a_disposal_gives_it_up() {
+    let mut fleet = Fleet::hosted(4);
+    let bin = fleet.state_dir().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+    std::fs::write(bin.join("gh.json"), "{}").unwrap();
+    fleet
+        .env
+        .push(("PATH".to_owned(), tool_path(&[bin.as_path()])));
+    fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+    fleet.plant_tracker("KEN-1", "completed");
+    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-1.json");
+    let delivery = json!({"commit": {"commit": "0123456789abcdef0123456789abcdef01234567"}});
+    let mut request = json!({"op": "close-lane", "item": "KEN-1", "delivery": delivery});
+    let disposal = |of: &str| {
+        json!({"disposed": {"by": "overseer", "id": "1769700000-9-31",
+            "reason": "the merge's timeline is unreadable", "of": of}})
+    };
+
+    for landing in [None, Some(disposal("boxes"))] {
+        if let Some(landing) = landing {
+            request["landing"] = landing;
+        }
+        let answer = fleet.close(request.clone());
+        assert_eq!(answer["refusal"]["key"], "cycle-unrecorded", "{answer}");
+        let fields = refusal_fields(&answer);
+        assert_eq!(fields["item"], "KEN-1");
+        assert!(!fields["cause"].is_empty(), "{fields:?}");
+        assert_eq!(fleet.lane("KEN-1")["status"], "running");
+        assert!(
+            !fleet
+                .provider_calls()
+                .iter()
+                .any(|l| l.starts_with("stop ") || l.starts_with("close ")),
+            "a refused close acts on nothing: {:?}",
+            fleet.provider_calls()
+        );
+        assert!(std::fs::symlink_metadata(&item_state).is_ok());
+    }
+
+    request["landing"] = disposal("record");
+    let answer = fleet.close(request);
+    let result = &answer["result"];
+    assert_eq!(result["word"], "closed", "{answer}");
+    let notes: Vec<&str> = result["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.starts_with("cycle-unrecorded cause=")),
+        "{notes:?}"
+    );
+    assert!(
+        notes.contains(&"boxes-unread cause=direct-delivery"),
+        "{notes:?}"
+    );
+    let lane = fleet.lane("KEN-1");
+    assert_eq!(lane["status"], "done");
+    assert!(
+        lane.get("cycle").is_none_or(|c| c == &json!({"pr": 7})),
+        "{lane}"
+    );
+    let log = fleet.fleet()["fleet_log"].as_array().unwrap().clone();
+    let rows: Vec<&Value> = log
+        .iter()
+        .filter(|r| r["kind"] == "landing-disposed")
+        .collect();
+    assert_eq!(rows.len(), 1, "{log:?}");
+    let row = rows[0];
+    assert_eq!(
+        (&row["item"], &row["by"], &row["id"], &row["of"]),
+        (
+            &json!("KEN-1"),
+            &json!("overseer"),
+            &json!("1769700000-9-31"),
+            &json!("record")
+        ),
+        "{row}"
+    );
+    assert_eq!(row["reason"], "the merge's timeline is unreadable");
+}
+
+// --- a merged lane whose work left its host -------------------------------------
+
+/// A merged hosted lane whose work left nothing on its host closes whatever
+/// its screen reads: on a provider that captures its own pane drawn at the
+/// harness's working hint, or failing its capture, the lane ends on its
+/// merge (`disposition: ended`, item files kept on its open item) with its
+/// harness stopped through the provider; with its item's record standing in
+/// the clone the same screen refuses `lane-live state=working` and stops
+/// nothing.
+#[test]
+fn a_merged_hosted_lane_whose_work_left_its_host_closes_whatever_its_screen_reads() {
+    const RECORD: &str = "/w/clone/tmp/workflow-state-KEN-1.json";
+    let working = "❯ do the thing\n✻ Working… (esc to interrupt)\n";
+    for (case, capture_fails, standing) in [
+        ("working, its record standing", false, true),
+        ("working, its record left", false, false),
+        ("its capture failing, its record left", true, false),
+    ] {
+        let mut fleet = Fleet::verb_pane(working);
+        if capture_fails {
+            fleet.answer("CAPTURE_STATUS", "1");
+        }
+        let disk = fleet.state_dir().join("provider-disk");
+        let worktree = disk.join(REMOTE_ROOT.trim_start_matches('/'));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::write(
+            worktree.join(".git"),
+            "gitdir: /w/clone/.git/worktrees/ken-1\n",
+        )
+        .unwrap();
+        if standing {
+            let record = disk.join(RECORD.trim_start_matches('/'));
+            std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+            std::fs::write(&record, "{}").unwrap();
+        }
+        fleet.answer("STOP_ENDS", "1");
+        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.plant_tracker("KEN-1", "started");
+        let answer = fleet.close(json!({"op": "close-lane", "item": "KEN-1"}));
+        let calls = fleet.provider_calls();
+        if standing {
+            assert_eq!(answer["refusal"]["key"], "lane-live", "{case}: {answer}");
+            assert_eq!(refusal_fields(&answer)["state"], "working", "{case}");
+            assert!(
+                !calls.iter().any(|l| l.starts_with("stop ")),
+                "{case}: {calls:?}"
+            );
+            assert_eq!(fleet.lane("KEN-1")["status"], "running", "{case}");
+            continue;
+        }
+        assert_eq!(answer["result"]["word"], "closed", "{case}: {answer}");
+        assert!(
+            calls.contains(&"stop --item KEN-1 --harness claude".to_owned()),
+            "{case}: {calls:?}"
+        );
+        assert_eq!(fleet.lane("KEN-1")["status"], "done", "{case}");
+        let log = fleet.fleet()["fleet_log"].as_array().unwrap().clone();
+        let row = log.iter().rev().find(|r| r["kind"] == "close").unwrap();
+        assert_eq!(
+            (&row["disposition"], &row["source"]),
+            (&json!("ended"), &json!("merged")),
+            "{case}: {row}"
+        );
+    }
+}
+
+// --- the base checkout after a landing ------------------------------------------
+
+/// After a recorded landing the project's base checkout follows the landed
+/// base through the real `sync-base`: a close whose delivery's cycle the
+/// recorder wrote, over a project checkout one commit behind its origin,
+/// leaves the checkout at the origin's head; one whose tracked file is
+/// dirty is left where it stood, the close noting `base-follow refused
+/// cause=dirty` and ending the lane all the same.
+#[test]
+fn a_recorded_landing_brings_the_base_checkout_to_the_landed_base() {
+    for dirty in [false, true] {
+        let mut fleet = Fleet::hosted(4);
+        let skills = fleet.state_dir().join(".agents/skills");
+        let catalog = orch_package().parent().unwrap().to_path_buf();
+        std::os::unix::fs::symlink(catalog.join("github"), skills.join("github")).unwrap();
+        let bin = fleet.state_dir().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::os::unix::fs::symlink(fixtures().join("gh/gh"), bin.join("gh")).unwrap();
+        std::fs::write(
+            bin.join("gh.json"),
+            json!({"graphql number=7 cursor=": merged_timeline()}).to_string(),
+        )
+        .unwrap();
+        fleet
+            .env
+            .push(("PATH".to_owned(), tool_path(&[bin.as_path()])));
+        fleet
+            .env
+            .push(("GH_TOKEN".to_owned(), "fixture-token".to_owned()));
+        let origin = TempDir::new().unwrap();
+        let project = fleet.state_dir().to_path_buf();
+        let git = |dir: &Path, args: &[&str]| -> String {
+            let out = program("git")
+                .current_dir(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        git(origin.path(), &["init", "-q", "--bare", "-b", "main"]);
+        git(&project, &["init", "-q", "-b", "main"]);
+        git(&project, &["config", "gc.auto", "0"]);
+        git(&project, &["config", "maintenance.auto", "false"]);
+        std::fs::write(project.join("tracked.txt"), "one\n").unwrap();
+        git(&project, &["add", "tracked.txt"]);
+        git(&project, &["commit", "-q", "-m", "one"]);
+        let behind = git(&project, &["rev-parse", "HEAD"]);
+        std::fs::write(project.join("tracked.txt"), "two\n").unwrap();
+        git(&project, &["commit", "-q", "-am", "two"]);
+        let landed = git(&project, &["rev-parse", "HEAD"]);
+        let remote = origin.path().display().to_string();
+        git(&project, &["remote", "add", "origin", &remote]);
+        git(&project, &["push", "-q", "origin", "main"]);
+        git(&project, &["reset", "-q", "--hard", &behind]);
+        if dirty {
+            std::fs::write(project.join("tracked.txt"), "local\n").unwrap();
+        }
+        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
+        fleet.plant_tracker("KEN-1", "completed");
+        let answer = fleet.close(
+            json!({"op": "close-lane", "item": "KEN-1", "delivery": {"pr": {"pr": 7, "repo": "o/r"}}}),
+        );
+        let result = &answer["result"];
+        assert_eq!(result["word"], "closed", "dirty={dirty}: {answer}");
+        assert_eq!(fleet.lane("KEN-1")["status"], "done");
+        let notes: Vec<&str> = result["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|n| n.starts_with("base-follow"))
+            .collect();
+        let head = git(&project, &["rev-parse", "HEAD"]);
+        if dirty {
+            assert_eq!(notes, ["base-follow refused cause=dirty"], "{answer}");
+            assert_eq!(head, behind, "a dirty checkout stays where it stood");
+        } else {
+            assert!(notes.is_empty(), "{answer}");
+            assert_eq!(result["observation"]["base"], "followed branch=main");
+            assert_eq!(head, landed, "the checkout follows the landed base");
+        }
+    }
 }

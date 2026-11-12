@@ -63,7 +63,8 @@ use agent_runtime::accounts::Roster;
 const TAG: &str = "lanes";
 /// The bound on one provider read: an ssh round trip behind the
 /// dispatcher's own busy wait (`ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS`, 30 s).
-const READ_BOUND: Duration = Duration::from_secs(120);
+/// The close's fetch of the landed base takes it too: one network read.
+pub(crate) const READ_BOUND: Duration = Duration::from_secs(120);
 /// The bound on the provider's close: a host close archives the lane's
 /// records and removes its worktree before it answers.
 const CLOSE_BOUND: Duration = Duration::from_secs(900);
@@ -83,6 +84,10 @@ pub const PREPARE_ROW: &str = "lane-prepare";
 /// tracker's quota hold deferred, retried while the notification row still
 /// reads `<key>|reported`.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
+/// `lane-left<TAB><lane><TAB><screen key>|reported`: the screen under which
+/// a merged hosted lane read neither idle nor exited was asked whether its
+/// work left its host.
+pub const LEFT_ROW: &str = "lane-left";
 /// `clone-root<TAB><item><TAB><clone>`: the clone a hosted lane's worktree
 /// `.git` named on the last pass that read it, kept once the worktree is
 /// gone, since the merge's saved state stays in that clone.
@@ -686,10 +691,16 @@ pub fn start(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     }
 }
 
-/// Whether the provider's `list` names a sandbox for `item`: a row whose
-/// first field ends in `/ITEM`, in any case, outside an `available` row.
-/// `Err` is a list that failed or was capped (`lane-host-busy step=list`).
-pub fn lists_item(scripts: &Path, host: &str, item: &str) -> std::result::Result<bool, String> {
+/// The state of the sandbox the provider's `list` names for `item`: the
+/// second field of a row whose first ends in `/ITEM`, in any case, outside
+/// an `available` row; `None` where no such row stands, the sandbox gone.
+/// `list` is the protocol's one presence read. `Err` is a list that failed
+/// or was capped (`lane-host-busy step=list`).
+pub fn lists_item(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+) -> std::result::Result<Option<String>, String> {
     let out = lane_host(scripts, host, "list", &["list"])?;
     let code = exit_code(&out);
     if code == LANE_HOST_BUSY_EXIT {
@@ -699,10 +710,11 @@ pub fn lists_item(scripts: &Path, host: &str, item: &str) -> std::result::Result
         return Err(cause_of("list", &out));
     }
     let suffix = format!("/{}", item.to_ascii_lowercase());
-    Ok(host::stdout_text(&out).lines().any(|row| {
+    Ok(host::stdout_text(&out).lines().find_map(|row| {
         let mut fields = row.split('\t');
         let name = fields.next().unwrap_or("").to_ascii_lowercase();
-        fields.next() != Some("available") && name.ends_with(&suffix)
+        let state = fields.next().unwrap_or("");
+        (state != "available" && name.ends_with(&suffix)).then(|| state.to_owned())
     }))
 }
 
@@ -2192,7 +2204,7 @@ pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
 // --- the finished-hosted close ------------------------------------------------
 
 /// The finished-hosted close at a hosted lane's
-/// `lane-exited` or `lane-idle` line: a lane whose item the GitHub duty read
+/// `lane-exited`, `lane-idle` or `lane-left` line: a lane whose item the GitHub duty read
 /// merged and whose work left nothing on its host ([`record_left`]) is
 /// closed through the one close; one whose item's record stands is inside
 /// its merge close-out or resumed and is left. A lane its provider's status
@@ -2263,6 +2275,28 @@ pub fn close_finished(
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }
     }
+}
+
+/// A hosted lane read neither idle nor exited: where the GitHub duty read
+/// its item merged, it is asked once per screen `key` whether its work left
+/// its host, and closed through [`close_finished`] where it did, since the
+/// screen of a lane whose work is over proves nothing. A close that failed
+/// un-reports the row, so the next pass asks again.
+pub fn close_left(lane: &Lane, pass: &Pass, hosts: &Hosts, key: &str, out: &mut Produced) {
+    let merged = pass
+        .baseline
+        .get(MERGED_ROW, &lane.item)
+        .is_some_and(|row| !row.is_empty());
+    if !merged || host_of(lane) == "local" {
+        return;
+    }
+    let name = lane_name(lane);
+    let reported = format!("{key}|reported");
+    if pass.baseline.get(LEFT_ROW, &name) == Some(reported.as_str()) {
+        return;
+    }
+    out.changes.push(set(LEFT_ROW, &name, reported));
+    close_finished(lane, pass, hosts, LEFT_ROW, key, out);
 }
 
 /// The retry of closes the tracker's hold deferred:

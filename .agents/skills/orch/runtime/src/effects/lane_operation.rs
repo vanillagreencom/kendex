@@ -623,6 +623,59 @@ impl<'a> LaneOperation<'a> {
         ))
     }
 
+    /// The project's base checkout brought to the landed base by
+    /// `sync-base`, which judges whether it may move (a checkout with
+    /// tracked changes refuses): `followed branch=B`, or `refused cause=C`
+    /// with its reason, `timeout` for a fetch past the read bound.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the close's one run of the orch package's base sync through the one runner, its repository named"
+    )]
+    pub(super) fn follow_base(&self) -> String {
+        let project = &self.run.settings.roots.project;
+        let script = crate::watch::overseer::scripts_dir(project).join("sync-base");
+        let repository = project.display().to_string();
+        match agent_runtime::host::run_tagged_in(
+            "close",
+            "sync-base",
+            &script,
+            "base-follow",
+            &[repository.as_str()],
+            agent_runtime::host::Place {
+                cwd: Some(project),
+                env: &[],
+            },
+            crate::watch::hosted::READ_BOUND,
+        ) {
+            Ok(out) if out.status.success() => format!(
+                "followed branch={}",
+                agent_runtime::host::stdout_text(&out).trim()
+            ),
+            Ok(out) => {
+                let stderr = agent_runtime::host::stderr_text(&out);
+                let reason = stderr
+                    .lines()
+                    .find_map(|l| l.strip_prefix("sync-base: "))
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map_or_else(
+                        || format!("exit-{}", out.status.code().unwrap_or(-1)),
+                        str::to_owned,
+                    );
+                format!("refused cause={reason}")
+            }
+            Err(agent_runtime::Error::NotStarted { .. }) => "refused cause=unstarted".to_owned(),
+            Err(_) => "refused cause=timeout".to_owned(),
+        }
+    }
+
+    /// The state the provider's `list` names for the lane's sandbox after
+    /// its close, `None` where it names none, or the cause of a list that
+    /// failed.
+    pub(super) fn host_listed(&self, lane: &Lane) -> std::result::Result<Option<String>, String> {
+        let scripts = crate::watch::overseer::scripts_dir(&self.run.settings.roots.project);
+        crate::watch::hosted::lists_item(&scripts, crate::watch::hosted::host_of(lane), &lane.item)
+    }
+
     /// Whether `worktree merged ITEM`, asked from the project checkout,
     /// shows the item's branch merged: `Ok(true)` on 0, `Ok(false)` on 1,
     /// `Err` with the status on any other answer.

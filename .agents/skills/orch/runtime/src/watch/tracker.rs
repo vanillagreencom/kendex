@@ -1486,8 +1486,29 @@ fn close_terminal_lanes(
             continue;
         }
         // Read before the close removes the lane-side state it is read
-        // from, and carried by the close's own request.
-        let cycle = cycle_of(ctx, tick, lane);
+        // from, and carried by the close's own request. A landing that
+        // cannot be recorded holds the close: its line is said once per
+        // cause, and every pass asks again, since a GitHub read can clear on
+        // any of them.
+        let cycle = match cycle_of(ctx, tick, lane) {
+            Ok(cycle) => cycle,
+            Err(cause) => {
+                let held = format!("held|{cause}");
+                if tick.baseline.get(TERMINAL_CLOSE_ROW, &lane.item) != Some(held.as_str()) {
+                    let _ = writeln!(
+                        std::io::stderr(),
+                        "lane-close-failed item={} step=cycle cause={cause}",
+                        lane.item
+                    );
+                    produced.changes.push(Change::Set {
+                        kind: TERMINAL_CLOSE_ROW.to_owned(),
+                        identity: lane.item.clone(),
+                        value: held,
+                    });
+                }
+                continue;
+            }
+        };
         let lines = cycle.as_ref().map(|c| c.lines.clone()).unwrap_or_default();
         let env = Env {
             now_secs: tick.wall,
@@ -1565,11 +1586,15 @@ fn close_terminal_lanes(
 /// cadence, and a row an earlier pass wrote can name an earlier pull request
 /// only. A merge its record's `cycle` already names is not recorded again.
 /// The row rides the close's request and is written with the close when it
-/// confirms, its lines said then. A refusal and a merge read that failed are
-/// each said once on stderr with the cause, as are the recorder's notes, and
-/// the close goes on with no cycle, as a GitHub refusal holds none of this
-/// duty's work.
-fn cycle_of(ctx: &Context, tick: &Tick, lane: &Lane) -> Option<CycleRow> {
+/// confirms, its lines said then; the recorder's notes are said on stderr.
+/// `Ok(None)` is a lane with no merge of its own to record; `Err` is the
+/// cause of a merge read that failed, a merge key that does not parse or a
+/// recorder refusal, which holds the close.
+fn cycle_of(
+    ctx: &Context,
+    tick: &Tick,
+    lane: &Lane,
+) -> std::result::Result<Option<CycleRow>, String> {
     let gh = github::handle(&ctx.gh);
     let since_iso = ctx.since.map(clock::iso_utc);
     let merged = match github::merged_keys(
@@ -1582,14 +1607,7 @@ fn cycle_of(ctx: &Context, tick: &Tick, lane: &Lane) -> Option<CycleRow> {
         tick.wall,
     ) {
         Ok(keys) => keys,
-        Err(e) => {
-            let _ = writeln!(
-                std::io::stderr(),
-                "lane-close-failed item={} step=cycle cause=merged-unread {e}",
-                lane.item
-            );
-            return None;
-        }
+        Err(e) => return Err(format!("merged-unread {e}")),
     };
     let repo_of = |v: &serde_json::Value| {
         v.get("repo")
@@ -1620,18 +1638,14 @@ fn cycle_of(ctx: &Context, tick: &Tick, lane: &Lane) -> Option<CycleRow> {
         };
         mine.then_some((key_repo, number))
     });
-    let (key_repo, number) = own?;
+    let Some((key_repo, number)) = own else {
+        return Ok(None);
+    };
     if cycle_pr.is_some() && cycle_pr == number.parse().ok() {
-        return None;
+        return Ok(None);
     }
-    let item = lane.item.as_str();
-    let mut stderr = std::io::stderr();
     let Ok(pr) = number.parse::<u64>() else {
-        let _ = writeln!(
-            stderr,
-            "lane-close-failed item={item} step=cycle cause=pr-unparsed key={key_repo}#{number}"
-        );
-        return None;
+        return Err(format!("pr-unparsed key={key_repo}#{number}"));
     };
     let delivery = Delivery::Pr {
         pr,
@@ -1646,18 +1660,13 @@ fn cycle_of(ctx: &Context, tick: &Tick, lane: &Lane) -> Option<CycleRow> {
         tick.wall,
     ) {
         Ok(row) => {
+            let mut stderr = std::io::stderr();
             for note in &row.notes {
                 let _ = writeln!(stderr, "{note}");
             }
-            Some(row)
+            Ok(Some(row))
         }
-        Err(cause) => {
-            let _ = writeln!(
-                stderr,
-                "lane-close-failed item={item} step=cycle cause={cause}"
-            );
-            None
-        }
+        Err(cause) => Err(cause),
     }
 }
 
@@ -1695,6 +1704,7 @@ fn close_one(
         ended: None,
         identity: None,
         cycle,
+        disposed: None,
     });
     // The close's bounds are judged before its intent persists, as the
     // command's admission judges them.

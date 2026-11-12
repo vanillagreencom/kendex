@@ -362,7 +362,24 @@ impl Close<'_> {
         if provider_closes(self.ground, self.lane) {
             let merged = self.merged(&operation, &mut observation);
             match operation.host_close(self.lane, merged)? {
-                Ok(HostClosed::Closed { line }) => observation["host_close"] = json!(line),
+                // The provider's exit is no proof its sandbox is gone: its
+                // `list` is asked after it, and only a list naming no row
+                // for the item lets the close go on.
+                Ok(HostClosed::Closed { line }) => match operation.host_listed(self.lane) {
+                    Ok(None) => observation["host_close"] = json!(line),
+                    Ok(Some(state)) => {
+                        observation["host_close"] = json!("standing");
+                        observation["listed"] = json!(state);
+                        observation["closed"] = json!(line);
+                        return Ok(self.hold(operation, observation));
+                    }
+                    Err(cause) => {
+                        observation["host_close"] = json!("unconfirmed");
+                        observation["closed"] = json!(line);
+                        observation["cause"] = json!(cause);
+                        return Ok(self.hold(operation, observation));
+                    }
+                },
                 Ok(HostClosed::Refused { path }) => {
                     observation["host_close"] = json!("refused");
                     observation["path"] = json!(path);
@@ -393,6 +410,11 @@ impl Close<'_> {
                 observation["worktree"] = json!("unreadable");
                 observation["cause"] = json!(cause);
             }
+        }
+        // After a recorded landing the base checkout follows it; a refusal
+        // is noted and holds nothing.
+        if self.cycle.is_some() {
+            observation["base"] = json!(operation.follow_base());
         }
         Ok(self.judged(operation, observation))
     }

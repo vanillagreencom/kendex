@@ -4773,9 +4773,13 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-confirm");
     let replies = runner.state_dir().join("linear.json");
-    let open = json!({"issues bulk-get": {"body": {"issues": {"nodes": [
-        {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
-    ]}}}});
+    // The lane completed its boxes: the item reads Verifying with none open.
+    let open = json!({
+        "issues bulk-get": {"body": {"issues": {"nodes": [
+            {"identifier": "KEN-W", "state": {"type": "started"}, "description": "", "children": {"nodes": []}}
+        ]}}},
+        "issues get": {"body": {"issue": {"description": "", "state": {"name": "Verifying", "type": "started"}}}},
+    });
     std::fs::write(&replies, open.to_string()).unwrap();
     runner.env = vec![
         (
@@ -4802,6 +4806,7 @@ fn a_merged_lane_whose_close_out_is_done_is_stopped_before_its_worktree_is_relea
     let mut fleet = runner.fleet();
     fleet["lanes"][0]["mail_root"] = json!(wt.display().to_string());
     fleet["lanes"][0]["cycle"] = json!({"pr": 7});
+    fleet["lanes"][0]["repo"] = json!("o/r");
     runner.write_fleet(&fleet);
     let record = runner.state_dir().join("workflow-state-KEN-W.json");
     std::fs::write(&record, "{}\n").unwrap();
@@ -5637,7 +5642,8 @@ fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
             .unwrap();
             std::fs::write(
                 scripts.join("lane-host.json"),
-                json!({"close --item KEN-N": {"stdout": "kept=none\n"}}).to_string(),
+                json!({"close --item KEN-N": {"stdout": "kept=none\n"}, "list": {"stdout": ""}})
+                    .to_string(),
             )
             .unwrap();
         }
@@ -6202,16 +6208,17 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
-/// Through the real `lane-host`: a launch whose `op` ends inside the create
-/// is failed by the reconcile from the phase the launch recorded before it;
-/// a provider a signal ends mid-create fails the launch
-/// `host-create-unknown` with no window, never `host-create-failed`; each
-/// leaves the lane out of `preparing`, and the next launch asks the
-/// provider's create again, reusing the item it holds, and opens. A create
-/// the provider's lock refuses fails `host-create-busy`, never as an item
-/// another session owns.
+/// Through the real `lane-host`: a launch whose `op` ends inside the
+/// provider's create leaves the phase it recorded before it, and the
+/// reconcile holds the launch `host-create-unknown`, the lane `preparing`
+/// and its slot charged, since the provider may hold a sandbox for it; the
+/// next launch request meets that held launch and asks no create; a close
+/// supersedes it, its provider close confirmed by `list`, and ends the
+/// record. A create the provider's lock then refuses fails
+/// `host-create-busy`, the create's own refusal, which charges nothing; the
+/// next create reuses what the provider holds and opens.
 #[test]
-fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it_holds() {
+fn a_hosted_create_whose_answer_is_lost_holds_its_launch_until_a_close_confirms_the_sandbox_gone() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
@@ -6247,43 +6254,65 @@ fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it
     let mut answers: Value =
         serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
     answers[first.as_str()] = json!({"kill_ancestor": 2});
-    answers[format!("{create}#1")] = json!({"signal": "KILL"});
+    answers["close --item KEN-H"] = json!({"stdout": "kept=none\n"});
+    answers["list"] = json!({"stdout": ""});
     // The shipped ssh provider's lock, held by the item's own earlier
     // create: its notice beside the 75 (`lane-host-ssh`'s `ownership-busy`).
-    answers[format!("{create}#2")] = json!({
+    answers[format!("{create}#1")] = json!({
         "exit": 75,
         "stderr": "lane-host-ssh: ownership-busy target=lane.example clone=/srv/clone exit=75\n",
     });
-    answers[format!("{create}#3")] = json!({"stdout": format!(
+    answers[format!("{create}#2")] = json!({"stdout": format!(
         "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\n",
         world.host()
     )});
     std::fs::write(&answers_path, answers.to_string()).unwrap();
+    let calls = || -> Vec<String> {
+        std::fs::read_to_string(provider.join("lane-host.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| {
+                l.trim_start_matches(&format!("ORCH_LANE_HOST={host} "))
+                    .to_owned()
+            })
+            .collect()
+    };
+    let creates = || calls().iter().filter(|l| l.starts_with("create ")).count();
+    let lane = || world.runner.fleet()["lanes"][0].clone();
     let mut request = world.request();
     request["host"] = json!(host);
     let ended = world.runner.op_fleet(&request);
     assert!(!ended.status.success(), "the asking op ended");
     let reconciled = world.runner.reconcile_one();
-    assert_eq!(reconciled["intent"]["outcome"], "failed", "{reconciled}");
+    assert_ne!(reconciled["intent"]["outcome"], "failed", "{reconciled}");
     assert_eq!(
         reconciled["intent"]["observation"]["note"], "host-create-unknown",
         "{reconciled}"
     );
-    assert_ne!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    assert_eq!(lane()["status"], "preparing");
+
     let panes_before = server.panes().len();
-    let report = effect_report(&world.runner.op_fleet(&request));
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    let observation = &report["intent"]["observation"];
-    assert_eq!(observation["note"], "host-create-unknown", "{report}");
-    assert_eq!(observation["at"], host, "{report}");
-    assert!(
-        observation["cause"]
-            .as_str()
-            .is_some_and(|c| c.starts_with("host-create-unanswered ")),
-        "the dispatcher's 137 is no answer: {report}"
+    let held = reply(&world.runner.op_fleet(&request));
+    assert_eq!(held["ok"], true, "{held}");
+    assert_eq!(lane()["status"], "preparing", "{held}");
+    assert_eq!(
+        creates(),
+        1,
+        "the held launch asks no create: {:?}",
+        calls()
     );
     assert_eq!(server.panes().len(), panes_before, "no window opened");
-    assert_ne!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+
+    let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    assert_eq!(closed["intent"]["outcome"], "confirmed", "{closed}");
+    assert_eq!(lane()["status"], "done");
+    let after = calls();
+    let close = after.iter().position(|l| l == "close --item KEN-H");
+    assert!(
+        close.is_some_and(|at| after[at + 1..].iter().any(|l| l == "list")),
+        "the provider's close confirmed by its list: {after:?}"
+    );
+
     let busy = effect_report(&world.runner.op_fleet(&request));
     assert_eq!(busy["intent"]["outcome"], "failed", "{busy}");
     assert!(
@@ -6292,24 +6321,11 @@ fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it
             .is_some_and(|c| c.starts_with("host-create-busy ")),
         "the provider's lock is no other item's ownership: {busy}"
     );
+    assert_eq!(lane()["status"], "stopped");
+    assert!(lane().get("sandbox").is_none(), "{}", lane());
     let again = effect_report(&world.runner.op_fleet(&request));
     assert_eq!(again["intent"]["outcome"], "confirmed", "{again}");
-    let creates: Vec<String> = std::fs::read_to_string(provider.join("lane-host.log"))
-        .unwrap()
-        .lines()
-        .filter(|l| l.contains(" create "))
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(
-        creates,
-        vec![
-            format!("ORCH_LANE_HOST={host} {first}"),
-            format!("ORCH_LANE_HOST={host} {create}"),
-            format!("ORCH_LANE_HOST={host} {create}"),
-            format!("ORCH_LANE_HOST={host} {create}"),
-        ],
-        "the provider's create asked again, reusing what it holds"
-    );
+    assert_eq!(creates(), 3, "{:?}", calls());
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
@@ -6588,6 +6604,95 @@ fn a_parked_hosted_relaunch_starts_its_sandbox_before_its_create() {
             }
         }
         effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+    }
+}
+
+/// A parked relaunch stopped part way keeps its slot until a close confirms
+/// its sandbox gone: one whose provider started the sandbox and then
+/// refused the create fails with the record `stopped`, the sandbox noted
+/// standing and the account still charged; its close asks the provider's
+/// close, confirmed by `list`, and releases the charge. One whose process
+/// ended inside the start leaves the `host-start` phase it recorded before
+/// it, which the reconcile holds: the lane stays `preparing`.
+#[test]
+fn a_part_way_hosted_relaunch_keeps_its_slot_until_a_close_confirms_its_sandbox_gone() {
+    for case in ["started, its create refused", "cut inside its start"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+        let world = HostedLaunch::new(&server, dir.path(), record);
+        let mut fleet = world.runner.fleet();
+        let mut prior = lane("KEN-H", "parked", &world.runner, Value::Null);
+        prior["host"] = json!(PROVIDER_PATH);
+        prior["kind"] = json!("ssh");
+        prior["launched_at"] = json!("2026-01-29T15:20:00Z");
+        prior["parked"] =
+            json!({"repo": "o/r", "pr": 7, "head": "h2", "at": "2026-01-29T15:40:00Z"});
+        fleet["lanes"] = json!([prior]);
+        world.runner.write_fleet(&fleet);
+        let account = world.runner.state_dir().display().to_string();
+        let canon = std::fs::canonicalize(world.runner.state_dir())
+            .unwrap()
+            .display()
+            .to_string();
+        let mut answers: Value = serde_json::from_str(
+            &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
+        )
+        .unwrap();
+        // The provider is asked directly here, so its parent is the asker.
+        answers["start --item KEN-H"] = if case == "cut inside its start" {
+            json!({"kill_ancestor": 1})
+        } else {
+            json!({"stdout": "sandbox-started item=KEN-H\n"})
+        };
+        answers[format!(
+            "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+        )] = json!({"exit": 1, "stderr": "lane-host-ssh: create-failed item=KEN-H\n"});
+        answers["close --item KEN-H"] = json!({"stdout": "kept=none\n"});
+        answers["list"] = json!({"stdout": ""});
+        std::fs::write(
+            world.scripts.join("lane-host.json"),
+            serde_json::to_string(&answers).unwrap(),
+        )
+        .unwrap();
+        let charges = || {
+            reply(&world.runner.run(&["lane", "charges", "--fleet"]))["result"]["charges"].clone()
+        };
+        let lane_now = || world.runner.fleet()["lanes"][0].clone();
+        if case == "cut inside its start" {
+            let ended = world.runner.op_fleet(&world.request());
+            assert!(!ended.status.success(), "{case}: the asking op ended");
+            let reconciled = world.runner.reconcile_one();
+            assert_ne!(
+                reconciled["intent"]["outcome"], "failed",
+                "{case}: {reconciled}"
+            );
+            assert_eq!(
+                reconciled["intent"]["observation"]["note"], "host-start-unknown",
+                "{case}: {reconciled}"
+            );
+            assert_eq!(lane_now()["status"], "preparing", "{case}");
+            assert_eq!(charges(), json!({ canon.clone(): 1 }), "{case}");
+            continue;
+        }
+        let report = effect_report(&world.runner.op_fleet(&world.request()));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        assert_eq!(lane_now()["status"], "stopped", "{case}");
+        assert_eq!(lane_now()["sandbox"], "standing", "{case}: {}", lane_now());
+        assert_eq!(charges(), json!({ canon.clone(): 1 }), "{case}");
+        let closed = effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+        assert_eq!(closed["intent"]["outcome"], "confirmed", "{case}: {closed}");
+        assert!(
+            world.calls().iter().any(|c| c.ends_with(" list")),
+            "{case}: {:?}",
+            world.calls()
+        );
+        assert!(
+            lane_now().get("sandbox").is_none(),
+            "{case}: {}",
+            lane_now()
+        );
+        assert_eq!(charges(), json!({}), "{case}");
     }
 }
 
