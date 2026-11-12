@@ -157,7 +157,9 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-14
+          # GitHub refuses the macos-14 runner, and a refused build cancels the
+          # run: no main build then publishes and rolling-main stops moving.
+          - os: macos-15
             target: aarch64-apple-darwin
           # The last Intel macOS image GitHub offers.
           - os: macos-15-intel
