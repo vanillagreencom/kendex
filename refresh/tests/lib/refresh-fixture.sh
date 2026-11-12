@@ -394,10 +394,11 @@ refresh_class_matches() { # CLASS STATE REASON METHOD [MEASURED]
 # bypasses the unchanged-publication return on a disposable release copy.
 run_admission_rows() {
   local saved_runner="$runner" old_head name has_pr armed content lifecycle disarm expected
-  local matched remote_head expected_pr
-  mkdir -p "$TMP/admission-release" "$TMP/admission-control"
+  local matched remote_head expected_pr summary_lines line
+  mkdir -p "$TMP/admission-release" "$TMP/admission-control" "$TMP/admission-summary-control"
   cp -RL "$repo/refresh" "$repo/skills" "$TMP/admission-release/"
   cp -RL "$repo/refresh" "$repo/skills" "$TMP/admission-control/"
+  cp -RL "$repo/refresh" "$repo/skills" "$TMP/admission-summary-control/"
   python3 - "$TMP/admission-control/refresh/refresh-consumer.sh" <<'UNCHANGED_CONTROL'
 from pathlib import Path
 import sys
@@ -409,6 +410,25 @@ changed = source.replace(old, 'if false; then # ' + old)
 assert changed != source
 path.write_text(changed)
 UNCHANGED_CONTROL
+  # Drops the retained-head summary's version, class and settings appends.
+  python3 - "$TMP/admission-summary-control/refresh/refresh-consumer.sh" <<'UNCHANGED_SUMMARY_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+source = path.read_text()
+start = 'if [ "$state" = unchanged ]; then\n'
+assert source.count(start) == 1
+offset = source.index(start)
+end = source.index('\nfi\n', offset)
+block = source[offset:end]
+for old, new in (('"$version_report" "$class_line" >>', '"" "" >>'),
+                 ('  [ -z "$settings_report" ] || ', '  : # ')):
+    assert block.count(old) == 1
+    block = block.replace(old, new)
+changed = source[:offset] + block + source[end:]
+assert changed != source
+path.write_text(changed)
+UNCHANGED_SUMMARY_CONTROL
   runner="$TMP/admission-release/refresh/refresh-consumer.sh"
   run_refresh admission-original pass render
   [ "$RC" -eq 0 ] || { bad 'admission fixture first publication' "$OUT"; return 1; }
@@ -417,6 +437,7 @@ UNCHANGED_CONTROL
     reset_default
     runner="$TMP/admission-release/refresh/refresh-consumer.sh"
     [ "$name" != unchanged-control ] || runner="$TMP/admission-control/refresh/refresh-consumer.sh"
+    [ "$name" != unchanged-summary-control ] || runner="$TMP/admission-summary-control/refresh/refresh-consumer.sh"
     git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$old_head"
     if [ "$name" = first ]; then git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh; fi
     : >"$TMP/state/pr"
@@ -442,8 +463,17 @@ UNCHANGED_CONTROL
       printf 'false\n' >"$TMP/state/branch-protected"
     fi
     : >"$TMP/state/calls"
+    # A setting note gives every row a settings report to carry.
+    CLASS_NOTES='setting-unset: setting=HARNESS_CI_QUEUE_PATHS'
     run_refresh "$content" pass render
+    unset CLASS_NOTES
     remote_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    summary_lines=0
+    for line in 'Engine version: `kendex 7.8.9 (release-build)`.' \
+      'class: class=render measured=true cause=renders-match-their-sources' \
+      '- <code>setting-unset: setting=HARNESS_CI_QUEUE_PATHS</code>'; do
+      ! grep -qxF -- "$line" "$TMP/state/summary" || summary_lines=$((summary_lines + 1))
+    done
     matched=false
     case "$expected" in
       unchanged)
@@ -452,7 +482,10 @@ UNCHANGED_CONTROL
             ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr (merge|close) ' "$TMP/state/calls" &&
             [ ! -e "$TMP/state/arm-attempted" ] &&
             { { [ "$armed" = true ] && [ -e "$TMP/state/armed" ]; } ||
-              { [ "$armed" = false ] && [ ! -e "$TMP/state/armed" ]; }; }; then matched=true; fi ;;
+              { [ "$armed" = false ] && [ ! -e "$TMP/state/armed" ]; }; }; then
+          matched=retained
+          [ "$summary_lines" -ne 3 ] || matched=true
+        fi ;;
       published)
         if [ "$RC" -eq 0 ] && [ "$remote_head" != "$old_head" ] &&
             grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
@@ -478,6 +511,11 @@ UNCHANGED_CONTROL
           grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $old_head" "$TMP/state/calls"; then
         ok 'control: unconditional old-head admission turns the unchanged assertion red'
       else bad "$name admission control" "$OUT"; fi
+    elif [ "$name" = unchanged-summary-control ]; then
+      # Every summary line must vanish, so each line's assertion is proved.
+      if [ "$matched" = retained ] && [ "$summary_lines" -eq 0 ]; then
+        ok 'control: dropped retained-head summary appends turn the unchanged assertion red'
+      else bad "$name admission control" "$OUT"; fi
     elif [ "$matched" = true ]; then ok "$name publication admission"
     else bad "$name publication admission" "$OUT"; fi
     rm -f -- "${TMP:?}/state/prepush-state.json" "${TMP:?}/state/disarm-state.json" "${TMP:?}/state/prepush-query-failed" \
@@ -488,6 +526,7 @@ unchanged-armed|yes|true|admission-original|active|pass|unchanged
 unchanged-direct|yes|false|admission-original|active|pass|unchanged
 retained-no-pr|no|false|admission-original|active|pass|unchanged
 unchanged-control|yes|false|admission-original|active|pass|unchanged
+unchanged-summary-control|yes|false|admission-original|active|pass|unchanged
 changed-armed|yes|true|admission-changed|active|pass|published
 changed-active|yes|false|admission-changed|active|pass|published
 first|no|false|admission-first|active|pass|published
