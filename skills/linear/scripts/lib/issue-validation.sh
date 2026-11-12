@@ -426,12 +426,16 @@ done_when_parse() {
                 .outside += [{line: ($i + 1), checked: ($line | test("^\\s*[-*] \\[[xX]\\]")),
                               text: ($line | sub("^\\s*[-*] \\[[ xX]\\]\\s*"; ""))}]
               else . end
-            | ((try ($line | capture("^(?<indent>[ \t]*)[-*] (?<kind>Waived|Superseded): \\S")) catch null) // null) as $slot
-            | (if $slot == null then null else
-                (($lines[$i + 1] // "" | try capture("^(?<indent>[ \t]+)" + (if $slot.kind == "Waived" then "Reason" else "Replacement" end) + ": (?<text>.*)$") catch null) // null)
-                | select(. != null and (.indent | length) > ($slot.indent | length))
-                | {kind: ($slot.kind | ascii_downcase), text} end) as $slot_record
-            | if .section and $slot_record != null then
+            # A slot-shaped line without its deeper reason line is an ordinary
+            # line: every branch yields one value, so the reduce state is never
+            # emptied by a failed match.
+            | (if .section | not then null else
+                ((try ($line | capture("^(?<indent>[ \t]*)[-*] (?<kind>Waived|Superseded): \\S")) catch null) // null) as $slot
+                | if $slot == null then null else
+                    (($lines[$i + 1] // "" | try capture("^(?<indent>[ \t]+)" + (if $slot.kind == "Waived" then "Reason" else "Replacement" end) + ": (?<text>.*)$") catch null) // null) as $reason
+                    | if $reason != null and ($reason.indent | length) > ($slot.indent | length)
+                      then {kind: ($slot.kind | ascii_downcase), text: $reason.text} else null end end end) as $slot_record
+            | if $slot_record != null then
                 .slots += 1 | .retired += [$slot_record + {number: .slots}] | .out += [$line]
               elif .section and ($line | test("^\\s*[-*] \\[[ xX]\\](\\s|$)")) then
                 (.slots + 1) as $n

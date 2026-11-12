@@ -525,3 +525,18 @@ met|[2]|{}|{"2":"Jarvis read it"}
 other-kind|[]|{"2":"superseded"}|{"2":"CC-730 The owner sees the update card"}
 other-reason|[]|{"2":"waived"}|{"2":"owner comment c2: another reason"}
 ROWS
+
+# A Waived: or Superseded: bullet without its deeper reason line is ordinary
+# prose, in the section or outside it, and takes no number.
+# Columns: name | description, \n between lines | boxes as [number, text].
+while IFS='|' read -r name description boxes; do
+  assert_jq "prose $name keeps its boxes" "$(done_when_parse "$(printf '%b' "$description")" '[]')" \
+    "[.boxes[] | [.number, .text]] == $boxes and .errors == []"
+done <<'ROWS'
+waived-last-line|## Done when\n- [ ] one\n- Waived: something|[[1,"one"]]
+waived-unindented-reason|## Done when\n- [ ] one\n- Waived: something\nReason: x\n- [ ] two|[[1,"one"],[2,"two"]]
+superseded-reason-line|## Done when\n- [ ] one\n- Superseded: something\n  Reason: x\n- [ ] two|[[1,"one"],[2,"two"]]
+before-section|## Notes\n- Waived: something\n## Done when\n- [ ] one\n- [ ] two|[[1,"one"],[2,"two"]]
+after-section|## Done when\n- [ ] one\n- [ ] two\n## Notes\n- Waived: something|[[1,"one"],[2,"two"]]
+outside-with-reason|## Notes\n- Superseded: the earlier approach\n  Replacement: CC-730 x\n## Done when\n- [ ] one\n- [ ] two|[[1,"one"],[2,"two"]]
+ROWS
