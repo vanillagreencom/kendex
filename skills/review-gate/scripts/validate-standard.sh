@@ -126,7 +126,13 @@ never advisory.
                                     ci_context ran for the pull request the
                                     default branch's head merged, on its
                                     pull_request leg and on its merge_group
-                                    leg. VALUE is the pull_request leg's job
+                                    leg. Where
+                                    REVIEW_GATE_STANDARD_LAND_BYPASS names
+                                    the landing app, a head it pushed with
+                                    no pull request is read through its
+                                    first parents to the nearest commit a
+                                    pull request merged. VALUE is the
+                                    pull_request leg's job
                                     names; a FAIL value is one of
                                     ci-context-missing:LEG:JOBS (LEG ran no
                                     such job; JOBS is what ran, or none),
@@ -153,8 +159,9 @@ as a match. The permission each row's reads need, as GitHub App permissions:
                                     organization's for an organization
                                     ruleset); a withheld field is unreadable
   classic-protection                the branch: Contents read
-  ci-context                        the default branch's head commit:
-                                    Contents read; its pull requests: Pull
+  ci-context                        the default branch's head commit,
+                                    and each landed commit's parent:
+                                    Contents read; their pull requests: Pull
                                     requests read; the workflow runs on each
                                     leg and their jobs: Actions read
 A token holding only repository Administration, Metadata and Actions read
@@ -472,9 +479,17 @@ fi
 # default branch's head merged holds the head where the pull_request leg ran.
 # The merge_group leg ran on the head itself, which the merge queue merged;
 # a head that did not come through the queue has none, and the leg stays
-# unconfirmed rather than read from another commit. Commit statuses are not
-# read: the CI context is an Actions job, and statuses need a permission the
-# standard's app does not hold.
+# unconfirmed rather than read from another commit. A commit the landing
+# app pushed belongs to no pull request: under the standard's rulesets that
+# app is the one actor admitted past the pull-request rule, and it pushes
+# only on top of the branch, so the head's first parents lead through the
+# commits it landed to the nearest one a pull request merged, which holds
+# both legs. That walk reads each landed commit's pull requests and its
+# parent, two reads per landed commit. A consumer that names no landing app
+# admits no actor past the pull-request rule, so a head no pull request
+# merged is the departure itself, and the walk is not taken. Commit statuses are not read: the CI
+# context is an Actions job, and statuses need a permission the standard's
+# app does not hold.
 
 # The names of the jobs that ran on SHA for EVENT, one per line, sorted and
 # unique, in LEG_JOBS; LEG_RUNS counts the runs. A failed read returns 1
@@ -508,7 +523,7 @@ leg_list() { # JOBS — the job names as one VALUE field, or none
 }
 
 ci_context_row() {
-  local head merged number pr_sha pr_jobs pr_list
+  local head commit merged number pr_sha pr_jobs pr_list landed=0
   if ! read_api "repos/$FULL/commits/$BRANCH_URI" '.sha'; then
     bad standard-ci-context unreadable "the head commit of $BRANCH could not be read: $READ_ERR"
     return 0
@@ -520,16 +535,36 @@ ci_context_row() {
       return 0
       ;;
   esac
-  if ! read_api "repos/$FULL/commits/$head/pulls" \
-    "map(select(.merged_at != null and .base.ref == $(jq_string "$BRANCH"))) | if length == 0 then \"\" else (.[0] | \"\\(.number) \\(.head.sha)\") end"; then
-    bad standard-ci-context unreadable "the pull requests of $head, the head of $BRANCH, could not be read: $READ_ERR"
-    return 0
-  fi
-  merged="$READ_OUT"
-  if [ -z "$merged" ]; then
-    bad standard-ci-context no-associated-pull-request "$head, the head of $BRANCH, belongs to no pull request merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
-    return 0
-  fi
+  commit="$head"
+  while :; do
+    if ! read_api "repos/$FULL/commits/$commit/pulls" \
+      "map(select(.merged_at != null and .base.ref == $(jq_string "$BRANCH"))) | if length == 0 then \"\" else (.[0] | \"\\(.number) \\(.head.sha)\") end"; then
+      bad standard-ci-context unreadable "the pull requests of $commit, on $BRANCH's first parents from its head $head, could not be read: $READ_ERR"
+      return 0
+    fi
+    merged="$READ_OUT"
+    [ -z "$merged" ] || break
+    if [ -z "$WANT_LAND_BYPASS" ]; then
+      bad standard-ci-context no-associated-pull-request "$head, the head of $BRANCH, belongs to no pull request merged into $BRANCH, and REVIEW_GATE_STANDARD_LAND_BYPASS names no landing app that pushes with none, so no commit shows which contexts $FULL's CI reports"
+      return 0
+    fi
+    if ! read_api "repos/$FULL/commits/$commit" '.parents[0].sha // ""'; then
+      bad standard-ci-context unreadable "the first parent of $commit, on $BRANCH's first parents from its head $head, could not be read: $READ_ERR"
+      return 0
+    fi
+    case "$READ_OUT" in
+      "")
+        bad standard-ci-context no-associated-pull-request "no commit on $BRANCH's first parents from its head $head belongs to a pull request merged into $BRANCH, so no commit shows which contexts $FULL's CI reports"
+        return 0
+        ;;
+      *[!0123456789abcdef]*)
+        bad standard-ci-context unreadable "the first parent of $commit is not a commit sha: $READ_OUT"
+        return 0
+        ;;
+    esac
+    commit="$READ_OUT"
+    landed=$((landed + 1))
+  done
   number="${merged%% *}"
   pr_sha="${merged#* }"
   case "$pr_sha" in
@@ -550,16 +585,16 @@ ci_context_row() {
     return 0
   fi
 
-  if ! leg_jobs "$head" merge_group; then
+  if ! leg_jobs "$commit" merge_group; then
     bad standard-ci-context unreadable "$READ_ERR"
     return 0
   fi
   if [ "$LEG_RUNS" -eq 0 ]; then
-    bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha. No merge_group run ran on $head, the head of $BRANCH, so the head did not come through the merge queue, and the merge_group leg is unconfirmed until the next merge through the queue."
+    bad standard-ci-context "merge-group-unobserved:$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha. No merge_group run ran on $commit, the commit it merged on $BRANCH, so that commit did not come through the merge queue, and the merge_group leg is unconfirmed until the next merge through the queue."
   elif ! grep -qxF -- "$WANT_CI" <<<"$LEG_JOBS"; then
-    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $head, the head of $BRANCH, and the standard has every repository report $WANT_CI on the pull_request and merge_group legs: .agents/skills/harness-ci/references/wiring.md § The CI context"
+    bad standard-ci-context "ci-context-missing:merge_group:$(leg_list "$LEG_JOBS")" "$FULL reported no $WANT_CI job for the merge group on $commit, the commit pull request #$number merged on $BRANCH, and the standard has every repository report $WANT_CI on the pull_request and merge_group legs: .agents/skills/harness-ci/references/wiring.md § The CI context"
   else
-    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $head"
+    ok standard-ci-context "$pr_list" "$FULL reported $WANT_CI for pull request #$number on $pr_sha and for its merge group on $commit, with $landed landed commits above it on $BRANCH"
   fi
 }
 ci_context_row

@@ -72,6 +72,7 @@ skills/reviewer/SKILL.md text eol=lf
 refresh/adopt-refresh.sh text eol=lf
 refresh/refresh-consumer.sh text eol=lf
 refresh/lib/caller.py text eol=lf
+refresh/lib/landing.sh text eol=lf
 
 # Binary assets, declared so git keeps them out of its textual diffs. That
 # declaration is also the doc-limits content sniff's only exemption: a blob

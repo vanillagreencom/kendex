@@ -5,7 +5,8 @@
 # published head, it merges directly where the base has no rules or protection,
 # or requests auto-merge. SKILL.md defines the arm outcomes. A render this
 # run committed first goes to the default branch itself where the landing
-# token, KENDEX_LAND_TOKEN, is set and that branch's merge queue holds no
+# token, KENDEX_LAND_TOKEN, is set, every project takes its packages from
+# the default catalog at main alone, and that branch's merge queue holds no
 # entry: the run pushes its one commit with that token, and where GitHub's
 # rulesets let the push through, no pull request, merge group or approval
 # follows.
@@ -15,14 +16,20 @@
 # refresh-state=unchanged pr=NUMBER|none class=CLASS head=REVISION published=false, or
 # refresh-state=unarmed pr=NUMBER pushed=REVISION head=REVISION, or
 # refresh-state=deferred reason=queued|merged|closed|branch-gone|base-moved. A
-# landing push GitHub refused also prints refresh-land=refused value=STATUS
-# ahead of the pull request route's record. A consumer whose render did not
-# run also gets
+# landing push GitHub refused also prints refresh-land=refused value=STATUS,
+# and a merge queue the landing check could not read
+# refresh-land=unavailable value=queue-read, ahead of the pull request
+# route's record. A consumer whose render did not run also gets
 # refresh-render=skipped package=bot-instructions cause=absent|unconfigured.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Load from the trusted runner before refresh replaces its installed files.
 source "$SCRIPT_DIR/../skills/review-gate/scripts/lib/arm-published-head.sh"
+source "$SCRIPT_DIR/lib/landing.sh"
+# The landing app's token bypasses the review rulesets and serves the one
+# landing push alone, so no child this run starts inherits it.
+land_token="${KENDEX_LAND_TOKEN:-}"
+unset KENDEX_LAND_TOKEN
 templates="$SCRIPT_DIR"
 ROOT="$(git rev-parse --show-toplevel)"
 ROOT="$(cd -- "$ROOT" && pwd -P)"
@@ -489,17 +496,15 @@ if [ "$publication_status" -gt 1 ]; then
   printf 'refresh-error=read value=publication-diff\n' >&2
   exit 1
 fi
-if [ "$publication_status" -eq 0 ]; then
-  report_settings
-  refresh_close_superseded
-  printf 'refresh-state=current pr=none class=none\n'
-  if [ -n "${GITHUB_OUTPUT:-}" ]; then
-    printf 'state=current\n' >>"$GITHUB_OUTPUT"
-    # The engine owns source resolution. Its subscription JSON identifies
-    # remotes but omits item overrides, so inspect TOML for any revision.
-    # No revision override can be covered by the main-only tuple.
-    # Missing evidence withholds the record, so a later run refreshes in full.
-    python3 - "${projects[@]}" >>"$GITHUB_OUTPUT" <<'SOURCE_COVERAGE'
+# Prints sources=covered where every selected project takes its packages
+# from the default catalog at main alone, else sources=uncovered. The
+# engine owns source resolution. Its subscription JSON identifies remotes
+# but omits item overrides, so inspect TOML for any revision. No revision
+# override can be covered by the main-only tuple. Missing evidence answers
+# uncovered: the current route then withholds the record, so a later run
+# refreshes in full, and the landing route keeps the pull request.
+refresh_source_coverage() {
+python3 - "${projects[@]}" <<'SOURCE_COVERAGE'
 import json, pathlib, subprocess, sys
 try:
     import tomllib
@@ -529,6 +534,14 @@ except (AssertionError, AttributeError, ImportError, KeyError, OSError, TypeErro
 else:
     print('sources=covered')
 SOURCE_COVERAGE
+}
+if [ "$publication_status" -eq 0 ]; then
+  report_settings
+  refresh_close_superseded
+  printf 'refresh-state=current pr=none class=none\n'
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then
+    printf 'state=current\n' >>"$GITHUB_OUTPUT"
+    refresh_source_coverage >>"$GITHUB_OUTPUT"
   fi
   printf '%s\n\nNo content changes to publish. Project lock records publish with the next content change.\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
@@ -590,26 +603,28 @@ if [ "$state" = unchanged ]; then
 fi
 # Only a commit this run made lands on the default branch: the retained head
 # above may be one a failed merge group left, and this run proved only its
-# own commit, on the base it fetched. KENDEX_LAND_TOKEN is the landing app's
+# own commit, on the base it fetched. land_token is the landing app's
 # token, which only the protected environment mints, and the push uses it
 # alone. The default branch's rulesets decide the push: the run asks
-# nothing about them first. No token, a class other than render and a merge
-# queue that holds an entry or could not be read keep the pull request
-# route: a push to a branch whose queue holds an entry makes GitHub rebuild
-# every running group.
+# nothing about them first. The render proof covers a package's bytes, and
+# kendex's merge queue proved only the default catalog's content, so a
+# project that takes packages from any other catalog or revision keeps the
+# pull request, where the consumer reviews them. No token, a class other
+# than render, that coverage, and a merge queue that holds an entry or
+# could not be read keep the pull request route.
 refresh_may_land() {
   local queued
-  [ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ] || return 1
-  queued="$(gh api graphql -f owner="${GH_REPO%%/*}" -f repo="${GH_REPO#*/}" -f branch="$default" \
-    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
-    --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1
+  [ -n "$land_token" ] && [ "$class" = render ] || return 1
+  [ "$(refresh_source_coverage)" = sources=covered ] || return 1
+  if ! queued="$(kendex_land_queue_entries "$GH_REPO" "$default")"; then
+    printf 'refresh-land=unavailable value=queue-read\n'
+    return 1
+  fi
   [ "$queued" = 0 ]
 }
 if refresh_may_land; then
-  land_status=0
-  GH_TOKEN="$KENDEX_LAND_TOKEN" git push origin "$head:refs/heads/$default" 2>"$TMP/land-stderr" || land_status=$?
-  cat -- "$TMP/land-stderr" >&2
-  if [ "$land_status" -eq 0 ]; then
+  kendex_land_push "$ROOT" origin "$head" "$default" "$land_token"
+  if [ "$KENDEX_LAND_RESULT" = landed ]; then
     refresh_close_superseded
     printf 'refresh-state=landed pr=none class=%s head=%s\n' "$class" "$head"
     {
@@ -621,15 +636,14 @@ if refresh_may_land; then
     } >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
     exit 0
   fi
-  # git prints "[rejected]" where the default branch moved after this run's
-  # fetch (git-push(1) OUTPUT), and the next run renders on the new base.
-  # GitHub's own refusal prints "[remote rejected]" and keeps the pull
+  # A default branch that moved after this run's fetch defers to the next
+  # run, which renders on the new base. GitHub's own refusal keeps the pull
   # request route.
-  if grep -qF ' ! [rejected]' "$TMP/land-stderr"; then
+  if [ "$KENDEX_LAND_RESULT" = base-moved ]; then
     printf 'refresh-state=deferred reason=base-moved\n'
     exit 0
   fi
-  printf 'refresh-land=refused value=%s\n' "$land_status"
+  printf 'refresh-land=refused value=%s\n' "$KENDEX_LAND_STATUS"
 fi
 merge_note='The refresh workflow waits for GitHub to show the published head. It merges directly where the base branch has no rules or protection, or requests auto-merge. If the head stays unseen, the run reports an unarmed warning. Check the run result for the arm outcome. The merge queue controls merging after auto-merge is enabled or this pull request is queued.'
 printf -v body 'Generated kendex updates.\n\n%s\n\nChange class: `%s`.\n\nClassifier:\n```text\n%s\n```\n\n%s\n' "$version_report" "$class" "$class_line" "$merge_note"

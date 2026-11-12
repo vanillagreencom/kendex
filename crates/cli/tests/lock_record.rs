@@ -45,9 +45,11 @@
 //! row lands the record on `main` and opens no pull request; with the push
 //! left on `GH_TOKEN`, the landed row finds it under the lanes app's token;
 //! with the queue read taken as empty, the busy-queue row lands it too;
-//! with the `[rejected]` read dropped, the moved-base row pushes the rolling
-//! branch; and with every refused landing push read as a moved base, the
-//! refused-push row opens no pull request.
+//! with the `land-unavailable` line dropped, the unread-queue row finds
+//! none; and with `KENDEX_LAND_TOKEN` left in the environment, the landed
+//! row finds it on a gh call. The queue read's answers and the push's reading of a moved base
+//! and of a refusal are `refresh/lib/landing.sh`'s, proved once with their
+//! controls in `refresh/tests/refresh-consumer.test.sh`.
 //!
 //! `sleep` on the fixture's `PATH` is a stub that logs its argument and
 //! returns at once, so the arm's waits between reads cost the suite
@@ -74,6 +76,12 @@ fn script() -> PathBuf {
 fn merge_queue_library() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../.agents/skills/github/scripts/lib/merge-queue.sh")
+}
+
+/// The landing route's shared queue read and push the script sources, named
+/// here so a change to that library runs this suite.
+fn landing_library() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../refresh/lib/landing.sh")
 }
 
 fn said(output: &Output) -> String {
@@ -174,13 +182,16 @@ const STALE_HEAD: &str = "0000000000000000000000000000000000000000";
 /// repository's squash, merge and rebase flags are `GH_METHODS` (all three
 /// unset). `GH_FAIL` fails the `default`, `rules` or `settings` read, and
 /// `methods-none` answers flags that allow nothing. The base's merge queue
-/// holds `GH_QUEUED` entries, none unset, and
+/// holds `GH_QUEUED` entries, none unset, answered as GitHub's GraphQL body
+/// so the shared reader in `refresh/lib/landing.sh` judges it, and
 /// `GH_FAIL` fails that `queue` read. `pr close` removes the pull request's
 /// open, armed and queued state. Each call is also logged to
-/// `GH_LOG.tokens` behind the `GH_TOKEN` it ran with, `none` unset.
+/// `GH_LOG.tokens` behind the `GH_TOKEN` it ran with, `none` unset, and
+/// once more behind `land-env` where it inherited `KENDEX_LAND_TOKEN`.
 const GH_STUB: &str = "#!/bin/sh
 printf '%s\\n' \"$*\" >> \"$GH_LOG\"
 printf '%s %s\\n' \"${GH_TOKEN:-none}\" \"$*\" >> \"$GH_LOG.tokens\"
+[ -z \"${KENDEX_LAND_TOKEN+set}\" ] || printf 'land-env %s\\n' \"$*\" >> \"$GH_LOG.tokens\"
 case \"$1 $2\" in
   'repo view') echo acme/widgets; exit 0 ;;
   'api repos/acme/widgets')
@@ -226,7 +237,7 @@ case \"$1 $2\" in
     case \"$*\" in
       *'mergeQueue(branch'*)
         [ \"$GH_FAIL\" != queue ] || { echo 'gh stub: queue refused' >&2; exit 1; }
-        printf '%s\\n' \"${GH_QUEUED:-0}\"; exit 0 ;;
+        printf '{\"data\":{\"repository\":{\"mergeQueue\":{\"entries\":{\"totalCount\":%s}}}}}\\n' \"${GH_QUEUED:-0}\"; exit 0 ;;
       *isInMergeQueue*)
         [ \"$GH_FAIL\" != state ] || { echo 'gh stub: state refused' >&2; exit 1; }
         if [ -f \"$GH_STATE/armed\" ]; then a=true; else a=false; fi
@@ -945,11 +956,13 @@ fn assert_landed(world: &World, head: &str, before: &str, output: &str) {
     assert!(!asked.contains("pr merge"), "{asked}");
     let status = git_ok(&world.home, &world.judged(), &["status", "--porcelain"]);
     assert_eq!(status, "", "{output}");
-    // The push to main carries the landing token, and no gh call does; the
-    // queue read carries the lanes app's.
+    // The push to main carries the landing token, and no gh call does, as
+    // GH_TOKEN or inherited; the queue read carries the lanes app's.
     let tokens = world.gh_tokens();
     assert!(
-        !tokens.lines().any(|line| line.starts_with("land-token ")),
+        !tokens
+            .lines()
+            .any(|line| line.starts_with("land-token ") || line.starts_with("land-env ")),
         "{tokens}"
     );
     let queue: Vec<&str> = tokens
@@ -1050,6 +1063,11 @@ fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
         ),
         ("queue", ADMITTED),
     ];
+    assert!(
+        landing_library().is_file(),
+        "{}",
+        landing_library().display()
+    );
     for (gh_fail, env) in rows {
         let world = world();
         world.branch("a", "ship");
@@ -1060,6 +1078,12 @@ fn no_landing_token_or_a_busy_queue_keeps_the_rolling_pull_request() {
         assert_eq!(
             recorded.status.code(),
             Some(0),
+            "{gh_fail} {env:?}: {output}"
+        );
+        // Only the unread queue names why no landing was tried.
+        assert_eq!(
+            output.contains("lock-record: land-unavailable=queue-read\n"),
+            *gh_fail == "queue",
             "{gh_fail} {env:?}: {output}"
         );
         assert!(

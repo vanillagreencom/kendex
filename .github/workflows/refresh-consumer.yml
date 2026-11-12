@@ -32,11 +32,11 @@ name: refresh-consumer
         type: string
         default: kendex
       app-id-secret-name:
-        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
+        description: Deprecated compatibility input; the shared job's repository token reads only the two fixed credential pairs.
         type: string
         default: FLEET_GH_APP_ID
       app-private-key-secret-name:
-        description: Deprecated compatibility input; the shared job reads only the two fixed environment pairs.
+        description: Deprecated compatibility input; the shared job's repository token reads only the two fixed credential pairs.
         type: string
         default: FLEET_GH_APP_PRIVATE_KEY
     # GitHub loads environment secrets when the called job starts. A caller

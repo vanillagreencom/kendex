@@ -58,20 +58,23 @@
 # entry or could not be read, and a push GitHub refuses keep the rolling
 # pull request.
 # A base that moved past the judged head ends the run with nothing landed:
-# the push that moved it starts a run of its own. Apart from a landing push
-# GitHub takes, nothing here pushes to the default branch: the organization
-# ruleset takes every change to it through the merge queue
-# (docs/decisions/D003-one-merge-path.md), and the record takes the same
-# route (docs/decisions/D007-lock-record-on-main.md). The rule a branch
-# follows is skills/AGENTS.md.
+# the push that moved it starts a run of its own. The landing push is the
+# route docs/decisions/D029-owner-merges-ci-input-repair.md records.
+# Otherwise nothing here pushes to the default branch: the rolling pull
+# request takes the record through the merge queue
+# (docs/decisions/D007-lock-record-on-main.md). The rule a branch follows
+# is skills/AGENTS.md.
 #
 # `gh` reads its token from GH_TOKEN, git pushes through the credential
 # helper `gh auth setup-git` installed for that token, which reads GH_TOKEN
-# when git asks, and the landing push sets GH_TOKEN to KENDEX_LAND_TOKEN for
-# its own command alone. The commit
+# when git asks. The run takes KENDEX_LAND_TOKEN out of its environment at
+# start, so no child it starts inherits it, and the landing push alone sets
+# GH_TOKEN to it, for its own command. The commit
 # identity is GIT_AUTHOR_* and GIT_COMMITTER_*. The disarm and dequeue
 # mutations are the github skill's, .agents/skills/github/scripts/lib/merge-queue.sh,
 # and so are the default-branch and merge-method reads, lib/repo-settings.sh.
+# The landing route's queue read and push are refresh/lib/landing.sh's,
+# shared with the consumer refresh.
 # The suite is crates/cli/tests/lock_record.rs.
 #
 # Every notice this script writes opens `lock-record: <key>=<value>`; the
@@ -102,6 +105,7 @@
 #   landed=<sha> paths=<n>      the record's commit, pushed to the base with no pull request; its paths follow
 #   land-deferred=<sha>         the base moved past that judged head before the push; nothing landed, and the run the newer push started records it
 #   land-refused=<status>       GitHub refused the push to the base; the rolling pull request carries the record instead
+#   land-unavailable=queue-read the base's merge queue could not be read, so no landing was tried; the rolling pull request carries the record instead
 #   pull-request-closed=<n>     the open rolling pull request the landed record superseded
 #   recorded=<sha> paths=<n>    the commit on the rolling branch; its paths follow
 #   pushed=<remote>/<branch>    the branch reached the remote
@@ -164,6 +168,12 @@ source "$here/../.agents/skills/github/scripts/lib/merge-queue.sh"
 source "$here/../.agents/skills/github/scripts/lib/gh-repo.sh"
 # shellcheck source=../.agents/skills/github/scripts/lib/repo-settings.sh
 source "$here/../.agents/skills/github/scripts/lib/repo-settings.sh"
+# shellcheck source=../refresh/lib/landing.sh
+source "$here/../refresh/lib/landing.sh"
+# The landing app's token bypasses the review rulesets and serves the one
+# landing push alone.
+land_token="${KENDEX_LAND_TOKEN:-}"
+unset KENDEX_LAND_TOKEN
 
 repo="$(cd -- "$here/.." && pwd)"
 base=""
@@ -362,26 +372,24 @@ fi
 # above took this run's own pull request out. The base's rulesets then
 # decide the push.
 may_land() {
-  local queued
-  [[ -n "${KENDEX_LAND_TOKEN:-}" ]] || return 1
-  queued="$(cd -- "$repo" && gh api graphql -F owner='{owner}' -F repo='{repo}' -f branch="$base" \
-    -f query='query($owner: String!, $repo: String!, $branch: String!) { repository(owner: $owner, name: $repo) { mergeQueue(branch: $branch) { entries { totalCount } } } }' \
-    --jq 'if (.errors // [] | length) != 0 then error("GraphQL errors") else .data.repository | if .mergeQueue == null then 0 else .mergeQueue.entries.totalCount end end')" || return 1
+  local slug queued
+  [[ -n "$land_token" ]] || return 1
+  if ! slug="$(cd -- "$repo" && kendex_github_resolve_gh_repo "$repo")" ||
+      ! queued="$(cd -- "$repo" && kendex_land_queue_entries "$slug" "$base")"; then
+    say land-unavailable queue-read "the merge queue of $base could not be read, so the record was not pushed to $base; the rolling pull request carries it instead" >&2
+    return 1
+  fi
   [[ "$queued" == 0 ]]
 }
 if may_land; then
   # The commit is made from the index and never checked out, so a refused
   # push leaves the tree as the rolling route below expects it.
-  land_err="$(mktemp)"
-  trap 'rm -f -- "$land_err"' EXIT
   tree="$(git -C "$repo" write-tree)"
   landed="$(git -C "$repo" commit-tree "$tree" -p "$head" \
     -m "$title [skip ci]" \
     -m "kendex refresh, built from $head, wrote these paths on $base after the merges up to that head. The rulesets on $base let the landing app push it, so the run pushed the record to $base itself, and [skip ci] starts no workflow on it.")"
-  rc=0
-  GH_TOKEN="$KENDEX_LAND_TOKEN" git -C "$repo" push --quiet "$remote" "$landed:refs/heads/$base" 2>"$land_err" || rc=$?
-  cat -- "$land_err" >&2
-  if [[ $rc -eq 0 ]]; then
+  kendex_land_push "$repo" "$remote" "$landed" "$base" "$land_token"
+  if [[ "$KENDEX_LAND_RESULT" == landed ]]; then
     say landed "$landed paths=$count" "$changed"
     # The pull request was disarmed and dequeued above, and a merge of it
     # would have moved the base past the head this push extends, so GitHub
@@ -393,14 +401,12 @@ if may_land; then
     git -C "$repo" reset -q --hard HEAD
     exit 0
   fi
-  # git prints "[rejected]" for a base that moved; GitHub's own refusal
-  # prints "[remote rejected]".
-  if grep -qF ' ! [rejected]' "$land_err"; then
+  if [[ "$KENDEX_LAND_RESULT" == base-moved ]]; then
     say land-deferred "$head" "$base moved past $head before the record could land; the run the newer push started records it"
     git -C "$repo" reset -q --hard HEAD
     exit 0
   fi
-  say land-refused "$rc" "GitHub refused the push of the record to $base, as printed above; the rolling pull request carries it instead" >&2
+  say land-refused "$KENDEX_LAND_STATUS" "GitHub refused the push of the record to $base, as printed above; the rolling pull request carries it instead" >&2
 fi
 
 git -C "$repo" checkout -q -B "$branch"

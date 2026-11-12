@@ -118,6 +118,8 @@ set -euo pipefail
 export TEST_STATE="@STATE@" GH_SHIM_FIXTURES="@FIXTURES@" TEST_GH_SHIM="@GH_SHIM@"
 printf '%s\n' "$*" >>"$TEST_STATE/calls"
 printf '%s|%s\n' "${GH_TOKEN-}" "$*" >>"$TEST_STATE/tokens"
+# The landing token reaches only the landing push.
+[ -z "${KENDEX_LAND_TOKEN+set}" ] || printf 'gh %s\n' "$*" >>"$TEST_STATE/land-token-seen"
 query=""
 for arg in "$@"; do
   case "$arg" in
@@ -151,11 +153,12 @@ case "$*" in
   'api --method PATCH repos/acme/test/pulls/1 '*) : ;;
   'api repos/acme/test/pulls?state=open&'*) cat "$TEST_STATE/pr" ;;
   'api graphql '*'mergeQueue(branch: $branch)'*)
-    # The landing check's queue read, answered as its --jq filter prints it.
-    if [ -f "$TEST_STATE/queue-entries" ]; then
-      [ "$(cat "$TEST_STATE/queue-entries")" != fail ] || exit 87
-      cat "$TEST_STATE/queue-entries"
-    else printf '0\n'; fi ;;
+    # The landing check's queue read, answered as GitHub's body with the
+    # entry count queue-entries holds, none unset.
+    entries=0
+    if [ -f "$TEST_STATE/queue-entries" ]; then entries="$(cat "$TEST_STATE/queue-entries")"; fi
+    [ "$entries" != fail ] || exit 87
+    printf '{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":%s}}}}}\n' "$entries" ;;
   'api graphql '*)
     # A read before any refusal is the run-start read, which precedes the
     # refresh.
@@ -250,6 +253,7 @@ cat >"$TMP/bin/kendex" <<'SH'
 set -euo pipefail
 printf '%s|%s\n' "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/catalog-revs"
 printf '%s|%s|%s\n' "$PWD" "$*" "${KENDEX_CATALOG_REV-unset}" >>"@STATE@/project-calls"
+[ -z "${KENDEX_LAND_TOKEN+set}" ] || printf 'kendex %s\n' "$*" >>"@STATE@/land-token-seen"
 # The runner calls the render verb under env -i, so it reads no test
 # setting; a row drives it through the state. render-exit and render-said are the verb's
 # exit and output where a row sets them; otherwise, like kendex, it runs the
@@ -366,23 +370,28 @@ if [ -f "$TEST_STATE/classifier-proof" ] &&
 fi
 # A private repository's fetch fails until the app credential is installed.
 if [ "${1:-}" = fetch ] && [ ! -f "$TEST_STATE/auth" ]; then exit 88; fi
-if [ "${1:-}" = push ] && [[ " $* " == *':refs/heads/main '* ]]; then
+# The landing push runs as git -C ROOT push.
+if [[ " $* " == *' push '*':refs/heads/main '* ]]; then
   printf 'git push main token=%s\n' "${GH_TOKEN-}" >>"$TEST_STATE/calls"
   [ -f "$TEST_STATE/land-mode" ] || exec "$TEST_REAL_GIT" "$@"
-  # git's own refusal of a push behind the remote, then GitHub's refusal of
-  # a push a ruleset holds.
+  # The remote refuses for real, so the runner reads what git itself
+  # reports: a push behind a default branch another push moved after the
+  # run's fetch, recorded in moved-head, then a refusal the remote's own
+  # hook gives with GitHub's ruleset words, as a ruleset refuses on GitHub.
   case "$(cat "$TEST_STATE/land-mode")" in
     moved)
-      printf '%s\n' 'To https://github.com/acme/test' \
-        ' ! [rejected]        HEAD -> main (fetch first)' \
-        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
-      exit 1 ;;
+      tip="$("$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" rev-parse refs/heads/main)"
+      moved="$(GIT_AUTHOR_NAME=competitor GIT_AUTHOR_EMAIL=competitor@example.invalid GIT_COMMITTER_NAME=competitor GIT_COMMITTER_EMAIL=competitor@example.invalid "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" commit-tree "$tip^{tree}" -p "$tip" -m moved)"
+      "$TEST_REAL_GIT" --git-dir="$TEST_LEASE_REMOTE" update-ref refs/heads/main "$moved" "$tip"
+      printf '%s\n' "$moved" >"$TEST_STATE/moved-head"
+      exec "$TEST_REAL_GIT" "$@" ;;
     rejected)
-      printf '%s\n' 'remote: error: GH013: Repository rule violations found for refs/heads/main.        ' \
-        'To https://github.com/acme/test' \
-        ' ! [remote rejected] HEAD -> main (push declined due to repository rule violations)' \
-        "error: failed to push some refs to 'https://github.com/acme/test'" >&2
-      exit 1 ;;
+      printf '#!/bin/sh\necho "error: GH013: Repository rule violations found for refs/heads/main." >&2\nexit 1\n' >"$TEST_LEASE_REMOTE/hooks/pre-receive"
+      chmod +x "$TEST_LEASE_REMOTE/hooks/pre-receive"
+      status=0
+      "$TEST_REAL_GIT" "$@" || status=$?
+      rm -f -- "${TEST_LEASE_REMOTE:?}/hooks/pre-receive"
+      exit "$status" ;;
     *) exit 2 ;;
   esac
 fi
@@ -429,7 +438,7 @@ file_edit "$TMP/bin" git 1 '@REAL_GIT@' "s|@REAL_GIT@|$REAL_GIT|"
 file_edit "$TMP/bin" gh 1 '@STATE@' "s|@STATE@|$TMP/state|"
 file_edit "$TMP/bin" gh 1 '@FIXTURES@' "s|@FIXTURES@|$FIXTURES|"
 file_edit "$TMP/bin" gh 1 '@GH_SHIM@' "s|@GH_SHIM@|$TMP/standard-gh|"
-file_edit "$TMP/bin" kendex 7 '@STATE@' "s|@STATE@|$TMP/state|"
+file_edit "$TMP/bin" kendex 8 '@STATE@' "s|@STATE@|$TMP/state|"
 chmod +x "$TMP/bin/gh" "$TMP/bin/kendex" "$TMP/bin/git"
 
 sandbox
@@ -1045,13 +1054,15 @@ land_matches() { # OUTCOME CLASS CLOSE
         # No gh call carries the landing token; the queue read carries the
         # repository token.
         ! grep -q '^land-token|' "$TMP/state/tokens" &&
-        grep -q '^test-token|api graphql .*mergeQueue' "$TMP/state/tokens" || return 1
+        grep -q '^test-token|api graphql .*mergeQueue' "$TMP/state/tokens" &&
+        # Neither gh nor kendex inherits the landing token.
+        [ ! -e "$TMP/state/land-token-seen" ] || return 1
       case "$3" in
         close) grep -qxF 'pr close 1 --repo acme/test' "$TMP/state/calls" ;;
         *) ! grep -q '^pr close ' "$TMP/state/calls" ;;
       esac ;;
     base-moved)
-      [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
+      [ "$main" = "$(cat "$TMP/state/moved-head")" ] && [ "$rolling" = "$land_rolling" ] &&
         grep -qxF "refresh-state=deferred reason=$1" <<<"$OUT" &&
         grep -qxF 'git push main token=land-token' "$TMP/state/calls" &&
         ! grep -q '^pr \|^api --method ' "$TMP/state/calls" ;;
@@ -1059,62 +1070,138 @@ land_matches() { # OUTCOME CLASS CLOSE
       [ "$main" = "$land_base" ] && [ "$rolling" = "$land_rolling" ] &&
         grep -qxF "refresh-state=unchanged pr=1 class=render head=$land_rolling published=false" <<<"$OUT" &&
         ! grep -q '^git push\|^pr \(merge\|close\) \|^api --method ' "$TMP/state/calls" ;;
-    pull | refused | unasked)
+    pull | refused | unasked | unread)
       [ "$main" = "$land_base" ] && [ "$rolling" != "$land_rolling" ] &&
         grep -qxF "refresh-state=pushed pr=1 class=$2" <<<"$OUT" &&
         grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $rolling" "$TMP/state/calls" || return 1
+      # Only a queue the check could not read names itself.
+      if [ "$1" = unread ]; then
+        grep -qxF 'refresh-land=unavailable value=queue-read' <<<"$OUT" || return 1
+      else
+        ! grep -q '^refresh-land=unavailable' <<<"$OUT" || return 1
+      fi
       case "$1" in
         refused) grep -qxF 'refresh-land=refused value=1' <<<"$OUT" ;;
         unasked) ! grep -q 'mergeQueue\|^git push main ' "$TMP/state/calls" ;;
-        pull) ! grep -q '^git push main ' "$TMP/state/calls" ;;
+        pull | unread) ! grep -q '^git push main ' "$TMP/state/calls" ;;
       esac ;;
     *) return 1 ;;
   esac
 }
+# The landing check's queue read, refresh/lib/landing.sh's one reader for
+# both landing scripts, judged on GitHub's GraphQL answers: the no-queue
+# and one-entry bodies recorded from GitHub, and the errors body gh prints
+# and exits 1 on (recorded) or 0 on. A count prints; anything else refuses,
+# which keeps the pull request. Each control breaks one branch of the
+# reader on a copy of the library and must turn its row red.
+mkdir -p "$TMP/queue-reader-bin"
+cat >"$TMP/queue-reader-bin/gh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >"$QUEUE_CALL"
+printf '%s' "$QUEUE_ANSWER"
+exit "$QUEUE_STATUS"
+SH
+chmod +x "$TMP/queue-reader-bin/gh"
+queue_read() { # LIBRARY ANSWER STATUS — sets OUT and RC
+  RC=0
+  OUT="$(env -i PATH="$TMP/queue-reader-bin:$PATH" QUEUE_CALL="$TMP/queue-reader-call" \
+    QUEUE_ANSWER="$2" QUEUE_STATUS="$3" "$BASH" -c '. "$1" && kendex_land_queue_entries acme/test main' _ "$1" 2>/dev/null)" || RC=$?
+}
+QUEUE_ROWS='no-queue|{"data":{"repository":{"mergeQueue":null}}}|0|0
+one-entry|{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":1}}}}}|0|1
+empty-queue|{"data":{"repository":{"mergeQueue":{"entries":{"totalCount":0}}}}}|0|0
+errors-failed|{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}|1|refused
+errors-passed|{"data":{"repository":null},"errors":[{"type":"NOT_FOUND","message":"Could not resolve to a Repository"}]}|0|refused
+no-count|{"data":{"repository":{"mergeQueue":{"entries":{}}}}}|0|refused
+not-json|not-json|0|refused
+empty||0|refused'
+queue_row_matches() { # WANT
+  if [ "$1" = refused ]; then [ "$RC" -ne 0 ] && [ -z "$OUT" ]; else [ "$RC" -eq 0 ] && [ "$OUT" = "$1" ]; fi
+}
+while IFS='|' read -r name answer status want; do
+  rm -f -- "$TMP/queue-reader-call"
+  queue_read "$REFRESH_DIR/lib/landing.sh" "$answer" "$status"
+  if queue_row_matches "$want" &&
+      grep -qF -- '-f owner=acme -f repo=test -f branch=main ' "$TMP/queue-reader-call"; then
+    ok "queue read $name"
+  else bad "queue read $name" "rc=$RC out=$OUT want=$want"; fi
+done <<<"$QUEUE_ROWS"
+cp "$REFRESH_DIR/lib/landing.sh" "$TMP/queue-reader-control.sh"
+while IFS='~' read -r control row match edit; do
+  file_edit "$TMP" queue-reader-control.sh 1 "$match" "$edit"
+  IFS='|' read -r name answer status want <<<"$(grep "^$row|" <<<"$QUEUE_ROWS")"
+  queue_read "$TMP/queue-reader-control.sh" "$answer" "$status"
+  if ! queue_row_matches "$want"; then ok "control: $control turns the $row queue read red"
+  else bad "queue read $control control" "rc=$RC out=$OUT"; fi
+  cp "$REFRESH_DIR/lib/landing.sh" "$TMP/queue-reader-control.sh"
+done <<'CONTROLS'
+a count read as empty~one-entry~then \.entries\.totalCount$~s/then \.entries\.totalCount$/then 0/
+no queue read as unreadable~no-queue~if \. == null then 0$~s/if \. == null then 0$/if . == null then error("no queue")/
+errors passed over~errors-passed~error\("GraphQL errors"\)$~s/then error("GraphQL errors")$/then . /
+CONTROLS
 cp "$TMP/arm-runner" "$TMP/land-runner"
+# A consumer's root manifest, which the source coverage the landing check
+# asks reads: it subscribes to kendex's catalog alone.
+printf 'schema = 7\n[sources.kendex]\nrepo = "vanillagreencom/kendex"\n' >"$repo/kendex.toml"
+commit "$repo"
+landing_lib="$repo/refresh/lib/landing.sh"
+cp "$landing_lib" "$TMP/land-lib"
 # NAME|CLASS|MEASURED|PUSH|OUTCOME|CONTROL|QUEUE|TOKEN|CLOSE
 # PUSH is GitHub's answer to the landing push: taken, moved (the base moved)
 # or rejected (a ruleset refused it). CONTROL is a source edit on a copy of
-# the runner that must turn the row's assertion red.
+# the runner, or of the landing library it sources, that must turn the
+# row's assertion red. The third-party row's project also subscribes to a
+# catalog other than kendex's.
 for row in \
-  'landed|render|true||landed||0|land-token|close' \
+  'landed|render|true||landed|token-exported|0|land-token|close' \
   'merged-since-start|render|true||landed|close-merged|0|land-token|merged' \
   'no-token|render|true||unasked|token-unchecked|0||' \
   'small-class|small|true||unasked||0|land-token|' \
   'unmeasured|standard|false||unasked||0|land-token|' \
-  'base-moved|render|true|moved|base-moved||0|land-token|' \
-  'push-refused|render|true|rejected|refused|refusal-deferred|0|land-token|' \
+  'base-moved|render|true|moved|base-moved|moved-unread|0|land-token|' \
+  'push-refused|render|true|rejected|refused|refusal-deferred remote-moved|0|land-token|' \
+  'third-party|render|true||pull|coverage-ignored|0|land-token|' \
   'queue-busy|render|true||pull|queue-ignored|2|land-token|' \
-  'unread-queue|render|true||pull||fail|land-token|' \
+  'unread-queue|render|true||unread|unread-silent|fail|land-token|' \
   'retained|render|true||retained|skip-unchanged|0|land-token|'; do
   IFS='|' read -r name class MEASURED land expected control queue LAND_TOKEN close <<<"$row"
   printf '%s\n' "$queue" >"$TMP/state/queue-entries"
   for mutation in none $control; do
     reset_default
     cp "$TMP/land-runner" "$runner"
+    cp "$TMP/land-lib" "$landing_lib"
     if [ "$mutation" != none ]; then
-      python3 - "$runner" "$mutation" <<'LAND_CONTROL'
+      python3 - "$runner" "$landing_lib" "$mutation" <<'LAND_CONTROL'
 from pathlib import Path
 import sys
-p = Path(sys.argv[1]).resolve()
+runner, library = Path(sys.argv[1]).resolve(), Path(sys.argv[2]).resolve()
+target, old, new = {
+    'refusal-deferred': (runner, "  printf 'refresh-land=refused value=%s\\n' \"$KENDEX_LAND_STATUS\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
+    'close-merged': (runner, '    merged | closed) return 0 ;;', '    merged | closed) ;;'),
+    'token-exported': (runner, 'unset KENDEX_LAND_TOKEN\n', ''),
+    'token-unchecked': (runner, '[ -n "$land_token" ] && [ "$class" = render ]', '[ "$class" = render ]'),
+    'coverage-ignored': (runner, '  [ "$(refresh_source_coverage)" = sources=covered ] || return 1\n', ''),
+    'queue-ignored': (runner, '  [ "$queued" = 0 ]\n}', '  : # [ "$queued" = 0 ]\n}'),
+    'unread-silent': (runner, "    printf 'refresh-land=unavailable value=queue-read\\n'\n", ''),
+    'skip-unchanged': (runner, 'if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
+    'moved-unread': (library, '*":refs/heads/$4:[rejected]"*) KENDEX_LAND_RESULT=base-moved ;;', '*":refs/heads/$4:[rejected-never]"*) KENDEX_LAND_RESULT=base-moved ;;'),
+    'remote-moved': (library, '*":refs/heads/$4:[rejected]"*)', '*":refs/heads/$4:["*"rejected]"*)'),
+}[sys.argv[3]]
+p = target
 s = p.read_text()
-old, new = {
-    'refusal-deferred': ("  printf 'refresh-land=refused value=%s\\n' \"$land_status\"\nfi", "  printf 'refresh-state=deferred reason=base-moved\\n'; exit 0\nfi"),
-    'close-merged': ('    merged | closed) return 0 ;;', '    merged | closed) ;;'),
-    'token-unchecked': ('[ -n "${KENDEX_LAND_TOKEN:-}" ] && [ "$class" = render ]', 'KENDEX_LAND_TOKEN="${KENDEX_LAND_TOKEN:-}"; [ "$class" = render ]'),
-    'queue-ignored': ('  [ "$queued" = 0 ]\n}', '  : # [ "$queued" = 0 ]\n}'),
-    'skip-unchanged': ('if [ "$state" = unchanged ]; then', 'if false; then # [ "$state" = unchanged ]'),
-}[sys.argv[2]]
 assert s.count(old) == 1, old
 changed = s.replace(old, new)
 assert changed != s
 p.write_text(changed)
 LAND_CONTROL
     fi
+    if [ "$name" = third-party ]; then
+      printf '{"schema":1,"subscriptions":[{"enabled":true,"repo":"vanillagreencom/kendex"},{"enabled":true,"repo":"owner/catalog"}]}\n' >"$repo/.fixture-sources"
+    fi
     commit "$repo"
     git -C "$repo" push -q origin main
     land_base="$(git --git-dir="$TMP/remote" rev-parse refs/heads/main)"
-    rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/prepush-state.json"
+    rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/prepush-state.json" "${TMP:?}/state/moved-head"
     [ -z "$land" ] || printf '%s\n' "$land" >"$TMP/state/land-mode"
     printf '1\n' >"$TMP/state/pr"
     content="land-$name-$mutation"
@@ -1135,6 +1222,7 @@ LAND_CONTROL
     fi
     : >"$TMP/state/calls"
     : >"$TMP/state/tokens"
+    rm -f -- "${TMP:?}/state/land-token-seen"
     run_refresh "$content" pass "$class"
     if [ "$mutation" = none ]; then
       if land_matches "$expected" "$class" "$close"; then ok "$name landing outcome"; else bad "$name landing outcome" "$OUT"; fi
@@ -1142,8 +1230,14 @@ LAND_CONTROL
       ok "control: $mutation turns the $name landing assertion red"
     else bad "$name $mutation landing control" "$OUT"; fi
     git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
+    if [ "$name" = third-party ]; then
+      reset_default
+      git -C "$repo" rm -q .fixture-sources
+      commit "$repo"
+    fi
   done
 done
+cp "$TMP/land-lib" "$landing_lib"
 rm -f -- "${TMP:?}/state/prepush-state.json"
 # The current route closes the open rolling pull request the same way: only
 # while GitHub still holds it open.
@@ -1193,6 +1287,9 @@ else bad 'reverted render landing' "$OUT"; fi
 git --git-dir="$TMP/remote" update-ref refs/heads/main "$land_base"
 unset MEASURED LAND_TOKEN
 rm -f -- "${TMP:?}/state/land-mode" "${TMP:?}/state/queue-entries"
+reset_default
+git -C "$repo" rm -q kendex.toml
+commit "$repo"
 reset_default
 cp "$TMP/arm-runner" "$runner"
 commit "$repo"
