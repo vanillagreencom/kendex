@@ -171,7 +171,9 @@ impl<'a> From<kendex_core::drift::report::Span<'a>> for Span<'a> {
 /// path (see [`names_a_path`]), starts a new line where it does not fit on
 /// the current one and is never broken: one wider than a whole line is
 /// that line, and the terminal wraps it, so a person can still copy it.
-/// Verbatim text keeps every space and breaks by cells alone.
+/// Where only a later line holds one that would start the first, the first
+/// line is left empty, so the caller draws its lead alone there. Verbatim
+/// text keeps every space and breaks by cells alone.
 pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut line = String::new();
@@ -212,7 +214,10 @@ pub(super) fn wrap(spans: &[Span<'_>], first: usize, rest: usize) -> Vec<String>
             let whole = command || names_a_path(piece);
             let width = cells(piece);
             let gap = usize::from(used > 0 && spaced);
-            if used > 0 && used + gap + width > room {
+            // The first line can have less room than the rest: a header's
+            // title takes part of it.
+            let later = whole && lines.is_empty() && used == 0 && width > room && width <= rest;
+            if later || (used > 0 && used + gap + width > room) {
                 lines.push(std::mem::take(&mut line));
                 used = 0;
                 room = rest.max(1);
@@ -464,8 +469,9 @@ mod tests {
     }
 
     /// A prose word that names a path is placed as a command is: whole on
-    /// the next line where the rest of this one cannot hold it, and a line
-    /// of its own where no line can. Any other word still breaks by cells.
+    /// the next line where the rest of this one cannot hold it, after an
+    /// empty first line where only a later line can, and a line of its own
+    /// where no line can. Any other word still breaks by cells.
     #[test]
     fn a_path_in_prose_is_never_broken() {
         let native = format!(
@@ -473,7 +479,7 @@ mod tests {
             s = std::path::MAIN_SEPARATOR
         );
         let at_native = format!("at {native} here");
-        let rows: [(&str, &str, usize, usize, &[&str]); 5] = [
+        let rows: [(&str, &str, usize, usize, &[&str]); 6] = [
             (
                 "wider than any line",
                 "shadow copy /home/a/.pi/agent/extensions/pi-widgets (no version)",
@@ -490,7 +496,14 @@ mod tests {
                 "/home/a/b now",
                 4,
                 20,
-                &["/home/a/b", "now"],
+                &["", "/home/a/b now"],
+            ),
+            (
+                "wider than the first line and every later one",
+                "/home/a/b/c/d now",
+                4,
+                8,
+                &["/home/a/b/c/d", "now"],
             ),
             (
                 "from the home directory",

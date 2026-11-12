@@ -117,7 +117,8 @@ fn moved_upstream() -> (Fixture, String) {
 }
 
 /// Every converted verb, rich against plain: `NO_COLOR` and `TERM=dumb`
-/// print what a pipe gets, the rich run stays within 80 cells, and each
+/// print what a pipe gets, the rich run stays within 80 cells but for a
+/// path drawn alone (see [`bounded`]), and each
 /// verb's report reaches past its header to the row `marker` names, so
 /// the comparison is over a report and not over the header alone.
 fn sweep(at: &Fixture, verbs: &[(&[&str], &str)]) {
@@ -143,7 +144,7 @@ fn sweep(at: &Fixture, verbs: &[(&[&str], &str)]) {
             rich.1.lines().skip(1).any(|line| line.contains(marker)),
             "the report drew no row past the header: {args:?} {rich:?}"
         );
-        for line in rich.1.lines() {
+        for line in rich.1.lines().filter(|line| bounded(line)) {
             assert!(
                 crate::width::visible_width(line) <= 80,
                 "{args:?}: {line:?}"
@@ -259,7 +260,8 @@ fn the_spinner_line_is_cleared_before_the_header() {
 /// not counted, while the same report in a pipe has lines wider than that —
 /// so the width was reached and wrapped, not merely never met. A remedy's
 /// command is drawn whole, since a command split at a space reads as a
-/// shorter one, so its line is the one a narrow terminal wraps itself.
+/// shorter one, so its line is the one a narrow terminal wraps itself, and
+/// so is a path drawn alone (see [`bounded`]).
 #[test]
 fn an_80_column_terminal_gets_no_line_past_80() {
     let at = fixture();
@@ -270,10 +272,31 @@ fn an_80_column_terminal_gets_no_line_past_80() {
         "no plain line reaches 80, so nothing had to wrap: {piped}"
     );
     for text in [&report, &verdict] {
-        for line in text.lines().filter(|line| !is_command(line)) {
+        for line in text
+            .lines()
+            .filter(|line| bounded(line) && !is_command(line))
+        {
             assert!(cells(line) <= 80, "{} cells: {line:?}\n{text}", cells(line));
         }
     }
+}
+
+/// Whether the 80-cell bound holds `line`: one with a space after its
+/// indent and its row's mark. A path is drawn whole, so one wider than the
+/// room is a line of its own, past 80 cells under a fixture root as long as
+/// a macOS temporary folder; its header line still holds the space.
+fn bounded(line: &str) -> bool {
+    let text = stripped(line);
+    let text = text.trim();
+    let words = match text.split_once(' ') {
+        Some((mark, rest))
+            if mark.chars().count() == 1 && !mark.chars().all(char::is_alphanumeric) =>
+        {
+            rest.trim_start()
+        }
+        _ => text,
+    };
+    words.contains(' ')
 }
 
 /// A row's command line: `fix:` or `see:` once its indent and colour are
@@ -410,7 +433,10 @@ fn writing_reports_honor_plain_overrides_and_wrap_at_80_columns() {
             "fixture never reaches width"
         );
         for line in rich.1.lines().filter(|line| {
-            !is_command(line) && !line.contains("kendex adopt") && !line.contains("kendex apply")
+            bounded(line)
+                && !is_command(line)
+                && !line.contains("kendex adopt")
+                && !line.contains("kendex apply")
         }) {
             assert!(
                 cells(line) <= 80,
@@ -581,10 +607,7 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
         );
         // A path wider than the line is the one thing drawn past it, whole
         // and alone after its indent.
-        for line in drawn.lines().filter(|line| {
-            let text = stripped(line);
-            text.trim_start().contains(' ')
-        }) {
+        for line in drawn.lines().filter(|line| bounded(line)) {
             assert!(
                 cells(line) <= 80,
                 "{args:?}: {} cells: {line:?}",
