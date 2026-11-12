@@ -4,7 +4,8 @@
 # For a subagent whose agent_type starts with `reviewer-` the hook refuses
 # every Edit, MultiEdit and NotebookEdit; a Write inside a git work tree
 # unless it is the artifact, <dir>/tmp/review-*.json; and a Bash command
-# running a Git write or discard verb. Pinned here: every other agent passes,
+# running a Git write or discard verb, or an `rm` of a path inside a work
+# tree. Pinned here: every other agent passes,
 # a Write outside any repository passes (a reviewer's controls live under
 # its own mktemp -d), a read-only git verb passes, and the fail-closed
 # edges — an unreadable payload, a path that is not a string, a git that
@@ -188,6 +189,43 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     '      case "$COMMAND" in *checkout*) exit 0 ;; esac' HOOK discard_rows \
     'refused for reviewer-correctness: git checkout -- tools/ht-tools/src/main.rs' \
     'refused for reviewer-correctness-ken-4159: git checkout -- tools/ht-tools/src/main.rs'
+fi
+
+echo "reviewer-read-only: a reviewer deletes nothing inside a work tree"
+printf 'cli\n' >"$REPO/cli.md"
+DELETE_SCRATCH="$(mktemp -d "$TMP_ROOT/delete.XXXXXX")" || { echo "reviewer-read-only: scratch=mktemp-failed" >&2; exit 1; }
+# delete_row AGENT CWD COMMAND WANT: WANT is the refusal's first line, or
+# pass. The payload names the cwd the call starts in, as the harness does.
+delete_row() {
+  local agent="$1" cwd="$2" cmd="$3" want="$4"
+  run_payload "$(jq -nc --arg a "$agent" --arg c "$cwd" --arg v "$cmd" \
+    '{agent_type: $a, tool_name: "Bash", cwd: $c, tool_input: {command: $v}}')"
+  if [ "$want" = pass ]; then
+    assert_eq "$rc" 0 "passes for $agent in $cwd: $cmd"
+  else
+    assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: $want" "refused for $agent in $cwd: $cmd"
+  fi
+}
+delete_rows() {
+  delete_row reviewer-test "$REPO" 'rm cli.md' "delete=$REPO/cli.md"
+  # The overnight form: the cd fails and the rm runs where the call started.
+  delete_row reviewer-test "$REPO" 'cd /nonexistent-review-dir; rm cli.md' "delete=$REPO/cli.md"
+  delete_row reviewer-test "$SCRATCH" "rm -f $REPO/src/lib.rs" "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$REPO" 'git rm -q src/lib.rs' "delete=$REPO/src/lib.rs"
+  delete_row reviewer-test "$REPO" "rm -rf $DELETE_SCRATCH" pass
+  delete_row reviewer-test "$REPO" "rm -rf -- $DELETE_SCRATCH 2>/dev/null" pass
+  delete_row reviewer-test "$REPO" 'd=$(mktemp -d); trap '\''rm -rf "$d"'\'' EXIT' pass
+  delete_row reviewer-test "$REPO" 'grep -rn "rm -rf" src/' pass
+  delete_row dev "$REPO" 'rm cli.md' pass
+}
+delete_rows
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  skill_load_control delete-allowed "$HOOK" \
+    '    [ -n "$RM_CALLS" ] || exit 0' \
+    '    exit 0' HOOK delete_rows \
+    "refused for reviewer-test in $REPO: rm cli.md" \
+    "refused for reviewer-test in $REPO: cd /nonexistent-review-dir; rm cli.md"
 fi
 
 for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
