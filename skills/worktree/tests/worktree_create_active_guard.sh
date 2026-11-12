@@ -154,16 +154,18 @@ step() {
       git -C "$MAIN" push -q origin main
       ;;
     remote-advance:*)
-      git clone -q -b "${1#remote-advance:}" "$ROOT/origin.git" "$ROOT/remote-work"
-      git -C "$ROOT/remote-work" config user.name Test
-      git -C "$ROOT/remote-work" config user.email test@example.com
-      git -C "$ROOT/remote-work" config commit.gpgsign false
-      git -C "$ROOT/remote-work" config gc.auto 0
-      git -C "$ROOT/remote-work" config maintenance.auto false
+      remote_clone "${1#remote-advance:}"
       printf 'remote source\n' > "$ROOT/remote-work/added.txt"
       git -C "$ROOT/remote-work" add added.txt
       git -C "$ROOT/remote-work" commit -qm remote
       git -C "$ROOT/remote-work" push -q origin "${1#remote-advance:}"
+      ;;
+    # Another clone merges the branch into main and pushes, so the main
+    # checkout's origin/main predates the merge.
+    remote-merge:*)
+      remote_clone main
+      git -C "$ROOT/remote-work" merge -q --no-ff -m "merge ${1#remote-merge:}" "origin/${1#remote-merge:}"
+      git -C "$ROOT/remote-work" push -q origin main
       ;;
     open-pr) touch "$ROOT/gh-state/open-pr" ;;
     pr-json)
@@ -264,6 +266,15 @@ STUB
 # A commit main lacks, made without touching the main checkout's tree.
 own_branch() {
   git -C "$MAIN" branch "$1" "$(git -C "$MAIN" commit-tree -p main -m "work on $1" 'main^{tree}')"
+}
+
+remote_clone() {
+  git clone -q -b "$1" "$ROOT/origin.git" "$ROOT/remote-work"
+  git -C "$ROOT/remote-work" config user.name Test
+  git -C "$ROOT/remote-work" config user.email test@example.com
+  git -C "$ROOT/remote-work" config commit.gpgsign false
+  git -C "$ROOT/remote-work" config gc.auto 0
+  git -C "$ROOT/remote-work" config maintenance.auto false
 }
 
 remote_only() {
@@ -400,6 +411,8 @@ dirty, unpublished local work is ownership on its own|wt local-work|create topic
 a remote branch one commit ahead of main is ownership with no PR and no checkout|remote:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 an origin branch main already contains is no claim: the issue branch starts from main|stale:topic publish:topic drop-local:topic advance|create topic|0|topic|in-base:origin|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
 a local and origin branch main already contains is no claim: the local branch moves to main|stale:topic publish:topic advance|create topic|0|topic|in-base:both|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+a branch merged into origin/<default> after the last fetch is no claim: containment is read after the fetch|local:topic publish:topic remote-merge:topic|create topic|0|topic|in-base:both|main=main@end/clean cfg=true trees=topic:reg@topic@other branches=topic dirty=-
+--base <default> takes the same rule: an origin branch main already contains is no claim|stale:topic publish:topic drop-local:topic advance|create topic --base main|0|topic|in-base:origin|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
 a contained local branch still yields to origin work main lacks|stale:topic publish:topic advance remote-advance:topic|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=topic dirty=-
 an ancestry that cannot be read keeps a contained branch a claim|stale:topic publish:topic drop-local:topic advance fail-ancestry|create topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unreachable secondary remote is skipped with a warning and the claim proceeds|flaky-remote|create topic|0|topic|skipped-remote:flaky+skipped-remote:flaky|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
@@ -407,7 +420,7 @@ a branch on a reachable secondary remote is ownership, naming that remote|flaky-
 no origin remote at all refuses before any write|no-origin|create topic|1|-|no-origin|main=main@end/clean cfg=- trees= branches=- dirty=-
 an unregistered target directory is preserved, not replaced|orphan|create topic|75|-|incomplete|main=main@end/clean cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
 --reuse of an unregistered target inside the checkout registers nothing and keeps its bytes|in-repo orphan|create topic --reuse|75|-|incomplete|main=main@end/?? trees/ cfg=- trees=topic:dir[owner-marker:keep] branches=- dirty=-
---from is stopped by a remote branch before a divergent checkout exists|remote:topic|create topic --from main|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
+--from another ref keeps a branch main already contains a claim: that ref can be the branch itself|stale:topic publish:topic drop-local:topic advance|create topic --from topic|75|-|dup:topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 BOT_NAME/<id> as a local branch is a candidate|local:robot/topic bot|create topic|75|-|dup:robot/topic:local|main=main@end/clean cfg=- trees= branches=robot/topic dirty=-
 BOT_NAME/<id> on the remote is a candidate|remote:robot/topic bot|create topic|75|-|dup:robot/topic:remote|main=main@end/clean cfg=- trees= branches=- dirty=-
 a failed PR query is uncertainty: nothing is created|fail-gh|create topic|1|-|gh-fail|main=main@end/clean cfg=- trees= branches=- dirty=-
