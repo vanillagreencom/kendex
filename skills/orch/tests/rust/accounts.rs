@@ -785,6 +785,48 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     );
 }
 
+/// A provider's reservation is a fact of the account, read apart from its
+/// figures: a line whose measurement nobody can read still reserves the
+/// account, so the home here with the most room is passed over for the
+/// other, a named pick of it is refused by its word, and the line is named
+/// in its note.
+#[test]
+fn a_providers_line_whose_measurement_nobody_can_read_keeps_its_reservation() {
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    world.plant_host_listing(
+        "fleet-vm",
+        &[measured("held", 10, 5), measured("worker", 60, 5)],
+    );
+    let held = world.dir("held");
+    answer_accounts(
+        &world,
+        "fleet-vm",
+        &format!("account={held}\tharness=claude\tweekly-pct=abc\treserved=1\n"),
+    );
+    let reply = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&reply).as_deref(),
+        Some(world.dir("worker").as_str()),
+        "{reply}"
+    );
+    let roster = world.roster();
+    assert!(
+        roster["lines"]
+            .as_array()
+            .is_some_and(|n| n.contains(&json!(format!(
+                "host-account-invalid account={held} field=weekly-pct"
+            )))),
+        "{roster}"
+    );
+    let named = world.pick(&PickRequest {
+        lane: Some(held),
+        ..claude(None)
+    });
+    assert_eq!(named["answer"], json!("reserved"), "{named}");
+}
+
 /// Two stated ends of one account, the provider's `plan-ends` on its row
 /// and this machine's `AGENT_RUNTIME_ACCOUNT_RETIRE`: the earlier is the
 /// account's end, named by its source. The provider's end before the

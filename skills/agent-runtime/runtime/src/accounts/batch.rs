@@ -81,11 +81,56 @@ struct Line {
 }
 
 /// A line one field of which nobody can read: the account it names, empty
-/// where it names none, and the first such field.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// where it names none, the first such field, and the row of the line's
+/// words alone where it names its account and harness and states a word.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Unreadable {
     pub account: String,
     pub field: &'static str,
+    pub words: Option<Value>,
+}
+
+/// The words a provider states of an account, apart from any figure, by
+/// field and by the record's name.
+const PROVIDER_WORDS: [(&str, &str); 3] = [
+    ("plan-ends", "plan_ends"),
+    ("reserved", "reserved"),
+    ("seat", "seat"),
+];
+
+/// A line's `key=value` fields; a field with no `=` holds the empty value.
+fn line_fields(text: &str) -> Map<String, Value> {
+    let mut fields: Map<String, Value> = Map::new();
+    for field in text.split('\t').filter(|f| !f.is_empty()) {
+        let (key, value) = field.split_once('=').unwrap_or((field, ""));
+        fields.insert(key.to_owned(), Value::from(value));
+    }
+    fields
+}
+
+/// The line a provider's unreadable line still says: its account, its
+/// harness and its words, no figure. A reservation is a fact of the
+/// account, so a measurement nobody can read never takes it away. None
+/// where the line names no account, no harness this parser reads, or no
+/// word.
+fn words_line(text: &str) -> Option<Line> {
+    let fields = line_fields(text);
+    let get = |key: &str| fields.get(key).and_then(Value::as_str).unwrap_or("");
+    let (account, harness) = (get("account"), get("harness"));
+    Harness::parse(harness)?;
+    let words: Vec<String> = PROVIDER_WORDS
+        .iter()
+        .filter(|(key, _)| !get(key).is_empty())
+        .map(|(key, _)| format!("{key}={}", get(key)))
+        .collect();
+    if account.is_empty() || words.is_empty() {
+        return None;
+    }
+    line(&format!(
+        "account={account}\tharness={harness}\t{}",
+        words.join("\t")
+    ))
+    .ok()
 }
 
 /// One line: `account` and `harness` required, the percentages whole
@@ -93,11 +138,7 @@ pub struct Unreadable {
 /// the Pi grant's four on a `harness=pi` row with no `monthly-pct`, the
 /// Codex credit's four on a `harness=codex` row, none on any other.
 fn line(text: &str) -> std::result::Result<Line, Unreadable> {
-    let mut fields: Map<String, Value> = Map::new();
-    for field in text.split('\t').filter(|f| !f.is_empty()) {
-        let (key, value) = field.split_once('=').unwrap_or((field, ""));
-        fields.insert(key.to_owned(), Value::from(value));
-    }
+    let fields = line_fields(text);
     let get = |key: &str| {
         fields
             .get(key)
@@ -191,6 +232,7 @@ fn line(text: &str) -> std::result::Result<Line, Unreadable> {
         return Err(Unreadable {
             account,
             field: bad.unwrap_or("harness"),
+            words: None,
         });
     };
     let nz = |key: &str| {
@@ -237,95 +279,104 @@ pub fn consumed_reset(text: &str, now: u64) -> Option<String> {
 /// measured `through` under `host_pool`'s kind, or the field that left it
 /// unread: a percentage nobody can parse is never judged as room. The
 /// words `plan-ends`, `reserved` and `seat` are carried as written where
-/// non-empty; the judge reads them.
+/// non-empty, an unread line's among them as a row of no reading; the judge
+/// reads them.
 fn rows(
     ctx: &Ctx,
     text: &str,
     host_pool: &str,
     through: &str,
 ) -> Vec<(usize, std::result::Result<Value, Unreadable>)> {
-    let mut out = Vec::new();
-    for (index, text) in text.lines().enumerate().filter(|(_, l)| !l.is_empty()) {
-        let Line {
-            fields,
-            account,
-            harness,
-            buckets,
-            grant,
-        } = match line(text) {
-            Ok(read) => read,
-            Err(unreadable) => {
-                out.push((index + 1, Err(unreadable)));
-                continue;
-            }
-        };
-        let get = |key: &str| {
-            fields
-                .get(key)
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned()
-        };
-        let status = match get("status") {
-            s if s.is_empty() => "ok".to_owned(),
-            s => s,
-        };
-        let mut words = Map::new();
-        for (key, name) in [
-            ("plan-ends", "plan_ends"),
-            ("reserved", "reserved"),
-            ("seat", "seat"),
-        ] {
-            let value = get(key);
-            if !value.is_empty() {
-                words.insert(name.to_owned(), Value::from(value));
-            }
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| !l.is_empty())
+        .map(|(index, text)| {
+            let read = line(text)
+                .map(|read| line_row(ctx, read, host_pool, through))
+                .map_err(|unreadable| Unreadable {
+                    words: words_line(text).map(|read| line_row(ctx, read, host_pool, through)),
+                    ..unreadable
+                });
+            (index + 1, read)
+        })
+        .collect()
+}
+
+/// One read line as a record measured `through` under `host_pool`'s kind.
+fn line_row(ctx: &Ctx, read: Line, host_pool: &str, through: &str) -> Value {
+    let Line {
+        fields,
+        account,
+        harness,
+        buckets,
+        grant,
+    } = read;
+    let get = |key: &str| {
+        fields
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let status = match get("status") {
+        s if s.is_empty() => "ok".to_owned(),
+        s => s,
+    };
+    let mut words = Map::new();
+    for (key, name) in PROVIDER_WORDS {
+        let value = get(key);
+        if !value.is_empty() {
+            words.insert(name.to_owned(), Value::from(value));
         }
-        let grant = grant || get("detail").starts_with("api-credit-");
-        let pool = match harness {
-            Harness::Pi if grant => "api-credit",
-            Harness::Pi | Harness::Copilot => "copilot",
-            Harness::Claude if host_pool == "cloud-credit" => "cloud-credit",
-            Harness::Claude | Harness::Codex => "plan",
-        };
-        let alias = alias(ctx.accounts, &account);
-        let mut row = emit(
-            ctx,
-            &Emit {
-                alias: &alias,
-                harness,
-                dir: &account,
-                through,
-                reading: Reading {
-                    status,
-                    detail: get("detail"),
-                    plan: String::new(),
-                    usage: Some(Usage::Provider(buckets)),
-                    age: None,
-                    prior: None,
-                    // The protocol states no time a figure was read, so no
-                    // fall of it can follow a wall's sighting; a record of
-                    // this spelling here is this machine's.
-                    fall: None,
-                },
-                words: Some(words),
-            },
-        );
-        finish(ctx, &mut row, pool);
-        out.push((index + 1, Ok(row)));
     }
-    out
+    let grant = grant || get("detail").starts_with("api-credit-");
+    let pool = match harness {
+        Harness::Pi if grant => "api-credit",
+        Harness::Pi | Harness::Copilot => "copilot",
+        Harness::Claude if host_pool == "cloud-credit" => "cloud-credit",
+        Harness::Claude | Harness::Codex => "plan",
+    };
+    let alias = alias(ctx.accounts, &account);
+    let mut row = emit(
+        ctx,
+        &Emit {
+            alias: &alias,
+            harness,
+            dir: &account,
+            through,
+            reading: Reading {
+                status,
+                detail: get("detail"),
+                plan: String::new(),
+                usage: Some(Usage::Provider(buckets)),
+                age: None,
+                prior: None,
+                // The protocol states no time a figure was read, so no
+                // fall of it can follow a wall's sighting; a record of
+                // this spelling here is this machine's.
+                fall: None,
+            },
+            words: Some(words),
+        },
+    );
+    finish(ctx, &mut row, pool);
+    row
 }
 
 /// A provider's `accounts` answer under a host of `host_pool`'s kind, as
-/// the listing's rows: a line nobody can read is left out, named in one
-/// `host-account-invalid` note.
+/// the listing's rows: a line nobody can read is named in one
+/// `host-account-invalid` note and left out but for its words, a row of no
+/// reading the pick carries onto this machine's reading of the account.
 pub fn host_rows(ctx: &mut Ctx, text: &str, host_pool: &str) -> Vec<Value> {
     let mut out = Vec::new();
     for (_, read) in rows(ctx, text, host_pool, "host") {
         match read {
             Ok(row) => out.push(row),
-            Err(Unreadable { account, field }) => {
+            Err(Unreadable {
+                account,
+                field,
+                words,
+            }) => {
                 let named = if account.is_empty() {
                     "<unnamed>"
                 } else {
@@ -334,10 +385,21 @@ pub fn host_rows(ctx: &mut Ctx, text: &str, host_pool: &str) -> Vec<Value> {
                 ctx.notes.push(format!(
                     "host-account-invalid account={named} field={field}"
                 ));
+                out.extend(words);
             }
         }
     }
     out
+}
+
+/// A provider's `accounts` answer read for its words alone: each line's
+/// words as a row of no reading, never its figures, for a pick the
+/// provider's figures do not judge.
+pub fn host_words(ctx: &mut Ctx, text: &str, host_pool: &str) -> Vec<Value> {
+    text.lines()
+        .filter_map(words_line)
+        .map(|read| line_row(ctx, read, host_pool, "host"))
+        .collect()
 }
 
 /// The question a supplied batch is judged on: the named pick's bound and
@@ -425,7 +487,7 @@ pub fn judge(
                     "record": judged.record(),
                 })
             }
-            Err(Unreadable { account, field }) => json!({
+            Err(Unreadable { account, field, .. }) => json!({
                 "line": number,
                 "account": if account.is_empty() { Value::Null } else { Value::from(account) },
                 "verdict": "unreadable",

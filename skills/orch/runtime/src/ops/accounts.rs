@@ -55,27 +55,43 @@ pub fn roster(
     host: Option<&str>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
-    roster_naming(settings, host, None, now)
+    roster_naming(settings, host, None, false, now)
 }
 
+/// The parse of a provider's `accounts` answer a listing reads it through:
+/// its rows whole, or its words alone.
+type Parse = fn(&mut Ctx, &str, &str) -> Vec<Value>;
+
+/// [`roster`] for a pick naming `named`: an overseer's pick judged on this
+/// machine's listing (`overseer`, `host` local) still reads the configured
+/// provider's words, since a provider's reservation keeps an account from
+/// every placement whoever's figures judge it.
 fn roster_naming(
     settings: &Settings,
     host: Option<&str>,
     named: Option<(Harness, &str)>,
+    overseer: bool,
     now: u64,
 ) -> std::result::Result<Roster, String> {
     let env = env(settings);
     let provider = settings.provider.get().map_err(|e| e.to_string())?;
-    let host = host
-        .or(provider.host.as_deref())
-        .filter(|h| *h != LOCAL && !h.is_empty());
-    let reading = match host {
-        Some(host) => Some(
+    let remote = |h: &&str| *h != LOCAL && !h.is_empty();
+    let read: Option<(&str, Parse)> = match host.or(provider.host.as_deref()).filter(remote) {
+        Some(host) => Some((host, batch::host_rows as Parse)),
+        None => provider
+            .host
+            .as_deref()
+            .filter(|h| overseer && remote(h))
+            .map(|host| (host, batch::host_words as Parse)),
+    };
+    let reading = match read {
+        Some((host, parse)) => Some(
             provider_reading(
                 &env,
                 &provider,
                 &scripts_dir(&settings.roots.project),
                 host,
+                parse,
                 now,
             )
             .map_err(|cause| format!("host={host} {cause}"))?,
@@ -86,19 +102,20 @@ fn roster_naming(
 }
 
 /// The provider's reading under `host`: the pool its kind declares, then
-/// its rows through its `accounts` verb; the cause where its capability
-/// line cannot be read.
+/// its rows through its `accounts` verb, read by `parse`; the cause where
+/// its capability line cannot be read.
 fn provider_reading(
     env: &Env,
     provider: &ProviderSettings,
     scripts: &Path,
     host: &str,
+    parse: Parse,
     now: u64,
 ) -> std::result::Result<Provider, String> {
     let read = env.accounts.get().map_err(|e| e.to_string())?;
     let pool = host_pool(scripts, host)?;
     let mut ctx = Ctx::new(env, &read, now)?;
-    let (rows, failure) = provider_rows(&mut ctx, provider, scripts, host, &pool);
+    let (rows, failure) = provider_rows(&mut ctx, provider, scripts, host, &pool, parse);
     Ok(Provider {
         host: host.to_owned(),
         pool,
@@ -163,6 +180,7 @@ fn provider_rows(
     scripts: &Path,
     host: &str,
     host_pool: &str,
+    parse: Parse,
 ) -> (Vec<Value>, Option<String>) {
     let path = cache::record_path(&ctx.usage_dir, "lane-host", host);
     let cached = |ctx: &mut Ctx| -> Option<(u64, String)> {
@@ -268,7 +286,7 @@ fn provider_rows(
             ctx.notes.push(format!("host-accounts-absent host={host}"));
             (Vec::new(), None)
         }
-        Ok((_, rows)) => (batch::host_rows(ctx, &rows, host_pool), None),
+        Ok((_, rows)) => (parse(ctx, &rows, host_pool), None),
         Err(cause) => {
             ctx.notes.push(cause.clone());
             (Vec::new(), Some(cause))
@@ -299,7 +317,8 @@ impl Hosts<'_> {
     /// whose launch kind may take no lane of the entry (a cloud task; a
     /// cloud session for any harness but Claude, or for a relaunch, which
     /// the cloud cannot resume); an overseer runs here, so only a provider
-    /// sharing the Claude plan's pool over ssh reads for it.
+    /// sharing the Claude plan's pool over ssh reads its figures for it (its
+    /// words are read for every overseer's pick, [`pick_fleet`]).
     fn hosted(
         &mut self,
         fleet_host: Option<&str>,
@@ -505,8 +524,9 @@ fn cloud_repo(
 
 /// The pick a caller receives: a launch whose model's provider nothing
 /// bills refused before any read (`accounts::unbilled`); else the listing
-/// under `lane_host` (the provider, `local` this machine's own reading,
-/// `None` the fleet's configured provider), the fleet's seats and charges
+/// under `lane_host` (the provider, `local` this machine's own reading with
+/// the configured provider's words for an overseer's pick, `None` the
+/// fleet's configured provider), the fleet's seats and charges
 /// read from its state with the lane `replaces` names left out, the host's
 /// repository rule where one applies, and the judgement over them. An
 /// unread listing, fleet or capability line is unjudged, never a verdict;
@@ -537,7 +557,7 @@ pub fn pick_fleet(
     let lane_host = asked.filter(|h| *h != LOCAL && !h.is_empty());
     let model = req.model.as_deref().unwrap_or("");
     let named = req.harness.billed(model).zip(req.lane.as_deref());
-    let roster = match roster_naming(settings, asked, named, now) {
+    let roster = match roster_naming(settings, asked, named, req.for_overseer, now) {
         Ok(roster) => roster,
         Err(cause) => {
             return PickAnswer::Unjudged {
@@ -546,7 +566,10 @@ pub fn pick_fleet(
         }
     };
     let pool = req.harness.pool(model);
+    // A pool only the provider's figures measure; a read of its words alone
+    // measures nothing.
     if req.harness == Harness::Pi
+        && lane_host.is_some()
         && let Some(cause) = &roster.provider_failure
     {
         let stated = roster

@@ -10265,6 +10265,32 @@ fn a_reserved_account_reported_with_no_reading_is_chosen_by_no_walk() {
     assert_eq!(lane["result"]["record"]["config_dir"], other, "{lane}");
 }
 
+/// A provider's reservation reaches every overseer's choice, on an entry
+/// whose figures the provider does not judge too: a Codex account the
+/// provider reserves, whose home here measures the most room, is passed
+/// over by the real `successor` verb for the other Codex home.
+#[test]
+fn a_providers_reservation_keeps_an_account_from_an_overseer_whose_figures_it_does_not_judge() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let reserved = planted(&runner, "rcodex");
+    let result = first_choice_on_vm(
+        &mut runner,
+        &[
+            measured_codex("rcodex", 10),
+            json!({"harness": "codex", "config_dir": reserved, "measured_through": "host", "reserved": 1}),
+            measured_codex("bcodex", 40),
+        ],
+    );
+    assert_eq!(
+        result["successor"]["account"],
+        planted(&runner, "bcodex"),
+        "{result}"
+    );
+}
+
 #[test]
 fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
     let dir = tempfile::tempdir().unwrap();
