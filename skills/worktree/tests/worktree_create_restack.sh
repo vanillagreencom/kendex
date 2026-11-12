@@ -730,6 +730,9 @@ configured_restack_case() {
   before="$(git -C "$WT" ls-files -v --stage; git -C "$WT" rev-parse HEAD; git -C "$WT" branch --show-current; git -C "$WT" config --worktree --get-regexp '^kendex-restack\.')"
   (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" "${command[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   assert_eq "$rc" 1 "$kind: explicit dirty restack refuses"
+  local refusal=worktree-restack-dirty
+  if [[ "$kind" == replay ]]; then refusal=worktree-replay-dirty; fi
+  assert_eq "$(message_records <"$ROOT/err")" "$refusal: $WT" "$kind: the dirty-tree admission refuses"
   if [[ "$kind" == deleted ]]; then
     assert_eq "$([[ ! -e "$WT/.agents/engine.md" ]] && printf absent)" absent "$kind: deletion stays absent"
   else
@@ -753,7 +756,7 @@ configured_mutant="$configured_control/scripts/worktree"
 configured_links="$configured_control/scripts/lib/links.sh"
 for mutation in dirty comparison symlink unlink; do
   case "$mutation" in
-    dirty) file="$configured_mutant"; from='  if [[ -n "$status" ]]; then'; to='  if false && [[ -n "$status" ]]; then' ;;
+    dirty) file="$configured_mutant"; from='  if [[ "$verdict" != clean ]]; then'; to='  if false && [[ "$verdict" != clean ]]; then' ;;
     comparison) file="$configured_links"; from='    if [[ "$operation" == check && ! -L "$wt/$path" ]]; then'; to='    if false && [[ "$operation" == check && ! -L "$wt/$path" ]]; then' ;;
     symlink) file="$configured_links"; from='    [[ -L "$wt/$path" ]] || continue'; to='    [[ -L "$wt/$path" ]] || :' ;;
     unlink) file="$configured_links"; from='    if ! rm -f "$wt/$path" 2>/dev/null; then'; to='    if [[ -L "$wt/$path" ]] && ! rm -f "$wt/$path" 2>/dev/null; then' ;;

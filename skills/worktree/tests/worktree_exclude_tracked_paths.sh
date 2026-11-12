@@ -426,8 +426,8 @@ done
 visibility_control="$TMP_ROOT/visibility-control"
 cp -R -- "${WORKTREE_SCRIPT%/*}" "$visibility_control"
 visibility_writer="$visibility_control/lib/links.sh"
-visibility_from='  elif [[ "$has_tracked" == tracked ]]; then'
-visibility_to='  elif false && [[ "$has_tracked" == tracked ]]; then'
+visibility_from='  elif [[ "$shape" == visible ]]; then'
+visibility_to='  elif false && [[ "$shape" == visible ]]; then'
 [[ ! -L "$visibility_writer" && "$(grep -cFx -- "$visibility_from" "$visibility_writer")" == 1 ]] || { echo 'visibility control: match is not unique' >&2; exit 2; }
 F="$visibility_from" T="$visibility_to" awk '{ if ($0 == ENVIRON["F"]) print ENVIRON["T"]; else print }' "$visibility_writer" >"$visibility_writer.edit"
 ! cmp -s -- "$visibility_writer" "$visibility_writer.edit" || { echo 'visibility control: no change' >&2; exit 2; }

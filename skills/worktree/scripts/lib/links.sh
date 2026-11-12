@@ -40,32 +40,80 @@ split_worktree_config_words() {
   read -r -a WORKTREE_CONFIG_WORDS <<<"$value"
 }
 
+# Succeeds when $2 is a configured WORKTREE_SYMLINKS path at which $1 holds
+# the tool's own link into the main checkout.
+is_managed_symlink_path() {
+  local wt="$1" rel="$2" path="" target=""
+  [[ -L "$wt/$rel" ]] || return 1
+  target="$(readlink "$wt/$rel")" || return 1
+  [[ "$target" == "$PROJECT_ROOT/$rel" ]] || return 1
+  split_worktree_config_words "${WORKTREE_SYMLINKS:-}"
+  for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
+    path="$(normalize_worktree_config_path WORKTREE_SYMLINKS "$path" 2>/dev/null)" || continue
+    [[ "$path" != "$rel" ]] || return 0
+  done
+  return 1
+}
+
+# Sets CES_SHAPE, the exclusion a configured link path needs. Every checkout
+# reads the one common file, and a root-anchored line hides only untracked
+# paths, so the shape depends on which index tracks the path:
+#   tracked descendants in either index  visible: each lane keeps a real
+#     directory, and its child links carry their own records.
+#   main tracks the exact path  runtime: the line cannot hide main's tracked
+#     path and still hides each lane's link, including a predating lane's.
+#   only this lane tracks it  record: main's untracked file is new output, so
+#     '!/<path>/' stays only as the link's dropped-link record.
+#   neither tracks it  runtime.
+# Without a managed link, the tracked rows need no line: a main-tracked path
+# keeps its lines and a lane-only one becomes visible. MODE link means the
+# caller lays the link; migrate reads the link from disk and leaves the
+# lines of an untracked path in place.
+configured_exclusion_shape() {
+  local wt="$1" path="$2" mode="$3" main_exact="" wt_exact="" descendants="" linked=false target=""
+  CES_SHAPE=""
+  classify_index_entry "$PROJECT_ROOT" "$path" || return 1
+  main_exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
+  classify_index_entry "$wt" "$path" || return 1
+  wt_exact="$CIE_EXACT"; descendants+="$CIE_DESCENDANTS"
+  if [[ "$mode" == link ]]; then
+    linked=true
+  elif [[ -L "$wt/$path" ]]; then
+    target="$(readlink "$wt/$path")" || return 1
+    [[ "$target" != "$PROJECT_ROOT/$path" ]] || linked=true
+  fi
+  if [[ -n "$descendants" ]]; then
+    CES_SHAPE=visible
+  elif [[ -n "$main_exact" ]]; then
+    CES_SHAPE=migrate
+    [[ "$linked" != true ]] || CES_SHAPE=runtime
+  elif [[ -n "$wt_exact" ]]; then
+    CES_SHAPE=visible
+    [[ "$linked" != true ]] || CES_SHAPE=record
+  else
+    CES_SHAPE="$mode"
+    [[ "$mode" != link ]] || CES_SHAPE=runtime
+  fi
+}
+
 # Only the common info/exclude is read by every checkout. Runtime links need
 # root-anchored exclusions because directory-only .gitignore rules miss links.
-# A tracked path must not hide new output in another checkout. Its blanket
-# exclusion is removed; the old negation spelling remains only as a record of
-# a managed tracked-file link, consumed by setup's dropped-link pass. Other
-# tools share this file, so only the writer's exact path forms are changed.
+# A configured link path passes link or migrate, and configured_exclusion_shape
+# decides its shape. Other tools share this file, so only the writer's exact
+# path forms are changed.
 exclude_from_worktree_index() (
-  local wt="$1" path="$2" has_tracked="${3:-false}" link_target=""
+  local wt="$1" path="$2" shape="${3:-runtime}"
   [[ -z "$path" ]] && return 0
-  if [[ "$has_tracked" == migrate ]]; then
-    classify_index_entry "$wt" "$path" "$PROJECT_ROOT" || return 1
-    if [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]]; then
-      has_tracked=tracked
-      # Only a managed link needs a record for the later dropped-link pass.
-      if [[ -L "$wt/$path" ]]; then
-        link_target="$(readlink "$wt/$path")" || return 1
-        [[ "$link_target" != "$PROJECT_ROOT/$path" ]] || has_tracked=true
-      fi
-    fi
+  if [[ "$shape" == link || "$shape" == migrate ]]; then
+    configured_exclusion_shape "$wt" "$path" "$shape" || return 1
+    shape="$CES_SHAPE"
   fi
   local common_dir info_exclude entry negation tmp="" candidate="" filtered="" rc=0 exists=false
   local original="" line="" ending=""
   local -a removed=("!/$path/")
-  if [[ "$has_tracked" == true ]]; then
+  if [[ "$shape" == record ]]; then
     removed=("/$path" "$path" "!$path/")
-  elif [[ "$has_tracked" == tracked ]]; then
+  elif [[ "$shape" == visible ]]; then
     removed+=("/$path" "$path" "!$path/")
   fi
   local failure=read operation=git-common-directory result=0
@@ -92,7 +140,7 @@ exclude_from_worktree_index() (
     exists=true
     original="$(cat -- "$info_exclude" 2>/dev/null && printf '.')" || return 1
     original="${original%.}"
-    if [[ "$has_tracked" == migrate ]]; then
+    if [[ "$shape" == migrate ]]; then
       while IFS= read -r line || [[ -n "$line" ]]; do
         ending=""
         [[ "$original" == *$'\n'* ]] && ending=$'\n'
@@ -124,7 +172,7 @@ exclude_from_worktree_index() (
     fi
   fi
 
-  if [[ "$has_tracked" == false ]]; then
+  if [[ "$shape" == runtime ]]; then
     operation=entry-inspection
     grep -qxF -- "$entry" <<<"$filtered" 2>/dev/null || rc=$?
     [[ "$rc" -le 1 ]] || return 1
@@ -132,7 +180,7 @@ exclude_from_worktree_index() (
       [[ -z "$filtered" || "$filtered" == *$'\n' ]] || filtered+=$'\n'
       filtered+="$entry"$'\n'
     fi
-  elif [[ "$has_tracked" == true ]]; then
+  elif [[ "$shape" == record ]]; then
     rc=0
     grep -qxF -- "$negation" <<<"$filtered" 2>/dev/null || rc=$?
     [[ "$rc" -le 1 ]] || return 1
@@ -224,7 +272,7 @@ copy_ignore_file_into_worktree() {
   local wt="$1" path="$2"
   local src="$PROJECT_ROOT/$path" dst="$wt/$path" tmp="" err="" effect=""
   ensure_worktree_path_safe "$wt" "$path" false || return 1
-  exclude_from_worktree_index "$wt" "$path" false || return 1
+  exclude_from_worktree_index "$wt" "$path" || return 1
   ignore_file_copy_matches "$src" "$dst" && return 0
   if [[ -d "$dst" && ! -L "$dst" ]]; then
     worktree_message ignore-copy-directory "$wt/$path" "Warning: '$path' in $wt is a directory where main's .gitignore should be copied; leaving it alone." >&2
@@ -333,7 +381,7 @@ walk_symlink_entry_children() {
 link_untracked_child() {
   local wt="$1" rel="$2" name="$3" child="$4" exact="$5" descendants="$6" depth="$7"
   if [[ -n "$exact$descendants" ]]; then
-    exclude_from_worktree_index "$wt" "$rel" tracked || return 1
+    exclude_from_worktree_index "$wt" "$rel" migrate || return 1
   fi
   if [[ -z "$exact" && -z "$descendants" ]] && is_copied_ignore_child "$name" "$child"; then
     copy_ignore_file_into_worktree "$wt" "$rel" || LUC_UNRESOLVED="$LUC_UNRESOLVED  - $rel (copy failed — see warning above)"$'\n'
@@ -447,23 +495,15 @@ symlink_into_worktree() {
   local src="$PROJECT_ROOT/$path"
   local dst="$wt/$path"
 
-  # Runtime links are hidden, but tracked ownership in either checkout must
-  # leave new output visible in the checkout where it is untracked.
   ensure_worktree_path_safe "$wt" "$path" false || return 1
   if [[ -f "$src" && -e "$dst" && ! -L "$dst" && ! -f "$dst" ]]; then
     worktree_message file-link-nonfile "$wt/$path" "Error: refusing to replace non-file worktree path '$path' with a file symlink." >&2
     return 1
   fi
-  # Either index can reserve this path for tracked output. Only a file link
-  # needs a retained dropped-link record; tracked directories remain real.
-  local tracked_here=false shadowed=false
+  local shadowed=false
   classify_index_entry "$wt" "$path" "$PROJECT_ROOT" || return 1
   [[ -z "$CIE_DESCENDANTS" ]] || shadowed=true
-  if [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]]; then
-    tracked_here=tracked
-    if [[ -f "$src" || ( -d "$src" && "$shadowed" != true ) ]]; then tracked_here=true; fi
-  fi
-  exclude_from_worktree_index "$wt" "$path" "$tracked_here" || return 1
+  exclude_from_worktree_index "$wt" "$path" link || return 1
 
   if [[ -f "$src" ]]; then
     # File symlink — if the path is tracked in the worktree (a project that

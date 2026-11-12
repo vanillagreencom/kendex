@@ -296,6 +296,25 @@ step() {
       entry harnessrc
       commit_main harnessrc
       ;;
+    # The same file entry before main tracks it; track-entry-file starts
+    # tracking it after the worktree exists, so the branch predates that.
+    runtime-file)
+      printf 'rc v1\n' >"$MAIN/harnessrc"
+      entry harnessrc
+      ;;
+    track-entry-file) commit_main harnessrc ;;
+    # An untracked file child beside the tracked anchor, which create links.
+    runtime-child) printf 'notes\n' >"$MAIN/.agents/notes.md" ;;
+    track-runtime-child) commit_main .agents/notes.md ;;
+    # The shipped producer of a typechanged tracked-file link: create's
+    # assume-unchanged call fails and only warns.
+    create-without-bit)
+      (cd "$MAIN" && PATH="$TMP_ROOT/failbin:$PATH" WORKTREE_TEST_GIT_FAIL=--assume-unchanged \
+        WORKTREE_TEST_GIT_FAIL_ONCE="$ROOT/fixture-git-failed-once" \
+        "$WORKTREE_SCRIPT" create topic >/dev/null 2>"$ROOT/fixture.err") || { echo "FIXTURE: create failed: $(cat "$ROOT/fixture.err")" >&2; exit 2; }
+      [[ "$(git -C "$WT" status --porcelain)" == ' T harnessrc' ]] || { echo 'FIXTURE: no typechanged link' >&2; exit 2; }
+      ;;
+    untracked-scratch) printf 'scratch\n' >"$WT/scratch.txt" ;;
     # Arm the shim above for this row's command only, on the flag whose site
     # the row pins.
     fail-set-bit) GIT_FAIL=--assume-unchanged ;;
@@ -434,6 +453,12 @@ a failed index read refuses child linking and leaves the existing links in place
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
 a failed legacy heal's real directory keeps hidden edits and flags through restack refusal|engine create feature advance-base legacy-link index-lock failed-repair-edit|create topic --restack|1|-|dirty|.agents=dir .agents/engine.md=file:hidden user edit assume=.agents/engine.md status=-
 a failing assume-unchanged bit warns and still links the tracked file entry|tracked-file fail-set-bit|create topic|0|wt|set-bit-failed|harnessrc=link(<main>/harnessrc) assume=- status= T harnessrc
+a restack treats that typechanged link as the tool's own and restores it from the index|tracked-file create-without-bit feature advance-base|create topic --restack|0|wt|map:1|harnessrc=link(<main>/harnessrc) assume=harnessrc status=-
+a restack leaves untracked files to the rebase|tracked-file create feature advance-base untracked-scratch|create topic --restack|0|wt|map:1|harnessrc=link(<main>/harnessrc) assume=harnessrc status=?? scratch.txt
+a file entry main starts tracking stays hidden in a worktree whose branch predates it|runtime-file create track-entry-file|fix-links @wt|0|restored|-|harnessrc=link(<main>/harnessrc) assume=- status=-
+that worktree restacks onto the commit that tracks the file|runtime-file create feature track-entry-file repair|create topic --restack|0|wt|map:1|harnessrc=link(<main>/harnessrc) assume=harnessrc status=-
+a linked file child main starts tracking stays hidden in a worktree whose branch predates it|anchored runtime-child create track-runtime-child|fix-links @wt|0|restored|-|.agents=dir .agents/notes.md=link(<main>/.agents/notes.md) .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
+that worktree restacks onto the commit that tracks the child|anchored runtime-child create feature track-runtime-child repair|create topic --restack|0|wt|map:1|.agents=dir .agents/notes.md=file:notes .agents/skills=dir .agents/skills/anchor.md=file:anchor assume=- status=-
 a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed+map:1|$SHADOW_V2
 "
 
