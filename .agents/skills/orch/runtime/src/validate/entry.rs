@@ -13,9 +13,9 @@ use std::time::Duration;
 
 #[derive(ClapArgs)]
 #[command(
-    long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is reserved for a --wait call whose budget expires while the run continues.
+    long_about = "Run the project's declared validation, or inspect a recorded run. A start prints state=started with its run directory before waiting, then state=done with validate=pass, FAILING or no-verdict. Exit 3 is a detached start or a --wait call whose budget expired while the run continues: it prints state=running with the run directory, and --wait --run-dir follows the run on.
 
-DEV_VALIDATE_TIMEOUT_SECS bounds the command. The cap adds the kill grace and one poll interval. Poll defaults to 30 seconds; a --wait call defaults to a 540-second budget. --foreground (also --attached) keeps execution inside the caller's process tree.
+DEV_VALIDATE_TIMEOUT_SECS bounds the command. The cap adds the kill grace and one poll interval. Poll defaults to 30 seconds; a detached start or a --wait call defaults to a 540-second budget, so one call fits under a harness's foreground call limit. --foreground (also --attached) keeps execution inside the caller's process tree and waits for the run's end; it takes no --budget.
 
 An admitted --run-id uses the runtime's declaration and base to resolve the mode. An ad-hoc start defaults to full. Range and ci requests require --base; full ignores a carried base with a notice. --reproduce forces fresh local work without CI admission or selector preview. --restack is a ci request without scoped execution.
 
@@ -69,6 +69,12 @@ pub struct Args {
     #[arg(long, hide = true)]
     pub restack_check: bool,
 }
+
+/// How long one start or `--wait` call follows a run: under the 600-second
+/// ceiling of one Claude Code foreground call, so the call returns to its
+/// caller's turn rather than being cut off or moved to the harness
+/// background, where nothing wakes the caller when the run ends.
+const WAIT_BUDGET_SECS: u64 = 540;
 
 pub struct TextReply {
     pub text: String,
@@ -143,7 +149,7 @@ fn arguments(args: &Args) -> Result<()> {
         Some("--worktree")
     } else if !file_read && args.run_dir.is_some() {
         Some("--run-dir")
-    } else if !args.wait && args.budget.is_some() {
+    } else if !(args.wait || (start && !args.foreground)) && args.budget.is_some() {
         Some("--budget")
     } else if !start && args.poll.is_some() {
         Some("--poll")
@@ -255,6 +261,7 @@ fn entry(
     locking: Locking,
 ) -> std::result::Result<TextReply, Failure> {
     arguments(args)?;
+    let budget = args.budget.unwrap_or(WAIT_BUDGET_SECS);
     let dir = || {
         args.run_dir
             .as_deref()
@@ -274,7 +281,7 @@ fn entry(
         return Ok(TextReply::new(files::RunFile::read(dir()?)?.record()?, 0));
     }
     if args.wait {
-        let (text, exit) = files::wait(dir()?, args.budget.unwrap_or(540), &SystemClock)?;
+        let (text, exit) = files::wait(dir()?, budget, &SystemClock)?;
         return Ok(TextReply::new(text, exit));
     }
     let worktree = args
@@ -394,8 +401,14 @@ fn entry(
                 locking,
             )?;
         }
-        let (text, exit) =
-            files::wait(Path::new(&started.run_dir), started.cap_secs, &SystemClock)?;
+        // An attached run has ended by now; a detached one is followed for
+        // one call's budget.
+        let follow = if req.foreground {
+            started.cap_secs
+        } else {
+            budget
+        };
+        let (text, exit) = files::wait(Path::new(&started.run_dir), follow, &SystemClock)?;
         return Ok(TextReply::new(text, exit));
     }
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
@@ -479,10 +492,15 @@ fn entry(
             resolved.ran_nothing.is_none(),
         ))
     })?;
-    if req.foreground && run_dir.2 {
-        run::execute(&run_dir.0, &SystemClock, &super::group_leader(&settings))?;
-    }
-    let (text, exit) = files::wait(&run_dir.0, run_dir.1, &SystemClock)?;
+    let follow = if req.foreground {
+        if run_dir.2 {
+            run::execute(&run_dir.0, &SystemClock, &super::group_leader(&settings))?;
+        }
+        run_dir.1
+    } else {
+        budget
+    };
+    let (text, exit) = files::wait(&run_dir.0, follow, &SystemClock)?;
     Ok(TextReply::new(text, exit))
 }
 

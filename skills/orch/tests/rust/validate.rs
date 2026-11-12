@@ -1292,7 +1292,7 @@ fn the_entry_help_states_its_contract_and_a_full_start_ignores_a_base_and_refuse
             "option-unused cause=--run-dir",
         ),
         (
-            vec!["--worktree", &wt, "--budget", "5"],
+            vec!["--worktree", &wt, "--attached", "--budget", "5"],
             "option-unused cause=--budget",
         ),
         (
@@ -2728,6 +2728,59 @@ fn the_catalog_shim_consumes_the_real_admission_and_waits_for_its_runtime_run() 
         stderr(&out),
         run_file(&adir, "job.err")
     );
+}
+
+/// A detached start, ad hoc or admitted, follows its run for one call's
+/// budget and returns with the run still going, so no call outlasts a
+/// harness's foreground limit; the next `--wait` follows the same run to its
+/// verdict.
+#[test]
+fn a_detached_start_returns_at_its_budget_with_the_run_going_and_a_wait_reads_it_to_its_end() {
+    for admitted in [false, true] {
+        let w = World::new();
+        let release = w.root.join("release");
+        let held = format!(
+            "while [ ! -e '{}' ]; do sleep 0.1; done; echo full",
+            release.display()
+        );
+        let wt = w.worktree.display().to_string();
+        let id = admitted.then(|| {
+            let admission = ok(&w.op(
+                &json!({"op":"record-validation-admission","round_id":ROUND}),
+                &[],
+            ));
+            admission["report"]["run_id"].as_str().unwrap().to_owned()
+        });
+        let mut args = vec!["--worktree", wt.as_str(), "--poll", "1", "--budget", "1"];
+        if let Some(id) = &id {
+            args.extend(["--run-id", id.as_str()]);
+        }
+        let out = w.entry(&args, &[("DEV_VALIDATE_CMD", &held)]);
+        assert_eq!(
+            out.status.code(),
+            Some(3),
+            "admitted={admitted}: {} {}",
+            text(&out),
+            stderr(&out)
+        );
+        let dir = directory(&out);
+        let last = text(&out).lines().last().unwrap().to_owned();
+        assert_eq!(field(&last, "state"), "running", "{last}");
+        assert_eq!(field(&last, "run-dir"), dir, "{last}");
+        fs::write(&release, "").unwrap();
+        let out = w.entry(&["--wait", "--run-dir", &dir, "--budget", "30"], &[]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "admitted={admitted}: {}",
+            text(&out)
+        );
+        assert_eq!(field(&text(&out), "state"), "done", "{}", text(&out));
+        assert_eq!(field(&text(&out), "validate"), "pass", "{}", text(&out));
+        if admitted {
+            assert_eq!(w.wait_closed(&dir)["outcome"], "pass");
+        }
+    }
 }
 
 #[test]
