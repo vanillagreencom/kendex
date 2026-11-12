@@ -160,9 +160,8 @@ release_asset() {
 # 42568537011: one catalog job's command download got a 504, its sibling's
 # succeeded), so a later try lands. A try carries no time limit, since a
 # slow link fetching the AppImage is not a failure, so the retries add at
-# most 70 s of waiting to the tries themselves; each 504 those CI runs got
-# took 11 s. Nothing else is retried: a 404 or a refused connection fails
-# at once.
+# most 70 s of waiting to the tries themselves. Nothing else is retried: a
+# 404 or a refused connection fails at once.
 download_attempts=8
 download_retry_secs=10
 release_tag=""
