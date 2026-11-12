@@ -53,9 +53,11 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 
 use crate::clock;
+use crate::harness::Harness;
 use crate::settings::{self, AccountSettings};
 
 pub mod cache;
+pub mod here;
 pub mod listing;
 pub mod renewal;
 pub mod usage;
@@ -719,25 +721,22 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
 
 // --- the pick ---------------------------------------------------------------------------------
 
-pub fn pick_harness(harness: &str, model: &str) -> &'static str {
-    match harness {
-        "claude" => "claude",
-        "codex" => "codex",
-        "copilot" => "copilot",
-        "pi" => {
-            if model.starts_with("pi-claude/") {
-                "claude"
-            } else if model.starts_with("github-copilot/") || model.starts_with("anthropic/") {
-                "pi"
-            } else {
-                "unmeasured"
-            }
-        }
-        _ => "unmeasured",
-    }
+/// The account kind a launch of the harness word `harness` on `model`
+/// spends, as the rows name it ([`Harness::billed`]); `unmeasured` where
+/// nothing measures it, a word naming none of the four among them.
+pub fn billed(harness: &str, model: &str) -> &'static str {
+    Harness::parse(harness)
+        .and_then(|h| h.billed(model))
+        .map_or("unmeasured", Harness::name)
 }
 
-/// A launch whose model's provider nothing bills ([`pick_harness`]'s
+/// The pool a launch of the harness word `harness` on `model` spends
+/// ([`Harness::pool`]); a word naming none of the four spends a plan.
+pub fn pool(harness: &str, model: &str) -> &'static str {
+    Harness::parse(harness).map_or("plan", |h| h.pool(model))
+}
+
+/// A launch whose model's provider nothing bills ([`billed`]'s
 /// `unmeasured`: a Pi model naming no provider, or one other than
 /// `pi-claude/`, `github-copilot/` and `anthropic/`) is refused at exit 5
 /// in both forms before any row is read, since nothing measures what it
@@ -746,7 +745,7 @@ pub fn pick_harness(harness: &str, model: &str) -> &'static str {
 /// ([`PickAnswer::Unbilled`]).
 pub fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
     let model = req.model.as_deref().unwrap_or("");
-    if pick_harness(&req.harness, model) != "unmeasured" {
+    if billed(&req.harness, model) != "unmeasured" {
         return None;
     }
     let (harness, model) = (req.harness.clone(), model.to_owned());
@@ -755,15 +754,6 @@ pub fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
     } else {
         PickAnswer::ProviderUnmeasured { harness, model }
     })
-}
-
-pub fn pick_pool(harness: &str, model: &str) -> &'static str {
-    match harness {
-        "pi" if model.starts_with("anthropic/") => "api-credit",
-        "copilot" => "copilot",
-        "pi" if model.starts_with("github-copilot/") => "copilot",
-        _ => "plan",
-    }
 }
 
 /// What a caller asks the judge: `lanes pick`'s own words.
@@ -1376,6 +1366,9 @@ pub enum PickAnswer {
         unmeasured: u32,
         seats: Vec<Judged>,
         walled_resets_at: Option<String>,
+        /// Each candidate a grant refused, its directory and the grant's
+        /// refusal: the read a caller repairs before a retry.
+        refusals: Vec<(String, Value)>,
         exclusions: Vec<(String, String)>,
     },
     /// Exit 3 of `--lane`: the named account is walled or on its seat's
@@ -1450,6 +1443,7 @@ impl PickAnswer {
                 unmeasured,
                 seats,
                 walled_resets_at,
+                refusals,
                 exclusions,
             } => (
                 "none",
@@ -1463,7 +1457,7 @@ impl PickAnswer {
                     })).collect::<Vec<Value>>(),
                     "qualifying_count": 0,
                     "walled_resets_at": walled_resets_at,
-                    "refusals": [],
+                    "refusals": refusals.iter().map(|(d, r)| json!({"config_dir": d, "refusal": r})).collect::<Vec<Value>>(),
                     "exclusions": exclusions.iter().map(|(d, r)| json!({"config_dir": d, "reason": r})).collect::<Vec<Value>>(),
                 }),
             ),
@@ -1649,8 +1643,8 @@ pub fn pick(
 ) -> PickAnswer {
     let today = today(now);
     let model = req.model.as_deref().unwrap_or("");
-    let billed = pick_harness(&req.harness, model);
-    let pool = pick_pool(&req.harness, model);
+    let billed = billed(&req.harness, model);
+    let pool = pool(&req.harness, model);
     let api_credit = pool == "api-credit";
     // A pool nobody measured is a read to repair, never a window to wait
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
@@ -1739,6 +1733,13 @@ pub fn pick(
             .cloned()
             .collect(),
         walled_resets_at: walled.iter().filter_map(|j| j.retry_at()).min(),
+        refusals: judged
+            .iter()
+            .filter_map(|j| {
+                let refusal = j.record().get("refusal")?.clone();
+                Some((j.row.config_dir.clone(), refusal))
+            })
+            .collect(),
         exclusions: judged
             .iter()
             .filter(|j| j.verdict != "room")
@@ -1817,8 +1818,8 @@ mod tests {
             ("pi", "other/model", "unmeasured", "plan"),
         ];
         for (harness, model, billed, pool) in rows {
-            assert_eq!(pick_harness(harness, model), billed, "{harness} {model}");
-            assert_eq!(pick_pool(harness, model), pool, "{harness} {model}");
+            assert_eq!(super::billed(harness, model), billed, "{harness} {model}");
+            assert_eq!(super::pool(harness, model), pool, "{harness} {model}");
         }
     }
 

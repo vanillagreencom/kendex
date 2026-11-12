@@ -62,7 +62,7 @@ assert_eq "$(count codex):$(cat "$ROW/seat-codex" 2>/dev/null || printf none)" 1
 # kendex classify it.
 # shellcheck source=../../orch/tests/lib/tier-model-path.sh
 . "$SKILL_DIR/../orch/tests/lib/tier-model-path.sh"
-USAGE_CURL="$SKILL_DIR/../orch/tests/rust/fixtures/usage-curl/curl"
+USAGE_CURL="$SKILL_DIR/../agent-runtime/tests/rust/fixtures/usage-curl/curl"
 # A row's run clears its environment, so the built runtime's cache, the one
 # the set-up fills for this checkout's sources, is handed to it by name.
 RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SKILL_DIR/../agent-runtime/scripts/lib/key.sh")" \
@@ -99,7 +99,7 @@ while IFS='|' read -r label weekly checked reviewer account; do
   H="$ROW/home"
   USAGE="$ROW/usage"
   mkdir -p "$USAGE" "$PROJ/.agents/skills"
-  ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
+  ln -s "$SKILL_DIR/../agent-runtime" "$PROJ/.agents/skills/agent-runtime"
   ln -s "$USAGE_CURL" "$ROW/bin/curl"
   claude_account "$H" firstclaude 100
   claude_account "$H" secondclaude "$weekly"
@@ -113,7 +113,7 @@ set -euo pipefail
 SH
   chmod +x "$ROW/bin/lane-claude"
   W_ENV+=("AGENT_RUNTIME_ACCOUNT_DIRS=$H/.firstclaude:$H/.secondclaude" "USAGE_FIXTURE_DIR=$USAGE"
-    "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+    "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "CLAUDE_CONFIG_DIR=$H/.firstclaude" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   room_cmd="$CLAUDE_ROOM_CMD"
   [[ "$checked" != no ]] || room_cmd=""
   W_ENV+=("SECOND_OPINION_CLAUDE_ROOM_CMD=$room_cmd")
@@ -158,10 +158,10 @@ while IFS='|' read -r label pool reviewer root; do
   build "pi-pool-$pi_row" ps:none current:claude models:claude+pi-copilot-gpt+codex count:1 cmd:claude=claude cmd:codex=codex pi:stub
   H="$ROW/home"
   mkdir -p "$H/.pi-copilot" "$PROJ/.agents/skills"
-  ln -s "$SKILL_DIR/../orch" "$PROJ/.agents/skills/orch"
+  ln -s "$SKILL_DIR/../agent-runtime" "$PROJ/.agents/skills/agent-runtime"
   printf '{}\n' > "$H/.pi-copilot/settings.json"
   printf '{}\n' > "$H/.pi-copilot/auth.json"
-  W_ENV+=("AGENT_RUNTIME_COPILOT_POOL=$H/.pi-copilot=$pool" "OVERSEE_WATCH_STATE_DIR=$ROW/state" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
+  W_ENV+=("AGENT_RUNTIME_COPILOT_POOL=$H/.pi-copilot=$pool" "AGENT_RUNTIME_ACCOUNT_STATE_DIR=$ROW/state" "AGENT_RUNTIME_CACHE=$RUNTIME_CACHE")
   got="$(run review)"
   assert_eq "${got%% *}" rc=0 "$label: review completes"
   assert_eq "$(jq -r '.qa_metadata.attempts | map(.name) | join(",")' "$ROW/out/out.json")" "$reviewer" "$label: artifact names the executed reviewer"

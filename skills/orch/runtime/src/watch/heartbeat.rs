@@ -47,9 +47,7 @@ use crate::settings::Settings;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
-use agent_runtime::accounts::{
-    PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
-};
+use agent_runtime::accounts::{PickAnswer, PickRequest, Roster, billed, pool, text_or_dash};
 use agent_runtime::journal::Env;
 
 /// The host word of a lane record with no host.
@@ -285,8 +283,8 @@ fn wall_verdict(
         return unjudged;
     };
     if !listing.bills(
-        pick_harness(&owed.harness, &owed.model),
-        pick_pool(&owed.harness, &owed.model),
+        billed(&owed.harness, &owed.model),
+        pool(&owed.harness, &owed.model),
     ) {
         return "verdict=queue".to_owned();
     }
@@ -367,7 +365,7 @@ fn owed_line(
 )]
 fn run(ctx: &Context, tick: &Tick) -> Produced {
     // The occupancy reader the owed verdicts' judge charges live lanes
-    // through, as the overseer duty's walk and the `accounts pick` verb
+    // through, as the overseer duty's walk and the `lane pick` verb
     // build it.
     let host = Host::kernel();
     let (owed, quota, open, github) = {

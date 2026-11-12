@@ -18,8 +18,8 @@ use agent_runtime::accounts::cache;
 use agent_runtime::accounts::listing::{Ctx, Emit, Provider, Reading, Usage, alias, emit, finish};
 use agent_runtime::accounts::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
 use agent_runtime::accounts::{
-    self, AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, Roster, TAG, names,
-    pick_harness, pick_pool, wall,
+    self, AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, Roster, TAG, billed, names,
+    pool, wall,
 };
 use agent_runtime::clock;
 use agent_runtime::host::{self, Place};
@@ -267,7 +267,12 @@ fn provider_rows(
         }
     };
     match answer {
-        Ok((2, _)) => (Vec::new(), None),
+        // The provider's exit 2: it holds no accounts, said beside the
+        // rows so an empty listing is never read as an unread one.
+        Ok((2, _)) => {
+            ctx.notes.push(format!("host-accounts-absent host={host}"));
+            (Vec::new(), None)
+        }
         Ok((_, rows)) => (host_rows(ctx, &rows, host_pool), None),
         Err(cause) => {
             ctx.notes.push(cause.clone());
@@ -780,7 +785,7 @@ pub fn pick_fleet(
     let named = req
         .lane
         .as_deref()
-        .map(|dir| (pick_harness(&req.harness, model), dir));
+        .map(|dir| (billed(&req.harness, model), dir));
     let roster = match roster_naming(settings, asked, named, now) {
         Ok(roster) => roster,
         Err(cause) => {
@@ -789,7 +794,7 @@ pub fn pick_fleet(
             };
         }
     };
-    let pool = pick_pool(&req.harness, model);
+    let pool = pool(&req.harness, model);
     if req.harness == "pi"
         && let Some(cause) = &roster.provider_failure
     {

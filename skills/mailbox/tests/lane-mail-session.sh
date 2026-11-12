@@ -159,6 +159,8 @@ echo "=== every session send prints its result and the account's credit, and wri
 mutant() {
   local dir
   dir="$(mutant_scripts "$1" lane-mail)" || exit 1
+  # The credit is read through agent-runtime's entry beside the mailbox.
+  [[ -e "$dir/../../agent-runtime" ]] || ln -s "$REPO_ROOT/skills/agent-runtime" "$dir/../../agent-runtime"
   mutate_file "$dir/lane-mail" "$2" "$3"
   LANE_MAIL_BIN="$dir/lane-mail"
 }
@@ -172,7 +174,7 @@ ACCOUNT="$TMP_ROOT/.eclaude"
 OTHER_ACCOUNT="$TMP_ROOT/.oclaude"
 USAGE="$TMP_ROOT/usage"
 mkdir -p "$ACCOUNT" "$OTHER_ACCOUNT" "$USAGE" "$TMP_ROOT/claims"
-ln -s "$REPO_ROOT/skills/orch/tests/rust/fixtures/usage-curl/curl" "$BIN/curl"
+ln -s "$REPO_ROOT/skills/agent-runtime/tests/rust/fixtures/usage-curl/curl" "$BIN/curl"
 EXPIRES=$((($(date +%s) + 3600) * 1000))
 for token in eclaude oclaude; do
   jq -cn --arg token "token-$token" --argjson expires "$EXPIRES" \
@@ -237,7 +239,7 @@ lm STUB_CLAUDE_OUT="$ARCHIVED" "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "is archived")" "receipt=none" \
   "control: a send that prints no receipt fails the receipt rows"
 # shellcheck disable=SC2016
-mutant credit-any-account 'AGENT_RUNTIME_ACCOUNT_DIRS="$account" "$ORCH_SCRIPTS/orch-runtime"' '"$ORCH_SCRIPTS/orch-runtime"'
+mutant credit-any-account 'AGENT_RUNTIME_ACCOUNT_DIRS="$account" "$AGENT_RUNTIME_SCRIPTS/agent-runtime"' '"$AGENT_RUNTIME_SCRIPTS/agent-runtime"'
 usage_answer "$OPEN_CREDIT"
 lm "${CREDIT_ENV[@]}" -- "${DIRECTIVE[@]}"
 assert_eq "receipt=$(receipt "") log=$(sort -u "$USAGE/curl.log" | paste -sd, -)" \

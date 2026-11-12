@@ -93,22 +93,21 @@ EOF
 # line on stderr with a refused reply and exits 1. `state inspect --fleet`
 # answers with the open intents in RECORD_DIR/runtime.open-intents (`[]`
 # when absent), or exits with the status RECORD_DIR/runtime.inspect-rc
-# holds, printing one keyed line. `accounts pick`, the account judge the
-# succession walk and the mark judge ask, answers the reply planted under
+# holds, printing one keyed line. `accounts pick`, agent-runtime's account
+# judge the succession walk and the mark judge ask, answers the reply planted under
 # RECORD_DIR/runtime.picks for the question asked, keyed
 # `<harness>-<trigger>-<excluded account's name>` (the trigger
-# `--min-headroom-pct`'s word, the name `--exclude-lane`'s basename
+# `--min-headroom-pct`'s word, the name `--exclude-account`'s basename
 # without its dot, `none` where the question names none), else the reply
-# at RECORD_DIR/runtime.pick-lane for a named pick (`--lane`) and at
+# at RECORD_DIR/runtime.pick-lane for a named pick (`--account`) and at
 # RECORD_DIR/runtime.pick for the chooser where a row plants one (each a
 # reply the verb printed on a fixture, never one written by hand: the
 # record's spelling is what the caller's reading is proven on); where none
 # is planted and RECORD_DIR/runtime.picks-only stands, the question is
 # refused `fixture-pick-unplanted`, else the shell judge beside the stub
 # (DIR/lanes, else the shipped `lanes`) is asked the same question through
-# its `pick`, its answer wrapped as the verb's reply, the exit by number and
-# the record; `--fleet` and `--replaces` are the verb's words alone and are
-# dropped. `state get --item KEY [POINTER]` and
+# its `pick` in its own words, its answer wrapped as the verb's reply, the
+# exit by number and the record. `state get --item KEY [POINTER]` and
 # `state set --item KEY POINTER VALUE` answer through the store beside the
 # stub (DIR/workflow-state, else the shipped one), the pointer's tokens
 # joined as the store's dotted field, so the store's `set` judges VALUE as
@@ -178,7 +177,7 @@ printf '%s\\n' "\$*" >> "\$record/runtime.args"
 case "\${1:-} \${2:-}" in
   "accounts pick")
     planted="\$record/runtime.pick"
-    case " \$* " in *" --lane "*) planted="\$record/runtime.pick-lane" ;; esac
+    case " \$* " in *" --account "*) planted="\$record/runtime.pick-lane" ;; esac
     harness="" trigger="" excluded=none take=""
     for arg in "\$@"; do
       case "\$take" in
@@ -190,7 +189,7 @@ case "\${1:-} \${2:-}" in
       case "\$arg" in
         --harness) take=harness ;;
         --min-headroom-pct) take=trigger ;;
-        --exclude-lane) take=excluded ;;
+        --exclude-account) take=excluded ;;
       esac
     done
     keyed="\$record/runtime.picks/\$harness-\$trigger-\$excluded"
@@ -200,18 +199,19 @@ case "\${1:-} \${2:-}" in
       printf 'orch-runtime: fixture-pick-unplanted key=%s\\n' "\$harness-\$trigger-\$excluded" >&2
       exit 2
     fi
-    args=() skip=""
+    args=()
     for arg in "\$@"; do
-      if [[ -n "\$skip" ]]; then skip=""; continue; fi
       case "\$arg" in
-        --replaces) skip="\$arg" ;;
-        accounts | pick | --fleet) ;;
+        accounts | pick) ;;
+        --account) args+=(--lane) ;;
+        --exclude-account) args+=(--exclude-lane) ;;
+        --for-controller) args+=(--for-overseer) ;;
         *) args+=("\$arg") ;;
       esac
     done
     rc=0
     out="\$('$lanes' pick \${args[@]+"\${args[@]}"} --json)" || rc=\$?
-    jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "orch-runtime-v1", ok: true, result: {
+    jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "agent-runtime-v1", ok: true, result: {
       answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[\$rc | tostring] // "unjudged"),
       exit: \$rc, record: (try (\$out | fromjson) catch null)}}' ;;
   "op --fleet")

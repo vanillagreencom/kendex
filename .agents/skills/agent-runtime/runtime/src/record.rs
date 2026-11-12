@@ -625,6 +625,31 @@ fn json_type(value: &Value) -> &'static str {
     }
 }
 
+/// POSIX `cksum`: CRC-32 over the bytes then over the byte count, least
+/// significant byte first until none is left, complemented (POSIX.1-2017,
+/// `cksum`). The one checksum every record name and digest takes:
+/// the account wall record's, the usage cache's and a private home's.
+pub fn cksum(bytes: &[u8]) -> u32 {
+    fn feed(mut crc: u32, byte: u8) -> u32 {
+        crc ^= u32::from(byte) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
+        }
+        crc
+    }
+    let mut crc = bytes.iter().fold(0u32, |crc, b| feed(crc, *b));
+    let mut len = bytes.len();
+    while len > 0 {
+        crc = feed(crc, (len & 0xff) as u8);
+        len >>= 8;
+    }
+    !crc
+}
+
 /// Read a document: `None` for an absent file; unparsable bytes refuse
 /// `json-invalid`, a non-object `record-shape`, and a file stamped with
 /// `record_version` or `revision` `record-stamped`. Every field is read

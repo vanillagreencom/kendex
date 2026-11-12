@@ -39,6 +39,14 @@ tempfile = "3"
 name = "integration"
 path = "../tests/rust/main.rs"
 
+[[test]]
+name = "accounts"
+path = "../tests/rust/accounts.rs"
+
+[[test]]
+name = "walk"
+path = "../tests/rust/walk.rs"
+
 [lints.rust]
 unsafe_code = "forbid"
 

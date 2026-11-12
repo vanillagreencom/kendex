@@ -1011,7 +1011,7 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
             (*name, args.to_vec())
         })
         .collect();
-    let verbs: [(&str, &[&str]); 6] = [
+    let verbs: [(&str, &[&str]); 5] = [
         (
             "state heal",
             &[
@@ -1031,20 +1031,9 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
             ],
         ),
         (
-            "accounts billed",
+            "lane pick",
             &[
-                "accounts",
-                "billed",
-                "--harness",
-                "opencode",
-                "--native-model",
-                "m",
-            ],
-        ),
-        (
-            "accounts pick",
-            &[
-                "accounts",
+                "lane",
                 "pick",
                 "--fleet",
                 "--harness",
@@ -1054,24 +1043,12 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
             ],
         ),
         (
-            "accounts walk source",
-            &[
-                "accounts",
-                "walk",
-                "--fleet",
-                "--source-harness",
-                "opencode",
-            ],
+            "lane walk source",
+            &["lane", "walk", "--fleet", "--source-harness", "opencode"],
         ),
         (
-            "accounts walk caller",
-            &[
-                "accounts",
-                "walk",
-                "--fleet",
-                "--caller-harness",
-                "opencode",
-            ],
+            "lane walk caller",
+            &["lane", "walk", "--fleet", "--caller-harness", "opencode"],
         ),
         ("marks", &["marks", "--fleet", "--harness", "opencode"]),
     ];
@@ -1104,7 +1081,7 @@ fn every_verb_taking_a_harness_refuses_one_outside_the_four_by_its_name_and_writ
     preferring
         .env
         .push(("ORCH_LANE_PREFERENCE".into(), "opencode:m:high".into()));
-    let answer = reply(&preferring.run(&["accounts", "walk", "--fleet"]));
+    let answer = reply(&preferring.run(&["lane", "walk", "--fleet"]));
     assert_eq!(answer["refusal"]["key"], "preference-invalid", "{answer}");
     assert_eq!(
         answer["refusal"]["fields"],

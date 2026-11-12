@@ -182,8 +182,9 @@ enum Verb {
         #[command(subcommand)]
         op: WatchOp,
     },
-    /// One lane's state as the observation duty judges it, read now
-    /// and printed; nothing is written.
+    /// One lane's state as the observation duty judges it, and the account
+    /// a lane of this fleet launches on: each a read, printed; nothing is
+    /// written.
     Lane {
         #[command(subcommand)]
         op: LaneOp,
@@ -399,12 +400,6 @@ enum Verb {
         #[arg(long)]
         file: PathBuf,
     },
-    /// The accounts judge's reads: the pick a launcher receives and the roster
-    /// under the judge's statement.
-    Accounts {
-        #[command(subcommand)]
-        op: AccountsOp,
-    },
     /// A validation run, started for a round and run as its detached job.
     Validate {
         #[command(subcommand)]
@@ -547,13 +542,23 @@ fn parse_mode(word: &str) -> std::result::Result<orch_runtime::state::ValidateMo
     }
 }
 
-/// The accounts judge's verbs.
 #[derive(Subcommand)]
-enum AccountsOp {
-    /// Which account a launch spends: the listing judged with this fleet's
-    /// seats and live charges; the reply carries `lanes pick`'s exit by
-    /// number and the record or the counts it printed, so a caller reads
-    /// the verdict it read before.
+enum LaneOp {
+    /// What the item's in-flight lane is doing: the provider's status verb
+    /// where its host declares one, else its recorded pane, foreground and
+    /// screen (a Pi lane's rows), judged by the watch's classifier.
+    Status {
+        /// The lane's item key.
+        #[arg(long)]
+        item: String,
+    },
+    /// The listing a lane of this fleet launches under: the fleet's
+    /// provider's rows beside this machine's, each row with its status
+    /// word, and the roster lines the heartbeat prints.
+    Roster,
+    /// Which account a lane of this fleet launches on: the listing under
+    /// the fleet's provider judged with the fleet's seats, its live charges
+    /// and the host's repository rule.
     Pick {
         #[command(flatten)]
         target: Target,
@@ -562,6 +567,12 @@ enum AccountsOp {
         /// The selector the harness runs.
         #[arg(long)]
         native_model: Option<String>,
+        /// Judge one named account instead of choosing.
+        #[arg(long)]
+        lane: Option<String>,
+        /// Judge the named account on the projection.
+        #[arg(long, requires = "lane")]
+        projected: bool,
         /// A config dir the pick omits before judging.
         #[arg(long = "exclude-lane")]
         exclude: Vec<String>,
@@ -569,46 +580,25 @@ enum AccountsOp {
         /// out, so a replacement adds no lane.
         #[arg(long)]
         replaces: Option<String>,
-        /// Judge seats as ordinary accounts.
-        #[arg(long)]
-        for_overseer: bool,
-        /// Judge one named account instead of choosing.
-        #[arg(long)]
-        lane: Option<String>,
-        /// Judge the named account on the projection.
-        #[arg(long)]
-        projected: bool,
         /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
-        /// The headroom the caller's own judgement triggers at: the same bound
-        /// as `--max-pct 100-T`, the succession walk's and the turn-end hook's
-        /// mark.
+        /// The headroom the caller's own judgement triggers at: the same
+        /// bound as `--max-pct 100-T`.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
         min_headroom_pct: Option<u32>,
         /// Hold the account's own binding bucket to the bound beside the
         /// model's window.
         #[arg(long)]
         binding_floor: bool,
-        /// Print the lane's launch prefix, `VAR=<config dir>`, and exit by the
-        /// answer's exit in place of the reply: the room check a consumer's
-        /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs.
-        #[arg(long)]
-        env: bool,
     },
-    /// The preference walk: `ORCH_LANE_PREFERENCE`'s entries for a lane, or
-    /// `AGENT_RUNTIME_CONTROLLER_PREFERENCE`'s for an overseer's session, in order,
-    /// each classified through `kendex tier-model` and judged by `pick`'s
-    /// rule; the reply names the entry taken and every entry skipped with
-    /// the judge's word.
+    /// The lane preference walk: `ORCH_LANE_PREFERENCE`'s entries in
+    /// order, each entry's host read through its capability line and each
+    /// judged by `pick`'s rule; the reply names the entry taken and every
+    /// entry skipped with the judge's word.
     Walk {
         #[command(flatten)]
         target: Target,
-        /// Walk the overseer preference for an overseer's session: seats
-        /// judged as ordinary accounts, the headroom trigger as the bound,
-        /// the caller's own entry last.
-        #[arg(long, conflicts_with_all = ["lane", "max_pct"])]
-        overseer: bool,
         /// A named lane (a directory or a listed alias) every entry is
         /// judged on.
         #[arg(long)]
@@ -623,8 +613,7 @@ enum AccountsOp {
         /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
-        /// The headroom the caller's own judgement triggers at;
-        /// `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` for an overseer where unset.
+        /// The headroom the caller's own judgement triggers at.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
         min_headroom_pct: Option<u32>,
         /// The harness of the session the walk is asked for, whose
@@ -657,36 +646,17 @@ enum AccountsOp {
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
     },
-    /// The listing under the judge's statement: each row with its status
-    /// word, and the roster lines the heartbeat prints.
-    Roster {
-        /// The provider to read under; this machine's own read where
-        /// unset.
+    /// The live charges of a fleet's lanes per account, the count
+    /// agent-runtime's account reading asks for: `{"fleet", "charges",
+    /// "started"}`, each account by its canonical config dir.
+    Charges {
+        #[arg(long, conflicts_with = "file", required_unless_present = "file")]
+        fleet: bool,
         #[arg(long)]
-        host: Option<String>,
-    },
-    /// The kind of account a launch of `--harness` on `--native-model`
-    /// spends, by the pick's own billing rule: `claude`, `codex`,
-    /// `copilot`, `pi`, or `unmeasured` where nothing measures the model's
-    /// provider.
-    Billed {
+        file: Option<PathBuf>,
+        /// The item of a lane a relaunch replaces, left out of the count.
         #[arg(long)]
-        harness: String,
-        /// The selector the harness runs, its provider included.
-        #[arg(long, default_value = "")]
-        native_model: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum LaneOp {
-    /// What the item's in-flight lane is doing: the provider's status verb
-    /// where its host declares one, else its recorded pane, foreground and
-    /// screen (a Pi lane's rows), judged by the watch's classifier.
-    Status {
-        /// The lane's item key.
-        #[arg(long)]
-        item: String,
+        replaces: Option<String>,
     },
 }
 
@@ -1748,7 +1718,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 system_env()?.now_secs,
             )?)?
         }
-        Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
         Verb::DevReturn { op, text } => {
             let worktree = match &op {
@@ -1811,12 +1780,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             };
             artifact_reply(result, text, "review-artifact-check")
         }
-        Verb::Lane {
-            op: LaneOp::Status { item },
-        } => {
-            let settings = resolve_settings(&flags)?;
-            watch::lanes::status(&settings, &record::fleet_path(&settings.state_dir), &item)?
-        }
+        Verb::Lane { op } => lane_verb(op, &flags)?,
         Verb::ContainerClose { checkout, parent } => {
             let settings = resolve_settings(&flags)?;
             let answer =
@@ -2332,40 +2296,81 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     }
 }
 
-/// The accounts judge's verbs, each a read: the pick over the listing and this
-/// fleet's state, the roster over the listing.
+/// The lane reads: a lane's state, and the account a lane of this fleet
+/// launches on, each account verb a read through agent-runtime's one judge
+/// with what only the fleet holds: the provider's rows, the fleet's seats
+/// and live charges, the replaced lane and the host's repository rule.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the command's one construction of the kernel host for the pick's occupancy read; the judge acts on nothing"
+    reason = "the command's one construction of the kernel host for the occupancy read; the judge acts on nothing"
 )]
-fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
+fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
-    // Every accounts verb runs the judge, which reads the account settings.
-    settings.accounts.get()?;
     let now = system_env()?.now_secs;
+    let host = ops::Host::kernel();
     match op {
-        AccountsOp::Pick {
+        LaneOp::Status { item } => Ok(watch::lanes::status(
+            &settings,
+            &record::fleet_path(&settings.state_dir),
+            &item,
+        )?),
+        LaneOp::Charges {
+            fleet: _,
+            file,
+            replaces,
+        } => {
+            let path = file.unwrap_or_else(|| record::fleet_path(&settings.state_dir));
+            let facts = ops::accounts::fleet_facts(&path, &[], replaces.as_deref(), &host, now)
+                .map_err(|cause| {
+                    agent_runtime::Error::refused("fleet-unread", &[("cause", &cause)])
+                })?;
+            Ok(serde_json::json!({
+                "fleet": path,
+                "charges": facts.charges,
+                "started": facts.started,
+            }))
+        }
+        LaneOp::Roster => {
+            settings.accounts.get()?;
+            let today = agent_runtime::accounts::today(now);
+            Ok(match ops::accounts::roster(&settings, None, now) {
+                Ok(roster) => serde_json::json!({
+                    "read": true,
+                    "accounts": roster.rows.len(),
+                    "lines": roster.lines(&today),
+                    "rows": roster.rows.iter().map(|r| serde_json::json!({
+                        "alias": r.alias,
+                        "config_dir": r.config_dir,
+                        "harness": r.harness,
+                        "measured_through": r.measured_through,
+                        "status": r.status,
+                        "word": r.word().text(),
+                        "ended": r.ended(&today),
+                        "record": r.raw,
+                    })).collect::<Vec<serde_json::Value>>(),
+                }),
+                Err(cause) => serde_json::json!({"read": false, "cause": cause}),
+            })
+        }
+        LaneOp::Pick {
             target,
             harness,
             native_model,
-            exclude,
-            replaces,
-            for_overseer,
             lane,
             projected,
+            exclude,
+            replaces,
             max_pct,
             min_headroom_pct,
             binding_floor,
-            env,
         } => {
-            let named = agent_runtime::harness::Harness::named(&harness)?;
-            let path = target_path(&target, &settings);
-            let host = ops::Host::kernel();
+            settings.accounts.get()?;
+            agent_runtime::harness::Harness::named(&harness)?;
             let request = agent_runtime::accounts::PickRequest {
                 harness,
                 model: native_model,
                 exclude,
-                for_overseer,
+                for_overseer: false,
                 lane,
                 projected,
                 max_pct,
@@ -2373,44 +2378,19 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 binding_floor,
                 admit_unread_scope: false,
             };
-            let answer = ops::accounts::pick_fleet(
+            Ok(ops::accounts::pick_fleet(
                 &settings,
-                &path,
+                &target_path(&target, &settings),
                 &host,
                 None,
                 replaces.as_deref(),
                 &request,
                 now,
-            );
-            if env {
-                // The text form a consumer's room check reads: the account
-                // variable the harness launches under (agent-runtime's
-                // table) and the directory, on stdout at exit 0; any other
-                // answer is its keyed line on stderr at the answer's exit.
-                if let agent_runtime::accounts::PickAnswer::Lane(judged) = &answer {
-                    let _ = writeln!(
-                        std::io::stdout().lock(),
-                        "{}={}",
-                        named.account_var(request.model.as_deref()),
-                        judged.row.config_dir
-                    );
-                } else {
-                    let reply = answer.reply();
-                    let _ = writeln!(
-                        std::io::stderr().lock(),
-                        "orch-runtime: account-{} harness={} exit={}",
-                        reply["answer"].as_str().unwrap_or("unjudged"),
-                        request.harness,
-                        answer.exit()
-                    );
-                }
-                std::process::exit(answer.exit());
-            }
-            Ok(answer.reply())
+            )
+            .reply())
         }
-        AccountsOp::Walk {
+        LaneOp::Walk {
             target,
-            overseer,
             lane,
             exclude,
             replaces,
@@ -2426,14 +2406,9 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             caller_keep,
             keep_unmeasured,
         } => {
-            let path = target_path(&target, &settings);
-            let host = ops::Host::kernel();
+            settings.accounts.get()?;
             let request = agent_runtime::accounts::walk::WalkRequest {
-                scope: if overseer {
-                    agent_runtime::accounts::walk::Scope::Overseer
-                } else {
-                    agent_runtime::accounts::walk::Scope::Lane
-                },
+                scope: agent_runtime::accounts::walk::Scope::Lane,
                 preference: None,
                 lane,
                 exclude,
@@ -2454,42 +2429,15 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 }),
                 keep_unmeasured,
             };
-            Ok(
-                ops::accounts::walk(&settings, &path, &host, replaces.as_deref(), &request, now)?
-                    .reply(),
-            )
-        }
-        AccountsOp::Roster { host } => {
-            let today = agent_runtime::accounts::today(now);
-            Ok(
-                match ops::accounts::roster(&settings, host.as_deref(), now) {
-                    Ok(roster) => serde_json::json!({
-                        "read": true,
-                        "accounts": roster.rows.len(),
-                        "lines": roster.lines(&today),
-                        "rows": roster.rows.iter().map(|r| serde_json::json!({
-                            "alias": r.alias,
-                            "config_dir": r.config_dir,
-                            "harness": r.harness,
-                            "measured_through": r.measured_through,
-                            "status": r.status,
-                            "word": r.word().text(),
-                            "ended": r.ended(&today),
-                            "record": r.raw,
-                        })).collect::<Vec<serde_json::Value>>(),
-                    }),
-                    Err(cause) => serde_json::json!({"read": false, "cause": cause}),
-                },
-            )
-        }
-        AccountsOp::Billed {
-            harness,
-            native_model,
-        } => {
-            agent_runtime::harness::Harness::named(&harness)?;
-            Ok(serde_json::json!({
-                "billed": agent_runtime::accounts::pick_harness(&harness, &native_model),
-            }))
+            Ok(ops::accounts::walk(
+                &settings,
+                &target_path(&target, &settings),
+                &host,
+                replaces.as_deref(),
+                &request,
+                now,
+            )?
+            .reply())
         }
     }
 }

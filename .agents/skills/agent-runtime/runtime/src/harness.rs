@@ -98,14 +98,38 @@ impl Harness {
     /// own root; any other Pi provider, or a Pi model naming none, takes the
     /// Claude variable too.
     pub fn account_var(self, model: Option<&str>) -> &'static str {
+        self.billed(model.unwrap_or_default())
+            .unwrap_or(Harness::Claude)
+            .home_var()
+    }
+
+    /// The kind of account a launch of this harness on `model` spends: its
+    /// own, except a Pi launch, which spends what its model's provider
+    /// bills, a Claude seat for `pi-claude/`, the Pi root for
+    /// `github-copilot/` and `anthropic/`; `None` for a Pi model naming any
+    /// other provider or none, which nothing measures.
+    pub fn billed(self, model: &str) -> Option<Harness> {
         match self {
-            Harness::Claude | Harness::Codex | Harness::Copilot => self.home_var(),
-            Harness::Pi => match model {
-                Some(m) if m.starts_with("github-copilot/") || m.starts_with("anthropic/") => {
-                    Harness::Pi.home_var()
-                }
-                Some(_) | None => Harness::Claude.home_var(),
-            },
+            Harness::Claude | Harness::Codex | Harness::Copilot => Some(self),
+            Harness::Pi if model.starts_with("pi-claude/") => Some(Harness::Claude),
+            Harness::Pi
+                if model.starts_with("github-copilot/") || model.starts_with("anthropic/") =>
+            {
+                Some(Harness::Pi)
+            }
+            Harness::Pi => None,
+        }
+    }
+
+    /// The pool a launch of this harness on `model` spends: a Pi
+    /// `anthropic/` model the API credit, Copilot and a Pi `github-copilot/`
+    /// model the Copilot pool, any other launch its plan.
+    pub fn pool(self, model: &str) -> &'static str {
+        match self {
+            Harness::Pi if model.starts_with("anthropic/") => "api-credit",
+            Harness::Copilot => "copilot",
+            Harness::Pi if model.starts_with("github-copilot/") => "copilot",
+            Harness::Claude | Harness::Codex | Harness::Pi => "plan",
         }
     }
 

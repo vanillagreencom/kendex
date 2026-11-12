@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use serde_json::Map;
 
+use agent_runtime::accounts::{self, walk};
 use agent_runtime::clock;
 use agent_runtime::error::{Error, Result};
 use agent_runtime::harness::{self, Harness};
@@ -28,6 +29,7 @@ use agent_runtime::protocol::{self, Outcome, Reply};
 use agent_runtime::reading::{Reading, Unreadable};
 use agent_runtime::record::{self, Expect};
 use agent_runtime::session;
+use agent_runtime::settings;
 
 const RECORD_VERSION: u64 = 1;
 const RECORD_VERSIONS: &[u64] = &[1];
@@ -176,6 +178,325 @@ enum Verb {
         #[command(subcommand)]
         op: ProcessOp,
     },
+    /// The account reading: this machine's accounts under the judge's
+    /// statement, the account a launch spends, and the preference walk,
+    /// each counting the lanes the project's orch runs on an account.
+    Accounts {
+        #[command(subcommand)]
+        op: AccountsOp,
+    },
+}
+
+/// The account reading's verbs.
+#[derive(Subcommand)]
+enum AccountsOp {
+    /// The listing under the judge's statement: each row with its status
+    /// word, and the roster lines.
+    Roster,
+    /// Which account a launch spends: the listing judged with the
+    /// controller record's seat and the lanes' live charges; the reply
+    /// carries the answer's exit by number and its record or counts.
+    Pick {
+        #[arg(long)]
+        harness: String,
+        /// The selector the harness runs.
+        #[arg(long)]
+        native_model: Option<String>,
+        /// Judge one named account instead of choosing.
+        #[arg(long)]
+        account: Option<String>,
+        /// Judge the named account on the projection.
+        #[arg(long, requires = "account")]
+        projected: bool,
+        /// A config dir the pick omits before judging.
+        #[arg(long)]
+        exclude_account: Vec<String>,
+        /// Judge seats as ordinary accounts: the controller's own pick.
+        #[arg(long)]
+        for_controller: bool,
+        /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
+        max_pct: Option<u32>,
+        /// The headroom the caller's own judgement triggers at: the same
+        /// bound as `--max-pct 100-T`.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        min_headroom_pct: Option<u32>,
+        /// Hold the account's own binding bucket to the bound beside the
+        /// model's window.
+        #[arg(long)]
+        binding_floor: bool,
+        /// The fleet record whose controller member is a seat and whose
+        /// lanes are charged; orch's own fleet where unset.
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// Print the launch prefix, `VAR=<config dir>`, and exit by the
+        /// answer's exit in place of the reply: the room check a consumer's
+        /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs.
+        #[arg(long)]
+        env: bool,
+    },
+    /// The preference walk: `--preference`'s entries, or for a
+    /// controller's session `AGENT_RUNTIME_CONTROLLER_PREFERENCE`'s, in
+    /// order, each judged by `pick`'s rule; the reply names the entry taken
+    /// and every entry skipped with the judge's word.
+    #[command(group = clap::ArgGroup::new("walked").required(true).multiple(true).args(["controller", "preference"]))]
+    Walk {
+        /// Walk the controller preference: seats judged as ordinary
+        /// accounts, the headroom trigger as the bound, the caller's own
+        /// entry last.
+        #[arg(long, conflicts_with_all = ["account", "max_pct"])]
+        controller: bool,
+        /// The entries walked, in place of the controller preference.
+        #[arg(long)]
+        preference: Option<String>,
+        /// The fleet record whose controller member is a seat and whose
+        /// lanes are charged; orch's own fleet where unset.
+        #[arg(long)]
+        record: Option<PathBuf>,
+        /// An account every entry is judged on (a directory or a listed
+        /// alias).
+        #[arg(long)]
+        account: Option<String>,
+        /// A config dir every pick omits before judging.
+        #[arg(long)]
+        exclude_account: Vec<String>,
+        /// The bound in percent used; `AGENT_RUNTIME_ACCOUNT_MAX_PCT` where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
+        max_pct: Option<u32>,
+        /// The headroom the caller's own judgement triggers at;
+        /// `AGENT_RUNTIME_CONTROLLER_HEADROOM_PCT` for a controller where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        min_headroom_pct: Option<u32>,
+        /// The harness of the session the walk is asked for, whose
+        /// permission posture an entry of another harness must take.
+        #[arg(long)]
+        source_harness: Option<String>,
+        /// That session's launch words; left out, the harness's row alone
+        /// answers.
+        #[arg(long, requires = "source_harness", allow_hyphen_values = true)]
+        source_flags: Option<String>,
+        /// The predecessor's harness: its own entry walks last.
+        #[arg(long)]
+        caller_harness: Option<String>,
+        #[arg(long, requires = "caller_harness")]
+        caller_account: Option<String>,
+        /// The model the successor runs; a numeric entry's model too.
+        #[arg(long, requires = "caller_harness")]
+        caller_model: Option<String>,
+        #[arg(long, requires = "caller_harness")]
+        caller_effort: Option<String>,
+        /// The model the caller's account is judged on.
+        #[arg(long, requires = "caller_harness")]
+        caller_pick_model: Option<String>,
+        /// Keep the caller's own account without a pick.
+        #[arg(long, requires = "caller_harness")]
+        caller_keep: bool,
+        /// At a context mark with the caller's account unmeasured: an entry
+        /// of its harness whose pick finds none keeps the caller's account
+        /// where the judge still reads it unmeasured.
+        #[arg(long, requires = "caller_harness")]
+        keep_unmeasured: bool,
+    },
+}
+
+/// The settings a reading takes: the account keys, the records' root, the
+/// homes, the controller preference, and the project whose orch counts the
+/// lanes. Loaded from the checkout the command runs in; a directory in no
+/// checkout is its own root, so a reading runs anywhere.
+struct AccountSettings {
+    project: PathBuf,
+    accounts: settings::Judged<settings::AccountSettings>,
+    state: settings::Judged<PathBuf>,
+    home: Option<String>,
+    copilot_home: Option<String>,
+    preference: String,
+}
+
+/// The home a Copilot account directory is resolved under.
+const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
+
+impl AccountSettings {
+    fn load() -> Result<AccountSettings> {
+        let cwd = std::env::current_dir().map_err(|e| Error::io("read", ".", e))?;
+        let roots = settings::roots(&cwd)?;
+        let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+            std::env::vars_os().collect();
+        let keys = settings::Keys {
+            read: &[
+                settings::ACCOUNT_KEYS,
+                settings::ENGINE_KEYS,
+                &[COPILOT_HOME_KEY],
+            ],
+            load: &[],
+        };
+        let values = settings::layered(&roots.project, &environment, true, &keys)?;
+        if let Some((path, keys)) = &values.passed_over {
+            for key in keys {
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "settings-skipped path={} key={key} reason=shell-form",
+                    path.display()
+                );
+            }
+        }
+        let loaded = AccountSettings {
+            accounts: settings::AccountSettings::read(&values),
+            state: settings::account_state_dir(&values),
+            home: values.get(settings::HOME_KEY).map(str::to_owned),
+            copilot_home: values.get(COPILOT_HOME_KEY).map(str::to_owned),
+            preference: settings::EngineSettings::read(&values).controller_preference,
+            project: roots.project,
+        };
+        // Every verb reads the account keys first: a value outside its form
+        // refuses before anything is read.
+        loaded.accounts.get()?;
+        loaded.state.get()?;
+        Ok(loaded)
+    }
+
+    fn env(&self) -> accounts::Env<'_> {
+        accounts::Env {
+            accounts: &self.accounts,
+            account_state: &self.state,
+            home: self.home.as_deref(),
+            copilot_home: self.copilot_home.as_deref(),
+            controller_preference: &self.preference,
+        }
+    }
+}
+
+fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
+    let loaded = AccountSettings::load()?;
+    let env = loaded.env();
+    let now = clock::Clock::wall(&clock::SystemClock)
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    match op {
+        AccountsOp::Roster => {
+            let today = accounts::today(now);
+            Ok(match accounts::roster(&env, None, now) {
+                Ok(roster) => serde_json::json!({
+                    "read": true,
+                    "accounts": roster.rows.len(),
+                    "lines": roster.lines(&today),
+                    "rows": roster.rows.iter().map(|r| serde_json::json!({
+                        "alias": r.alias,
+                        "config_dir": r.config_dir,
+                        "harness": r.harness,
+                        "measured_through": r.measured_through,
+                        "status": r.status,
+                        "word": r.word().text(),
+                        "ended": r.ended(&today),
+                        "record": r.raw,
+                    })).collect::<Vec<serde_json::Value>>(),
+                }),
+                Err(cause) => serde_json::json!({"read": false, "cause": cause}),
+            })
+        }
+        AccountsOp::Pick {
+            harness,
+            native_model,
+            account,
+            projected,
+            exclude_account,
+            for_controller,
+            max_pct,
+            min_headroom_pct,
+            binding_floor,
+            record,
+            env: text,
+        } => {
+            let named = Harness::named(&harness)?;
+            let request = accounts::PickRequest {
+                harness,
+                model: native_model,
+                exclude: exclude_account,
+                for_overseer: for_controller,
+                lane: account,
+                projected,
+                max_pct,
+                min_headroom_pct,
+                binding_floor,
+                admit_unread_scope: false,
+            };
+            let answer =
+                accounts::here::pick(&env, &loaded.project, record.as_deref(), &request, now)?;
+            if text {
+                // The text form a room check reads: the variable the harness
+                // launches its account under and the directory, on stdout at
+                // exit 0; any other answer its keyed line on stderr at the
+                // answer's exit.
+                if let accounts::PickAnswer::Lane(judged) = &answer {
+                    let _ = writeln!(
+                        std::io::stdout().lock(),
+                        "{}={}",
+                        named.account_var(request.model.as_deref()),
+                        judged.row.config_dir
+                    );
+                } else {
+                    let reply = answer.reply();
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "agent-runtime: account-{} harness={} exit={}",
+                        reply["answer"].as_str().unwrap_or("unjudged"),
+                        request.harness,
+                        answer.exit()
+                    );
+                }
+                std::process::exit(answer.exit());
+            }
+            Ok(answer.reply())
+        }
+        AccountsOp::Walk {
+            controller,
+            preference,
+            record,
+            account,
+            exclude_account,
+            max_pct,
+            min_headroom_pct,
+            source_harness,
+            source_flags,
+            caller_harness,
+            caller_account,
+            caller_model,
+            caller_effort,
+            caller_pick_model,
+            caller_keep,
+            keep_unmeasured,
+        } => {
+            let request = walk::WalkRequest {
+                scope: if controller {
+                    walk::Scope::Overseer
+                } else {
+                    walk::Scope::Lane
+                },
+                preference,
+                lane: account,
+                exclude: exclude_account,
+                max_pct,
+                min_headroom_pct,
+                source: source_harness.map(|harness| walk::Source {
+                    harness,
+                    flags: source_flags
+                        .map(|text| text.split_whitespace().map(str::to_owned).collect()),
+                }),
+                caller: caller_harness.map(|harness| walk::Caller {
+                    harness,
+                    lane: caller_account,
+                    model: caller_model,
+                    effort: caller_effort,
+                    pick_model: caller_pick_model,
+                    keep: caller_keep,
+                }),
+                keep_unmeasured,
+            };
+            Ok(
+                accounts::here::walk(&env, &loaded.project, record.as_deref(), &request, now)?
+                    .reply(),
+            )
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -1118,6 +1439,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             ))
             .unwrap_or_default()),
         },
+        Verb::Accounts { op } => accounts_verb(op),
     }
 }
 
@@ -1125,6 +1447,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
 const USAGE_EXIT: i32 = 2;
 
 fn main() {
+    // The account renewal re-executes this program for its step, apart
+    // from the caller's process group.
+    if accounts::renewal_step(std::env::args_os().nth(1).as_deref()) {
+        return;
+    }
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
     let cli = match Cli::try_parse() {

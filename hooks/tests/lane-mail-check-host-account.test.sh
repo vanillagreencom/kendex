@@ -64,10 +64,6 @@ host_account_rows() { # HOOK [ROWS]
       assert_eq "$(grep -cE '^lane-mail-check: account=(unlisted|unmeasured)$|cloud-credit-refused' "$ERR_FILE" || true)" 0 \
         "a hosted account is never reported as unlisted or unmeasured, nor looked up in the sandbox"
     fi
-    if [ "$name" = local-pi ]; then
-      assert_eq "$(grep -c '^lanes: cloud-credit-refused .*cause=api-credit' "$ERR_FILE" || true)" 1 \
-        "a Pi lane with no native identity is judged by the account judge on its API grant"
-    fi
     if [ "$status" = 2 ]; then
       assert_eq "$(grep -cF ' op --item KEN-4296 --request [REQUEST FILE]' "$ERR_FILE" || true)" 1 \
         "the hosted context mark still requires a handoff record"

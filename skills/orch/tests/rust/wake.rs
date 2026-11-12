@@ -23,7 +23,7 @@ use agent_runtime::record::FLEET_FILE_NAME;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_runtime::clock::Clock;
@@ -37,44 +37,6 @@ use orch_runtime::watch::wake::{self, OVERSEER_TARGET, UNREAD_KIND};
 use orch_runtime::watch::{self, Baseline, Change, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
 use support::*;
-
-/// The agent-runtime binary the duty delivers through, built once from
-/// the sibling crate into this suite's own target directory: Cargo builds
-/// a dependency's library alone, and no stable artifact dependency names
-/// its binary, so the suite asks for it by the same command.
-fn agent_runtime() -> &'static Path {
-    static BIN: OnceLock<PathBuf> = OnceLock::new();
-    BIN.get_or_init(|| {
-        let own = binary();
-        let profile_dir = own.parent().expect("the binary's directory");
-        let target = profile_dir.parent().expect("the target directory");
-        let mut args = vec![
-            "build",
-            "-q",
-            "-p",
-            "agent-runtime",
-            "--bin",
-            "agent-runtime",
-        ];
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
-            args.push("--release");
-        }
-        let out = Command::new(env!("CARGO"))
-            .args(&args)
-            .current_dir(env!("CARGO_MANIFEST_DIR"))
-            .env("CARGO_TARGET_DIR", target)
-            .output()
-            .expect("cargo");
-        assert!(
-            out.status.success(),
-            "building agent-runtime: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let bin = profile_dir.join("agent-runtime");
-        assert!(bin.is_file(), "{}", bin.display());
-        bin
-    })
-}
 
 /// The settings a wake in `dir` runs under: the agent-runtime command
 /// `agent_runtime`, the two stub harnesses, the mailbox fixture the owner

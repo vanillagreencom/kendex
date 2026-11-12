@@ -720,7 +720,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             match &step {
                 Step::Caller(c) => {
                     let pick_model = c.pick_model.clone().unwrap_or_default();
-                    if accounts::pick_harness(&c.harness, &pick_model) == "unmeasured"
+                    if accounts::billed(&c.harness, &pick_model) == "unmeasured"
                         && !pick_model.contains('/')
                     {
                         return Err(refused(
@@ -816,7 +816,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 continue;
             }
         };
-        let billed = accounts::pick_harness(&harness, &pick_model);
+        let billed = accounts::billed(&harness, &pick_model);
         let chosen = |account: Option<String>, record: Option<Value>, kept_unmeasured: bool| {
             WalkAnswer::Lane(Box::new(Chosen {
                 entry: text.clone(),
@@ -915,10 +915,8 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     && req.keep_unmeasured
                     && caller.is_some_and(|c| {
                         c.harness == harness
-                            && accounts::pick_harness(
-                                &c.harness,
-                                c.pick_model.as_deref().unwrap_or(""),
-                            ) == billed
+                            && accounts::billed(&c.harness, c.pick_model.as_deref().unwrap_or(""))
+                                == billed
                     });
                 let kept = keep
                     .then(|| caller.and_then(|c| c.lane.clone()))

@@ -45,7 +45,7 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # The walk asks the runtime's account judge; this world has no built
-# runtime, so the stand-in (lib/runtime-stub.sh), named by ORCH_RUNTIME_CLI,
+# runtime, so the stand-in (lib/runtime-stub.sh), named by AGENT_RUNTIME_CLI,
 # answers each `accounts pick` the walk asks with the reply the real verb
 # printed over this world: one file per question (harness, trigger, excluded
 # account) under fixtures/accounts-pick, its home spelled as this one's,
@@ -58,7 +58,7 @@ for reply in "$TEST_DIR"/fixtures/accounts-pick/*.json; do
   sed "s|@H@|$H|g" "$reply" > "$TMP_ROOT/runtime/runtime.picks/$(basename "$reply" .json)"
 done
 : > "$TMP_ROOT/runtime/runtime.picks-only"
-export ORCH_RUNTIME_CLI="$TMP_ROOT/runtime/orch-runtime"
+export AGENT_RUNTIME_CLI="$TMP_ROOT/runtime/orch-runtime"
 
 selection() {
   local rc=0 result row role flag expected_rc expected_account

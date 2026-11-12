@@ -5,7 +5,7 @@ summary: "A repository mailbox for questions, notices, answers and directives."
 license: MIT
 user-invocable: true
 dependencies:
-  optional: [orch, worktree, linear]
+  optional: [orch, worktree, linear, agent-runtime]
 metadata:
   author: vanillagreen
   source: kendex

@@ -47,25 +47,25 @@ SECOND_OPINION_CODEX_CMD = "codex exec -m gpt-6.1-sol -s read-only -c model_reas
 # A reviewer can be checked for room on the account it spends before it is
 # asked. The check exits 0 when there is room and prints the account's
 # NAME=value env prefix, which the reviewer then runs under; any other exit
-# skips the reviewer for the next one. The orch skill's account judge,
-# `orch-runtime accounts pick --env`, is that check. pi-copilot and pi-copilot-gpt, Pi on the Copilot pool running Claude
-# Opus and GPT, come with their command, model, room check and inline diff
-# built in (`second-opinion --help` prints them); their check runs that judge
-# from .agents/skills/orch in the project this skill is installed in, so
-# where orch is not installed there, in a global install, which has no
-# project, or where the check refuses, the entry is skipped for the next one. Setting
-# an entry's _CMD replaces all four with that entry's own settings; setting
-# its _ROOM_CMD empty drops the check. Each target remains subject to
-# session-model exclusion.
+# skips the reviewer for the next one. The agent-runtime skill's account
+# judge, `agent-runtime accounts pick --env`, is that check; where orch is
+# installed in the project it counts the lanes running on each account.
+# pi-copilot and pi-copilot-gpt, Pi on the Copilot pool running Claude Opus and
+# GPT, come with their command, model, room check and inline diff built in
+# (`second-opinion --help` prints them); their check runs that judge from
+# .agents/skills/agent-runtime in the project this skill is installed in, so
+# where agent-runtime is not installed there, in a global install, which has
+# no project, or where the check refuses, the entry is skipped for the next
+# one. Setting an entry's _CMD replaces all four with that entry's own
+# settings; setting its _ROOM_CMD empty drops the check. Each target remains
+# subject to session-model exclusion.
 # The Copilot check reads AGENT_RUNTIME_COPILOT_POOL from the settings in the
 # lane's own tree; a hosted lane states it in .env.local until its provider
-# forwards it, and one without it records the check's refusal. Each check pins
-# ORCH_LANE_HOST=local through env, since the command runs without a shell: the
-# reviewer runs on this machine's login, which a lane-host provider's reading
-# of the account does not judge. claude and codex have no check unless one
-# is set:
-# SECOND_OPINION_CLAUDE_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime accounts pick --env --fleet --harness claude --native-model claude-opus-5-5"
-# SECOND_OPINION_CODEX_ROOM_CMD = "env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime accounts pick --env --fleet --harness codex --native-model gpt-6.1-sol --binding-floor"
+# forwards it, and one without it records the check's refusal. The judge reads
+# this machine's own login, the one the reviewer runs on, never a lane-host
+# provider's copy. claude and codex have no check unless one is set:
+# SECOND_OPINION_CLAUDE_ROOM_CMD = ".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness claude --native-model claude-opus-5-5"
+# SECOND_OPINION_CODEX_ROOM_CMD = ".agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness codex --native-model gpt-6.1-sol --binding-floor"
 
 # A reviewer that cannot run git, such as Pi on read-only file tools, is sent
 # the change itself: set to 1, its review prompt carries the diff, up to the cap

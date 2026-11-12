@@ -114,7 +114,7 @@ SO=""
 PROJ=""
 # Word state, reset per row.
 W_PS="" W_PAD="" W_CURRENT="" W_MODELS="" W_COUNT="" W_TARGET="" W_STALE=""
-W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_ORCH="" W_PATH=""
+W_RESP_CLAUDE="" W_RESP_CODEX="" W_RESP_EXTRA="" W_PI="" W_RUNTIME="" W_PATH=""
 W_GLOBAL="" W_ENV=()
 
 # `_` is a space and TAB a tab inside an identity value: the padded spellings.
@@ -209,12 +209,12 @@ word() {
     # the stock Copilot entries' program: pi:stub a pi that records its argv
     # and answers as the extra lane, pi:missing a PATH without pi
     pi:stub|pi:missing) W_PI="${1#pi:}" ;;
-    # orch's runtime entry where the stock room check looks for it, under the project
-    # root: orch:<kind> answers as room:<kind> and records its argv, orch:none
-    # leaves it uninstalled
-    orch:*) W_ORCH="${1#orch:}" ;;
+    # agent-runtime's entry where the stock room check looks for it, under the
+    # project root: runtime:<kind> answers as room:<kind> and records its argv,
+    # runtime:none leaves it uninstalled
+    runtime:*) W_RUNTIME="${1#runtime:}" ;;
     # install:global puts the skill in no repository, as a global install
-    # is, and runs it from the project, the tree under review, so the orch
+    # is, and runs it from the project, the tree under review, so the runtime
     # word plants its entry under the working directory instead
     install:global) W_GLOBAL=1 ;;
     marker:*) W_ENV+=("${1#marker:}") ;;
@@ -271,7 +271,7 @@ SH
   chmod +x "$ROW/bin/lane-$1"
 }
 
-# A room check for target NAME, as `orch-runtime accounts pick --env` answers one, written into DIR as
+# A room check for target NAME, as `agent-runtime accounts pick --env` answers one, written into DIR as
 # room-<kind>-<name>: `room` exits 0 printing the account's env prefix,
 # `walled` exits 3 with its reason on stderr and `unmeasured` 5 with two
 # stderr lines, both passed through, `json` prints
@@ -314,8 +314,8 @@ stage_nopi() {
 
 # The stock Copilot entries' world: the pi the stock command runs, recording
 # its argv and the Pi root it was handed, then answering as the extra lane;
-# and orch's runtime entry under the project root, recording ORCH_LANE_HOST
-# and its argv, then answering as a room stub counted as `orch`.
+# and agent-runtime's entry under the project root, recording its argv, then
+# answering as a room stub counted as `runtime`.
 make_stock_world() {
   case "$W_PI" in
     stub)
@@ -328,26 +328,26 @@ SH
       chmod +x "$ROW/bin/pi" ;;
     missing) stage_nopi; W_PATH="$NOPI_PATH" ;;
   esac
-  [[ -n "$W_ORCH" && "$W_ORCH" != none ]] || return 0
-  make_room_stub "orch=$W_ORCH" "$ROW/bin"
-  mkdir -p "$PROJ/.agents/skills/orch/scripts"
-  cat >"$PROJ/.agents/skills/orch/scripts/orch-runtime" <<SH
+  [[ -n "$W_RUNTIME" && "$W_RUNTIME" != none ]] || return 0
+  make_room_stub "runtime=$W_RUNTIME" "$ROW/bin"
+  mkdir -p "$PROJ/.agents/skills/agent-runtime/scripts"
+  cat >"$PROJ/.agents/skills/agent-runtime/scripts/agent-runtime" <<SH
 #!/usr/bin/env bash
-printf '%s %s\n' "\${ORCH_LANE_HOST:--}" "\$*" >>"$ROW/orch-argv"
-exec "$ROW/bin/room-$W_ORCH-orch"
+printf '%s\n' "\$*" >>"$ROW/runtime-argv"
+exec "$ROW/bin/room-$W_RUNTIME-runtime"
 SH
-  chmod +x "$PROJ/.agents/skills/orch/scripts/orch-runtime"
+  chmod +x "$PROJ/.agents/skills/agent-runtime/scripts/agent-runtime"
 }
 
 # What the stock entries ran, the suffix a stock row appends: each pi argv and
-# each orch room check (ORCH_LANE_HOST, then argv), `;`-joined, the seat the extra
+# each runtime room check's argv, `;`-joined, the seat the extra
 # lane ran under, and whether its first request carried the diff inline.
 stock_state() {
   local inline=-
   [[ ! -e "$ROW/request-extra-1.txt" ]] || inline="$(request_state extra 1 | jq -r .inline_diff)"
-  printf 'pi=%s orch=%s seat=%s inline=%s' \
+  printf 'pi=%s runtime=%s seat=%s inline=%s' \
     "$(paste -s -d ';' "$ROW/pi-argv" 2>/dev/null || printf -- '-')" \
-    "$(paste -s -d ';' "$ROW/orch-argv" 2>/dev/null || printf -- '-')" \
+    "$(paste -s -d ';' "$ROW/runtime-argv" 2>/dev/null || printf -- '-')" \
     "$(cat "$ROW/seat-extra" 2>/dev/null || printf 'none')" "$inline"
 }
 
@@ -402,7 +402,7 @@ build() {
   second_opinion_install "$SKILL_DIR" "$PROJ/skills"
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
-  W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_ORCH="" W_PATH=""
+  W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean W_PI="" W_RUNTIME="" W_PATH=""
   W_GLOBAL="" W_ENV=()
   for w in "$@"; do word "$w"; done
   if [[ -n "$W_GLOBAL" ]]; then
@@ -555,7 +555,7 @@ stock_pick() {
     PI_COPILOT_GPT) set -- gpt-6.1-sol ;;
     *) echo "UNKNOWN-STOCK-ENTRY: $1" >&2; exit 2 ;;
   esac
-  printf 'env ORCH_LANE_HOST=local .agents/skills/orch/scripts/orch-runtime accounts pick --env --fleet --harness pi --native-model github-copilot/%s' "$1"
+  printf '.agents/skills/agent-runtime/scripts/agent-runtime accounts pick --env --harness pi --native-model github-copilot/%s' "$1"
 }
 # One word per line the guards emit, held here once; a space composes them.
 same_model() { printf '→ skipping %s: runs the same model as this session (%s) — a second opinion must be cross-model' "$1" "$2"; }
@@ -597,7 +597,7 @@ err_word() {
     stockroom:*) printf '→ room: %s has room by the default SECOND_OPINION_%s_ROOM_CMD; runs under SO_TEST_SEAT=%s' "$a" "$b" "$c" ;;
     stockroomrefused:*) printf "→ skipping %s: room check refused — the default SECOND_OPINION_%s_ROOM_CMD exited %s; its own reason is on stderr above, and running the default SECOND_OPINION_%s_ROOM_CMD's command prints it again: %s" "$a" "$b" "$c" "$b" "$(stock_pick "$b")" ;;
     stockroomunavail:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs a program not installed here: %s' "$a" "$b" "$(stock_pick "$b")" ;;
-    stockroomnoroot:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs orch from the project root this install is in, and it is in none: %s' "$a" "$b" "$(stock_pick "$b")" ;;
+    stockroomnoroot:*) printf '→ skipping %s: room check unavailable — the default SECOND_OPINION_%s_ROOM_CMD runs agent-runtime from the project root this install is in, and it is in none: %s' "$a" "$b" "$(stock_pick "$b")" ;;
     noassign:*) printf '→ skipping %s: room check printed a line that is no NAME=value assignment: {"config_dir":"/seat"} — SECOND_OPINION_%s_ROOM_CMD prints the env prefix of the account it judged and nothing else' "$a" "$b" ;;
     target-undeclared:*) printf '→ skipping %s: model undeclared — %s fronts a selectable model; set SECOND_OPINION_%s_MODEL to the model id it runs' "$a" "$a" "$b" ;;
     roster-empty) printf '→ skipping roster: SECOND_OPINION_MODELS is set but empty — no targets to consider' ;;

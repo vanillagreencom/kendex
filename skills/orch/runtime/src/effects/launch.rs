@@ -1361,7 +1361,7 @@ fn hosted_command(
     }
     let mut shell_line = remote.shell_line();
     if harness == Harness::Pi
-        && agent_runtime::accounts::pick_pool("pi", r.model.as_deref().unwrap_or("")) == "copilot"
+        && agent_runtime::accounts::pool("pi", r.model.as_deref().unwrap_or("")) == "copilot"
     {
         shell_line = format!("{} && {shell_line}", PI_SESSION_ENV_STEP.trim_end());
     }

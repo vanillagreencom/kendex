@@ -47,7 +47,8 @@ fn orch_scripts() -> PathBuf {
 /// root is another repository's), and a scripts tree the mailbox program
 /// runs beside: every orch script linked to the real one but
 /// `orch-runtime`, linked to this build's binary, and `workflow-state`,
-/// the real one behind a wrapper that logs each verb it is asked. The
+/// the real one behind a wrapper that logs each verb it is asked; and
+/// agent-runtime's entry, its built binary, which reads the credit. The
 /// lanes' Claude account and another stand under a home of their own,
 /// each with its credential and a fresh usage record carrying a credit.
 struct World {
@@ -129,15 +130,17 @@ fn world() -> World {
     std::fs::write(&directive, TEXT).unwrap();
     // The scripts tree: the mailbox program finds the orch scripts two
     // directories up from its own place, so it is linked into a tree of
-    // its own beside the logging `workflow-state`. The runtime's wrapper
-    // finds its binary through the agent-runtime package beside the orch
-    // one, which this tree lacks, so the tree's `orch-runtime` is the
-    // binary every row runs.
+    // its own beside the logging `workflow-state`, and agent-runtime's
+    // entry two directories up as well. Each package's entry is its built
+    // binary, which the shipped wrapper would find only in a set-up cache.
     let tree = aux.path().join("tree");
     let mailbox = tree.join("mailbox").join("scripts");
     let orch = tree.join("orch").join("scripts");
-    std::fs::create_dir_all(&mailbox).unwrap();
-    std::fs::create_dir_all(&orch).unwrap();
+    let shared = tree.join("agent-runtime").join("scripts");
+    for dir in [&mailbox, &orch, &shared] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    std::os::unix::fs::symlink(agent_runtime(), shared.join("agent-runtime")).unwrap();
     let real = real_lane_mail();
     std::os::unix::fs::symlink(&real, mailbox.join("lane-mail")).unwrap();
     std::os::unix::fs::symlink(real.parent().unwrap().join("lib"), mailbox.join("lib")).unwrap();
@@ -239,7 +242,7 @@ impl World {
                 "PATH",
                 tool_path(&[
                     &fixtures().join("claude-cloud"),
-                    &fixtures().join("usage-curl"),
+                    &account_fixtures().join("usage-curl"),
                 ]),
             )
             .env("LANE_MAIL_CLI", &self.lane_mail)

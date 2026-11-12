@@ -19,6 +19,7 @@
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::host::{self, Hold, Place};
@@ -119,7 +120,7 @@ pub fn renew(
     let request = serde_json::to_string(&step).map_err(|e| unrun(e.to_string()))?;
     let out = host::run_tagged_fed_own_group(
         TAG,
-        "agent-runtime",
+        executable_name(&exe),
         &exe,
         "renew",
         &[STEP_ARG],
@@ -135,6 +136,18 @@ pub fn renew(
             out.status.code().unwrap_or(-1),
             host::stderr_text(&out)
         )))
+    })
+}
+
+/// The file name of the executable the step re-runs, the program a refusal
+/// names: whichever binary runs the listing in process, never a fixed word.
+/// One process re-runs one executable, so it is read once.
+fn executable_name(exe: &Path) -> &'static str {
+    static NAME: OnceLock<String> = OnceLock::new();
+    NAME.get_or_init(|| {
+        exe.file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| exe.display().to_string())
     })
 }
 

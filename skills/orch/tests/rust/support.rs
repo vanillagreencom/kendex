@@ -25,6 +25,13 @@ use agent_runtime::process::Identity;
 use orch_runtime::error::Error;
 use orch_runtime::watch;
 
+#[path = "../../../agent-runtime/tests/rust/account_planters.rs"]
+mod account_planters;
+pub use account_planters::*;
+#[path = "../../../agent-runtime/tests/rust/isolation.rs"]
+mod isolation;
+pub use isolation::*;
+
 /// The one injected clock as a test drives it: time
 /// moves only when the test passes it, and a `sleep` blocks its thread
 /// until the clock has reached its wake time. Shared by the runner's two
@@ -184,6 +191,44 @@ pub fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
 }
 
+/// The agent-runtime binary, built once from the sibling crate into this
+/// suite's own target directory: Cargo builds a dependency's library alone,
+/// and no stable artifact dependency names its binary, so the suite asks for
+/// it by the same command.
+pub fn agent_runtime() -> &'static Path {
+    static BIN: OnceLock<PathBuf> = OnceLock::new();
+    BIN.get_or_init(|| {
+        let own = binary();
+        let profile_dir = own.parent().expect("the binary's directory");
+        let target = profile_dir.parent().expect("the target directory");
+        let mut args = vec![
+            "build",
+            "-q",
+            "-p",
+            "agent-runtime",
+            "--bin",
+            "agent-runtime",
+        ];
+        if profile_dir.file_name().is_some_and(|n| n == "release") {
+            args.push("--release");
+        }
+        let out = Command::new(env!("CARGO"))
+            .args(&args)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env("CARGO_TARGET_DIR", target)
+            .output()
+            .expect("cargo");
+        assert!(
+            out.status.success(),
+            "building agent-runtime: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let bin = profile_dir.join("agent-runtime");
+        assert!(bin.is_file(), "{}", bin.display());
+        bin
+    })
+}
+
 /// The binary as every suite starts it: its environment
 /// selected by [`isolation_env`], never inherited, no private environment
 /// file, and the temporary root as its working directory, so no caller's
@@ -200,139 +245,6 @@ pub fn isolated() -> Command {
     let mut command = program(binary());
     command.arg("--no-private-env").current_dir(cwd);
     command
-}
-
-/// `name` as a test child under [`isolation_env`]: the one constructor for
-/// every program a row starts that reads a home or a configuration (`git`,
-/// a shipped script), so no row's own start reaches the operator's files,
-/// such as `~/.gitconfig` and its includes.
-pub fn program(name: impl AsRef<std::ffi::OsStr>) -> Command {
-    let mut command = Command::new(name);
-    isolation_env(&mut command);
-    command
-}
-
-/// Git's ceilings for a test child: `root` and, where these tests live in a
-/// repository (a clean copy of the index does not), its root, so a row that
-/// hands the binary a fixture path inside the repository
-/// (`tests/rust/fixtures/...`) resolves no project root there either. Git
-/// stops below each ceiling, never at it: a child that starts in `root`
-/// itself climbs past it, so `root` is a proper ancestor of the folder the
-/// child starts in, and a wrapper whose child starts in a known folder
-/// passes that folder's parent.
-pub fn ceilings(root: &Path) -> std::ffi::OsString {
-    let mut ceilings = root.as_os_str().to_owned();
-    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    while dir.pop() {
-        if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
-            ceilings.push(":");
-            ceilings.push(dir.as_os_str());
-            break;
-        }
-    }
-    ceilings
-}
-
-/// The environment a test child runs with: cleared, then the tools' path,
-/// the locale, the temporary root, a scratch home under that root (a tool
-/// that reads a home, `gh` or `git`, finds nothing of the operator there),
-/// a fixed git identity (a fixture commit needs one, and the operator's
-/// is in the configuration no child reads) and git's ceiling at the root,
-/// so no checkout above a test directory is a project root
-/// (`settings::roots` then reads the working directory). A row adds what
-/// it needs after. [`program`] applies it to a program a row starts,
-/// [`isolated`] to the binary, and the private tmux server to every pane.
-pub fn isolation_env(command: &mut Command) -> &mut Command {
-    let root = std::env::temp_dir();
-    let home = root.join("isolated-home");
-    std::fs::create_dir_all(&home).expect("the scratch home");
-    command
-        .env_clear()
-        .env("PATH", tool_path(&[]))
-        .env(
-            "LANG",
-            std::env::var_os("LANG").unwrap_or_else(|| "C.UTF-8".into()),
-        )
-        .env("TMPDIR", &root)
-        .env("HOME", &home)
-        .env("GIT_CEILING_DIRECTORIES", ceilings(&root));
-    for (name, value) in [
-        ("GIT_AUTHOR_NAME", "t"),
-        ("GIT_AUTHOR_EMAIL", "t@t"),
-        ("GIT_COMMITTER_NAME", "t"),
-        ("GIT_COMMITTER_EMAIL", "t@t"),
-    ] {
-        command.env(name, value);
-    }
-    command
-}
-
-/// The tools directory under the temporary root that every test child sees
-/// on `PATH` after a row's own prefixes: a `gh` that refuses, so a row that
-/// names no `gh` fixture never reaches the operator's real `gh` by omission
-/// (a real `gh` under the scratch home starts `gh send-telemetry` and
-/// connects out), and a `loginctl` answering that the user manager does not
-/// linger, so a detached job's launcher takes its `setsid` route and no row
-/// starts a unit on the operator's user manager; a row that wants the unit
-/// route plants its own manager fakes ahead of this directory. The programs
-/// an account's usage, token or keyring read and a lane host's read run,
-/// `curl`, `codex`, `secret-tool` and `ssh`, refuse as `gh` does, so a row
-/// whose world plants no answer for them (the usage fixture as `curl`)
-/// reaches no endpoint, keyring or host of the operator's. Each tool is
-/// written once per process through [`publish`] (the rows of one test
-/// binary start together on a cold temporary root).
-fn isolated_bin() -> PathBuf {
-    static DIR: OnceLock<PathBuf> = OnceLock::new();
-    DIR.get_or_init(|| {
-        let dir = std::env::temp_dir().join("isolated-bin");
-        std::fs::create_dir_all(&dir).expect("the isolated tools directory");
-        for (name, text) in [
-            (
-                "gh",
-                "#!/bin/sh\nprintf 'gh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            ),
-            (
-                "curl",
-                "#!/bin/sh\nprintf 'curl: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            ),
-            (
-                "codex",
-                "#!/bin/sh\nprintf 'codex: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            ),
-            (
-                "secret-tool",
-                "#!/bin/sh\nprintf 'secret-tool: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            ),
-            (
-                "ssh",
-                "#!/bin/sh\nprintf 'ssh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            ),
-            ("loginctl", "#!/bin/sh\necho no\n"),
-        ] {
-            publish(&dir, name, text);
-        }
-        dir
-    })
-    .clone()
-}
-
-/// `text` as the executable `dir/name`, kept where the file already holds
-/// it, else written under a name no other process or thread uses and
-/// renamed into place, so test binaries writing it at once all read one
-/// whole file.
-fn publish(dir: &Path, name: &str, text: &str) -> PathBuf {
-    let path = dir.join(name);
-    if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
-        return path;
-    }
-    let tmp = dir.join(format!(
-        ".{name}.{}.{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    write_executable(&tmp, text);
-    std::fs::rename(&tmp, &path).expect("a published executable in place");
-    path
 }
 
 /// `program` behind a wrapper that runs it with the scratch home, no global
@@ -392,16 +304,6 @@ pub fn isolated_row(name: &str) -> bool {
     false
 }
 
-/// A test child's `PATH`: a row's own `prefixes` first, then the isolated
-/// tools directory, then the path this process inherited. Every row that
-/// sets `PATH` composes it here, so a prefix never drops the refusing `gh`.
-pub fn tool_path(prefixes: &[&Path]) -> String {
-    let mut parts: Vec<String> = prefixes.iter().map(|p| p.display().to_string()).collect();
-    parts.push(isolated_bin().display().to_string());
-    parts.push(std::env::var("PATH").unwrap_or_default());
-    parts.join(":")
-}
-
 pub fn fixtures() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -412,33 +314,6 @@ pub fn fixtures() -> PathBuf {
 /// The stub harness `name` as the executable the runtime launches.
 pub fn stub(name: &str) -> PathBuf {
     fixtures().join(name).join("claude")
-}
-
-/// `text` as the executable `path`, written by a child process. A file this
-/// test process holds open for writing is held by every other test thread's
-/// child between its fork and its exec as well, and running it then fails
-/// `ETXTBSY`; a rename into place keeps that same file, so it does not help.
-/// The child takes this process's `PATH`, not [`isolation_env`]'s: the tools
-/// that path names are written here.
-pub fn write_executable(path: &Path, text: impl AsRef<str>) {
-    let out = Command::new("sh")
-        .env_clear()
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .args([
-            "-c",
-            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
-            "write-executable",
-        ])
-        .arg(text.as_ref())
-        .arg(path)
-        .output()
-        .expect("sh");
-    assert!(
-        out.status.success(),
-        "write-executable {}: {}",
-        path.display(),
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 /// The shell every private server's panes run, resolved once: bash from
@@ -780,10 +655,6 @@ pub fn tmux(socket: &Path, args: &[&str]) -> Output {
         .args(args)
         .output()
         .expect("tmux")
-}
-
-pub fn stderr(out: &Output) -> String {
-    String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
 /// A child the test holds and reaps, so a stop test can plant its live pid.
@@ -1680,113 +1551,6 @@ pub fn run_driven(
 
 // --- the accounts a listing lists ----------------------------------------------------------
 
-/// A usage record as the listing's cache holds it, planted beside the
-/// account: `<state>/usage/<harness>-<cksum>-<len>.json`.
-fn usage_record_path(state: &Path, harness: &str, config_dir: &str) -> PathBuf {
-    state.join("usage").join(format!(
-        "{harness}-{}-{}.json",
-        agent_runtime::accounts::wall::cksum(config_dir.as_bytes()),
-        config_dir.len()
-    ))
-}
-
-/// A Claude usage body that reads as the row's windows: the 5-hour and
-/// weekly windows with their resets, the model-scoped windows, and the
-/// cloud credit where the row carries a dollar grant. A row naming no
-/// weekly window but a headroom takes `100 - headroom` as its weekly use.
-fn claude_body(row: &Value) -> Value {
-    let resets = &row["resets"];
-    let mut body = json!({});
-    if let Some(session) = row["session_5h_pct"].as_f64() {
-        body["five_hour"] = json!({"utilization": session, "resets_at": resets["session"]});
-    }
-    let weekly = row["weekly_pct"]
-        .as_f64()
-        .or_else(|| row["headroom_pct"].as_f64().map(|h| 100.0 - h));
-    if let Some(weekly) = weekly {
-        let reset = if resets["weekly"].is_null() {
-            row["binding_resets_at"].clone()
-        } else {
-            resets["weekly"].clone()
-        };
-        body["seven_day"] = json!({"utilization": weekly, "resets_at": reset});
-    }
-    if let Some(buckets) = row["model_buckets"].as_array() {
-        body["limits"] = Value::Array(
-            buckets
-                .iter()
-                .map(|b| {
-                    json!({"kind": "weekly_scoped", "percent": b["pct"], "resets_at": b["resets_at"],
-                           "scope": {"model": {"display_name": b["label"]}}})
-                })
-                .collect(),
-        );
-    }
-    if row["credits"]["unit"] == json!("usd") {
-        let c = &row["credits"];
-        body["iguana_necktie"] = json!({
-            "limit_dollars": c["limit_dollars"], "used_dollars": c["used_dollars"],
-            "remaining_dollars": c["remaining_dollars"], "resets_at": c["resets_at"],
-            "locked_reason": c["locked_reason"],
-        });
-    }
-    body
-}
-
-/// A Codex usage body that reads as the row's windows and credits.
-fn codex_body(row: &Value) -> Value {
-    let resets = &row["resets"];
-    let epoch = |v: &Value| v.as_str().and_then(agent_runtime::clock::epoch_secs);
-    let weekly = row["weekly_pct"]
-        .as_f64()
-        .or_else(|| row["headroom_pct"].as_f64().map(|h| 100.0 - h));
-    let mut body = json!({"rate_limit": {
-        "primary_window": row["session_5h_pct"].as_f64().map(|p| json!({
-            "used_percent": p, "reset_at": epoch(&resets["session"]), "limit_window_seconds": 18_000})),
-        "secondary_window": weekly.map(|p| json!({
-            "used_percent": p,
-            "reset_at": epoch(if resets["weekly"].is_null() { &row["binding_resets_at"] } else { &resets["weekly"] }),
-            "limit_window_seconds": 604_800})),
-    }});
-    if row["credits"].is_object() {
-        let c = &row["credits"];
-        body["credits"] = json!({"has_credits": c["has_credits"], "unlimited": c["unlimited"],
-            "overage_limit_reached": c["overage_limit_reached"], "balance": c["balance"]});
-        body["spend_control"] = json!({"reached": c["spend_control_reached"]});
-    }
-    body
-}
-
-/// A Copilot usage body that reads as the row's monthly pool.
-fn copilot_body(row: &Value) -> Value {
-    let granted = row["credits"]["granted"].as_f64().unwrap_or(100.0);
-    let pct = row["monthly_pct"]
-        .as_f64()
-        .or_else(|| row["headroom_pct"].as_f64().map(|h| 100.0 - h))
-        .unwrap_or(0.0);
-    json!({
-        "copilot_plan": row["plan"],
-        "quota_reset_date_utc": row["resets"]["monthly"],
-        "quota_snapshots": {"premium_interactions": {
-            "entitlement": granted, "remaining": granted - (pct * granted / 100.0).ceil()}},
-    })
-}
-
-/// The accounts a listing lists, planted from rows in the listing's own
-/// record shape: a row measured through `local` is a directory under
-/// `root/home` named as the row's `config_dir` is (under the planted
-/// path itself where two rows share a name), holding the credential its
-/// `status` reads as (`expired` a token past its expiry, `no_credentials`
-/// none, `error` a file that is not JSON) and, under `state/usage`, the
-/// record its figure or refusal reads as; a row measured through `host` is
-/// one line of the provider's `accounts` answer in `root/lane-host.json`
-/// under `host`, the host fixture linked into `root` and its capability
-/// line an SSH host's where none is planted. Directories under `root/home`
-/// the rows no longer name are removed, and the provider's cached answer
-/// with them. The environment the listing reads the world under: the
-/// home, the state directory, the provider, and the planted directories as
-/// the configured ones, since a planted name need not carry its harness's
-/// word.
 /// Installs orch where the runtime finds its scripts, under the checkout
 /// `project`'s `.agents/skills`, with the skills its scripts reach by
 /// path beside it (orch's required skills and `harness-ci`'s classifier),
@@ -1846,6 +1610,11 @@ pub fn install_lane_host(project: &Path, planted: &Path) {
     }
 }
 
+/// The accounts a listing lists ([`plant_listing`]), and under `host` the
+/// provider's rows as its `accounts` answer in `root/lane-host.json`, the
+/// host fixture linked into `root` and its capability line an SSH host's
+/// where none is planted. The environment the listing reads the world under:
+/// the planted listing's, the state directory and the provider.
 pub fn plant_accounts(
     root: &Path,
     state: &Path,
@@ -1853,73 +1622,24 @@ pub fn plant_accounts(
     rows: &[Value],
     now: u64,
 ) -> Vec<(String, String)> {
-    let home = root.join("home");
-    std::fs::create_dir_all(&home).unwrap();
-    let mut env = vec![
-        ("HOME".to_owned(), home.display().to_string()),
-        (
-            "OVERSEE_WATCH_STATE_DIR".to_owned(),
-            state.display().to_string(),
-        ),
-        (
-            "AGENT_RUNTIME_ACCOUNT_STATE_DIR".to_owned(),
-            state.display().to_string(),
-        ),
-    ];
-    if let Some(host) = host {
-        env.push(("ORCH_LANE_HOST".to_owned(), host.to_owned()));
+    std::fs::create_dir_all(root).unwrap();
+    if host.is_some() {
         let link = root.join("lane-host");
         if std::fs::symlink_metadata(&link).is_err() {
             std::os::unix::fs::symlink(fixtures().join("lane-host/lane-host"), &link).unwrap();
         }
         install_lane_host(root, root);
     }
-    let mut provider_lines = Vec::new();
-    let mut local_dirs: Vec<PathBuf> = Vec::new();
-    for row in rows {
-        let through = row["measured_through"].as_str().unwrap_or("local");
-        let config_dir = row["config_dir"].as_str().unwrap().to_owned();
-        if through == "host" {
-            provider_lines.push(provider_line(row, &config_dir));
-            continue;
-        }
-        let name = Path::new(&config_dir).file_name().unwrap().to_owned();
-        let dir = if local_dirs.iter().any(|d| d.file_name() == Some(&name)) {
-            root.join(config_dir.trim_start_matches('/'))
-        } else {
-            home.join(&name)
-        };
-        plant_local(&dir, state, row, now);
-        local_dirs.push(dir);
-    }
-    for entry in std::fs::read_dir(&home).unwrap().flatten() {
-        let keep = local_dirs.iter().any(|d| *d == entry.path());
-        if !keep && entry.file_name().to_string_lossy().starts_with('.') {
-            std::fs::remove_dir_all(entry.path()).unwrap();
-        }
-    }
+    let Planted {
+        mut env,
+        provider_lines,
+    } = plant_listing(root, state, rows, now);
     env.push((
-        "AGENT_RUNTIME_ACCOUNT_DIRS".to_owned(),
-        local_dirs
-            .iter()
-            .map(|d| d.display().to_string())
-            .collect::<Vec<String>>()
-            .join(":"),
+        "OVERSEE_WATCH_STATE_DIR".to_owned(),
+        state.display().to_string(),
     ));
-    for entry in std::fs::read_dir(state.join("usage"))
-        .into_iter()
-        .flatten()
-        .flatten()
-    {
-        if entry
-            .file_name()
-            .to_string_lossy()
-            .starts_with("lane-host-")
-        {
-            std::fs::remove_file(entry.path()).unwrap();
-        }
-    }
     if let Some(host) = host {
+        env.push(("ORCH_LANE_HOST".to_owned(), host.to_owned()));
         let path = root.join("lane-host.json");
         let mut map: Value = std::fs::read_to_string(&path)
             .ok()
@@ -1981,212 +1701,6 @@ pub fn planted_pick(shape: &str) -> Value {
         .join("../../../hooks/tests/fixtures/pick-replies.json");
     let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
     planted[shape]["reply"].clone()
-}
-
-/// One `accounts` line for a provider's row: the words and windows the
-/// row carries, as the provider states them.
-fn provider_line(row: &Value, account: &str) -> String {
-    let mut fields = vec![
-        format!("account={account}"),
-        format!("harness={}", row["harness"].as_str().unwrap_or("claude")),
-    ];
-    if let Some(status) = row["status"].as_str().filter(|s| *s != "ok") {
-        fields.push(format!("status={status}"));
-    }
-    if let Some(detail) = row["detail"].as_str() {
-        fields.push(format!("detail={detail}"));
-    }
-    let resets = &row["resets"];
-    let weekly = row["weekly_pct"]
-        .as_f64()
-        .or_else(|| row["headroom_pct"].as_f64().map(|h| 100.0 - h));
-    let weekly_reset = if resets["weekly"].is_null() {
-        &row["binding_resets_at"]
-    } else {
-        &resets["weekly"]
-    };
-    for (key, value, reset_key, reset) in [
-        (
-            "session-5h",
-            row["session_5h_pct"].as_f64(),
-            "session",
-            &resets["session"],
-        ),
-        ("weekly", weekly, "weekly", weekly_reset),
-        (
-            "monthly",
-            row["monthly_pct"].as_f64(),
-            "monthly",
-            &resets["monthly"],
-        ),
-    ] {
-        if let Some(pct) = value {
-            fields.push(format!("{key}-pct={}", pct as u64));
-            if let Some(reset) = reset.as_str() {
-                fields.push(format!("{reset_key}-resets={reset}"));
-            }
-        }
-    }
-    if let Some(bucket) = row["model_buckets"].as_array().and_then(|b| b.first()) {
-        if let Some(pct) = bucket["pct"].as_f64() {
-            fields.push(format!("model-pct={}", pct as u64));
-        }
-        if let Some(label) = bucket["label"].as_str() {
-            fields.push(format!("model-label={label}"));
-        }
-        if let Some(reset) = bucket["resets_at"].as_str() {
-            fields.push(format!("model-resets={reset}"));
-        }
-    }
-    if row["credits"]["unit"] == json!("usd") {
-        let c = &row["credits"];
-        fields.push(format!(
-            "credit-limit={}",
-            c["limit_dollars"].as_f64().unwrap_or(0.0)
-        ));
-        fields.push(format!(
-            "credit-spent={}",
-            c["used_dollars"].as_f64().unwrap_or(0.0)
-        ));
-        fields.push(format!(
-            "credit-remaining={}",
-            c["remaining_dollars"].as_f64().unwrap_or(0.0)
-        ));
-        fields.push(format!(
-            "credit-expires={}",
-            c["resets_at"].as_str().unwrap_or("")
-        ));
-    }
-    for (key, name) in [
-        ("plan_ends", "plan-ends"),
-        ("plan-ends", "plan-ends"),
-        ("reserved", "reserved"),
-        ("seat", "seat"),
-    ] {
-        match &row[key] {
-            Value::Null => {}
-            Value::String(s) => fields.push(format!("{name}={s}")),
-            other => fields.push(format!("{name}={other}")),
-        }
-    }
-    format!("{}\n", fields.join("\t"))
-}
-
-/// One local account: its directory, its credential as the row's status
-/// reads, and its usage record.
-fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
-    let harness = row["harness"].as_str().unwrap_or("claude");
-    let alias = row["alias"].as_str().unwrap_or("account");
-    let status = row["status"].as_str().unwrap_or("ok");
-    let _ = std::fs::remove_dir_all(dir);
-    std::fs::create_dir_all(dir).unwrap();
-    let config_dir = dir.display().to_string();
-    let expires_ms = if status == "expired" {
-        (now - 3600) * 1000
-    } else {
-        (now + 365 * 86_400) * 1000
-    };
-    let credential = match harness {
-        "claude" => json!({"claudeAiOauth": {
-            "accessToken": format!("token-{alias}"), "refreshToken": format!("refresh-{alias}"),
-            "expiresAt": expires_ms, "refreshTokenExpiresAt": expires_ms,
-            "subscriptionType": row["plan"].as_str().unwrap_or("max")}})
-        .to_string(),
-        "codex" => json!({"tokens": {"access_token": format!("token-{alias}"), "account_id": format!("acct-{alias}")}}).to_string(),
-        _ => json!({"copilotTokens": format!("token-{alias}")}).to_string(),
-    };
-    let file = match harness {
-        "claude" => ".credentials.json",
-        "codex" => "auth.json",
-        _ => "config.json",
-    };
-    match status {
-        "no_credentials" => std::fs::write(dir.join(".claude.json"), "{}\n").unwrap(),
-        "error" => std::fs::write(dir.join(file), "not json\n").unwrap(),
-        _ => std::fs::write(dir.join(file), credential).unwrap(),
-    }
-    let record = usage_record_path(state, harness, &config_dir);
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    let _ = std::fs::remove_file(&record);
-    let age = row["usage_age_s"].as_u64().unwrap_or(0);
-    let body = match harness {
-        "claude" => claude_body(row),
-        "codex" => codex_body(row),
-        _ => copilot_body(row),
-    };
-    let refusal = |status: &str, code: &str| {
-        json!({"endpoint": "usage", "status": status, "code": code,
-               "detail": row["detail"].as_str().unwrap_or(&format!("usage query refused with HTTP {code}")),
-               "expires_at": now + 300})
-    };
-    // A row the listing rated carries the sample it rated against: the
-    // binding window three points lower, as many seconds earlier as the
-    // rate names.
-    let prior = row["usage_rate_pct_per_min"]
-        .as_f64()
-        .filter(|r| *r > 0.0 && row["usage_rate_state"] == json!("measured"))
-        .map(|rate| {
-            let elapsed = (3.0 * 60.0 / rate).round() as u64;
-            let mut earlier = row.clone();
-            if row["binding_bucket"] == json!("model") {
-                let buckets = earlier["model_buckets"].as_array_mut().unwrap();
-                let fullest = (0..buckets.len())
-                    .max_by(|a, b| {
-                        buckets[*a]["pct"]
-                            .as_f64()
-                            .unwrap_or(0.0)
-                            .total_cmp(&buckets[*b]["pct"].as_f64().unwrap_or(0.0))
-                    })
-                    .unwrap();
-                let pct = buckets[fullest]["pct"].as_f64().unwrap();
-                buckets[fullest]["pct"] = json!(pct - 3.0);
-            } else {
-                let key = match row["binding_bucket"].as_str() {
-                    Some("session") => "session_5h_pct",
-                    Some("monthly") => "monthly_pct",
-                    _ => "weekly_pct",
-                };
-                let pct = row[key]
-                    .as_f64()
-                    .or_else(|| row["headroom_pct"].as_f64().map(|h| 100.0 - h))
-                    .unwrap_or(0.0);
-                earlier[key] = json!(pct - 3.0);
-            }
-            let body = match harness {
-                "claude" => claude_body(&earlier),
-                "codex" => codex_body(&earlier),
-                _ => copilot_body(&earlier),
-            };
-            json!({"fetched_at": now - age - elapsed, "usage": body})
-        })
-        .unwrap_or(Value::Null);
-    let value = match status {
-        "ok" | "no_usage_data" => json!({"harness": harness, "config_dir": config_dir,
-            "fetched_at": now - age, "usage": body, "sample_claims": 1, "prior": prior}),
-        "rate_limited" => json!({"harness": harness, "config_dir": config_dir, "fetched_at": now,
-            "usage_fetched_at": now - age, "usage": body, "sample_claims": 1,
-            "refusal": refusal("rate_limited", "429")}),
-        "unreachable" => {
-            json!({"harness": harness, "config_dir": config_dir, "fetched_at": now - age,
-            "refusal": refusal("unreachable", "503")})
-        }
-        "refused" => json!({"harness": harness, "config_dir": config_dir, "fetched_at": now - age,
-            "refusal": refusal("refused", "403")}),
-        "plan_ended" => {
-            json!({"harness": harness, "config_dir": config_dir, "fetched_at": now - age,
-            "refusal": refusal("plan_ended", "403")})
-        }
-        _ => return,
-    };
-    std::fs::write(&record, value.to_string()).unwrap();
-    // The record is older than the credential it reads: a credential newer
-    // than the record is a renewed login whose figure is another's.
-    let at = std::time::UNIX_EPOCH + Duration::from_secs(now.saturating_sub(age + 1));
-    for path in [dir.join(file), dir.join(".claude.json")] {
-        if let Ok(f) = std::fs::File::open(&path) {
-            let _ = f.set_modified(at);
-        }
-    }
 }
 
 /// A copy of `sleep` named `name` under `dir`, so a pane holds a process the

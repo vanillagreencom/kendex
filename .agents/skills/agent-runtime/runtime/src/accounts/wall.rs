@@ -8,31 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-
-/// POSIX `cksum`: CRC-32 over the bytes then over the byte count, least
-/// significant byte first until none is left, complemented (POSIX.1-2017,
-/// `cksum`). The record is named by `cksum` of the account's
-/// canonical spelling (`lib/account-wall.sh`, `account_wall_file`).
-pub fn cksum(bytes: &[u8]) -> u32 {
-    fn feed(mut crc: u32, byte: u8) -> u32 {
-        crc ^= u32::from(byte) << 24;
-        for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 {
-                (crc << 1) ^ 0x04C1_1DB7
-            } else {
-                crc << 1
-            };
-        }
-        crc
-    }
-    let mut crc = bytes.iter().fold(0u32, |crc, b| feed(crc, *b));
-    let mut len = bytes.len();
-    while len > 0 {
-        crc = feed(crc, (len & 0xff) as u8);
-        len >>= 8;
-    }
-    !crc
-}
+use crate::record::cksum;
 
 /// One spelling per account (`lib/lane-claims.sh`, `lane_claims_canon`):
 /// the resolved path where the directory stands, else the spelling with
@@ -179,6 +155,7 @@ mod tests {
     /// '/home/me/.eclaude' | cksum` gives `2455569205 17`).
     #[test]
     fn the_record_name_is_the_posix_cksum_of_the_account() {
+        use crate::record::cksum;
         assert_eq!(cksum(b"/home/me/.eclaude"), 2_455_569_205);
         assert_eq!(cksum(b""), 0xFFFF_FFFF);
         assert_eq!(

@@ -394,24 +394,21 @@ ol_lanes() { # ACCOUNT_HARNESS ARGS...
   return "$rc"
 }
 
-# ol_runtime_pick ACCOUNT_HARNESS ARGS... — the one account judge, the
-# runtime's `accounts pick --fleet` over ARGS (the verb's own words:
-# --harness, --lane, --min-headroom-pct, --binding-floor, --exclude-lane,
-# --native-model, --for-overseer), under the host ol_lane_host names for
-# ACCOUNT_HARNESS; the runtime named by ORCH_RUNTIME_CLI, else the wrapper
-# beside this library's scripts, its reader the `lanes` beside them, the one
-# this library's own reads run. The reply's record is printed as the judge
+# ol_runtime_pick ARGS... — the one account judge, agent-runtime's
+# `accounts pick` over ARGS (the verb's own words: --harness, --account,
+# --min-headroom-pct, --binding-floor, --exclude-account, --native-model,
+# --for-controller), this machine's reading with the lanes orch counts on
+# each account; the program named by AGENT_RUNTIME_CLI, else agent-runtime's
+# entry beside this package. The reply's record is printed as the judge
 # records it, and the answer's exit returned by number:
 # 0 a lane, 3 none or walled, 4 no record, 5 unmeasured, 7 no repository
 # access, 1 unjudged. A runtime the install has not built answers 69,
 # `setup-required`, and any other failure its own status, the runtime's
 # line left in DEP_ERR for the caller's keyed refusal.
-ol_runtime_pick() { # ACCOUNT_HARNESS ARGS...
-  local harness="$1" rc=0 reply exit
-  shift
-  ol_lane_host "$harness" || return 1
-  reply="$(ORCH_LANE_HOST="$OL_LANE_HOST" OVERSEE_WATCH_LANES="$SCRIPT_DIR/lanes" \
-    "${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}" accounts pick --fleet "$@" 2>"$DEP_ERR")" || rc=$?
+ol_runtime_pick() { # ARGS...
+  local rc=0 reply exit
+  reply="$("${AGENT_RUNTIME_CLI:-$SCRIPT_DIR/../../agent-runtime/scripts/agent-runtime}" \
+    accounts pick "$@" 2>"$DEP_ERR")" || rc=$?
   (( rc == 0 )) || return "$rc"
   exit="$(jq -r 'if .ok == true and (.result.exit | type) == "number" then .result.exit else error("no judgement in the reply") end' <<<"$reply" 2>"$DEP_ERR")" || return 1
   jq -c '.result.record // empty' <<<"$reply" 2>"$DEP_ERR" || return 1
@@ -427,19 +424,19 @@ ol_runtime_pick() { # ACCOUNT_HARNESS ARGS...
 # asked about the account they spend (ol_account); a launch spending none
 # the judge measures, or one nothing can name, returns 4 with no record and
 # asks nothing.
-# It passes --for-overseer for a fleet sweep, so recorded overseer accounts
+# It passes --for-controller for a fleet sweep, so recorded overseer accounts
 # stay candidates. LANE asks the same judge about one account instead.
 OL_PICK_RECORD=""
 ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]
-  local floor=() exclude=() scope=(--for-overseer) rc=0 harness model LC_ALL=C
+  local floor=() exclude=() scope=(--for-controller) rc=0 harness model LC_ALL=C
   OL_PICK_RECORD=""
   ol_account "$1" "$2"
   harness="$OL_ACCOUNT_HARNESS" model="$OL_ACCOUNT_MODEL"
   ol_account_measured "$harness" || return 4
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
-  [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
-  [[ -z "${5:-}" ]] || scope=(--lane "$5")
-  OL_PICK_RECORD="$(ol_runtime_pick "$harness" --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
+  [[ -z "${4:-}" ]] || exclude=(--exclude-account "$4")
+  [[ -z "${5:-}" ]] || scope=(--account "$5")
+  OL_PICK_RECORD="$(ol_runtime_pick --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
     ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--native-model "$model"})" || rc=$?
   return "$rc"
 }

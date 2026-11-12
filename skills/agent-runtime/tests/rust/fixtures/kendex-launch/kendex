@@ -5,7 +5,7 @@
 # checkout's own kendex.toml. Every call appends its argv to `kendex.log`
 # beside the path it was invoked as (the rows link the fixture into their
 # world's bin as `kendex`). `tier-model` answers through the one answer table
-# the shell suites launch under, tests/fixtures/tier-model/kendex (a managed
+# the shell suites launch under, orch's tests/fixtures/tier-model/kendex (a managed
 # alias for a Claude class word, the native default for a Codex or Copilot
 # word); every other verb is refused, exit 64, with its argv on stderr, so a
 # read reaching it is the row's failure, never the operator's install. Bash
@@ -16,7 +16,7 @@ printf '%s\n' "$*" >> "$here/kendex.log"
 self="$0"
 [ ! -L "$self" ] || self="$(readlink "$self")"
 case "${1:-}" in
-  tier-model) exec "$(dirname "$self")/../../../fixtures/tier-model/kendex" "$@" ;;
+  tier-model) exec "$(dirname "$self")/../../../../../orch/tests/fixtures/tier-model/kendex" "$@" ;;
   *)
     printf 'kendex-fixture: unplanned argv=[%s]\n' "$*" >&2
     exit 64

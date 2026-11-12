@@ -58,7 +58,6 @@ use crate::ops::CLOUD_KIND;
 use crate::settings;
 use crate::state::{self, Lane, LaneStatus};
 use agent_runtime::accounts::Roster;
-use agent_runtime::accounts::wall;
 
 /// The tag the lane duty's provider calls are counted under.
 const TAG: &str = "lanes";
@@ -1570,7 +1569,7 @@ pub fn open_pr(pass: &Pass, lane: &Lane) -> PullRead {
             body.push('\n');
             return PullRead::Open(OpenPull {
                 head: pull.head.sha,
-                digest: wall::cksum(body.as_bytes()).to_string(),
+                digest: agent_runtime::record::cksum(body.as_bytes()).to_string(),
                 draft: pull.draft.present().copied(),
             });
         }

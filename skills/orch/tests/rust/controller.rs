@@ -5203,7 +5203,8 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     // The account the state directory holds (`init_fleet`'s credential) has
     // room for the watch's whole life: a controller the watch reads live has
     // its account marks judged on every pass.
-    std::os::unix::fs::symlink(fixtures().join("usage-curl/curl"), bin.join("curl")).unwrap();
+    std::os::unix::fs::symlink(account_fixtures().join("usage-curl/curl"), bin.join("curl"))
+        .unwrap();
     let usage = dir.join("usage-fixtures");
     std::fs::create_dir_all(&usage).unwrap();
     std::fs::write(
@@ -5614,7 +5615,11 @@ fn launcher_checkout(
 ) -> std::path::PathBuf {
     use std::os::unix::fs::symlink;
     let dir = runner.state_dir();
-    symlink(fixtures().join("kendex-launch/kendex"), bin.join("kendex")).unwrap();
+    symlink(
+        account_fixtures().join("kendex-launch/kendex"),
+        bin.join("kendex"),
+    )
+    .unwrap();
     let shipped = shipped_scripts();
     let skills = shipped.parent().unwrap().parent().unwrap();
     let scripts = dir.join("skills/orch/scripts");
@@ -7538,7 +7543,12 @@ impl MarksWorld {
             ("bin/curl", "usage-curl/curl"),
             ("bin/kendex", "kendex-launch/kendex"),
         ] {
-            std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
+            let base = if fixture.starts_with("lane-host") {
+                fixtures()
+            } else {
+                account_fixtures()
+            };
+            std::os::unix::fs::symlink(base.join(fixture), dir.path().join(name)).unwrap();
         }
         install_lane_host(dir.path(), dir.path());
         let root = dir.path().display().to_string();
@@ -7635,13 +7645,13 @@ impl MarksWorld {
     }
 
     /// The question a Claude lane's turn end asks the account judge about
-    /// its own home `dir` under `extra`, as the hook spells it: `accounts
+    /// its own home `dir` under `extra`, as the hook asks it: `lane
     /// pick --fleet --lane DIR --harness claude --min-headroom-pct 3`. The
     /// whole reply.
     fn pick_lane(&self, dir: &str, extra: &[(&str, &str)]) -> Value {
         let out = self.run(
             &[
-                "accounts",
+                "lane",
                 "pick",
                 "--fleet",
                 "--lane",
@@ -8198,7 +8208,7 @@ fn an_excluded_home_is_measured_for_its_overseers_marks_and_refused_to_a_lane_pi
 }
 
 /// The account judge's replies the hook suites plant for a lane's turn end
-/// (`hooks/tests/fixtures/pick-replies.json`) are the real `accounts pick
+/// (`hooks/tests/fixtures/pick-replies.json`) are the real `lane pick
 /// --lane`'s, each answered here for the inputs it records: a measured
 /// Claude home `used` percent spent, the provider's row where `host` names
 /// one (`reserved` its reserve word), under `env`, compared in
@@ -8472,7 +8482,7 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
     );
     // A mark, the succession switch or an account setting outside its form
     // refuses `marks --fleet` by key and value, and an account setting the
-    // accounts judge's `accounts pick` too; a lane's `marks --item`, which
+    // accounts judge's `lane pick` too; a lane's `marks --item`, which
     // reads the context mark alone, answers under each but that mark, and
     // `state path --fleet` under that one.
     world.write_fleet(&world.dir("eclaude"));
@@ -8506,7 +8516,7 @@ fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no
         if judge {
             let pick = world.run(
                 &[
-                    "accounts",
+                    "lane",
                     "pick",
                     "--fleet",
                     "--lane",
@@ -10028,7 +10038,7 @@ fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_t
         "the walk judged a model's window: {answer}"
     );
     let lane = reply(&runner.run(&[
-        "accounts",
+        "lane",
         "pick",
         "--fleet",
         "--harness",

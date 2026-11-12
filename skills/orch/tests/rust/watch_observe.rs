@@ -3692,7 +3692,7 @@ fn open_pull(sha: &str, body: &str, draft: Option<bool>) -> Value {
 /// The body digest as the stall row keeps it (`cksum` over the body and
 /// the newline jq printed after it).
 fn digest(body: &str) -> String {
-    account_wall::cksum(format!("{body}\n").as_bytes()).to_string()
+    agent_runtime::record::cksum(format!("{body}\n").as_bytes()).to_string()
 }
 
 /// A running Claude cloud lane: its session opened at `now - 7000`, on

@@ -148,7 +148,7 @@ pub const USER_EMAIL_KEY: &str = "KENDEX_USER_EMAIL";
 /// configured only with both the label and an email.
 pub const OWNER_ASK_LABEL_KEY: &str = "ORCH_OWNER_ASK_LABEL";
 /// The `harness[@host]:model:effort` entries a lane launch walks
-/// (`accounts walk`); unset, a launch takes the model it names.
+/// (`lane walk`); unset, a launch takes the model it names.
 pub const LANE_PREFERENCE_KEY: &str = "ORCH_LANE_PREFERENCE";
 /// Days past a record's own recorded end before the retention duty removes
 /// it (the key `lane-mail compact` reads too): the event log's rotated

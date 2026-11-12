@@ -707,22 +707,6 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
     Ok(())
 }
 
-/// One spelling per account, as the claim store compares them
-/// (`lane_claims_canon`): the directory resolved physically, else its own
-/// spelling with trailing slashes off.
-fn canonical_account(account: &str) -> String {
-    match fs::canonicalize(account) {
-        Ok(resolved) => resolved.display().to_string(),
-        Err(_) => {
-            let mut spelled = account.to_owned();
-            while spelled.len() > 1 && spelled.ends_with('/') {
-                spelled.pop();
-            }
-            spelled
-        }
-    }
-}
-
 /// What the lane's recorded harness reads as, through the one identity
 /// reader: live, gone, or unreadable, with no identity recorded as `None`.
 fn recorded_harness(lane: &Lane, host: &Host) -> Option<Reading<Identity>> {
@@ -1000,7 +984,8 @@ pub(super) fn launch_lane(
     // the one the
     // wall spent, compared the way the claim store compares accounts.
     if let (Some(account), Some(spent)) = (&r.account, &r.exclude_account)
-        && canonical_account(account) == canonical_account(spent)
+        && agent_runtime::accounts::wall::canon(account)
+            == agent_runtime::accounts::wall::canon(spent)
     {
         return Err(Error::AccountSpent {
             item: r.item.clone(),
@@ -1214,7 +1199,10 @@ pub(super) fn launch_lane(
     LaneMembers {
         lane_since: Some(at),
         selection: Some(r.selection(position.is_some())),
-        exclude_account: r.exclude_account.as_deref().map(canonical_account),
+        exclude_account: r
+            .exclude_account
+            .as_deref()
+            .map(agent_runtime::accounts::wall::canon),
         ..LaneMembers::default()
     }
     .write(&mut intent.extra)?;

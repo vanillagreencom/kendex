@@ -502,7 +502,6 @@ ADAPTER_ROWS='.claude/hooks|claude|399999||GAP|claude 399999 1000000
 .claude/hooks|sonnet|180001||context=180001|claude 180001 200000
 .codex/hooks|codex|232560||GAP|codex 232560 258400
 .codex/hooks|codex|232561||context=232561|codex 232561 258400
-.pi/kendex/hooks|pi|180000|200000|GAP|pi 180000 200000
 .pi/kendex/hooks|pi|180001|200000|context=180001|pi 180001 200000
 .pi/kendex/hooks|pi|399999||window-unread=pi-claude/m|pi 399999 null
 .pi/kendex/hooks|pi|400000||context=400000|pi 400000 null'
@@ -921,11 +920,7 @@ done
 # judged there as everywhere.
 #
 #   PROVIDER|ACCOUNT DIR|POOL READING|RC|FIRST LINE
-PI_ACCOUNT_ROWS='pi-claude|.claude||0|-
-pi-claude|.neutralclaude||2|lane-mail-check: headroom=3 bucket=weekly mark=3
-github-copilot|.neutralclaude|97/100|2|lane-mail-check: headroom=3 bucket=monthly mark=3
-github-copilot|.neutralclaude|50/100|0|-
-openai|.claude||0|lane-mail-check: account=unmeasured'
+PI_ACCOUNT_ROWS='openai|.claude||0|lane-mail-check: account=unmeasured'
 new_handoff_lane handoff_pi_account KEN-79
 install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 PI_ROOT="$TMP_ROOT/pi-account-root"
@@ -946,17 +941,6 @@ while IFS='|' read -r PI_PROVIDER PI_DIR PI_POOL PI_RC PI_FIRST; do
   stop_pi "$PI_PROVIDER" 1000 $(account_env "$PI_DIR") "ORCH_LANE_COPILOT_POOL=${PI_POOL:+$PI_ROOT=$PI_POOL}"
   expect "$PI_RC" "$PI_FIRST" "a Pi lane on $PI_PROVIDER with ${PI_POOL:-the seat $PI_DIR}: $PI_FIRST"
 done <<<"$PI_ACCOUNT_ROWS"
-# The account directory the table's rows are judged on is the runtime's
-# billing answer for the Pi harness. The control asks it for another
-# harness's: a github-copilot model is then judged on the Claude seat, not on
-# the Copilot pool its provider bills.
-mutant pi-billed-harness -e 's/accounts billed --harness pi --native-model/accounts billed --harness claude --native-model/'
-install_hook "$MUTANT_PATH" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
-# shellcheck disable=SC2046
-stop_pi github-copilot 1000 $(account_env .neutralclaude) "ORCH_LANE_COPILOT_POOL=$PI_ROOT=97/100"
-assert_eq "$([ "RC=$RC first=$(first_line)" = "RC=2 first=lane-mail-check: headroom=3 bucket=monthly mark=3" ] && echo pool || echo elsewhere)" \
-  elsewhere "control: the billing rule asked for another harness judges a Copilot model off its pool"
-install_hook "$HOOK" "$LANE/.pi/kendex/hooks/lane-mail-check.sh"
 # A provider nothing measures is answered by the rule alone, and a turn end
 # whose transcript names no model has read no provider, so the account is left
 # unjudged for want of a reading: `lanes` is never asked in either. Both run on

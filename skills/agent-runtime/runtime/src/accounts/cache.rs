@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::usage::{Rounding, parse_body};
-use super::wall;
 use super::{MODEL, WINDOWS};
 
 /// How long a refused endpoint is left alone when its answer named no
@@ -146,7 +145,7 @@ fn fall(harness: &str, earlier: (u64, &Value), later: (u64, &Value)) -> Option<F
 pub fn record_path(usage_dir: &Path, harness: &str, config_dir: &str) -> PathBuf {
     usage_dir.join(format!(
         "{harness}-{}-{}.json",
-        wall::cksum(config_dir.as_bytes()),
+        crate::record::cksum(config_dir.as_bytes()),
         config_dir.len()
     ))
 }

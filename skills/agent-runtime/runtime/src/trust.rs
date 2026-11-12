@@ -114,7 +114,7 @@ pub fn home_path(account: &Path, launch_dir: &Path) -> PathBuf {
         .collect();
     account
         .join("lane-launch")
-        .join(format!("{leaf}-{}", cksum(dir)))
+        .join(format!("{leaf}-{}", crate::record::cksum(dir)))
         .join("home")
 }
 
@@ -134,41 +134,6 @@ pub fn account_of(path: &Path) -> &Path {
         Some(at) => Path::new(OsStr::from_bytes(&bytes[..at])),
         None => path,
     }
-}
-
-/// The POSIX `cksum` of `data`: CRC-32 over the bytes then the length,
-/// complemented, the figure the shell's `cksum` prints first.
-fn cksum(data: &[u8]) -> u32 {
-    const fn table() -> [u32; 256] {
-        let mut table = [0u32; 256];
-        let mut i = 0;
-        while i < 256 {
-            let mut crc = (i as u32) << 24;
-            let mut bit = 0;
-            while bit < 8 {
-                crc = if crc & 0x8000_0000 != 0 {
-                    (crc << 1) ^ 0x04C1_1DB7
-                } else {
-                    crc << 1
-                };
-                bit += 1;
-            }
-            table[i] = crc;
-            i += 1;
-        }
-        table
-    }
-    const TABLE: [u32; 256] = table();
-    let mut crc: u32 = 0;
-    for &byte in data {
-        crc = (crc << 8) ^ TABLE[((crc >> 24) ^ u32::from(byte)) as usize];
-    }
-    let mut len = data.len();
-    while len > 0 {
-        crc = (crc << 8) ^ TABLE[((crc >> 24) ^ (len as u32 & 0xff)) as usize];
-        len >>= 8;
-    }
-    !crc
 }
 
 fn refused(key: &'static str, harness: Harness, path: &Path, cause: Option<&str>) -> Error {
@@ -849,8 +814,8 @@ mod tests {
         );
         assert_eq!(account_of(&home), account);
         assert_eq!(account_of(account), account);
-        assert_eq!(cksum(b""), 4_294_967_295);
-        assert_eq!(cksum(b"a"), 1_220_704_766);
+        assert_eq!(crate::record::cksum(b""), 4_294_967_295);
+        assert_eq!(crate::record::cksum(b"a"), 1_220_704_766);
     }
 
     /// The effective config a launch would open is read back through the

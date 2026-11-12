@@ -7,7 +7,7 @@ user-invocable: true
 argument-hint: "review [scope] | challenge [description] | audit [path] | quick [question]"
 dependencies:
   required: [github]
-  optional: [orch]
+  optional: [agent-runtime]
 metadata:
   author: vanillagreen
   source: kendex

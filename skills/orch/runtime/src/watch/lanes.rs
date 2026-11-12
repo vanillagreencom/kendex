@@ -1200,7 +1200,7 @@ fn handoffs(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
                 format!("handoff-read-failed item={item} path={}", path.display()),
             ),
             HandoffReading::Stands { record } => {
-                let key = account_wall::cksum(record.as_bytes()).to_string();
+                let key = agent_runtime::record::cksum(record.as_bytes()).to_string();
                 let prior = pass.baseline.get("handoff", item);
                 out.changes.push(set("handoff", item, key.clone()));
                 if prior != Some(key.as_str()) {
