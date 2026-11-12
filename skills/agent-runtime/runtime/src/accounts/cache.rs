@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use super::usage::{Rounding, parse_body};
 use super::{MODEL, WINDOWS};
+use crate::harness::Harness;
 
 /// How long a refused endpoint is left alone when its answer named no
 /// Retry-After: long enough that a fleet measuring every thirty seconds
@@ -112,8 +113,10 @@ impl Record {
 /// both weekly figures read, the later lower in the whole percents the
 /// listing judges, and read before the earlier figure's weekly reset. A
 /// lower figure past that reset is the next week's; a figure nobody could
-/// read is never lower.
+/// read is never lower, and a record of no harness (a lane host's) holds
+/// no figure of one.
 fn fall(harness: &str, earlier: (u64, &Value), later: (u64, &Value)) -> Option<Fall> {
+    let harness = Harness::parse(harness)?;
     let weekly = |usage: &Value| {
         let buckets = parse_body(harness, usage, Rounding::Rounded);
         let pct = buckets.get("weekly_pct").and_then(Value::as_f64);
@@ -179,7 +182,7 @@ pub enum FigureRead {
     Reset(String),
 }
 
-pub fn figure(record: &Record, harness: &str, max_age: Option<u64>, now: u64) -> FigureRead {
+pub fn figure(record: &Record, harness: Harness, max_age: Option<u64>, now: u64) -> FigureRead {
     let (Some(usage), Some(at)) = (&record.usage, record.figure_at()) else {
         return FigureRead::Miss;
     };
@@ -448,12 +451,12 @@ mod tests {
         .unwrap();
         let record = read(&path, "claude", "/h/.a").unwrap();
         assert_eq!(record.usage_fetched_at, Some(1600));
-        let FigureRead::Served(served) = figure(&record, "claude", Some(300), 1800) else {
+        let FigureRead::Served(served) = figure(&record, Harness::Claude, Some(300), 1800) else {
             panic!("served");
         };
         assert_eq!((served.fetched_at, served.age), (1600, 200));
         assert!(matches!(
-            figure(&record, "claude", Some(100), 1800),
+            figure(&record, Harness::Claude, Some(100), 1800),
             FigureRead::Miss
         ));
         assert!(refusal(&record, "usage", 1800).is_some());
@@ -468,7 +471,7 @@ mod tests {
         );
         let record = read(&path, "claude", "/h/.a").unwrap();
         assert!(matches!(
-            figure(&record, "claude", None, 1_800_000_000),
+            figure(&record, Harness::Claude, None, 1_800_000_000),
             FigureRead::Reset(_)
         ));
         assert!(read(&path, "claude", "/h/.b").is_none());

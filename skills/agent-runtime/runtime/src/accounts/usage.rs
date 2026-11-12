@@ -18,6 +18,8 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use crate::harness::Harness;
+
 /// Five hours: a Codex window more than half again as long is its weekly
 /// one, since Codex reports window durations that vary by account, and a
 /// kept figure younger than this answers a usage 429.
@@ -382,11 +384,11 @@ pub fn parse_copilot(body: &Value) -> Value {
     })
 }
 
-pub fn parse_body(harness: &str, body: &Value, rounding: Rounding) -> Value {
+pub fn parse_body(harness: Harness, body: &Value, rounding: Rounding) -> Value {
     match harness {
-        "claude" => parse_claude(body, rounding),
-        "copilot" => parse_copilot(body),
-        _ => parse_codex(body, rounding),
+        Harness::Claude => parse_claude(body, rounding),
+        Harness::Copilot => parse_copilot(body),
+        Harness::Codex | Harness::Pi => parse_codex(body, rounding),
     }
 }
 
@@ -460,11 +462,11 @@ pub enum Credential {
     },
 }
 
-pub fn credential_path(harness: &str, dir: &str) -> String {
+pub fn credential_path(harness: Harness, dir: &str) -> String {
     match harness {
-        "claude" => format!("{dir}/.credentials.json"),
-        "copilot" => format!("{dir}/config.json"),
-        _ => format!("{dir}/auth.json"),
+        Harness::Claude => format!("{dir}/.credentials.json"),
+        Harness::Copilot => format!("{dir}/config.json"),
+        Harness::Codex | Harness::Pi => format!("{dir}/auth.json"),
     }
 }
 
@@ -485,7 +487,7 @@ fn ms(v: Option<&Value>) -> u64 {
 /// Codex file states none, so it is the `exp` claim of the access token
 /// itself, a JWT, 0 where the file holds no such token (an API key, or a
 /// token no claim reads out of).
-pub fn credential(harness: &str, dir: &str) -> Credential {
+pub fn credential(harness: Harness, dir: &str) -> Credential {
     let path = credential_path(harness, dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -499,7 +501,7 @@ pub fn credential(harness: &str, dir: &str) -> Credential {
         return Credential::Invalid(path);
     }
     let text_of = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").to_owned();
-    let (token, expires_ms, refresh_expires_ms, plan, account_id) = if harness == "claude" {
+    let (token, expires_ms, refresh_expires_ms, plan, account_id) = if harness == Harness::Claude {
         let oauth = file.get("claudeAiOauth");
         (
             text_of(oauth.and_then(|o| o.get("accessToken"))),
@@ -602,7 +604,7 @@ pub enum CopilotLogin {
 /// with none, `lastLoggedInUser`'s GitHub.com login names the keyring
 /// item.
 pub fn copilot_login(dir: &str) -> CopilotLogin {
-    let path = credential_path("copilot", dir);
+    let path = credential_path(Harness::Copilot, dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

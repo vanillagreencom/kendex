@@ -230,7 +230,7 @@ impl World {
     /// answer's word, its exit and its record.
     fn pick(&self, req: &PickRequest) -> Value {
         let mut command = self.command();
-        command.args(["accounts", "pick", "--harness", &req.harness]);
+        command.args(["accounts", "pick", "--harness", req.harness.name()]);
         command.arg("--record").arg(self.fleet_path());
         if let Some(model) = &req.model {
             command.args(["--native-model", model]);
@@ -419,9 +419,8 @@ fn seat_need(trigger: u64) -> u64 {
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
-        harness: "claude".to_owned(),
         model: model.map(str::to_owned),
-        ..PickRequest::default()
+        ..PickRequest::new(Harness::Claude)
     }
 }
 
@@ -855,9 +854,8 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
     unread["headroom_pct"] = Value::Null;
     unread["verdict"] = json!("unmeasured");
     let pi = PickRequest {
-        harness: "pi".to_owned(),
         model: Some("anthropic/claude-opus-5".to_owned()),
-        ..PickRequest::default()
+        ..PickRequest::new(Harness::Pi)
     };
     let rows = self::rows(
         &[api, unread.clone(), measured("plan", 10, 5)],
@@ -884,7 +882,7 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
         now(),
     );
     assert!(
-        matches!(&unmeasured, PickAnswer::ProviderUnmeasured { harness, model } if harness == "pi" && model == "anthropic/claude-opus-5"),
+        matches!(&unmeasured, PickAnswer::ProviderUnmeasured { harness, model } if *harness == Harness::Pi && model == "anthropic/claude-opus-5"),
         "{unmeasured:?}"
     );
     assert_eq!(unmeasured.exit(), 5);
@@ -1345,8 +1343,7 @@ fn an_unreadable_percentage_reads_unmeasured_never_zero() {
         "the account whose reading nobody could read is never the lane: {claude_pick}"
     );
     let codex_pick = world.pick(&PickRequest {
-        harness: "codex".to_owned(),
-        ..PickRequest::default()
+        ..PickRequest::new(Harness::Codex)
     });
     assert_eq!(codex_pick["answer"], json!("none"), "{codex_pick}");
     assert_eq!(codex_pick["record"]["unmeasured"], json!(1), "{codex_pick}");
@@ -1602,8 +1599,7 @@ fn a_full_five_hour_window_is_no_wall_and_a_five_hour_figure_alone_is_no_reading
     let codex = world.pick(&named(
         &world.dir("acodex"),
         PickRequest {
-            harness: "codex".to_owned(),
-            ..PickRequest::default()
+            ..PickRequest::new(Harness::Codex)
         },
     ));
     assert_eq!(
@@ -2837,9 +2833,8 @@ fn the_candidates_are_the_configured_accounts_alone_never_a_login_folder_found_i
     );
     let copilot_pick = |lane: Option<String>| {
         world.pick(&PickRequest {
-            harness: "copilot".to_owned(),
             lane,
-            ..PickRequest::default()
+            ..PickRequest::new(Harness::Copilot)
         })
     };
     let chooser = copilot_pick(None);

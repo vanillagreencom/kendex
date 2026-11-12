@@ -45,9 +45,9 @@ pub enum Scope {
 
 /// The predecessor's own entry, walked after the setting's entries: its
 /// harness swept with no model named, or its own lane kept.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
-    pub harness: String,
+    pub harness: Harness,
     pub lane: Option<String>,
     /// The model the successor runs; `None` is the harness's default.
     pub model: Option<String>,
@@ -61,9 +61,9 @@ pub struct Caller {
 /// The session the walk is asked for, whose permission posture an entry
 /// of another harness must be able to take: no words means the harness's
 /// own row answers (a judgement handed no launch words).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Source {
-    pub harness: String,
+    pub harness: Harness,
     pub flags: Option<Vec<String>>,
 }
 
@@ -92,7 +92,7 @@ pub struct WalkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     pub text: String,
-    pub harness: String,
+    pub harness: Harness,
     pub host: Option<String>,
     /// The model field: a class, a model the harness's `--model` takes,
     /// empty for its native default, a count for a numeric entry.
@@ -183,22 +183,22 @@ impl Preference {
                 }
                 None => (head, None),
             };
-            let numeric = host.is_none()
-                && matches!(harness, "claude" | "codex" | "copilot" | "pi")
-                && count_word(model)
-                && all(effort, |c| c.is_ascii_lowercase());
+            let Some(harness) = Harness::parse(harness) else {
+                return refuse();
+            };
+            let numeric =
+                host.is_none() && count_word(model) && all(effort, |c| c.is_ascii_lowercase());
             let named = all(effort, |c| c.is_ascii_lowercase())
                 && match harness {
-                    "claude" | "codex" | "copilot" => model_word(model),
-                    "pi" => pi_model(model),
-                    _ => false,
+                    Harness::Claude | Harness::Codex | Harness::Copilot => model_word(model),
+                    Harness::Pi => pi_model(model),
                 };
             if !numeric && !named {
                 return refuse();
             }
             preference.entries.push(Entry {
                 text: entry.to_owned(),
-                harness: harness.to_owned(),
+                harness,
                 host,
                 model: model.to_owned(),
                 effort: effort.to_owned(),
@@ -232,8 +232,12 @@ struct Classified {
     clippy::disallowed_methods,
     reason = "the walk's one read of kendex's model resolution, `kendex tier-model`, through the one runner under the accounts tag"
 )]
-fn classify(harness: &str, word: &str, classify: bool) -> std::result::Result<Classified, String> {
-    if word.is_empty() || !matches!(harness, "claude" | "codex" | "copilot") {
+fn classify(
+    harness: Harness,
+    word: &str,
+    classify: bool,
+) -> std::result::Result<Classified, String> {
+    if word.is_empty() || harness == Harness::Pi {
         return Ok(Classified {
             model: word.to_owned(),
             ..Classified::default()
@@ -246,9 +250,9 @@ fn classify(harness: &str, word: &str, classify: bool) -> std::result::Result<Cl
         Some(bare) => (bare, &word[bare.len()..]),
         None => (word, ""),
     };
-    let managed = harness == "claude" && !classify;
-    let context = CLASSIFY_CONTEXT.replace("HARNESS", harness);
-    let mut args = vec!["tier-model", harness, "--model", bare, "--json"];
+    let managed = harness == Harness::Claude && !classify;
+    let context = CLASSIFY_CONTEXT.replace("HARNESS", harness.name());
+    let mut args = vec!["tier-model", harness.name(), "--model", bare, "--json"];
     if !managed {
         args.extend(["--runtime-context-json", context.as_str()]);
     }
@@ -285,7 +289,7 @@ fn classify(harness: &str, word: &str, classify: bool) -> std::result::Result<Cl
     if tag != Some("class") {
         return Ok(Classified {
             model: word.to_owned(),
-            old_id: old_id && harness == "claude",
+            old_id: old_id && harness == Harness::Claude,
             ..Classified::default()
         });
     }
@@ -326,17 +330,17 @@ struct Resolved {
 
 /// The harness's entry of the default overseer preference, whose class a
 /// numeric entry with no caller model takes.
-fn default_class(harness: &str) -> Option<String> {
+fn default_class(harness: Harness) -> Option<String> {
     DEFAULT_CONTROLLER_PREFERENCE
         .split(',')
-        .find(|e| e.split(':').next() == Some(harness))
+        .find(|e| e.split(':').next() == Some(harness.name()))
         .and_then(|e| e.split(':').nth(1))
         .map(str::to_owned)
 }
 
 fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, String> {
     if !entry.numeric {
-        let read = classify(&entry.harness, &entry.model, false)?;
+        let read = classify(entry.harness, &entry.model, false)?;
         return Ok(Resolved {
             model: read.model,
             class: read.class,
@@ -349,9 +353,9 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
     }
     let form = "harness:model:effort";
     if caller_model.is_empty()
-        && let Some(class) = default_class(&entry.harness)
+        && let Some(class) = default_class(entry.harness)
     {
-        let read = classify(&entry.harness, &class, false)?;
+        let read = classify(entry.harness, &class, false)?;
         return Ok(Resolved {
             model: read.model,
             class: read.class,
@@ -363,7 +367,7 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
             callers_model: false,
         });
     }
-    let read = classify(&entry.harness, caller_model, true)?;
+    let read = classify(entry.harness, caller_model, true)?;
     let replacement = if caller_model.is_empty() || read.old_id {
         Value::Null
     } else {
@@ -444,11 +448,11 @@ enum Skip {
 /// full bypass at all.
 fn permitted(
     scope: Scope,
-    target: &str,
+    target: Harness,
     callers_model: bool,
     source: Option<&Source>,
 ) -> std::result::Result<(), Skip> {
-    let target_word = Harness::parse(target).is_some_and(|h| !h.bypass_words().is_empty());
+    let target_word = !target.bypass_words().is_empty();
     let Some(source) = source else {
         return if target_word {
             Ok(())
@@ -462,17 +466,16 @@ fn permitted(
     if callers_model {
         return Err(Skip::PermissionUntransferable);
     }
-    let source_harness = Harness::parse(&source.harness);
-    let transfers = match (&source.flags, source_harness) {
-        (Some(words), Some(h)) => transferable(h, words),
-        _ => false,
-    };
+    let transfers = source
+        .flags
+        .as_ref()
+        .is_some_and(|words| transferable(source.harness, words));
     if scope == Scope::Lane && !target_word && transfers {
         return Ok(());
     }
     let allowed = target_word
         && match &source.flags {
-            None => source_harness.is_some_and(|h| !h.bypass_words().is_empty()),
+            None => !source.harness.bypass_words().is_empty(),
             Some(_) => transfers,
         };
     if allowed {
@@ -486,7 +489,7 @@ fn permitted(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Chosen {
     pub entry: String,
-    pub harness: String,
+    pub harness: Harness,
     pub host: Option<String>,
     pub model: String,
     pub class: Option<String>,
@@ -535,9 +538,10 @@ impl Walked {
     pub fn reply(&self) -> Value {
         let (answer, chosen, last_choice, room) = match &self.answer {
             WalkAnswer::Lane(c) => {
-                let env = Harness::parse(&c.harness)
-                    .zip(c.account.as_ref())
-                    .map(|(h, dir)| format!("{}={dir}", h.account_var(Some(c.model.as_str()))));
+                let env = c
+                    .account
+                    .as_ref()
+                    .map(|dir| format!("{}={dir}", c.harness.account_var(Some(c.model.as_str()))));
                 let launch = c.launch;
                 let chosen = json!({
                     "entry": c.entry, "harness": c.harness, "host": c.host, "model": c.model,
@@ -631,7 +635,7 @@ pub struct Ground<'a> {
 
 /// Where an entry is judged, from the walk's scope, the entry's own host
 /// and its harness.
-pub type HostOf<'a> = dyn FnMut(Scope, Option<&str>, &str) -> Result<Hosted> + 'a;
+pub type HostOf<'a> = dyn FnMut(Scope, Option<&str>, Harness) -> Result<Hosted> + 'a;
 
 /// The judge's answer for a request under a host.
 pub type PickUnder<'a> = dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer + 'a;
@@ -641,14 +645,6 @@ pub type PickUnder<'a> = dyn FnMut(&PickRequest, Option<&str>) -> PickAnswer + '
 /// host; an answer the judge could not give ends the walk as a refusal.
 pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Result<Walked> {
     let accounts = settings.accounts.get()?;
-    // The session the walk is asked for and its predecessor each run one of
-    // the four harnesses; any other is refused by its name, never walked as
-    // a session of no posture or no entry.
-    let source = req.source.as_ref().map(|s| s.harness.as_str());
-    let caller = req.caller.as_ref().map(|c| c.harness.as_str());
-    for word in source.into_iter().chain(caller) {
-        Harness::named(word)?;
-    }
     let text = req.preference.clone().unwrap_or_else(|| match req.scope {
         Scope::Lane => String::new(),
         Scope::Overseer => settings.controller_preference.to_owned(),
@@ -720,9 +716,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             match &step {
                 Step::Caller(c) => {
                     let pick_model = c.pick_model.clone().unwrap_or_default();
-                    if accounts::billed(&c.harness, &pick_model) == "unmeasured"
-                        && !pick_model.contains('/')
-                    {
+                    if c.harness.billed(&pick_model).is_none() && !pick_model.contains('/') {
                         return Err(refused(
                             "caller-account-unknown",
                             &[(
@@ -738,7 +732,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     if c.keep {
                         walked.answer = WalkAnswer::Lane(Box::new(Chosen {
                             entry: "caller".to_owned(),
-                            harness: c.harness.clone(),
+                            harness: c.harness,
                             host: None,
                             model: c.model.clone().unwrap_or_default(),
                             class: None,
@@ -755,7 +749,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     }
                     (
                         "caller".to_owned(),
-                        c.harness.clone(),
+                        c.harness,
                         None,
                         c.model.clone().unwrap_or_default(),
                         pick_model,
@@ -775,7 +769,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     walked.deprecated.extend(resolved.deprecated.clone());
                     (
                         entry.text.clone(),
-                        entry.harness.clone(),
+                        entry.harness,
                         entry.host.clone(),
                         resolved.model.clone(),
                         resolved.model,
@@ -786,10 +780,8 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     )
                 }
             };
-        if let Err(why) = permitted(req.scope, &harness, callers_model, req.source.as_ref()) {
-            let word = Harness::parse(&harness)
-                .and_then(|h| h.bypass_words().first().copied())
-                .unwrap_or("none");
+        if let Err(why) = permitted(req.scope, harness, callers_model, req.source.as_ref()) {
+            let word = harness.bypass_words().first().copied().unwrap_or("none");
             let mut row = match why {
                 Skip::PermissionUnwritable => skip(&text, "entry-permission-unwritable", None),
                 Skip::PermissionUntransferable => {
@@ -797,7 +789,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 }
             };
             row["harness"] = json!(harness);
-            row["source"] = json!(req.source.as_ref().map(|s| s.harness.clone()));
+            row["source"] = json!(req.source.as_ref().map(|s| s.harness));
             row["word"] = json!(word);
             if callers_model {
                 row["model"] = json!(model);
@@ -806,7 +798,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
             continue;
         }
         // The host the entry is judged under, as the caller reads it.
-        let (judge_host, launch) = match hosted(req.scope, host.as_deref(), &harness)? {
+        let (judge_host, launch) = match hosted(req.scope, host.as_deref(), harness)? {
             Hosted::Judge { host, launch } => (host, launch),
             Hosted::Skip { host, launch } => {
                 let mut row = skip(&text, "host-launch", None);
@@ -816,11 +808,11 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 continue;
             }
         };
-        let billed = accounts::billed(&harness, &pick_model);
+        let billed = harness.billed(&pick_model);
         let chosen = |account: Option<String>, record: Option<Value>, kept_unmeasured: bool| {
             WalkAnswer::Lane(Box::new(Chosen {
                 entry: text.clone(),
-                harness: harness.clone(),
+                harness,
                 host: host.clone(),
                 model: model.clone(),
                 class: class.clone(),
@@ -837,7 +829,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
         let request = |max_pct: Option<u32>, lane: Option<String>, exclude: Vec<String>| {
             let overseer = req.scope == Scope::Overseer;
             PickRequest {
-                harness: harness.clone(),
+                harness,
                 model: Some(pick_model.clone()).filter(|m| !m.is_empty()),
                 exclude,
                 for_overseer: overseer,
@@ -855,13 +847,13 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                 },
                 // A Codex or Copilot overseer's own mark reads its account's
                 // binding bucket, never a model's window.
-                binding_floor: overseer && !matches!(harness.as_str(), "claude" | "pi"),
+                binding_floor: overseer && !matches!(harness, Harness::Claude | Harness::Pi),
                 admit_unread_scope: overseer,
             }
         };
         let judge_host = judge_host.unwrap_or_else(|| LOCAL.to_owned());
         let mut pick = |pr: &PickRequest| judge(pr, Some(&judge_host));
-        if req.scope == Scope::Overseer && billed == "unmeasured" {
+        if req.scope == Scope::Overseer && billed.is_none() {
             // An entry spending no account the judge measures: nothing to
             // pick or refuse, its first turn the one reading of its room.
             walked.answer = chosen(None, None, false);
@@ -894,7 +886,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     "account-unmeasured",
                     &[
                         ("entry", &text),
-                        ("harness", &harness),
+                        ("harness", harness.name()),
                         ("model", &pick_model),
                     ],
                 ));
@@ -915,8 +907,7 @@ pub fn walk(settings: &Env, ground: Ground, req: &WalkRequest, now: u64) -> Resu
                     && req.keep_unmeasured
                     && caller.is_some_and(|c| {
                         c.harness == harness
-                            && accounts::billed(&c.harness, c.pick_model.as_deref().unwrap_or(""))
-                                == billed
+                            && c.harness.billed(c.pick_model.as_deref().unwrap_or("")) == billed
                     });
                 let kept = keep
                     .then(|| caller.and_then(|c| c.lane.clone()))

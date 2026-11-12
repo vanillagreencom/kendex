@@ -485,7 +485,7 @@ impl Caller {
     /// model and effort where the record names them.
     pub(crate) fn walk_entry(&self, harness: Harness) -> walk::Caller {
         walk::Caller {
-            harness: harness.name().to_owned(),
+            harness,
             lane: self.account.clone(),
             model: self.model.clone().filter(|m| !m.is_empty()),
             effort: self.effort.clone().filter(|e| !e.is_empty()),
@@ -515,12 +515,11 @@ impl Caller {
                     None,
                     None,
                     &PickRequest {
-                        harness: harness.name().to_owned(),
                         model: self.mark_model(),
                         lane: Some(account.to_owned()),
                         for_overseer: true,
                         min_headroom_pct: Some(trigger),
-                        ..PickRequest::default()
+                        ..PickRequest::new(harness)
                     },
                     now,
                 );
@@ -573,9 +572,9 @@ impl Caller {
     /// account is not its home (a Pi seat). An account the walk admitted
     /// with its model's window unread carries `scope: unread` to the launch.
     pub fn successor_of(&self, chosen: &walk::Chosen) -> Pending {
-        let same = self.harness.is_some_and(|h| h.name() == chosen.harness);
+        let same = self.harness == Some(chosen.harness);
         Pending {
-            harness: Some(chosen.harness.clone()),
+            harness: Some(chosen.harness.name().to_owned()),
             account: chosen.account.clone(),
             home: self
                 .harness
@@ -2715,11 +2714,10 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 None,
                 None,
                 &PickRequest {
-                    harness: harness.name().to_owned(),
                     model: Some(model.to_owned()),
                     exclude: vec![spent.to_owned()],
                     for_overseer: false,
-                    ..PickRequest::default()
+                    ..PickRequest::new(harness)
                 },
                 tick.wall,
             ))

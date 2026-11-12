@@ -35,6 +35,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_runtime::accounts::{self, PickRequest};
 use agent_runtime::clock;
+use agent_runtime::harness::Harness;
 use agent_runtime::settings::Roots;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Settings};
 use serde_json::{Value, json};
@@ -284,7 +285,7 @@ impl World {
     /// [`World::pick`] for a relaunch of the lane of `replaces`.
     fn pick_replacing(&self, req: &PickRequest, replaces: Option<&str>) -> Value {
         let mut command = self.command();
-        command.args(["lane", "pick", "--fleet", "--harness", &req.harness]);
+        command.args(["lane", "pick", "--fleet", "--harness", req.harness.name()]);
         if let Some(model) = &req.model {
             command.args(["--native-model", model]);
         }
@@ -429,9 +430,8 @@ fn seat_need(trigger: u64) -> u64 {
 /// The chooser's request for a Claude launch with `model`.
 fn claude(model: Option<&str>) -> PickRequest {
     PickRequest {
-        harness: "claude".to_owned(),
         model: model.map(str::to_owned),
-        ..PickRequest::default()
+        ..PickRequest::new(Harness::Claude)
     }
 }
 
@@ -644,9 +644,9 @@ fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_accou
     };
     world.plant_host_listing("fleet-vm", &[pool("cli", "copilot"), pool("pi1", "pi")]);
     let judged: Vec<Value> = [
-        ("copilot", None, "/home/me/.cli"),
+        (Harness::Copilot, None, "/home/me/.cli"),
         (
-            "pi",
+            Harness::Pi,
             Some("github-copilot/claude-opus-5-5"),
             "/home/me/.pi1",
         ),
@@ -655,11 +655,10 @@ fn a_copilot_home_or_a_pi_root_the_overseer_names_is_judged_as_an_ordinary_accou
     .map(|(harness, model, dir)| {
         world.write_fleet(Vec::new(), Some(dir));
         let reply = world.pick(&PickRequest {
-            harness: harness.to_owned(),
             model: model.map(str::to_owned),
             lane: Some(dir.to_owned()),
             min_headroom_pct: Some(3),
-            ..PickRequest::default()
+            ..PickRequest::new(harness)
         });
         json!([
             harness,
@@ -1366,9 +1365,8 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     );
     world.plant_host_listing("fleet-vm", &[home.clone(), api.clone()]);
     let copilot = PickRequest {
-        harness: "pi".to_owned(),
         model: Some("github-copilot/claude-opus-5-5".to_owned()),
-        ..PickRequest::default()
+        ..PickRequest::new(Harness::Pi)
     };
     let stated = world.pick(&copilot);
     assert_eq!(

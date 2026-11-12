@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::clock;
+use crate::harness::Harness;
 use crate::host::{self, Place};
 use serde_json::{Map, Value, json};
 
@@ -118,7 +119,7 @@ pub fn list(
     settings: &Env,
     accounts: &AccountSettings,
     provider: Option<Provider>,
-    named: Option<(&str, &str)>,
+    named: Option<(Harness, &str)>,
     now: u64,
 ) -> Result<Listing, String> {
     let mut ctx = Ctx::new(settings, accounts, now)?;
@@ -144,7 +145,7 @@ pub fn list(
     // provider's, states that home's fallback reading and names no Pi root.
     let copilot_homes: Vec<String> = rows
         .iter()
-        .filter(|r| r["harness"] == json!("copilot"))
+        .filter(|r| r["harness"] == json!(Harness::Copilot))
         .filter_map(|r| r["config_dir"].as_str().map(wall::canon))
         .collect();
     for entry in &accounts.copilot_pool {
@@ -197,14 +198,14 @@ pub fn alias(settings: &AccountSettings, config_dir: &str) -> String {
 // --- the accounts this machine lists ----------------------------------------------------------
 
 struct Found {
-    harness: &'static str,
+    harness: Harness,
     dir: String,
     /// Whether the owner configured the account: the chooser picks among
     /// configured accounts alone.
     configured: bool,
 }
 
-const HARNESSES: [&str; 3] = ["claude", "codex", "copilot"];
+const HARNESSES: [Harness; 3] = [Harness::Claude, Harness::Codex, Harness::Copilot];
 
 /// The accounts this machine lists, the owner's statement and nothing
 /// found by looking: each `AGENT_RUNTIME_ACCOUNT_DIRS` entry, absolute or relative to
@@ -214,7 +215,7 @@ const HARNESSES: [&str; 3] = ["claude", "codex", "copilot"];
 /// and `named`, the directory a pick names where it stands and nothing
 /// else lists it. With the setting unset no account is configured, and the
 /// listing says so.
-fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, String> {
+fn discover(ctx: &mut Ctx, named: Option<(Harness, &str)>) -> Result<Vec<Found>, String> {
     let accounts = ctx.accounts;
     let mut configured: Vec<Found> = Vec::new();
     if accounts.account_dirs.is_empty() {
@@ -254,8 +255,10 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
         accounts
             .codex_home
             .as_deref()
-            .map(|h| ("codex", usage::home_account(h))),
-        ctx.settings.copilot_home.map(|h| ("copilot", h.to_owned())),
+            .map(|h| (Harness::Codex, usage::home_account(h))),
+        ctx.settings
+            .copilot_home
+            .map(|h| (Harness::Copilot, h.to_owned())),
     ];
     for (harness, dir) in homes.into_iter().flatten() {
         if !found.iter().any(|f| f.dir == dir) {
@@ -267,10 +270,10 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
         }
     }
     let named = named.and_then(|(harness, dir)| {
-        let harness = HARNESSES.into_iter().find(|h| *h == harness)?;
-        (!found
-            .iter()
-            .any(|f| wall::canon(&f.dir) == wall::canon(dir)))
+        (HARNESSES.contains(&harness)
+            && !found
+                .iter()
+                .any(|f| wall::canon(&f.dir) == wall::canon(dir)))
         .then_some((harness, dir))
     });
     if let Some((harness, dir)) = named
@@ -288,23 +291,23 @@ fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, St
 /// The harness whose account a configured directory holds, by its files:
 /// Copilot's `config.json` or Codex's `auth.json` with no Claude
 /// `.credentials.json` beside it, else Claude.
-fn kind_of(dir: &str) -> Result<&'static str, String> {
+fn kind_of(dir: &str) -> Result<Harness, String> {
     let holds = |name: &str| usage::exists(&Path::new(dir).join(name));
     let credentials = holds(".credentials.json")?;
     Ok(if holds("config.json")? && !credentials {
-        "copilot"
+        Harness::Copilot
     } else if holds("auth.json")? && !credentials {
-        "codex"
+        Harness::Codex
     } else {
-        "claude"
+        Harness::Claude
     })
 }
 
-fn local_pool(harness: &str, host_pool: &str) -> String {
+fn local_pool(harness: Harness, host_pool: &str) -> String {
     match harness {
-        "claude" if host_pool == "cloud-credit" => "cloud-credit".to_owned(),
-        "copilot" => "copilot".to_owned(),
-        _ => "plan".to_owned(),
+        Harness::Claude if host_pool == "cloud-credit" => "cloud-credit".to_owned(),
+        Harness::Copilot => "copilot".to_owned(),
+        Harness::Claude | Harness::Codex | Harness::Pi => "plan".to_owned(),
     }
 }
 
@@ -387,7 +390,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
     };
     let mut renewed = false;
     let (token, account_id, plan) = match harness {
-        "copilot" => match copilot_token(dir) {
+        Harness::Copilot => match copilot_token(dir) {
             Ok(token) => (token, String::new(), String::new()),
             Err(why) => {
                 let canon = wall::canon(dir);
@@ -419,7 +422,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
                 );
             }
         },
-        _ => match usage::credential(harness, dir) {
+        Harness::Claude | Harness::Codex | Harness::Pi => match usage::credential(harness, dir) {
             Credential::Missing(path) => {
                 return row(
                     ctx,
@@ -445,7 +448,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
                 plan,
                 account_id,
             } => {
-                if harness == "claude" && usage::expired(refresh_expires_ms, ctx.now) {
+                if harness == Harness::Claude && usage::expired(refresh_expires_ms, ctx.now) {
                     let mut reading = Reading::refused(
                         "expired",
                         "refresh token expired; sign in again".to_owned(),
@@ -473,12 +476,12 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
     };
     let mut reading = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
     reading.plan = match (harness, &reading.usage) {
-        ("copilot", Some(Usage::Body(body))) => body
+        (Harness::Copilot, Some(Usage::Body(body))) => body
             .get("copilot_plan")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned(),
-        ("copilot", _) => String::new(),
+        (Harness::Copilot, _) => String::new(),
         _ => plan,
     };
     let mut row = row(ctx, reading);
@@ -583,7 +586,7 @@ fn stated_row(ctx: &Ctx, entry: &CopilotPool) -> Value {
         ctx,
         &Emit {
             alias: &alias,
-            harness: "pi",
+            harness: Harness::Pi,
             dir: &entry.dir,
             through: "stated",
             reading: Reading::stated(entry, "no Copilot login is read for a Pi root"),
@@ -598,10 +601,10 @@ fn stated_row(ctx: &Ctx, entry: &CopilotPool) -> Value {
 /// window, so no caller on the host posts the refused grant again; one
 /// this machine raised on its own posted nothing, and nothing stops the
 /// next listing from posting.
-fn renewed_token(ctx: &mut Ctx, harness: &str, dir: &str) -> Result<String, Box<Reading>> {
-    let path = cache::record_path(&ctx.usage_dir, harness, dir);
+fn renewed_token(ctx: &mut Ctx, harness: Harness, dir: &str) -> Result<String, Box<Reading>> {
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
     if !credential_newer(harness, dir, &path)
-        && let Some(record) = cache::read(&path, harness, dir)
+        && let Some(record) = cache::read(&path, harness.name(), dir)
         && let Some((refusal, age)) = cache::refusal(&record, "token", ctx.now)
     {
         let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
@@ -624,7 +627,7 @@ fn renewed_token(ctx: &mut Ctx, harness: &str, dir: &str) -> Result<String, Box<
             detail: detail.clone(),
             expires_at: ctx.now + refusal_window(refused.retry_after.as_deref()),
         };
-        if let Err(cause) = cache::write_refusal(&path, harness, dir, refusal, ctx.now) {
+        if let Err(cause) = cache::write_refusal(&path, harness.name(), dir, refusal, ctx.now) {
             ctx.notes.push(format!(
                 "refusal-unrecorded dir={} cause={cause}",
                 ctx.usage_dir.display()
@@ -653,18 +656,18 @@ fn refusal_window(retry_after: Option<&str>) -> u64 {
 /// this listing renewed itself is the same account, so its record stands.
 fn usage_reading(
     ctx: &mut Ctx,
-    harness: &str,
+    harness: Harness,
     dir: &str,
     token: &str,
     account_id: &str,
     renewed: bool,
 ) -> Reading {
-    let path = cache::record_path(&ctx.usage_dir, harness, dir);
+    let path = cache::record_path(&ctx.usage_dir, harness.name(), dir);
     let record = |ctx: &mut Ctx| -> Option<Reading> {
         if !renewed && credential_newer(harness, dir, &path) {
             return None;
         }
-        let record = cache::read(&path, harness, dir)?;
+        let record = cache::read(&path, harness.name(), dir)?;
         match cache::figure(&record, harness, Some(ctx.serve_max_age), ctx.now) {
             FigureRead::Served(figure) => return Some(served(figure, "ok", String::new())),
             FigureRead::Reset(reset) => ctx
@@ -679,9 +682,9 @@ fn usage_reading(
         return reading;
     }
     let url = match harness {
-        "claude" => ctx.accounts.claude_usage_url.clone(),
-        "copilot" => COPILOT_CREDITS_URL.to_owned(),
-        _ => ctx.accounts.codex_usage_url.clone(),
+        Harness::Claude => ctx.accounts.claude_usage_url.clone(),
+        Harness::Copilot => COPILOT_CREDITS_URL.to_owned(),
+        Harness::Codex | Harness::Pi => ctx.accounts.codex_usage_url.clone(),
     };
     let usage_dir = ctx.usage_dir.clone();
     let (reading, notice) = cache::under_refresh_lock(&usage_dir, || {
@@ -698,7 +701,7 @@ fn usage_reading(
 
 /// Whether the credential file is newer than the record: a renewed login
 /// makes the figure another login's.
-fn credential_newer(harness: &str, dir: &str, record: &Path) -> bool {
+fn credential_newer(harness: Harness, dir: &str, record: &Path) -> bool {
     let modified = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
     match (
         modified(Path::new(&usage::credential_path(harness, dir))),
@@ -729,7 +732,7 @@ fn served(figure: cache::Figure, status: &str, detail: String) -> Reading {
 /// windows and the record's own age.
 fn refused_reading(
     record: &cache::Record,
-    harness: &str,
+    harness: Harness,
     refusal: &Refusal,
     age: u64,
     now: u64,
@@ -761,7 +764,7 @@ fn refused_reading(
 )]
 fn fetch(
     ctx: &mut Ctx,
-    harness: &str,
+    harness: Harness,
     dir: &str,
     path: &Path,
     url: &str,
@@ -808,11 +811,11 @@ fn fetch(
     if !usage.is_object() {
         return Reading::refused("error", "usage response was not a JSON object".to_owned());
     }
-    let prior = cache::read(path, harness, dir).and_then(|r| {
+    let prior = cache::read(path, harness.name(), dir).and_then(|r| {
         let at = r.usage_fetched_at.unwrap_or(r.fetched_at);
         r.usage.map(|u| (u, ctx.now.saturating_sub(at)))
     });
-    let fall = cache::write_figure(path, harness, dir, usage.clone(), ctx.now);
+    let fall = cache::write_figure(path, harness.name(), dir, usage.clone(), ctx.now);
     Reading {
         status: "ok".to_owned(),
         detail: String::new(),
@@ -830,7 +833,7 @@ fn fetch(
     clippy::disallowed_methods,
     reason = "the listing's one request to a usage endpoint, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
 )]
-fn request(harness: &str, url: &str, token: &str, account_id: &str) -> Option<usage::Answer> {
+fn request(harness: Harness, url: &str, token: &str, account_id: &str) -> Option<usage::Answer> {
     let mut args: Vec<&str> = vec![
         "-s",
         "--max-time",
@@ -844,15 +847,15 @@ fn request(harness: &str, url: &str, token: &str, account_id: &str) -> Option<us
     let beta = format!("anthropic-beta: {CLAUDE_OAUTH_BETA}");
     let account = format!("chatgpt-account-id: {account_id}");
     let config = match harness {
-        "claude" => {
+        Harness::Claude => {
             args.extend(["-H", &beta]);
             format!("header = \"Authorization: Bearer {token}\"\n")
         }
-        "copilot" => {
+        Harness::Copilot => {
             args.extend(["-H", "Accept: application/json"]);
             format!("header = \"Authorization: token {token}\"\n")
         }
-        _ => {
+        Harness::Codex | Harness::Pi => {
             if !account_id.is_empty() {
                 args.extend(["-H", &account]);
             }
@@ -881,7 +884,7 @@ fn request(harness: &str, url: &str, token: &str, account_id: &str) -> Option<us
 /// record while that figure is younger than five hours.
 fn refused_answer(
     ctx: &mut Ctx,
-    harness: &str,
+    harness: Harness,
     dir: &str,
     path: &Path,
     url: &str,
@@ -891,7 +894,7 @@ fn refused_answer(
     let code = answer.code.unwrap_or(0);
     let mut status = usage::refusal_status(code, "refused");
     let mut detail = format!("usage query refused with HTTP {code}");
-    if harness == "claude"
+    if harness == Harness::Claude
         && matches!(code, 401 | 403)
         && let Some(ended) = plan_ended(url, token)
     {
@@ -905,14 +908,14 @@ fn refused_answer(
         detail: detail.clone(),
         expires_at: ctx.now + refusal_window(answer.retry_after.as_deref()),
     };
-    if let Err(cause) = cache::write_refusal(path, harness, dir, refusal, ctx.now) {
+    if let Err(cause) = cache::write_refusal(path, harness.name(), dir, refusal, ctx.now) {
         ctx.notes.push(format!(
             "refusal-unrecorded dir={} cause={cause}",
             ctx.usage_dir.display()
         ));
     }
     if status == "rate_limited"
-        && let Some(record) = cache::read(path, harness, dir)
+        && let Some(record) = cache::read(path, harness.name(), dir)
         && let FigureRead::Served(figure) =
             cache::figure(&record, harness, Some(FIVE_HOURS_S), ctx.now)
     {
@@ -981,14 +984,14 @@ fn plan_ended(usage_url: &str, token: &str) -> Option<String> {
 
 pub struct Emit<'a> {
     pub alias: &'a str,
-    pub harness: &'a str,
+    pub harness: Harness,
     pub dir: &'a str,
     pub through: &'a str,
     pub reading: Reading,
     pub words: Option<Map<String, Value>>,
 }
 
-fn buckets_of(harness: &str, usage: &Usage) -> Value {
+fn buckets_of(harness: Harness, usage: &Usage) -> Value {
     match usage {
         Usage::Body(body) => usage::parse_body(harness, body, Rounding::Rounded),
         Usage::Provider(buckets) => buckets.clone(),
@@ -1091,7 +1094,7 @@ pub fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "excluded": excluded(ctx.accounts, e.alias, e.dir),
         "retired": retired,
     });
-    if e.harness == "copilot" {
+    if e.harness == Harness::Copilot {
         row["credits_used"] = buckets.get("credits_used").cloned().unwrap_or(Value::Null);
     }
     if let Some(words) = &e.words {
@@ -1169,7 +1172,7 @@ fn wall_overlay(
 /// measured where both samples are at least a minute apart, the figure
 /// rose, and the prior's window is the one judged now (same bucket, its
 /// label in the normalized spelling, its reset within five minutes).
-fn binding_and_rate(row: &mut Value, harness: &str, prior: Option<&(Value, u64)>) {
+fn binding_and_rate(row: &mut Value, harness: Harness, prior: Option<&(Value, u64)>) {
     let ended = row["status"] == json!("plan_ended");
     let measured = matches!(row["status"].as_str(), Some("ok" | "rate_limited"));
     let headroom = row["headroom_pct"].as_f64();
@@ -1352,7 +1355,7 @@ mod tests {
                 &ctx,
                 &Emit {
                     alias: "a",
-                    harness: "claude",
+                    harness: Harness::Claude,
                     dir: "/h/.a",
                     through: "local",
                     reading: Reading {

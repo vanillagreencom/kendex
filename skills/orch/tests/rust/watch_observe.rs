@@ -1587,7 +1587,7 @@ fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
     Ok(Walked {
         answer: WalkAnswer::Lane(Box::new(Chosen {
             entry: "claude:opus:high".to_owned(),
-            harness: "claude".to_owned(),
+            harness: Harness::Claude,
             host: None,
             model: "opus".to_owned(),
             class: None,
@@ -5295,8 +5295,8 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
             Some(vec!["--dangerously-skip-permissions".to_owned()])
         );
         assert_eq!(
-            walks[0].caller.as_ref().map(|c| c.harness.as_str()),
-            Some("claude")
+            walks[0].caller.as_ref().map(|c| c.harness),
+            Some(Harness::Claude)
         );
     }
     let third = driver.pass(&state);
@@ -5310,7 +5310,7 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
         Ok(Walked {
             answer: WalkAnswer::Lane(Box::new(Chosen {
                 entry: "codex:standard:high".to_owned(),
-                harness: "codex".to_owned(),
+                harness: Harness::Codex,
                 host: None,
                 model: String::new(),
                 class: Some("standard".to_owned()),

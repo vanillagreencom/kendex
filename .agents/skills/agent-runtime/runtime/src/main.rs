@@ -408,7 +408,7 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
         } => {
             let named = Harness::named(&harness)?;
             let request = accounts::PickRequest {
-                harness,
+                harness: named,
                 model: native_model,
                 exclude: exclude_account,
                 for_overseer: for_controller,
@@ -476,19 +476,25 @@ fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
                 exclude: exclude_account,
                 max_pct,
                 min_headroom_pct,
-                source: source_harness.map(|harness| walk::Source {
-                    harness,
-                    flags: source_flags
-                        .map(|text| text.split_whitespace().map(str::to_owned).collect()),
-                }),
-                caller: caller_harness.map(|harness| walk::Caller {
-                    harness,
-                    lane: caller_account,
-                    model: caller_model,
-                    effort: caller_effort,
-                    pick_model: caller_pick_model,
-                    keep: caller_keep,
-                }),
+                source: source_harness
+                    .map(|word| Harness::named(&word))
+                    .transpose()?
+                    .map(|harness| walk::Source {
+                        harness,
+                        flags: source_flags
+                            .map(|text| text.split_whitespace().map(str::to_owned).collect()),
+                    }),
+                caller: caller_harness
+                    .map(|word| Harness::named(&word))
+                    .transpose()?
+                    .map(|harness| walk::Caller {
+                        harness,
+                        lane: caller_account,
+                        model: caller_model,
+                        effort: caller_effort,
+                        pick_model: caller_pick_model,
+                        keep: caller_keep,
+                    }),
                 keep_unmeasured,
             };
             Ok(

@@ -62,7 +62,7 @@ fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
 /// included.
 pub fn source(caller: &Caller, harness: Harness) -> Source {
     Source {
-        harness: harness.name().to_owned(),
+        harness,
         flags: match caller.permission {
             Some(Permission::Bypass) => None,
             Some(Permission::Native) | None => Some(caller.extra_args.clone()),

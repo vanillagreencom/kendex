@@ -21,6 +21,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use account_planters::*;
 use agent_runtime::accounts::{Env, PickRequest, here};
 use agent_runtime::clock;
+use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Reply;
 use agent_runtime::settings::{self, AccountSettings, Judged, Keys};
 use isolation::*;
@@ -1037,14 +1038,14 @@ fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
     let record = world.path().join(RECORD);
     let mut drifted = Vec::new();
     for (harness, trigger, excluded) in [
-        ("claude", 50, "claude"),
-        ("codex", 50, "claude"),
-        ("claude", 90, "claude"),
-        ("codex", 90, "claude"),
-        ("codex", 50, "2codex"),
+        (Harness::Claude, 50, "claude"),
+        (Harness::Codex, 50, "claude"),
+        (Harness::Claude, 90, "claude"),
+        (Harness::Codex, 90, "claude"),
+        (Harness::Codex, 50, "2codex"),
     ] {
         let request = PickRequest {
-            harness: harness.to_owned(),
+            harness,
             model: None,
             exclude: vec![world.dir(excluded)],
             for_overseer: true,

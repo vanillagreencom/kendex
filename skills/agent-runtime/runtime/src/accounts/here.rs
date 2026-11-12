@@ -18,6 +18,7 @@ use super::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
 use super::{AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, TAG, wall};
 use crate::controller::Overseer;
 use crate::error::{Error, Result};
+use crate::harness::Harness;
 use crate::host::{self, Place};
 use crate::record;
 
@@ -166,10 +167,7 @@ fn judge(settings: &Env, ground: &Beside, req: &PickRequest, now: u64) -> PickAn
         }
     };
     let model = req.model.as_deref().unwrap_or("");
-    let named = req
-        .lane
-        .as_deref()
-        .map(|dir| (super::billed(&req.harness, model), dir));
+    let named = req.harness.billed(model).zip(req.lane.as_deref());
     match super::roster_naming(settings, None, named, now) {
         Ok(roster) => super::pick(
             &roster.rows,
@@ -210,7 +208,7 @@ pub fn walk(
     now: u64,
 ) -> Result<Walked> {
     let ground = Beside::read(project, record)?;
-    let mut host = |_: Scope, entry_host: Option<&str>, _: &str| match entry_host {
+    let mut host = |_: Scope, entry_host: Option<&str>, _: Harness| match entry_host {
         Some(h) if h != LOCAL => Err(Error::refused(
             "host-capabilities-unread",
             &[("host", h), ("cause", "no-provider")],

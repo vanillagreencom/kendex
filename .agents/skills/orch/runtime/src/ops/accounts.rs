@@ -18,10 +18,10 @@ use agent_runtime::accounts::cache;
 use agent_runtime::accounts::listing::{Ctx, Emit, Provider, Reading, Usage, alias, emit, finish};
 use agent_runtime::accounts::walk::{self, Ground, Hosted, Scope, WalkRequest, Walked};
 use agent_runtime::accounts::{
-    self, AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, Roster, TAG, billed, names,
-    pool, wall,
+    self, AccountRow, Env, FleetFacts, LOCAL, PickAnswer, PickRequest, Roster, TAG, names, wall,
 };
 use agent_runtime::clock;
+use agent_runtime::harness::Harness;
 use agent_runtime::host::{self, Place};
 use serde_json::{Map, Value, json};
 
@@ -62,7 +62,7 @@ pub fn roster(
 fn roster_naming(
     settings: &Settings,
     host: Option<&str>,
-    named: Option<(&str, &str)>,
+    named: Option<(Harness, &str)>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
     let env = env(settings);
@@ -300,7 +300,7 @@ fn dollars(text: &str) -> Option<f64> {
 struct ProviderLine {
     fields: Map<String, Value>,
     account: String,
-    harness: String,
+    harness: Harness,
     buckets: Value,
     credit_fields: bool,
 }
@@ -327,7 +327,7 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
             .to_owned()
     };
     let account = get("account");
-    let harness = get("harness");
+    let harness = Harness::parse(&get("harness"));
     let mut bad: Option<&'static str> = None;
     let mut pcts: [(&'static str, Option<u64>); 3] = [
         ("weekly-pct", None),
@@ -347,7 +347,7 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
     if account.is_empty() {
         bad = bad.or(Some("account"));
     }
-    if !matches!(harness.as_str(), "claude" | "codex" | "copilot" | "pi") {
+    if harness.is_none() {
         bad = bad.or(Some("harness"));
     }
     let credit_fields = [
@@ -361,7 +361,7 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
     let limit = dollars(&get("credit-limit"));
     let remaining = dollars(&get("credit-remaining"));
     if credit_fields {
-        if harness != "pi"
+        if harness != Some(Harness::Pi)
             || fields.contains_key("monthly-pct")
             || limit.is_none_or(|l| l <= 0.0)
             || remaining.is_none()
@@ -373,9 +373,12 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
             bad = bad.or(Some("credit-spent"));
         }
     }
-    if let Some(field) = bad {
-        return Err(Unreadable { account, field });
-    }
+    let (None, Some(harness)) = (bad, harness) else {
+        return Err(Unreadable {
+            account,
+            field: bad.unwrap_or("harness"),
+        });
+    };
     let nz = |key: &str| {
         let v = get(key);
         if v.is_empty() {
@@ -468,18 +471,18 @@ fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
             }
         }
         let grant = credit_fields || get("detail").starts_with("api-credit-");
-        let pool = match harness.as_str() {
-            "pi" if grant => "api-credit",
-            "pi" | "copilot" => "copilot",
-            "claude" if host_pool == "cloud-credit" => "cloud-credit",
-            _ => "plan",
+        let pool = match harness {
+            Harness::Pi if grant => "api-credit",
+            Harness::Pi | Harness::Copilot => "copilot",
+            Harness::Claude if host_pool == "cloud-credit" => "cloud-credit",
+            Harness::Claude | Harness::Codex => "plan",
         };
         let alias = alias(ctx.accounts, &account);
         let mut row = emit(
             ctx,
             &Emit {
                 alias: &alias,
-                harness: &harness,
+                harness,
                 dir: &account,
                 through: "host",
                 reading: Reading {
@@ -533,7 +536,7 @@ impl Hosts<'_> {
         replaces: bool,
         scope: Scope,
         entry_host: Option<&str>,
-        harness: &str,
+        harness: Harness,
     ) -> agent_runtime::Result<Hosted> {
         match scope {
             Scope::Lane => {
@@ -556,7 +559,7 @@ impl Hosts<'_> {
                 };
                 let skipped = match launch {
                     Launch::Window | Launch::Ssh => false,
-                    Launch::CloudSession => harness != "claude" || replaces,
+                    Launch::CloudSession => harness != Harness::Claude || replaces,
                     Launch::CloudTask => true,
                 };
                 Ok(if skipped {
@@ -573,7 +576,7 @@ impl Hosts<'_> {
             }
             Scope::Overseer => {
                 let mut host = None;
-                if harness == "claude"
+                if harness == Harness::Claude
                     && let Some(h) = fleet_host.filter(|h| *h != LOCAL)
                     && self.read(h)?.launch == Some(Launch::Ssh)
                 {
@@ -604,7 +607,7 @@ pub fn walk(
         lines: BTreeMap::new(),
     };
     let fleet_host = provider.host.as_deref();
-    let mut host = |scope: Scope, entry_host: Option<&str>, harness: &str| {
+    let mut host = |scope: Scope, entry_host: Option<&str>, harness: Harness| {
         hosts.hosted(fleet_host, replaces.is_some(), scope, entry_host, harness)
     };
     let mut pick = |request: &PickRequest, judge_host: Option<&str>| {
@@ -782,10 +785,7 @@ pub fn pick_fleet(
     let asked = lane_host.or(provider.host.as_deref());
     let lane_host = asked.filter(|h| *h != LOCAL && !h.is_empty());
     let model = req.model.as_deref().unwrap_or("");
-    let named = req
-        .lane
-        .as_deref()
-        .map(|dir| (billed(&req.harness, model), dir));
+    let named = req.harness.billed(model).zip(req.lane.as_deref());
     let roster = match roster_naming(settings, asked, named, now) {
         Ok(roster) => roster,
         Err(cause) => {
@@ -794,14 +794,14 @@ pub fn pick_fleet(
             };
         }
     };
-    let pool = pool(&req.harness, model);
-    if req.harness == "pi"
+    let pool = req.harness.pool(model);
+    if req.harness == Harness::Pi
         && let Some(cause) = &roster.provider_failure
     {
         let stated = roster
             .rows
             .iter()
-            .any(|r| r.harness == "pi" && r.measured_through == "stated");
+            .any(|r| r.harness == Harness::Pi && r.measured_through == "stated");
         if pool == "api-credit" || (pool == "copilot" && !stated) {
             let word = if pool == "api-credit" {
                 "api-grant-unread"

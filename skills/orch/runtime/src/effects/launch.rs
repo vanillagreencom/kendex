@@ -1360,9 +1360,7 @@ fn hosted_command(
         remote.brief_path = None;
     }
     let mut shell_line = remote.shell_line();
-    if harness == Harness::Pi
-        && agent_runtime::accounts::pool("pi", r.model.as_deref().unwrap_or("")) == "copilot"
-    {
+    if harness == Harness::Pi && Harness::Pi.pool(r.model.as_deref().unwrap_or("")) == "copilot" {
         shell_line = format!("{} && {shell_line}", PI_SESSION_ENV_STEP.trim_end());
     }
     let line = format!("{} {}", created.prefix, shell_quote(&shell_line));

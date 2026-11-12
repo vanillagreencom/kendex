@@ -47,7 +47,8 @@ use crate::settings::Settings;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
-use agent_runtime::accounts::{PickAnswer, PickRequest, Roster, billed, pool, text_or_dash};
+use agent_runtime::accounts::{PickAnswer, PickRequest, Roster, text_or_dash};
+use agent_runtime::harness::Harness;
 use agent_runtime::journal::Env;
 
 /// The host word of a lane record with no host.
@@ -282,16 +283,19 @@ fn wall_verdict(
     let Some(listing) = listing else {
         return unjudged;
     };
-    if !listing.bills(
-        billed(&owed.harness, &owed.model),
-        pool(&owed.harness, &owed.model),
-    ) {
+    // A harness none of the four, or a model whose provider nothing bills,
+    // spends no account a listing bills.
+    let harness = Harness::parse(&owed.harness);
+    let (Some(harness), Some(billed)) = (harness, harness.and_then(|h| h.billed(&owed.model)))
+    else {
+        return "verdict=queue".to_owned();
+    };
+    if !listing.bills(billed, harness.pool(&owed.model)) {
         return "verdict=queue".to_owned();
     }
     let request = PickRequest {
-        harness: owed.harness.clone(),
         model: (owed.model != "-").then(|| owed.model.clone()),
-        ..PickRequest::default()
+        ..PickRequest::new(harness)
     };
     match accounts::pick_fleet(
         &ctx.settings,

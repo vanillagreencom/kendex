@@ -656,7 +656,7 @@ impl Operation<'_> {
             };
         }
         let dir = account.display().to_string();
-        match crate::accounts::usage::credential(harness.name(), &dir) {
+        match crate::accounts::usage::credential(harness, &dir) {
             Credential::Missing(_) => SignIn::Missing {
                 cause: "no-credential",
             },

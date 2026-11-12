@@ -818,7 +818,14 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 /// with no window's figure. The walled line's figures are the record's:
 /// the projected window where one was projected, else
 /// the reading's wall and binding bucket.
-fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &Host) -> Result<()> {
+fn room(
+    path: &Path,
+    r: &LaunchLane,
+    harness: Harness,
+    replaces: Option<&str>,
+    env: &Env,
+    host: &Host,
+) -> Result<()> {
     let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
         return Ok(());
     };
@@ -830,11 +837,10 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
         cause: cause.to_owned(),
     };
     let request = PickRequest {
-        harness: r.harness.clone(),
         model: r.model.clone(),
         lane: Some(account.clone()),
         projected: true,
-        ..PickRequest::default()
+        ..PickRequest::new(harness)
     };
     match accounts::pick_fleet(settings, path, host, None, replaces, &request, env.now_secs) {
         PickAnswer::Lane(_) | PickAnswer::NoRecord => Ok(()),
@@ -1087,7 +1093,14 @@ pub(super) fn launch_lane(
     }
     // The account's room, judged before the admission and the cap; a
     // relaunch is judged with its own record's charge left out.
-    room(path, r, position.map(|_| r.item.as_str()), env, host)?;
+    room(
+        path,
+        r,
+        harness,
+        position.map(|_| r.item.as_str()),
+        env,
+        host,
+    )?;
     // The admission judgement, under the
     // same launch lock and before the cap, so one transition admits or
     // refuses with one cause: a first launch is judged on its item, its

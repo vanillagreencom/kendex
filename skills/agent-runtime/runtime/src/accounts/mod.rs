@@ -176,7 +176,7 @@ pub struct ModelBucket {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AccountRow {
     pub alias: String,
-    pub harness: String,
+    pub harness: Harness,
     pub config_dir: String,
     /// One spelling per account: the resolved path where the directory
     /// stands.
@@ -274,14 +274,15 @@ pub fn names(alias: &str, config_dir: &str, name: &str) -> bool {
 
 impl AccountRow {
     /// One listing row as the judge reads it, under `settings`' statement.
-    /// `None` for a row with no `status` or `verdict`: a row that failed
-    /// to render, never a measured account.
+    /// `None` for a row with no `status` or `verdict`, or a harness none of
+    /// the four: a row that failed to render, never a measured account.
     pub fn parse(raw: &Value, settings: &AccountSettings) -> Option<AccountRow> {
         if raw.get("status").is_none_or(Value::is_null)
             || raw.get("verdict").is_none_or(Value::is_null)
         {
             return None;
         }
+        let harness = Harness::parse(raw.get("harness").and_then(Value::as_str)?)?;
         let alias = text(raw, "alias");
         let config_dir = text(raw, "config_dir");
         let model_buckets = raw
@@ -304,7 +305,7 @@ impl AccountRow {
         let excluded = listing::excluded(settings, &alias, &config_dir);
         Some(AccountRow {
             canon: wall::canon(&config_dir),
-            harness: text(raw, "harness"),
+            harness,
             measured_through: text(raw, "measured_through"),
             status: text(raw, "status"),
             detail: string(raw, "detail"),
@@ -516,7 +517,7 @@ impl Roster {
 
     /// Whether an account bills the harness and pool a pick would judge
     /// (`owed_wall`'s roster check).
-    pub fn bills(&self, billed: &str, pool: &str) -> bool {
+    pub fn bills(&self, billed: Harness, pool: &str) -> bool {
         self.rows
             .iter()
             .any(|r| r.harness == billed && ((r.pool == "api-credit") == (pool == "api-credit")))
@@ -542,7 +543,7 @@ pub fn roster(
 pub fn roster_naming(
     settings: &Env,
     provider: Option<Provider>,
-    named: Option<(&str, &str)>,
+    named: Option<(Harness, &str)>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
     let accounts = settings.accounts.get().map_err(|e| e.to_string())?;
@@ -578,7 +579,7 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// with no credential file is no reading, so the provider's measured one
 /// stands as an account's one reading does. An account with one reading
 /// keeps it. The roster is never resolved: it reports both readings.
-fn resolve(rows: &[AccountRow], billed: &str, model: &str, admit: bool) -> Vec<AccountRow> {
+fn resolve(rows: &[AccountRow], billed: Harness, model: &str, admit: bool) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
         let other = out.iter().position(|r| {
@@ -605,12 +606,12 @@ fn resolve(rows: &[AccountRow], billed: &str, model: &str, admit: bool) -> Vec<A
 fn prefer(
     own: AccountRow,
     provider: AccountRow,
-    billed: &str,
+    billed: Harness,
     model: &str,
     admit: bool,
 ) -> AccountRow {
-    let scoped = billed == "claude" && !model.is_empty();
-    let unread = provider.harness == "pi" && provider.headroom_pct.is_none()
+    let scoped = billed == Harness::Claude && !model.is_empty();
+    let unread = provider.harness == Harness::Pi && provider.headroom_pct.is_none()
         || provider.status == "unreachable"
         || (provider.status == "no_usage_data" && provider.headroom_pct.is_none());
     let unscoped = scoped
@@ -620,7 +621,7 @@ fn prefer(
         return provider;
     }
     let own_figure = own.headroom_pct.is_some()
-        && (own.harness == "pi" || own.status == "ok")
+        && (own.harness == Harness::Pi || own.status == "ok")
         && !(scoped && own.model_buckets.is_empty());
     if own_figure {
         return own;
@@ -688,7 +689,7 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
     };
     let raw = json!({
         "alias": listing::alias(settings, dir),
-        "harness": "pi",
+        "harness": Harness::Pi,
         "config_dir": dir,
         "retire_date": Value::Null,
         "measured_through": through,
@@ -721,23 +722,8 @@ fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountR
 
 // --- the pick ---------------------------------------------------------------------------------
 
-/// The account kind a launch of the harness word `harness` on `model`
-/// spends, as the rows name it ([`Harness::billed`]); `unmeasured` where
-/// nothing measures it, a word naming none of the four among them.
-pub fn billed(harness: &str, model: &str) -> &'static str {
-    Harness::parse(harness)
-        .and_then(|h| h.billed(model))
-        .map_or("unmeasured", Harness::name)
-}
-
-/// The pool a launch of the harness word `harness` on `model` spends
-/// ([`Harness::pool`]); a word naming none of the four spends a plan.
-pub fn pool(harness: &str, model: &str) -> &'static str {
-    Harness::parse(harness).map_or("plan", |h| h.pool(model))
-}
-
-/// A launch whose model's provider nothing bills ([`billed`]'s
-/// `unmeasured`: a Pi model naming no provider, or one other than
+/// A launch whose model's provider nothing bills ([`Harness::billed`]'s
+/// `None`: a Pi model naming no provider, or one other than
 /// `pi-claude/`, `github-copilot/` and `anthropic/`) is refused at exit 5
 /// in both forms before any row is read, since nothing measures what it
 /// spends and an unmeasured pool is never room. The chooser's answer
@@ -745,21 +731,25 @@ pub fn pool(harness: &str, model: &str) -> &'static str {
 /// ([`PickAnswer::Unbilled`]).
 pub fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
     let model = req.model.as_deref().unwrap_or("");
-    if billed(&req.harness, model) != "unmeasured" {
-        return None;
-    }
-    let (harness, model) = (req.harness.clone(), model.to_owned());
-    Some(if req.lane.is_some() {
+    req.harness
+        .billed(model)
+        .is_none()
+        .then(|| unbilled_answer(req))
+}
+
+fn unbilled_answer(req: &PickRequest) -> PickAnswer {
+    let (harness, model) = (req.harness, req.model.clone().unwrap_or_default());
+    if req.lane.is_some() {
         PickAnswer::Unbilled { harness, model }
     } else {
         PickAnswer::ProviderUnmeasured { harness, model }
-    })
+    }
 }
 
 /// What a caller asks the judge: `lanes pick`'s own words.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PickRequest {
-    pub harness: String,
+    pub harness: Harness,
     /// The selector the harness runs (`--native-model`).
     pub model: Option<String>,
     /// Config dirs the pick omits before judging (`--exclude-lane`).
@@ -792,6 +782,23 @@ pub struct PickRequest {
 }
 
 impl PickRequest {
+    /// The chooser's plain question for `harness`: no model, no exclusion,
+    /// no named account, the setting's bound.
+    pub fn new(harness: Harness) -> PickRequest {
+        PickRequest {
+            harness,
+            model: None,
+            exclude: Vec::new(),
+            for_overseer: false,
+            lane: None,
+            projected: false,
+            max_pct: None,
+            min_headroom_pct: None,
+            binding_floor: false,
+            admit_unread_scope: false,
+        }
+    }
+
     /// The bound in percent used a request names, where it names one.
     fn bound(&self) -> Option<u32> {
         self.max_pct.or(self.min_headroom_pct.map(|t| 100 - t))
@@ -1091,7 +1098,7 @@ pub fn credit_room(row: &AccountRow, floor: f64) -> bool {
     let Some(credits) = &row.credits else {
         return false;
     };
-    row.harness == "codex"
+    row.harness == Harness::Codex
         && credits.get("has_credits") == Some(&Value::Bool(true))
         && credits.get("overage_limit_reached") == Some(&Value::Bool(false))
         && credits.get("spend_control_reached") == Some(&Value::Bool(false))
@@ -1396,13 +1403,13 @@ pub enum PickAnswer {
     /// launch (`pick-provider-unmeasured`), a read to repair, never a
     /// window to wait out; and the chooser's answer to a launch whose
     /// model's provider nothing bills ([`unbilled`]).
-    ProviderUnmeasured { harness: String, model: String },
+    ProviderUnmeasured { harness: Harness, model: String },
     /// Exit 5 of `--lane`: the launch names a model whose provider nothing
     /// bills ([`unbilled`]), refused before any row is read. The record
     /// names the harness and the model and carries no `refusal`: the
     /// launcher's named arm reads a refusal it does not know as its judge
     /// failing, and a record with none as `lane-provider-unmeasured`.
-    Unbilled { harness: String, model: String },
+    Unbilled { harness: Harness, model: String },
     /// Exit 4 of `--lane`: no row names the directory.
     NoRecord,
     /// Exit 7 of `--lane`: a `cloud-session` host's account that
@@ -1534,8 +1541,7 @@ fn judge(
     let binding = lane_binding(row, req.model.as_deref(), req.binding_floor);
     let wall = binding.as_ref().map(|b| b.pct);
     let seat = !req.for_overseer
-        && row.harness != "copilot"
-        && row.harness != "pi"
+        && !matches!(row.harness, Harness::Copilot | Harness::Pi)
         && facts.seats.contains(&row.canon);
     let projection = binding.as_ref().map(|b| {
         projection(
@@ -1643,13 +1649,15 @@ pub fn pick(
 ) -> PickAnswer {
     let today = today(now);
     let model = req.model.as_deref().unwrap_or("");
-    let billed = billed(&req.harness, model);
-    let pool = pool(&req.harness, model);
+    let Some(billed) = req.harness.billed(model) else {
+        return unbilled_answer(req);
+    };
+    let pool = req.harness.pool(model);
     let api_credit = pool == "api-credit";
     // A pool nobody measured is a read to repair, never a window to wait
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
-    let grant_pool = api_credit || (req.harness == "pi" && pool == "copilot");
+    let grant_pool = api_credit || (req.harness == Harness::Pi && pool == "copilot");
     let rows = &resolve(rows, billed, model, req.admit_unread_scope);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
@@ -1720,7 +1728,7 @@ pub fn pick(
     let unmeasured = judged.iter().filter(|j| j.verdict == "unmeasured").count() as u32;
     if grant_pool && walled.is_empty() && (candidates == 0 || unmeasured > 0) {
         return PickAnswer::ProviderUnmeasured {
-            harness: req.harness.clone(),
+            harness: req.harness,
             model: model.to_owned(),
         };
     }
@@ -1808,18 +1816,19 @@ mod tests {
 
     #[test]
     fn the_billed_harness_and_pool_follow_the_launchers_tables() {
+        use Harness::{Claude, Codex, Copilot, Pi};
         let rows = [
-            ("claude", "claude-sonnet-5", "claude", "plan"),
-            ("codex", "-", "codex", "plan"),
-            ("copilot", "-", "copilot", "copilot"),
-            ("pi", "pi-claude/opus", "claude", "plan"),
-            ("pi", "github-copilot/gpt", "pi", "copilot"),
-            ("pi", "anthropic/claude", "pi", "api-credit"),
-            ("pi", "other/model", "unmeasured", "plan"),
+            (Claude, "claude-sonnet-5", Some(Claude), "plan"),
+            (Codex, "-", Some(Codex), "plan"),
+            (Copilot, "-", Some(Copilot), "copilot"),
+            (Pi, "pi-claude/opus", Some(Claude), "plan"),
+            (Pi, "github-copilot/gpt", Some(Pi), "copilot"),
+            (Pi, "anthropic/claude", Some(Pi), "api-credit"),
+            (Pi, "other/model", None, "plan"),
         ];
         for (harness, model, billed, pool) in rows {
-            assert_eq!(super::billed(harness, model), billed, "{harness} {model}");
-            assert_eq!(super::pool(harness, model), pool, "{harness} {model}");
+            assert_eq!(harness.billed(model), billed, "{harness} {model}");
+            assert_eq!(harness.pool(model), pool, "{harness} {model}");
         }
     }
 
@@ -1864,9 +1873,9 @@ mod tests {
             roster.rows[2].plan_ends,
             PlanEnd::Day("2026-12-01".to_owned())
         );
-        assert!(roster.bills("claude", "plan"));
-        assert!(!roster.bills("codex", "plan"));
-        assert!(!roster.bills("claude", "api-credit"));
+        assert!(roster.bills(Harness::Claude, "plan"));
+        assert!(!roster.bills(Harness::Codex, "plan"));
+        assert!(!roster.bills(Harness::Claude, "api-credit"));
         // The stated end come and the credential still answering: the
         // contradiction line under the roster, and the account not picked.
         let lines = roster.lines("2026-10-20");

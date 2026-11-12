@@ -22,6 +22,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::harness::Harness;
 use crate::host::{self, Hold, Place};
 use crate::record;
 use serde::{Deserialize, Serialize};
@@ -88,7 +89,7 @@ impl Refused {
 /// them.
 #[derive(Debug, Serialize, Deserialize)]
 struct Step {
-    harness: String,
+    harness: Harness,
     dir: String,
     now: u64,
     client_id: Option<String>,
@@ -104,12 +105,12 @@ struct Step {
 )]
 pub fn renew(
     accounts: &AccountSettings,
-    harness: &str,
+    harness: Harness,
     dir: &str,
     now: u64,
 ) -> Result<String, Refused> {
     let step = Step {
-        harness: harness.to_owned(),
+        harness,
         dir: dir.to_owned(),
         now,
         client_id: accounts.claude_client_id.clone(),
@@ -210,16 +211,16 @@ fn renew_here(step: &Step) -> Result<String, Refused> {
         } else {
             None
         };
-        Ok(match usage::credential(&step.harness, &step.dir) {
+        Ok(match usage::credential(step.harness, &step.dir) {
             Credential::Token {
                 token, expires_ms, ..
             } if !usage::expired(expires_ms, step.now) => Ok(token),
             Credential::Token { .. }
             | Credential::Missing(_)
             | Credential::Invalid(_)
-            | Credential::NoToken { .. } => match step.harness.as_str() {
-                "claude" => claude(step),
-                _ => codex(&step.dir, step.now),
+            | Credential::NoToken { .. } => match step.harness {
+                Harness::Claude => claude(step),
+                Harness::Codex | Harness::Copilot | Harness::Pi => codex(&step.dir, step.now),
             },
         })
     });
@@ -267,7 +268,7 @@ fn claude(step: &Step) -> Result<String, Refused> {
                 "no OAuth client id is configured (AGENT_RUNTIME_CLAUDE_CLIENT_ID)".to_owned(),
             )
         })?;
-    let path = usage::credential_path("claude", dir);
+    let path = usage::credential_path(Harness::Claude, dir);
     let mut file = read_json(&path);
     let refresh = file
         .pointer("/claudeAiOauth/refreshToken")
@@ -448,7 +449,7 @@ fn write_whole(path: &Path, value: &Value) -> Result<(), String> {
     reason = "the one run of the Codex CLI's own renewal, `codex app-server` in the account's config dir through the one runner under its tag, the requests on its stdin held open for the answer; the CLI writes auth.json and this reads it back"
 )]
 fn codex(dir: &str, now: u64) -> Result<String, Refused> {
-    let path = usage::credential_path("codex", dir);
+    let path = usage::credential_path(Harness::Codex, dir);
     let refresh = read_json(&path)
         .pointer("/tokens/refresh_token")
         .and_then(Value::as_str)
@@ -462,7 +463,7 @@ fn codex(dir: &str, now: u64) -> Result<String, Refused> {
             ),
         ));
     }
-    if !on_path("codex") {
+    if !on_path(Harness::Codex.binary()) {
         return Err(Refused::own(
             "expired",
             format!(
@@ -473,8 +474,8 @@ fn codex(dir: &str, now: u64) -> Result<String, Refused> {
     let home = [("CODEX_HOME", OsStr::new(dir))];
     let out = host::run_tagged_fed_own_group(
         TAG,
-        "codex",
-        Path::new("codex"),
+        Harness::Codex.binary(),
+        Path::new(Harness::Codex.binary()),
         "renew",
         &["app-server"],
         Place {
@@ -495,7 +496,7 @@ fn codex(dir: &str, now: u64) -> Result<String, Refused> {
         ),
         Err(_) => (String::new(), String::new()),
     };
-    match usage::credential("codex", dir) {
+    match usage::credential(Harness::Codex, dir) {
         Credential::Token {
             token, expires_ms, ..
         } if !usage::expired(expires_ms, now) => Ok(token),

@@ -34,6 +34,7 @@ use crate::watch::hosted::{
 use crate::watch::lanes::{self, LaneState, reset};
 use crate::watch::tracker::{self, TerminalState};
 use agent_runtime::clock::Clock;
+use agent_runtime::harness::Harness;
 use agent_runtime::journal::Env;
 use agent_runtime::observe::WallKind;
 
@@ -680,15 +681,17 @@ impl Close<'_> {
     /// which the account's reading answers alone.
     fn wall(&self, banner: &str) -> WallRead {
         let account = self.lane.account.as_deref().filter(|a| !a.is_empty());
-        let harness = self.who.harness.as_deref();
-        let (Some(account), Some(harness @ ("claude" | "codex"))) = (account, harness) else {
+        let harness = self.who.harness.as_deref().and_then(Harness::parse);
+        let (Some(account), Some(harness @ (Harness::Claude | Harness::Codex))) =
+            (account, harness)
+        else {
             return WallRead {
                 account: "none",
                 resets: None,
             };
         };
         let request = agent_runtime::accounts::PickRequest {
-            harness: harness.to_owned(),
+            harness,
             model: self.lane.model.clone().filter(|m| !m.is_empty()),
             exclude: Vec::new(),
             for_overseer: false,

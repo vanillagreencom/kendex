@@ -9385,7 +9385,7 @@ fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
     );
     let chosen = Chosen {
         entry: entry.to_owned(),
-        harness: harness.to_owned(),
+        harness: agent_runtime::harness::Harness::named(harness).unwrap(),
         host: None,
         model: model.to_owned(),
         class: None,

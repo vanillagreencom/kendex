@@ -2365,9 +2365,8 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
             binding_floor,
         } => {
             settings.accounts.get()?;
-            agent_runtime::harness::Harness::named(&harness)?;
             let request = agent_runtime::accounts::PickRequest {
-                harness,
+                harness: agent_runtime::harness::Harness::named(&harness)?,
                 model: native_model,
                 exclude,
                 for_overseer: false,
@@ -2414,19 +2413,25 @@ fn lane_verb(op: LaneOp, flags: &Flags) -> Result<serde_json::Value> {
                 exclude,
                 max_pct,
                 min_headroom_pct,
-                source: source_harness.map(|harness| agent_runtime::accounts::walk::Source {
-                    harness,
-                    flags: source_flags
-                        .map(|text| text.split_whitespace().map(str::to_owned).collect()),
-                }),
-                caller: caller_harness.map(|harness| agent_runtime::accounts::walk::Caller {
-                    harness,
-                    lane: caller_lane,
-                    model: caller_model,
-                    effort: caller_effort,
-                    pick_model: caller_pick_model,
-                    keep: caller_keep,
-                }),
+                source: source_harness
+                    .map(|word| agent_runtime::harness::Harness::named(&word))
+                    .transpose()?
+                    .map(|harness| agent_runtime::accounts::walk::Source {
+                        harness,
+                        flags: source_flags
+                            .map(|text| text.split_whitespace().map(str::to_owned).collect()),
+                    }),
+                caller: caller_harness
+                    .map(|word| agent_runtime::harness::Harness::named(&word))
+                    .transpose()?
+                    .map(|harness| agent_runtime::accounts::walk::Caller {
+                        harness,
+                        lane: caller_lane,
+                        model: caller_model,
+                        effort: caller_effort,
+                        pick_model: caller_pick_model,
+                        keep: caller_keep,
+                    }),
                 keep_unmeasured,
             };
             Ok(ops::accounts::walk(
