@@ -488,8 +488,9 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
         )
         .unwrap();
     };
-    // (arguments, a row the rich run draws marked, once its colour is off)
-    let verbs: [(&[&str], &str); 3] = [
+    // (arguments, a row the rich run draws marked, once its colour is off,
+    // and whether the run closes on the ledger at the project)
+    let verbs: [(&[&str], &str, bool); 3] = [
         (
             &[
                 "remove",
@@ -498,18 +499,21 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
                 "--scope",
                 "project",
             ],
-            "  ✓ changes:",
+            "  ✓ Save kendex.toml",
+            true,
         ),
         (
             &["update-pi", "--check", "--scope", "project"],
-            "  ! pi-widgets -",
+            "  ! pi-widgets",
+            false,
         ),
         (
             &["update-pi", "--scope", "project", "--leave"],
-            "  ✓ installed pi-widgets -> 2.0.0",
+            "  ✓ installed pi-widgets → 2.0.0",
+            false,
         ),
     ];
-    for (args, marked) in verbs {
+    for (args, marked, closes_at_project) in verbs {
         let run = |ui: &str, extra: &[(&str, &str)]| {
             fs::remove_dir_all(&home).unwrap();
             fs::create_dir_all(&home).unwrap();
@@ -565,6 +569,15 @@ fn converted_writing_verbs_print_a_pipes_lines_without_colour_and_wrap_at_80() {
         assert!(
             drawn.lines().map(stripped).any(|line| line == marked),
             "{args:?}: no marked row {marked:?}: {rich:?}"
+        );
+        // The closing line's place is the project root, past 80 cells,
+        // whole on a line of its own.
+        let root = project.canonicalize().unwrap();
+        let root = kendex_core::paths::slashed(&root);
+        assert_eq!(
+            drawn.lines().map(stripped).any(|line| line.trim() == root),
+            closes_at_project,
+            "{args:?}: {rich:?}"
         );
         // A path wider than the line is the one thing drawn past it, whole
         // and alone after its indent.

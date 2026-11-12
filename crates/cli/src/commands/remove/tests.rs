@@ -20,8 +20,9 @@ fn trash(root: &std::path::Path, name: &str) -> PlannedOp {
 /// A bundle removal's preview and what it wrote, in both renderings: the
 /// declaration it drops, the one it keeps removed, each install it takes
 /// with its reason and each it keeps with what still wants it, then the
-/// writes under `changes:`. The plain lines are the ones scripts read
-/// today; with the declaration kept, the removal's reason is left off.
+/// writes under `changes:`, a section rich. The plain lines are the ones
+/// scripts read today; with the declaration kept, the removal's reason is
+/// left off.
 #[test]
 #[allow(clippy::expect_used)]
 fn a_removal_says_what_it_drops_takes_and_keeps_then_what_it_wrote() {
@@ -74,7 +75,8 @@ fn a_removal_says_what_it_drops_takes_and_keeps_then_what_it_wrote() {
                 "  <36>•</> keeping skill github removed: [suppressed] in kendex.toml",
                 "  <36>•</> removing skill alpha for Claude Code — part of the starter bundle",
                 "  <36>•</> keeping skill beta for Claude Code — asked for",
-                "  <32>✓</> changes:",
+                "",
+                "<1;32>changes</>  <90>1</>",
                 "  <32>✓</> Trash skill alpha's files",
             ],
         ),
@@ -93,7 +95,8 @@ fn a_removal_says_what_it_drops_takes_and_keeps_then_what_it_wrote() {
                 "  <36>•</> keeping skill github removed: [suppressed] in kendex.toml",
                 "  <36>•</> removing skill alpha for Claude Code",
                 "  <36>•</> keeping skill beta for Claude Code — asked for",
-                "  <32>✓</> changes:",
+                "",
+                "<1;32>changes</>  <90>1</>",
                 "  <32>✓</> Trash skill alpha's files",
             ],
         ),
@@ -128,7 +131,8 @@ fn a_written_op_keeps_its_path_whole() {
     assert_eq!(
         tagged(&changes_lines(&rich(60), &[op])),
         [
-            "  <32>✓</> changes:",
+            "",
+            "<1;32>changes</>  <90>1</>",
             "  <32>✓</> Trash skill alpha's files at",
             "    /home/a/My Projects/app/.claude/skills/alpha",
         ]
@@ -153,10 +157,10 @@ fn the_sweep_asks_with_the_changes_a_yes_adds() {
             true,
             &[
                 "! also remove skill github, which nothing needs anymore?",
-                "  1 more change; --sweep or --no-sweep answers this without asking",
+                "  This adds 1 change. To skip this question, use --sweep or --no-sweep.",
                 "  - Trash skill github's files",
-                "  [s] remove them too · [Enter] keep them",
-                "  › remove them too",
+                "  [s] remove too · [Enter] keep",
+                "  › remove too",
             ],
         ),
         (
@@ -166,10 +170,10 @@ fn the_sweep_asks_with_the_changes_a_yes_adds() {
             &[
                 "",
                 "<33>!</> <1>also remove skill github, which nothing needs anymore?</>",
-                "  1 more change; --sweep or --no-sweep answers this without asking",
+                "  This adds 1 change. To skip this question, use --sweep or --no-sweep.",
                 "  <36>•</> Trash skill github's files",
-                "  <34>[s]</> <90>remove them too</><90> · </><1;34>[Enter]</> <1>keep them</>",
-                "  <34>›</> <1>keep them</>",
+                "  <34>[s]</> <90>remove too</><90> · </><1;34>[Enter]</> <1>keep</>",
+                "  <34>›</> <1>keep</>",
             ],
         ),
     ];

@@ -644,19 +644,24 @@ fn plan_lines(style: &Style, plan: &ScopePlan) -> Vec<(Stream, Vec<String>)> {
         plan.rows
             .iter()
             .flat_map(|row| {
-                style.report_package(row_status(row), &row.name, &versions(row), &describe(row))
+                style.report_package(
+                    row_status(row),
+                    &row.name,
+                    row.version.as_deref(),
+                    target(row),
+                    &describe(row),
+                )
             })
             .collect(),
     ));
     let mut said = Vec::new();
     for (name, reason) in &plan.notes {
-        said.extend(style.report_row(
+        said.extend(style.report_keyed(
             ui::Status::Failed,
-            &[Span::Prose(&format!(
-                "not-evaluated={name} scope={} : {reason}",
-                plan.label
-            ))],
+            &format!("not-evaluated={name} scope={} : {reason}", plan.label),
             "  ! ",
+            &format!("{name}: kendex could not check it"),
+            reason,
         ));
     }
     for error in &plan.shadows.errors {
@@ -693,15 +698,14 @@ fn row_status(row: &Row) -> ui::Status {
     }
 }
 
-fn versions(row: &Row) -> String {
-    let installed = row.version.as_deref().unwrap_or("-");
+/// The version an npm package can move to, where it differs from the one
+/// installed; kendex settles every other package itself.
+fn target(row: &Row) -> Option<&str> {
     match &row.status {
         Status::Npm {
             latest: Some(latest),
-        } if latest != installed => {
-            format!("{installed} -> {latest}")
-        }
-        _ => installed.to_owned(),
+        } if row.version.as_deref() != Some(latest.as_str()) => Some(latest),
+        _ => None,
     }
 }
 
@@ -803,18 +807,6 @@ fn closing_lines(style: &Style, updated: usize, clean: bool) -> Vec<String> {
     }
 }
 
-/// A package that landed, as it lands: on stdout with the plan's rows.
-fn landed_lines(style: &Style, verb: &str, name: &str, version: Option<&str>) -> Vec<String> {
-    style.report_row(
-        ui::Status::Done,
-        &[Span::Prose(&format!(
-            "{verb} {name} -> {}",
-            version.unwrap_or("?")
-        ))],
-        "  ",
-    )
-}
-
 /// What one scope's install pass did: the packages that landed, and the
 /// names of the ones that did not, each already said with its cause.
 #[derive(Default)]
@@ -858,12 +850,10 @@ fn install_rows(
         match pi_ext::install(env, &plan.root, source_dir, decl.enabled) {
             Ok(outcome) => {
                 installed.landed.push(row.name.clone());
-                ui::stdout(&landed_lines(
-                    &style,
-                    verb,
-                    &row.name,
-                    outcome.version.as_deref(),
-                ));
+                ui::stdout(
+                    &style
+                        .report_landed(&format!("{verb} {}", row.name), outcome.version.as_deref()),
+                );
                 for bin in &outcome.unbuilt_bins {
                     ui::stderr(&style.report_row(
                         ui::Status::Decision,
@@ -1014,9 +1004,11 @@ mod tests {
 
     /// A scope's plan in both renderings, a row per status the verb reads
     /// and a package it could not evaluate. Plain keeps the columns on
-    /// stdout and the scope and the refusal key on stderr; rich marks each
-    /// row with what it needs: done, an install this run makes, a package
-    /// blocked from installing, and a notice for what kendex leaves alone.
+    /// stdout, their `-` for no version, and the scope and the
+    /// `not-evaluated=` key on stderr; rich marks each row with what it
+    /// needs: done, an install this run makes, a package blocked from
+    /// installing, and a notice for what kendex leaves alone. Rich leaves a
+    /// missing version off and says the unevaluated package in words.
     #[test]
     fn a_plan_draws_each_status_with_what_it_needs() {
         let source_dir = PathBuf::from("/catalog/pi-extensions/pi-widgets");
@@ -1080,15 +1072,16 @@ mod tests {
                     "out|    <90>up to date</>",
                     "out|  <33>!</> pi-stale 1.0.0",
                     "out|    <90>stale (package or install record differs)</>",
-                    "out|  <33>!</> pi-missing -",
+                    "out|  <33>!</> pi-missing",
                     "out|    <90>not installed yet</>",
                     "out|  <31>✗</> pi-twice 1.0.0",
                     "out|    <90>blocked: pi-twice would register twice</>",
                     "out|  <36>•</> pi-left 0.1.0",
                     "out|    <90>nothing this place lists supplies it</>",
-                    "out|  <36>•</> pi-npm 1.0.0 -> 2.0.0",
+                    "out|  <36>•</> pi-npm 1.0.0 → 2.0.0",
                     "out|    <90>npm, update available</>",
-                    "err|  <31>✗</> not-evaluated=pi-broken scope=user : source cat is not readable",
+                    "err|  <31>✗</> pi-broken: kendex could not check it",
+                    "err|    <90>source cat is not readable</>",
                 ],
             ),
             (
@@ -1156,8 +1149,8 @@ mod tests {
             assert_eq!(tagged(&closing_lines(&rich(80), updated, clean)), want_rich);
         }
         let landed = |style: &Style| {
-            let mut lines = landed_lines(style, "updated", "pi-stale", Some("2.0.0"));
-            lines.extend(landed_lines(style, "installed", "pi-missing", None));
+            let mut lines = style.report_landed("updated pi-stale", Some("2.0.0"));
+            lines.extend(style.report_landed("installed pi-missing", None));
             lines
         };
         assert_eq!(
@@ -1167,8 +1160,8 @@ mod tests {
         assert_eq!(
             tagged(&landed(&rich(80))),
             [
-                "  <32>✓</> updated pi-stale -> 2.0.0",
-                "  <32>✓</> installed pi-missing -> ?",
+                "  <32>✓</> updated pi-stale → 2.0.0",
+                "  <32>✓</> installed pi-missing",
             ]
         );
     }

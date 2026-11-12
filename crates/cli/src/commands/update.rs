@@ -219,11 +219,7 @@ fn run_on_with_source(
         return Ok(());
     };
 
-    ui::stderr(&style.report_row(
-        Status::Notice,
-        &[Span::Prose(&format!("updating {current} → {latest}"))],
-        "",
-    ));
+    ui::stderr(&style.report_move(Status::Notice, "updating", current, latest, ""));
     // The command's own baked version is the state marker for the whole
     // install, so it is the last thing written. Any failure before it
     // leaves the old command in place, the next run still reads the feed

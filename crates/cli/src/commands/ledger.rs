@@ -107,8 +107,8 @@ pub fn say_ledger_with(
     scored: &[ItemSafety],
     folded: Folded,
 ) {
-    let (line, steps) = ledger(scope, wrote, blocked, pi_left, scored, folded);
-    ui::ledger(&line, &steps);
+    let (outcome, steps) = ledger(scope, wrote, blocked, pi_left, scored, folded);
+    ui::ledger_at(&scope_label(scope), &outcome, &steps);
 }
 
 /// The same outcomes, from a run that acted on none of them. A preview
@@ -122,8 +122,8 @@ pub fn say_preview(
     pi_left: Option<PiLeft>,
     scored: &[ItemSafety],
 ) {
-    let (line, _) = ledger(scope, wrote, blocked, pi_left, scored, Folded::None);
-    ui::ledger(&line, &[]);
+    let (outcome, _) = ledger(scope, wrote, blocked, pi_left, scored, Folded::None);
+    ui::ledger_at(&scope_label(scope), &outcome, &[]);
 }
 
 fn ledger(
@@ -212,10 +212,7 @@ fn ledger(
             steps.push(ui::Step::Hint("folded — --verbose draws them".to_owned()));
         }
     }
-    (
-        format!("{}: {}", scope_label(scope), parts.join(" · ")),
-        steps,
-    )
+    (parts.join(" · "), steps)
 }
 
 /// The next step for the skipped part. An action is named only where it
@@ -403,8 +400,8 @@ mod tests {
             ),
         ];
         for (case, scored, want) in rows {
-            let (line, _) = ledger(&Scope::Global, wrote(), &[], None, scored, Folded::None);
-            assert_eq!(line, format!("global: {want}"), "{case}");
+            let (outcome, _) = ledger(&Scope::Global, wrote(), &[], None, scored, Folded::None);
+            assert_eq!(outcome, *want, "{case}");
         }
     }
 }

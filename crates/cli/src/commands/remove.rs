@@ -30,19 +30,20 @@ const USAGE: &str =
     "usage: kendex remove <name>… [--kind KIND] [--keep-declaration] [--scope project|global|all]";
 
 /// The answer to the sweep question: `s` takes what nothing needs anymore
-/// with the removal, and the default keeps it, as `--no-sweep` does.
+/// with the removal, and the default keeps it, as `--no-sweep` does. The
+/// labels name no count, since the question can name one leftover or more.
 const SWEEP: [(Choice<'static>, bool); 2] = [
     (
         Choice {
             key: Key::Char('s'),
-            label: "remove them too",
+            label: "remove too",
         },
         true,
     ),
     (
         Choice {
             key: Key::Enter,
-            label: "keep them",
+            label: "keep",
         },
         false,
     ),
@@ -129,10 +130,13 @@ struct Planned {
 }
 
 /// The sweep a yes writes: the plan that also takes what nothing needs
-/// anymore, and the changes it adds to the plan that keeps it.
+/// anymore, the changes it adds to the plan that keeps it, and the
+/// leftovers it removes. A leftover the sweep holds, such as an edited
+/// copy, is not among them.
 struct Sweep {
     report: EngineReport,
     added: Consent,
+    removes: Vec<String>,
 }
 
 type Planning = Result<Planned, Box<dyn std::error::Error>>;
@@ -172,19 +176,27 @@ fn plan_scopes(
 /// The sweep as the plan that takes the leftovers too, where nobody
 /// answered it and a yes adds a change. A leftover the sweep would hold,
 /// an edited copy or a package with nothing to write, adds none, and a
-/// sweep that adds no change is not asked.
+/// sweep that adds no change is not asked. What it removes is read off
+/// the same plan, never off `sweepable`, which lists a held leftover too.
 fn sweep_of(
     env: &Env,
     prepared: &ops::PreparedRemoval,
     report: &EngineReport,
 ) -> Result<Option<Sweep>, Box<dyn std::error::Error>> {
     let sweeping = prepared.plan_sweeping(env)?;
-    let added = Approved::of(report, &Consent::of(report, &[]))
-        .added(&sweeping)
-        .consent;
+    let added = Approved::of(report, &Consent::of(report, &[])).added(&sweeping);
+    let mut removes: Vec<String> = Vec::new();
+    for change in &added.set_changes {
+        let name = format!("{} {}", change.kind.name(), change.name);
+        if change.direction == SetDirection::Remove && !removes.contains(&name) {
+            removes.push(name);
+        }
+    }
+    let added = added.consent;
     Ok((!added.is_empty()).then_some(Sweep {
         report: sweeping,
         added,
+        removes,
     }))
 }
 
@@ -192,28 +204,24 @@ fn sweep_of(
 /// is the whole point of the step, so with nobody to ask and no flag the
 /// removal stops before any scope writes, naming the flags that answer it.
 fn refuse_an_unanswerable_sweep(planned: &[Planning]) -> CliResult {
-    let leftovers: Vec<String> = planned
+    let leftovers: Vec<&str> = planned
         .iter()
         .flatten()
-        .filter(|planned| planned.sweep.is_some())
-        .flat_map(|planned| leftover_names(&planned.report))
+        .filter_map(|planned| planned.sweep.as_ref())
+        .flat_map(|sweep| sweep.removes.iter().map(String::as_str))
         .collect();
     if leftovers.is_empty() || answerable(false) {
         return Ok(());
     }
+    let them = match leftovers.len() {
+        1 => "it",
+        _ => "them",
+    };
     Err(format!(
-        "removing this leaves {} behind that nothing needs anymore — pass --sweep to remove them too, or --no-sweep to keep them",
+        "removing this leaves {} behind that nothing needs anymore. To remove {them} too, use --sweep. To keep {them}, use --no-sweep.",
         leftovers.join(", ")
     )
     .into())
-}
-
-fn leftover_names(report: &EngineReport) -> Vec<String> {
-    report
-        .sweepable
-        .iter()
-        .map(|change| format!("{} {}", change.kind.name(), change.name))
-        .collect()
 }
 
 /// What one scope's removal came to.
@@ -271,7 +279,7 @@ fn remove_scope(
 /// reconciles a declaration writes as well as trashes, and a list of
 /// writes under the word "removed" says the wrong thing.
 fn changes_lines(style: &Style, ops: &[PlannedOp]) -> Vec<String> {
-    let mut lines = style.report_row(Status::Done, &[Span::Prose("changes:")], "");
+    let mut lines = style.section("changes", ops.len(), Status::Done);
     for op in ops {
         lines.extend(style.report_op(Status::Done, op, "  - "));
     }
@@ -359,11 +367,7 @@ fn answer(
     let Some(sweep) = sweep else {
         return Ok(report);
     };
-    ui::stderr(&sweep_question(
-        style,
-        &leftover_names(&report),
-        &sweep.added,
-    ));
+    ui::stderr(&sweep_question(style, &sweep.removes, &sweep.added));
     match ui::choose(&SWEEP)? {
         true => Ok(sweep.report),
         false => Ok(report),
@@ -371,7 +375,7 @@ fn answer(
 }
 
 /// The sweep as a decision: what it would take, how many changes that is
-/// and the flags that answer it unasked, then each change a yes adds. The
+/// and the flags that skip the question, then each change a yes adds. The
 /// keys are drawn under it by the question itself.
 fn sweep_question(style: &Style, leftovers: &[String], added: &Consent) -> Vec<String> {
     let count = added.count();
@@ -381,7 +385,7 @@ fn sweep_question(style: &Style, leftovers: &[String], added: &Consent) -> Vec<S
             leftovers.join(", ")
         ),
         Some(&format!(
-            "{count} more change{}; --sweep or --no-sweep answers this without asking",
+            "This adds {count} change{}. To skip this question, use --sweep or --no-sweep.",
             match count {
                 1 => "",
                 _ => "s",

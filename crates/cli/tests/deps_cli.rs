@@ -553,6 +553,59 @@ fn a_sweep_that_would_hold_its_leftover_asks_nothing() {
     assert_eq!(fs::read_to_string(&edited).unwrap(), body, "{said}");
 }
 
+/// Two leftovers, one of them edited: the sweep holds the edited copy, so
+/// the refusal with nobody to ask and the question at a terminal name only
+/// the leftover a yes removes, and `s` removes that one and keeps the
+/// edited copy.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_sweep_names_only_the_leftovers_a_yes_removes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = &rooted(&tmp);
+    let project = project(&tmp);
+    skill(home, "dev", "dependencies:\n  required: [github, linear]\n");
+    let refreshed = kendex(home, &project, &["refresh", "--yes"]);
+    assert!(
+        refreshed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&refreshed.stderr)
+    );
+    assert!(project.join(".claude/skills/linear").exists());
+    let edited = project.join(".claude/skills/github/SKILL.md");
+    let body = format!("{}\nA local note.\n", fs::read_to_string(&edited).unwrap());
+    fs::write(&edited, &body).unwrap();
+
+    let refused = kendex(home, &project, &["remove", "dev"]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("leaves skill linear behind"), "{said}");
+    assert!(!said.contains("skill github"), "{said}");
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
+        .args(["remove", "dev"])
+        .current_dir(&project)
+        .env_clear()
+        .envs(test_util::fixture_env(home))
+        .env("KENDEX_UI", "plain")
+        .env("PATH", std::env::var("PATH").unwrap_or_default());
+    let output = crate::pty::conversation(
+        command,
+        &[("[s] remove too", "s")],
+        crate::pty::Stderr::Terminal,
+    );
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{said}");
+    assert!(
+        said.lines()
+            .any(|line| line == "! also remove skill linear, which nothing needs anymore?"),
+        "{said}"
+    );
+    assert!(!project.join(".claude/skills/dev").exists(), "{said}");
+    assert!(!project.join(".claude/skills/linear").exists(), "{said}");
+    assert_eq!(fs::read_to_string(&edited).unwrap(), body, "{said}");
+}
+
 /// The sweep asked at a terminal, by its keys: `s` takes what nothing
 /// needs anymore with the removal, Enter keeps it, and Escape cancels
 /// before anything is written. Each run asks the question the real plans
@@ -583,7 +636,7 @@ fn the_sweep_is_answered_by_its_keys() {
 
         let output = crate::pty::conversation(
             command,
-            &[("[s] remove them too", key)],
+            &[("[s] remove too", key)],
             crate::pty::Stderr::Terminal,
         );
 
@@ -593,7 +646,7 @@ fn the_sweep_is_answered_by_its_keys() {
             .lines()
             .map(str::trim_end)
             .skip_while(|line| !line.starts_with("! also remove "))
-            .take_while(|line| !line.contains("[s] remove them too"))
+            .take_while(|line| !line.contains("[s] remove too"))
             .collect();
         let settings = format!(
             "  - Move {} to the trash, nothing of its own left",
@@ -603,7 +656,7 @@ fn the_sweep_is_answered_by_its_keys() {
             question,
             [
                 "! also remove skill github, which nothing needs anymore?",
-                "  3 more changes; --sweep or --no-sweep answers this without asking",
+                "  This adds 3 changes. To skip this question, use --sweep or --no-sweep.",
                 "  - Move skill github's files to the trash",
                 "  - Move skill github's files to the trash",
                 &settings,

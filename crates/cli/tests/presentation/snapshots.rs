@@ -601,7 +601,7 @@ fn a_late_warning_lands_above_the_closing_ledger() {
             .position(|line| line.contains("snapshot not derived"));
         let closed = printed
             .lines()
-            .position(|line| line.contains(": applied ") || line.contains(": up to date"));
+            .position(|line| line.contains("applied ") || line.contains("up to date"));
         assert!(
             warned.is_some(),
             "the fixture could not make the snapshot fail — running as root? ({ui}): {printed}"
