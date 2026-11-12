@@ -115,7 +115,9 @@ fi
 ''')
         # Every item's tree sits at the clone's one hosted path, as the real
         # command places it. Like the real command, exists answers for the
-        # item the tree there was created for, recorded beside it.
+        # item the tree there was created for, recorded beside it, and a
+        # reuse brings the tree to the base unless the row's tree holds work
+        # of its own (SSH_TEST_TREE_KEEPS).
         wt = self.source / ".agents/skills/worktree/scripts/worktree"
         self.executable(wt, '''#!/usr/bin/env bash
 set -euo pipefail
@@ -123,7 +125,9 @@ printf 'worktree %s\\n' "$*" >> "$SSH_TEST_LOG"
 path="$PWD-worktree"
 case "$1" in
 create)
-  if [[ -d "$path" ]]; then [[ " $* " == *" --reuse "* ]] || exit 75
+  if [[ -d "$path" ]]; then
+    [[ " $* " == *" --reuse "* ]] || exit 75
+    [[ -n "${SSH_TEST_TREE_KEEPS:-}" ]] || git -C "$path" checkout -q --detach "$(git rev-parse HEAD)"
   else
     [[ " $* " != *" --reuse "* ]] || exit 1
     git worktree add --detach "$path" >&2
@@ -1741,6 +1745,11 @@ touch node_modules/dep
                     link.parent.mkdir(parents=True, exist_ok=True)
                     link.symlink_to(clone / private_name)
             self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3, "changed": 1}\n')
+            if selector in ("divergent", "worktree-copies"):
+                # The reused tree keeps its own commit, the changed lockfile in it.
+                env["SSH_TEST_TREE_KEEPS"] = "1"
+                (tree / "ui/package-lock.json").write_text('{"lockfileVersion": 3, "changed": 1}\n')
+                self.git(tree, "commit", "-qam", "item work")
             expected = {private_name: ((clone / private_name).read_bytes(), (clone / private_name).stat().st_mode)
                         for private_name in private_names}
             expected_links = {private_name: os.readlink(clone / private_name)
@@ -2127,6 +2136,123 @@ touch node_modules/dep
         self.assertEqual(second.returncode, 0, second.stderr)
         self.assertEqual(second.stdout, first.stdout)
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+
+    def git(self, path, *args):
+        """Git in a fixture checkout, committing as the fixture's author."""
+        return subprocess.run([self.env["REAL_GIT"], "-C", str(path), "-c", "user.name=Test",
+                               "-c", "user.email=test@example.org", *args],
+                              env=self.git_env, check=True, capture_output=True).stdout
+
+    def real_worktree_source(self, symlinks):
+        """The source on main with the worktree skill's own scripts and links."""
+        self.copy_tree(PACKAGE.parent / "worktree/scripts", self.source / ".agents/skills/worktree/scripts",
+                       dirs_exist_ok=True)
+        (self.source / "kendex.settings.toml").write_text(
+            f'[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = "{symlinks}"\n')
+        with (self.source / ".gitignore").open("a") as ignore:
+            ignore.write("node_modules/\n")
+        for args in (("branch", "-M", "main"), ("add", "."), ("commit", "-qm", "real worktree fixture")):
+            self.git(self.source, *args)
+
+    def commit_in_tree(self, path, relative, text):
+        (path / relative).write_text(text)
+        self.git(path, "add", "--", relative)
+        self.git(path, "commit", "-qm", "item work")
+        return self.git(path, "rev-parse", "HEAD").decode().strip()
+
+    @staticmethod
+    def fields(output):
+        return dict(field.split("=", 1) for field in output.decode().strip().split("\t"))
+
+    def relaunch_after_an_added_dependency(self):
+        """A first launch at the base's lockfile, then the item's own commit
+        adding a dependency to its tree, then a relaunch; returns the tree,
+        the item's lockfile and the relaunch's npm calls."""
+        self.executable(self.bin / "npm", '''#!/usr/bin/env bash
+set -euo pipefail
+printf 'npm %s in %s\\n' "$*" "$PWD" >> "$SSH_TEST_LOG"
+mkdir -p node_modules
+find node_modules -mindepth 1 -delete
+cp package-lock.json node_modules/installed-lockfile
+''')
+        self.real_worktree_source(".env.local ui/node_modules")
+        self.seed_source("ui/package.json", '{"name": "ui"}\n')
+        self.seed_source("ui/package-lock.json", '{"lockfileVersion": 3}\n')
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        added = '{"lockfileVersion": 3, "packages": {"node_modules/added": {"version": "1.0.0"}}}\n'
+        (path / "ui/package.json").write_text('{"name": "ui", "dependencies": {"added": "1.0.0"}}\n')
+        self.git(path, "add", "--", "ui/package.json")
+        self.commit_in_tree(path, "ui/package-lock.json", added)
+        mark = len(self.log_since(0))
+        second = self.create("--relaunch")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        return path, added, [line for line in self.log_since(mark) if line.startswith("npm ")]
+
+    def test_relaunch_installs_the_dependencies_the_items_own_tree_commits(self):
+        """KEN-5007: a relaunch installs the lockfile the item's tree commits
+        at its head, a dependency absent from the base included, into the
+        node_modules the tree links; the clone's own pair is put back."""
+        path, added, installs = self.relaunch_after_an_added_dependency()
+        clone = Path(self.row["clone"])
+        self.assertEqual(installs, [f"npm ci --no-audit --no-fund in {clone / 'ui'}"])
+        self.assertEqual((path / "ui/node_modules/installed-lockfile").read_text(), added)
+        blob = self.git(path, "rev-parse", "HEAD:ui/package-lock.json").decode().strip()
+        self.assertEqual((clone / "ui/node_modules/.lane-host-install").read_text().strip(), blob)
+        self.assertEqual(self.git(clone, "status", "--porcelain", "--", "ui"), b"")
+
+    def test_control_relaunch_reading_the_base_lockfile_installs_the_base_set(self):
+        original = self.script.read_text()
+        rule = '  declared="$tree"\n'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, original.replace(rule, ""))
+            with self.assertRaises(AssertionError):
+                self.test_relaunch_installs_the_dependencies_the_items_own_tree_commits()
+            path = Path(self.fields(self.create("--relaunch").stdout)["path"])
+            self.assertEqual((path / "ui/node_modules/installed-lockfile").read_text(), '{"lockfileVersion": 3}\n')
+
+    def relaunch_over_a_conflicting_base(self):
+        """A first launch, the item's commit to a file, then the base moving
+        that file another way, then a relaunch; returns the tree, the item's
+        head and the relaunch."""
+        self.real_worktree_source(".env.local")
+        self.seed_source("shared.txt", "base\n")
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        head = self.commit_in_tree(path, "shared.txt", "item\n")
+        (path / "tmp").mkdir(exist_ok=True)
+        (path / "tmp/lane-state").write_text("kept\n")
+        self.seed_source("shared.txt", "moved base\n")
+        return path, head, self.create("--relaunch")
+
+    def test_relaunch_over_a_conflicting_base_keeps_the_items_work(self):
+        """KEN-2965: a relaunch whose rebase onto the base conflicts keeps the
+        item's tree on its own head, its commits and files intact, and answers
+        tree=unrebased on its create line."""
+        path, head, result = self.relaunch_over_a_conflicting_base()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = self.fields(result.stdout)
+        self.assertEqual((fields["path"], fields["tree"]), (str(path), "unrebased"))
+        self.assertEqual(self.git(path, "rev-parse", "HEAD").decode().strip(), head)
+        self.assertEqual((path / "shared.txt").read_text(), "item\n")
+        self.assertEqual((path / "tmp/lane-state").read_text(), "kept\n")
+        self.assertEqual(self.git(path, "status", "--porcelain"), b"")
+
+    def test_control_relaunch_without_the_keep_fails_the_create(self):
+        original = self.script.read_text()
+        rule = 'REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]'
+        self.assertEqual(original.count(rule), 1)
+        with tempfile.TemporaryDirectory() as control:
+            self.script = Path(control) / "orch/scripts/lane-host-ssh"
+            self.executable(self.script, original.replace(rule, 'REUSE_KEEPING = ["--reuse"]'))
+            with self.assertRaises(AssertionError):
+                self.test_relaunch_over_a_conflicting_base_keeps_the_items_work()
+            failed = self.create("--relaunch")
+            self.assertEqual((failed.returncode, failed.stdout), (1, b""), failed.stderr)
 
     def test_relaunch_opens_origin_only_landing_branch(self):
         """A cloud handoff pushes its branch before a static host has a tree."""

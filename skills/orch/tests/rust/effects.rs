@@ -6186,6 +6186,44 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
+/// A create whose line adds `tree=unrebased`, the shipped ssh provider's
+/// answer where it kept the item's retained tree on its own head
+/// (`lane-host-ssh-tests.py`'s conflicting relaunch): the launch goes on in
+/// that tree, its observation names the tree, and the brief closes by
+/// telling the lane its restack is its own.
+#[test]
+fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let answers_path = world.scripts.join("lane-host.json");
+    let mut answers: Value =
+        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+    let account = world.runner.state_dir().display().to_string();
+    answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] = json!({
+        "stdout": format!("ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\ttree=unrebased\n", world.host())
+    });
+    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    let brief = dir.path().join("brief.md");
+    std::fs::write(&brief, "/orch start KEN-H\n").unwrap();
+    let mut request = world.request();
+    request["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["mail_root"], world.host(), "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["tree"], "unrebased",
+        "{report}"
+    );
+    let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
+    assert!(
+        ssh.contains("this tree is not rebased. The restack is yours to run."),
+        "the lane is told its tree is kept unrebased: {ssh}"
+    );
+    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
 /// Through the real `lane-host`: a launch whose `op` ends inside the create
 /// is failed by the reconcile from the phase the launch recorded before it;
 /// a provider a signal ends mid-create fails the launch

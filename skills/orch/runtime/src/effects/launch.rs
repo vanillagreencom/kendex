@@ -68,6 +68,10 @@ fn closed_by(text: &str, line: &str) -> String {
     }
 }
 
+/// What a hosted lane's brief closes with where the provider kept the item's
+/// retained tree on its own head (`tree=unrebased`).
+const UNREBASED_TEXT: &str = "Your retained work is kept as it stands: its rebase onto the base branch conflicted and was aborted, so this tree is not rebased. The restack is yours to run.";
+
 fn mode_sentence(mode: LaneOutput) -> &'static str {
     match mode {
         LaneOutput::Quiet => QUIET_TEXT,
@@ -1189,6 +1193,10 @@ fn hosted_launch(
     if let Err(cause) = hosted_marker(&scripts, provider, &r.item, &created.path, r.refresh) {
         return failed(operation, &cause);
     }
+    let brief = match brief {
+        Some(text) if created.unrebased => Some(closed_by(&text, UNREBASED_TEXT)),
+        brief => brief,
+    };
     let command = match hosted_command(run.settings, r, harness, &created, brief.as_deref()) {
         Ok(command) => command,
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
@@ -1200,7 +1208,7 @@ fn hosted_launch(
     // A hosted lane's sessions live on its host and bind nothing here, so
     // every hosted launch starts the harness fresh and the context
     // continues through the handoff record.
-    open_and_confirm(
+    let mut outcome = open_and_confirm(
         operation,
         r,
         &server,
@@ -1212,7 +1220,11 @@ fn hosted_launch(
         Sessions::Hosted {
             mail_root: created.path.clone(),
         },
-    )
+    )?;
+    if created.unrebased {
+        outcome.annotate("tree", json!("unrebased"));
+    }
+    Ok(outcome)
 }
 
 /// The launch record on the host, verified rather than trusted: the
