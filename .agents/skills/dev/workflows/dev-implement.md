@@ -251,13 +251,13 @@ Based on the FINAL validated code, decide which extra QA passes the change needs
 | Trigger | Signal |
 |---------|--------|
 | Unsafe code, atomics, lock-free | `needs-safety-audit` |
-| Hot path, latency-sensitive, or shared/main-build perf risk | `needs-perf-test` |
+| A named hot-path, latency-sensitive or shared-build operation whose cost the change can alter, with a measurement route (below) | `needs-perf-test` |
 | New module, public API | `needs-review` |
 | Changed view, layout, styling or UI copy | `needs-ui-review` |
 
 A round that raises `needs-ui-review`, or changes a file a `QA_UI_PATHS` glob matches (`.agents/skills/orch/scripts/orch-env QA_UI_PATHS ""`), builds each changed view to the polish bar in [code-quality references/ui.md](../../code-quality/references/ui.md) and the design-system doc `QA_UI_DESIGN_DOC` names (`.agents/skills/orch/scripts/orch-env QA_UI_DESIGN_DOC ""`), and captures its screenshot set by [code-quality references/ui.md § Screenshots](../../code-quality/references/ui.md#screenshots), listed in § 9.1's Screenshots section. The `needs-ui-review` QA pass judges each view from that set.
 
-Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected.
+`needs-perf-test` needs a performance surface and a measurement route. The surface is the operation or path the final code changes, and the reason the change can alter its cost. A broad label such as "shared build" gives no reason, and an identity or permission change alone has no performance surface. The route is the project's documented benchmark, runner or regression check, with a workload and a baseline that can answer that concern. Work isolated behind a development-only feature gate does not take `needs-perf-test`: run the feature-gated checks locally and signal only if shared or feature-off paths are affected. Record the surface, the reason and the route in the Completion Summary's Key Decisions (§ 9.1). A real concern with no measurement route takes no signal: record the concern and the exact missing prerequisite (workload, baseline or runner) there, for disposition. Never report a missing benchmark as evidence that the change is safe or at risk.
 
 A signal is never silently dropped: every triggered row appears in the artifact and in the return's `QA:` line, and `none` is an explicit answer, not a default.
 
