@@ -148,7 +148,9 @@ pub fn end_notice(run_id: &str, run_dir: &str, outcome: StageOutcome) -> NoticeT
         | StageOutcome::NoVerdict
         | StageOutcome::Lost
         | StageOutcome::Stopped
-        | StageOutcome::NoChange => String::new(),
+        | StageOutcome::NoChange
+        | StageOutcome::HandedOver
+        | StageOutcome::PassExcused => String::new(),
     };
     NoticeText {
         key: format!("validate-{run_id}"),
@@ -644,6 +646,7 @@ pub fn reuse(stages: &[Stage], want: &Want, declaration: &proof::Declaration) ->
             head: None,
             base: (!want.base.is_empty()).then(|| want.base.clone()),
             round: None,
+            exception: None,
         },
         declaration,
         &mut |_| None,

@@ -433,6 +433,10 @@ enum Verb {
         /// round, submit, restack or recovery.
         #[arg(long, value_parser = parse_need)]
         need: orch_runtime::ops::proof::Need,
+        /// The exception {by, id, excused} a round closed `pass-excused`
+        /// began with; its failed run proves its tree for this read alone.
+        #[arg(long)]
+        exception_file: Option<std::path::PathBuf>,
     },
 }
 
@@ -2063,6 +2067,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             base,
             round,
             need,
+            exception_file,
         } => {
             let settings = resolve_settings(&flags)?;
             let request = orch_runtime::ops::proof::ReadProof {
@@ -2071,6 +2076,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 head,
                 base,
                 round,
+                exception: exception_file
+                    .as_deref()
+                    .map(orch_runtime::state::Exception::read)
+                    .transpose()?,
             };
             serde_json::to_value(orch_runtime::proof::run(&settings, &item, &request)?)?
         }

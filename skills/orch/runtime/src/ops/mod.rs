@@ -941,6 +941,8 @@ mod tests {
                 Request::BeginRound(BeginRound {
                     kind: RoundKind::Dev,
                     body_revision: None,
+                    exception: None,
+                    group: None,
                 }),
                 &fleet_path,
                 Kind::Item,
@@ -965,6 +967,8 @@ mod tests {
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
                 body_revision: None,
+                exception: None,
+                group: None,
             }),
         )
         .unwrap_err();
@@ -1527,6 +1531,8 @@ mod tests {
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
                 body_revision: None,
+                exception: None,
+                group: None,
             }),
             &env(),
         )
@@ -1540,6 +1546,8 @@ mod tests {
             &Request::BeginRound(BeginRound {
                 kind: RoundKind::Dev,
                 body_revision: None,
+                exception: None,
+                group: None,
             }),
             &other,
         )
@@ -1563,6 +1571,8 @@ mod tests {
                 Request::BeginRound(BeginRound {
                     kind: RoundKind::Review,
                     body_revision: None,
+                    exception: None,
+                    group: None,
                 }),
                 "begin-round",
             ),

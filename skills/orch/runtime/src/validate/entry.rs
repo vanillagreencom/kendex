@@ -600,6 +600,7 @@ fn require_proof(
         head: Some(expected.into()),
         base: base.map(str::to_owned),
         round: None,
+        exception: None,
     };
     let result = crate::ops::proof::read(
         &stages,

@@ -97,6 +97,8 @@ fn begin(kind: RoundKind) -> Request {
     Request::BeginRound(BeginRound {
         kind,
         body_revision: None,
+        group: None,
+        exception: None,
     })
 }
 
@@ -3933,6 +3935,424 @@ mod dev_artifacts {
             assert!(receipts.is_empty(), "{want}: {receipts:?}");
         }
     }
+
+    /// The declared command a passing run runs, the world's own.
+    const PASSING: &str = "printf 'validate: lanes=unit selection=battery\\n'";
+
+    impl World {
+        /// The delegating side's two steps through the runtime: a dev round
+        /// begun, in `group` where given, and the checkout's HEAD recorded
+        /// as its base. Returns the minted round.
+        fn begin_round(&self, group: Option<(u32, u32)>) -> String {
+            let mut request = json!({"op": "begin-round", "kind": "dev"});
+            if let Some((n, of)) = group {
+                request["group"] = json!({"n": n, "of": of});
+            }
+            self.begin_with(&request)
+        }
+        fn begin_with(&self, request: &Value) -> String {
+            let begun = result(&self.run(&[
+                "op",
+                "--item",
+                "issue-8",
+                "--request-json",
+                &request.to_string(),
+            ]));
+            let round = begun["report"]["round_id"].as_str().unwrap().to_owned();
+            let base = json!({"op": "record-round", "step": "base", "worktree": self.wt});
+            result(&self.run(&[
+                "op",
+                "--item",
+                "issue-8",
+                "--request-json",
+                &base.to_string(),
+            ]));
+            round
+        }
+        fn op(&self, request: Value) -> Output {
+            self.run(&[
+                "op",
+                "--item",
+                "issue-8",
+                "--request-json",
+                &request.to_string(),
+            ])
+        }
+        /// `read-proof` of the checkout's tree under the declared command
+        /// `cmd`.
+        fn read_proof(&self, cmd: &str, need: &str, extra: &[&str]) -> Value {
+            let tree = self.tree();
+            let mut args = vec![
+                "read-proof",
+                "--item",
+                "issue-8",
+                "--need",
+                need,
+                "--tree",
+                &tree,
+            ];
+            args.extend_from_slice(extra);
+            result(
+                &self
+                    .command()
+                    .env("DEV_VALIDATE_CMD", cmd)
+                    .args(&args)
+                    .output()
+                    .unwrap(),
+            )
+        }
+        fn round_stage(&self, round: &str) -> Value {
+            self.doc()["stages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["round_id"] == round && s["kind"] != "validate")
+                .cloned()
+                .unwrap()
+        }
+        /// A real validation run of `round` over the checkout under the
+        /// declared command `cmd`, waited for until its stage closes;
+        /// returns its run directory.
+        fn validated(&self, round: &str, cmd: &str) -> PathBuf {
+            let started = result(
+                &self
+                    .command()
+                    .env("DEV_VALIDATE_CMD", cmd)
+                    .args([
+                        "validate", "start", "--item", "issue-8", "--round", round, "--base",
+                        "main", "--mode", "full", "--poll", "1",
+                    ])
+                    .output()
+                    .unwrap(),
+            );
+            let dir = PathBuf::from(started["run_dir"].as_str().unwrap());
+            let bound = std::time::Instant::now() + Duration::from_secs(90);
+            while !self.doc()["stages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|s| s["run_dir"] == dir.to_str().unwrap() && s["end"].is_u64())
+            {
+                assert!(
+                    std::time::Instant::now() < bound,
+                    "{}",
+                    fs::read_to_string(dir.join("log")).unwrap_or_default()
+                );
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            dir
+        }
+    }
+
+    /// A group that is not the last commits its part and its item
+    /// decisions and hands them to the group after it with validation still
+    /// pending: the check answers `hand-over`, never `accept`, the round's
+    /// close records that word, and nothing reads it as proof of the tree.
+    /// A redelegation of the round keeps the group it began with. The
+    /// defect: such a group could return no truthful result, since every
+    /// accepting receipt claimed a validation the later group owned.
+    #[test]
+    fn a_group_that_is_not_the_last_hands_its_committed_work_over_without_claiming_acceptance() {
+        let w = World::new();
+        let first = w.begin_round(Some((1, 2)));
+        assert_eq!(w.round_stage(&first)["group"], json!({"n": 1, "of": 2}));
+        let redelegated = result(&w.call(&["round", "recover"], &first, &[]));
+        let round = redelegated["round_id"].as_str().unwrap().to_owned();
+        assert_ne!(round, first, "{redelegated}");
+        assert_eq!(w.round_stage(&round)["group"], json!({"n": 1, "of": 2}));
+        w.commit("app.txt");
+        result(&w.write(
+            &round,
+            "implement",
+            "handed-over",
+            &["--bundled", "--item", "1", "Applied", "group one's part"],
+        ));
+        let receipt: Value =
+            serde_json::from_str(&fs::read_to_string(w.receipt_path(&round)).unwrap()).unwrap();
+        assert_eq!(receipt["validate"], "handed-over");
+        assert_eq!(receipt["validate_mode"], Value::Null);
+        assert_eq!(receipt["commit"], w.head().as_str());
+        let answer = result(&w.run(&[
+            "dev-return",
+            "check",
+            "--worktree",
+            w.wt.to_str().unwrap(),
+            "--issue",
+            "issue-8",
+            "--round-id",
+            &round,
+        ]));
+        assert_eq!(answer["verdict"], "hand-over", "{answer}");
+        assert_eq!(answer["validate"], "handed-over");
+        let closed = result(
+            &w.op(json!({"op": "accept-result", "round_id": round, "outcome": "handed-over"})),
+        );
+        assert_eq!(closed["report"]["outcome"], "handed-over", "{closed}");
+        assert_eq!(w.round_stage(&round)["outcome"], "handed-over");
+        assert!(w.doc().get("validate_rounds").is_none());
+        assert_eq!(w.read_proof(PASSING, "submit", &[])["proof"], "missing");
+    }
+
+    /// A hand-over holds only from a group the round began in that is not
+    /// the last, on a receipt that carries the group's decisions, past the
+    /// round's base; each other case refuses with its key and writes no
+    /// receipt, and a group outside its own count is refused at the begin.
+    #[test]
+    fn a_hand_over_is_refused_from_the_last_or_an_ungrouped_round_a_single_change_or_an_unmoved_head()
+     {
+        let itemized: &[&str] = &["--bundled", "--item", "1", "Applied", "part"];
+        // (the round's group, the receipt's extra flags, commit first, the key)
+        type Case<'a> = (Option<(u32, u32)>, &'a [&'a str], bool, &'a str);
+        let cases: [Case<'_>; 4] = [
+            (Some((2, 2)), itemized, true, "handover-final"),
+            (None, itemized, true, "handover-final"),
+            (Some((1, 2)), &[], true, "handover-kind"),
+            (Some((1, 2)), itemized, false, "handover-unmoved"),
+        ];
+        for (group, extra, moved, want) in cases {
+            let w = World::new();
+            let round = w.begin_round(group);
+            if moved {
+                w.commit("app.txt");
+            }
+            let out = w.write(&round, "implement", "handed-over", extra);
+            refused(&out, want);
+            assert!(!w.receipt_path(&round).exists(), "{want}");
+        }
+        let w = World::new();
+        refused(
+            &w.op(json!({"op": "begin-round", "kind": "dev", "group": {"n": 3, "of": 2}})),
+            "round-group",
+        );
+    }
+
+    /// A round left at the HEAD it was delegated at, whose change that
+    /// commit already holds, ends on that commit with a pass over its tree:
+    /// the check accepts and the round's own proof is complete. No new
+    /// commit is asked for.
+    #[test]
+    fn a_round_left_at_its_delegated_head_with_a_pass_over_that_tree_is_accepted() {
+        let w = World::new();
+        w.commit("app.txt");
+        let round = w.begin_round(None);
+        let dir = w.validated(&round, PASSING);
+        result(&w.write(
+            &round,
+            "implement",
+            "pass",
+            &["--validate-run-dir", dir.to_str().unwrap()],
+        ));
+        let answer = result(&w.run(&[
+            "dev-return",
+            "check",
+            "--worktree",
+            w.wt.to_str().unwrap(),
+            "--issue",
+            "issue-8",
+            "--round-id",
+            &round,
+        ]));
+        assert_eq!(answer["verdict"], "accept", "{answer}");
+        assert_eq!(w.doc()["pre_delegate_sha"], w.head().as_str());
+        assert_eq!(w.read_proof(PASSING, "round", &[])["proof"], "complete");
+    }
+
+    /// The declared command a red run runs: the battery reports its lanes
+    /// and exits 1.
+    const FAILING_RUN: &str = "printf 'validate: lanes=unit selection=battery\\n'; exit 1";
+
+    /// A round begun with an exception for known failures ends on a red
+    /// run that fails only those checks: the receipt keeps its FAILING line
+    /// and cites the exception, the check answers `accept-excused` with it,
+    /// the round closes `pass-excused` while its run keeps `fail`, and the
+    /// run proves its tree only for a read naming that same exception. A
+    /// failure the exception does not name, or a receipt citing another
+    /// exception, is not accepted. The defect: an authorized exception could
+    /// be accepted only by writing the failed check as a pass.
+    #[test]
+    fn an_exception_the_round_began_with_accepts_only_the_failures_it_names_and_keeps_them_visible()
+    {
+        let w = World::new();
+        let exception = json!({"by": "owner-directive", "id": "D-7", "excused": ["lint", "unit"]});
+        let first =
+            w.begin_with(&json!({"op": "begin-round", "kind": "dev", "exception": exception}));
+        let redelegated = result(&w.call(&["round", "recover"], &first, &[]));
+        let round = redelegated["round_id"].as_str().unwrap().to_owned();
+        assert_eq!(w.round_stage(&round)["exception"], exception);
+        w.commit("app.txt");
+        let dir = w.validated(&round, FAILING_RUN);
+        let cited = w.root.join("exception.json");
+        fs::write(&cited, exception.to_string()).unwrap();
+        let written = result(&w.write(
+            &round,
+            "implement",
+            "FAILING: lint, unit",
+            &[
+                "--validate-run-dir",
+                dir.to_str().unwrap(),
+                "--exception-file",
+                cited.to_str().unwrap(),
+            ],
+        ));
+        let receipt: Value =
+            serde_json::from_str(&fs::read_to_string(written["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(receipt["validate"], "FAILING: lint, unit");
+        assert_eq!(receipt["exception"], exception);
+        let check = |file: Option<&Path>| {
+            let mut command = w.command();
+            command.args(["dev-return", "check"]);
+            match file {
+                Some(file) => command.arg("--file").arg(file),
+                None => command.args(["--worktree", w.wt.to_str().unwrap()]).args([
+                    "--issue",
+                    "issue-8",
+                    "--round-id",
+                    &round,
+                ]),
+            };
+            result(&command.output().unwrap())
+        };
+        let answer = check(None);
+        assert_eq!(answer["verdict"], "accept-excused", "{answer}");
+        assert_eq!(answer["validate"], "FAILING: lint, unit");
+        assert_eq!(answer["exception"], exception);
+        let closed = result(
+            &w.op(json!({"op": "accept-result", "round_id": round, "outcome": "pass-excused"})),
+        );
+        assert_eq!(closed["report"]["outcome"], "pass-excused", "{closed}");
+        assert_eq!(w.round_stage(&round)["exception"], exception);
+        let run = w.doc()["stages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["run_dir"] == dir.to_str().unwrap())
+            .cloned()
+            .unwrap();
+        assert_eq!(run["outcome"], "fail");
+        let excused = w.read_proof(
+            FAILING_RUN,
+            "submit",
+            &["--exception-file", cited.to_str().unwrap()],
+        );
+        assert_eq!(excused["proof"], "complete", "{excused}");
+        assert_eq!(excused["rows"][0]["run_dir"], dir.to_str().unwrap());
+        assert_eq!(excused["rows"][0]["by"], "owner-directive");
+        assert_eq!(excused["rows"][0]["id"], "D-7");
+        assert_eq!(excused["rows"][0]["excused"], json!(["lint", "unit"]));
+        assert_eq!(w.read_proof(FAILING_RUN, "submit", &[])["proof"], "missing");
+        let narrower = w.root.join("narrower.json");
+        fs::write(
+            &narrower,
+            json!({"by": "owner-directive", "id": "D-7", "excused": ["lint"]}).to_string(),
+        )
+        .unwrap();
+        let other = w.read_proof(
+            FAILING_RUN,
+            "submit",
+            &["--exception-file", narrower.to_str().unwrap()],
+        );
+        assert_eq!(other["proof"], "missing");
+        // A failure the exception does not name stays a failure, and a
+        // receipt citing an exception the round did not begin with is not
+        // accepted.
+        let variant = |name: &str, field: &str, value: Value| {
+            let mut copy = receipt.clone();
+            copy[field] = value;
+            let path = w.wt.join(format!("tmp/{name}.json"));
+            fs::write(&path, copy.to_string()).unwrap();
+            check(Some(&path))
+        };
+        let wider = variant("wider", "validate", json!("FAILING: docs, lint, unit"));
+        assert_eq!(wider["verdict"], "retry", "{wider}");
+        assert_eq!(wider["reason"], "valid");
+        let unbegun = variant(
+            "unbegun",
+            "exception",
+            json!({"by": "owner-directive", "id": "D-7", "excused": ["docs", "lint", "unit"]}),
+        );
+        assert_eq!(unbegun["verdict"], "retry", "{unbegun}");
+        assert_eq!(unbegun["reason"], "exception_unbegun");
+    }
+
+    /// The worker never grants an exception: a receipt cites only the one
+    /// its round began with, beside a red run, and a round closes
+    /// `pass-excused` only where it began with one. Each other case
+    /// refuses with its key and writes nothing.
+    #[test]
+    fn an_exception_is_refused_unless_the_round_began_with_it_beside_a_red_run() {
+        let exception = json!({"by": "owner-directive", "id": "D-7", "excused": ["lint"]});
+        let other = json!({"by": "overseer", "id": "D-7", "excused": ["lint"]});
+        // (the round's exception, the cited one, validate, a run named, the key)
+        type Case<'a> = (Option<&'a Value>, Value, &'a str, bool, &'a str);
+        let cases: [Case<'_>; 5] = [
+            (
+                Some(&exception),
+                exception.clone(),
+                "pass",
+                true,
+                "exception-run",
+            ),
+            (
+                Some(&exception),
+                exception.clone(),
+                "FAILING: lint",
+                false,
+                "exception-run",
+            ),
+            (
+                None,
+                exception.clone(),
+                "FAILING: lint",
+                true,
+                "exception-unbegun",
+            ),
+            (
+                Some(&exception),
+                other.clone(),
+                "FAILING: lint",
+                true,
+                "exception-unbegun",
+            ),
+            (
+                Some(&exception),
+                json!({"by": "owner-directive", "id": "D-7", "excused": []}),
+                "FAILING: lint",
+                true,
+                "exception-invalid",
+            ),
+        ];
+        for (begun, cited, validate, run, want) in cases {
+            let w = World::new();
+            let mut request = json!({"op": "begin-round", "kind": "dev"});
+            if let Some(begun) = begun {
+                request["exception"] = begun.clone();
+            }
+            let round = w.begin_with(&request);
+            let file = w.root.join("exception.json");
+            fs::write(&file, cited.to_string()).unwrap();
+            let dir = w.wt.join("tmp/dev-validate-red");
+            let mut extra = vec!["--exception-file", file.to_str().unwrap()];
+            if run {
+                extra.extend(["--validate-run-dir", dir.to_str().unwrap()]);
+            }
+            refused(&w.write(&round, "implement", validate, &extra), want);
+            assert!(!w.receipt_path(&round).exists(), "{want}");
+        }
+        let w = World::new();
+        refused(
+            &w.op(json!({"op": "begin-round", "kind": "dev",
+                         "exception": {"by": "owner-directive", "id": "D-7", "excused": []}})),
+            "exception-invalid",
+        );
+        let round = w.begin_round(None);
+        let before = w.doc();
+        refused(
+            &w.op(json!({"op": "accept-result", "round_id": round, "outcome": "pass-excused"})),
+            "exception-unbegun",
+        );
+        assert_eq!(w.doc(), before);
+    }
 }
 
 /// An operation patches only the keys it writes.
@@ -6051,6 +6471,8 @@ fn begin_round_records_the_body_revision_and_reports_body_moved_past_the_previou
         let request = Request::BeginRound(BeginRound {
             kind,
             body_revision: revision.map(str::to_owned),
+            group: None,
+            exception: None,
         });
         let b = begun(run(&path, &request).unwrap());
         assert_eq!(b.body_moved, moved, "{note}");

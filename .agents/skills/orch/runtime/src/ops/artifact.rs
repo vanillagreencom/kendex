@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 use super::proof;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
-use crate::state::{self, ItemState, Stage, StageKind, ValidateMode};
+use crate::state::{self, Exception, ItemState, Stage, StageKind, ValidateMode};
 use crate::validate::files::{self, RunFile};
 use agent_runtime::clock::Clock;
 use agent_runtime::journal::Env;
@@ -69,7 +69,7 @@ pub struct StampRound {
 
 #[derive(Debug, Args)]
 #[command(
-    after_help = "A foreground record has validate-mode=full|range, head=40-hex, started-at=UTC, ended-at=UTC, exit=0..999 and selection=all|subset|battery|unreported. A reported selection also has lanes=NAME,...; an unreported selection has none. verdict=no-verdict records a bounded run.\nThe Apple gate reads ORCH_APPLE_WORKFLOW (.github/workflows/mac-run.yml) on the base branch. Declare the item's labels with --label or --no-labels. ios/macOS paths, Xcode projects, Apple Package.swift platforms or labels ios/macos require a validate-note line: mac run test: pass run=ID.\n--validate not-run ends a round whose item permits ending with no change: --no-change TEXT quotes the item's sentence that permits it, and the round names a summary, no run and no record, at the HEAD it was delegated at with a clean tree."
+    after_help = "A foreground record has validate-mode=full|range, head=40-hex, started-at=UTC, ended-at=UTC, exit=0..999 and selection=all|subset|battery|unreported. A reported selection also has lanes=NAME,...; an unreported selection has none. verdict=no-verdict records a bounded run.\nThe Apple gate reads ORCH_APPLE_WORKFLOW (.github/workflows/mac-run.yml) on the base branch. Declare the item's labels with --label or --no-labels. ios/macOS paths, Xcode projects, Apple Package.swift platforms or labels ios/macos require a validate-note line: mac run test: pass run=ID.\n--validate not-run ends a round whose item permits ending with no change: --no-change TEXT quotes the item's sentence that permits it, and the round names a summary, no run and no record, at the HEAD it was delegated at with a clean tree.\n--validate handed-over passes a group's committed work to the group after it, which validates: the round began with a group that is not the last, the commit moved past the round's base, the receipt is a fix or names its items, and it names no run.\n--exception-file cites, beside a FAILING run, the exception {by, id, excused} the round began with; the receipt keeps its FAILING line."
 )]
 pub struct WriteReturn {
     #[command(flatten)]
@@ -112,6 +112,8 @@ pub struct WriteReturn {
     pub item: Vec<String>,
     #[arg(long, allow_hyphen_values = true)]
     pub no_change: Option<String>,
+    #[arg(long)]
+    pub exception_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -852,6 +854,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
         head: Some(r.commit.clone()),
         base: Some(base.to_owned()),
         round: None,
+        exception: None,
     };
     let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
     let answer = proof::read(&rows, &[], &request, &declared, &mut tree_of);
@@ -1246,6 +1249,110 @@ fn no_change(settings: &Settings, r: &WriteReturn) -> Result<Option<NoChange>> {
     }))
 }
 
+/// A group that is not the last passes its committed work and its item
+/// decisions to the group after it, which owns validation: the receipt
+/// claims no acceptance, so it names no run. The group is the one the
+/// delegating side recorded when the round began, never the worker's word.
+fn hand_over(settings: &Settings, r: &WriteReturn) -> Result<bool> {
+    if r.validate != "handed-over" {
+        return Ok(false);
+    }
+    if r.kind != "fix" && !r.bundled && r.item.is_empty() {
+        return Err(refuse(
+            "handover-kind",
+            format!("kind={} bundled=false", r.kind),
+        ));
+    }
+    let path = state::item_path(&settings.state_dir, &r.id.issue);
+    let snapshot = crate::validate::load(&path)?;
+    let group = match &snapshot {
+        Some(s) => s
+            .view::<ItemState>(&path)?
+            .stages
+            .into_iter()
+            .find(|s| {
+                s.kind != StageKind::Validate && s.round_id.as_deref() == Some(&r.id.round_id)
+            })
+            .and_then(|s| s.group),
+        None => None,
+    };
+    match group {
+        Some(group) if group.n < group.of => {}
+        Some(group) => {
+            return Err(refuse(
+                "handover-final",
+                format!("group={}/{}", group.n, group.of),
+            ));
+        }
+        None => return Err(refuse("handover-final", "group=unrecorded")),
+    }
+    let delegated = snapshot.as_ref().and_then(|s| {
+        s.doc
+            .get("pre_delegate_sha")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
+    let Some(delegated) = delegated else {
+        return Err(refuse("handover-unmoved", "pre_delegate_sha=unrecorded"));
+    };
+    let commit = git(
+        &r.id.worktree,
+        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
+    )?;
+    if commit == delegated || !ancestor(&r.id.worktree, &delegated, &commit)? {
+        return Err(refuse(
+            "handover-unmoved",
+            format!("commit={commit} delegated={delegated}"),
+        ));
+    }
+    Ok(true)
+}
+
+/// The round's own stage: the one `begin-round` opened, whatever kind a
+/// check later set on it.
+fn round_stage(settings: &Settings, issue: &str, round_id: &str) -> Result<Option<Stage>> {
+    Ok(stages(settings, issue)?
+        .into_iter()
+        .find(|s| s.kind != StageKind::Validate && s.round_id.as_deref() == Some(round_id)))
+}
+
+/// The exception a FAILING receipt cites beside its run: the one its round
+/// began with, never one the worker names on its own.
+fn cited_exception(settings: &Settings, r: &WriteReturn) -> Result<Option<Exception>> {
+    let Some(file) = &r.exception_file else {
+        return Ok(None);
+    };
+    if !r.validate.starts_with("FAILING:") {
+        return Err(refuse("exception-run", format!("validate={}", r.validate)));
+    }
+    if r.validate_run_dir.is_none() && r.validate_record.is_none() {
+        return Err(refuse("exception-run", "run=none"));
+    }
+    let cited = Exception::read(file)?;
+    let begun = round_stage(settings, &r.id.issue, &r.id.round_id)?.and_then(|s| s.exception);
+    if begun.as_ref() != Some(&cited) {
+        return Err(refuse(
+            "exception-unbegun",
+            format!(
+                "by={} id={}",
+                serde_json::to_value(cited.authorization.by)?
+                    .as_str()
+                    .unwrap_or_default(),
+                cited.authorization.id
+            ),
+        ));
+    }
+    Ok(Some(cited))
+}
+
+/// The check names a `FAILING:` value lists; an empty name is a failure
+/// the receipt could not name.
+fn failing_names(validate: &str) -> Option<BTreeSet<&str>> {
+    validate
+        .strip_prefix("FAILING:")
+        .map(|names| names.split(',').map(str::trim).collect())
+}
+
 pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     identity(&r.id)?;
     if !nonempty(&r.branch)
@@ -1254,7 +1361,7 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     {
         return Err(refuse("required", "branch and commit"));
     }
-    if !["pass", "no-verdict", "not-run"].contains(&r.validate.as_str())
+    if !["pass", "no-verdict", "not-run", "handed-over"].contains(&r.validate.as_str())
         && !r.validate.starts_with("FAILING:")
     {
         return Err(refuse("invalid-validate", &r.validate));
@@ -1271,10 +1378,16 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         return Err(refuse("required", "near-ceiling-base"));
     }
     let no_change = no_change(settings, r)?;
+    let handed_over = hand_over(settings, r)?;
+    let exception = cited_exception(settings, r)?;
     let run = match (&r.validate_run_dir, &r.validate_record) {
         (Some(dir), None) => Some(run_record(dir)?),
         (None, Some(file)) => Some(foreground(file)?),
-        (None, None) if r.validate.starts_with("FAILING:") || no_change.is_some() => None,
+        (None, None)
+            if r.validate.starts_with("FAILING:") || no_change.is_some() || handed_over =>
+        {
+            None
+        }
         _ => return Err(refuse("required", "one validation evidence source")),
     };
     let mut commit = no_change
@@ -1359,6 +1472,9 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if let Some(no_change) = &no_change {
         record["no_change"] = json!(no_change.clause);
     }
+    if let Some(exception) = &exception {
+        record["exception"] = serde_json::to_value(exception)?;
+    }
     if r.kind == "implement" {
         let measured = shared_measure(
             settings,
@@ -1387,7 +1503,7 @@ fn scalars(v: &Value) -> bool {
     let validate = v["validate"].as_str().unwrap_or_default();
     let failing = validate.starts_with("FAILING:");
     let not_run = validate == "not-run";
-    let unrun = failing || not_run;
+    let unrun = failing || not_run || validate == "handed-over";
     let timing = &v["validate_time"];
     let time_ok = if timing.is_null() {
         unrun && v.get("validate_time").is_some()
@@ -1537,10 +1653,22 @@ fn check_answer(
     files: &[String],
 ) -> Answer {
     let ok = reason == "valid";
+    // Every failing check must be one the exception names: a check it does
+    // not name keeps the failure a failure.
+    let excused = serde_json::from_value::<Exception>(v["exception"].clone())
+        .ok()
+        .zip(v["validate"].as_str().and_then(failing_names))
+        .is_some_and(|(exception, failing)| {
+            failing.iter().all(|name| exception.excused.contains(*name))
+        });
     let verdict = if ok && (v["validate"] == "pass" || v["validate"] == "no-verdict") {
         "accept"
+    } else if ok && excused {
+        "accept-excused"
     } else if ok && v["validate"] == "not-run" {
         "no-change"
+    } else if ok && v["validate"] == "handed-over" {
+        "hand-over"
     } else if reason == "missing" {
         "wait"
     } else {
@@ -1559,6 +1687,7 @@ fn check_answer(
         "near_ceiling_error",
         "screenshots",
         "no_change",
+        "exception",
     ] {
         let raw = &v[k];
         value[k] = match k {
@@ -1692,11 +1821,7 @@ fn record_check(
                 .and_then(|n| n.to_str())
                 .ok_or_else(|| refuse("artifact-unreadable", file.display()))?;
             let mut batch = json!({"records":[]});
-            if let Some(failed) = receipt["validate"]
-                .as_str()
-                .and_then(|s| s.strip_prefix("FAILING:"))
-            {
-                let checks: BTreeSet<_> = failed.split(',').map(str::trim).collect();
+            if let Some(checks) = receipt["validate"].as_str().and_then(failing_names) {
                 if checks.contains("") {
                     batch["unknown"] = json!(true);
                 } else {
@@ -1789,6 +1914,16 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
         || !scalars(&v)
     {
         return Ok(emit("invalid", None, None, &[]));
+    }
+    if !v["exception"].is_null() {
+        let Ok(cited) = serde_json::from_value::<Exception>(v["exception"].clone()) else {
+            return Ok(emit("invalid", None, None, &[]));
+        };
+        let issue = v["issue"].as_str().expect("receipt schema");
+        let round_id = v["round_id"].as_str().expect("receipt schema");
+        if round_stage(settings, issue, round_id)?.and_then(|s| s.exception) != Some(cited) {
+            return Ok(emit("exception_unbegun", None, None, &[]));
+        }
     }
     if id.is_some() && v["kind"] == "fix" && round.is_none() {
         return Err(refuse("expected-round-required", file.display()));
@@ -2071,12 +2206,23 @@ fn redelegate(settings: &Settings, r: &RecoverRound, reason: &str, env: &Env) ->
             if doc.get("dev_round_id").is_some_and(|v| *v != r.id.round_id) {
                 return Err(refuse("round-superseded", &r.id.round_id));
             }
+            // The replacement is the same delegation: it keeps the group
+            // and the exception the replaced round began with.
+            let replaced = snapshot
+                .view::<ItemState>(&path)?
+                .stages
+                .into_iter()
+                .find(|s| {
+                    s.kind != StageKind::Validate && s.round_id.as_deref() == Some(&r.id.round_id)
+                });
             let begun = super::item::begin_round(
                 &path,
                 &mut doc,
                 &super::BeginRound {
                     kind: super::RoundKind::Dev,
                     body_revision: None,
+                    group: replaced.as_ref().and_then(|s| s.group),
+                    exception: replaced.and_then(|s| s.exception),
                 },
                 env,
             )?;
@@ -2416,6 +2562,7 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
         no_summary: true,
         item: items,
         no_change: None,
+        exception_file: None,
     };
     let artifact = match write(settings, &receipt) {
         Ok(answer) => PathBuf::from(answer.text),

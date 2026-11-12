@@ -20,8 +20,8 @@ use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
 use crate::state::{
-    self, Authorization, AuthorizedBy, ItemState, Record, Stage, StageKind, StageOutcome,
-    SummaryComment, ValidateJob,
+    self, Authorization, AuthorizedBy, Exception, ItemState, Record, RoundGroup, Stage, StageKind,
+    StageOutcome, SummaryComment, ValidateJob,
 };
 use agent_runtime::effects::{JobHandle, SidecarRead};
 use agent_runtime::journal::Env;
@@ -68,6 +68,16 @@ pub struct BeginRound {
     /// recorded, not judged: the record says what the round read.
     #[serde(default)]
     pub body_revision: Option<String>,
+    /// The round's group where the delegating side runs groups one after
+    /// another, recorded on the round's stage: a receipt hands its work over
+    /// only from a group that is not the last.
+    #[serde(default)]
+    pub group: Option<RoundGroup>,
+    /// The known failures the round may end with, granted here by the
+    /// delegating side and recorded on the round's stage; a receipt only
+    /// cites it.
+    #[serde(default)]
+    pub exception: Option<Exception>,
 }
 
 /// Record that a validation run was admitted for a round before any work
@@ -534,6 +544,32 @@ pub(super) fn begin_round(
 ) -> Result<RoundBegun> {
     let round_id = env.round_id();
     let now = env.now_secs;
+    if let Some(group) = r.group
+        && (group.n == 0 || group.n > group.of || r.kind.stage().is_none())
+    {
+        let kind = serde_json::to_value(r.kind)?;
+        return Err(agent_runtime::Error::refused(
+            "round-group",
+            &[
+                ("kind", kind.as_str().unwrap_or_default()),
+                ("n", &group.n.to_string()),
+                ("of", &group.of.to_string()),
+            ],
+        )
+        .into());
+    }
+    if let Some(exception) = &r.exception {
+        let cause = match exception.check() {
+            Err(cause) => Some(cause),
+            Ok(()) if r.kind.stage().is_none() => Some("kind=ci".to_owned()),
+            Ok(()) => None,
+        };
+        if let Some(cause) = cause {
+            return Err(
+                agent_runtime::Error::refused("exception-invalid", &[("cause", &cause)]).into(),
+            );
+        }
+    }
     let Some(kind) = r.kind.stage() else {
         record::set(doc, r.kind.field(), round_id.clone());
         return Ok(RoundBegun {
@@ -576,6 +612,12 @@ pub(super) fn begin_round(
     });
     if let Some(revision) = &r.body_revision {
         row["body_revision"] = json!(revision);
+    }
+    if let Some(group) = r.group {
+        row["group"] = serde_json::to_value(group)?;
+    }
+    if let Some(exception) = &r.exception {
+        row["exception"] = serde_json::to_value(exception)?;
     }
     rows.push(row);
     Ok(RoundBegun {
@@ -799,6 +841,16 @@ pub(super) fn accept_result_at(
         return Err(Error::RoundSuperseded {
             round_id: r.round_id.clone(),
         });
+    }
+    // A failure is excused only by the exception its round began with; a
+    // run's own close keeps its verdict.
+    if r.outcome == StageOutcome::PassExcused && (r.run_dir.is_some() || stage.exception.is_none())
+    {
+        return Err(agent_runtime::Error::refused(
+            "exception-unbegun",
+            &[("round_id", r.round_id.as_str())],
+        )
+        .into());
     }
     // A directed item's step is accepted under the owner's directive alone;
     // its runs close on their verdicts.

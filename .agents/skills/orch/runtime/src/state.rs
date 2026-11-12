@@ -13,6 +13,7 @@
 //! atomic replacement, the write check and the refusal of a stamped file.
 //! This module owns the read views and the kind a file's name selects.
 
+use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -149,6 +150,12 @@ pub enum StageOutcome {
     /// The round changed nothing, as its item's own text permits, and ran
     /// no check.
     NoChange,
+    /// A group that is not the last committed its work and passed it to
+    /// the group after it, which owns validation: no acceptance is claimed.
+    HandedOver,
+    /// The round's run failed only on checks the exception its round began
+    /// with excuses; the run keeps its own `fail`.
+    PassExcused,
 }
 
 impl StageOutcome {
@@ -161,8 +168,65 @@ impl StageOutcome {
             StageOutcome::Lost => "lost",
             StageOutcome::Stopped => "stopped",
             StageOutcome::NoChange => "no-change",
+            StageOutcome::HandedOver => "handed-over",
+            StageOutcome::PassExcused => "pass-excused",
         }
     }
+}
+
+/// Known failures a round may end with, granted by the delegating side
+/// when the round begins: the authority and the exact checks excused. A
+/// worker cites the exception its round began with and never grants one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Exception {
+    #[serde(flatten)]
+    pub authorization: Authorization,
+    pub excused: BTreeSet<String>,
+}
+
+impl Exception {
+    /// The exception a file holds, refused `exception-invalid` where it is
+    /// not one.
+    pub fn read(path: &Path) -> Result<Exception> {
+        let invalid = |cause: String| {
+            agent_runtime::Error::refused(
+                "exception-invalid",
+                &[("path", &path.display().to_string()), ("cause", &cause)],
+            )
+        };
+        let text = fs::read_to_string(path).map_err(|e| invalid(e.kind().to_string()))?;
+        let exception: Exception =
+            serde_json::from_str(&text).map_err(|e| invalid(e.to_string()))?;
+        exception.check().map_err(invalid)?;
+        Ok(exception)
+    }
+
+    /// An exception excuses at least one check, each named as a
+    /// receipt's `FAILING:` list names it.
+    pub fn check(&self) -> std::result::Result<(), String> {
+        if self.authorization.id.trim().is_empty() {
+            return Err("id=empty".into());
+        }
+        if self.excused.is_empty() {
+            return Err("excused=empty".into());
+        }
+        match self
+            .excused
+            .iter()
+            .find(|name| name.is_empty() || name.trim() != name.as_str() || name.contains(','))
+        {
+            Some(name) => Err(format!("excused={name:?}")),
+            None => Ok(()),
+        }
+    }
+}
+
+/// A round's place among the groups its delegating side runs one after
+/// another: group `n` of `of`, counted from 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoundGroup {
+    pub n: u32,
+    pub of: u32,
 }
 
 /// One `stages[]` entry as read: `{kind, round_id, start, end}` in epoch
@@ -196,6 +260,10 @@ pub struct Stage {
     pub authorization: Option<Authorization>,
     #[serde(default)]
     pub body_revision: Option<String>,
+    #[serde(default)]
+    pub group: Option<RoundGroup>,
+    #[serde(default)]
+    pub exception: Option<Exception>,
     // The intentional stop a `validate stop` recorded on the open
     // stage before it ended the run's job.
     #[serde(default)]

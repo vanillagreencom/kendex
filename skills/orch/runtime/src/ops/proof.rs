@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::settings::ValidateSettings;
-use crate::state::{Stage, StageKind, StageOutcome, ValidateMode};
+use crate::state::{Exception, Stage, StageKind, StageOutcome, ValidateMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -99,6 +99,10 @@ pub struct ReadProof {
     pub base: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub round: Option<String>,
+    /// The exception a round's failed run is read as proof under: only a
+    /// round closed `pass-excused` with exactly this exception.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Exception>,
 }
 
 /// A recorded restack skip (`merge-pr-restack.md` step 2, its one writer):
@@ -136,6 +140,10 @@ pub struct ProofRow {
     pub start: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end: Option<u64>,
+    /// The exception a failed run proves its tree under, printed on its row
+    /// as `by`, `id` and `excused`.
+    #[serde(flatten)]
+    pub exception: Option<Exception>,
     /// The stage's place in `stages[]`: the order of two rows started in
     /// the same second.
     #[serde(skip)]
@@ -184,37 +192,64 @@ fn row_of((index, stage): (usize, &Stage)) -> Option<ProofRow> {
         selection: proof.selection.clone(),
         start: stage.start,
         end: stage.end,
+        exception: None,
         index,
     })
+}
+
+/// The rounds whose own stage closed `pass-excused` under exactly the
+/// read's exception; none where the read names no exception.
+fn excused_rounds<'a>(stages: &'a [Stage], exception: Option<&Exception>) -> Vec<&'a str> {
+    let Some(exception) = exception else {
+        return Vec::new();
+    };
+    stages
+        .iter()
+        .filter(|s| {
+            s.kind != StageKind::Validate
+                && s.outcome == Some(StageOutcome::PassExcused)
+                && s.exception.as_ref() == Some(exception)
+        })
+        .filter_map(|s| s.round_id.as_deref())
+        .collect()
+}
+
+/// Whether the stage is a failed run of one of the excused rounds.
+fn excused(s: &Stage, rounds: &[&str]) -> bool {
+    s.kind == StageKind::Validate
+        && s.end.is_some()
+        && s.outcome == Some(StageOutcome::Fail)
+        && s.round_id.as_deref().is_some_and(|r| rounds.contains(&r))
 }
 
 /// Whether the stage is the tree's own local evidence that did not pass: a
 /// validate row at `tree` that ran its own command (not a reuse, and not a
 /// `ci` row, which ran nothing locally) and is red, lost, stopped,
-/// bound-ended or still open.
-fn unpassed_at(tree: &str, s: &Stage) -> bool {
+/// bound-ended or still open, and not an excused failure.
+fn unpassed_at(tree: &str, s: &Stage, excused_rounds: &[&str]) -> bool {
     s.kind == StageKind::Validate
         && s.proof
             .as_ref()
             .is_some_and(|p| p.tree == tree && p.mode != ValidateMode::Ci && p.reused.is_none())
         && (s.end.is_none() || s.outcome != Some(StageOutcome::Pass))
+        && !excused(s, excused_rounds)
 }
 
 /// A row at the tree that did not pass and started no earlier than the
 /// pass voids it: within one start second the records cannot prove which
 /// came first.
-fn voided(stages: &[Stage], tree: &str, pass: &ProofRow) -> bool {
+fn voided(stages: &[Stage], tree: &str, pass: &ProofRow, excused_rounds: &[&str]) -> bool {
     stages
         .iter()
-        .any(|s| unpassed_at(tree, s) && s.start >= pass.start)
+        .any(|s| unpassed_at(tree, s, excused_rounds) && s.start >= pass.start)
 }
 
-/// Whether the row is a pass that ran its own command: closed `pass`, not
-/// a reuse of an earlier row, scoped only for a docs-only snapshot, and
-/// run with the declared finding prefix.
-fn own_pass(stage: &Stage, declaration: &Declaration) -> bool {
+/// Whether the row is a pass that ran its own command: closed `pass` or an
+/// excused failure, not a reuse of an earlier row, scoped only for a
+/// docs-only snapshot, and run with the declared finding prefix.
+fn own_pass(stage: &Stage, declaration: &Declaration, excused_rounds: &[&str]) -> bool {
     stage.end.is_some()
-        && stage.outcome == Some(StageOutcome::Pass)
+        && (stage.outcome == Some(StageOutcome::Pass) || excused(stage, excused_rounds))
         && stage.proof.as_ref().is_some_and(|p| {
             (p.mode != ValidateMode::Docs || p.docs_only)
                 && p.reused.is_none()
@@ -260,6 +295,8 @@ pub fn read(
         },
         admitted: declaration.admitted(r.need),
         declaration,
+        excused: excused_rounds(stages, r.exception.as_ref()),
+        exception: r.exception.as_ref(),
         tree_of,
     };
     let answer = |proof: Verdict, rows: Vec<ProofRow>, skip: Option<RestackSkip>| ProofRead {
@@ -282,7 +319,9 @@ pub fn read(
     if r.need == Need::Restack
         && let Some(head) = r.head.as_deref()
         && let Some(skip) = skips.iter().rev().find(|s| s.head == head)
-        && !stages.iter().any(|s| unpassed_at(&r.tree, s))
+        && !stages
+            .iter()
+            .any(|s| unpassed_at(&r.tree, s, &reader.excused))
     {
         let trees: Vec<String> = reader
             .rows()
@@ -308,6 +347,10 @@ struct Reader<'a> {
     round: Option<&'a str>,
     admitted: Vec<(ValidateMode, &'a str)>,
     declaration: &'a Declaration,
+    /// The rounds whose failed runs read as passes under the read's
+    /// exception, and that exception, printed on each such row.
+    excused: Vec<&'a str>,
+    exception: Option<&'a Exception>,
     tree_of: &'a mut dyn FnMut(&str) -> Option<String>,
 }
 
@@ -320,7 +363,7 @@ impl Reader<'_> {
             .stages
             .iter()
             .enumerate()
-            .filter(|(_, s)| own_pass(s, self.declaration))
+            .filter(|(_, s)| own_pass(s, self.declaration, &self.excused))
             .filter(|(_, s)| {
                 self.round
                     .is_none_or(|round| s.round_id.as_deref() == Some(round))
@@ -332,7 +375,14 @@ impl Reader<'_> {
                         .any(|(mode, cmd)| p.mode == *mode && p.cmd == *cmd)
                 })
             })
-            .filter_map(row_of)
+            .filter_map(|(index, s)| {
+                row_of((index, s)).map(|mut row| {
+                    if excused(s, &self.excused) {
+                        row.exception = self.exception.cloned();
+                    }
+                    row
+                })
+            })
             .collect();
         rows.sort_by_key(|row| std::cmp::Reverse((row.start, row.index)));
         rows.into_iter()
@@ -354,7 +404,7 @@ impl Reader<'_> {
         }
         let rows: Vec<ProofRow> = self.rows().filter(|row| row.tree == tree).collect();
         for row in rows {
-            if voided(self.stages, tree, &row) {
+            if voided(self.stages, tree, &row, &self.excused) {
                 continue;
             }
             if whole(&row) {
@@ -399,7 +449,7 @@ impl Reader<'_> {
                     })
             })
             .filter_map(row_of)
-            .filter(|row| !voided(self.stages, tree, row))
+            .filter(|row| !voided(self.stages, tree, row, &self.excused))
             .max_by_key(|row| (row.start, row.index))
     }
 }
@@ -938,6 +988,7 @@ mod tests {
             head: None,
             base: base.map(str::to_owned),
             round: Some("r".into()),
+            exception: None,
         }
     }
 
