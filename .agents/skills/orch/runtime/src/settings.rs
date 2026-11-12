@@ -532,6 +532,10 @@ pub struct Settings {
     /// readers take.
     pub claim_store: PathBuf,
     pub lane_mail_cli: PathBuf,
+    /// The mailbox and tmux server a watch's start named on its command
+    /// line; `None` in every other process. `effects::fleet_reach` is its
+    /// one reader.
+    pub reach: Option<agent_runtime::effects::Reach>,
     pub apple_workflow: String,
     pub apple_labels: Vec<String>,
     pub validate: ValidateSettings,
@@ -1039,6 +1043,7 @@ pub fn load(
         cloud_lane_cap,
         claim_store,
         lane_mail_cli,
+        reach: None,
         apple_workflow: values
             .raw("ORCH_APPLE_WORKFLOW")
             .unwrap_or(".github/workflows/mac-run.yml")

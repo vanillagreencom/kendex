@@ -3,7 +3,7 @@
 # across an upgrade and runs this path as each pass, with
 # OVERSEE_WATCH_REPEAT_OWNER its own pid. That pass is the one call this entry
 # serves: it hands the loop's claim to `orch-runtime watch run --replace <loop
-# pid>`, started detached through lib/job-unit.sh, and exits 4, the pass status
+# pid>`, started detached by `orch-runtime watch start`, and exits 4, the pass status
 # on which the loop ends, only once the runtime's own claim stands. The loop
 # waits on this pass and its exit releases only a record naming itself, so the
 # entry releases the loop's start-less record for it and reads the runtime's
@@ -11,7 +11,7 @@
 # before scripts/setup has built it), a launch that fails, or a claim that does
 # not stand in time is watch-relaunch-failed, exit 1: the loop keeps its claim,
 # put back where it was released, and its next pass tries again. Any other call
-# is refused, exit 2: the fleet watch is `orch-runtime watch run`.
+# is refused, exit 2: the fleet watch is `orch-runtime watch start`.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,7 +33,7 @@ die() { # STATUS KEY FIELD=VALUE...
 
 OWNER="${OVERSEE_WATCH_REPEAT_OWNER:-}"
 unset OVERSEE_WATCH_REPEAT_OWNER
-[[ "$OWNER" =~ ^[1-9][0-9]*$ ]] || die 2 unsupported "run=orch-runtime watch run --file STATE"
+[[ "$OWNER" =~ ^[1-9][0-9]*$ ]] || die 2 unsupported "run=orch-runtime watch start --file STATE"
 
 STATE=""
 RUN_ARGS=()
@@ -76,17 +76,19 @@ if claimed="$(runtime_claim)"; then
   exit 4
 fi
 
-# shellcheck source=lib/job-unit.sh
-source "$SCRIPT_DIR/lib/job-unit.sh"
-# A launch the launcher answers possibly started (6) is read back as one
-# that started: only the runtime's claim says whether it runs.
+# The runtime starts the watch detached, naming on its command line the
+# mailbox and tmux server this pass reaches. A launch it answers possibly
+# started (75) is read back as one that started: only the runtime's claim
+# says whether it runs.
 launched=0
-job_unit_launch "watch-$(date -u +%Y%m%dT%H%M%SZ)" "$DIR/oversee-watch.runner" -- \
-  sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "$DIR/oversee-watch.err" \
-  "$RUNTIME" watch run --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} \
+answer="$("$RUNTIME" watch start --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} 2>&1 >/dev/null)" \
   || launched=$?
-[[ "$launched" -eq 0 || "$launched" -eq 6 ]] \
-  || die 1 watch-relaunch-failed "pid=$OWNER" "error=${JOB_UNIT_ERROR_KEY:-launch-failed}" "$JOB_UNIT_ERROR"
+if [[ "$launched" -ne 0 && "$launched" -ne 75 ]]; then
+  key="$(sed -n '/^orch-runtime: /{s/^orch-runtime: \([^ ]*\).*/\1/p;q;}' <<<"$answer")" || key=""
+  say watch-relaunch-failed "pid=$OWNER" "error=${key:-launch-failed}"
+  [[ -z "$answer" ]] || printf '%s\n' "$answer" >&2
+  exit 1
+fi
 
 # The loop's own record, released on its behalf: only by the loop's own pass,
 # and only while it is the loop's start-less record.
@@ -99,7 +101,7 @@ fi
 deadline=$((SECONDS + CLAIM_SECS))
 while (( SECONDS < deadline )); do
   if claimed="$(runtime_claim)"; then
-    say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
+    say watch-relaunched "pid=$OWNER" "claim=$claimed"
     exit 4
   fi
   sleep 0.5
@@ -113,7 +115,7 @@ if [[ -n "$released" ]]; then
   rm -f -- "$RECORD.$$"
 fi
 if claimed="$(runtime_claim)"; then
-  say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
+  say watch-relaunched "pid=$OWNER" "claim=$claimed"
   exit 4
 fi
 die 1 watch-relaunch-failed "pid=$OWNER" "error=claim-unconfirmed" "secs=$CLAIM_SECS"

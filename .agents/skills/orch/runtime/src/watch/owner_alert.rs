@@ -74,8 +74,9 @@ pub fn send(settings: &Settings, file: &str, text: &str) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("channel=file {e}"))?;
     }
     std::fs::write(&notice, text).map_err(|e| format!("channel=file {e}"))?;
-    Mailbox::new(settings.lane_mail_cli.clone())
+    let reach = crate::effects::fleet_reach(settings).map_err(|e| format!("channel=owner {e}"))?;
+    Mailbox::new(reach.mail_program)
         .bounded(BOUND)
-        .owner_notice(&settings.roots.common, &notice)
+        .owner_notice(&reach.mail_root, &notice)
         .map_err(|refusal| format!("channel=owner {refusal}"))
 }

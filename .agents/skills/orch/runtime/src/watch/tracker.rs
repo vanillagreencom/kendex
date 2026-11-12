@@ -1003,10 +1003,16 @@ fn read_tracker(
     // The owner's tracker answers, then the due tracker asks once the
     // tracker was read: an unread tracker
     // cannot establish that the person left a recommendation unanswered.
-    let mailbox = Mailbox::new(ctx.settings.lane_mail_cli.clone());
-    let owner_read = quota!(read_owner_tracker_answers(linear, ctx, &mailbox)?);
+    let reach = crate::effects::fleet_reach(&ctx.settings)?;
+    let mailbox = Mailbox::new(reach.mail_program);
+    let owner_read = quota!(read_owner_tracker_answers(
+        linear,
+        ctx,
+        &mailbox,
+        &reach.mail_root
+    )?);
     if owner_read == OwnerRead::Read {
-        *ask_failed = resolve_due_tracker_asks(&mailbox, &ctx.settings.roots.common);
+        *ask_failed = resolve_due_tracker_asks(&mailbox, &reach.mail_root);
     }
     // The triage candidates: open items created at or after the floor
     // whose verdict is not kept or canceled, keyed on state and newest
@@ -1266,6 +1272,7 @@ fn read_owner_tracker_answers(
     linear: &Linear,
     ctx: &Context,
     mailbox: &Mailbox,
+    root: &Path,
 ) -> Result<Answered<OwnerRead>> {
     let Some(owner) = &ctx.settings.reads.owner_tracker else {
         return Ok(Answered::Value(OwnerRead::Disabled));
@@ -1274,7 +1281,6 @@ fn read_owner_tracker_answers(
         let _ = writeln!(std::io::stderr(), "owner-tracker-unread cause={cause}");
         Ok(Answered::Value(OwnerRead::Unread(cause)))
     };
-    let root = &ctx.settings.roots.common;
     let asks = match mailbox.pending_owner_asks(root) {
         Ok(asks) => asks,
         Err(_) => return unread("asks"),

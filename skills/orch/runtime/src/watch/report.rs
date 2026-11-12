@@ -216,8 +216,8 @@ struct Window {
     reason = "report windows compare report file times with actual mailbox attachment receipts"
 )]
 fn window(ctx: &Context, doc: &Document, session_start: Option<u64>) -> Result<Window> {
-    let events =
-        Mailbox::new(ctx.settings.lane_mail_cli.clone()).events(&ctx.settings.roots.common)?;
+    let reach = crate::effects::fleet_reach(&ctx.settings)?;
+    let events = Mailbox::new(reach.mail_program).events(&reach.mail_root)?;
     let attachments: BTreeSet<PathBuf> = events
         .iter()
         .filter(|e| e.kind() == "notice" && e.to.as_deref() == Some("owner"))
@@ -964,9 +964,10 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         )),
     }
     out.push_str("\n```\nWaiting on you\n```\n\n");
-    let mail = Mailbox::new(ctx.settings.lane_mail_cli.clone());
-    let asks = mail.pending_owner_asks(&ctx.settings.roots.common)?;
-    let events = mail.events(&ctx.settings.roots.common)?;
+    let reach = crate::effects::fleet_reach(&ctx.settings)?;
+    let mail = Mailbox::new(reach.mail_program);
+    let asks = mail.pending_owner_asks(&reach.mail_root)?;
+    let events = mail.events(&reach.mail_root)?;
     let answered: BTreeSet<&str> = events
         .iter()
         .filter(|e| e.mail_class.as_deref() == Some("resolution"))
@@ -1096,8 +1097,9 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
 /// before the report's one delivery. An id of any other envelope names no
 /// ask.
 fn refuse_stale_ask(ctx: &Context, summary: &str) -> Result<()> {
-    let mail = Mailbox::new(ctx.settings.lane_mail_cli.clone());
-    let root = &ctx.settings.roots.common;
+    let reach = crate::effects::fleet_reach(&ctx.settings)?;
+    let mail = Mailbox::new(reach.mail_program);
+    let root = &reach.mail_root;
     let pending: BTreeSet<String> = mail
         .pending_owner_asks(root)?
         .iter()
@@ -1236,11 +1238,9 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
         // is named by an absolute path.
         let text = target.with_extension("notice.txt");
         std::fs::write(&text, &notice_text).map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
-        let sent = Mailbox::new(ctx.settings.lane_mail_cli.clone()).report_notice(
-            &ctx.settings.roots.common,
-            &target,
-            &text,
-        );
+        let sent = crate::effects::fleet_reach(&ctx.settings).and_then(|reach| {
+            Ok(Mailbox::new(reach.mail_program).report_notice(&reach.mail_root, &target, &text)?)
+        });
         let _ = std::fs::remove_file(&text);
         Some(sent?)
     };

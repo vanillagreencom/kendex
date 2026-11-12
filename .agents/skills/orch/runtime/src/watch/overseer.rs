@@ -765,6 +765,9 @@ pub struct Pass<'a> {
     /// written to the named file under the state directory; `Ok` once the
     /// owner holds the words, `Err` with the cause where it was not sent.
     pub alert: &'a dyn Fn(&str, &str) -> Result<(), String>,
+    /// The tmux server the fleet's reach names, where the controller's
+    /// server is looked for after the one its record names.
+    pub server: Option<&'a Path>,
 }
 
 /// The verdict of the record's session from the reads: the login wall
@@ -1004,41 +1007,40 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     // confirmed by pid and start, kept there dead after its process exited,
     // or that server proven gone, its pid dead or reused: no session runs in
     // a pane that is gone or dead.
-    let socket = pass.fleet.overseer.as_ref().and_then(overseer_socket);
-    let (reads, pane_pid) = match (pass.readers.pane)(
-        socket.as_deref(),
-        record.server,
-        record.server_start,
-        &record.pane,
-    ) {
-        Reading::Live(PaneState::Running(fields)) => {
-            let process =
-                (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
-            let harness_gone = matches!(process, ProcessReading::ShellsOnly)
-                && match record.identity.as_ref() {
-                    Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
-                    None => record.harness.is_some(),
-                };
-            (
-                Some(Reads {
-                    process,
-                    screen: (pass.readers.capture)(&fields.pane),
-                    rows: record.session_rows.as_deref().map(rows::session_verdict),
-                    harness_gone,
-                }),
-                Some(fields.pid),
-            )
-        }
-        Reading::Live(PaneState::Dead(_)) | Reading::Gone => (None, None),
-        Reading::Unreadable { cause } => {
-            return judged(
-                Verdict::Unreadable {
-                    cause: cause.to_owned(),
-                },
-                Some(key),
-            );
-        }
-    };
+    let sockets = agent_runtime::effects::fleet_sockets(
+        pass.fleet.overseer.as_ref().and_then(overseer_socket),
+        pass.server.map(Path::to_path_buf),
+    );
+    let (reads, pane_pid) =
+        match (pass.readers.pane)(&sockets, record.server, record.server_start, &record.pane) {
+            Reading::Live(PaneState::Running(fields)) => {
+                let process =
+                    (pass.readers.foreground)(fields.pid, record.harness, record.identity.as_ref());
+                let harness_gone = matches!(process, ProcessReading::ShellsOnly)
+                    && match record.identity.as_ref() {
+                        Some(id) => matches!((pass.readers.start_epoch)(id), Reading::Gone),
+                        None => record.harness.is_some(),
+                    };
+                (
+                    Some(Reads {
+                        process,
+                        screen: (pass.readers.capture)(&fields.pane),
+                        rows: record.session_rows.as_deref().map(rows::session_verdict),
+                        harness_gone,
+                    }),
+                    Some(fields.pid),
+                )
+            }
+            Reading::Live(PaneState::Dead(_)) | Reading::Gone => (None, None),
+            Reading::Unreadable { cause } => {
+                return judged(
+                    Verdict::Unreadable {
+                        cause: cause.to_owned(),
+                    },
+                    Some(key),
+                );
+            }
+        };
     // The overseer's own context record, read once per pass where the
     // fleet has a mailbox root: the reading the judge is handed, the
     // wedge and the stale and gap judgements all read this one record.
@@ -2027,9 +2029,6 @@ pub fn run_transfer(
     crate::ops::admit(&request, settings)?;
     let host = crate::ops::Host::kernel();
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;
-    if let Some(held) = &held_brief {
-        held.write()?;
-    }
     let crate::ops::Report::RequestTransfer(report) = &applied.report else {
         unreachable!("a transfer request reports its transfer")
     };
@@ -2038,6 +2037,15 @@ pub fn run_transfer(
         | agent_runtime::journal::Effect::Reconciled { intent }
         | agent_runtime::journal::Effect::Supersedes { intent } => intent.id.clone(),
     };
+    // The intent stands: a brief that cannot be written names it, so the
+    // reconcile that finds it is the caller's next step.
+    if let Some(held) = &held_brief {
+        held.write()
+            .map_err(|error| crate::error::Error::Persisted {
+                intent: intent.clone(),
+                error: Box::new(error),
+            })?;
+    }
     crate::effects::run(
         path,
         &request,
@@ -2168,10 +2176,9 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             relaunch: &relaunch,
             memory: &pane_memory,
         };
-        let context_record = ctx
-            .settings
-            .roots
-            .common
+        let reach = crate::effects::fleet_reach(&ctx.settings)?;
+        let context_record = reach
+            .mail_root
             .join("tmp/lane-mail/overseer")
             .join("context.json");
         let alert = |file: &str, text: &str| owner_alert::send(&ctx.settings, file, text);
@@ -2209,6 +2216,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 transfer: &transfer,
                 context_record: Some(&context_record),
                 alert: &alert,
+                server: reach.socket.as_deref(),
             },
             &ctx.slot,
         );
@@ -2273,6 +2281,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 wall_pauses: &wall_pauses,
                 hosted: &hosted_reads,
                 copilot_home: copilot_home.as_deref(),
+                server: reach.socket.as_deref(),
             });
             absorb(&mut produced, lanes);
         }

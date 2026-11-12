@@ -81,7 +81,7 @@ impl Config {
         let watch = settings.watch.get()?;
         Ok(Config {
             fleet: paths.state.clone(),
-            common_root: settings.roots.common.clone(),
+            common_root: crate::effects::fleet_reach(settings)?.mail_root,
             request: paths.dir.join("oversee-watch.mail-request"),
             interval: watch.mail_interval,
             mark_repeat: watch.mark_repeat,
@@ -111,10 +111,10 @@ pub fn overseer_dir(common_root: &Path) -> PathBuf {
 }
 
 /// Register the mail duty on `runner` for the fleet state at `fleet`, with
-/// the mailbox program the settings name.
+/// the mailbox program the fleet's reach names.
 pub fn register(runner: &mut Runner<'_>, fleet: &Path, settings: &Settings) -> Result<()> {
     let duty = MailDuty::new(
-        Mailbox::new(settings.lane_mail_cli.clone()),
+        Mailbox::new(crate::effects::fleet_reach(settings)?.mail_program),
         Config::of(settings, &Paths::of(fleet)?)?,
     );
     register_duty(runner, duty);

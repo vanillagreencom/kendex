@@ -1221,6 +1221,53 @@ fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
+/// The takeover brief an overseer's transfer holds is written once its
+/// intent stands; a brief that cannot be written refuses `io-failed
+/// operation=write-brief` naming that intent as `persisted_intent`, so the
+/// caller's reconcile finds it, and no job starts.
+#[test]
+fn a_held_brief_that_cannot_be_written_names_the_intent_it_left_standing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    std::fs::write(runner.state_dir().join("intents"), "not a directory").unwrap();
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let mut request = transfer_request(&server, runner.state_dir());
+    request["cause"] = json!("walled");
+    request["exclude_account"] = json!(elsewhere.display().to_string());
+    let answer = reply(&runner.op_fleet(&request));
+    assert_eq!(answer["refusal"]["key"], "io-failed", "{answer}");
+    let fields = &answer["refusal"]["fields"];
+    let named = |name: &str| {
+        fields
+            .as_array()
+            .and_then(|all| all.iter().find(|pair| pair[0] == name))
+            .map(|pair| pair[1].clone())
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(named("operation"), "write-brief", "{answer}");
+    let open = runner.fleet()["intents"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|i| {
+                    i["id"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("request-transfer:"))
+                        && !i["completed_at"].is_string()
+                })
+                .cloned()
+        })
+        .unwrap_or(Value::Null);
+    assert_eq!(named("persisted_intent"), open["id"], "{answer} {open}");
+    assert!(open["id"].is_string(), "the intent stands: {open}");
+    assert!(live(predecessor.pid()), "no job retired the predecessor");
+}
+
 /// `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off` refuses a transfer before any transition,
 /// so the record and the intents directory are as they were; a stop under
 /// the same setting is admitted.
@@ -3828,7 +3875,9 @@ fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
         &json!({
             "op": "start-controller",
             "controller": pending(runner.state_dir()),
-            "watch": ["sleep", "30"],
+            // The start's reach joins the words as the sleeper's ignored
+            // arguments.
+            "watch": ["sh", "-c", "exec sleep 30", "sleeper"],
         }),
         &env,
     ));
@@ -4341,6 +4390,7 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
     watch
         .args(["--state-dir", &work.display().to_string()])
         .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(watch_reach(&runner, &work))
         .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
         .current_dir(&work)
         .stdout(std::process::Stdio::null())
@@ -4598,6 +4648,7 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     watch
         .args(["--state-dir", &work.display().to_string()])
         .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(watch_reach(&runner, &work))
         .args(["--interval", "1", "--max-loops", "1"])
         .args(["--since", "2026-01-01T00:00:00Z"])
         .current_dir(&work)
@@ -4667,6 +4718,7 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     watch
         .args(["--state-dir", &work.display().to_string()])
         .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(watch_reach(&runner, &work))
         .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
         .current_dir(&work)
         .stdout(std::process::Stdio::null())
@@ -5346,15 +5398,46 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
         .unwrap()
         .expect("the runtime claimed the fleet state");
     assert!(live(claim.pid), "a live runtime claim: {claim:?}");
+    // The watch names on its own command line, after the request's words,
+    // the mailbox and the server the start reached.
+    let argv: Vec<String> = std::fs::read(format!("/proc/{}/cmdline", claim.pid))
+        .unwrap()
+        .split(|b| *b == 0)
+        .filter(|w| !w.is_empty())
+        .map(|w| String::from_utf8_lossy(w).into_owned())
+        .collect();
     let intent = runner.fleet()["intents"][0].clone();
+    let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
+    assert!(out.status.success(), "watch stop: {}", stderr(&out));
+    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
     assert_eq!(
         discharged_by(&intent, "watch-claimed").len(),
         1,
         "the job is the fleet's once its claim stands: {intent}"
     );
-    let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
-    assert!(out.status.success(), "watch stop: {}", stderr(&out));
-    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
+    let at = argv.iter().position(|w| w == "--mail-program").unwrap_or(0);
+    let reach = &argv[at..(at + 6).min(argv.len())];
+    assert_eq!(reach.len(), 6, "{argv:?}");
+    let canonical = |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| p.into());
+    assert_eq!(
+        (
+            reach[0].as_str(),
+            std::path::PathBuf::from(&reach[1]),
+            reach[2].as_str(),
+            canonical(&reach[3]),
+            reach[4].as_str(),
+            std::path::PathBuf::from(&reach[5]),
+        ),
+        (
+            "--mail-program",
+            fixtures().join("lane-mail-quiet/lane-mail"),
+            "--mail-root",
+            std::fs::canonicalize(runner.state_dir()).unwrap(),
+            "--socket",
+            server.socket.clone(),
+        ),
+        "{argv:?}"
+    );
 
     // The watch's stderr file cannot be opened: nothing started, the start
     // held with the cause.
@@ -9624,6 +9707,26 @@ fn pi_root_marked(root: &Path) {
     .unwrap();
 }
 
+/// The reach a row's watch start names, as the fleet's own reach reads in
+/// the runner's world: the mailbox program a row plants, else the quiet
+/// stub, over the checkout `work`, and the fleet server.
+fn watch_reach(runner: &Runner, work: &Path) -> Vec<String> {
+    let program = runner
+        .env
+        .iter()
+        .find(|(name, _)| name == "LANE_MAIL_CLI")
+        .map(|(_, value)| std::path::PathBuf::from(value))
+        .unwrap_or_else(|| fixtures().join("lane-mail-quiet/lane-mail"));
+    vec![
+        "--mail-program".to_owned(),
+        program.display().to_string(),
+        "--mail-root".to_owned(),
+        work.display().to_string(),
+        "--socket".to_owned(),
+        runner.server_socket.display().to_string(),
+    ]
+}
+
 /// The real `watch run` on the runner's fleet state, its interval one
 /// second, until its overseer duty's transfer settles; the watch stopped
 /// and the settled intent returned. The watch is held [`Owned`], so a row
@@ -9635,6 +9738,7 @@ fn watched_transfer(runner: &Runner) -> Value {
     watch
         .args(["--state-dir", &work.display().to_string()])
         .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(watch_reach(runner, work))
         .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
         .current_dir(work)
         .stdout(std::process::Stdio::null())

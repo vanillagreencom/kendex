@@ -219,6 +219,10 @@ enum ControllerOp {
         /// where left out.
         #[arg(long)]
         handoff: Option<String>,
+        /// The preference the walk takes, in the setting's form, over
+        /// `AGENT_RUNTIME_CONTROLLER_PREFERENCE`.
+        #[arg(long, conflicts_with = "recover")]
+        preference: Option<String>,
     },
     /// Open a controller where none runs, on the request file's
     /// `{controller, brief_file, session?, watch?}`.
@@ -248,7 +252,8 @@ enum ControllerOp {
         reach: ReachArgs,
     },
     /// Record the controller a person opened by hand in the caller's own
-    /// pane, or with `--request` the pane an adoption request names.
+    /// pane, or the pane `--pane` names (on `--socket`, else the caller's own
+    /// server) running `--harness`, or the pane an adoption request names.
     Adopt {
         #[arg(long)]
         record: PathBuf,
@@ -256,8 +261,12 @@ enum ControllerOp {
         /// environment do not say.
         #[arg(long, conflicts_with = "request")]
         account: Option<String>,
-        #[arg(long)]
+        #[arg(long, conflicts_with = "pane")]
         request: Option<PathBuf>,
+        #[arg(long, requires = "harness")]
+        pane: Option<String>,
+        #[command(flatten)]
+        named: AdoptArgs,
     },
     /// Retire the recorded controller exactly and record `off`, run by its
     /// detached job.
@@ -326,6 +335,48 @@ enum ControllerOp {
         #[command(flatten)]
         reach: ReachArgs,
     },
+}
+
+/// What an adoption of the pane `--pane` names records beside it.
+#[derive(clap::Args)]
+struct AdoptArgs {
+    /// The tmux server the pane is on; the caller's own `$TMUX` where left
+    /// out.
+    #[arg(long, requires = "pane")]
+    socket: Option<PathBuf>,
+    #[arg(long, requires = "pane")]
+    harness: Option<String>,
+    /// The harness's native session id.
+    #[arg(long, requires = "pane")]
+    session_id: Option<String>,
+    #[arg(long, requires = "pane")]
+    home: Option<String>,
+    #[arg(long, requires = "pane")]
+    model: Option<String>,
+    #[arg(long, requires = "pane")]
+    effort: Option<String>,
+    #[arg(long, requires = "pane")]
+    cwd: Option<String>,
+}
+
+impl AdoptArgs {
+    /// The adoption request the flags name for `pane`.
+    fn request(self, pane: String, account: Option<String>) -> controller::AdoptController {
+        controller::AdoptController {
+            pane,
+            socket: self.socket,
+            harness: self.harness.unwrap_or_default(),
+            session_id: self.session_id,
+            account,
+            home: self.home,
+            model: self.model,
+            effort: self.effort,
+            cwd: self.cwd,
+            session_rows: None,
+            permission: None,
+            extra_args: None,
+        }
+    }
 }
 
 /// The mailbox and the tmux server a verb that runs an effect reaches, each
@@ -1853,6 +1904,7 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             mark,
             recover,
             handoff,
+            preference,
         } => {
             if recover {
                 let pane = predecessor.as_deref().unwrap_or_default();
@@ -1865,10 +1917,15 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             // The choice judges no rate mark of its own: the marks are the
             // opener's, so the wall a rate projects is never reached here.
             let no_wall = settings::Judged::of("wall-minutes", Ok(0));
+            let called = preference.map(|preference| settings::ControllerSettings {
+                preference,
+                preference_set: true,
+                ..loaded.controller.clone()
+            });
             let choosing = controller::successor::Choosing {
                 accounts: loaded.accounts.env(),
                 launch: &loaded.launch,
-                controller: &loaded.controller,
+                controller: called.as_ref().unwrap_or(&loaded.controller),
                 wall_minutes: &no_wall,
             };
             let project = loaded.accounts.project.clone();
@@ -1939,29 +1996,34 @@ fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
             record,
             account,
             request,
-        } => match request {
-            Some(request) => {
-                let r: controller::AdoptController = request_file(&request)?;
-                let adopted = agent_runtime::effects::adopt_controller(
-                    &record,
-                    &r,
-                    &loaded.engine,
-                    record::Locking::FLOCK,
-                )?;
-                serde_json::to_value(adopted).map_err(|source| Error::Json {
-                    path: record.clone(),
-                    source,
-                })
-            }
-            None => Ok(agent_runtime::effects::register_controller(
+            pane,
+            named,
+        } => {
+            let r: controller::AdoptController = match (request, pane) {
+                (Some(request), _) => request_file(&request)?,
+                (None, Some(pane)) => named.request(pane, account),
+                (None, None) => {
+                    return Ok(agent_runtime::effects::register_controller(
+                        &record,
+                        account.as_deref(),
+                        &loaded.engine,
+                        &loaded.roots.common,
+                        record::Locking::FLOCK,
+                    )?
+                    .0);
+                }
+            };
+            let adopted = agent_runtime::effects::adopt_controller(
                 &record,
-                account.as_deref(),
+                &r,
                 &loaded.engine,
-                &loaded.roots.common,
                 record::Locking::FLOCK,
-            )?
-            .0),
-        },
+            )?;
+            serde_json::to_value(adopted).map_err(|source| Error::Json {
+                path: record.clone(),
+                source,
+            })
+        }
         ControllerOp::Status {
             record,
             server,

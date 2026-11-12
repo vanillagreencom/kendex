@@ -97,7 +97,7 @@ fn zone(name: Option<&str>) -> Option<TimeZone> {
 }
 
 /// The production pane and window readers with the test's own server as
-/// the ambient one: the one thing the kernel reads from the environment.
+/// the one the fleet's reach names, where a pass is given none.
 struct TestReaders {
     socket: PathBuf,
 }
@@ -105,15 +105,15 @@ struct TestReaders {
 impl TestReaders {
     fn pane(
         &self,
-        recorded: Option<&Path>,
+        sockets: &[PathBuf],
         server: u64,
         start: Option<u64>,
         pane: &str,
     ) -> Reading<PaneState> {
-        let sockets = agent_runtime::effects::fleet_sockets(
-            recorded.map(Path::to_path_buf),
-            Some(self.socket.clone()),
-        );
+        let mut sockets = sockets.to_vec();
+        if !sockets.contains(&self.socket) {
+            sockets.push(self.socket.clone());
+        }
         lanes::pane_at(&sockets, server, start, pane)
     }
 
@@ -312,6 +312,7 @@ impl LaneDriver<'_> {
             wall_pauses: &wall_pauses,
             hosted: &reads,
             copilot_home: self.copilot_home.as_deref(),
+            server: None,
         });
         apply(&mut self.baseline, &produced);
         self.now += 240;
@@ -328,7 +329,7 @@ macro_rules! lane_driver {
             socket: $server.socket.clone(),
         };
         let pane_read =
-            |r: Option<&Path>, s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
+            |r: &[PathBuf], s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
         let windows_read = |r: Option<&Path>, session: &str| $readers.windows(r, session);
         let mut $name = LaneDriver {
             readers: Readers {
@@ -1533,6 +1534,7 @@ impl OverseerDriver<'_> {
                 transfer: &transfer,
                 context_record: self.context_record.as_deref(),
                 alert: self.alert,
+                server: None,
             },
             &self.slot,
         );
@@ -1667,7 +1669,7 @@ macro_rules! overseer_driver {
             socket: $server.socket.clone(),
         };
         let pane_read =
-            |r: Option<&Path>, s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
+            |r: &[PathBuf], s: u64, start: Option<u64>, p: &str| $readers.pane(r, s, start, p);
         let windows_read = |r: Option<&Path>, session: &str| $readers.windows(r, session);
         let $transfers = RefCell::new(Vec::new());
         let mut $name = OverseerDriver {

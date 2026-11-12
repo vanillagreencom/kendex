@@ -448,7 +448,7 @@ fn progress_reports(dir: &Path, cutoff: u64) -> Result<Vec<Unit>> {
 
 /// The overseer mailbox's session rows files, `session-<server pid>-<pane
 /// number>.jsonl` under `overseer`, whose pane is gone: the server answering
-/// at the ambient socket is that pid and holds no such pane. A file the
+/// at `server` is that pid and holds no such pane. A file the
 /// fleet record names (`overseer.session_rows`, `overseer.pending.
 /// session_rows`, `pending.session_rows`), a link, a server that does not
 /// answer there and a pane that cannot be read each keep the file.
@@ -456,7 +456,11 @@ fn progress_reports(dir: &Path, cutoff: u64) -> Result<Vec<Unit>> {
     clippy::disallowed_methods,
     reason = "the retention duty's pane read, the answering server's exact pane by id, judged beside the record and never acted on"
 )]
-fn dead_session_rows(overseer: &Path, record: &Document) -> Result<Vec<PathBuf>> {
+fn dead_session_rows(
+    overseer: &Path,
+    server: Option<&Path>,
+    record: &Document,
+) -> Result<Vec<PathBuf>> {
     let named: Vec<PathBuf> = [
         "/overseer/session_rows",
         "/overseer/pending/session_rows",
@@ -471,7 +475,7 @@ fn dead_session_rows(overseer: &Path, record: &Document) -> Result<Vec<PathBuf>>
     })
     .collect();
     let mut dead = Vec::new();
-    let mut server: Option<Option<tmux::Server>> = None;
+    let mut answered: Option<Option<tmux::Server>> = None;
     for file in read_dir(overseer)? {
         let Some((pid, pane)) = name_of(&file)
             .strip_prefix("session-")
@@ -491,11 +495,8 @@ fn dead_session_rows(overseer: &Path, record: &Document) -> Result<Vec<PathBuf>>
         {
             continue;
         }
-        let answering = server.get_or_insert_with(|| {
-            tmux::ambient_socket()
-                .and_then(|socket| tmux::server(&socket))
-                .ok()
-        });
+        let answering =
+            answered.get_or_insert_with(|| server.and_then(|socket| tmux::server(socket).ok()));
         let Some(live) = answering.as_ref().filter(|live| live.pid == pid) else {
             continue;
         };
@@ -569,10 +570,12 @@ struct Plan {
     cutoff: u64,
 }
 
-/// The places a pass reads beside the state directory.
+/// The places a pass reads beside the state directory, and the tmux server
+/// a session rows file's pane is judged on.
 struct Places {
     progress: PathBuf,
     overseer: PathBuf,
+    server: Option<PathBuf>,
 }
 
 /// The judgement: the records at `fleet`, the directory beside it and the
@@ -624,7 +627,7 @@ fn plan(
     units.extend(intent_files(&paths.dir, intents, cutoff)?);
     units.extend(progress_reports(&places.progress, cutoff)?);
     units.extend(
-        dead_session_rows(&places.overseer, record)?
+        dead_session_rows(&places.overseer, places.server.as_deref(), record)?
             .into_iter()
             .map(Unit::SessionRows),
     );
@@ -762,13 +765,15 @@ fn judged_pass(
     now: u64,
     commit: impl FnOnce(&[PlannedRows], u64) -> Result<Confirmed>,
 ) -> Result<Pruned> {
+    let reach = crate::effects::fleet_reach(settings)?;
     let plan = plan(
         fleet,
         paths,
         &settings.roots.project,
         &Places {
             progress: settings.store.progress_report_dir.clone(),
-            overseer: crate::watch::mail::overseer_dir(&settings.roots.common),
+            overseer: crate::watch::mail::overseer_dir(&reach.mail_root),
+            server: reach.socket,
         },
         settings.retention_days.get()?,
         now,
@@ -890,8 +895,12 @@ fn prune(ctx: &Context, tick: &Tick) -> Result<Pruned> {
 /// the mailbox lives whatever the state directory: the refusal where the
 /// mailbox refused.
 fn compact(settings: &Settings) -> Option<String> {
-    Mailbox::new(settings.lane_mail_cli.clone())
-        .compact(&settings.roots.common)
+    let reach = match crate::effects::fleet_reach(settings) {
+        Ok(reach) => reach,
+        Err(e) => return Some(format!("lane-mail compact item=overseer {e}")),
+    };
+    Mailbox::new(reach.mail_program)
+        .compact(&reach.mail_root)
         .err()
         .map(|refusal| format!("lane-mail compact item=overseer {refusal}"))
 }

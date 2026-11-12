@@ -38,7 +38,6 @@ use std::time::Duration;
 
 use agent_runtime::harness::Harness;
 use agent_runtime::host;
-use agent_runtime::host::tmux;
 use serde_json::Value;
 
 use super::owner_alert::{self, Word};
@@ -188,8 +187,8 @@ fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
 }
 
 /// The overseer as a target: the session record's pane, server, harness
-/// identity, home and directory, as the launchers wrote them.
-fn overseer_target(overseer: &Overseer) -> Option<Target> {
+/// identity, home and directory, as the launchers wrote them, on `socket`.
+fn overseer_target(overseer: &Overseer, socket: &Path) -> Option<Target> {
     let extra = &overseer.extra;
     let text = |key: &str| extra.get(key).and_then(Value::as_str);
     let harness = Harness::parse(text("harness")?)?;
@@ -206,10 +205,7 @@ fn overseer_target(overseer: &Overseer) -> Option<Target> {
         pane: text("pane")?.to_owned(),
         server: extra.get("server").and_then(u64_of)?,
         server_start: extra.get("server_start").and_then(u64_of),
-        socket: match overseer_socket(overseer) {
-            Some(socket) => socket,
-            None => tmux::ambient_socket().ok()?,
-        },
+        socket: socket.to_path_buf(),
         identity,
         home: text("home").map(PathBuf::from),
         cwd: PathBuf::from(text("cwd")?),
@@ -298,12 +294,17 @@ impl Wake {
         };
         let socket = match fleet.overseer.as_ref().and_then(overseer_socket) {
             Some(socket) => socket,
-            None => tmux::ambient_socket()?,
+            None => crate::effects::fleet_reach(&self.settings)?
+                .socket()?
+                .to_path_buf(),
         };
         let host = crate::ops::Host::kernel();
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
-                fleet.overseer.as_ref().and_then(overseer_target)
+                fleet
+                    .overseer
+                    .as_ref()
+                    .and_then(|o| overseer_target(o, &socket))
             } else {
                 fleet.lanes.iter().find(|l| l.item == name).and_then(|l| {
                     lane_target(l, &socket).filter(|_| !crate::ops::wake::turn_runs(l, &host))

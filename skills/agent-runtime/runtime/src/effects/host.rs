@@ -1499,7 +1499,7 @@ pub fn adopt_controller(
     }
     let socket = match &r.socket {
         Some(socket) => socket.clone(),
-        None => tmux::ambient_socket()?,
+        None => caller_socket()?,
     };
     let server = tmux::server(&socket)?;
     let fields = pane_read(&server, &r.pane)?;
@@ -1782,6 +1782,17 @@ fn caller_var(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+/// The server of the caller's own pane, the first field of `$TMUX`. An
+/// adoption or a registration is made from the session's own pane, which
+/// always has it: with none it refuses `tmux-missing` before it asks any
+/// server, never falling back to the user's default socket.
+fn caller_socket() -> Result<PathBuf> {
+    caller_var("TMUX")
+        .and_then(|value| value.split(',').next().map(PathBuf::from))
+        .filter(|socket| !socket.as_os_str().is_empty())
+        .ok_or_else(|| Error::refused("tmux-missing", &[("var", "TMUX")]))
+}
+
 /// The account a session of `harness` runs on whose home variable reads
 /// `home`: that home, else the harness's default home; a Codex home a
 /// folder-trust launch built under an account names that account.
@@ -1905,7 +1916,7 @@ pub fn register_controller(
     if !is_pane_id(&pane) {
         return Err(Error::refused("pane-invalid", &[("pane", &pane)]));
     }
-    let socket = tmux::ambient_socket()?;
+    let socket = caller_socket()?;
     let server = tmux::server(&socket)?;
     let fields = pane_read(&server, &pane)?;
     let rows = root.join("tmp/lane-mail/overseer").join(format!(

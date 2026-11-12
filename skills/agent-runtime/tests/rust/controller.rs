@@ -726,3 +726,79 @@ fn the_handoff_is_written_under_one_header_naming_the_records_generation() {
     assert_eq!(field(&fields, "reason"), Some("header"), "{fields}");
     assert_eq!(std::fs::read_to_string(&handoff).unwrap(), written);
 }
+
+/// An adoption is made from the session's own pane: an adoption request
+/// that names no server, and a registration of the caller's pane, run where
+/// `$TMUX` is unset refuse `tmux-missing var=TMUX` before any server is
+/// asked, the user's default socket included, and the record keeps its
+/// bytes.
+#[test]
+fn an_adoption_or_registration_with_no_server_named_refuses_before_asking_any() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    let text = world.record(&record, FLEET);
+    let request = write(
+        &world.root().join("adopt.json"),
+        &json!({"pane": "%7", "harness": "claude"}),
+    );
+    let adopt = world.controller(
+        world.root(),
+        &args(&["adopt"], &record, Some(&request)),
+        &[],
+    );
+    let register = world.controller(
+        world.root(),
+        &args(&["adopt"], &record, None),
+        &[("TMUX_PANE", "%7")],
+    );
+    for (form, out) in [("adopt --request", adopt), ("adopt", register)] {
+        let (key, fields) = refusal(&out);
+        assert_eq!(key, "tmux-missing", "{form}: {fields}");
+        assert_eq!(field(&fields, "var"), Some("TMUX"), "{form}: {fields}");
+        assert_eq!(std::fs::read_to_string(&record).unwrap(), text, "{form}");
+    }
+    assert_eq!(
+        world.log("tmux.log"),
+        "",
+        "an adoption with no server named asked one"
+    );
+}
+
+/// The flag forms: `adopt --pane` reads the pane on the server `--socket`
+/// names and on no other, and with neither `--socket` nor `$TMUX` refuses
+/// `tmux-missing`; `successor --preference` walks the call's preference
+/// over the setting's, so an empty one refuses `preference-empty` where the
+/// setting is unset.
+#[test]
+fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    let text = world.record(&record, FLEET);
+    let mut pane = args(&["adopt"], &record, None);
+    pane.extend(["--pane", "%7", "--harness", "claude"].map(str::to_owned));
+    let (key, fields) = refusal(&world.controller(world.root(), &pane, &[]));
+    assert_eq!(key, "tmux-missing", "{fields}");
+    assert_eq!(world.log("tmux.log"), "", "no server named, none asked");
+    pane.extend(["--socket".to_owned(), world.socket().display().to_string()]);
+    let (key, fields) = refusal(&world.controller(world.root(), &pane, &[]));
+    assert_eq!(key, "tmux-refused", "{fields}");
+    let named_server = format!("-S {} ", world.socket().display());
+    let calls = world.log("tmux.log");
+    assert!(
+        !calls.is_empty() && calls.lines().all(|call| call.starts_with(&named_server)),
+        "{calls}"
+    );
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), text);
+    let mut successor = args(&["successor"], &record, None);
+    successor.extend(
+        [
+            "--cwd",
+            &world.root().display().to_string(),
+            "--preference",
+            "",
+        ]
+        .map(str::to_owned),
+    );
+    let (key, fields) = refusal(&world.controller(world.root(), &successor, &[]));
+    assert_eq!(key, "preference-empty", "{fields}");
+}

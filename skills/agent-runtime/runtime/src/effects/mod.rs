@@ -136,7 +136,7 @@ pub struct Run<'a> {
 /// from the directory its process stands in or from an ambient socket: a
 /// detached job inherits that directory and environment from whatever
 /// started it, which may stand in another checkout.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reach {
     /// The mailbox program the owner notice runs.
     pub mail_program: PathBuf,

@@ -906,6 +906,7 @@ mod tests {
         let run = super::super::engine_run(
             &path,
             &settings,
+            super::super::fleet_reach(&settings).unwrap(),
             &env,
             Locking::FLOCK,
             &agent_runtime::clock::SystemClock,

@@ -732,6 +732,25 @@ enum WatchOp {
         /// under its selection.
         #[arg(long, hide = true)]
         credential_selected: bool,
+        #[command(flatten)]
+        reach: WatchReach,
+    },
+    /// Start `watch run` detached beside the fleet state with these flags,
+    /// reaching the mailbox and tmux server this command reaches, named on
+    /// its command line; `launch-job`'s answer and exits.
+    Start {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        interval: Option<u64>,
+        #[arg(long)]
+        max_loops: Option<u32>,
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        replace: Option<u32>,
+        #[arg(long = "repo")]
+        repos: Vec<String>,
     },
     /// The claim and whether its identity runs, the due times the records
     /// imply, and the last event line's number.
@@ -751,6 +770,48 @@ enum WatchOp {
         #[arg(long, default_value_t = 1)]
         since: u64,
     },
+}
+
+/// The mailbox and tmux server a watch reaches, each named by its start: a
+/// watch runs detached and inherits its directory and environment from
+/// whatever started it, which may stand in another checkout.
+#[derive(Args)]
+struct WatchReach {
+    /// The mailbox program the watch's owner alerts and mail reads run.
+    #[arg(long)]
+    mail_program: Option<PathBuf>,
+    /// The mailbox root they are delivered and read under.
+    #[arg(long)]
+    mail_root: Option<PathBuf>,
+    /// The tmux server the watch asks where a record names none.
+    #[arg(long)]
+    socket: Option<PathBuf>,
+}
+
+impl WatchReach {
+    /// The reach the start named, refused before anything is read or asked:
+    /// `mailbox-unnamed` naming the missing flag, else `tmux-server-unnamed`.
+    fn named(&self) -> Result<agent_runtime::effects::Reach> {
+        let missing = |field: &str| {
+            Error::Runtime(agent_runtime::Error::refused(
+                "mailbox-unnamed",
+                &[("field", field)],
+            ))
+        };
+        let mail_program = self
+            .mail_program
+            .clone()
+            .ok_or_else(|| missing("mail_program"))?;
+        let mail_root = self.mail_root.clone().ok_or_else(|| missing("mail_root"))?;
+        let socket = self.socket.clone().ok_or_else(|| {
+            Error::Runtime(agent_runtime::Error::refused("tmux-server-unnamed", &[]))
+        })?;
+        Ok(agent_runtime::effects::Reach {
+            mail_program,
+            mail_root,
+            socket: Some(socket),
+        })
+    }
 }
 
 /// Which state file a verb acts on: a path, or an item or fleet under the
@@ -1315,6 +1376,28 @@ fn replied(value: serde_json::Value, status: i32) -> Result<serde_json::Value> {
     Ok(value)
 }
 
+/// A detached job's launch as its verb answers it: exit 0 started, 75
+/// possibly started, 1 `job-launch-failed` with nothing started.
+fn launched(
+    launch: &agent_runtime::effects::job::Launch,
+    record: &Path,
+) -> Result<serde_json::Value> {
+    let status = match launch {
+        agent_runtime::effects::job::Launch::Started { .. } => 0,
+        agent_runtime::effects::job::Launch::Unanswered { .. } => {
+            agent_runtime::effects::UNCONFIRMED_EXIT
+        }
+        agent_runtime::effects::job::Launch::Refused { cause } => {
+            return Err(
+                agent_runtime::Error::refused("job-launch-failed", &[("cause", cause)]).into(),
+            );
+        }
+    };
+    let mut value = serde_json::to_value(launch)?;
+    value["record"] = serde_json::json!(record);
+    replied(value, status)
+}
+
 fn read_request<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
     let bytes = std::fs::read(path)
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-request", path.clone(), e)))?;
@@ -1461,6 +1544,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // An overseer's start or transfer opens on the overseer's own
             // handoff and takeover brief where the request names none.
             let held_brief = ops::successor::overseer_defaults(&mut request, &path, &settings)?;
+            effects::companion_reach(&mut request, &settings)?;
             // What the settings refuse before any transition: a succession
             // under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
@@ -1561,14 +1645,14 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 )?)?);
             }
             let applied = persist(&path, &request, &env, locking, &settings)?;
-            if let Some(held) = &held_brief {
-                held.write()?;
-            }
             // Every refusal from here on comes after the request's intent was
             // persisted: it names that intent, which stands for the reconcile,
             // so a caller never reads it as nothing done.
             let persisted = effects::persisted_intent(&applied.report).map(str::to_owned);
             let effected = || -> Result<serde_json::Value> {
+                if let Some(held) = &held_brief {
+                    held.write()?;
+                }
                 // The reconcile may have closed a runtime-started run and written
                 // its end notice owed in that same transition; the owed walk runs
                 // after it as well as before, so that notice is sent in this call.
@@ -1702,22 +1786,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &argv,
                 stderr.as_deref(),
             );
-            let status = match &launch {
-                agent_runtime::effects::job::Launch::Started { .. } => 0,
-                agent_runtime::effects::job::Launch::Unanswered { .. } => {
-                    agent_runtime::effects::UNCONFIRMED_EXIT
-                }
-                agent_runtime::effects::job::Launch::Refused { cause } => {
-                    return Err(agent_runtime::Error::refused(
-                        "job-launch-failed",
-                        &[("cause", cause)],
-                    )
-                    .into());
-                }
-            };
-            let mut value = serde_json::to_value(&launch)?;
-            value["record"] = serde_json::json!(record);
-            replied(value, status)?
+            launched(&launch, &record)?
         }
         Verb::StopJob { record } => {
             serde_json::json!({"stopped": agent_runtime::effects::job::stop_recorded(&record)?})
@@ -2203,7 +2272,17 @@ fn reexec_with_github_auth(settings: &Settings) -> Error {
 /// and registers every duty, one registration line each: the reconcile of
 /// every open intent on the long cadence and the duties under `watch/`.
 fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
-    let settings = resolve_settings(flags)?;
+    // A run's reach is judged before the settings are read: a start that
+    // names none has asked no server and alerted no mailbox.
+    let named = match &op {
+        WatchOp::Run { reach, .. } => Some(reach.named()?),
+        WatchOp::Start { .. }
+        | WatchOp::Status { .. }
+        | WatchOp::Stop { .. }
+        | WatchOp::Log { .. } => None,
+    };
+    let mut settings = resolve_settings(flags)?;
+    settings.reach = named;
     let clock = SystemClock;
     match op {
         WatchOp::Run {
@@ -2214,6 +2293,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             replace,
             repos,
             credential_selected,
+            reach: _,
         } => {
             if !credential_selected {
                 return Err(reexec_with_github_auth(&settings));
@@ -2313,6 +2393,44 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 }),
             );
             Ok(serde_json::to_value(runner.run()?)?)
+        }
+        WatchOp::Start {
+            target,
+            interval,
+            max_loops,
+            since,
+            replace,
+            repos,
+        } => {
+            let path = target_path(&target, &settings);
+            let exe = std::env::current_exe().map_err(|e| {
+                Error::Runtime(agent_runtime::Error::io("exe", PathBuf::from("."), e))
+            })?;
+            let mut program = vec![exe.display().to_string()];
+            if let Some(dir) = &flags.state_dir {
+                program.extend(["--state-dir".to_owned(), dir.display().to_string()]);
+            }
+            if !flags.private_env {
+                program.push("--no-private-env".to_owned());
+            }
+            let mut words = Vec::new();
+            let pairs = [
+                ("--interval", interval.map(|n| n.to_string())),
+                ("--max-loops", max_loops.map(|n| n.to_string())),
+                ("--since", since),
+                ("--replace", replace.map(|n| n.to_string())),
+            ];
+            for (flag, value) in pairs {
+                if let Some(value) = value {
+                    words.extend([flag.to_owned(), value]);
+                }
+            }
+            for repo in repos {
+                words.extend(["--repo".to_owned(), repo]);
+            }
+            let name = format!("watch-{}", Env::system()?.iso().replace(['-', ':'], ""));
+            let (launch, record) = effects::start_watch(&path, &settings, &program, &words, &name)?;
+            launched(&launch, &record)
         }
         WatchOp::Status { target } => {
             let paths = watch::Paths::of(&target_path(&target, &settings))?;

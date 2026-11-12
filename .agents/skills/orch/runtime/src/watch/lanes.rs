@@ -101,14 +101,15 @@ pub struct WindowRow {
 }
 
 /// A pane read by exact id on the server whose pid, and where recorded
-/// whose start, a record names, looked for at the socket the controller
-/// record names first ([`pane_at`]).
-pub type PaneRead<'a> = &'a dyn Fn(Option<&Path>, u64, Option<u64>, &str) -> Reading<PaneState>;
+/// whose start, a record names, looked for among the sockets given, the
+/// controller record's first ([`pane_at`]).
+pub type PaneRead<'a> = &'a dyn Fn(&[PathBuf], u64, Option<u64>, &str) -> Reading<PaneState>;
 /// Who holds a pane's terminal, read for the lane's harness and recorded
 /// identity.
 pub type ForegroundRead<'a> = &'a dyn Fn(u32, Option<Harness>, Option<&Identity>) -> ProcessReading;
 /// The windows of a session on the server at the socket the controller
-/// record names, else the ambient one, with the server's pid.
+/// record names, else the one the fleet's reach names, with the server's
+/// pid.
 pub type WindowsRead<'a> = &'a dyn Fn(Option<&Path>, &str) -> Reading<(u64, Vec<WindowRow>)>;
 
 /// The pane `pane` on the server [`agent_runtime::effects::server_at`] finds among
@@ -188,26 +189,21 @@ pub struct Readers<'a> {
 }
 
 impl Readers<'static> {
-    /// The readers production judges with: the recorded server found at the
-    /// controller record's socket or the ambient one by pid and start, the
-    /// exact pane, the one judge's foreground read, the capture, the rows
-    /// and the status file.
+    /// The readers production judges with: the recorded server found among
+    /// the sockets given by pid and start, the exact pane, the one judge's
+    /// foreground read, the capture, the rows and the status file.
     #[allow(
         clippy::disallowed_methods,
         reason = "the lane observation duty's reads: the recorded pane by exact id on the server the record names, its foreground through the one judge with the recorded identity, its screen and the lane's files; the duty judges beside the record and never acts"
     )]
     pub fn kernel() -> Readers<'static> {
         fn pane(
-            recorded: Option<&Path>,
+            sockets: &[PathBuf],
             server: u64,
             server_start: Option<u64>,
             pane: &str,
         ) -> Reading<PaneState> {
-            let sockets = agent_runtime::effects::fleet_sockets(
-                recorded.map(Path::to_path_buf),
-                tmux::ambient_socket().ok(),
-            );
-            pane_at(&sockets, server, server_start, pane)
+            pane_at(sockets, server, server_start, pane)
         }
         fn foreground(
             pane_pid: u32,
@@ -229,10 +225,10 @@ impl Readers<'static> {
                 },
             }
         }
-        fn windows(recorded: Option<&Path>, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
-            match recorded.map_or_else(tmux::ambient_socket, |s| Ok(s.to_path_buf())) {
-                Ok(socket) => windows_at(&socket, session),
-                Err(_) => Reading::Unreadable {
+        fn windows(socket: Option<&Path>, session: &str) -> Reading<(u64, Vec<WindowRow>)> {
+            match socket {
+                Some(socket) => windows_at(socket, session),
+                None => Reading::Unreadable {
                     cause: "server-unreachable",
                 },
             }
@@ -518,6 +514,9 @@ pub struct Pass<'a> {
     pub hosted: &'a hosted::Reads<'a>,
     /// The account a Copilot record naming none runs on ([`copilot_home`]).
     pub copilot_home: Option<&'a Path>,
+    /// The tmux server the fleet's reach names, asked where the controller
+    /// record names none.
+    pub server: Option<&'a Path>,
 }
 
 /// What one lane's pass read, kept for the report a row asks for.
@@ -607,13 +606,13 @@ impl HostRead {
 /// leaves it unjudged, and a running one is the proof that the harness is
 /// up, which the pane is judged with: the provider's own where its kind
 /// captures it, else the local pane, whose own foreground is the transport
-/// shell and proves nothing of the harness either way. `socket` is the one
-/// the controller record names, where the lane's server is looked for
-/// first.
+/// shell and proves nothing of the harness either way. `sockets` are where
+/// the lane's server is looked for, the controller record's first, then
+/// the one the fleet's reach names.
 fn read_lane<'a>(
     lane: &'a Lane,
     readers: &Readers,
-    socket: Option<&Path>,
+    sockets: &[PathBuf],
     host: HostRead,
     account_room: Option<bool>,
 ) -> Observed<'a> {
@@ -707,7 +706,12 @@ fn read_lane<'a>(
         });
     };
     let pane_key = Some(format!("{server} {pane_id}"));
-    let pane = match (readers.pane)(socket, server, launch.and_then(|l| l.server_start), pane_id) {
+    let pane = match (readers.pane)(
+        sockets,
+        server,
+        launch.and_then(|l| l.server_start),
+        pane_id,
+    ) {
         Reading::Live(PaneState::Running(fields)) => Reading::Live(fields),
         // A pane its server keeps after its process exited holds no
         // session: a local lane has ended, its kept screen the closing
@@ -799,11 +803,14 @@ pub fn status(settings: &Settings, path: &Path, item: &str) -> crate::error::Res
         Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
     let readers = Readers::kernel();
-    let socket = fleet
-        .overseer
-        .as_ref()
-        .and_then(agent_runtime::effects::overseer_socket);
-    let observed = read_lane(lane, &readers, socket.as_deref(), host, None);
+    let sockets = agent_runtime::effects::fleet_sockets(
+        fleet
+            .overseer
+            .as_ref()
+            .and_then(agent_runtime::effects::overseer_socket),
+        crate::effects::fleet_reach(settings)?.socket,
+    );
+    let observed = read_lane(lane, &readers, &sockets, host, None);
     let mut said = Produced::default();
     let (counters, stage) = lane_counts(
         lane,
@@ -855,7 +862,13 @@ pub(crate) fn judge(
         Ok(caps) => HostRead::of(&scripts, lane, caps),
     };
     let readers = Readers::kernel();
-    read_lane(lane, &readers, socket, host, account_room).state
+    let sockets = agent_runtime::effects::fleet_sockets(
+        socket.map(Path::to_path_buf),
+        crate::effects::fleet_reach(settings)
+            .ok()
+            .and_then(|reach| reach.socket),
+    );
+    read_lane(lane, &readers, &sockets, host, account_room).state
 }
 
 /// The non-blank lines of `block`, the last `cap` of them.
@@ -987,18 +1000,20 @@ pub fn observe(pass: &Pass) -> Produced {
         .filter_map(|l| hosts.of(l).ok().map(|caps| (*l, caps)))
         .filter(|(_, caps)| caps.status != Status::None)
         .collect();
-    let socket = pass
-        .fleet
-        .overseer
-        .as_ref()
-        .and_then(agent_runtime::effects::overseer_socket);
+    let sockets = agent_runtime::effects::fleet_sockets(
+        pass.fleet
+            .overseer
+            .as_ref()
+            .and_then(agent_runtime::effects::overseer_socket),
+        pass.server.map(Path::to_path_buf),
+    );
     let observed: Vec<Observed> = lanes
         .iter()
         .map(|(lane, caps)| {
             read_lane(
                 lane,
                 pass.readers,
-                socket.as_deref(),
+                &sockets,
                 HostRead::of(pass.scripts, lane, *caps),
                 None,
             )
@@ -2122,7 +2137,8 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
         .overseer
         .as_ref()
         .and_then(agent_runtime::effects::overseer_socket);
-    let (server, windows) = match (pass.readers.windows)(socket.as_deref(), session) {
+    let socket = socket.as_deref().or(pass.server);
+    let (server, windows) = match (pass.readers.windows)(socket, session) {
         Reading::Live(listing) => listing,
         Reading::Gone | Reading::Unreadable { .. } => return,
     };

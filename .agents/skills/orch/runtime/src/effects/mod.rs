@@ -64,7 +64,7 @@ mod stop;
 
 pub use close::{Closed, Word as CloseWord, close_lane};
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
 use agent_runtime::protocol::Outcome;
@@ -107,11 +107,11 @@ impl<'a> Run<'a> {
         env: &'a Env,
         locking: Locking,
         clock: &'a dyn Clock,
-    ) -> Run<'a> {
-        Run {
-            engine: engine_run(path, settings, env, locking, clock),
+    ) -> Result<Run<'a>> {
+        Ok(Run {
+            engine: engine_run(path, settings, fleet_reach(settings)?, env, locking, clock),
             settings,
-        }
+        })
     }
 
     /// The recording boundary an outcome's operation names: a lane
@@ -131,11 +131,12 @@ impl<'a> Run<'a> {
 
 /// The engine's run over the record at `path`, filled from orch's settings:
 /// the engine's own keys as the one load read them, and orch's state
-/// directory, close grace and the fleet's reach as the arguments the engine
-/// takes.
+/// directory, close grace and the reach it was given as the arguments the
+/// engine takes.
 fn engine_run<'a>(
     path: &'a Path,
     settings: &'a Settings,
+    reach: agent_runtime::effects::Reach,
     env: &'a Env,
     locking: Locking,
     clock: &'a dyn Clock,
@@ -146,7 +147,7 @@ fn engine_run<'a>(
         settings: &settings.engine,
         state_dir: settings.state_dir.clone(),
         close_grace: settings.close_grace.clone(),
-        reach: fleet_reach(settings),
+        reach,
         env,
         locking,
         clock,
@@ -155,15 +156,24 @@ fn engine_run<'a>(
     }
 }
 
-/// The fleet's own mailbox and tmux server: the mailbox program and main
-/// checkout of the checkout the fleet's record stands in, and the server
-/// the overseer's own `$TMUX` names, else the user's default.
-fn fleet_reach(settings: &Settings) -> agent_runtime::effects::Reach {
-    agent_runtime::effects::Reach {
+/// The fleet's own mailbox and tmux server: what a watch's start named;
+/// in any other process the mailbox program and main checkout of the
+/// checkout it stands in and the server its own `$TMUX` names, else the
+/// user's default. A watch is started detached and inherits its directory
+/// and environment from whatever started it, so only its start names them.
+/// A server that cannot be read refuses `tmux-server-unnamed` with the
+/// read's cause before any server is asked.
+pub fn fleet_reach(settings: &Settings) -> Result<agent_runtime::effects::Reach> {
+    if let Some(reach) = &settings.reach {
+        return Ok(reach.clone());
+    }
+    let socket = agent_runtime::host::tmux::ambient_socket()
+        .map_err(|e| refused("tmux-server-unnamed", &[("cause", e.key())]))?;
+    Ok(agent_runtime::effects::Reach {
         mail_program: settings.lane_mail_cli.clone(),
         mail_root: settings.roots.common.clone(),
-        socket: agent_runtime::host::tmux::ambient_socket().ok(),
-    }
+        socket: Some(socket),
+    })
 }
 
 /// orch's own `job` command for an intent's detached job, after the
@@ -256,7 +266,7 @@ pub fn send_owed_notices(
     if !has_live_effect(request) {
         return Ok(Vec::new());
     }
-    let run = Run::new(path, settings, env, locking, clock);
+    let run = Run::new(path, settings, env, locking, clock)?;
     job::send_owed_notices(&run.engine).map_err(Error::from)
 }
 
@@ -269,7 +279,7 @@ pub fn send_unanswered_notices(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Vec<job::NoticeUnmarked>> {
-    let run = Run::new(path, settings, env, locking, clock);
+    let run = Run::new(path, settings, env, locking, clock)?;
     job::send_unanswered_notices(&run.engine).map_err(Error::from)
 }
 
@@ -313,10 +323,10 @@ pub fn run(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Option<Effected>> {
-    let run = Run::new(path, settings, env, locking, clock);
     let Some(effect) = live_effect(report) else {
         return Ok(None);
     };
+    let run = Run::new(path, settings, env, locking, clock)?;
     run_effect(&run, request, effect).map(Some)
 }
 
@@ -507,8 +517,10 @@ pub fn run_job(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<Applied> {
-    let mut run = Run::new(path, settings, env, locking, clock);
-    run.engine.reach = reach;
+    let run = Run {
+        engine: engine_run(path, settings, reach, env, locking, clock),
+        settings,
+    };
     with_controller(&run, |ctl| {
         agent_runtime::controller::run::run_job(ctl, intent_id)
     })
@@ -707,6 +719,47 @@ fn watch_files(path: &Path) -> agent_runtime::Result<controller::CompanionFiles>
     })
 }
 
+/// Start the fleet watch over the fleet state at `path` detached, under the
+/// files a controller start's companion keeps: `program`, `watch run --file
+/// <path>`, `flags`, then the reach [`fleet_reach`] answers in this process,
+/// launched as the recorded job `name`. The launch's answer and its record.
+pub fn start_watch(
+    path: &Path,
+    settings: &Settings,
+    program: &[String],
+    flags: &[String],
+    name: &str,
+) -> Result<(job::Launch, PathBuf)> {
+    let reach = fleet_reach(settings)?;
+    let files = watch_files(path)?;
+    let file = path.display().to_string();
+    let words: Vec<String> = agent_runtime::controller::run::reach_words(&reach);
+    let argv: Vec<&str> = program
+        .iter()
+        .map(String::as_str)
+        .chain(["watch", "run", "--file", &file])
+        .chain(flags.iter().map(String::as_str))
+        .chain(words.iter().map(String::as_str))
+        .collect();
+    let launch = job::launch_command(name, &files.record, &argv, Some(&files.stderr));
+    Ok((launch, files.record))
+}
+
+/// A controller start's companion watch reaches the mailbox and server the
+/// start reaches: their flags join the watch words the request names, so
+/// the detached watch finds neither from the directory or environment it
+/// inherits.
+pub fn companion_reach(request: &mut Request, settings: &Settings) -> Result<()> {
+    if let Request::StartController(r) = request
+        && let Some(words) = &mut r.watch
+    {
+        words.extend(agent_runtime::controller::run::reach_words(&fleet_reach(
+            settings,
+        )?));
+    }
+    Ok(())
+}
+
 /// `act` run over the hand-over's run on the same record: orch's settings
 /// as the hand-over reads them, and the fleet watch as a start's companion.
 fn with_controller<T>(
@@ -719,10 +772,11 @@ fn with_controller<T>(
         controller: &run.settings.controller,
         inherited: run.settings.inherited(),
     };
-    let mut ctl = controller::Run {
+    let ctl = controller::Run {
         engine: engine_run(
             run.engine.path,
             run.settings,
+            run.engine.reach.clone(),
             run.engine.env,
             run.engine.locking,
             run.engine.clock,
@@ -730,7 +784,6 @@ fn with_controller<T>(
         settings: &settings,
         companion: watch_files,
     };
-    ctl.engine.reach = run.engine.reach.clone();
     act(&ctl).map_err(Error::from)
 }
 
@@ -806,7 +859,7 @@ pub fn reconcile(
     locking: Locking,
     clock: &dyn Clock,
 ) -> Result<ReconcileRun> {
-    let run = Run::new(path, settings, env, locking, clock);
+    let run = Run::new(path, settings, env, locking, clock)?;
     let open = open_intents(path)?;
     let mut reconciled = Vec::new();
     let mut refused = Vec::new();

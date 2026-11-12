@@ -1769,14 +1769,26 @@ fn watch_env(command: &mut Command, dir: &Path) {
 }
 
 /// `watch run --file <state>` then `flags` on the fleet state in `dir`,
-/// under [`watch_env`].
+/// under [`watch_env`], its start naming the shipped mailbox client over
+/// `dir` and a server socket under `dir` that no server answers.
 fn watch_run_command(dir: &Path, flags: &[&str]) -> Command {
+    watch_run_with(dir, flags, &lane_mail())
+}
+
+/// [`watch_run_command`] with its start naming the mailbox program `mail`.
+fn watch_run_with(dir: &Path, flags: &[&str], mail: &Path) -> Command {
     let state = dir.join(FLEET_FILE_NAME);
     let mut command = isolated();
     watch_env(&mut command, dir);
     command
         .args(["watch", "run", "--file", &state.display().to_string()])
         .args(flags)
+        .arg("--mail-program")
+        .arg(mail)
+        .arg("--mail-root")
+        .arg(dir)
+        .arg("--socket")
+        .arg(dir.join("tmux.sock"))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
@@ -2217,11 +2229,14 @@ fn spawn_sign_in_watch(dir: &Path) -> std::process::Child {
         json!({SIGN_IN_REPO: {"exit": 0}}).to_string(),
     )
     .unwrap();
-    let mut command = watch_run_command(dir, &["--interval", "1", "--repo", SIGN_IN_REPO]);
+    let mut command = watch_run_with(
+        dir,
+        &["--interval", "1", "--repo", SIGN_IN_REPO],
+        &bin.join("lane-mail"),
+    );
     command
         .env("GH_TOKEN", START_TOKEN)
         .env("OVERSEE_WATCH_PR_WATCH", bin.join("pr-watch"))
-        .env("LANE_MAIL_CLI", bin.join("lane-mail"))
         .stderr(std::fs::File::create(dir.join("watch.err")).unwrap());
     command.spawn().expect("spawn watch run")
 }
@@ -2423,4 +2438,301 @@ fn an_unrenewable_sign_in_reaches_the_owner_once_and_a_renewal_clears_it() {
         ],
         "a later expiry is said again"
     );
+}
+
+// The watch's reach: the mailbox and the server its start names.
+
+/// A watch row's world under a temporary root below git's ceiling, as
+/// agent-runtime's controller rows plant theirs: `bin/tmux` logs every call
+/// to `tmux.log` and answers that no server runs; `named/lane-mail` logs
+/// each call to `named-mail.log`; `checkout` is a checkout holding the fleet
+/// state, whose own mailbox program logs to `checkout-mail.log`;
+/// `mail-root` and `named.sock` are what a start names, `ambient.sock` the
+/// server its `$TMUX` names. Dropping it waits for every process whose
+/// command line names the root and kills what is left.
+struct ReachWorld {
+    dir: tempfile::TempDir,
+}
+
+impl ReachWorld {
+    fn new() -> ReachWorld {
+        let world = ReachWorld {
+            dir: tempfile::tempdir().unwrap(),
+        };
+        let root = world.root();
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        std::fs::create_dir_all(root.join("mail-root")).unwrap();
+        write_executable(
+            &root.join("bin/tmux"),
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\necho 'no server running on stand-in' >&2\nexit 1\n",
+                root.join("tmux.log").display()
+            ),
+        );
+        logging_mailbox(&world.named_mail(), &root.join("named-mail.log"));
+        let checkout = world.checkout();
+        std::fs::create_dir_all(&checkout).unwrap();
+        let out = program("git")
+            .args(["-C", &checkout.display().to_string(), "init", "-q"])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git init: {}", stderr(&out));
+        logging_mailbox(
+            &checkout.join(".agents/skills/mailbox/scripts/lane-mail"),
+            &root.join("checkout-mail.log"),
+        );
+        let init = watch_cmd(&checkout, &["state", "init", "--fleet"]);
+        assert!(init.status.success(), "init: {}", stderr(&init));
+        world
+    }
+
+    fn root(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn checkout(&self) -> PathBuf {
+        self.root().join("checkout")
+    }
+
+    fn named_mail(&self) -> PathBuf {
+        self.root().join("named/lane-mail")
+    }
+
+    fn named_socket(&self) -> PathBuf {
+        self.root().join("named.sock")
+    }
+
+    fn log(&self, name: &str) -> Vec<String> {
+        lines_of(&self.root().join(name))
+    }
+
+    /// The three flags naming the world's mailbox and server.
+    fn reach(&self) -> Vec<String> {
+        vec![
+            "--mail-program".to_owned(),
+            self.named_mail().display().to_string(),
+            "--mail-root".to_owned(),
+            self.root().join("mail-root").display().to_string(),
+            "--socket".to_owned(),
+            self.named_socket().display().to_string(),
+        ]
+    }
+
+    /// `watch run` on the checkout's fleet state, standing in the checkout,
+    /// with `reach`: no `LANE_MAIL_CLI`, so the checkout's own mailbox is the
+    /// one its walk finds; `$TMUX` naming the ambient socket; the stand-in
+    /// tmux first on `PATH` and tmux's default socket directory the root.
+    fn watch(&self, reach: &[String]) -> Command {
+        let checkout = self.checkout();
+        let state = checkout.join(FLEET_FILE_NAME);
+        let mut command = isolated();
+        watch_env(&mut command, &checkout);
+        command
+            .args(["--state-dir", &checkout.display().to_string()])
+            .args(["watch", "run", "--file", &state.display().to_string()])
+            .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
+            .args(reach)
+            .env_remove("LANE_MAIL_CLI")
+            .env(
+                "PATH",
+                tool_path(&[&self.root().join("bin"), &checkout.join("bin")]),
+            )
+            .env(
+                "TMUX",
+                format!("{},0,0", self.root().join("ambient.sock").display()),
+            )
+            .env("TMUX_TMPDIR", self.root())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+
+    /// The processes other than this one whose command line names the root.
+    fn naming(&self) -> Vec<u32> {
+        let root = self.root().as_os_str().as_encoded_bytes().to_vec();
+        let own = std::process::id();
+        std::fs::read_dir("/proc")
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
+                    .filter(|pid| *pid != own && cmdline_names(*pid, &root))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// Whether `pid`'s command line holds `root`.
+fn cmdline_names(pid: u32, root: &[u8]) -> bool {
+    std::fs::read(format!("/proc/{pid}/cmdline"))
+        .is_ok_and(|line| line.windows(root.len()).any(|w| w == root))
+}
+
+impl Drop for ReachWorld {
+    fn drop(&mut self) {
+        let deadline = Instant::now() + secs(10);
+        while !self.naming().is_empty() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let root = self.root().as_os_str().as_encoded_bytes().to_vec();
+        for pid in self.naming() {
+            // Signalled only while its command line still names the root,
+            // so a reused pid is never touched.
+            if cmdline_names(pid, &root) {
+                let _ = Command::new("kill")
+                    .args(["-KILL", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+}
+
+/// A mailbox program at `program` that appends each call to `log`.
+fn logging_mailbox(program: &Path, log: &Path) {
+    std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+    write_executable(
+        program,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", log.display()),
+    );
+}
+
+/// A watch started under a checkout that holds its own mailbox program and
+/// whose `$TMUX` names another server sends its owner notice through the
+/// mailbox its start names, under the root its start names, and asks only
+/// the server its start names: the controller record names no socket, so
+/// its pane is looked for there, and the closed intent's owed notice is
+/// the reconcile duty's to send.
+#[test]
+fn a_watch_under_a_checkout_with_its_own_mailbox_alerts_and_asks_only_what_its_start_names() {
+    let world = ReachWorld::new();
+    let state = world.checkout().join(FLEET_FILE_NAME);
+    let server = Owned::sleep();
+    let now = agent_runtime::journal::Env::system().unwrap().iso();
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["overseer"] = json!({
+        "generation": 1, "server": server.pid(), "pane": "%1",
+        "window": "overseer", "harness": "claude"
+    });
+    fleet["intents"] = json!([{
+        "id": "request-transfer:overseer:1:1-1", "op": "request-transfer",
+        "target": "overseer:1", "created_at": now, "completed_at": now,
+        "outcome": "failed",
+        "notice": {"key": "job-launch-failed", "text": "the planted notice", "owner": "owed"}
+    }]);
+    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    let mut child = world.watch(&world.reach()).spawn().expect("watch run");
+    let named = format!("-S {} ", world.named_socket().display());
+    let notice = format!(
+        "notice --item overseer --to owner --file {}",
+        world
+            .checkout()
+            .join("intents/request-transfer:overseer:1:1-1.notice")
+            .display()
+    );
+    let deadline = Instant::now() + secs(40);
+    loop {
+        let noticed = world
+            .log("named-mail.log")
+            .iter()
+            .any(|l| l.starts_with(&notice));
+        let asked = world.log("tmux.log").iter().any(|l| l.starts_with(&named));
+        if noticed && asked {
+            break;
+        }
+        if Instant::now() >= deadline || child.try_wait().unwrap().is_some() {
+            let _ = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "noticed={noticed} asked={asked}: tmux {:?} named {:?} checkout {:?}: {}",
+                world.log("tmux.log"),
+                world.log("named-mail.log"),
+                world.log("checkout-mail.log"),
+                stderr(&out)
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let stop = watch_cmd(&world.checkout(), &["watch", "stop", "--fleet"]);
+    assert!(
+        reply(&stop)["ok"].as_bool().unwrap_or(false),
+        "{}",
+        stderr(&stop)
+    );
+    let out = bounded_output(child, secs(20), "the stopped watch ran on");
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        world
+            .log("named-mail.log")
+            .iter()
+            .any(|l| l.ends_with(&format!(
+                "--root {}",
+                world.root().join("mail-root").display()
+            ))),
+        "the notice went under the root the start names: {:?}",
+        world.log("named-mail.log")
+    );
+    assert_eq!(
+        world.log("checkout-mail.log"),
+        Vec::<String>::new(),
+        "the checkout's own mailbox is never run"
+    );
+    let elsewhere: Vec<String> = world
+        .log("tmux.log")
+        .into_iter()
+        .filter(|l| !l.starts_with(&named))
+        .collect();
+    assert_eq!(
+        elsewhere,
+        Vec::<String>::new(),
+        "only the named server is asked"
+    );
+}
+
+/// A watch start that leaves out its mailbox program, its mailbox root or
+/// its server is refused by the missing name before the sign-in ladder,
+/// the claim, any server or any mailbox, in a world whose checkout and
+/// `$TMUX` would answer for each.
+#[test]
+fn a_watch_start_naming_no_mailbox_or_server_is_refused_before_any_server_or_alert() {
+    let world = ReachWorld::new();
+    let reach = world.reach();
+    let without = |flag: &str| -> Vec<String> {
+        let at = reach.iter().position(|w| w == flag).unwrap();
+        let mut words = reach.clone();
+        words.drain(at..at + 2);
+        words
+    };
+    let cases = [
+        (
+            "--mail-program",
+            "mailbox-unnamed",
+            json!([["field", "mail_program"]]),
+        ),
+        (
+            "--mail-root",
+            "mailbox-unnamed",
+            json!([["field", "mail_root"]]),
+        ),
+        ("--socket", "tmux-server-unnamed", json!([])),
+    ];
+    let paths = Paths::of(&world.checkout().join(FLEET_FILE_NAME)).unwrap();
+    for (flag, key, fields) in cases {
+        let child = world.watch(&without(flag)).spawn().expect("watch run");
+        let out = bounded_output(child, secs(20), "a start naming too little ran on");
+        assert_eq!(out.status.code(), Some(1), "{flag}: {}", stderr(&out));
+        let answer = reply(&out);
+        assert_eq!(answer["refusal"]["key"], key, "{flag}: {answer}");
+        assert_eq!(answer["refusal"]["fields"], fields, "{flag}: {answer}");
+        assert!(
+            watch::claim::read(&paths).unwrap().is_none(),
+            "{flag}: nothing claimed"
+        );
+    }
+    for log in ["tmux.log", "named-mail.log", "checkout-mail.log"] {
+        assert_eq!(
+            world.log(log),
+            Vec::<String>::new(),
+            "{log}: nothing asked or sent"
+        );
+    }
 }
