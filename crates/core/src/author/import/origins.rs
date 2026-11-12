@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use crate::env::Env;
 use crate::error::{CoreError, Result};
+use crate::hash::RenderedIdentity;
 use crate::library::Origin;
 use crate::manifest::{INPLACE_SOURCE_NAME, Manifest, ManifestFile};
 use crate::model::{ItemKind, Scope};
@@ -219,6 +220,7 @@ fn marketplace_origins(
             .ok()
         })
         .and_then(|entry| entry.rendered_hash.clone());
+    let has_recorded_hash = recorded_hash.is_some();
     let Some(source_hash) = recorded_hash.or_else(|| installed_hash(&sealed, package.kind, &path))
     else {
         return unreachable(license);
@@ -247,7 +249,14 @@ fn marketplace_origins(
             .parent()
             .and_then(|parent| SealedSource::open(parent).ok())
             .and_then(|sealed| read_bytes(&sealed, row.kind, installed))
-        && edited.hash() != source_hash
+        // Lock identities use the destination's Git policy; the fallback
+        // compares exact installed-form bytes when no lock identity exists.
+        && if has_recorded_hash {
+            let files = edited.clone().into_files();
+            !RenderedIdentity::observed_files(installed, &files, true).matches(&source_hash)
+        } else {
+            edited.hash() != source_hash
+        }
     {
         // A copy's SKILL.md carries only the installed key set; the
         // publisher's other keys come back around the edits, so importing
