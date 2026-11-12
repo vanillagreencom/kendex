@@ -5,13 +5,15 @@ The runtime passes its tmux calls an environment without TMUX_TMPDIR
 servers it starts. A `tmux` shim first on PATH sets it on every call
 instead: tests and runtime alike resolve tmux through PATH, and every
 fixture that starts tmux builds its PATH from this process's. At exit, pass or fail, every server
-in the folder is stopped and the folder is removed.
+in the folder is stopped and the folder is removed, and so when SIGTERM ends the run, as the
+battery runner stops an overdue suite.
 """
 import atexit
 import os
 from pathlib import Path
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -45,7 +47,11 @@ def isolate():
     (shims / "tmux").chmod(0o755)
     os.environ.update({SCOPE: str(root), "TMUX_TMPDIR": str(sockets),
                        "PATH": str(shims) + os.pathsep + os.environ["PATH"]})
-    atexit.register(release, root, real, os.getpid())
+    owner = os.getpid()
+    atexit.register(release, root, real, owner)
+    # SIGTERM's default action skips atexit. A disposition the caller set stands.
+    if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+        signal.signal(signal.SIGTERM, lambda signum, frame: terminated(root, real, owner, signum))
 
 
 def serving(path):
@@ -55,6 +61,17 @@ def serving(path):
         except (FileNotFoundError, ConnectionRefusedError):
             return False
     return True
+
+
+def terminated(root, real, owner, signum):
+    # SystemExit would not end the run: unittest records it as a row error and
+    # goes on. The default action ends it with the signal's own status, and a
+    # second SIGTERM during the release ends it at once.
+    signal.signal(signum, signal.SIG_DFL)
+    try:
+        release(root, real, owner)
+    finally:
+        os.kill(os.getpid(), signum)
 
 
 def release(root, real, owner):

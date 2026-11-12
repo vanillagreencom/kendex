@@ -29,7 +29,7 @@ import uuid
 from fixtures.tmux_scope import SCOPE, isolate
 
 isolate()
-ROOT =Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[3]
 SKILLS = Path(os.environ.get("JARVIS_TEST_SKILLS", ROOT / "skills"))
 SCRIPT = Path(os.environ.get("JARVIS_TEST_SCRIPT", SKILLS / "jarvis/scripts/jarvis-session"))
 HARNESS_SCRIPT = Path(__file__).with_name("fixtures") / "harness.py"
@@ -2896,45 +2896,49 @@ class FixtureLifetimeContract(unittest.TestCase):
 
     def test_failed_run_leaves_no_tmux_server(self):
         # A run that starts a server in a pane holding a lock, then fails on
-        # purpose, starts outside this run's tmux folder as a developer's does.
-        lock = self.root / "pane.lock"
-        lock.touch()
-        row = self.root / "row.py"
-        row.write_text(
-            "import fcntl, os, subprocess, sys, time, unittest\n"
-            "sys.path.insert(0, " + repr(str(Path(__file__).resolve().parent)) + ")\n"
-            "from fixtures.tmux_scope import isolate\n"
-            "isolate()\n"
-            "class Row(unittest.TestCase):\n"
-            "    def test_fails(self):\n"
-            "        pane = 'exec python3 -c ' + repr('import fcntl, sys, time; f = open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(1000)') + ' ' + repr(sys.argv[1])\n"
-            "        subprocess.run(['tmux', '-L', 'row', '-f', os.devnull, 'new-session', '-d', pane], check=True)\n"
-            "        with open(sys.argv[1]) as held:\n"
-            "            deadline = time.monotonic() + 15\n"
-            "            while True:\n"
-            "                try:\n"
-            "                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
-            "                except BlockingIOError:\n"
-            "                    break\n"
-            "                fcntl.flock(held, fcntl.LOCK_UN)\n"
-            "                self.assertLess(time.monotonic(), deadline)\n"
-            "                time.sleep(0.05)\n"
-            "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}'], check=True,\n"
-            "                             capture_output=True, text=True).stdout, end='', file=sys.__stdout__, flush=True)\n"
-            "        self.fail('planted failure')\n"
-            "unittest.main(argv=sys.argv[:1])\n")
+        # purpose or takes the SIGTERM the battery runner stops an overdue
+        # suite with, starts outside this run's tmux folder as a developer's does.
         scope = Path(os.environ[SCOPE])
         env = {key: value for key, value in os.environ.items() if key not in (SCOPE, "TMUX_TMPDIR", "TMUX", "TMUX_PANE")}
         env["PATH"] = os.pathsep.join(entry for entry in env["PATH"].split(os.pathsep) if Path(entry).parent != scope)
-        result = subprocess.run([sys.executable, "-B", str(row), str(lock)], env=env, capture_output=True, text=True, timeout=60)
-        server = Path(result.stdout.strip())
-        self.addCleanup(subprocess.run, ["tmux", "-S", str(server), "kill-server"], capture_output=True)
-        self.assertEqual((result.returncode, server.is_absolute()), (1, True), result.stderr)
-        self.assertNotEqual(server.parent, Path("/tmp") / ("tmux-%d" % os.getuid()))
-        self.assertFalse(server.exists())
-        self.assertFalse(server.parents[2].exists())
-        with lock.open() as held:
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for ending, status, code in (("failed", 1, "self.fail('planted failure')"),
+                                     ("terminated", -signal.SIGTERM, "os.kill(os.getpid(), signal.SIGTERM)")):
+            with self.subTest(ending=ending):
+                lock = self.root / (ending + ".lock")
+                lock.touch()
+                row = self.root / (ending + ".py")
+                row.write_text(
+                    "import fcntl, os, signal, subprocess, sys, time, unittest\n"
+                    "sys.path.insert(0, " + repr(str(Path(__file__).resolve().parent)) + ")\n"
+                    "from fixtures.tmux_scope import isolate\n"
+                    "isolate()\n"
+                    "class Row(unittest.TestCase):\n"
+                    "    def test_ends(self):\n"
+                    "        pane = 'exec python3 -c ' + repr('import fcntl, sys, time; f = open(sys.argv[1]); fcntl.flock(f, fcntl.LOCK_EX); time.sleep(1000)') + ' ' + repr(sys.argv[1])\n"
+                    "        subprocess.run(['tmux', '-L', 'row', '-f', os.devnull, 'new-session', '-d', pane], check=True)\n"
+                    "        with open(sys.argv[1]) as held:\n"
+                    "            deadline = time.monotonic() + 15\n"
+                    "            while True:\n"
+                    "                try:\n"
+                    "                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+                    "                except BlockingIOError:\n"
+                    "                    break\n"
+                    "                fcntl.flock(held, fcntl.LOCK_UN)\n"
+                    "                self.assertLess(time.monotonic(), deadline)\n"
+                    "                time.sleep(0.05)\n"
+                    "        print(subprocess.run(['tmux', '-L', 'row', 'display-message', '-p', '#{socket_path}'], check=True,\n"
+                    "                             capture_output=True, text=True).stdout, end='', file=sys.__stdout__, flush=True)\n"
+                    "        " + code + "\n"
+                    "unittest.main(argv=sys.argv[:1])\n")
+                result = subprocess.run([sys.executable, "-B", str(row), str(lock)], env=env, capture_output=True, text=True, timeout=60)
+                server = Path(result.stdout.strip())
+                self.addCleanup(subprocess.run, ["tmux", "-S", str(server), "kill-server"], capture_output=True)
+                self.assertEqual((result.returncode, server.is_absolute()), (status, True), result.stderr)
+                self.assertNotEqual(server.parent, Path("/tmp") / ("tmux-%d" % os.getuid()))
+                self.assertFalse(server.exists())
+                self.assertFalse(server.parents[2].exists())
+                with lock.open() as held:
+                    fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
 
     def test_lifetime_controls(self):
         rows = (
