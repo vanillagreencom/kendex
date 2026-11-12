@@ -1833,12 +1833,40 @@ create_issue() {
     return "$attach_failed"
 }
 
+pending_issue_descendants() {
+    local issue_result="$1" issue_id
+    local frontier next_frontier child_parent children descendants seen
+    issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
+    # Terminal ancestors can still contain open work. Keep every unfiltered
+    # frontier until the whole subtree is read, as dependencies.md requires.
+    frontier="$issue_id"
+    descendants='[]'
+    seen=$(jq -c '[.issue.identifier]' <<<"$issue_result") || return 1
+    while [ -n "$frontier" ]; do
+        next_frontier=""
+        while IFS= read -r child_parent; do
+            children=$(list_children "$child_parent" --format=raw) || return 1
+            children=$(jq -c --argjson seen "$seen" \
+                '.issue.children.nodes | map({id: .identifier, state_type: .state.type})
+                | unique_by(.id) | map(select(.id as $id | $seen | index($id) | not))' <<<"$children") || return 1
+            descendants=$(jq -c --argjson children "$children" '. + $children' <<<"$descendants") || return 1
+            seen=$(jq -c --argjson children "$children" '. + ($children | map(.id))' <<<"$seen") || return 1
+            children=$(jq -r '.[].id' <<<"$children") || return 1
+            if [ -n "$children" ]; then
+                next_frontier="${next_frontier:+$next_frontier$'\n'}$children"
+            fi
+        done <<<"$frontier"
+        frontier="$next_frontier"
+    done
+    jq -r "$STATE_TYPE_CLOSED_JQ"'.[] | select(.state_type | state_type_closed | not) | .id' <<<"$descendants"
+}
+
 # Both update routes use the description that will be written. Completion can
 # therefore tick verified boxes and set Done in one mutation, without a bypass.
 # FLT-1168 reached update from Verifying with an open post-merge box.
 resolve_issue_update_state() {
     local issue_result="$1" state="$2" description="$3"
-    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type
+    local issue_id team_id resolved parsed open_boxes missing_evidence_boxes outside_lines errors state_type closing pending_children
     issue_id=$(jq -r '.issue.identifier' <<<"$issue_result") || return 1
     team_id=$(jq -r '.issue.team.id // empty' <<<"$issue_result") || return 1
     if [ -z "$team_id" ]; then
@@ -1846,6 +1874,18 @@ resolve_issue_update_state() {
         return 1
     fi
     resolved=$(resolve_state_id "$state" "$team_id" raw) || return 1
+    state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
+    # Every closing type but completed (Canceled, Duplicate) closes the parent
+    # without judging its children; completed is held by its checklist below.
+    closing=$(jq -r "$STATE_TYPE_CLOSED_JQ"'(.type // "") | state_type_closed and . != "completed"' <<<"$resolved") || return 1
+    if [ "$closing" = true ]; then
+        pending_children=$(pending_issue_descendants "$issue_result") || return 1
+        if [ -n "$pending_children" ]; then
+            printf 'linear: refused=open-children issue=%s children=%s fix=detach-or-cancel-children\n' "$issue_id" "${pending_children//$'\n'/,}" >&2
+            printf 'Keep a child with issues update CHILD --remove-parent, or authorize, comment and cancel each child before its parent.\n' >&2
+            return 1
+        fi
+    fi
     parsed=$(done_when_parse "$description" '[]') || return 1
     # The completion answer `issues complete` reads decides; the keys below
     # only name its cause.
@@ -1853,7 +1893,6 @@ resolve_issue_update_state() {
         open_boxes=$(jq -c '[.boxes[] | select(.checked | not) | .number]' <<<"$parsed") || return 1
         missing_evidence_boxes=$(jq -c '.missing_evidence_boxes' <<<"$parsed") || return 1
         outside_lines=$(jq -c '[.outside_boxes[] | select(.checked | not) | .line]' <<<"$parsed") || return 1
-        state_type=$(jq -r '.type // empty' <<<"$resolved") || return 1
         if [ -z "$state_type" ]; then
             printf 'linear: refused=state-type-unavailable issue=%s state=%s\n' "$issue_id" "$state" >&2
             return 1
@@ -3394,38 +3433,19 @@ unblock_issue() {
 complete_superseded_issues() {
     local replacement="$1"
     shift
-    local superseded_id superseded_result superseded_terminal disposition_result pending_children
-    local frontier next_frontier child_parent children descendants seen
+    local superseded_id superseded_result superseded_terminal superseded_closed disposition_result pending_children
     for superseded_id in "$@"; do
         if ! superseded_result=$(get_issue "$superseded_id" --format=raw); then
             jq -cn --arg issue "$superseded_id" '{error: "supersession-read", issue: $issue}' >&2
             return 1
         fi
         superseded_terminal=$(jq -er '.issue.state.type | strings' <<<"$superseded_result") || return 1
-        case "$superseded_terminal" in completed|canceled) continue ;; esac
+        superseded_closed=$(jq -nr --arg type "$superseded_terminal" "$STATE_TYPE_CLOSED_JQ"'$type | state_type_closed') || return 1
+        if [ "$superseded_closed" = true ]; then
+            continue
+        fi
         linear_guard_issue_team complete "$superseded_id" || return 1
-        # Terminal ancestors can still contain open work. Keep every unfiltered
-        # frontier until the whole subtree is read, as dependencies.md requires.
-        frontier="$superseded_id"
-        descendants='[]'
-        seen=$(jq -c '[.issue.identifier]' <<<"$superseded_result") || return 1
-        while [ -n "$frontier" ]; do
-            next_frontier=""
-            while IFS= read -r child_parent; do
-                children=$(list_children "$child_parent" --format=raw) || return 1
-                children=$(jq -c --argjson seen "$seen" \
-                    '.issue.children.nodes | map({id: .identifier, state_type: .state.type})
-                    | unique_by(.id) | map(select(.id as $id | $seen | index($id) | not))' <<<"$children") || return 1
-                descendants=$(jq -c --argjson children "$children" '. + $children' <<<"$descendants") || return 1
-                seen=$(jq -c --argjson children "$children" '. + ($children | map(.id))' <<<"$seen") || return 1
-                children=$(jq -r '.[].id' <<<"$children") || return 1
-                if [ -n "$children" ]; then
-                    next_frontier="${next_frontier:+$next_frontier$'\n'}$children"
-                fi
-            done <<<"$frontier"
-            frontier="$next_frontier"
-        done
-        pending_children=$(jq -r '.[] | select(.state_type != "completed" and .state_type != "canceled") | .id' <<<"$descendants") || return 1
+        pending_children=$(pending_issue_descendants "$superseded_result") || return 1
         if [ -n "$pending_children" ]; then
             jq -cn --arg issue "$superseded_id" --arg children "$pending_children" \
                 '{error: "supersession-children", issue: $issue, children: ($children | split("\n")), remedy: "Disposition the open children before retrying completion."}' >&2

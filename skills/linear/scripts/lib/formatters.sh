@@ -9,6 +9,9 @@ readonly ISSUE_BLOCKED_BY_NODE_FIELDS='id type issue { id identifier title state
 readonly ISSUE_BLOCKS_FIELDS="relations { pageInfo { hasNextPage endCursor } nodes { $ISSUE_BLOCKS_NODE_FIELDS } }"
 readonly ISSUE_BLOCKED_BY_FIELDS="inverseRelations { pageInfo { hasNextPage endCursor } nodes { ${ISSUE_BLOCKED_BY_NODE_FIELDS} } }"
 readonly ISSUE_RELATION_FIELDS="$ISSUE_BLOCKS_FIELDS $ISSUE_BLOCKED_BY_FIELDS"
+# Linear's closed workflow-state types. A team's Duplicate state answers type
+# duplicate (tests/lib/fixtures/recorded/statuses-list.json).
+readonly STATE_TYPE_CLOSED_JQ='def state_type_closed: IN("completed", "canceled", "duplicate");'
 readonly ISSUE_RELATION_JQ='
 def issue_is_open: (.state.type | IN("completed", "canceled") | not);
 def issue_blocks_launch: issue_is_open and .state.name != "Verifying";
