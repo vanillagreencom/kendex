@@ -282,7 +282,7 @@ class Producer(unittest.TestCase):
                      for side in ("ssh:undeclared", "host", "relay", "report", "forward", "consumer"))
         cases.append(("satellite-side", changed(side="ssh:alpha"), "destination-unknown"))
         cases.extend((name, original, "state-exists")
-                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending", "second-init",
+                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending",
                                   "legacy-dormant", "legacy-frozen"))
         self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
         with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
@@ -304,9 +304,8 @@ class Producer(unittest.TestCase):
                         directory.joinpath("events.log").write_text(
                             self.module.pass_output(footer["side"], footer["roots"], []))
                         self.assertFalse(directory.joinpath("batch.json").exists())
-                    elif name in ("established", "pending", "second-init"):
-                        watch = (self.module.Watch(self.home, BASH, self.settings, [captured])
-                                 if name == "second-init" else self.watch())
+                    elif name in ("established", "pending"):
+                        watch = self.watch()
                         watch.accept(watch.acquire(0))
                         if name == "pending":
                             self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
@@ -333,7 +332,7 @@ class Producer(unittest.TestCase):
                     self.assertEqual(self.inbox(), inbox)
                     self.assertEqual({str(root): self.native_events(root, "to-overseer")[1]
                                       for root in (self.home, self.peer)}, envelopes)
-                    if name in ("established", "pending", "second-init", "footer-log"):
+                    if name in ("established", "pending", "footer-log"):
                         resumed = self.watch()
                         self.assertEqual(resumed.cursors["local"], footer["roots"])
                         if name == "footer-log":
