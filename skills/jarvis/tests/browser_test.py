@@ -1,5 +1,7 @@
 """Surface: jarvis-browser configured launch, detected browsers, reports, launchers and refused input."""
+from contextlib import redirect_stdout, redirect_stderr
 import http.client
+import io
 import json
 import os
 from pathlib import Path
@@ -11,7 +13,7 @@ import tempfile
 import time
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from desktop_world import SCRIPTS, World, load, run_case
 
 
@@ -155,18 +157,20 @@ class Browser(World):
                 lookup.assert_not_called()
 
     def test_profile_endpoints(self):
+        self.bin.joinpath("ps").symlink_to(shutil.which("ps"))
         # The normal suite supplies only Chromium's external HTTP/file
         # interface. JARVIS_TEST_CHROMIUM selects a real browser command.
         # The fixture serves from socketserver.TCPServer: http.server.HTTPServer's
         # bind runs socket.getfqdn, a reverse lookup that stalls on macOS runners
         # past the 10-second endpoint deadline.
-        browser = os.environ.get("JARVIS_TEST_CHROMIUM") or str(self.executable("chromium-fixture", '''import http.server,json,socketserver,sys,uuid
+        browser = os.environ.get("JARVIS_TEST_CHROMIUM") or str(self.executable("chromium-fixture", '''import http.server,json,os,socketserver,sys,uuid
 from pathlib import Path
 profile=Path(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--user-data-dir=')))
 port=int(next(arg.split('=',1)[1] for arg in sys.argv if arg.startswith('--remote-debugging-port=')))
-assert port==0
+assert 0 < port < 65536, sys.argv
+with open(os.environ["TOOL_LOG"],"a") as log: log.write(json.dumps(sys.argv[1:])+"\\n")
 profile.mkdir(parents=True,exist_ok=True)
-marker=profile/'DevToolsActivePort'
+marker=profile/'fixture-ready'
 if marker.exists(): sys.exit(0)
 target='/devtools/browser/'+str(uuid.uuid4())
 url=sys.argv[-1]
@@ -210,19 +214,28 @@ server.serve_forever()
             with self.root.joinpath(name + ".log").open("wb") as log:
                 children.append(subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "jarvis-browser"), urls[-1]],
                     env=self.env, cwd=self.root, stdout=log, stderr=log))
+        for index, profile in enumerate(profiles):
+            self.env["JARVIS_BROWSER_PROFILE"] = str(profile)
             result = self.run_tool("jarvis-browser", "--port")
             self.assertEqual(result.returncode, 0, result.stderr)
             port = int(result.stdout)
-            self.assertTrue(profile.joinpath("DevToolsActivePort").is_file(), result.stderr)
-            self.assertEqual(port, int(profile.joinpath("DevToolsActivePort").read_text().splitlines()[0]))
+            self.assertTrue(profile.joinpath("JarvisDebuggingPort").is_file(), result.stderr)
+            record = json.loads(profile.joinpath("JarvisDebuggingPort").read_text())
+            self.assertEqual(port, record["port"])
+            self.assertEqual(record["pid"], children[index].pid)
+            self.assertGreater(port, 0)
             ports.append(port)
-            self.assertIsNone(children[-1].poll())
+            self.assertIsNone(children[index].poll())
             # A second invocation reuses this live profile; detached readiness
             # must accept that native launcher exiting successfully.
-            reused = self.run_tool("jarvis-browser", "--detach", urls[-1])
+            reused = self.run_tool("jarvis-browser", "--detach", urls[index])
             self.assertEqual(reused.returncode, 0, reused.stderr)
             self.assertEqual(self.run_tool("jarvis-browser", "--port").stdout, result.stdout)
         self.assertNotEqual(*ports)
+        if not os.environ.get("JARVIS_TEST_CHROMIUM"):
+            self.assertTrue(self.calls())
+            for argv in self.calls():
+                self.assertNotIn("--remote-debugging-port=0", argv)
         for index, port in enumerate(ports):
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:
@@ -237,19 +250,119 @@ server.serve_forever()
                 time.sleep(0.02)
             self.assertIn(urls[index], pages)
             self.assertNotIn(urls[1 - index], pages)
-        # Chromium can leave a marker after exit; a reused port belonging to
-        # another browser must not make that old browser target look ready.
-        marker = profiles[-1] / "DevToolsActivePort"
+        # An old target or a recycled PID from another profile cannot make
+        # a stored port look ready, even before the first target is discovered.
+        marker = profiles[-1] / "JarvisDebuggingPort"
         self.assertFalse(marker.is_symlink())
         saved = marker.read_text()
-        marker.write_text(str(ports[0]) + "\n" + saved.splitlines()[1] + "\n")
-        refused = self.run_tool("jarvis-browser", "--port")
-        self.assertEqual((refused.returncode, refused.stdout), (2, b""), refused.stderr)
+        record = json.loads(saved)
+        for changed in (dict(record, port=ports[0]), dict(record, pid=children[0].pid, target=None)):
+            with self.subTest(record=changed):
+                marker.write_text(json.dumps(changed))
+                module = load("jarvis-browser")
+                output, errors = io.StringIO(), io.StringIO()
+                clock = SimpleNamespace(monotonic=Mock(side_effect=[0, 11]), sleep=Mock())
+                with patch.dict(os.environ, self.env, clear=True), \
+                     patch.object(sys, "argv", ["jarvis-browser", "--port"]), \
+                     patch.object(module, "time", clock), \
+                     redirect_stdout(output), redirect_stderr(errors):
+                    with self.assertRaises(SystemExit) as refused:
+                        module.main()
+                self.assertEqual((refused.exception.code, output.getvalue()), (2, ""), errors.getvalue())
+                self.assertIn("endpoint=unavailable", errors.getvalue())
+                clock.sleep.assert_not_called()
         marker.write_text(saved)
+        # An absolute browser command with restricted PATH must not lose its
+        # healthy profile record when the required process probe is unavailable.
+        probe = self.bin / "ps"
+        probe.unlink()
+        for state in ("missing", "nonzero"):
+            if state == "nonzero":
+                self.executable("ps", "import sys\nsys.exit(7)\n")
+            calls = self.log.read_bytes() if self.log.exists() else None
+            for arguments in (("--port",), ("--detach", urls[-1]), (urls[-1],), ("--stop",)):
+                with self.subTest(probe=state, arguments=arguments):
+                    refused = self.run_tool("jarvis-browser", *arguments)
+                    self.assertEqual((refused.returncode, refused.stdout), (2, b""), refused.stderr)
+                    key = b"stop=failed cause=process-unread" if arguments == ("--stop",) else b"process-probe=failed command=ps"
+                    self.assertIn(key, refused.stderr)
+                    self.assertEqual(marker.read_text(), saved)
+                    self.assertIsNone(children[-1].poll())
+                    self.assertEqual(self.log.read_bytes() if self.log.exists() else None, calls)
+            fresh = self.root / ("unread-start-" + state)
+            with patch.dict(self.env, JARVIS_BROWSER_PROFILE=str(fresh)):
+                refused = self.run_tool("jarvis-browser", "--detach", "about:blank")
+            self.assertEqual((refused.returncode, refused.stdout), (2, b""), refused.stderr)
+            self.assertIn(b"process-probe=failed command=ps", refused.stderr)
+            self.assertFalse(fresh.exists())
+            self.assertEqual(self.log.read_bytes() if self.log.exists() else None, calls)
+        probe.unlink()
+        probe.symlink_to(shutil.which("ps"))
+        self.assertEqual(self.run_tool("jarvis-browser", "--port").stdout, str(ports[-1]).encode()+b"\n")
         failed = self.executable("failed-browser", "import sys\nsys.exit(23)\n")
         self.env.update(JARVIS_BROWSER_COMMAND=str(failed), JARVIS_BROWSER_PROFILE=str(self.root / "never-ready"))
         refused = self.run_tool("jarvis-browser", "--detach", urls[0])
         self.assertEqual((refused.returncode, refused.stdout), (2, b""), refused.stderr)
+
+    def test_detached_record_failure_stops_browser(self):
+        self.bin.joinpath("ps").symlink_to(shutil.which("ps"))
+        module = load("jarvis-browser")
+        browser = self.executable("browser", "import signal\nsignal.pause()\n")
+        environment = dict(self.env, JARVIS_BROWSER_COMMAND=str(browser), JARVIS_BROWSER_PORT="0",
+                           JARVIS_BROWSER_PROFILE=str(self.root / "record-failure"))
+        children = []
+        popen = subprocess.Popen
+
+        def launch(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            if args[0][0] == str(browser):
+                children.append(child)
+                self.addCleanup(lambda: child.wait(timeout=5))
+                self.addCleanup(lambda: child.poll() is None and child.kill())
+            return child
+
+        with patch.dict(os.environ, environment, clear=True), \
+             patch.object(sys, "argv", ["jarvis-browser", "--detach", "about:blank"]), \
+             patch.object(module.subprocess, "Popen", side_effect=launch), \
+             patch.object(module, "write_json", side_effect=OSError("record write refused")):
+            with self.assertRaises(SystemExit) as refused:
+                module.main()
+        self.assertEqual(refused.exception.code, 2)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+
+    def test_process_probe_failures(self):
+        module = load("jarvis-browser")
+        profile = self.root / "probe-profile"
+        profile.mkdir()
+        record = profile / "JarvisDebuggingPort"
+        record.write_text(json.dumps({"pid": 0, "port": 9333, "target": None}))
+        saved = record.read_bytes()
+        browser = str(self.executable("browser"))
+        environment = dict(self.env, JARVIS_BROWSER_PROFILE=str(profile), JARVIS_BROWSER_PORT="0",
+                           JARVIS_BROWSER_COMMAND=browser)
+        for failure, cause in ((FileNotFoundError(2, "missing"), "cause=unavailable errno=2"),
+                               (subprocess.TimeoutExpired("ps", 5), "cause=timeout"),
+                               (subprocess.CompletedProcess("ps", 7), "cause=exit status=7")):
+            for arguments in (("--port",), ("--detach", "about:blank"), ("about:blank",), ("--stop",)):
+                with self.subTest(failure=type(failure).__name__, arguments=arguments):
+                    kwargs = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                    with patch.dict(os.environ, environment, clear=True), \
+                         patch.object(sys, "argv", ["jarvis-browser", *arguments]), \
+                         patch.object(module.subprocess, "run", **kwargs), \
+                         patch.object(module.subprocess, "Popen") as launch, \
+                         patch.object(module.os, "execv") as execute, redirect_stderr(io.StringIO()):
+                        if arguments == ("--stop",):
+                            with self.assertRaises(SystemExit) as refused:
+                                module.main()
+                            self.assertEqual(refused.exception.code, 2)
+                        else:
+                            with self.assertRaises(module.ProcessProbeError) as refused:
+                                module.main()
+                            self.assertEqual(str(refused.exception), cause)
+                        launch.assert_not_called()
+                        execute.assert_not_called()
+                    self.assertEqual(record.read_bytes(), saved)
 
     def test_profile_endpoint_control(self):
         with tempfile.TemporaryDirectory(prefix="jarvis-endpoint-control-") as scratch:
@@ -264,13 +377,18 @@ server.serve_forever()
             target = scripts / "jarvis-browser"
             env = dict(os.environ, JARVIS_TOOL_SCRIPTS=str(scripts))
             target.write_text(original)
-            clean = run_case(Path(__file__).resolve(), "Browser.test_profile_endpoints", env, timeout=60)
+            clean = run_case(Path(__file__).resolve(), "Browser.test_profile_endpoints", env, timeout=90)
             self.assertEqual(clean.returncode, 0, clean.stderr)
-            target.write_text(changed)
-            result = run_case(Path(__file__).resolve(), "Browser.test_profile_endpoints", env, timeout=60)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b"FAIL: test_profile_endpoints", result.stderr)
-            self.assertNotIn(b"ERROR:", result.stderr)
+            port_argument = '"--remote-debugging-port=" + port'
+            self.assertEqual(original.count(port_argument), 1)
+            for mutation in (changed, original.replace(port_argument, '"--remote-debugging-port=0"')):
+                with self.subTest(mutation=mutation != changed):
+                    self.assertNotEqual(mutation, original)
+                    target.write_text(mutation)
+                    result = run_case(Path(__file__).resolve(), "Browser.test_profile_endpoints", env, timeout=90)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(b"FAIL: test_profile_endpoints", result.stderr)
+                    self.assertNotIn(b"ERROR:", result.stderr)
 
 
 if __name__ == "__main__":

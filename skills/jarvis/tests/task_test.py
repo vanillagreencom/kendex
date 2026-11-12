@@ -1282,10 +1282,10 @@ while True: signal.pause()
         return seen
 
     def test_failed_browser_launch_stops_its_browser(self):
-        # A ps that cannot list every process's argv leaves the profile's
-        # browser unread.
+        # Keep ownership readable until the fixture browser starts, then fail
+        # the cleanup probe against that live browser.
         unread_ps = "#!" + self.env["JARVIS_TEST_BASH"] + "\n" + \
-            '[[ " $* " != *" -A "*" args= "* ]] || exit 1\nexec ' + shlex.quote(shutil.which("ps")) + ' "$@"\n'
+            '[[ " $* " != *" -A "*" args= "* || ! -e "${JARVIS_BROWSER_PROFILE:-}/running" ]] || exit 1\nexec ' + shlex.quote(shutil.which("ps")) + ' "$@"\n'
         for row, readable in (("stopped", True), ("unread", False)):
             with self.subTest(row=row):
                 reader = self.browser_harness(row, exit_status=3)
