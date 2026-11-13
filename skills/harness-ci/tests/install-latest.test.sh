@@ -36,7 +36,7 @@ run_install_latest() { # SCRIPT RELEASE COMMIT FAIL_AT INSTALL_RC [GITHUB_ASSIGN
   : >"$TMP/github-path"
   rm -f "$TMP/install-log" "$TMP/install-env"
   OUT="" RC=0
-  OUT="$(env -i PATH="$TMP/bin:/usr/bin:/bin" HOME="$TMP" \
+  OUT="$(env -i PATH="$TMP/bin:$PATH" HOME="$TMP" \
     CALLS="$TMP/calls" TRANSPORT_LOG="$TMP/transport" INSTALL_LOG="$TMP/install-log" INSTALL_ENV="$TMP/install-env" \
     GITHUB_PATH="$TMP/github-path" RELEASE="$release" COMMIT="$commit" TAGS="$tags" FAIL_AT="$fail_at" INSTALL_RC="$install_rc" \
     ${token_env[@]+"${token_env[@]}"} bash "$checkout/.agents/skills/$entry/scripts/install-latest.sh" 2>&1)" || RC=$?
