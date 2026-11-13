@@ -1086,6 +1086,17 @@ mod tests {
                 gap("unmeasured", "the reply carries no judgement"),
             ),
             (
+                "a result naming no exit",
+                ran(
+                    0,
+                    &json!({"protocol": "orch-runtime-v1", "ok": true,
+                            "result": {"answer": "lane", "record": {"verdict": "room"}}})
+                    .to_string(),
+                    "",
+                ),
+                gap("unmeasured", "the reply carries no judgement"),
+            ),
+            (
                 "killed at the ceiling",
                 Err(killed),
                 gap("timeout", "the read was abandoned after 20 seconds"),
@@ -1125,7 +1136,8 @@ mod tests {
     /// A launch record naming an absolute identity file is a hosted lane's,
     /// told by what its harness and model spend; a record naming none, a
     /// link and a lane with no launch directory are local; a record that
-    /// stands and cannot be read, and an item no path can name, are causes.
+    /// stands and cannot be read, each naming why, and an item no path can
+    /// name, are causes.
     #[test]
     fn hosted_launch_is_told_by_its_identity_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -1172,13 +1184,17 @@ mod tests {
                 "{case}"
             );
         }
-        for (case, text) in [("no JSON", "{"), ("no object", "[]")] {
+        for (case, text, why) in [
+            (
+                "no JSON",
+                "{",
+                "EOF while parsing an object at line 1 column 1",
+            ),
+            ("no object", "[]", "no launch record object"),
+        ] {
             plant(text);
             let cause = hosted(&lane("KEN-1"), Harness::Claude, "").unwrap_err();
-            assert!(
-                cause.starts_with(&record.display().to_string()),
-                "{case}: {cause}"
-            );
+            assert_eq!(cause, format!("{}: {why}", record.display()), "{case}");
         }
         let elsewhere: PathBuf = dir.path().join("elsewhere.json");
         std::fs::write(&elsewhere, identity).unwrap();

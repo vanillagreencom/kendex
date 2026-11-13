@@ -355,6 +355,10 @@ fn a_controllers_switch_marks_its_recovery_started_before_it_asks_its_successor(
 /// The planted account a lane's credential lives in, as the listing names it.
 const ACCOUNT: &str = "/home/me/.aclaude";
 
+/// A launch record naming a native identity file, as a hosted provider
+/// records it.
+const HOSTED_RECORD: &str = r#"{"identity_file": "/sandbox/identity"}"#;
+
 /// [`ACCOUNT`]'s row of the listing: a measured Claude account whose weekly
 /// window, its binding, is `weekly` percent used, read this instant.
 fn account_row(weekly: u64) -> Value {
@@ -443,6 +447,15 @@ enum Beside {
     Hosted,
     /// A launch record that is no JSON.
     LaunchUnread,
+    /// A launch record whose bytes are no text.
+    LaunchNotText,
+}
+
+/// The lane's launch record, holding `record`.
+fn plant_launch_record(lane: &Path, record: &[u8]) {
+    let launch = lane.join(".git/lane-launch");
+    fs::create_dir_all(&launch).unwrap();
+    fs::write(launch.join(format!("{ITEM}.json")), record).unwrap();
 }
 
 /// A lane's account mark at a Stop that left its context mark nothing to
@@ -548,6 +561,16 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
             Some("account=unmeasured"),
         ),
         (
+            "launch record not text",
+            account_row(98),
+            "claude",
+            &[],
+            ".aclaude",
+            Beside::LaunchNotText,
+            0,
+            Some("account=unmeasured"),
+        ),
+        (
             "pi with no model",
             account_row(10),
             "pi",
@@ -592,17 +615,9 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
                     .to_string(),
             )
             .unwrap(),
-            Beside::Hosted => {
-                let launch = lane.join(".git/lane-launch");
-                fs::create_dir_all(&launch).unwrap();
-                let record = json!({ "identity_file": "/sandbox/identity" });
-                fs::write(launch.join(format!("{ITEM}.json")), record.to_string()).unwrap();
-            }
-            Beside::LaunchUnread => {
-                let launch = lane.join(".git/lane-launch");
-                fs::create_dir_all(&launch).unwrap();
-                fs::write(launch.join(format!("{ITEM}.json")), "{").unwrap();
-            }
+            Beside::Hosted => plant_launch_record(&lane, HOSTED_RECORD.as_bytes()),
+            Beside::LaunchUnread => plant_launch_record(&lane, b"{"),
+            Beside::LaunchNotText => plant_launch_record(&lane, &[0xff, 0xfe]),
         }
         let mut env = planted.env;
         env.push((
@@ -619,6 +634,216 @@ fn a_lanes_account_mark_tells_each_answer_the_judge_gives() {
         } else {
             world.turn(&lane, harness, &[], &stop(), &env)
         };
+        assert_eq!(out.code, code, "{case}: {}", out.stderr);
+        let told = account_line(&out);
+        match want {
+            None => assert_eq!(told, None, "{case}: {}", out.stderr),
+            Some(want) => assert!(
+                told.as_deref().is_some_and(|line| line.starts_with(want)),
+                "{case}: {told:?}\n{}",
+                out.stderr
+            ),
+        }
+    }
+}
+
+/// A row of the listing for `harness`'s own directory under the home,
+/// walled at 98 percent of its binding bucket.
+fn walled_home_row(harness: &str) -> Value {
+    let mut row = account_row(98);
+    row["alias"] = json!(format!("{harness}-home"));
+    row["harness"] = json!(harness);
+    row["config_dir"] = json!(format!("/home/me/.{harness}"));
+    if harness == "copilot" {
+        row["binding_bucket"] = json!("monthly");
+        row["monthly_pct"] = json!(98);
+        row["plan"] = json!("individual");
+        row["resets"]["monthly"] = row["resets"]["weekly"].clone();
+    }
+    row
+}
+
+/// How a case's session names the account it runs, and what it plants
+/// beside its listing.
+#[derive(Clone, Copy)]
+enum Named {
+    /// No home variable: the harness's own directory under `HOME`.
+    Home,
+    /// `LANES_HOME` names the home the harness's directory is under.
+    LanesHome,
+    /// `LANES_HOME` set empty, which names no home.
+    LanesHomeEmpty,
+    /// The harness's own directory under `HOME`, and a launch record
+    /// naming a native identity file.
+    HomeHosted,
+    /// `CLAUDE_CONFIG_DIR` names [`ACCOUNT`]'s directory, and the lane
+    /// root's private env file excludes that account.
+    PrivateEnv,
+    /// `CLAUDE_CONFIG_DIR` names [`ACCOUNT`]'s directory, and the Stop
+    /// names a transcript whose session runs the model held here.
+    Transcript(&'static str),
+    /// No home variable, and the Stop names a Pi transcript whose session
+    /// runs the `github-copilot/` model held here; the owner states the
+    /// Copilot pool of the Pi root under `HOME`, walled at 98 percent.
+    PiTranscript(&'static str),
+}
+
+/// The account a lane's mark judges is the one its session runs: with no
+/// home variable, the harness's own directory under `LANES_HOME`, or under
+/// `HOME` where `LANES_HOME` is unset or empty; a Codex lane's launch record
+/// makes no hosted lane; the pick reads no private env file the turn end
+/// reads none of; and a session's own model is judged on that model's
+/// window, so a walled Opus window holds an Opus session and leaves a
+/// Sonnet session its room; a Pi lane's is the Pi root under `HOME` its
+/// transcript's provider bills.
+#[test]
+fn a_lanes_account_mark_judges_the_account_and_model_its_session_names() {
+    let walled = "headroom=2 bucket=weekly";
+    let mut opus = account_row(10);
+    opus["model_buckets"] = json!([{"label": "Opus 5", "pct": 98,
+        "resets_at": agent_runtime::clock::iso_utc(now_ms() / 1000 + 4 * 86_400)}]);
+    let cases = [
+        (
+            "claude home",
+            "claude",
+            walled_home_row("claude"),
+            Named::Home,
+            2,
+            Some(walled),
+        ),
+        (
+            "lanes home",
+            "claude",
+            walled_home_row("claude"),
+            Named::LanesHome,
+            2,
+            Some(walled),
+        ),
+        (
+            "empty lanes home",
+            "claude",
+            walled_home_row("claude"),
+            Named::LanesHomeEmpty,
+            2,
+            Some(walled),
+        ),
+        (
+            "codex home",
+            "codex",
+            walled_home_row("codex"),
+            Named::Home,
+            2,
+            Some(walled),
+        ),
+        (
+            "codex launch record",
+            "codex",
+            walled_home_row("codex"),
+            Named::HomeHosted,
+            2,
+            Some(walled),
+        ),
+        (
+            "copilot home",
+            "copilot",
+            walled_home_row("copilot"),
+            Named::Home,
+            // Copilot's Stop is refused on stdout at status 0.
+            0,
+            Some("headroom=2 bucket=monthly"),
+        ),
+        (
+            "private env file",
+            "claude",
+            account_row(10),
+            Named::PrivateEnv,
+            0,
+            None,
+        ),
+        (
+            "own model",
+            "claude",
+            opus.clone(),
+            Named::Transcript("claude-opus-5"),
+            2,
+            Some("headroom=2 bucket=model"),
+        ),
+        (
+            "another model's window",
+            "claude",
+            opus,
+            Named::Transcript("claude-sonnet-5-5"),
+            0,
+            None,
+        ),
+        (
+            "pi root",
+            "pi",
+            account_row(10),
+            Named::PiTranscript("gpt-5"),
+            2,
+            Some("headroom=2 bucket=monthly"),
+        ),
+    ];
+    for (case, harness, row, named, code, want) in cases {
+        let world = TurnWorld::new();
+        let lane = lane_in(&world);
+        let listed = match named {
+            Named::LanesHome => world.root.join("lanes"),
+            _ => world.root.clone(),
+        };
+        let planted = plant_listing(&listed, &world.account_state(), &[row], now_ms() / 1000);
+        let mut env: Vec<(String, String)> = planted
+            .env
+            .into_iter()
+            .filter(|(name, _)| name != "HOME")
+            .collect();
+        let mut add = |name: &str, value: String| env.push((name.to_owned(), value));
+        let account = world.home.join(".aclaude").display().to_string();
+        let mut payload = stop();
+        match named {
+            Named::Home => {}
+            Named::LanesHome => add("LANES_HOME", listed.join("home").display().to_string()),
+            Named::LanesHomeEmpty => add("LANES_HOME", String::new()),
+            Named::HomeHosted => plant_launch_record(&lane, HOSTED_RECORD.as_bytes()),
+            Named::PrivateEnv => {
+                add("CLAUDE_CONFIG_DIR", account);
+                fs::write(
+                    lane.join(".env.local"),
+                    "AGENT_RUNTIME_ACCOUNT_EXCLUDE=aclaude\n",
+                )
+                .unwrap();
+            }
+            Named::Transcript(model) => {
+                add("CLAUDE_CONFIG_DIR", account);
+                add("DISABLE_AUTO_COMPACT", "1".to_owned());
+                let transcript = world.root.join("transcript.jsonl");
+                let usage = json!({"type": "assistant", "message": {"model": model,
+                    "usage": {"input_tokens": 1, "cache_read_input_tokens": 992,
+                              "cache_creation_input_tokens": 0, "output_tokens": 7}}});
+                fs::write(&transcript, format!("{usage}\n")).unwrap();
+                payload = json!({ "hook_event_name": "Stop", "session_id": SESSION,
+                                  "transcript_path": transcript })
+                .to_string();
+            }
+            Named::PiTranscript(model) => {
+                let root = world.home.join(".pi").join("agent");
+                fs::create_dir_all(&root).unwrap();
+                add(
+                    "AGENT_RUNTIME_COPILOT_POOL",
+                    format!("{}=98/100", root.display()),
+                );
+                let transcript = world.root.join("transcript.jsonl");
+                let usage = json!({"type": "message", "message": {"role": "assistant",
+                    "provider": "github-copilot", "model": model,
+                    "usage": {"input": 1, "output": 7, "cacheRead": 992, "cacheWrite": 0}}});
+                fs::write(&transcript, format!("{usage}\n")).unwrap();
+                payload = json!({ "hook_event_name": "Stop", "session_id": SESSION,
+                                  "transcript_path": transcript })
+                .to_string();
+            }
+        }
+        let out = world.turn(&lane, harness, &[], &payload, &env);
         assert_eq!(out.code, code, "{case}: {}", out.stderr);
         let told = account_line(&out);
         match want {
