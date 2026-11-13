@@ -463,7 +463,9 @@ const PI_INDEX: &str = "export const version = 1;\n";
 /// A kept retired Pi package deleted or edited by hand is no failure of a
 /// plain refresh, which writes nothing of it, as a hook's or a skill's is
 /// not: verify alone fails its row. Nor of an apply with no terminal: a
-/// package its catalog retired is not one the manifest asks for.
+/// package its catalog retired is not one the manifest asks for. The
+/// kept package still has its row in `update-pi --check`: nothing installs
+/// it again, so the plan must not drop it without a line.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
@@ -506,6 +508,18 @@ fn a_plain_refresh_passes_a_kept_retired_pi_package_that_verify_fails() {
         let kept = kendex(&home, &project, &refresh);
         assert!(kept.status.success(), "edited={edited}: {}", said(&kept));
         assert!(package.exists(), "edited={edited}: {}", said(&kept));
+        if !edited {
+            let check = ["update-pi", "--check", "--scope", "project"];
+            let planned = kendex(&home, &project, &check);
+            assert_eq!(planned.status.code(), Some(0), "{}", said(&planned));
+            let rows = String::from_utf8_lossy(&planned.stdout);
+            assert!(
+                rows.lines()
+                    .any(|line| line.split_whitespace().next() == Some("pi-widgets")),
+                "{}",
+                said(&planned)
+            );
+        }
         match edited {
             true => write(&package.join("index.js"), "export const version = 2;\n"),
             false => fs::remove_dir_all(&package).unwrap(),
