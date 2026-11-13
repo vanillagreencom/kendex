@@ -1063,44 +1063,38 @@ fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state()
 }
 
 /// A running watch whose agent-runtime answers setup-required in the middle
-/// of the wake's pass (its wrapper finding the key unbuilt, as after an
-/// update) ends with one `unready` refusal naming orch's setup and releases
-/// its claim: the helper is asked once, no failure line is counted, nothing
-/// is typed, and no watch stays on the installation. The world is the
-/// row's own: its private server, its mailbox fixture, its claim.
+/// of the wake's pass (its wrapper finding the key unbuilt, as while an
+/// update builds it) fails that step and runs on: the claim stands, the log
+/// says `watch-step-failed step=wake`, the failure's cause names orch's
+/// setup, nothing is typed, and the first pass after the build delivers.
+/// The world is the row's own: its private server, its mailbox fixture,
+/// its claim.
 #[test]
-fn a_running_watch_whose_agent_runtime_answers_setup_required_ends_with_one_unready_report() {
+fn a_running_watch_whose_agent_runtime_answers_setup_required_fails_the_step_and_delivers_after_the_build()
+ {
+    let real = agent_runtime();
     let tools = tempfile::tempdir().unwrap();
+    let unbuilt = tools.path().join("unbuilt");
     let calls = tools.path().join("calls");
     let helper = tools.path().join("agent-runtime");
     write_executable(
         &helper,
         format!(
-            "#!/bin/sh\nif [ \"${{1:-}}\" = version ]; then echo '{{\"ok\":true}}'; exit 0; fi\nprintf '%s\\n' \"$1\" >> '{}'\nprintf 'agent-runtime: setup-required key=k run=/elsewhere/setup\\n' >&2\nexit 69\n",
-            calls.display()
+            "#!/bin/bash\nif [ -e '{unbuilt}' ]; then\n  printf '%s\\n' \"$1\" >> '{calls}'\n  printf 'agent-runtime: setup-required key=k run=/elsewhere/setup\\n' >&2\n  exit 69\nfi\nexec '{real}' \"$@\"\n",
+            unbuilt = unbuilt.display(),
+            calls = calls.display(),
+            real = real.display(),
         ),
     );
+    std::fs::write(&unbuilt, "").unwrap();
     let fleet = Fleet::with_agent_runtime(&helper);
     let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
     fleet.server.await_composer(&pane.id);
     fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
-    unread(&[("KEN-1", "m-1")])
-        .store(&fleet.paths.baseline)
-        .unwrap();
+    let state = unread(&[("KEN-1", "m-1")]);
     let clock = FakeClock::new();
-    let identity = me();
-    let runner = fleet.runner(&clock);
-    let ended = run_driven(runner, &clock, &fleet.paths, &identity, || {
-        let bound = Instant::now() + secs(15);
-        while std::fs::metadata(&calls).is_err() || std::fs::metadata(&fleet.paths.pid).is_ok() {
-            assert!(
-                Instant::now() < bound,
-                "the watch held its claim on an unbuilt agent-runtime"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    });
-    let err = ended.expect_err("the watch ended on its own");
+    // The cause the runner writes under the step's line on its stderr.
+    let err = run_once(&mut fleet.body(), &state, &clock).unwrap_err();
     assert_eq!(
         orch_runtime::protocol::diagnostic_line(&err),
         format!(
@@ -1113,18 +1107,36 @@ fn a_running_watch_whose_agent_runtime_answers_setup_required_ends_with_one_unre
                 .display()
         )
     );
+    state.store(&fleet.paths.baseline).unwrap();
+    let identity = me();
+    let runner = fleet.runner(&clock);
+    let failed = "EVENT watch-step-failed step=wake count=1";
+    let ended = run_driven(runner, &clock, &fleet.paths, &identity, || {
+        // The first pass ran against the unbuilt key and the loop sleeps.
+        clock.await_sleepers(1);
+        assert_eq!(fleet.log_lines(), vec![failed]);
+        assert!(
+            watch::claim::names_runner(&fleet.paths, &identity).unwrap(),
+            "the claim stands"
+        );
+        assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "nothing typed");
+        // The build ends: the next pass, one mail cadence on, delivers.
+        std::fs::remove_file(&unbuilt).unwrap();
+        clock.pass(secs(20));
+        assert_eq!(fleet.turns("lead-1").len(), 1, "{:?}", fleet.log_lines());
+    });
+    ended.expect("the watch ran until its stop");
+    assert_eq!(
+        fleet.log_lines(),
+        vec![
+            failed,
+            "EVENT idle-unread KEN-1",
+            "EVENT wake-delivered KEN-1"
+        ]
+    );
     assert_eq!(
         std::fs::read_to_string(&calls).unwrap().lines().count(),
-        1,
-        "asked once, then the end"
+        2,
+        "asked once by the body alone and once by the run's first pass"
     );
-    assert!(
-        !fleet
-            .log_lines()
-            .iter()
-            .any(|l| l.contains("watch-step-failed")),
-        "{:?}",
-        fleet.log_lines()
-    );
-    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new(), "nothing typed");
 }

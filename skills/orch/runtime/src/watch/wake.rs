@@ -622,8 +622,9 @@ impl Wake {
             &args,
             self.settings.engine.verify.get()? + ANSWER_MARGIN,
         )?;
-        // agent-runtime unbuilt under a running watch: the watch's one
-        // `unready` report, which ends it.
+        // agent-runtime unbuilt under a running watch: the pass fails with
+        // the cause the watch's admission gives the same state, which names
+        // orch's setup.
         if crate::ready::setup_required(output.status.code()) {
             return Err(crate::ready::unbuilt(
                 crate::ready::Duty::Watch,

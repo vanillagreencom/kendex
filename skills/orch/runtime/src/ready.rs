@@ -52,11 +52,6 @@ pub fn unbuilt(duty: Duty, program: &str, settings: &Settings) -> Unready {
     }
 }
 
-/// Whether `error` is a duty's `unready` refusal.
-pub fn is_unready(error: &Error) -> bool {
-    error.key() == UNREADY
-}
-
 /// A duty of orch's that asks before it claims anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Duty {
