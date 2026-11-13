@@ -251,6 +251,11 @@ enum Command {
     ReleaseMainBuild(commands::update::ReleaseMainBuildArgs),
     /// Update Pi extension packages
     ///
+    /// Fetches the remote catalogs the packages come from first. A package
+    /// whose catalog cannot be fetched, or no longer has the branch or tag
+    /// it names, is reported as not evaluated with the cause and is left as
+    /// installed.
+    ///
     /// Pi loads user and project package lists together. Installing the same
     /// package in both prevents Pi from starting. Keep either copy and remove
     /// the other before updating.

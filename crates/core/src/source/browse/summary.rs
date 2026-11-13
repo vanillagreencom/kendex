@@ -84,7 +84,7 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
                 (open_held(env, &held)?, None, Some(held))
             } else {
                 let resolution = crate::remote::sync(env, &key, None)?;
-                let warning = resolution.warning.clone();
+                let warning = resolution.warning(&key);
                 // The fetch may be the one a never-fetched subscription
                 // under this spelling was waiting for: it is Ready now, and
                 // the page carries on as it rather than offering Subscribe.

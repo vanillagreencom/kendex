@@ -84,6 +84,7 @@ pub fn run(
         true => super::project::Registering::Nothing,
         false => super::project::target_registrable(env, target, &scopes)?,
     };
+    let unrefreshed = refresh_sources(env, &scopes);
     for scope in &scopes {
         if let Err(error) =
             kendex_core::engine::check_catalog_compatibility(env, scope, &PlanOptions::current())
@@ -95,7 +96,7 @@ pub fn run(
     let _guards = (!check)
         .then(|| kendex_core::apply::lock_scopes_for_write(env, &scopes))
         .transpose()?;
-    let mut plans = plan_scopes(env, &settings, &scopes)?;
+    let mut plans = plan_scopes(env, &settings, &scopes, unrefreshed)?;
 
     let style = ui::style();
     if plans.is_empty() {
@@ -141,20 +142,54 @@ pub fn run(
     Ok(())
 }
 
+/// The refusal for each declared package, per scope in `scopes` order,
+/// whose remote catalog this run could not bring current
+/// (`pi_ext::Freshness`). Fetched before the catalog compatibility check, so
+/// that check reads the catalog the plan installs from.
+fn refresh_sources(env: &Env, scopes: &[Scope]) -> Vec<Unrefreshed> {
+    let mut freshness = pi_ext::Freshness::default();
+    scopes
+        .iter()
+        .map(
+            |scope| match manifest::load(&manifest::manifest_path(env, scope)) {
+                Ok(ManifestFile::Current(manifest)) => {
+                    let _reading =
+                        ui::spinner(&format!("reading marketplaces for {}", scope.label()));
+                    freshness.refresh(env, &manifest)
+                }
+                // The plan reports an unreadable manifest as its own note.
+                Ok(ManifestFile::Absent) | Err(_) => Unrefreshed::new(),
+            },
+        )
+        .collect()
+}
+
+/// Declared packages by name whose catalog could not be brought current.
+type Unrefreshed = std::collections::BTreeMap<String, kendex_core::error::CoreError>;
+
 /// The plan of every scope the run reached that has a Pi root or declares
 /// a package, each install guard checking the run's other scopes too
-/// (`pi_ext::paired_roots`).
+/// (`pi_ext::paired_roots`). `unrefreshed` is `refresh_sources` over
+/// `scopes`.
 fn plan_scopes(
     env: &Env,
     settings: &settings::AppSettings,
     scopes: &[Scope],
+    unrefreshed: Vec<Unrefreshed>,
 ) -> Result<Vec<ScopePlan>, Box<dyn std::error::Error>> {
     let mut plans = Vec::new();
-    for scope in scopes {
+    for (scope, unrefreshed) in scopes.iter().zip(unrefreshed) {
         let (root, other_roots) = pi_ext::paired_roots(env, settings, scope, scopes);
         if root.is_dir() || scope_declares_extensions(env, scope) {
             let (_, loaded_with) = pi_ext::session_roots(env, settings, scope);
-            plans.push(plan_scope(env, scope, root, &other_roots, &loaded_with)?);
+            plans.push(plan_scope(
+                env,
+                scope,
+                root,
+                &other_roots,
+                &loaded_with,
+                unrefreshed,
+            )?);
         }
     }
     Ok(plans)
@@ -437,14 +472,17 @@ fn plan_scope(
     root: PathBuf,
     other_roots: &[PathBuf],
     loaded_with: &[PathBuf],
+    unrefreshed: Unrefreshed,
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
-    let (declared, resolved) = declared_sources(env, scope, &mut notes)?;
+    let (declared, resolved) = declared_sources(env, scope, unrefreshed, &mut notes)?;
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
+    // A declared package whose source was not evaluated is a note, not
+    // proof that nothing supplies it.
     let mut sourced = std::collections::BTreeSet::new();
     for (name, resolution) in resolved {
-        if matches!(resolution, Ok(pi_ext::Resolved::Ships(_))) {
+        if !matches!(resolution, Ok(pi_ext::Resolved::Retired { .. })) {
             sourced.insert(name.clone());
         }
         let key = kendex_core::lock::entry_key(
@@ -535,14 +573,16 @@ fn plan_scope(
 type Resolutions = Vec<(String, kendex_core::error::Result<pi_ext::Resolved>)>;
 
 /// Every declared Pi extension by name, and what its catalog answers for
-/// each, which `pi_ext::admit` judges: a source that would not resolve is
-/// a note there, so the rest of the scope still updates. A catalog
+/// each, which `pi_ext::admit` judges: a source that would not resolve, or
+/// whose catalog this run could not bring current (`unrefreshed`), is a
+/// note there, so the rest of the scope still updates. A catalog
 /// compatibility refusal stops the scope here instead. The name list keeps
 /// every declaration, for the checks that read what sits on disk whatever
 /// the source says.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
+    mut unrefreshed: Unrefreshed,
     notes: &mut Vec<(String, String)>,
 ) -> kendex_core::error::Result<(Vec<String>, Resolutions)> {
     let path = manifest::manifest_path(env, scope);
@@ -556,6 +596,10 @@ fn declared_sources(
     };
     let mut found = Vec::new();
     for (name, decl) in &manifest.pi_extensions {
+        if let Some(error) = unrefreshed.remove(name) {
+            found.push((name.clone(), Err(error)));
+            continue;
+        }
         match pi_ext::resolve_declared(env, scope, &manifest, name, decl) {
             Err(error) if error.is_catalog_compatibility() => return Err(error),
             resolution => found.push((name.clone(), resolution)),
@@ -633,7 +677,9 @@ fn plan_lines(style: &Style, plan: &ScopePlan) -> Vec<(Stream, Vec<String>)> {
             ui::Status::Notice,
         ),
     )];
-    if plan.rows.is_empty() {
+    // A package kendex could not evaluate has a note and no row, and may
+    // be installed.
+    if plan.rows.is_empty() && plan.notes.is_empty() {
         drawn.push((
             Stream::Err,
             style.report_detail(&[Span::Prose("no pi packages installed")], "  "),
@@ -1008,7 +1054,9 @@ mod tests {
     /// `not-evaluated=` key on stderr; rich marks each row with what it
     /// needs: done, an install this run makes, a package blocked from
     /// installing, and a notice for what kendex leaves alone. Rich leaves a
-    /// missing version off and says the unevaluated package in words.
+    /// missing version off and says the unevaluated package in words. A
+    /// plan whose only package was not evaluated never says nothing is
+    /// installed.
     #[test]
     fn a_plan_draws_each_status_with_what_it_needs() {
         let source_dir = PathBuf::from("/catalog/pi-extensions/pi-widgets");
@@ -1056,7 +1104,7 @@ mod tests {
         let place = project.root.display();
         let project_plain = format!("err|{} ({place})", root.display());
         let project_rich = format!("err|    <90>{place}</>");
-        let rows: [(&ScopePlan, &[&str], &[&str]); 3] = [
+        let rows: [(&ScopePlan, &[&str], &[&str]); 4] = [
             (
                 &full,
                 &[
@@ -1100,6 +1148,23 @@ mod tests {
                     "err|<1;36>global</>  <90>0</>",
                     "err|    <90>/home/a/.pi/agent</>",
                     "err|    <90>no pi packages installed</>",
+                ],
+            ),
+            (
+                &plan(
+                    Vec::new(),
+                    vec![("pi-broken".into(), "source cat is not readable".into())],
+                ),
+                &[
+                    "err|user (/home/a/.pi/agent)",
+                    "err|  ! not-evaluated=pi-broken scope=user : source cat is not readable",
+                ],
+                &[
+                    "err|",
+                    "err|<1;36>global</>  <90>0</>",
+                    "err|    <90>/home/a/.pi/agent</>",
+                    "err|  <31>✗</> pi-broken: kendex could not check it",
+                    "err|    <90>source cat is not readable</>",
                 ],
             ),
             (
@@ -1229,7 +1294,7 @@ mod tests {
         let scope = Scope::Project { root: project };
         let mut notes = Vec::new();
         assert!(matches!(
-            declared_sources(&env, &scope, &mut notes),
+            declared_sources(&env, &scope, Unrefreshed::new(), &mut notes),
             Err(kendex_core::error::CoreError::CatalogNeedsEngine { .. })
         ));
         assert!(notes.is_empty());
@@ -1250,7 +1315,8 @@ mod tests {
         let rows: [(&str, Blocked); 3] = [
             ("update-pi plan", |env, targeted| {
                 let settings = settings::load(env).unwrap();
-                let plans = plan_scopes(env, &settings, targeted).unwrap();
+                let plans =
+                    plan_scopes(env, &settings, targeted, refresh_sources(env, targeted)).unwrap();
                 let personal = plans
                     .iter()
                     .find(|plan| matches!(plan.scope, Scope::Global))
