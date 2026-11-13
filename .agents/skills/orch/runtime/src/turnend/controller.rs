@@ -72,7 +72,7 @@ fn jarvis_marks(
     jarvis: &Jarvis,
     bound: Option<(String, &Controller)>,
 ) -> Flow {
-    let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+    let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
         return Ok(());
     };
     let (bound, controller) = bound.unzip();
@@ -173,7 +173,7 @@ fn overseer(
     key: &Key,
     controller: &Controller,
 ) -> Flow {
-    let settings = match marks::marks_settings(&lane.root, vars.private_env) {
+    let settings = match marks::marks_settings(turn, &lane.root, vars.private_env) {
         Ok(settings) => settings,
         Err(cause) => {
             turn.note(&Said::HandoffUnanswered, &cause);
@@ -405,7 +405,7 @@ fn lost(
     key: &Key,
     controller: &Controller,
 ) {
-    let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+    let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
         return;
     };
     let mailbox = overseer_dir(&settings.roots.common);
@@ -628,7 +628,7 @@ pub(super) fn overseer_tool_check(
     let (Some(key), Some(_)) = (&role.key, &vars.tmux_pane) else {
         return Ok(());
     };
-    let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+    let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
         return Ok(());
     };
     let mailbox = overseer_dir(&settings.roots.common);

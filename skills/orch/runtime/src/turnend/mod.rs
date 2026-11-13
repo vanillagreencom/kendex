@@ -220,6 +220,9 @@ struct Turn {
     /// The wake check's notice, said on stderr where it was found and
     /// carried into a later refusal's text.
     wake: Option<String>,
+    /// The settings load's notices, said once each after the answer's own
+    /// lines, so a harness reads the keyed line first.
+    skipped: Vec<String>,
 }
 
 impl Turn {
@@ -238,7 +241,27 @@ impl Turn {
             role: Rc::new(role::Role::default()),
             notice: None,
             wake: None,
+            skipped: Vec::new(),
         }
+    }
+
+    /// Keeps `settings`' notices for the end of the answer; every load of
+    /// one turn reads the same root, so each is kept once.
+    fn keep_skipped(&mut self, settings: &crate::settings::Settings) {
+        for line in &settings.skipped {
+            if !self.skipped.contains(line) {
+                self.skipped.push(line.clone());
+            }
+        }
+    }
+
+    /// The answer with the settings load's notices after its own stderr.
+    fn finish(&self, mut answer: Answer) -> Answer {
+        for line in &self.skipped {
+            answer.stderr.push_str(line);
+            answer.stderr.push('\n');
+        }
+        answer
     }
 
     fn note(&mut self, said: &Said, cause: &str) {
@@ -326,10 +349,11 @@ pub fn run(
     let vars = Vars::read(private_env);
     let harness = Harness::of(hook_dir, vars.pi_dir.as_deref());
     let mut turn = Turn::new(harness, hook_dir.to_path_buf());
-    match judge(&mut turn, &vars, arm, event, stdin) {
+    let answer = match judge(&mut turn, &vars, arm, event, stdin) {
         Ok(()) => turn.pass(),
         Err(answer) => answer,
-    }
+    };
+    turn.finish(answer)
 }
 
 fn judge(

@@ -1008,9 +1008,8 @@ fn a_close_reads_the_lanes_open_ask_through_the_shipped_mailbox() {
 }
 
 /// The lane record the shell suites plant drifting from what the real
-/// `launch-lane` writes: `tests/lane_model_recovery.sh` and the hook's
-/// `lane-mail-model-switch.test.sh` read the permission words off the
-/// record the fixture holds, and `tests/lane-state.sh` and
+/// `launch-lane` writes: `tests/lane_model_recovery.sh` reads the
+/// permission words off the record the fixture holds, and `tests/lane-state.sh` and
 /// `tests/lane_close.sh` read its launch identity in the start's form, so
 /// the fixture is this launch's record, its root and its process, pane and
 /// clock values as placeholders and the start's form (`ticks:`) kept before

@@ -93,7 +93,7 @@ pub(super) fn check(
                 return Ok(());
             }
             let reader =
-                mail_reader(lane, vars).map_err(|(said, cause)| turn.refuse(said, &cause))?;
+                mail_reader(turn, lane, vars).map_err(|(said, cause)| turn.refuse(said, &cause))?;
             (item.as_str(), reader)
         }
         None => {
@@ -229,7 +229,7 @@ pub(super) fn question_tool_check(
     if !QUESTION_TOOLS.contains(&payload.tool.as_str()) || !lane.launched(turn)? {
         return Ok(());
     }
-    let route = (turn.caller != Caller::Subagent).then(|| routes(lane, vars, item).ask);
+    let route = (turn.caller != Caller::Subagent).then(|| routes(turn, lane, vars, item).ask);
     let said = Said::QuestionTool {
         tool: payload.tool.clone(),
         route,
@@ -259,7 +259,7 @@ pub(super) fn idle_check(
     if *arm != Arm::Stop || turn.caller != Caller::Lead || !lane.launched(turn)? {
         return Ok(());
     }
-    let Ok(reader) = mail_reader(lane, vars) else {
+    let Ok(reader) = mail_reader(turn, lane, vars) else {
         return Ok(());
     };
     let mailbox = Mailbox::new(reader);
@@ -324,7 +324,7 @@ pub(super) fn idle_check(
     }
     let said = Said::Idle {
         item: item.clone(),
-        routes: Box::new(routes(lane, vars, item)),
+        routes: Box::new(routes(turn, lane, vars, item)),
         status_file,
     };
     Err(turn.refuse(said, ""))
@@ -495,7 +495,7 @@ fn whole_number(text: &str) -> bool {
 
 /// The mailbox reader the settings name (`LANE_MAIL_CLI`, else the mailbox
 /// package of the lane's own install), where it is an executable.
-fn mail_reader(lane: &Lane, vars: &Vars) -> Result<PathBuf, (Said, String)> {
+fn mail_reader(turn: &mut Turn, lane: &Lane, vars: &Vars) -> Result<PathBuf, (Said, String)> {
     let unsettled = |e: crate::Error| (Said::ReaderUnsettled, e.to_string());
     let roots = agent_runtime::settings::roots(&lane.root).map_err(|e| unsettled(e.into()))?;
     let environment: Vec<_> = std::env::vars_os().collect();
@@ -503,9 +503,9 @@ fn mail_reader(lane: &Lane, vars: &Vars) -> Result<PathBuf, (Said, String)> {
         state_dir: None,
         private_env: vars.private_env,
     };
-    let cli = settings::load(&roots, &environment, &flags)
-        .map_err(unsettled)?
-        .lane_mail_cli;
+    let settings = settings::load(&roots, &environment, &flags).map_err(unsettled)?;
+    turn.keep_skipped(&settings);
+    let cli = settings.lane_mail_cli;
     let executable = std::fs::metadata(&cli)
         .is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0);
     if !executable {
@@ -539,7 +539,7 @@ fn overseer_reader(
     if std::fs::symlink_metadata(overseer_box.join("to-lane.jsonl")).is_err() {
         return Ok(None);
     }
-    let Ok(reader) = mail_reader(lane, vars) else {
+    let Ok(reader) = mail_reader(turn, lane, vars) else {
         return Ok(None);
     };
     let role = Rc::clone(&turn.role);
@@ -586,8 +586,8 @@ fn read_command(reader: &Path, item: &str, root: &Path) -> String {
 /// The routes a refusal names, through the lane's reader where it
 /// resolves and by the verb's name where it does not: the route is the
 /// rule, and the gap in the install has its own line at the mail check.
-fn routes(lane: &Lane, vars: &Vars, item: &str) -> Routes {
-    let asker = mail_reader(lane, vars).unwrap_or_else(|_| PathBuf::from("lane-mail"));
+fn routes(turn: &mut Turn, lane: &Lane, vars: &Vars, item: &str) -> Routes {
+    let asker = mail_reader(turn, lane, vars).unwrap_or_else(|_| PathBuf::from("lane-mail"));
     let (asker, item, root) = (
         shell_quoted(&asker),
         shell_quoted(Path::new(item)),

@@ -13,7 +13,7 @@
 # than the verb answers 1 from its unknown-command arm, and a caller reading
 # either as "none stands" would tell a lane that has already written its record
 # to write it again at every turn end.
-# Inputs: hooks/, skills/agent-runtime/, skills/agent-runtime/scripts/,
+# Inputs: skills/agent-runtime/, skills/agent-runtime/scripts/,
 # skills/change-scope/references/, skills/change-scope/scripts/,
 # skills/communication/references/reports.md, skills/mailbox/scripts/, skills/orch/runtime/,
 # skills/orch/scripts/, skills/orch/tests/, skills/orch/workflows/start.md.
@@ -205,20 +205,6 @@ for word in $VERDICTS; do
 done
 assert_eq "missing=${MISSING#,}" "missing=" \
   "every verdict the verb publishes is spelled in the help its callers read"
-
-# The callers: each reaches the verb, the runtime's for the hook, rather
-# than restating its jq filter.
-# The watch's own caller is the runtime's lane observation, held by its
-# Rust rows.
-FILTER='select(type == "object" and .resumed_at == null)'
-for caller in hooks/lane-mail-check.sh; do
-  path="$TEST_DIR/../../../$caller"
-  [[ "$caller" != scripts/* ]] || path="$TEST_DIR/../$caller"
-  assert_eq "$(grep -cF -- "$FILTER" "$path" || true)" "0" \
-    "$caller states no second copy of the record test"
-  assert_eq "$(grep -cF -- 'state handoff-standing --item "' "$path" || true)" "1" \
-    "$caller asks the runtime's verb instead, once"
-done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

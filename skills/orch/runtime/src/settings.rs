@@ -582,6 +582,10 @@ pub struct Settings {
     /// `--no-private-env` turns it off for every reader, the base
     /// checkout's policy among them.
     pub private_env: bool,
+    /// The notice of each private env file line this load passed over,
+    /// `settings-skipped path=… key=… reason=shell-form`, for the caller
+    /// to say where its own answer puts it.
+    pub skipped: Vec<String>,
 }
 
 /// orch's one setup under an install's root: it builds the agent-runtime
@@ -601,6 +605,16 @@ impl Settings {
             copilot_home: self.copilot_home.as_deref(),
             pi_root: self.pi_root.as_deref(),
             setups: LAUNCH_SETUPS,
+        }
+    }
+
+    /// Says the load's notices on stderr, for a caller whose answer comes
+    /// after them.
+    pub fn tell_skipped(&self) {
+        use std::io::Write as _;
+        let mut stderr = std::io::stderr().lock();
+        for line in &self.skipped {
+            let _ = writeln!(stderr, "{line}");
         }
     }
 }
@@ -702,19 +716,19 @@ pub fn load(
     flags: &Flags,
 ) -> Result<Settings> {
     let values = shared::layered(&roots.project, environment, flags.private_env, &KEYS)?;
-    let passed_over = match &values.passed_over {
-        Some((path, keys)) => {
-            use std::io::Write as _;
-            for key in keys {
-                let _ = writeln!(
-                    std::io::stderr(),
-                    "settings-skipped path={} key={key} reason=shell-form",
-                    path.display()
-                );
-            }
-            keys.clone()
-        }
-        None => Vec::new(),
+    let (passed_over, skipped) = match &values.passed_over {
+        Some((path, keys)) => (
+            keys.clone(),
+            keys.iter()
+                .map(|key| {
+                    format!(
+                        "settings-skipped path={} key={key} reason=shell-form",
+                        path.display()
+                    )
+                })
+                .collect(),
+        ),
+        None => (Vec::new(), Vec::new()),
     };
     let get = |key: &str| values.get(key);
 
@@ -1063,6 +1077,7 @@ pub fn load(
         lane_mail_cli,
         reach: None,
         private_env: flags.private_env,
+        skipped,
         apple_workflow: values
             .raw("ORCH_APPLE_WORKFLOW")
             .unwrap_or(".github/workflows/mac-run.yml")

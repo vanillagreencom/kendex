@@ -2364,3 +2364,34 @@ impl TurnWorld {
         }
     }
 }
+
+/// The runtime cache `cache` holding this suite's own `orch-runtime` under
+/// the key the shipped wrapper computes for this checkout's sources
+/// (agent-runtime's `lib/key.sh`, read once per run): a row that runs the
+/// shipped wrapper with `AGENT_RUNTIME_CACHE` naming `cache` runs the binary
+/// under test, the wrapper as real as the binary.
+pub fn place_built_runtime(cache: &Path) {
+    static KEY: OnceLock<String> = OnceLock::new();
+    let key = KEY.get_or_init(|| {
+        let skills = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let out = program("/bin/bash")
+            .args([
+                "-c",
+                "refuse() { echo \"$*\" >&2; exit 1; }; . \"$1\"; agent_runtime_key \"$2\"",
+                "_",
+            ])
+            .arg(skills.join("agent-runtime/scripts/lib/key.sh"))
+            .arg(skills.join("orch/runtime"))
+            .output()
+            .expect("bash");
+        assert!(out.status.success(), "the runtime key: {}", stderr(&out));
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    });
+    std::fs::create_dir_all(cache.join("bin")).unwrap();
+    let link = cache.join("bin").join(format!("orch-runtime-{key}"));
+    match std::os::unix::fs::symlink(binary(), &link) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(e) => panic!("linking {}: {e}", link.display()),
+    }
+}

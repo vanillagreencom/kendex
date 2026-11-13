@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# The usage arm of lane-mail-check, the Copilot context reader, and the turn
-# end that judges the reading it records: the judge installed where kendex
-# renders it for Copilot, fed the payload the orch copilot-lane-context
-# extension hands it from one `session.usage_info` event of the session's root
-# agent, {session_id, cwd, current_tokens, token_limit}, and the agentStop
-# that follows. The extension's own rules are skills/orch/tests/
-# copilot-lane-context.sh's. The shared world is lib/lane-mail-world.sh;
-# HOOK_UNDER_TEST overrides the judge the must-fail controls run against.
+# The usage arm of the lane-mail-check entry, the Copilot context reader: the
+# entry installed where kendex renders it for Copilot, fed the payload the
+# orch copilot-lane-context extension hands it from one `session.usage_info`
+# event of the session's root agent, {session_id, cwd, current_tokens,
+# token_limit}. The extension's own rules are skills/orch/tests/
+# copilot-lane-context.sh's; how the turn end judges the reading is the
+# runtime's rows' subject. These rows hold what reaches the verb through the
+# entry: the arm, the install's directory as the harness spelled it, the
+# payload's own directory, and a global install's walk. The shared world is
+# lib/lane-mail-world.sh.
 set -euo pipefail
 
 # shellcheck source=lib/lane-mail-world.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
-# Every run's user home is COP_HOME, where the judge keeps its Copilot lead
+# Every run's user home is COP_HOME, where the turn end keeps its Copilot lead
 # records.
 CALL_ENV=("HOME=$COP_HOME")
 # The two Copilot hooks as kendex renders them into DIR: each script beside
@@ -29,7 +31,6 @@ new_usage_lane() { # NAME ITEM [JUDGE]
   rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
   install_copilot_hooks "$LANE/.github/hooks" "${3:-$HOOK}"
   mkdir -p "$LANE/tmp/lane-mail/$2"
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init "$2" >/dev/null)
   BOX="$LANE/tmp/lane-mail/$2"
   JUDGE="$LANE/.github/hooks/lane-mail-check.sh"
   cop_clear_leads
@@ -45,160 +46,36 @@ usage() { # TOKENS LIMIT [SESSION] [ENV=VAL...]
     '{session_id:$s, cwd:$c, current_tokens:$t, token_limit:$l}')" "$@"
   ARM_ARGS=()
 }
-turn_end() { # [SESSION] [ENV=VAL...]
-  local session="${1:-s1}"
-  shift $(($# < 1 ? $# : 1))
-  CASE_HOOK="$LANE/.github/hooks/lane-mail-check.sh"
-  run_payload "$(jq -nc --arg s "$session" --arg p "$TMP_ROOT/session-state/$session/events.jsonl" \
-    '{sessionId:$s, timestamp:1, cwd:"/w", transcriptPath:$p, stopReason:"end_turn", stop_hook_active:false}')" "$@"
-}
 # What a run wrote on both streams, the first stderr line keyed.
 quiet() { printf 'RC=%s stdout=%s stderr=%s' "$RC" "$(cat "$TMP_ROOT/stdout")" "$(first_line)"; }
 # The record in BOX as `tokens window session model`, or `none`.
 record() {
   jq -r '"\(.tokens) \(.window) \(.session_id) \(.model)"' "$BOX/context.json" 2>/dev/null || echo none
 }
-stdout_field() { # JQ
-  jq -r "$1" "$TMP_ROOT/stdout" 2>/dev/null || echo unparseable
-}
-MARK90=ORCH_HANDOFF_CONTEXT_PCT=90
-SOURCE="80% of tokenLimit, Copilot's backgroundCompactionThreshold default"
-# A lane that sets REPORT_ITEM reports a step before every turn end, so the
-# idle judge, whose rows are in lane-mail-check.test.sh, holds none of its
-# turn ends.
 
 echo "=== the reading ==="
 new_usage_lane lane KEN-401
-REPORT_ITEM=KEN-401
 usage 150000 272000
-assert_eq "$(quiet) record=$(record) source=$(jq -r '"\(.capacity_source) gap=\(.gap)"' "$BOX/context.json" 2>/dev/null)" \
-  "RC=0 stdout= stderr=- record=150000 217600 s1 null source=$SOURCE gap=null" \
-  "a lane's reading is recorded silently, its capacity 80 percent of the token limit, named as Copilot's default, with no gap"
-usage 0 272000
-assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=0 217600 s1 null" \
-  "a reading of no tokens is still a reading"
+assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=150000 217600 s1 null" \
+  "a lane's reading reaches the verb through the entry and is recorded silently"
 # The reading is judged in the directory its payload names, not the one the
-# extension happens to run the hook from.
+# extension happens to run the hook from; the entry finds its install from
+# its own directory.
 CALL_DIR="$TMP_ROOT"
 usage 160000 272000
 CALL_DIR=""
 assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=160000 217600 s1 null" \
   "a hook run from another directory records the lane its payload's cwd names"
 
-echo "=== the turn end judges the reading under the shared rule ==="
-usage 195840 272000
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" "RC=0 first=$GAP decision=" \
-  "a reading at 90 percent of the compaction limit passes"
-usage 195841 272000
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: context=195841 decision=block" \
-  "a reading past it, 72 percent of the token limit, holds the turn end"
-usage 400000 1000000
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=400000" \
-  "400000 tokens hold the turn end whatever the limit"
-# A successor session in the same mailbox is not judged on its predecessor's
-# reading: it is unmeasured until its own is recorded.
-cop_lead_start "$JUDGE" s0
-usage 199000 272000 s0
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: reading-unrecorded=$BOX/context.json decision=" \
-  "another session's reading is reported unmeasured and holds nothing"
-rm -f -- "${BOX:?}/context.json"
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: reading-unrecorded=$BOX/context.json decision=" \
-  "no reading at all is reported unmeasured, never room"
-if [ "$CAN_DENY_READS" -eq 1 ]; then
-  usage 150000 272000
-  chmod 000 "$BOX/context.json"
-  turn_end s1 "$MARK90"
-  chmod 600 "$BOX/context.json"
-  assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-    "RC=0 first=lane-mail-check: record=$BOX/context.json decision=block" \
-    "a reading that stands and cannot be read holds the turn end under its own key"
-fi
-
-echo "=== a reading handed on and not yet recorded ==="
-# The extension's pending marker for s1: a reading of the session is on its
-# way to the record.
-PENDING="$COP_HOME/.cache/lane-mail/copilot-usage/s1"
-pend() { mkdir -p "${PENDING%/*}" && : > "$PENDING"; }
-# unpend_after SECONDS: the marker removed that long into the turn end, as
-# the extension removes it once the run records. A real wait, the turn end's
-# own poll being the thing under test.
-unpend_after() { (sleep "$1" && rm -f -- "${PENDING:?}") & UNPEND_PID=$!; }
-new_usage_lane pending KEN-421
-REPORT_ITEM=KEN-421
-usage 150000 272000
-pend
-# A real wait of the whole bound: the marker never goes.
-turn_end s1 "$MARK90"
-assert_eq "RC=$RC first=$(first_line) keys=$(grep -c '^lane-mail-check: ' "$ERR_FILE") decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: reading-pending=$PENDING keys=2 decision=" \
-  "a marker standing through the wait leaves the context unmeasured, never the earlier record below the mark read as room"
-usage 195841 272000
-pend
-unpend_after 0.5
-turn_end s1 "$MARK90"
-wait "$UNPEND_PID"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) pending=$([ -e "$PENDING" ] && echo stands || echo gone)" \
-  "RC=0 first=lane-mail-check: context=195841 decision=block pending=gone" \
-  "a marker removed during the wait lets the turn end judge the record it waited for"
-
 echo "=== a gap is refused at exit 2 on stderr, for the extension's timeline ==="
-# A session no start or turn end recorded as a lead is recorded nowhere.
 new_usage_lane unrecorded KEN-407
 usage 150000 272000 s5
 assert_eq "$(quiet) record=$(record)" "RC=2 stdout= stderr=lane-mail-check: session-unrecorded=s5 record=none" \
   "a reading of a session no lead record names is refused and recorded nowhere"
-new_usage_lane unwritable KEN-402
-rm -rf -- "${BOX:?}"
-printf 'not a directory\n' > "$BOX"
-usage 150000 272000 s1 LANE_MAIL_ITEM=KEN-402
-assert_eq "$(quiet)" "RC=2 stdout= stderr=lane-mail-check: context-unrecorded=$BOX/context.json" \
-  "a reading that cannot be written is its keyed line at exit 2"
-# A write that fails where the directory still takes a removal: `date`, which
-# stamps the record, fails, and the earlier reading is removed with it, so the
-# turn end past the mark reports the context unmeasured rather than judging
-# the older figure as room.
-new_usage_lane stale KEN-408
-mkdir -p "$TMP_ROOT/nodate"
-printf '#!/bin/sh\nexit 1\n' > "$TMP_ROOT/nodate/date"
-chmod +x "$TMP_ROOT/nodate/date"
-usage 150000 272000
-usage 199000 272000 s1 "PATH=$TMP_ROOT/nodate:$PATH"
-assert_eq "$(quiet) record=$(record)" "RC=2 stdout= stderr=lane-mail-check: context-unrecorded=$BOX/context.json record=none" \
-  "a reading past the mark that cannot be written is refused, and the earlier reading removed"
-turn_end s1 "$MARK90"
-expect 0 "lane-mail-check: reading-unrecorded=$BOX/context.json" \
-  "the turn end after it reports the context unmeasured, not the earlier figure as room"
-# An install the gate or the context library cannot use is refused under the
-# key its turn end reports the same gap under.
-new_usage_lane no-state KEN-409
-hole_install orch-runtime
-usage 150000 272000
-assert_eq "$(quiet) record=$(record)" \
-  "RC=2 stdout= stderr=lane-mail-check: handoff-skipped=$LANE/.agents/skills/orch/scripts/orch-runtime record=none" \
-  "a lane whose install has no runtime is refused under handoff-skipped, naming it"
-new_usage_lane no-lib KEN-410
-hole_install lib/lane-context.sh
-usage 150000 272000
-assert_eq "$(quiet) record=$(record)" \
-  "RC=2 stdout= stderr=lane-mail-check: handoff-skipped=$LANE/.agents/skills/orch/scripts/lib/lane-context.sh record=none" \
-  "a lane whose install has no context library is refused under handoff-skipped, naming it"
 new_usage_lane invalid KEN-403
 usage 150000 0
 assert_eq "$(quiet) record=$(record)" "RC=2 stdout= stderr=lane-mail-check: payload=invalid-json record=none" \
   "a reading naming no token limit is refused as a payload it cannot read"
-new_usage_lane unmarked KEN-404
-unmark_lanes
-usage 150000 272000
-assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
-  "a session no launch made a lane passes silently and is recorded nowhere"
 new_usage_lane claude-copy KEN-405
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 JUDGE="$LANE/.claude/hooks/lane-mail-check.sh"
@@ -206,106 +83,21 @@ usage 150000 272000
 assert_eq "$(quiet) record=$(record)" "RC=2 stdout= stderr=lane-mail-check: harness-unlisted=$LANE/.claude/hooks record=none" \
   "an install that is not Copilot's refuses a reading it would record as another harness's"
 # The global scope, under the Copilot home, with the orch skill in that
-# home's own skills directory as a global install renders it: the judge is
-# known as Copilot's by its registry document.
+# home's own skills directory as a global install renders it: the entry's
+# walk finds the home's reader, and the verb knows the install as Copilot's
+# by its registry document.
 new_usage_lane global KEN-406
 rm -rf -- "${LANE:?}/.github/hooks"
 GLOBAL_HOME="$TMP_ROOT/copilot-home"
 mkdir -p "$GLOBAL_HOME/skills/orch"
 ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$GLOBAL_HOME/skills/orch/scripts"
-  mkdir -p "$GLOBAL_HOME/skills/mailbox"
+mkdir -p "$GLOBAL_HOME/skills/mailbox"
 ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts" "$GLOBAL_HOME/skills/mailbox/scripts"
 install_copilot_hooks "$GLOBAL_HOME/hooks"
 JUDGE="$GLOBAL_HOME/hooks/lane-mail-check.sh"
 usage 150000 272000
 assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=150000 217600 s1 null" \
   "the judge in the Copilot home's global scope records the lane's reading"
-
-echo "=== the overseer ==="
-new_usage_overseer() { # NAME
-  CALL_ENV=("HOME=$COP_HOME" "COPILOT_HOME=$TMP_ROOT")
-  new_lane "$1" main
-  unmark_lanes
-  rm -f -- "${LANE:?}/.claude/hooks/lane-mail-check.sh"
-  install_copilot_hooks "$LANE/.github/hooks"
-  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-  # The fleet record names TMP_ROOT as the overseer's launch home, the
-  # Copilot home its transcript sits under, so the transcript ownership gate
-  # holds its turn end to its own session.
-  record_overseer "$OVERSEER_PANE" "$OVERSEER_SERVER" "$TMP_ROOT"
-  BOX="$LANE/tmp/lane-mail/overseer"
-  JUDGE="$LANE/.github/hooks/lane-mail-check.sh"
-  cop_clear_leads
-  cop_lead_start "$JUDGE" s1
-}
-new_usage_overseer overseer
-# shellcheck disable=SC2046
-usage 199000 272000 s1 $(overseer_env)
-assert_eq "$(quiet) record=$(record) key=$(jq -r .pane_key "$BOX/context.json" 2>/dev/null)" \
-  "RC=0 stdout= stderr=- record=199000 217600 s1 null key=$OVERSEER_SERVER $OVERSEER_PANE" \
-  "the overseer's reading is recorded in its mailbox under its pane key"
-# The judge, handed that reading, finds it due.
-plant_judge
-judge_says "$(marks_reply context-window)"
-# shellcheck disable=SC2046
-turn_end s1 $(overseer_env) "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) argv=$(judge_argv | tail -n 1) route=$(stdout_field .reason | grep -cF -- '/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]')" \
-  "RC=0 first=lane-mail-check: context=199000 decision=block argv=marks --fleet --context 199000:217600 route=1" \
-  "its turn end hands that reading to the judge, which judges it due, and names the succession"
-rm -f -- "${BOX:?}/context.json" "${JUDGE_DIR:?}/out"
-# shellcheck disable=SC2046
-usage 199000 272000 s1 $(overseer_env %3)
-assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
-  "a session in a pane the fleet state does not name is no overseer, and recorded nowhere"
-usage 199000 272000
-assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \
-  "nor is a session outside tmux"
-# An overseer whose known native binding still matches writes a lost-pane
-# gap at its turn end; named again, it reads that record as no reading.
-# overseer_named PANE: the fleet record names PANE as the overseer's.
-overseer_named() { # PANE
-  record_overseer "$1" "$OVERSEER_SERVER" "$TMP_ROOT"
-  bind_overseer copilot "$TMP_ROOT" s1
-}
-# LOST is the lost turn end's first line and record; the run left is the
-# turn end after it.
-lost_overseer() { # NAME
-  new_usage_overseer "$1"
-  # shellcheck disable=SC2046
-  usage 199000 272000 s1 $(overseer_env)
-  overseer_named %3
-  # shellcheck disable=SC2046
-  turn_end s1 $(overseer_env)
-  LOST="first=$(first_line) record=$(jq -r '"\(.tokens) \(.gap)"' "$BOX/context.json" 2>/dev/null)"
-  overseer_named "$OVERSEER_PANE"
-  # shellcheck disable=SC2046
-  turn_end s1 $(overseer_env) "$MARK90"
-}
-lost_overseer overseer_lost
-assert_eq "$LOST" \
-  "first=lane-mail-check: pane-unrecorded=$OVERSEER_SERVER $OVERSEER_PANE record=null pane-unrecorded" \
-  "an overseer the fleet record lost writes the gap pane-unrecorded at its turn end"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: reading-unrecorded=$BOX/context.json decision=" \
-  "named again, its turn end reports that gap record unmeasured and holds nothing"
-
-echo "=== must-fail controls ==="
-# The arm's dispatch removed: the reading runs the turn-end path, which
-# records nothing.
-mutant usage-undispatched -e 's@^if \[ "\$ARM" = usage \]; then$@if false; then@'
-new_usage_lane control_dispatch KEN-411 "$MUTANT_PATH"
-usage 150000 272000
-assert_eq "record=$(record)" "record=none" "control: without its dispatch a reading is recorded nowhere"
-
-# The pending check removed: the earlier record below the mark is read as
-# room while a reading is on its way.
-MUTANT_SOURCE="$REPO_ROOT/skills/orch/scripts/lib/lane-context.sh" mutant usage-pending-unread -e 's@^  if copilot_reading_pending; then$@  if false; then@'
-CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_usage_lane control_pending KEN-422
-usage 150000 272000
-pend
-turn_end s1 "$MARK90"
-rm -f -- "${PENDING:?}"
-expect 0 "$GAP" "control: without the pending check the earlier record passes the turn end as room"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

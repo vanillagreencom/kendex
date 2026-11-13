@@ -206,7 +206,7 @@ fn recovered(
     launch: Option<&Launch>,
 ) -> Result<(Key, Option<Launch>), String> {
     let mut cause = "no controller record binds this native session to a live pane".to_owned();
-    let settings = marks::marks_settings(&lane.root, vars.private_env)
+    let settings = marks::marks_settings(turn, &lane.root, vars.private_env)
         .map_err(|e| format!("{cause}; the settings could not be loaded: {e}"))?;
     if let Some(key) = controller_pane(turn, vars, &settings, payload) {
         return Ok((key, None));
@@ -369,7 +369,7 @@ pub(super) fn read(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload)
     let Some(key) = turn.role.key.clone() else {
         return;
     };
-    let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+    let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
         return;
     };
     let binding = controller(turn, vars, &settings, payload, &key);

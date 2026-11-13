@@ -347,7 +347,7 @@ fn mark_gate<'a>(
         turn.note(&Said::HandoffUnanswered, cause);
         turn.pass()
     };
-    let settings = match marks_settings(&lane.root, vars.private_env) {
+    let settings = match marks_settings(turn, &lane.root, vars.private_env) {
         Ok(settings) => settings,
         Err(cause) => return Err(unanswered(turn, "unanswered", &cause)),
     };
@@ -385,15 +385,22 @@ fn mark_gate<'a>(
 
 /// This checkout's settings, read from the lane's root by the load every
 /// verb takes, with the caller's environment and the command line's word on
-/// the private env file.
-pub(super) fn marks_settings(root: &Path, private_env: bool) -> Result<Settings, String> {
+/// the private env file; the load's notices are kept for the end of the
+/// turn's answer.
+pub(super) fn marks_settings(
+    turn: &mut Turn,
+    root: &Path,
+    private_env: bool,
+) -> Result<Settings, String> {
     let roots = agent_runtime::settings::roots(root).map_err(|e| e.to_string())?;
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let flags = Flags {
         state_dir: None,
         private_env,
     };
-    settings::load(&roots, &environment, &flags).map_err(|e| e.to_string())
+    let settings = settings::load(&roots, &environment, &flags).map_err(|e| e.to_string())?;
+    turn.keep_skipped(&settings);
+    Ok(settings)
 }
 
 /// The wall time a reading is recorded at, which the watch's stale rule

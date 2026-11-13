@@ -994,3 +994,33 @@ fn an_overseer_attached_launch_is_held_at_its_marks() {
         }
     }
 }
+
+/// A session the fleet record binds, in a directory that is no repository,
+/// is no controller: `role::read` names it `Kind::None`, and past the
+/// context mark its turn end meets nothing, tells nothing and passes. Its
+/// pane is the one the record names for its native session, read with
+/// `$TMUX` set and no `TMUX_PANE`.
+#[test]
+fn a_bound_session_outside_a_repository_meets_nothing_past_the_mark() {
+    let world = TurnWorld::new();
+    let (env, account) = claude_on(&world, PANE);
+    let env: Vec<(String, String)> = env
+        .into_iter()
+        .filter(|(name, _)| name != "TMUX_PANE")
+        .collect();
+    let dir = world.root.join("assistant");
+    let fleet = dir.join("tmp").join(agent_runtime::record::FLEET_FILE_NAME);
+    fs::create_dir_all(fleet.parent().unwrap()).unwrap();
+    let member = world.controller(PANE, "claude", &account, SESSION);
+    fs::write(&fleet, json!({ "overseer": member }).to_string()).unwrap();
+    let path = account.join(format!("projects/p/{SESSION}.jsonl"));
+    let named = transcript(&path, &[claude_usage(450_000)]);
+    let payload = json!({ "session_id": SESSION, "transcript_path": named.display().to_string() });
+    let out = world.turn(&dir, "claude", &[], &payload.to_string(), &env);
+    assert_eq!(
+        (out.code, out.stdout.as_str(), out.stderr.as_str()),
+        (0, "", ""),
+        "{}",
+        out.stderr
+    );
+}

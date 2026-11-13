@@ -3,8 +3,7 @@
 # repository with the hook installed where kendex renders it, the payload
 # runner, the real `lane-mail` sender, a peer repository sending into the
 # lane's overseer mailbox, the tmux pane the fleet record names, and the
-# overseer session with the judge beside it. lane-mail-check.test.sh,
-# lane-mail-check-copilot.test.sh and lane-mail-check-overseer-tool.test.sh
+# overseer session. lane-mail-compact.test.sh and lane-mail-usage.test.sh
 # source it after `set -euo pipefail`; each counts into the PASS and FAIL set
 # here and reports them itself.
 # shellcheck disable=SC2034
@@ -129,12 +128,10 @@ new_worktree_lane() { # NAME BRANCH
 
 # The install and the launch record, on the repository LANE names. The orch
 # scripts directory is a link, as a case that replaces it expects, to a
-# directory beside it holding the scripts one link each (plant_siblings)
-# with the runtime stand-in beside them: every world answers the hook's
-# account mark and watch read from that stand-in, never from the shipped
-# wrapper, which resolves a built binary no world has. The directory sits
-# under the same `orch`, so a script's `../../mailbox` resolves as the
-# install's does.
+# directory beside it holding the scripts one link each (plant_siblings),
+# the shipped wrapper among them over the runtime sources linked beside
+# it. The directory sits under the same `orch`, so a script's
+# `../../mailbox` resolves as the install's does.
 lay_out_lane() { # BRANCH
   local scripts="$LANE/.agents/skills/orch/.scripts"
   mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills" "$scripts"
@@ -334,10 +331,13 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
     [ "$name" != "${2:-}" ] || continue
     ln -s -f -n "$entry" "$1/$name"
   done
-  # The runtime the hook asks for the watch's claim: the shipped wrapper
-  # resolves a built binary no fixture has, so every install answers no
-  # claim until a case plants another answer.
-  [ "${2:-}" = orch-runtime ] || runtime_stub "$1" none
+  # The hook runs the shipped wrapper, which builds its key from the sources
+  # beside its directory and runs the binary the cache holds for them: this
+  # checkout's runtime sources, linked where an install lays them, select
+  # the binary setup built into AGENT_RUNTIME_CACHE.
+  local package="${1%/*}"
+  [ -e "$package/runtime" ] || ln -s "$REPO_ROOT/skills/orch/runtime" "$package/runtime"
+  [ -e "${package%/*}/agent-runtime" ] || ln -s "$REPO_ROOT/skills/agent-runtime" "${package%/*}/agent-runtime"
 }
 
 # The runtime the hook asks for the watch's claim, `orch-runtime watch
@@ -643,9 +643,7 @@ variant() { # NAME SED-ARGUMENT...
 JUDGE_DIR="$TMP_ROOT/judge"
 mkdir -p "$JUDGE_DIR"
 plant_judge() { # [SCRIPTS_DIR]
-  local scripts="${1:-$LANE/.claude/skills/orch/scripts}"
   [ -n "${1:-}" ] || plant_install
-  runtime_stub "$scripts" none || return 1
   rm -f -- "${JUDGE_DIR:?}/args" "${JUDGE_DIR:?}/out" "${JUDGE_DIR:?}/err" \
     "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/hang"
 }
@@ -657,18 +655,15 @@ judge_says() { # RESULT
 judge_calls() { [ -f "$JUDGE_DIR/args" ] && wc -l < "$JUDGE_DIR/args" | tr -d ' ' || echo 0; }
 judge_argv() { cat "$JUDGE_DIR/args" 2>/dev/null || true; }
 
-# The verb's own replies, each captured for the inputs the fixture records
-# and held to the verb by the controller row
-# the_hook_suites_plant_the_marks_verbs_own_replies.
+# The marks verb's replies, each captured for the inputs the fixture records.
 MARKS_REPLIES="$TEST_DIR/fixtures/marks-replies.json"
 marks_reply() { # SHAPE
   jq -ce --arg shape "$1" '.[$shape].reply | objects' "$MARKS_REPLIES"
 }
 
 # The account judge's replies to a lane's turn end, `accounts pick --lane`'s
-# own for the inputs the fixture records, held to the judge by the
-# controller row the_hook_suites_plant_the_account_judges_own_replies and
-# the cloud row of tests/rust/accounts.rs. pick_reply prints SHAPE's in the
+# own for the inputs the fixture records, held to the judge by the cloud row
+# of tests/rust/accounts.rs. pick_reply prints SHAPE's in the
 # runtime's envelope, its record naming DIR as ALIAS.
 PICK_REPLIES="$TEST_DIR/fixtures/pick-replies.json"
 pick_reply() { # SHAPE DIR ALIAS
@@ -827,14 +822,6 @@ wake_row_process_table() {
     printf 'exec %q "$@"\n' "$executable"
   } > "$TMUX_BIN/ps"
   chmod +x "$TMUX_BIN/ps"
-}
-
-wake_control() { # NAME ROW OLD NEW
-  local status=0
-  wake_mutant "$1" "$3" "$4"
-  env -i "PATH=$PATH" "HOME=$COP_HOME" "TMPDIR=$TMPDIR" "AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE" "HOOK_UNDER_TEST=$MUTANT_PATH" \
-    bash "$TEST_DIR/lane-mail-check-wake.test.sh" --wake-row "$2" > "$TMP_ROOT/$1.control.log" 2>&1 || status=$?
-  assert_eq "$status" 1 "control: $1 makes the $2 assertion red"
 }
 
 # The record that ends an overseer's refusal, written on the fleet's own item.

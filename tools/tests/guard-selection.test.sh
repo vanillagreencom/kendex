@@ -355,7 +355,7 @@ OUT="$(cd "$actual" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DE
 [ "$RC" -eq 0 ] && grep -Fxq 'test --manifest-path crates/core/Cargo.toml --quiet' "$REPLAY_CARGO_LOG" \
   && ok 'the real runtime selector reaches the copied fixture cargo boundary' \
   || bad 'the real runtime selector reaches the copied fixture cargo boundary' "rc=$RC cargo=$(cat "$REPLAY_CARGO_LOG") out=$OUT"
-for suite in hooks/tests/lane-mail-check.test.sh hooks/tests/lane-mail-model-switch.test.sh refresh/tests/refresh-consumer.test.sh; do
+for suite in refresh/tests/refresh-consumer.test.sh; do
   [ "$RC" -eq 0 ] && grep -Fxq "=== $suite" <<<"$OUT" \
     && ok "KEN-3966 replay selects $suite" || bad "KEN-3966 replay selects $suite" "rc=$RC out=$OUT"
 done
@@ -368,8 +368,7 @@ for input in skills/orch/scripts/lib/lane-launch.sh skills/orch/references/skill
   printf '\n# launch replay\n' >> "$actual/$input"
   printf '\n# launch replay\n' >> "$actual/.agents/$input"
 done
-for input in hooks/tests/lane-mail-check-agent.test.sh \
-  skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
+for input in skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
   skills/orch/tests/lane_model_recovery.sh \
   skills/orch/tests/lane-claims.sh; do
   printf '\n# launch replay\n' >> "$actual/$input"

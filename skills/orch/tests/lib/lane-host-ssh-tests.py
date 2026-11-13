@@ -574,14 +574,6 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         # entry runs the binary setup built for these sources.
         runtime = self.runtime_binary()
         self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
-        if control == "consumer":
-            guard = 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ]; then'
-            self.assertEqual(hook_text.count(guard), 1)
-            hook_text = hook_text.replace(guard, 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ] && false; then')
-        if control == "handoff-notice":
-            target = 'hand_over "lane-mail-check: model-unavailable=handoff-unwritten$NL$(cat -- "$WORK_DIR/model.err")"'
-            self.assertEqual(hook_text.count(target), 1)
-            hook_text = hook_text.replace(target, 'model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"')
         self.seed_source(".claude/hooks/lane-mail-check.sh", hook_text)
         made = self.create()
         self.assertEqual(made.returncode, 0, made.stderr)
@@ -604,12 +596,9 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                                                   "identity_file": self.row["clone"] + "/.git/lane-host-pid",
                                                   "runtime": "/cache/bin/orch-runtime-fixture"})
         if not control and not recovery_fault:
-            # A private-file value the settings load skips writes its notice
-            # on stderr ahead of every runtime answer, the standing item's init
-            # refusal included.
+            # A private-file value the settings load skips is told beside
+            # every runtime answer, the standing item's init refusal included.
             (path / ".env.local").write_text("GH_TOKEN=$(printf example)\n")
-        stop_done = self.root / "stop-done"
-        fault_reached = self.root / "fault-reached"
         planted = None
         if recovery_fault == "handoff":
             # The runtime's handoff write refuses inside this invocation: the
@@ -624,43 +613,6 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
                 done = subprocess.run([str(store), "--state-dir", str(path / "tmp"), *args],
                                       cwd=path, env=self.env, capture_output=True)
                 self.assertEqual(done.returncode, 0, done.stderr)
-        elif recovery_fault:
-            # A private wrapper keeps the real owner and fails its dependency.
-            # Its exit receipt proves detached completion before state is read.
-            name = "lane-state.sh" if recovery_fault == "stop" else "lane-launch.sh"
-            library = path / ".agents/skills/orch/scripts/lib" / name
-            text = library.read_text()
-            function = "lane_stop_identity" if recovery_fault == "stop" else "lane_run_detached"
-            signature = function + "() {"
-            self.assertEqual(text.count(signature), 1)
-            text = text.replace(signature, "native_real_" + signature)
-            if recovery_fault == "stop":
-                wrapper = f'''
-lane_stop_identity() {{
-  trap 'printf done > {shlex.quote(str(stop_done))}' EXIT
-  lane_process_table() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
-  native_real_lane_stop_identity "$@"
-}}
-'''
-            else:
-                no_commands = self.root / "no-detach-commands"
-                no_commands.mkdir()
-                wrapper = f'''
-lane_run_detached() {{
-  local PATH={shlex.quote(str(no_commands))} rc=0
-  printf reached > {shlex.quote(str(fault_reached))}
-  native_real_lane_run_detached "$@" || rc=$?
-  printf done > {shlex.quote(str(stop_done))}
-  return "$rc"
-}}
-'''
-            library.write_text(text + wrapper)
-        if control == "stop-record":
-            library = path / ".agents/skills/orch/scripts/lib/lane-relaunch.sh"
-            text = library.read_text()
-            target = ".handoff.stop_failure ="
-            self.assertEqual(text.count(target), 1)
-            library.write_text(text.replace(target, ".handoff.unreported_stop_failure ="))
         # The prefix execs this native process. Block TERM until its callback
         # returns so the fixture can report the hook result before exiting.
         native = self.bin / "claude"
@@ -687,12 +639,6 @@ signal.sigwait({signal.SIGTERM})
             reply = json.loads(child.stdout.readline())
             self.assertEqual(reply["exit"], 0, reply)
             self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
-            if recovery_fault and recovery_fault != "handoff":
-                deadline = time.monotonic() + 20
-                while not stop_done.exists() and time.monotonic() < deadline:
-                    time.sleep(0.01)
-                self.assertTrue(stop_done.exists(), "stop attempt produced no completion receipt")
-                self.assertTrue(fault_reached.exists(), "stop fault was not reached")
             state = json.loads((path / "tmp/workflow-state-TEST-1.json").read_text())
             read = self.hosted_state_read(path, PACKAGE / "scripts/lib/lane-gitfile.sh")
             self.assertEqual(read.returncode, 0, read.stderr)
@@ -704,26 +650,8 @@ signal.sigwait({signal.SIGTERM})
                 self.assertIsNone(child.poll(), "a failed handoff write ended its predecessor")
                 self.assertFalse((path / "tmp/model-recovery-TEST-1.log").exists(),
                                  "a failed handoff write dispatched recovery")
-                if control == "handoff-notice":
-                    with self.assertRaises(AssertionError):
-                        self.assert_native_handoff_failure(reply)
-                else:
-                    self.assert_native_handoff_failure(reply)
-            elif recovery_fault:
-                self.assert_native_model_handoff(state)
-                self.assertIsNone(child.poll(), "a failed stop ended its predecessor")
-                if recovery_fault == "stop":
-                    if control == "stop-record":
-                        with self.assertRaises(AssertionError):
-                            self.assert_native_stop_failure(state, child.pid)
-                    else:
-                        self.assert_native_stop_failure(state, child.pid)
-                    log = (path / "tmp/model-recovery-TEST-1.log").read_text()
-                    self.assertTrue(log.startswith("lane-relaunch: native-stop=failed "), log)
-                else:
-                    self.assertIn("lane-mail-check: model-unavailable=recovery-unstarted", reply["stdout"])
-                    self.assertIn("lane-launch: detached=missing-command commands=perl", reply["stdout"])
-            elif control in ("producer", "consumer"):
+                self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
+            elif control == "producer":
                 self.assertEqual(state["model_checks"]["native-session"]["outcome"], "unavailable")
                 self.assertIsNone(child.poll())
                 with self.assertRaises(AssertionError):
@@ -756,44 +684,14 @@ signal.sigwait({signal.SIGTERM})
         self.assertTrue(check["launch_identity"]["launch"]["pid"])
         self.assertTrue(check["launch_identity"]["launch"]["start"])
 
-    def assert_native_stop_failure(self, state, predecessor):
-        failure = state["handoff"].get("stop_failure")
-        self.assertIsNotNone(failure, "the controller received no stop failure")
-        self.assertEqual((failure["cause"], failure["pid"], failure["exit"]),
-                         ("process-read-failed", None, 1))
-        self.assertEqual(failure["launch"]["pid"], str(predecessor))
-        self.assertTrue(failure["launch"]["start"])
-
-    def assert_native_handoff_failure(self, reply):
-        self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
-        self.assertIn("orch-runtime: round-unknown round_id=pruned-round", reply["stdout"])
-
     def test_native_model_recovery_failures(self):
-        for fault in ("handoff", "stop", "dispatch"):
-            with self.subTest(fault=fault):
-                case = type(self)()
-                self.addCleanup(case.doCleanups)
-                case.setUp()
-                case.native_model_switch(recovery_fault=fault)
-
-    def test_native_model_recovery_failure_controls(self):
-        # Retain each required dependency failure. Losing its report must fail
-        # the same assertion. Keep the defects outside the tracked tree.
-        for control, fault in (("handoff-notice", "handoff"), ("stop-record", "stop")):
-            with self.subTest(control=control):
-                case = type(self)()
-                self.addCleanup(case.doCleanups)
-                scratch = tempfile.TemporaryDirectory()
-                self.addCleanup(scratch.cleanup)
-                case.control_scratch = Path(scratch.name)
-                case.setUp()
-                case.native_model_switch(control=control, recovery_fault=fault)
+        self.native_model_switch(recovery_fault="handoff")
 
     def test_native_model_marker_handoff(self):
         self.native_model_switch()
 
     def test_native_model_marker_controls(self):
-        for control in ("producer", "consumer"):
+        for control in ("producer",):
             with self.subTest(control=control):
                 case = type(self)()
                 self.addCleanup(case.doCleanups)

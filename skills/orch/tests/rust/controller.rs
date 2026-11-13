@@ -6655,10 +6655,11 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
 }
 
 /// The real hook installed in the checkout `work` as a kendex install has
-/// it: a repository, the hook copied into its hook directory, the orch
-/// checkout `scripts` and the mailbox package linked under its install.
-/// Returns the hook's path.
-fn install_hook(scripts: &Path, work: &Path) -> std::path::PathBuf {
+/// it: a repository, the hook copied into its hook directory, the orch and
+/// mailbox packages linked under its install, so the hook runs the shipped
+/// wrapper, which [`run_hook`] points at the binary under test. Returns the
+/// hook's path.
+fn install_hook(work: &Path) -> std::path::PathBuf {
     use std::os::unix::fs::symlink;
     let git = program("git")
         .args(["init", "-q"])
@@ -6674,7 +6675,7 @@ fn install_hook(scripts: &Path, work: &Path) -> std::path::PathBuf {
         .to_owned();
     let installed = work.join(".agents/skills");
     std::fs::create_dir_all(&installed).unwrap();
-    symlink(scripts.parent().unwrap(), installed.join("orch")).unwrap();
+    symlink(skills.join("orch"), installed.join("orch")).unwrap();
     symlink(skills.join("mailbox"), installed.join("mailbox")).unwrap();
     let hook = work.join(".claude/hooks/lane-mail-check.sh");
     std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
@@ -6693,7 +6694,6 @@ fn install_hook(scripts: &Path, work: &Path) -> std::path::PathBuf {
 /// after it.
 fn model_switch(
     runner: &Runner,
-    scripts: &Path,
     env: &[(String, String)],
     home: &Path,
     work: &Path,
@@ -6703,7 +6703,7 @@ fn model_switch(
     let hook = if installed.exists() {
         installed
     } else {
-        install_hook(scripts, work)
+        install_hook(work)
     };
     let session = record["session_id"].as_str().unwrap();
     let payload = json!({
@@ -6718,7 +6718,9 @@ fn model_switch(
 
 /// The installed `hook` run as the harness runs it for the overseer
 /// `record` names, from `work` under `home` and `env`, `payload` on its
-/// standard input, inside the record's pane on the runner's server.
+/// standard input, inside the record's pane on the runner's server; the
+/// shipped wrapper it runs finds the binary under test in the row's own
+/// runtime cache ([`place_built_runtime`]).
 fn run_hook(
     runner: &Runner,
     hook: &Path,
@@ -6729,6 +6731,14 @@ fn run_hook(
     payload: &Value,
 ) -> std::process::Output {
     use std::io::Write;
+    let cache = env
+        .iter()
+        .find(|(name, _)| name == "AGENT_RUNTIME_CACHE")
+        .map_or_else(
+            || runner.state_dir().join("runtime-cache"),
+            |(_, value)| std::path::PathBuf::from(value),
+        );
+    place_built_runtime(&cache);
     let mut child = program("/bin/bash");
     for (name, value) in env {
         child.env(name, value);
@@ -6736,6 +6746,7 @@ fn run_hook(
     let mut child = child
         .arg(hook)
         .current_dir(work)
+        .env("AGENT_RUNTIME_CACHE", &cache)
         .env("ORCH_STATE_DIR", runner.state_dir())
         .env("CLAUDE_CONFIG_DIR", home)
         .env("TMUX", format!("{},0,0", runner.server_socket.display()))
@@ -6830,7 +6841,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
         stderr(launched.op())
     );
     let overseer = runner.fleet()["overseer"].clone();
-    let (out, check) = model_switch(&runner, &scripts, &launch.env, &account, &work, &overseer);
+    let (out, check) = model_switch(&runner, &launch.env, &account, &work, &overseer);
     assert_eq!(
         check["outcome"],
         "switched",
@@ -6862,7 +6873,7 @@ fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_t
     let home = controller["home"]
         .as_str()
         .map_or_else(|| account.clone(), std::path::PathBuf::from);
-    let (out, _) = model_switch(&runner, &scripts, &failing, &home, &work, &controller);
+    let (out, _) = model_switch(&runner, &failing, &home, &work, &controller);
     let context: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
     assert_eq!(
         context["hookSpecificOutput"]["additionalContext"]
@@ -6937,7 +6948,7 @@ fn a_model_switch_whose_transfer_job_never_claims_is_handed_over_unconfirmed() {
     ));
     unclaimed.push(("AGENT_RUNTIME_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     unclaimed.push(("SETSID_LOG".to_owned(), log.display().to_string()));
-    let (out, _) = model_switch(&runner, &scripts, &unclaimed, &account, &work, &overseer);
+    let (out, _) = model_switch(&runner, &unclaimed, &account, &work, &overseer);
     let intent = runner.fleet()["intents"]
         .as_array()
         .unwrap()
@@ -7074,7 +7085,7 @@ fn a_controllers_native_switch_past_its_successor_writes_its_body_and_tells_the_
         "{started}\n{}",
         stderr(launched.op())
     );
-    install_hook(&scripts, &work);
+    install_hook(&work);
     let overseer = runner.fleet()["overseer"].clone();
     let out = native_switch(&runner, &launch.env, &account, &work, &overseer);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -7170,7 +7181,7 @@ fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_e
     let session = overseer["session_id"].as_str().unwrap().to_owned();
     let transcript = project_dir(&account, &work).join(format!("{session}.jsonl"));
     std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
-    let hook = install_hook(&scripts, &work);
+    let hook = install_hook(&work);
     let mut hook_env = launch.env.clone();
     hook_env.push(("ORCH_OVERSEER_WALL_MINUTES".to_owned(), "0".to_owned()));
     // The controller's wake, armed as the turn-end check asks: a follower
@@ -8422,116 +8433,6 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
     assert_eq!(refused_field(&unstamped, "found"), "none", "{unstamped}");
 }
 
-/// The replies the hook suites plant for the judge (`hooks/tests/fixtures/
-/// marks-replies.json`) are the `marks` verb's own, each answered here for
-/// the inputs it records: through the real executable, and the memory mark
-/// through the judge itself over a fixture cgroup reading. Only `resets`, a
-/// time the planted account's reset stands at, is compared by presence.
-#[test]
-fn the_hook_suites_plant_the_marks_verbs_own_replies() {
-    use agent_runtime::controller::views::Caller;
-    use agent_runtime::process::{Identity, Memory};
-    use agent_runtime::reading::Reading;
-    use orch_runtime::watch::overseer::{MarksAsk, judge_marks};
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../hooks/tests/fixtures/marks-replies.json");
-    let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
-    let comparable = |reply: &Value| {
-        let mut reply = reply.clone();
-        if let Some(resets) = reply.get_mut("resets") {
-            *resets = json!("present");
-        }
-        reply
-    };
-    let mut wrong = serde_json::Map::new();
-    for (name, case) in planted.as_object().unwrap() {
-        let inputs = &case["inputs"];
-        let mut world = MarksWorld::new();
-        match inputs["used"].as_u64() {
-            Some(used) => {
-                let mut account = measured_account("eclaude", used);
-                if let Some(rate) = inputs["rate"].as_f64() {
-                    account["usage_rate_pct_per_min"] = json!(rate);
-                }
-                world.plant(None, &[account]);
-                world.write_fleet(&world.dir("eclaude"));
-            }
-            None => world.write_fleet("/home/nobody/.claude"),
-        }
-        let env: Vec<(String, String)> = inputs["env"]
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-            .collect();
-        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let answered = match inputs["memory"].as_array() {
-            None => {
-                let mut args = Vec::new();
-                if let Some(context) = inputs["context"].as_str() {
-                    args.extend(["--context", context]);
-                }
-                world.marks(&args, &env)
-            }
-            Some(memory) => {
-                let roots = agent_runtime::settings::Roots {
-                    project: world.path().to_path_buf(),
-                    common: world.path().to_path_buf(),
-                };
-                let mut environment = world.environment();
-                environment.extend(env.iter().map(|(k, v)| ((*k).into(), (*v).into())));
-                let settings = orch_runtime::settings::load(
-                    &roots,
-                    &environment,
-                    &orch_runtime::settings::Flags {
-                        state_dir: Some(world.path().to_path_buf()),
-                        private_env: false,
-                    },
-                )
-                .unwrap();
-                let host = orch_runtime::ops::Host::kernel();
-                let reading = Reading::Live(Some(Memory {
-                    current: memory[0].as_u64().unwrap(),
-                    max: memory[1].as_u64().unwrap(),
-                    oom_kill: None,
-                }));
-                let read = |_: &Identity| reading.clone();
-                let caller = Caller {
-                    harness: Some(agent_runtime::harness::Harness::Claude),
-                    account: Some(world.dir("eclaude")),
-                    home: Some(world.dir("eclaude")),
-                    model: Some("opus".to_owned()),
-                    cwd: Some(world.path().display().to_string()),
-                    identity: Some(Identity {
-                        pid: 4242,
-                        start: "ticks:1".to_owned(),
-                    }),
-                    ..Caller::default()
-                };
-                judge_marks(&MarksAsk {
-                    settings: &settings,
-                    fleet_path: &world.path().join(agent_runtime::record::FLEET_FILE_NAME),
-                    host: &host,
-                    caller: &caller,
-                    context: None,
-                    memory: &read,
-                    now: now_secs(),
-                })
-                .unwrap()
-                .reply()
-            }
-        };
-        if comparable(&case["reply"]) != comparable(&answered) {
-            wrong.insert(name.clone(), answered);
-        }
-    }
-    assert!(
-        wrong.is_empty(),
-        "planted replies the verb does not answer: {}",
-        Value::Object(wrong)
-    );
-}
-
 /// An account kept from workers, by the owner's
 /// `AGENT_RUNTIME_ACCOUNT_EXCLUDE` or by a provider's `reserved=1` on a row
 /// with no reading, is kept from every lane, never from the controller
@@ -8582,57 +8483,6 @@ fn a_home_kept_from_workers_is_measured_for_its_overseers_marks_and_refused_to_a
             "{case}: the refused home is measured: {pick}"
         );
     }
-}
-
-/// The account judge's replies the hook suites plant for a lane's turn end
-/// (`hooks/tests/fixtures/pick-replies.json`) are the real `lane pick
-/// --lane`'s, each answered here for the inputs it records: a measured
-/// Claude home `used` percent spent, the provider's row where `host` names
-/// one (`reserved` its reserve word), under `env`, compared in
-/// [`planted_form`]. A shape whose inputs name a `row` is that row's to
-/// answer.
-#[test]
-fn the_hook_suites_plant_the_account_judges_own_replies() {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../hooks/tests/fixtures/pick-replies.json");
-    let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
-    let mut wrong = serde_json::Map::new();
-    for (name, case) in planted.as_object().unwrap() {
-        let inputs = &case["inputs"];
-        if inputs["row"].is_string() {
-            continue;
-        }
-        let mut world = MarksWorld::new();
-        let mut account = measured_account("eclaude", inputs["used"].as_u64().unwrap());
-        let host = inputs["host"].as_str();
-        let dir = match host {
-            Some(_) => {
-                account["measured_through"] = json!("host");
-                account["reserved"] = inputs["reserved"].clone();
-                account["config_dir"].as_str().unwrap().to_owned()
-            }
-            None => world.dir("eclaude"),
-        };
-        world.plant(host, &[account]);
-        world.write_fleet("/home/nobody/.claude");
-        let env: Vec<(String, String)> = inputs["env"]
-            .as_object()
-            .unwrap()
-            .iter()
-            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
-            .collect();
-        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-        let answered = world.pick_lane(&dir, &env)["result"].clone();
-        let home = world.path().join("home");
-        if planted_form(&case["reply"], Path::new("/home/me")) != planted_form(&answered, &home) {
-            wrong.insert(name.clone(), spelled_home(&answered, &home));
-        }
-    }
-    assert!(
-        wrong.is_empty(),
-        "planted replies the judge does not answer: {}",
-        Value::Object(wrong)
-    );
 }
 
 #[test]
@@ -9491,7 +9341,7 @@ fn a_succession_publishes_the_successor_it_launched_and_a_model_switch_recovers_
     );
     let home = Path::new(overseer["home"].as_str().unwrap()).to_owned();
     let generation = overseer["generation"].as_u64().unwrap();
-    let (hook, check) = model_switch(&runner, &scripts, &launch.env, &home, &work, &overseer);
+    let (hook, check) = model_switch(&runner, &launch.env, &home, &work, &overseer);
     assert_eq!(
         check["outcome"],
         "switched",

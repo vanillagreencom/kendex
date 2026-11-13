@@ -1350,6 +1350,7 @@ fn resolve_settings(flags: &Flags) -> Result<Settings> {
     let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
     let settings = settings::load(&roots, &environment, flags)?;
     orch_runtime::provider::install(settings.dispatch.clone());
+    settings.tell_skipped();
     Ok(settings)
 }
 
@@ -1361,11 +1362,13 @@ fn artifact_settings(flags: &Flags, worktree: Option<&Path>) -> Result<Settings>
     match worktree.filter(|w| w.is_dir()) {
         Some(worktree) => {
             let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-            settings::load(
+            let settings = settings::load(
                 &agent_runtime::settings::roots(worktree)?,
                 &environment,
                 flags,
-            )
+            )?;
+            settings.tell_skipped();
+            Ok(settings)
         }
         None => resolve_settings(flags),
     }

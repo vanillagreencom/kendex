@@ -138,10 +138,11 @@ pub fn session(private_env: bool) -> Answer {
 pub fn run(item: &str, checkpoint: bool, private_env: bool) -> Answer {
     let vars = Vars::read(private_env);
     let mut turn = Turn::new(Harness::Unlisted, PathBuf::new());
-    match admit(&mut turn, &vars, item, checkpoint) {
+    let answer = match admit(&mut turn, &vars, item, checkpoint) {
         Ok(answer) => turn.said(&answer),
         Err(answer) => answer,
-    }
+    };
+    turn.finish(answer)
 }
 
 fn admit(turn: &mut Turn, vars: &Vars, item: &str, checkpoint: bool) -> Flow<String> {
@@ -188,7 +189,7 @@ fn admit(turn: &mut Turn, vars: &Vars, item: &str, checkpoint: bool) -> Flow<Str
     let named = json!({"session_id": record.session_id, "transcript_path": record.transcript});
     let payload = Payload::decode(named.to_string().as_bytes(), false)
         .map_err(|invalid| turn.refuse(Said::PayloadInvalid, &invalid.0))?;
-    let settings = match marks::marks_settings(&lane.root, vars.private_env) {
+    let settings = match marks::marks_settings(turn, &lane.root, vars.private_env) {
         Ok(settings) => settings,
         Err(cause) => {
             let said = Said::AgentInput {

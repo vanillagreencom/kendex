@@ -88,11 +88,13 @@ impl TextReply {
 }
 
 pub fn resolve_at(worktree: &Path, flags: &settings::Flags) -> Result<Settings> {
-    settings::load(
+    let settings = settings::load(
         &agent_runtime::settings::roots(worktree)?,
         &std::env::vars_os().collect::<Vec<_>>(),
         flags,
-    )
+    )?;
+    settings.tell_skipped();
+    Ok(settings)
 }
 
 fn request(base: Option<String>) -> StartRequest {

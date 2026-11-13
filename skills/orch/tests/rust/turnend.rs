@@ -40,8 +40,7 @@ impl Out {
 
     /// The keyed line after the account mark's, asserted to be
     /// `account=<account>`: a lane's Stop in a world planting no account
-    /// tells its account mark first, as the released hook's idle rows read
-    /// it (`hooks/tests/lane-mail-check.test.sh:1462`).
+    /// tells its account mark first.
     fn after(&self, account: &str) -> &str {
         let mut keyed = self
             .stderr
@@ -3085,4 +3084,75 @@ fn the_admission_names_codex_alternate_review_and_copilot_compaction() {
         ),
         (Value::Null, json!(true))
     );
+}
+
+/// The settings load's notice follows the turn end's own answer, once: a
+/// harness reads the keyed line first, and a lane whose private env file
+/// holds a line the load passes over is still told so, though the turn
+/// loads its settings more than once.
+#[test]
+fn the_settings_loads_notice_follows_the_turn_ends_keyed_answer() {
+    let world = World::launched();
+    world.direct("d1", "rebase onto main", false);
+    fs::write(
+        world.lane.join(".env.local"),
+        "GH_TOKEN=$(printf example)\n",
+    )
+    .unwrap();
+    let reader = lane_mail().display().to_string();
+    // The verb as the hook runs it, the private env file read.
+    let stop = || {
+        let mut child = program(binary())
+            .arg("turn-end")
+            .arg("--hook-dir")
+            .arg(world.hooks("claude"))
+            .current_dir(&world.lane)
+            .env("PWD", &world.lane)
+            .env("HOME", &world.home)
+            .env("PATH", tool_path(&[&world.stand_ins()]))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("LANE_MAIL_CLI", &reader)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("orch-runtime");
+        child.stdin.take().unwrap().write_all(b"{}").unwrap();
+        let out = child.wait_with_output().unwrap();
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let notice = format!(
+        "settings-skipped path={}/.env.local key=GH_TOKEN reason=shell-form",
+        world.lane.display()
+    );
+    let (code, said) = stop();
+    assert_eq!(code, Some(2), "{said}");
+    assert_eq!(
+        said.lines().next(),
+        Some("lane-mail-check: unread=1"),
+        "{said}"
+    );
+    let told: Vec<&str> = said
+        .lines()
+        .filter(|l| l.starts_with("settings-skipped "))
+        .collect();
+    assert_eq!(told, [notice.as_str()], "{said}");
+    assert_eq!(said.lines().last(), Some(notice.as_str()), "{said}");
+    // The mail read, the turn end reaches the marks and the idle judge,
+    // each loading the settings again: its own notice is said once, at the
+    // end (the account read's own run says its notice in its cause).
+    let (_, said) = stop();
+    assert!(
+        said.starts_with("lane-mail-check: account=unlisted\n"),
+        "{said}"
+    );
+    let closing: Vec<&str> = said
+        .lines()
+        .rev()
+        .take_while(|l| l.starts_with("settings-skipped "))
+        .collect();
+    assert_eq!(closing, [notice.as_str()], "{said}");
 }

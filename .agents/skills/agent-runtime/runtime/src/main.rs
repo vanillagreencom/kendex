@@ -705,6 +705,9 @@ struct AccountSettings {
     home: Option<String>,
     copilot_home: Option<String>,
     preference: String,
+    /// The notice of each private env file line the load passed over, for
+    /// the verb to say ahead of its reply.
+    skipped: Vec<String>,
 }
 
 /// The home a Copilot account directory is resolved under.
@@ -725,16 +728,20 @@ impl AccountSettings {
             load: &[],
         };
         let values = settings::layered(&roots.project, &environment, true, &keys)?;
-        if let Some((path, keys)) = &values.passed_over {
-            for key in keys {
-                let _ = writeln!(
-                    std::io::stderr().lock(),
-                    "settings-skipped path={} key={key} reason=shell-form",
-                    path.display()
-                );
-            }
-        }
+        let skipped = match &values.passed_over {
+            Some((path, keys)) => keys
+                .iter()
+                .map(|key| {
+                    format!(
+                        "settings-skipped path={} key={key} reason=shell-form",
+                        path.display()
+                    )
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let loaded = AccountSettings {
+            skipped,
             accounts: settings::AccountSettings::read(&values),
             state: settings::account_state_dir(&values),
             home: values.get(settings::HOME_KEY).map(str::to_owned),
@@ -747,6 +754,14 @@ impl AccountSettings {
         loaded.accounts.get()?;
         loaded.state.get()?;
         Ok(loaded)
+    }
+
+    /// Says the load's notices on stderr.
+    fn tell_skipped(&self) {
+        let mut stderr = std::io::stderr().lock();
+        for line in &self.skipped {
+            let _ = writeln!(stderr, "{line}");
+        }
     }
 
     fn env(&self) -> accounts::Env<'_> {
@@ -762,6 +777,7 @@ impl AccountSettings {
 
 fn accounts_verb(op: AccountsOp) -> Result<serde_json::Value> {
     let loaded = AccountSettings::load()?;
+    loaded.tell_skipped();
     let env = loaded.env();
     let now = clock::Clock::wall(&clock::SystemClock)
         .duration_since(std::time::UNIX_EPOCH)
@@ -2119,6 +2135,7 @@ fn hand_over(
 fn controller_verb(op: ControllerOp) -> Result<serde_json::Value> {
     use controller::transition::Request;
     let loaded = HandOverSettings::load()?;
+    loaded.accounts.tell_skipped();
     let env = Env::system()?;
     let effect_settings = loaded.effect_settings();
     match op {

@@ -102,7 +102,7 @@ pub(super) fn switch(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payloa
         (None, Kind::Overseer, Binding::Bound(_)) => Seat::Controller,
         (None, _, _) => return Ok(()),
     };
-    let settings = match marks::marks_settings(&lane.root, vars.private_env) {
+    let settings = match marks::marks_settings(turn, &lane.root, vars.private_env) {
         Ok(settings) => settings,
         Err(cause) => {
             return Err(handed(
@@ -139,7 +139,7 @@ pub(super) fn reset(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload
     if turn.harness != Harness::Claude || matches!(turn.role.kind, Kind::Overseer) {
         return;
     }
-    if let Err((cause, detail)) = reset_lane(vars, lane, item, &payload.session) {
+    if let Err((cause, detail)) = reset_lane(turn, vars, lane, item, &payload.session) {
         turn.note(&Said::ModelUnavailable(cause), &detail);
     }
 }
@@ -147,12 +147,13 @@ pub(super) fn reset(turn: &mut Turn, vars: &Vars, lane: &Lane, payload: &Payload
 /// The reset's reads and its one write, the cause and the words of the
 /// step that failed where one did.
 fn reset_lane(
+    turn: &mut Turn,
     vars: &Vars,
     lane: &Lane,
     item: &str,
     session: &str,
 ) -> Result<(), (&'static str, String)> {
-    let settings = marks::marks_settings(&lane.root, vars.private_env)
+    let settings = marks::marks_settings(turn, &lane.root, vars.private_env)
         .map_err(|e| ("reset-state-unread", e))?;
     let fleet = record::fleet_path(&settings.state_dir);
     if std::fs::symlink_metadata(&fleet).is_err() {

@@ -167,7 +167,7 @@ fn gated_box(turn: &mut Turn, vars: &Vars, lane: &Lane) -> Flow<Option<Kept>> {
     };
     match (&role.kind, &role.binding) {
         (Kind::Overseer | Kind::Jarvis(_), Binding::Bound(_)) => {
-            let Ok(settings) = marks::marks_settings(&lane.root, vars.private_env) else {
+            let Ok(settings) = marks::marks_settings(turn, &lane.root, vars.private_env) else {
                 return Ok(None);
             };
             let dir = overseer_dir(&settings.roots.common);
