@@ -49,6 +49,7 @@ rows = [world["issues"][ref] for ref in refs if ref in world["issues"]]
 print(json.dumps([{"id": row[0], "title": "", "state": row[1], "state_type": row[2]} for row in rows]))
 """
 DONE, CANCELED, OPEN = ("Done", "completed"), ("Canceled", "canceled"), ("In Progress", "started")
+DUPLICATE = ("Duplicate", "duplicate")
 BULK_GET = ["issues", "bulk-get", "--stdin", "--format=compact"]
 
 
@@ -365,13 +366,15 @@ class ProgressLog(MailWorld):
         # Each row: State text, the tracker world (None: no linear package),
         # then the listed lines, the summary counts, the exit, the stderr key
         # and each bulk read's refs. The writer corrects what is listed.
-        issues = {"KEN-1": DONE, "KEN-3": OPEN, "KEN-4": CANCELED}
+        issues = {"KEN-1": DONE, "KEN-3": OPEN, "KEN-4": CANCELED, "KEN-5": DUPLICATE}
         rows = (
             ("closed and id-less listed", "- KEN-1 shipped\n- Call the vendor\n- KEN-3 in review\n", {"issues": issues},
              ["closed line=5 ids=KEN-1:Done", "unbound line=6"], (3, 1, 1, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
             ("both removed", "- KEN-3 in review\n", {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-3"]]),
             ("canceled", "- KEN-4 dropped\n", {"issues": issues}, ["closed line=5 ids=KEN-4:Canceled"],
              (1, 1, 0, 0, 0), 0, None, [["KEN-4"]]),
+            ("duplicate", "- KEN-5 filed twice\n", {"issues": issues}, ["closed line=5 ids=KEN-5:Duplicate"],
+             (1, 1, 0, 0, 0), 0, None, [["KEN-5"]]),
             ("mixed kept", "- KEN-1 and KEN-3\n", {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
             ("open child keeps its parent, State ends at its heading", "- KEN-1 parent\n  - KEN-3 child\n\n## Notes\n- KEN-1 again\n",
              {"issues": issues}, [], (1, 0, 0, 0, 0), 0, None, [["KEN-1", "KEN-3"]]),
@@ -437,9 +440,9 @@ class ProgressLog(MailWorld):
                 self.assertEqual(calls, [[BULK_GET, ["KEN-3", "KEN-1"]]])
 
     def test_check_state_control(self):
-        # A closed rule that drops Canceled must fail the canceled row; the
-        # earlier tracker pattern must fail the zero-numbered row.
-        for old, new in (('CLOSED_TYPES = ("completed", "canceled")', 'CLOSED_TYPES = ("completed",)'),
+        # A closed rule that drops Canceled and Duplicate must fail their rows;
+        # the earlier tracker pattern must fail the zero-numbered row.
+        for old, new in (('CLOSED_TYPES = ("completed", "canceled", "duplicate")', 'CLOSED_TYPES = ("completed",)'),
                          ('_TRACKER_ID = r"[A-Z][A-Z0-9]*-[1-9]\\d*"', '_TRACKER_ID = r"[A-Z][A-Z0-9]*-\\d+"')):
             with self.subTest(mutation=new), tempfile.TemporaryDirectory() as folder:
                 copy = Path(folder) / "jarvis/scripts"

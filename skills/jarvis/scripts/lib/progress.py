@@ -35,8 +35,8 @@ _MAILBOX_ID = r"\d{10,}-\d+-\d+"
 _TRACKER_ID = r"[A-Z][A-Z0-9]*-[1-9]\d*"
 _ID = re.compile(r"(?<![\w-])(?:(?P<mailbox>%s)|(?P<slack>%s)|(?P<tracker>%s))(?![\w-])"
                  % (_MAILBOX_ID, SLACK_KEY.pattern, _TRACKER_ID))
-# The Linear package's closed states: formatters.sh issue_is_open.
-CLOSED_TYPES = ("completed", "canceled")
+# The Linear package's closed states: formatters.sh state_type_closed.
+CLOSED_TYPES = ("completed", "canceled", "duplicate")
 
 
 def handoff_path(home, selected):
