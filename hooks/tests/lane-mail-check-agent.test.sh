@@ -240,7 +240,7 @@ new_lane agent_launch AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 TRANSCRIPT="$TMP_ROOT/agent-launch.jsonl"
 # The reserve applies only while an attached agent may be out; with none out
-# the launch meets the plain mark, 400000 tokens or strictly past the
+# the launch meets the plain mark, 650000 tokens or strictly past the
 # percentage, the one mark that names a handoff. Below it the reserve refuses
 # as agent-reserve with an agent out, naming no handoff, and as
 # agent-unobserved where the roster is unknown, naming the lane's handoff.
@@ -256,102 +256,102 @@ while IFS='|' read -r agents tokens tool reserve rc key; do
       assert_eq "$(handoffs_named)" 1 "the refusal at $tokens with agents $agents names the lane handoff"
       case "$key" in *agent-launch=*) applied=false; amount=0 ;; *) applied=true; amount=${reserve:-150000} ;; esac
       assert_eq "$(handoff_context | jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.reserve_applied,.decision.reserve_tokens,.source.harness,.source.session_id,.source.transcript]')" \
-        "[$tokens,400000,50,$applied,$amount,\"claude\",\"s1\",\"$TRANSCRIPT\"]" \
+        "[$tokens,650000,50,$applied,$amount,\"claude\",\"s1\",\"$TRANSCRIPT\"]" \
         "parsed handoff decision for $agents at $tokens"
       ;;
   esac
 done <<'ROWS'
-out|249999|Agent||0|-
-out|250000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000
-out|250001|Agent||2|lane-mail-check: agent-reserve=Agent tokens=250001 reserve=150000
-out|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
-teammate|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-returned|260000|Agent||0|-
-resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-shutdown|260000|Agent||0|-
-tool-string|260000|Agent||0|-
-tool-block|260000|Agent||0|-
-tool-idle|260000|Agent||0|-
-queued|260000|Agent||0|-
-shared-launch|260000|Agent||0|-
-shared-spawn|260000|Agent||0|-
-resume-noted|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-requeued|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-stopped|260000|Agent||0|-
-stopped-resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-stopped-resumed-returned|260000|Agent||0|-
-stopped-unknown|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-stopped-unknown-returned|260000|Agent||0|-
-stopped-resume-noted|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-reported|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-idle|260000|Agent||0|-
-listed-replay|260000|Agent||0|-
-listed-running|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-resumed|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-sent-idle|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-sent-running-idle|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-sent-unknown-idle|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-listed-sent-unknown-running-idle|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-listed-sent-notified|260000|Agent||0|-
-listed-resent-idle|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-stopped-unknown-listed-idle|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:active:available|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:active:interrupted|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:active:failed|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:active:missing|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:active:terminal|260000|Agent||0|-
-notified:active:task|260000|Agent||0|-
-notified:idle:available|260000|Agent||0|-
-notified:idle:interrupted|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:idle:failed|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:idle:missing|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:idle:terminal|260000|Agent||0|-
-notified:resumed:interrupted|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:unknown:interrupted|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:unsent:interrupted|260000|Agent||0|-
-notified:unsent:failed|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:unsent:missing|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-notified:ended:missing|260000|Agent||0|-
-listed-error|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-unknown|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-listed-unknown-returned|260000|Agent||0|-
-listed-unrelated|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-absent|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-listed-absent-returned|260000|Agent||0|-
-listed-overlap-first|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-overlap-last|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-listed-queued-idle|260000|Agent||0|-
-listed-queued-task|260000|Agent||0|-
-listed-result-idle|260000|Agent||0|-
-listed-result-block-idle|260000|Agent||0|-
-stop-refused|260000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000
-foreground|260000|Agent||0|-
-unclassified|260000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=260000 reserve=150000
-refused|260000|Agent||0|-
-none|399999|Agent||0|-
-none|400000|Agent||2|lane-mail-check: agent-launch=Agent tokens=400000
+out|349999|Agent||0|-
+out|350000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=350000 reserve=150000
+out|350001|Agent||2|lane-mail-check: agent-reserve=Agent tokens=350001 reserve=150000
+out|650000|Agent||2|lane-mail-check: agent-launch=Agent tokens=650000
+teammate|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+returned|360000|Agent||0|-
+resumed|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+shutdown|360000|Agent||0|-
+tool-string|360000|Agent||0|-
+tool-block|360000|Agent||0|-
+tool-idle|360000|Agent||0|-
+queued|360000|Agent||0|-
+shared-launch|360000|Agent||0|-
+shared-spawn|360000|Agent||0|-
+resume-noted|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+requeued|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+stopped|360000|Agent||0|-
+stopped-resumed|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+stopped-resumed-returned|360000|Agent||0|-
+stopped-unknown|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+stopped-unknown-returned|360000|Agent||0|-
+stopped-resume-noted|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+reported|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-idle|360000|Agent||0|-
+listed-replay|360000|Agent||0|-
+listed-running|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-resumed|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-sent-idle|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-sent-running-idle|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-sent-unknown-idle|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+listed-sent-unknown-running-idle|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+listed-sent-notified|360000|Agent||0|-
+listed-resent-idle|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+stopped-unknown-listed-idle|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:active:available|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:active:interrupted|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:active:failed|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:active:missing|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:active:terminal|360000|Agent||0|-
+notified:active:task|360000|Agent||0|-
+notified:idle:available|360000|Agent||0|-
+notified:idle:interrupted|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:idle:failed|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:idle:missing|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:idle:terminal|360000|Agent||0|-
+notified:resumed:interrupted|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:unknown:interrupted|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:unsent:interrupted|360000|Agent||0|-
+notified:unsent:failed|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:unsent:missing|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+notified:ended:missing|360000|Agent||0|-
+listed-error|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-unknown|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+listed-unknown-returned|360000|Agent||0|-
+listed-unrelated|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-absent|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+listed-absent-returned|360000|Agent||0|-
+listed-overlap-first|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-overlap-last|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+listed-queued-idle|360000|Agent||0|-
+listed-queued-task|360000|Agent||0|-
+listed-result-idle|360000|Agent||0|-
+listed-result-block-idle|360000|Agent||0|-
+stop-refused|360000|Agent||2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000
+foreground|360000|Agent||0|-
+unclassified|360000|Agent||2|lane-mail-check: agent-unobserved=Agent tokens=360000 reserve=150000
+refused|360000|Agent||0|-
+none|499999|Agent||0|-
+none|650000|Agent||2|lane-mail-check: agent-launch=Agent tokens=650000
 out|100000|Agent|50000|0|-
-out|250000|Bash||0|-
+out|350000|Bash||0|-
 out|600000|TaskOutput||0|-
-out|250000|Agent|nope|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=nope
-out|250000|Agent|-1|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=-1
-out|0|Agent|400000|2|lane-mail-check: agent-reserve=Agent tokens=0 reserve=400000
-none|0|Agent|400000|0|-
+out|350000|Agent|nope|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=nope
+out|350000|Agent|-1|2|lane-mail-check: setting-range=ORCH_HANDOFF_AGENT_RESERVE_TOKENS=-1
+out|0|Agent|650000|2|lane-mail-check: agent-reserve=Agent tokens=0 reserve=650000
+none|0|Agent|650000|0|-
 ROWS
 # An unknown capacity is unmeasured at the plain mark, which is judged first,
 # so no agent out turns it into a reserve-only hold.
 for agents in none out; do
   [ "$agents" = out ] || [ "$SCAN_AVAILABLE" -eq 1 ] || continue
-  usage_line sonnet 260000 > "$TRANSCRIPT"
+  usage_line sonnet 360000 > "$TRANSCRIPT"
   [ "$agents" = none ] || append_launch
   ARM_ARGS=(halt)
   run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,tool_name:"Agent",tool_input:{}}')" DISABLE_AUTO_COMPACT=0
   ARM_ARGS=()
-  expect 2 'lane-mail-check: agent-input=context-unmeasured' "an unknown capacity at 260000 with agents $agents is unmeasured"
+  expect 2 'lane-mail-check: agent-input=context-unmeasured' "an unknown capacity at 360000 with agents $agents is unmeasured"
 done
 if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   # A terminal notification brings the child back, so the plain mark applies.
-  write_transcript "$TRANSCRIPT" 260000
+  write_transcript "$TRANSCRIPT" 360000
   append_launch
   append_notice a1 completed
   ARM_ARGS=(halt)
@@ -359,7 +359,7 @@ if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   ARM_ARGS=()
   expect 0 - 'a returned child leaves no reserve'
 fi
-AGENTS=out launch 400000 Agent
+AGENTS=out launch 650000 Agent
 assert_eq "$(sed -n 's/^lane-mail-check: detached-route=//p' "$ERR_FILE")" orch-job-runner 'refusal names the existing detached route'
 usage_line sonnet 100000 > "$TRANSCRIPT"
 ARM_ARGS=(halt)
@@ -378,8 +378,8 @@ ARM_ARGS=()
 new_lane agent_legacy AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 plant_install
-LEGACY_LIB="$TMP_ROOT/retained-context-lib"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$LEGACY_LIB"
+LEGACY_LIB="$TMP_ROOT/retained-context-scripts/lib"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$TMP_ROOT/retained-context-scripts"
 cat >> "$LEGACY_LIB/lane-context.sh" <<'RELEASED_CONTEXT_JUDGE'
 lane_context_handoff_due() { # TOKENS WINDOW PCT
   local pct
@@ -509,8 +509,8 @@ overseer_transcript
 new_overseer agent_overseer
 judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
-AGENTS=out launch 250000 Agent $(overseer_env)
-expect 2 "$(scan_key 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000')" 'the identified overseer meets the reserve'
+AGENTS=out launch 350000 Agent $(overseer_env)
+expect 2 "$(scan_key 'lane-mail-check: agent-reserve=Agent tokens=350000 reserve=150000')" 'the identified overseer meets the reserve'
 # Only a refusal at the plain mark names the succession, which oversee-succeed
 # judges by that same mark; a reserve refusal, with the roster read or not,
 # names none it would refuse.
@@ -524,13 +524,13 @@ while IFS='|' read -r agents tokens rc key judge; do
   [ "$rc" = 0 ] || assert_eq "$(named_judge)" "$judge" "overseer refusal at $tokens with agents $agents names its succession"
 done <<'ROWS'
 out|240000|0|-|
-out|260000|2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000|
-out|300000|2|lane-mail-check: agent-reserve=Agent tokens=300000 reserve=150000|
-unclassified|300000|2|lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000|
-out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
-returned|260000|0|-|
-none|260000|0|-|
-none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
+out|360000|2|lane-mail-check: agent-reserve=Agent tokens=360000 reserve=150000|
+out|450000|2|lane-mail-check: agent-reserve=Agent tokens=450000 reserve=150000|
+unclassified|450000|2|lane-mail-check: agent-unobserved=Agent tokens=450000 reserve=150000|
+out|650000|2|lane-mail-check: agent-launch=Agent tokens=650000|--context 650000:1000000
+returned|360000|0|-|
+none|360000|0|-|
+none|650000|2|lane-mail-check: agent-launch=Agent tokens=650000|--context 650000:1000000
 ROWS
 record_overseer_handoff
 # shellcheck disable=SC2046
@@ -547,7 +547,7 @@ write_transcript "$TRANSCRIPT" 600000
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')" $(overseer_env)
 expect 2 'lane-mail-check: context=600000' 'the real native mark result retains its refusal'
 assert_eq "$(handoff_context | jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.cap_mark,.decision.window_mark,.decision.reserve_applied,.decision.reserve_tokens,.source.session_id,.source.transcript]')" \
-  "[600000,400000,50,400000,500000,false,0,\"s1\",\"$TRANSCRIPT\"]" \
+  "[600000,650000,50,650000,500000,false,0,\"s1\",\"$TRANSCRIPT\"]" \
   'the real native result reaches the parsed overseer handoff record'
 
 new_overseer agent_children
@@ -591,16 +591,16 @@ done <<'ROWS'
 ROWS
 # A launch admitted with none out leaves its child running at the turn end,
 # which the judge reads by the plain mark: no reserve, so no hand-over below
-# 400000.
+# 650000.
 if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   judge_says "$BELOW_MARK_LINE"
   # shellcheck disable=SC2046
-  launch 260000 Agent $(overseer_env)
-  expect 0 - 'the overseer launches at 260000 of 1000000 with none out'
+  launch 360000 Agent $(overseer_env)
+  expect 0 - 'the overseer launches at 360000 of 1000000 with none out'
   rm -f -- "${JUDGE_DIR:?}/args"
   agent_stop '{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}'
-  expect 0 - 'its turn end with that child running demands no hand-over below 400000'
-  assert_eq "$(judge_argv)" '--check-marks --context 260000:1000000' 'the turn-end judge takes the reading alone'
+  expect 0 - 'its turn end with that child running demands no hand-over below 650000'
+  assert_eq "$(judge_argv)" '--check-marks --context 360000:1000000' 'the turn-end judge takes the reading alone'
   judge_says "$CONTEXT_MARK_LINE"
   write_transcript "$TRANSCRIPT" 600000
 fi

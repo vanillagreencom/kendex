@@ -488,20 +488,20 @@ copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(hook_keys) recorded=$(cop_context_recorded)" \
   'RC=0 keyed=account=unmeasured recorded=["copilot",100000,800000,"claude-opus-5"]' \
   "a Copilot lane's fresh record is read, recorded with the compaction point as capacity, and judged room"
-cop_record 400000 1000000
+cop_record 650000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: context=400000 decision=block" \
-  "with no extension reading of the session, a fresh status-line record at the 400000-token cap holds the turn end with the documented block answer"
+  "RC=0 first=lane-mail-check: context=650000 decision=block" \
+  "with no extension reading of the session, a fresh status-line record at the 650000-token cap holds the turn end with the documented block answer"
 cop_record 130000 200000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: context=130000" \
   "a 200K window is judged on its own compaction point, past half of 160000"
-cop_record 400000 1000000 "$TMP_ROOT/session-state/s2/events.jsonl"
+cop_record 650000 1000000 "$TMP_ROOT/session-state/s2/events.jsonl"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(hook_keys)" "RC=0 keyed=reading-unrecorded=$LANE/tmp/lane-mail/KEN-204/context.json;session-record=wrong-transcript;account=unmeasured" \
   "a record naming another transcript is unmeasured, never read as this session's"
-cop_record 400000 1000000
+cop_record 650000 1000000
 jq -c '.written_at = 1' "$COP_ACCOUNT/lane-status/s1.json" > "$TMP_ROOT/stale.json"
 mv -- "$TMP_ROOT/stale.json" "$COP_ACCOUNT/lane-status/s1.json"
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
@@ -524,24 +524,24 @@ cop_gap_record() { # ITEM
     lane_context_record "$2" copilot null "" "" s1 "" pane-unrecorded' \
     _ "$REPO_ROOT/skills/orch/scripts" "$LANE/tmp/lane-mail/$1"
 }
-cop_record 400000 1000000
+cop_record 650000 1000000
 cop_extension_reading KEN-204 100000 800000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC keyed=$(hook_keys) decision=$(stdout_field .decision)" "RC=0 keyed=account=unmeasured decision=" \
   "an extension reading below the mark is judged room, never overridden by a status-line record past it"
 # A record that is no extension reading of this session is passed over for
 # the status-line record: a predecessor's in the same mailbox, and a gap record.
-cop_record 400000 1000000
+cop_record 650000 1000000
 cop_extension_reading KEN-204 100000 800000 s0
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: context=400000 decision=block" \
+  "RC=0 first=lane-mail-check: context=650000 decision=block" \
   "an extension reading of another session gives way to this session's fresh status-line record past the mark"
-cop_record 400000 1000000
+cop_record 650000 1000000
 cop_gap_record KEN-204
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision)" \
-  "RC=0 first=lane-mail-check: context=400000 decision=block" \
+  "RC=0 first=lane-mail-check: context=650000 decision=block" \
   "a gap record gives way to this session's fresh status-line record past the mark"
 rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 
@@ -554,16 +554,16 @@ rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 # carries no allow_all_enabled, so where one stands the record is still read
 # for the cause, and the context judged on the extension's reading.
 while IFS='|' read -r allow grant extension want; do
-  cop_record 400000 1000000 "" "$allow"
+  cop_record 650000 1000000 "" "$allow"
   [ -z "$extension" ] || cop_extension_reading KEN-204 "$extension" 800000
   copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT" "COPILOT_ALLOW_ALL=$grant"
   assert_eq "RC=$RC keyed=$(hook_keys) decision=$(stdout_field .decision)" "RC=0 keyed=$want decision=block" \
     "a record at the cap whose allow_all_enabled is $allow at the turn end, COPILOT_ALLOW_ALL=[$grant], extension reading [$extension]"
   rm -f -- "${LANE:?}/tmp/lane-mail/KEN-204/context.json"
 done <<'ROWS'
-false|true||stop-cause=allow-all-blocked-by-policy;context=400000
-false|||context=400000
-true|true||context=400000
+false|true||stop-cause=allow-all-blocked-by-policy;context=650000
+false|||context=650000
+true|true||context=650000
 false|true|700000|stop-cause=allow-all-blocked-by-policy;context=700000
 true|true|700000|context=700000
 ROWS
@@ -773,7 +773,7 @@ refused_mark_rows() { # NAME
   plant_copilot_install
   mkdir -p "$LANE/tmp/lane-mail/overseer" "$COP_LEADS"
   : > "$COP_LEADS/s1"
-  cop_record 400000 1000000
+  cop_record 650000 1000000
   peer_send 'Beside a crossed mark.'
   watch_stub "$LANE/.github/skills/orch/scripts"
   CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_ACCOUNT")
@@ -782,7 +782,7 @@ refused_mark_rows() { # NAME
   REFUSED_MARK="RC=$RC context=$(stdout_field '.additionalContext' | head -n 1) fleet=$(stdout_field '.additionalContext' | grep -c '^lane-mail-check: fleet-state=')"
 }
 refused_mark_rows copilot_overseer_refused_mark
-assert_eq "$REFUSED_MARK" "RC=0 context=lane-mail-check: context=400000 fleet=1" \
+assert_eq "$REFUSED_MARK" "RC=0 context=lane-mail-check: context=650000 fleet=1" \
   "a Copilot tool call past the mark whose mailbox check refuses hands the mark over ahead of the refusal" "$ERR_FILE"
 
 # --- a Copilot call reaching the Claude copy ------------------------------
@@ -886,7 +886,7 @@ CONTEXT_LIB_VARIANT="$MUTANT_PATH" new_copilot_lane control_cop_record ken-217
 mkdir -p "$LANE/tmp/lane-mail/KEN-217"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init KEN-217 >/dev/null)
 REPORT_ITEM=KEN-217
-cop_record 400000 1000000
+cop_record 650000 1000000
 copilot_stop "$COP_TRANSCRIPT" "" "COPILOT_HOME=$COP_ACCOUNT"
 assert_eq "RC=$RC decision=$(stdout_field .decision)" "RC=0 decision=" \
   "control: without the record read a Copilot lane at the cap ends its turn"

@@ -422,7 +422,7 @@ CONTEXT_FILE="$TMP_ROOT/wt/CC-1/tmp/lane-mail/CC-1/context.json"
 mkdir -p "${CONTEXT_FILE%/*}"
 for row in "claude|claude -n CC-1 '$CLAUDE_COMPACTION' $CLAUDE_QUESTION_OFF --resume $CLAUDE222|$REARM|$CLAUDE222| $UNATTENDED_TEXT" "codex|codex resume $CODEX_SETTINGS $CODEX_COMPACTION $CODEX_QUESTION_OFF $CODEX444||$CODEX444| $UNATTENDED_TEXT" "pi|pi $PI_QUESTION_OFF --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl||$PI_SESSION_ID| $UNATTENDED_TEXT"; do
   IFS='|' read -r harness expected rearm context_session unattended <<<"$row"
-  context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}')"
+  context_record="$(jq -nc --arg h "$harness" --arg s "$context_session" '{harness:$h,session_id:$s,tokens:650000,window:1000000}')"
   printf '%s\n' "$context_record" > "$CONTEXT_FILE"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
@@ -433,7 +433,7 @@ for row in "claude|claude -n CC-1 '$CLAUDE_COMPACTION' $CLAUDE_QUESTION_OFF --re
     context_args=(--relaunch)
     prior_session=other-session
     if [[ "$lifetime" == fresh ]]; then context_args=(); prior_session="$context_session"; fi
-    jq -nc --arg h "$harness" --arg s "$prior_session" '{harness:$h,session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+    jq -nc --arg h "$harness" --arg s "$prior_session" '{harness:$h,session_id:$s,tokens:650000,window:1000000}' > "$CONTEXT_FILE"
     LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "context-$harness-$lifetime" -- ${context_args[@]+"${context_args[@]}"} --harness "$harness" CC-1
     assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
       "$harness clears the predecessor reading for a $lifetime session"
@@ -497,7 +497,7 @@ assert_eq "control=$control_rc rc=$selected_rc transcript=$selected" 'control=1 
 CONTEXT_CONTROL="$REPO/scripts/open-terminal-context-control"
 cp "$OT" "$CONTEXT_CONTROL"
 mutate_file "$CONTEXT_CONTROL" '"$remote_path" "$HARNESS" "$context_session"' '"$remote_path" "$HARNESS" ""'
-jq -nc --arg s "$CLAUDE222" '{harness:"claude",session_id:$s,tokens:400000,window:1000000}' > "$CONTEXT_FILE"
+jq -nc --arg s "$CLAUDE222" '{harness:"claude",session_id:$s,tokens:650000,window:1000000}' > "$CONTEXT_FILE"
 OT="$CONTEXT_CONTROL" LANES_HOME="$SESSION_HOME" run_case context-control -- --relaunch --harness claude CC-1
 assert_eq "rc=$RC context=$([[ -e "$CONTEXT_FILE" ]] && echo present || echo absent)" "rc=0 context=absent" \
   "control: dropping the selected identity loses the matching resumed reading"

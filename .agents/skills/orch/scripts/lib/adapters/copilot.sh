@@ -12,7 +12,7 @@
 # management documentation). The capacity this adapter hands the shared judge
 # is that point, so the percentage mark fires with a margin before compaction
 # on any window, and on the 1M window every launch selects (lib/lane-launch.sh,
-# `--context long_context`) the 400000-token cap fires first.
+# `--context long_context`) the default 650000-token cap fires first.
 #
 # Sourced by lib/lane-context.sh, never run.
 

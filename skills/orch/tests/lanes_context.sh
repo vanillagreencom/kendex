@@ -501,13 +501,13 @@ echo "=== the context mark is the setting, and defaults to ninety percent ==="
 # account at 10 percent headroom above the mark leaves nothing required.
 # A reading whose window the adapter could not name is judged neither way, and
 # its row says so rather than reading ok beside a blank handoff cell.
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 "" claude-sonnet-4-6
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 649999 "" claude-sonnet-4-6
 lanes_table "$(run_ctx --json)" \
-  "a reading with no window is window-unread, never ok|ken-103|status=window-unread context_tokens=399999 context_window=null context_handoff_due=null handoff_required=false"
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 400000 "" claude-sonnet-4-6
+  "a reading with no window is window-unread, never ok|ken-103|status=window-unread context_tokens=649999 context_window=null context_handoff_due=null handoff_required=false"
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 650000 "" claude-sonnet-4-6
 lanes_table "$(run_ctx --json)" \
-  "the absolute cap is due without capacity|ken-103|status=ok context_tokens=400000 context_window=null context_handoff_due=true handoff_required=true"
-record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 399999 1000000 claude-opus-5-5
+  "the absolute cap is due without capacity|ken-103|status=ok context_tokens=650000 context_window=null context_handoff_due=true handoff_required=true"
+record_reading "$TMP_ROOT/lanes/ken-103/tmp/lane-mail/KEN-103" claude 649999 1000000 claude-opus-5-5
 lanes_table "$(run_ctx --json)" \
   "one token under the absolute cap with capacity remaining is room|ken-103|context_handoff_due=false handoff_required=false"
 lanes_table "$(CTX_CONTEXT_PCT=96 run_ctx --json)" \
@@ -724,7 +724,7 @@ echo "=== the caller's own pane is the overseer, reported with no stored reading
 # pane. Its context is judged at its own turn end on the reading that turn end
 # took, so the reading the overseer mailbox holds, even one naming this very
 # pane, is not reported: it may be a predecessor's in the same pane.
-record_reading "$OVERSEER_BOX" claude 400000 1000000 claude-fable-5-1 "$LIVE_PID %34"
+record_reading "$OVERSEER_BOX" claude 650000 1000000 claude-fable-5-1 "$LIVE_PID %34"
 CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)"
 lanes_table "$CALLER" \
   "the caller's own unclaimed pane is a row with no reading, joined to the lane its harness defaults to|overseer|status=unrecorded harness=null context_tokens=null headroom_pct=3" \

@@ -65,7 +65,7 @@ reading() { # LIB HARNESS WINDOW
 # due LIB TOKENS WINDOW PCT — the judge's answer and exit status.
 due() { # LIB TOKENS WINDOW PCT
   local out rc=0
-  out="$(bash -c 'set -euo pipefail; source "$1"; shift; lane_context_handoff_due "$@"' _ "$@")" || rc=$?
+  out="$(bash -c 'set -euo pipefail; cd -- "$1"; shift; source "$1"; shift; lane_context_handoff_due "$@"' _ "$TMP_ROOT" "$@")" || rc=$?
   printf 'rc=%s%s' "$rc" "${out:+ $out}"
 }
 
@@ -307,8 +307,8 @@ if section before-point; then
     "$BASH" -euo pipefail -c 'source "$1"; lane_context_window_full "$2" "$3" "$4"' _ "$LIB" "$tokens" "$point" "$harness" || rc=$?
     assert_eq "$rc" "$full" "$harness $model full-window status at $tokens"
   done <<'ROWS'
-claude|claude-opus-5-5|399999|room|1
-claude|claude-opus-5-5|400000|due|1
+claude|claude-opus-5-5|649999|room|1
+claude|claude-opus-5-5|650000|due|1
 claude|sonnet|180000|room|1
 claude|sonnet|180001|due|1
 claude|claude-sonnet-4-5-20250929|190000|due|1
@@ -328,17 +328,19 @@ if section judge; then
   while IFS='|' read -r tokens window pct want; do
     assert_eq "$(due "$LIB" "$tokens" "$window" "$pct")" "$want" "$tokens of ${window:-no window} at $pct: $want"
   done <<'ROWS'
+232200|258000|90|rc=0 room
+232201|258000|90|rc=0 due
 232560|258400|90|rc=0 room
 232561|258400|90|rc=0 due
 232559|258400|90|rc=0 room
 117964|131072|90|rc=0 room
 117965|131072|90|rc=0 due
-399999|1000000|90|rc=0 room
-400000|1000000|90|rc=0 due
-400000||90|rc=0 due
-400000|0|90|rc=0 due
-399999||90|rc=1
-400000|2000000|100|rc=0 due
+649999|1000000|90|rc=0 room
+650000|1000000|90|rc=0 due
+650000||90|rc=0 due
+650000|0|90|rc=0 due
+649999||90|rc=1
+650000|2000000|100|rc=0 due
 180000|200000|100|rc=0 room
 180001|200000|100|rc=0 due
 160000|200000|80|rc=0 room
@@ -353,6 +355,19 @@ if section judge; then
 05|10|90|rc=2
 x|10|90|rc=2
 5|1x|90|rc=2
+ROWS
+  while IFS='|' read -r limit tokens want; do
+    assert_eq "$(ORCH_HANDOFF_CONTEXT_TOKENS="$limit" due "$LIB" "$tokens" 1000000 90)" "$want" \
+      "configured token mark $limit at $tokens"
+    if [[ "$want" == 'rc=0 due' ]]; then
+      decision=$(ORCH_HANDOFF_CONTEXT_TOKENS="$limit" "$BASH" -c 'source "$1"; lane_context_handoff_decision "$2" 1000000 90' _ "$LIB" "$tokens")
+      assert_eq "$(jq -c '[.cap,.cap_mark]' <<<"$decision")" "[$limit,$limit]" \
+        "configured decision mark $limit"
+    fi
+  done <<'ROWS'
+700000|699999|rc=0 room
+700000|700000|rc=0 due
+400000|400000|rc=0 due
 ROWS
 fi
 
@@ -586,9 +601,9 @@ if section agent-reserve; then
     assert_eq "$(due "$LIB" "$tokens" "$window" "$pct" "$reserve")" "$want" \
       "agent reserve: $tokens of ${window:-unknown} at $pct with $reserve: $want"
   done <<'ROWS'
-249999|1000000|90|150000|rc=0 room
-250000|1000000|90|150000|rc=0 due
-250001|1000000|90|150000|rc=0 due
+499999|1000000|90|150000|rc=0 room
+500000|1000000|90|150000|rc=0 due
+500001|1000000|90|150000|rc=0 due
 67964|131072|90|50000|rc=0 room
 67965|131072|90|50000|rc=0 due
 49999|200000|50|50000|rc=0 room
@@ -597,7 +612,7 @@ if section agent-reserve; then
 180000|200000|90|0|rc=0 due
 0|200000|50|150000|rc=0 due
 1||90|150000|rc=1
-250000||90|150000|rc=0 due
+500000||90|150000|rc=0 due
 0||90|999999999999999999999|rc=0 due
 1|200000|90|-1|rc=2
 1|200000|90|015|rc=2
@@ -625,7 +640,7 @@ if section pre-panel; then
     if [ "$rc" -eq 0 ]; then out=$(jq -r '.verdict' "$T/panel-reading.json"); fi
     printf 'rc=%s verdict=%s' "$rc" "$out"
   }
-  for row in '249999|room' '250000|due' '250001|due'; do
+  for row in '499999|room' '500000|due' '500001|due'; do
     IFS='|' read -r tokens want <<<"$row"
     claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
     assert_eq "$(panel_read claude "$T/panel-transcript" --attached-launch)" "rc=0 verdict=$want" \
@@ -633,29 +648,29 @@ if section pre-panel; then
     assert_eq "$(jq -r '.tokens' "$PANEL_BOX/context.json" 2>/dev/null || echo absent)" "$tokens" \
       "pre-panel records the current $tokens reading without a prior record"
     assert_eq "$(jq -c '[.decision.tokens,.decision.cap,.decision.mark_pct,.decision.cap_mark,.decision.window_mark,.decision.reserve_applied,.decision.reserve_tokens,.source.harness,.source.session_id]' "$T/panel-reading.json")" \
-      "[$tokens,400000,90,250000,750000,true,150000,\"claude\",\"s1\"]" \
+      "[$tokens,650000,90,500000,750000,true,150000,\"claude\",\"s1\"]" \
       "attached launch decision fields at $tokens"
   done
   # A lane holding the earlier review-pr text sends the unflagged five- or
   # six-argument form before its attached panel, which keeps the reserve.
-  claude_line claude-opus-5-5 300000 > "$T/panel-transcript"
+  claude_line claude-opus-5-5 550000 > "$T/panel-transcript"
   for form in five six; do
     legacy=(claude s1 "$T/panel-transcript" "$PANEL_BOX" "$T")
     [ "$form" = five ] || legacy+=("")
     rc=0
     out=$(panel_run "${legacy[@]}") || rc=$?
     assert_eq "rc=$rc verdict=$out" "rc=0 verdict=due" \
-      "unflagged $form-argument pre-panel 300000 of 1000000: due" "$T/panel.err"
+      "unflagged $form-argument pre-panel 550000 of 1000000: due" "$T/panel.err"
   done
   # The same native command guards panels, dev-fix and diagnosis launches;
   # an ordinary checkpoint asks for the plain mark.
-  for row in '274811|room' '276194|room' '399999|room' '400000|due'; do
+  for row in '274811|room' '276194|room' '649999|room' '650000|due'; do
     IFS='|' read -r tokens want <<<"$row"
     claude_line claude-opus-5-5 "$tokens" > "$T/panel-transcript"
     assert_eq "$(panel_read claude "$T/panel-transcript" --checkpoint)" "rc=0 verdict=$want" \
       "ordinary checkpoint $tokens: $want" "$T/panel.err"
     assert_eq "$(jq -c '[.decision.tokens,.decision.cap_mark,.decision.reserve_applied,.decision.reserve_tokens]' "$T/panel-reading.json")" \
-      "[$tokens,400000,false,0]" "ordinary checkpoint decision fields at $tokens"
+      "[$tokens,650000,false,0]" "ordinary checkpoint decision fields at $tokens"
   done
   "$BASH" -c 'source "$1"; lane_context_record "$2" copilot 100000 800000 "" s1 "" "" "$LANE_CONTEXT_COPILOT_CAPACITY_SOURCE"' _ "$LIB" "$PANEL_BOX"
   assert_eq "$(panel_read copilot '')" 'rc=0 verdict=room' \
@@ -713,13 +728,13 @@ luna-reserve-room|gpt-6-luna|82559|258400|attached-launch|known|150000|0:room
 luna-reserve-equal|gpt-6-luna|82560|258400|attached-launch|known|150000|0:alternate-review
 luna-plain-equal|gpt-6-luna|232560|258400|attached-launch|known|150000|0:alternate-review
 luna-plain-due|gpt-6-luna|232561|258400|attached-launch|known|150000|0:due
-sol-reserve-room|gpt-6.1-sol|249999|475000|attached-launch|known|150000|0:room
-sol-reserve-equal|gpt-6.1-sol|250000|475000|attached-launch|known|150000|0:alternate-review
-sol-measured|gpt-6.1-sol|269524|475000|attached-launch|known|150000|0:alternate-review
+sol-reserve-room|gpt-6.1-sol|277499|475000|attached-launch|known|150000|0:room
+sol-reserve-equal|gpt-6.1-sol|277500|475000|attached-launch|known|150000|0:alternate-review
+sol-measured|gpt-6.1-sol|269524|475000|attached-launch|known|150000|0:room
 sol-successor|gpt-6.1-sol|283010|475000|attached-launch|known|150000|0:alternate-review
 sol-plain-reading|gpt-6.1-sol|319607|475000|attached-launch|known|150000|0:alternate-review
-sol-before-cap|gpt-6.1-sol|399999|475000|attached-launch|known|150000|0:alternate-review
-sol-at-cap|gpt-6.1-sol|400000|475000|attached-launch|known|150000|0:due
+sol-before-cap|gpt-6.1-sol|427500|475000|attached-launch|known|150000|0:alternate-review
+sol-at-cap|gpt-6.1-sol|650000|475000|attached-launch|known|150000|0:due
 luna-legacy-five|gpt-6-luna|84140|258400|legacy-five|known|150000|0:due
 luna-legacy-six|gpt-6-luna|84140|258400|legacy-six|known|150000|0:due
 luna-checkpoint|gpt-6-luna|84140|258400|checkpoint|known|150000|0:room
@@ -728,10 +743,10 @@ luna-checkpoint-due|gpt-6-luna|232561|258400|checkpoint|known|150000|0:due
 unknown-point|gpt-6-luna|84140|null|attached-launch|known|150000|2:
 unverified-point|gpt-6-luna|84140|258400|attached-launch|absent|150000|2:
 invalid-point-evidence|gpt-6-luna|84140|258400|attached-launch|invalid|150000|2:
-independent-reserve-cap|gpt-6.1-sol|300000|null|attached-launch|known|150000|0:due
-independent-invalid-window-cap|gpt-6.1-sol|300000|-1|attached-launch|known|150000|0:due
+independent-reserve-cap|gpt-6.1-sol|550000|null|attached-launch|known|150000|0:due
+independent-invalid-window-cap|gpt-6.1-sol|550000|-1|attached-launch|known|150000|0:due
 invalid-window-below-cap|gpt-6-luna|84140|-1|attached-launch|known|150000|2:
-independent-plain-cap|gpt-6.1-sol|400000|null|attached-launch|known|150000|0:due
+independent-plain-cap|gpt-6.1-sol|650000|null|attached-launch|known|150000|0:due
 unread-usage|gpt-6-luna|84140|258400|attached-launch|unread|150000|2:
 absent-usage|gpt-6-luna|84140|258400|attached-launch|empty|150000|2:
 missing-transcript|gpt-6-luna|84140|258400|attached-launch|missing|150000|2:
@@ -777,7 +792,7 @@ ROWS
       fi
     done
   done <<'ROWS'
-sol-crossing|gpt-6.1-sol|475000|399999|400000|known|0:due
+sol-crossing|gpt-6.1-sol|475000|427500|427501|known|0:due
 luna-crossing|gpt-6-luna|258400|232560|232561|known|0:due
 unavailable-usage|gpt-6-luna|258400|232560|232561|unread|2:
 unavailable-capacity|gpt-6-luna|258400|232560|100000|absent|2:
@@ -948,8 +963,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'claude configuration 0 gives point unresolved'
   control strict-mark lane-context.sh 'elif [ "$1" -gt "$window_mark" ]; then' 'elif [ "$1" -ge "$window_mark" ]; then' \
     '232560 of 258400 at 90: rc=0 room'
-  control agent-reserve lane-context.sh '    cap_mark=$((400000 - $4))' '    cap_mark=400000' \
-    'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
+  control agent-reserve lane-context.sh '    cap_mark=$((cap - $4))' '    cap_mark=$cap' \
+    'agent reserve: 500000 of 1000000 at 90 with 150000: rc=0 due'
   control plain-mark-floor lane-context.sh 'window_mark=$(($2 * pct / 100))' 'window_mark=$((($2 * pct + 99) / 100))' \
     '117965 of 131072 at 90: rc=0 due'
   control reserve-mark-ceiling lane-context.sh 'window_mark=$((($2 * pct + 99) / 100 - $4))' 'window_mark=$(($2 * pct / 100 - $4))' \
@@ -959,16 +974,18 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '    if false && [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
     'Codex admission luna-fresh'
   control process-checkpoint-fresh lane-context.sh '  context_read_and_record "$BOX" ""' \
-    '  context_read_and_record "$BOX" ""; TOKENS=399999 WINDOW=475000' \
+    '  context_read_and_record "$BOX" ""; TOKENS=427500 WINDOW=475000' \
     'process checkpoint sol-crossing after'
   control panel-refresh lane-context.sh '  context_read_and_record "$BOX" ""' '  TOKENS=0 WINDOW=1000000 COMPACTED=false SOURCE=' \
-    'pre-panel fresh transcript 250001: due'
+    'pre-panel fresh transcript 500001: due'
   control launch-only-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if true; then' \
-    'ordinary checkpoint 274811: room'
+    'ordinary checkpoint 649999: room'
   control unflagged-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if [ "$CLI_OPERATION" = attached-launch ]; then' \
-    'unflagged five-argument pre-panel 300000 of 1000000: due'
+    'unflagged five-argument pre-panel 550000 of 1000000: due'
   control absolute-cap lane-context.sh 'if [ "$1" -ge "$cap_mark" ]; then' 'if [ "$1" -gt "$cap_mark" ]; then' \
-    '400000 of no window at 90: rc=0 due'
+    '650000 of no window at 90: rc=0 due'
+  control configured-cap lane-context.sh 'cap=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_TOKENS 650000) || return 2' 'cap=650000' \
+    'configured token mark 700000 at 699999'
   control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \
     '180001 of 200000 at 100: rc=0 due'
   control window-read-as-room lane-context.sh "case \"\$window_mark\" in '') return 1 ;;" "case \"\$window_mark\" in '') printf 'room\\n'; return 0 ;;" \

@@ -510,13 +510,13 @@ message() { # KEY VALUE [CAUSE]
         ;;
       context=*)
         if [ "$ROLE" = overseer ]; then
-          printf 'this overseer requires handoff under the shared context rule at %s tokens used. Handoff is required at 400000 tokens used, or strictly past %s percent of the printed window (%s tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
+          printf 'this overseer requires handoff under the shared context rule at %s tokens used. Handoff is required at ORCH_HANDOFF_CONTEXT_TOKENS tokens used (default 650000), or strictly past %s percent of the printed window (%s tokens). Succeed this session yourself at the next safe point. Context is reported at every tool call and turn end; the watch reports account triggers.\n%s\n' \
             "$2" "$MARK" "$WINDOW" "$HANDOFF_INSTRUCTION"
         elif [ "$ROLE" = jarvis ]; then
           printf 'This managed Jarvis session reached its context handoff mark at %s tokens used.\n%s\n' \
             "$2" "$HANDOFF_INSTRUCTION"
         else
-          printf 'this lane requires handoff under the shared context rule: tokens used=%s, effective capacity=%s. Handoff is required at 400000 tokens used, or strictly past %s percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n%s\n' \
+          printf 'this lane requires handoff under the shared context rule: tokens used=%s, effective capacity=%s. Handoff is required at ORCH_HANDOFF_CONTEXT_TOKENS tokens used (default 650000), or strictly past %s percent of the printed window. An empty capacity means unknown. No handoff record stands. Write the handoff so the next session can continue the work.\n%s\n' \
             "$2" "$WINDOW" "$MARK" "$HANDOFF_INSTRUCTION"
         fi
         ;;
@@ -2528,6 +2528,7 @@ load_context_lib() { # [reserve]
       . "$1" && declare -F lane_context_handoff_due >/dev/null &&
       declare -F context_read_and_record >/dev/null &&
       { [ "$2" != reserve ] || {
+        export ORCH_HANDOFF_CONTEXT_TOKENS=400000
         [ "$(lane_context_handoff_due 250000 1000000 90 150000)" = due ] &&
         [ "$(lane_context_handoff_due 249999 1000000 90 150000)" = room ] &&
         [ "$(lane_context_handoff_due 249999 1000000 90 200000)" = due ]
