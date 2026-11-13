@@ -2367,7 +2367,9 @@ fn age(path: &Path, secs: u64) {
 /// state: the item's state, status file, handoff and run directory leave,
 /// the mailbox and the record's lock stay, the siblings stand, the archive
 /// the reply names holds every path that left beside the mailbox and the
-/// `--archive` path, and the directory's own retention ran, since no watch
+/// `--archive` path, its `records.json` declaring the item's record the
+/// `state` member and every other path `along`, and the directory's own
+/// retention ran, since no watch
 /// runs it there, taking another item's expired record.
 #[test]
 fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_siblings() {
@@ -2451,6 +2453,41 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
         !listed.iter().any(|p| p.ends_with("audit-KEN-B.json")),
         "a sibling's file is not archived: {listed:?}"
     );
+    let record = format!(
+        "{}/records.json",
+        relative(&kept).strip_suffix(".tgz").unwrap()
+    );
+    let out = program("tar")
+        .args(["-xzOf", &kept.display().to_string(), &record])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{record}: {}", stderr(&out));
+    let declared: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut members: Vec<(String, String)> = declared["members"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{declared}"))
+        .iter()
+        .map(|m| {
+            (
+                m["path"].as_str().unwrap().to_owned(),
+                m["role"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    members.sort();
+    let mut want: Vec<(String, String)> = [
+        ("workflow-state-KEN-A.json", "state"),
+        ("handoffs/KEN-A-handoff.md", "along"),
+        ("KEN-A.run", "along"),
+        ("lane-status-KEN-A.md", "along"),
+        ("lane-mail/KEN-A", "along"),
+    ]
+    .iter()
+    .map(|(rel, role)| (format!("{}/{rel}", relative(dir)), (*role).to_owned()))
+    .chain([(relative(&dir.join("extra/tmp")), "along".to_owned())])
+    .collect();
+    want.sort();
+    assert_eq!(members, want, "each packed path declared with its role");
     assert!(
         std::fs::symlink_metadata(&expired).is_err(),
         "the expired record left with the directory's retention"
@@ -5058,18 +5095,20 @@ fn rounds_state(fix: u64) -> Value {
 /// its state, through the real dispatcher: the clone its worktree's `.git`
 /// names, else the copy its merge saved there, which the clone the watch
 /// kept still names once the merge's close-out removed the worktree, else
-/// the archive the fleet log's last `kept=` row names, whose empty state
-/// marker selects this merge's saved copy and never another's, and which,
-/// with no marker at all, answers from the member named for the item before
-/// the merge's copy, passing over the empty hard-link entry a twice-archived
-/// file leaves; with none, the rounds are null and the close's notes name
-/// the paths tried. The class stays unread with its cause, the checkout no
-/// repository. The archives are planted in the three forms
-/// `lane-host-ssh::archive_tmp` writes, as `main` wrote them. Under the C
-/// locale, where tar lists a non-ASCII name escaped, a marker naming one
-/// still answers, and a worktree named so still sorts after the clone. A
-/// marker naming the physical path of a clone recorded through a symlink
-/// names the hard-link entry its second archiving left, and still answers.
+/// the archive the fleet log's last `kept=` row names, read only where it
+/// declares its state: a state marker's member; with an empty marker, this
+/// merge's copy among the saved copies its list names, never another merge's
+/// nor a copy the list leaves out; a close-out archive's `records.json`
+/// member of role `state`, never a nested copy that sorts first. An archive
+/// declaring neither answers nothing, its path tried with
+/// `cause=undeclared`; with no state anywhere, the rounds are null and the
+/// close's notes name the paths tried. The class stays unread with its
+/// cause, the checkout no repository. The hosted archives are planted in the
+/// forms `lane-host-ssh::archive_tmp` writes; the close-out archive is the
+/// real `state remove`'s. Under the C locale, where tar lists a non-ASCII
+/// name escaped, a marker naming one still answers. A marker naming the
+/// physical path of a clone recorded through a symlink names the hard-link
+/// entry its second archiving left, and still answers.
 #[test]
 fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
     for (case, fix) in [
@@ -5078,10 +5117,11 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
         ("the saved copy after the worktree's removal", Some(4)),
         ("the archive its close kept", Some(6)),
         ("the archive's saved copy alone", Some(6)),
-        ("the archive with no state marker", Some(8)),
+        ("an empty marker with no saved list", None),
+        ("the archive with no state marker", None),
         ("a marker naming a non-ASCII path", Some(10)),
-        ("no marker, a non-ASCII worktree", Some(12)),
         ("a marker naming a hard-link entry", Some(14)),
+        ("the close-out archive's declared state", Some(16)),
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
@@ -5120,10 +5160,23 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             )
             .unwrap();
         };
+        let kept_row = |archive: &Path| {
+            json!({"at": "2026-01-29T16:30:00Z", "kind": "close", "item": "KEN-1",
+                "text": format!("lane-host close kept={}", archive.display())})
+        };
+        let undeclared = format!(
+            "{} cause=undeclared",
+            fleet.state_dir().join("kept.tgz").display()
+        );
+        let mut tried = vec![format!("{REMOTE_ROOT}/.git")];
         // The archive a close kept, `marker` its `lane-host-state` member
-        // where it has one, each `linked` member a hard link to the member it
-        // names, archived after it, and the fleet log's row naming it.
-        let archive = |marker: Option<&str>, members: &[(&str, Value)], linked: &[(&str, &str)]| {
+        // where it has one and `listed` its `lane-host-saved` member, each
+        // `linked` member a hard link to the member it names, archived after
+        // it, and the fleet log's row naming it.
+        let archive = |marker: Option<&str>,
+                       listed: Option<&str>,
+                       members: &[(&str, Value)],
+                       linked: &[(&str, &str)]| {
             let kept = fleet.state_dir().join("kept");
             for (member, state) in members {
                 let at = kept.join(member);
@@ -5137,6 +5190,10 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             }
             let mut names: Vec<&str> = members.iter().map(|(member, _)| *member).collect();
             names.extend(linked.iter().map(|(link, _)| *link));
+            if let Some(listed) = listed {
+                std::fs::write(kept.join("lane-host-saved"), listed).unwrap();
+                names.insert(0, "lane-host-saved");
+            }
             if let Some(marker) = marker {
                 std::fs::write(kept.join("lane-host-state"), marker).unwrap();
                 names.insert(0, "lane-host-state");
@@ -5151,8 +5208,7 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                 .output()
                 .unwrap();
             assert!(out.status.success(), "tar: {}", stderr(&out));
-            json!({"at": "2026-01-29T16:30:00Z", "kind": "close", "item": "KEN-1",
-                "text": format!("lane-host close kept={}", archive.display())})
+            kept_row(&archive)
         };
         let mut log = Vec::new();
         match (case, fix) {
@@ -5174,71 +5230,98 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             }
             ("the archive its close kept", Some(fix)) => log.push(archive(
                 Some("clone/tmp/workflow-state-KEN-1.json\n"),
+                None,
                 &[("clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
                 &[],
             )),
+            // A copy of this merge the list leaves out comes first in the
+            // archive and in name order.
             ("the archive's saved copy alone", Some(fix)) => log.push(archive(
                 Some("\n"),
+                Some(&format!("{}\n{}\n", &saved(6)[1..], &saved(7)[1..])),
                 &[
+                    (
+                        "a/tmp/cycle-state/workflow-state-pr-7.json",
+                        rounds_state(9),
+                    ),
                     (&saved(6)[1..], rounds_state(9)),
                     (&saved(7)[1..], rounds_state(fix)),
                 ],
                 &[],
             )),
-            // The worktree's tmp linked to the clone's archives one state file
-            // under both paths, the clone's as the hard-link entry.
-            ("the archive with no state marker", Some(fix)) => log.push(archive(
-                None,
-                &[
-                    ("w/ken-1/tmp/workflow-state-KEN-1.json", rounds_state(fix)),
-                    (&saved(7)[1..], rounds_state(9)),
-                ],
-                &[(
-                    "w/clone/tmp/workflow-state-KEN-1.json",
-                    "w/ken-1/tmp/workflow-state-KEN-1.json",
-                )],
-            )),
+            ("an empty marker with no saved list", None) => {
+                log.push(archive(
+                    Some("\n"),
+                    None,
+                    &[(&saved(7)[1..], rounds_state(9))],
+                    &[],
+                ));
+                tried.push(undeclared.clone());
+            }
+            ("the archive with no state marker", None) => {
+                log.push(archive(
+                    None,
+                    None,
+                    &[
+                        ("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(9)),
+                        (&saved(7)[1..], rounds_state(9)),
+                    ],
+                    &[],
+                ));
+                tried.push(undeclared.clone());
+            }
             ("a marker naming a non-ASCII path", Some(fix)) => log.push(archive(
                 Some("clon\u{e9}/tmp/workflow-state-KEN-1.json\n"),
+                None,
                 &[(
                     "clon\u{e9}/tmp/workflow-state-KEN-1.json",
                     rounds_state(fix),
                 )],
                 &[],
             )),
-            // The worktree's name sorts before the clone's, so only a name
-            // read raw places the clone's copy first.
-            ("no marker, a non-ASCII worktree", Some(fix)) => log.push(archive(
-                None,
-                &[
-                    (
-                        "w/an\u{e9}-1/tmp/workflow-state-KEN-1.json",
-                        rounds_state(9),
-                    ),
-                    ("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix)),
-                ],
-                &[],
-            )),
             // The clone's tmp archived through its recorded path, then the
             // state file through its physical one, which the marker names.
             ("a marker naming a hard-link entry", Some(fix)) => log.push(archive(
                 Some("var/w/clone/tmp/workflow-state-KEN-1.json\n"),
+                None,
                 &[("w/clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
                 &[(
                     "var/w/clone/tmp/workflow-state-KEN-1.json",
                     "w/clone/tmp/workflow-state-KEN-1.json",
                 )],
             )),
-            _ => retained(),
+            // The item's close-out over an `--archive` tree holding another
+            // copy of its record, whose path sorts before the record's.
+            ("the close-out archive's declared state", Some(fix)) => {
+                let dir = fleet.state_dir();
+                std::fs::write(
+                    dir.join("workflow-state-KEN-1.json"),
+                    rounds_state(fix).to_string(),
+                )
+                .unwrap();
+                let nested = dir.join("a-tree/tmp/workflow-state-KEN-1.json");
+                std::fs::create_dir_all(nested.parent().unwrap()).unwrap();
+                std::fs::write(&nested, rounds_state(9).to_string()).unwrap();
+                let removed = reply(&fleet.run(&[
+                    "state",
+                    "remove",
+                    "--item",
+                    "KEN-1",
+                    "--archive",
+                    &dir.join("a-tree").display().to_string(),
+                ]));
+                let kept = removed["result"]["kept"].as_str().expect("the archive");
+                log.push(kept_row(Path::new(kept)));
+            }
+            _ => {
+                retained();
+                tried.push(saved(7));
+            }
         }
-        let mut lane = hosted_lane("KEN-1");
         if case.contains("non-ASCII") {
             fleet.env.push(("LC_ALL".to_owned(), "C".to_owned()));
         }
-        if case == "no marker, a non-ASCII worktree" {
-            lane["mail_root"] = json!("/w/an\u{e9}-1");
-        }
-        fleet.write_lanes(vec![lane]);
+        fleet.write_lanes(vec![hosted_lane("KEN-1")]);
         let mut doc = fleet.fleet();
         doc["fleet_log"] = json!(log);
         std::fs::write(fleet.fleet_path(), doc.to_string()).unwrap();
@@ -5281,11 +5364,11 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                         .any(|n| n == "oversee-cycle: rounds-unread item=KEN-1"),
                     "{case}: {notes:?}"
                 );
-                for path in [format!("{REMOTE_ROOT}/.git"), saved(7)] {
-                    let tried = format!("lane-gitfile: state-tried item=KEN-1 path={path}");
+                for path in &tried {
+                    let line = format!("lane-gitfile: state-tried item=KEN-1 path={path}");
                     assert!(
-                        notes.iter().flat_map(|n| n.lines()).any(|l| l == tried),
-                        "{case}: {notes:?}"
+                        notes.iter().flat_map(|n| n.lines()).any(|l| l == line),
+                        "{case}: {line} in {notes:?}"
                     );
                 }
             }

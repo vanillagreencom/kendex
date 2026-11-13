@@ -433,7 +433,10 @@ pub struct CloseOut {
 /// leaves, whatever its age, but the record's lock file
 /// ([`without_record_locks`]); the archive holds them, the lane mailbox,
 /// which no close-out removes, and each `extra` path that stands, which the
-/// caller removes after. Nothing is removed until the archive stands. A
+/// caller removes after. The archive's `records.json` declares each path
+/// it packs as `members`, role `state` for the item's record and `along`
+/// for the rest, so its reader never chooses among nested copies of the
+/// record. Nothing is removed until the archive stands. A
 /// status file the lane's hook writes again after the removal stands until
 /// the item's next close-out.
 ///
@@ -622,12 +625,19 @@ fn close_out_held(
     let archive = if targets.is_empty() && standing == 0 {
         None
     } else {
+        let members: Vec<Value> = evidence
+            .iter()
+            .map(|path| {
+                let role = if own.contains(path) { "state" } else { "along" };
+                serde_json::json!({"path": relative(path), "role": role})
+            })
+            .collect();
         Some(write(
             root,
             project,
             state_dir,
             &format!("close-{item}-{now}"),
-            None,
+            Some(&serde_json::json!({ "members": members })),
             &evidence,
         )?)
     };

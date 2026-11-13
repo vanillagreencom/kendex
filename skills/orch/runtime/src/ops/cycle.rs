@@ -432,15 +432,15 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 }
 
 /// The state member of the archive the fleet log's last `kept=PATH` row for
-/// the item since its session began names: the member its `lane-host-state`
-/// member names; where that is the empty line a close writes once no live
-/// state remained, the copy the merge `pr` saved, never another merge's;
-/// where the archive holds no such member, as a close writes it from a clone
-/// whose state cannot be resolved, the member named for the item, then the
-/// one named for the merge. Among several copies the clone's comes before
-/// the worktree's, then name order, and the first that reads as an object
-/// answers: a file archived twice is a hard-link entry the second time,
-/// which `tar -O` prints empty, so a marker naming one reads its link's
+/// the item since its session began names, as the archive declares it: the
+/// member a hosted close's `lane-host-state` member names; where that is the
+/// empty line a close writes once no live state remained, the copy the merge
+/// `pr` saved among those its `lane-host-saved` member lists, never another
+/// merge's; in a close-out archive, the member its `records.json` declares
+/// of role `state`. An archive declaring neither answers nothing, its path
+/// tried with `cause=undeclared`: no copy is chosen by its name or its
+/// order. A file archived twice is a hard-link entry the second time, which
+/// `tar -O` prints empty, so a declared member that is one reads its link's
 /// target.
 #[allow(
     clippy::disallowed_methods,
@@ -452,6 +452,11 @@ fn kept_state(
     pr: Option<u64>,
     tried: &mut Vec<String>,
 ) -> Option<Map<String, Value>> {
+    enum Declared {
+        Member(String),
+        Nothing,
+        Undeclared,
+    }
     let since = lane
         .session_since
         .clone()
@@ -472,7 +477,6 @@ fn kept_state(
             before_ok.then(|| t[at + 5..].trim_end().to_owned())
         })
         .next_back()?;
-    tried.push(kept.clone());
     let tar = |args: &[&str]| -> Option<String> {
         let out = host::run_tagged(TAG, "tar", Path::new("tar"), "kept", args, BOUND).ok()?;
         out.status
@@ -484,53 +488,71 @@ fn kept_state(
         Ok(Value::Object(map)) => Some(map),
         Ok(_) | Err(_) => None,
     };
-    let object = |name: &str| doc(&member(name)?);
-    // The marker holds the member's raw name, which no listing need match.
-    let marker = member("lane-host-state");
-    if let Some(name) = marker.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
-        let text = member(name)?;
-        if !text.is_empty() {
-            return doc(&text);
+    let declared = || {
+        let Some(listing) = tar(&["-tzf", &kept]) else {
+            return Declared::Nothing;
+        };
+        let names: Vec<String> = listing.lines().map(listed_name).collect();
+        let listed = |name: &str| names.iter().any(|n| n == name);
+        if listed("lane-host-state") {
+            // The marker holds the member's raw name, which no listing need match.
+            let Some(marker) = member("lane-host-state") else {
+                return Declared::Nothing;
+            };
+            let marker = marker.trim();
+            if !marker.is_empty() {
+                return Declared::Member(marker.to_owned());
+            }
+            if !listed("lane-host-saved") {
+                return Declared::Undeclared;
+            }
+            let saved = pr.zip(member("lane-host-saved")).and_then(|(pr, saved)| {
+                let suffix = format!("/workflow-state-pr-{pr}.json");
+                saved
+                    .lines()
+                    .find(|line| line.ends_with(&suffix))
+                    .map(str::to_owned)
+            });
+            return saved.map_or(Declared::Nothing, Declared::Member);
         }
-        // A file archived under two paths is a hard-link entry the second
-        // time, which `tar -O` prints empty; its listing line names the
-        // member that holds the bytes.
-        let line = listed_name(tar(&["-tvzf", &kept, name])?.lines().next()?);
-        let (_, target) = line.split_once(&format!(" {name} link to "))?;
-        return object(target);
-    }
-    let listing = tar(&["-tzf", &kept])?;
-    let names: Vec<String> = listing.lines().map(listed_name).collect();
-    let worktree = format!(
-        "{}/",
-        lane.mail_root
+        let stage = kept.strip_suffix(".tgz").unwrap_or(&kept);
+        let Some(records) = member(&format!("{}/records.json", stage.trim_start_matches('/')))
             .as_deref()
-            .unwrap_or("")
-            .trim_start_matches('/')
-    );
-    let copies = |matches: &dyn Fn(&str) -> bool| {
-        let mut found: Vec<&str> = names
+            .and_then(doc)
+        else {
+            return Declared::Undeclared;
+        };
+        let Some(members) = records.get("members").and_then(Value::as_array) else {
+            return Declared::Undeclared;
+        };
+        members
             .iter()
-            .map(String::as_str)
-            .filter(|name| matches(name))
-            .collect();
-        found.sort_by_key(|name| (name.starts_with(&worktree), *name));
-        found
+            .find(|m| m.get("role").and_then(Value::as_str) == Some("state"))
+            .and_then(|m| m.get("path").and_then(Value::as_str))
+            .map_or(Declared::Nothing, |path| Declared::Member(path.to_owned()))
     };
-    let candidates: Vec<&str> = if names.iter().any(|name| name == "lane-host-state") {
-        // Listed and not read: the archive answers nothing for it.
-        marker.as_ref()?;
-        let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
-        copies(&|name| name.ends_with(&suffix))
-    } else {
-        let mut keyed = vec![format!("workflow-state-{}.json", lane.item)];
-        keyed.extend(pr.map(|pr| format!("workflow-state-pr-{pr}.json")));
-        keyed
-            .iter()
-            .flat_map(|file| copies(&|name| name.rsplit('/').next() == Some(file.as_str())))
-            .collect()
+    let name = match declared() {
+        Declared::Member(name) => name,
+        Declared::Nothing => {
+            tried.push(kept.clone());
+            return None;
+        }
+        Declared::Undeclared => {
+            tried.push(format!("{kept} cause=undeclared"));
+            return None;
+        }
     };
-    candidates.into_iter().find_map(object)
+    tried.push(kept.clone());
+    let text = member(&name)?;
+    if !text.is_empty() {
+        return doc(&text);
+    }
+    // A file archived under two paths is a hard-link entry the second
+    // time, which `tar -O` prints empty; its listing line names the
+    // member that holds the bytes.
+    let line = listed_name(tar(&["-tvzf", &kept, &name])?.lines().next()?);
+    let (_, target) = line.split_once(&format!(" {name} link to "))?;
+    doc(&member(target)?)
 }
 
 /// A member's raw name from a `tar -t` line. GNU tar's listing under the C

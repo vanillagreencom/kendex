@@ -869,8 +869,9 @@ def archive_tmp(row, item, worktree_path):
     their checkout's ORCH_STATE_DIR names, read by the clone's own settings
     loader with no runtime on the host. The archive's
     `lane-host-state` member names that file's member, or is an empty line
-    when no live state remains. With an empty marker, a reader takes only
-    the saved cycle copy of the merge it records, if present. A resolution
+    when no live state remains. With an empty marker, the `lane-host-saved`
+    member lists the clone's saved cycle copies, and a reader takes only the
+    listed copy of the merge it records. A resolution
     that fails stops close, the sandbox and its state kept: an archive
     without the state loses it."""
     data = remote(row, '''paths=() names=()
@@ -914,6 +915,12 @@ if test "${#paths[@]}" -eq 0; then exit 0; fi
 manifest=$(mktemp -d)
 trap 'rm -rf -- "${manifest:?}"' EXIT
 printf '%s\\n' "$member" > "$manifest/lane-host-state"
+if test "${#names[@]}" -gt 0 && test -z "$member"; then
+  for saved in "$1"/tmp/cycle-state/workflow-state-pr-*.json; do
+    if test -f "$saved"; then printf '%s\\n' "${saved#/}"; fi
+  done > "$manifest/lane-host-saved"
+  names+=(lane-host-saved)
+fi
 tar -chzf - -C "$manifest" ${names[@]+"${names[@]}"} -C / "${paths[@]}"''', row["clone"], worktree_path, item).stdout
     if not data:
         return

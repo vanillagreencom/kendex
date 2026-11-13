@@ -3460,6 +3460,27 @@ fi'''))
                 if state == "present":
                     self.assertIn("before-delete:" + line, (self.root / "calls").read_text())
 
+    def test_close_lists_the_clones_saved_copies_where_no_live_state_remains(self):
+        # The merge's close-out removed the live state after saving its copy
+        # in the clone; a worktree copy is no saved copy, so the list a reader
+        # takes the merge's copy from names the clone's alone.
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        worktree = Path(self.row["clone"] + "-worktree")
+        for directory in (clone / "tmp/cycle-state", worktree / "tmp/cycle-state"):
+            directory.mkdir(parents=True, exist_ok=True)
+        for pr in (6, 7):
+            (clone / f"tmp/cycle-state/workflow-state-pr-{pr}.json").write_text(f'{{"cycles": {pr}}}')
+        (worktree / "tmp/cycle-state/workflow-state-pr-7.json").write_text('{"cycles": 9}')
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        listed = [str(clone / f"tmp/cycle-state/workflow-state-pr-{pr}.json").lstrip("/") for pr in (6, 7)]
+        with tarfile.open(archive) as saved:
+            self.assertEqual(saved.extractfile("lane-host-state").read(), b"\n")
+            self.assertEqual(saved.extractfile("lane-host-saved").read().decode().splitlines(), listed)
+            self.assertEqual(saved.extractfile(listed[1]).read(), b'{"cycles": 7}')
+
     def test_close_accepts_merged_and_keeps_the_whole_archive(self):
         # The close passes --merged on a merged full close; a static host cuts
         # nothing, so every tmp record stays in the archive. The control is the
