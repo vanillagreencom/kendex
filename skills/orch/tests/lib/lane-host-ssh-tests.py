@@ -2192,6 +2192,45 @@ cp package-lock.json node_modules/installed-lockfile
             failed = self.create("--relaunch")
             self.assertEqual((failed.returncode, failed.stdout), (1, b""), failed.stderr)
 
+    def relaunch_over_staged_work(self, worktree_script=None):
+        """A first launch, the item's commit, a change staged and left
+        uncommitted, then the base moving another file, then a relaunch;
+        returns the tree, the item's head and the relaunch. worktree_script
+        replaces the fixture's worktree command before the first launch."""
+        self.real_worktree_source(".env.local")
+        if worktree_script is not None:
+            self.seed_source(".agents/skills/worktree/scripts/worktree", worktree_script)
+        first = self.create()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        path = Path(self.fields(first.stdout)["path"])
+        head = self.commit_in_tree(path, "item.txt", "item\n")
+        (path / "staged.txt").write_text("staged\n")
+        self.git(path, "add", "--", "staged.txt")
+        self.seed_source("base.txt", "moved base\n")
+        return path, head, self.create("--relaunch")
+
+    def test_relaunch_over_staged_work_keeps_it_unrebased(self):
+        """A relaunch over a tree holding staged uncommitted work on a moved
+        base keeps its head and index and answers tree=unrebased, so the lane
+        is not read as rebased."""
+        path, head, result = self.relaunch_over_staged_work()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        fields = self.fields(result.stdout)
+        self.assertEqual((fields["path"], fields.get("tree")), (str(path), "unrebased"))
+        self.assertEqual(self.git(path, "rev-parse", "HEAD").decode().strip(), head)
+        self.assertEqual(self.git(path, "diff", "--cached", "--name-only"), b"staged.txt\n")
+        self.assertEqual(self.git(path, "show", ":staged.txt"), b"staged\n")
+
+    def test_control_relaunch_over_staged_work_without_the_dirty_keep_reads_rebased(self):
+        source = PACKAGE.parent / "worktree/scripts/worktree"
+        original = source.read_text()
+        rule = 'skipped the rebase." >&2\n        report_reused_worktree\n'
+        self.assertEqual(original.count(rule), 1)
+        cut = original.replace(rule, 'skipped the rebase." >&2\n        report_created_worktree; exit 0\n')
+        _, _, result = self.relaunch_over_staged_work(cut)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("tree", self.fields(result.stdout))
+
     def test_relaunch_opens_origin_only_landing_branch(self):
         """A cloud handoff pushes its branch before a static host has a tree."""
         scripts = self.source / ".agents/skills/worktree/scripts"

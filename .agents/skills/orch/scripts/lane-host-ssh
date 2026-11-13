@@ -404,11 +404,11 @@ def worktree(row, *args, preliminary=False):
                   row["clone"], *args, accept=(75, REUSE_UNREBASED) if args[0] == "create" else ())
 
 
-# The worktree command's exit for a reuse whose rebase onto the base conflicted:
-# the rebase was aborted and the tree handed back on its own head, set up.
+# The worktree command's exit for a reuse that handed the tree back, set up, on
+# a head that does not contain the base.
 REUSE_UNREBASED = 76
-# A standing tree is reused with the item's work kept: a conflicting rebase
-# leaves it as it stands rather than failing the create.
+# A standing tree is reused with the item's work kept: a tree the reuse cannot
+# rebase stays as it stands rather than failing the create.
 REUSE_KEEPING = ["--reuse", "--keep-on-conflict"]
 
 
@@ -1072,9 +1072,10 @@ The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields, and pi-root, the row's account directory, for a Pi lane. Existing
 ownership exits 75; --reuse and --relaunch pass --reuse --keep-on-conflict to
-the worktree command when the target exists: a rebase onto the base that
-conflicts is aborted, the tree is kept on the item's own head, and the line
-adds tree=unrebased. Without a target, an origin item branch uses
+the worktree command when the target exists: a tree that command hands back
+without the base (a conflicting rebase aborted, uncommitted work, a detached
+head, a head at its published head) is kept on the item's own head, and the
+line adds tree=unrebased. Without a target, an origin item branch uses
 --base; no origin item branch uses plain create.
 Every create passes --hosted, so the item's worktree sits at the clone's one
 hosted lane path (worktree path --hosted), and path= names it.

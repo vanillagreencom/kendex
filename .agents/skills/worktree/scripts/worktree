@@ -38,8 +38,8 @@ fi
 source "$MESSAGE_DIR/lib/messages.sh"
 
 readonly ACTIVE_WORK_EXIT=75
-# create --reuse --keep-on-conflict handed back a tree its conflicting rebase
-# left where it stood: the path is on stdout as for exit 0, and the caller
+# create --reuse --keep-on-conflict handed back a tree whose head does not
+# contain the base: the path is on stdout as for exit 0, and the caller
 # learns the tree is not on the base without parsing a notice.
 readonly REUSE_UNREBASED_EXIT=76
 
@@ -1449,14 +1449,45 @@ keep_unrebased_worktree() { # rebase|replay CONFLICT_FILES
   esac
   release_issue_claim_lock
   setup_app_worktree "$WT_PATH" true true || exit 1
-  worktree_message reuse-unrebased "$WT_PATH" "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." >&2
-  if [[ -n "$2" ]]; then
+  hand_back_unrebased "$operation onto origin/$DEFAULT_BRANCH conflicts, so it was aborted and $WT_PATH is kept on its pre-$1 head." "$restack_flags" "$2"
+}
+
+# The one exit of a --keep-on-conflict tree whose head does not contain the
+# base, whatever kept it there.
+hand_back_unrebased() { # SENTENCE RESTACK_FLAGS [CONFLICT_FILES]
+  worktree_message reuse-unrebased "$WT_PATH" "$1" >&2
+  if [[ -n "${3:-}" ]]; then
     echo "Conflicting files:" >&2
-    sed 's/^/  /' <<<"$2" >&2
+    sed 's/^/  /' <<<"$3" >&2
   fi
-  echo "Restack it when ready: $0 create $ISSUE $restack_flags" >&2
+  if [[ -n "$2" ]]; then
+    echo "Restack it when ready: $0 create $ISSUE $2" >&2
+  fi
   report_created_worktree
   exit "$REUSE_UNREBASED_EXIT"
+}
+
+# Every reuse exit that hands the tree back without a conflict. Under
+# --keep-on-conflict exit 0 means the head contains the base, so a caller
+# reading the exit alone never takes a kept tree for a rebased one. A merged
+# branch owes no restack and stays 0.
+report_reused_worktree() {
+  local branch=""
+  if [[ "$KEEP_ON_CONFLICT" == true && -z "$REUSE_MERGED_COMMIT" ]]; then
+    resolve_default_branch || exit 1
+    if ! git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD 2>/dev/null; then
+      branch="$(git -C "$WT_PATH" branch --show-current 2>/dev/null)" || branch=""
+      if [[ -n "$REUSE_STATUS" ]]; then
+        hand_back_unrebased "$WT_PATH holds uncommitted work, so no rebase onto origin/$DEFAULT_BRANCH was attempted and it is kept on its own head." "${branch:+--restack}"
+      fi
+      if [[ -z "$branch" ]]; then
+        hand_back_unrebased "$WT_PATH has a detached HEAD, so no rebase onto origin/$DEFAULT_BRANCH was attempted and it is kept as it stands." ""
+      fi
+      hand_back_unrebased "$WT_PATH is at its published head, which does not contain origin/$DEFAULT_BRANCH; its next push rebases it, and it is kept on that head." "--restack"
+    fi
+  fi
+  report_created_worktree
+  exit 0
 }
 
 recorded_worktree_issue() { # WT
@@ -3080,7 +3111,7 @@ case "${1:-}" in
       exit 1
     fi
     if [[ "$KEEP_ON_CONFLICT" == true && ( "$REUSE" != true || "$RESTACK" == true ) ]]; then
-      worktree_message keep-mode-required "--keep-on-conflict" "Error: --keep-on-conflict keeps a --reuse tree whose rebase conflicts; combine it with --reuse and not --restack." >&2
+      worktree_message keep-mode-required "--keep-on-conflict" "Error: --keep-on-conflict hands back a --reuse tree it leaves without the base; combine it with --reuse and not --restack." >&2
       exit 1
     fi
     if [[ -n "$TRANSFER" ]] && { [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" ]] || [[ "$REUSE" == true || "$RESTACK" == true || "$REPLAY" == true ]]; }; then
@@ -3140,14 +3171,14 @@ case "${1:-}" in
         fetch_origin || exit 1
         materialize_worktree_claim "$WT_PATH" || exit 1
       fi
-      REUSE_STATUS=""
+      REUSE_STATUS="" REUSE_MERGED_COMMIT=""
       REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
       if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
         if [[ "$REUSE_CHECKOUT_MODE" == claim || -n "${WORKTREE_SETUP_CMD:-}" ]]; then
           setup_app_worktree "$WT_PATH" true true || exit 1
         fi
         worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
-        report_created_worktree; exit 0
+        report_reused_worktree
       fi
 
       # Network/ref discovery must succeed before the claim lock or any setup
@@ -3419,8 +3450,7 @@ case "${1:-}" in
       # Refresh setup (rebase may have replaced symlinks with tracked content)
       release_issue_claim_lock
       setup_app_worktree "$WT_PATH" true true
-      report_created_worktree
-      exit 0
+      report_reused_worktree
     fi
 
     # A directory is reusable only when its exact canonical path is registered

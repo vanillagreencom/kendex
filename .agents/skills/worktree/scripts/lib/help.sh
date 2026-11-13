@@ -326,11 +326,16 @@ Options:
                   With --reuse, not --restack: when the rebase or replay
                   conflicts, abort it as --reuse does and hand the tree back
                   on its pre-rebase head, set up as a completed reuse would
-                  be: the path on stdout, a 'worktree-reuse-unrebased' notice
-                  naming the path on stderr followed by the conflicting
-                  files, exit 76. For a caller that needs a session in the
-                  tree more than a rebased branch, such as a relaunch; a
-                  caller that needs the base omits it and keeps the failure
+                  be. Every tree --reuse hands back whose head does not
+                  contain origin/<default> (a conflict, uncommitted work, a
+                  detached HEAD, a head at its remote branch's head) then
+                  exits 76: the path on stdout, a 'worktree-reuse-unrebased'
+                  notice naming the path and the cause on stderr, the
+                  conflicting files after it. A merged branch stays exit 0,
+                  so exit 0 means the head contains the base. For a caller
+                  that needs a session in the tree more than a rebased
+                  branch, such as a relaunch; a caller that needs the base
+                  omits it and keeps the failure
   --hosted        The create runs for a hosted lane, on a clone that holds one
                   lane worktree: a new tree lands at
                   ../.worktrees/<checkout-name>/<WORKTREE_HOSTED_NAME> beside

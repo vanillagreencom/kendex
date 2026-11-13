@@ -6268,7 +6268,7 @@ fn a_hosted_create_that_kept_the_tree_unrebased_opens_and_tells_the_lane() {
         );
         let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
         assert!(
-            ssh.contains("this tree is not rebased. The restack is yours to run."),
+            ssh.contains("not rebased onto the base branch. The restack is yours to run."),
             "{case}: the lane is told its tree is kept unrebased: {ssh}"
         );
         effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
@@ -8742,7 +8742,7 @@ fn a_launch_with_no_brief_file_starts_its_lane_on_the_armed_start_brief() {
     assert_eq!(report["intent"]["outcome"], "confirmed", "hosted: {report}");
     let recorded = launch_record_of(&world.host_path);
     let expected = format!(
-        "{}\nYour retained work is kept as it stands: its rebase onto the base branch conflicted and was aborted, so this tree is not rebased. The restack is yours to run.",
+        "{}\nYour retained work is kept as it stands, not rebased onto the base branch. The restack is yours to run.",
         armed(
             format!("/orch start KEN-H {words}\n{quiet}"),
             "claude",

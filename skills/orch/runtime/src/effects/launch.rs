@@ -77,7 +77,7 @@ fn closed_by(text: &str, line: &str) -> String {
 
 /// What a hosted lane's brief closes with where the provider kept the item's
 /// retained tree on its own head (`tree=unrebased`).
-const UNREBASED_TEXT: &str = "Your retained work is kept as it stands: its rebase onto the base branch conflicted and was aborted, so this tree is not rebased. The restack is yours to run.";
+const UNREBASED_TEXT: &str = "Your retained work is kept as it stands, not rebased onto the base branch. The restack is yours to run.";
 
 fn mode_sentence(mode: LaneOutput) -> &'static str {
     match mode {

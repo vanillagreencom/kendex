@@ -621,6 +621,9 @@ remote movement after authorization fails the exact lease|clean restack move-rem
 a local rewrite is not covered by prior authorization|clean restack local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 --keep-on-conflict over a clean rebase rebases as --reuse does|plain|create topic --reuse --keep-on-conflict|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+--keep-on-conflict over uncommitted work on a head without the advanced main hands the tree back unrebased|plain dirty-other|create topic --reuse --keep-on-conflict|76|wt|reuse-dirty+unrebased|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
+--keep-on-conflict over a clean tree at its published head without the advanced main hands it back unrebased|clean|create topic --reuse --keep-on-conflict|76|wt|unrebased|engine=none branch=topic head=pre ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
+--keep-on-conflict over uncommitted work on a head that contains main exits 0|contained dirty-other|create topic --reuse --keep-on-conflict|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
 reuse over a clean tree behind its remote fast-forwards to the remote and keeps that head unrebased over the advanced main|cloud move-remote advance-main|create topic --reuse|0|wt|fast-forward|engine=none branch=topic head=external ahead=1 dirty=- tree=file.txt:orig,other.txt:orig restack=- remote=external map=-
 reuse over a clean tree at its published head keeps it unrebased over the advanced main|clean|create topic --reuse|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
 --reuse --replay over a clean tree behind its remote fast-forwards to the remote, then replays onto the advanced main|cloud cloud-push advance-main|create topic --reuse --replay|0|wt|fast-forward+map:1x|engine=none branch=topic head=rebased ahead=1 dirty=- tree=cloud.txt:cloud,file.txt:orig,main-advanced-twice.txt:advanced twice,other.txt:orig restack=remote:origin,branch:topic,expected:external,authorized:head remote=external map=1x
@@ -891,6 +894,33 @@ kept_remove_rc=0
 assert_eq "$kept_remove_rc" "1" "control: the removal follows the map"
 assert_eq "$(message_records <"$ROOT/kept-remove.err" | grep -c '^worktree-remove-rebase-map: ' || true)" "1" \
   "control: the removal refuses on the map alone"
+
+echo
+echo "=== must-fail control: with an exit's keep check cut, --keep-on-conflict hands a kept tree back at 0 ==="
+
+# The rows above pin exit 76 for a dirty tree and for one at its published
+# head, each without the base. The defect planted is that exit's call of the
+# check, on a private package copy: the tree comes back at 0 with no notice,
+# which a caller reading the exit takes for a rebased tree.
+keep_control() { # LABEL FIXTURE CHECK_CALL
+  local label="$1" fixture="$2" call="$3" mutant got
+  # shellcheck disable=SC2086
+  build "keep-$label" $fixture
+  mkdir -p "$ROOT/pkg"
+  cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+  mutant="$ROOT/pkg/worktree/scripts/worktree"
+  assert_eq "$(F="$call" perl -0ne 'print scalar(() = /\Q$ENV{F}\E/g)' -- "$mutant")" "1" "$label control finds its exit's check"
+  F="$call" perl -0pi -e '$t = $ENV{F}; $t =~ s/report_reused_worktree$/report_created_worktree; exit 0/; s/\Q$ENV{F}\E/$t/' -- "$mutant"
+  assert_eq "$(F="$call" perl -0ne 'print scalar(() = /\Q$ENV{F}\E/g)' -- "$mutant")" "0" "$label control cuts it only in its private copy"
+  got="$(WORKTREE_SCRIPT="$mutant" run "create topic --reuse --keep-on-conflict")"
+  assert_eq "${got%% out=*}" "rc=0" "$label control: the mutant hands the kept tree back at 0"
+  assert_eq "$(message_records <"$ROOT/err" | grep -c '^worktree-reuse-unrebased: ' || true)" "0" \
+    "$label control: the mutant names no unrebased tree"
+}
+keep_control dirty "plain dirty-other" 'skipped the rebase." >&2
+        report_reused_worktree'
+keep_control published clean 'setup_app_worktree "$WT_PATH" true true
+      report_reused_worktree'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -49,7 +49,7 @@ When an execution policy rejects top-level `git rebase` porcelain, never retry t
 
 A branch is rebased through `worktree push`, `create --restack`, or `create --reuse`. After a bare `git rebase`, `worktree push` republishes with a pinned lease when every remote commit has one exact local match in changed paths, modes and complete before/after file contents. A base update in the same file, missing work or an unproved comparison keeps the refusal and the fetch-and-integrate route. Use this section's replay fallback when execution policy blocks rebase.
 
-`create --reuse --keep-on-conflict` aborts a conflicting rebase and hands the tree back on its pre-rebase head with exit 76, for a relaunch that must start the session before the restack; a caller that needs the base omits the flag and keeps the failure (`create --help`).
+`create --reuse --keep-on-conflict` aborts a conflicting rebase and hands the tree back on its pre-rebase head, and exits 76 for every tree it hands back whose head does not contain the base, for a relaunch that must start the session before the restack; a caller that needs the base omits the flag and keeps the failure (`create --help`).
 
 A branch whose pull request the merge lookup confirms merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit. When the lookup cannot answer, `create` records `worktree-merge-unverified` and rebases as for a branch in flight (`merged --help`).
 
