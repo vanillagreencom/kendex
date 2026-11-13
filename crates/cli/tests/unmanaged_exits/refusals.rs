@@ -228,7 +228,7 @@ fn an_exit_read_in_the_global_scope_says_so() {
     fs::write(
         global.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )

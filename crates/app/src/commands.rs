@@ -127,7 +127,7 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         std::fs::write(
             project.join("kendex.toml"),
-            "schema = 7\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.gh]\nsource = \"kendex\"\n",
+            "schema = 8\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[skills.gh]\nsource = \"kendex\"\n",
         )
         .unwrap();
         let scope = Scope::Project {

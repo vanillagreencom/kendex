@@ -134,7 +134,36 @@ pub(super) fn validate_items(table: &Table, findings: &mut Vec<Finding>) {
             }
             validate_rev(kind_table, name, decl, &location, &repo_sources, findings);
             validate_env(kind_table, decl, &location, findings);
+            validate_links(kind_table, decl, &location, findings);
         }
+    }
+}
+
+/// `links` records how a writer stored a scope-owned skill's tree, so it
+/// reads only on a skill whose source is that store, and only in the one
+/// spelling the writers put down.
+fn validate_links(kind_table: &str, decl: &Table, location: &str, findings: &mut Vec<Finding>) {
+    let Some(links) = decl.get("links") else {
+        return;
+    };
+    let scope_owned = matches!(
+        decl.get("source").and_then(Value::as_str),
+        Some(crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME)
+    );
+    if kind_table != "skills" || !scope_owned {
+        findings.push(Finding {
+            location: location.to_owned(),
+            problem: "links says how a local or in-place skill's tree was stored and is read nowhere else".into(),
+            fix: "remove links; kendex writes it on the skills it stores".into(),
+        });
+        return;
+    }
+    if links.as_str() != Some("shared-tree") {
+        findings.push(Finding {
+            location: location.to_owned(),
+            problem: "links must be \"shared-tree\"".into(),
+            fix: "remove links to keep the tree's bytes as delivered, or write links = \"shared-tree\"".into(),
+        });
     }
 }
 

@@ -18,7 +18,7 @@ fn failed_comparison(home: &Path, fetched_ago: u64, superseded: bool) -> PathBuf
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
+        "schema = 8\n\n[sources.cat]\nrepo = \"owner/repo\"\n",
     )
     .unwrap();
     let env = Env::host_rooted(home);

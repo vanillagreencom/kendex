@@ -280,7 +280,12 @@ pub fn adopt(
     let move_plan =
         engine::adopt::adopt(env, scope, kind, name, harnesses).map_err(|e| e.to_string())?;
     apply::execute(env, &move_plan).map_err(|e| e.to_string())?;
-    Ok(settle_after(env, scope))
+    // The links the move kept are its own report: the settle that follows
+    // reads the stored tree and cannot tell a kept link from a converted
+    // one.
+    let mut settled = settle_after(env, scope);
+    settled.warnings.extend(move_plan.warnings);
+    Ok(settled)
 }
 
 /// Install what the manifest declares over the files already sitting where

@@ -60,7 +60,7 @@ fn check_reads_every_scope_minimum_before_settling_any_record() {
             let path = kendex_core::manifest::manifest_path(&env, scope);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, format!(
-                "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n",
+                "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n",
                 source_path(&catalog))).unwrap();
             let plan = plan_apply(&env, scope, &PlanOptions::current()).unwrap();
             apply::execute(&env, &plan.plan).unwrap();
@@ -153,7 +153,7 @@ fn check_resolves_catalogs_only_for_settlement_with_time_remaining() {
         let manifest_path = kendex_core::manifest::manifest_path(&env, &scope);
         fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
         fs::write(&manifest_path, format!(
-            "schema = 7\n[sources.cat]\nrepo = '{repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n")).unwrap();
+            "schema = 8\n[sources.cat]\nrepo = '{repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.scout]\nsource = 'cat'\n")).unwrap();
         let manifest = kendex_core::manifest::load_current(&manifest_path)
             .unwrap()
             .unwrap();
@@ -361,7 +361,7 @@ fn compatible_minima_render_the_same_bytes_and_newer_minima_write_nothing() {
                 "[skills.gated]"
             };
             let declared = format!(
-                "schema = 7\n{sources}[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'good'\n{gated}\nsource = 'gated'\n"
+                "schema = 8\n{sources}[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'good'\n{gated}\nsource = 'gated'\n"
             );
             fs::write(project.join("kendex.toml"), &declared).unwrap();
             let scope = Scope::Project {
@@ -492,7 +492,7 @@ fn removal_world(row: &RemovalRow) -> (tempfile::TempDir, Env, Scope, std::path:
     git(&catalog, &["commit", "-q", "-m", "compatible tip"]);
     let repo = format!("file://{}", catalog.display());
     fs::write(project.join("kendex.toml"), format!(
-        "schema = 7\n[sources.cat]\nrepo = '{repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'cat'\n{}",
+        "schema = 8\n[sources.cat]\nrepo = '{repo}'\nrev = 'main'\n[install]\nharnesses = ['claude']\nmethod = 'copy'\n[skills.good]\nsource = 'cat'\n{}",
         row.declarations)).unwrap();
     let scope = Scope::Project {
         root: project.clone(),

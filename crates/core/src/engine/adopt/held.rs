@@ -12,8 +12,8 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::{HarnessId, ItemKind, Scope};
 
-use super::capture::{Seen, look};
-use super::{already_managed, destination, hooks, supports, usable};
+use super::capture::{Conversion, Seen, interpret, look};
+use super::{already_managed, destination, hooks, inplace, supports, usable};
 
 // Where a tool reads an item, and which spelling of the toggled pair is
 // the one on disk. The question a surface asks and the place adoption
@@ -123,6 +123,9 @@ pub(super) struct Held {
     pub(super) local_item: PathBuf,
     pub(super) positions: Vec<(HarnessId, PathBuf)>,
     pub(super) seen: Seen,
+    /// A skill's tree in the reading its store keeps, where the tools hold
+    /// one.
+    pub(super) conversion: Option<Conversion>,
 }
 
 /// What the named tools hold where this item goes, read through the
@@ -212,10 +215,20 @@ pub(super) fn read_positions(
     }
 
     let seen = look(env, scope, kind, name, &positions, &local_item)?;
+    let conversion = match kind {
+        ItemKind::Skill => interpret(
+            name,
+            &seen,
+            &crate::render::skill::links::shared_tree(env, scope, name),
+            inplace::home(scope, kind, name).is_some(),
+        )?,
+        _ => None,
+    };
     Ok(Held {
         local_item,
         positions,
         seen,
+        conversion,
     })
 }
 

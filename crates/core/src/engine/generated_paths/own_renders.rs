@@ -332,6 +332,28 @@ fn the_committed_renders_are_the_bytes_this_checkout_renders() {
     }
 }
 
+/// This repository's skills link only inside their own trees, to sibling
+/// packages and to project files the render can reach, so its plan keeps
+/// no link unrepresentable.
+#[test]
+fn the_committed_renders_keep_no_link_unrepresentable() {
+    let root = crate::test_util::checkout_root();
+    let env = Env::detect().expect("the host environment reads");
+    let (_tmp, copy) = committed_copy(&root).expect("the checkout copies");
+    let declared = declaration(&env, &copy).expect("the declaration reads");
+    let lock = record(&env, &copy).expect("the record reads");
+    let scope = Scope::Project { root: copy };
+    let report = plan_scope(&env, &scope, &declared, &lock, &PlanOptions::current())
+        .expect("the checkout plans");
+    let kept: Vec<&str> = report
+        .warnings
+        .iter()
+        .filter(|warning| warning.message.starts_with("agent-link-unrepresentable:"))
+        .map(|warning| warning.message.as_str())
+        .collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
 /// A refresh may hold an edited copy that its source no longer installs,
 /// so comparing desired render bytes alone cannot prove record agreement.
 fn refresh_and_verify(env: &Env, root: &Path) -> Result<Standing, String> {
@@ -455,7 +477,7 @@ impl RefreshFixture {
 
     fn declare(&self, source: &str) {
         std::fs::write(self.project.join("kendex.toml"), format!(
-        "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
+        "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"codex\"]\n[hooks.probe]\nsource = \"cat\"\n",
         source,
     )).expect("the declaration writes");
     }

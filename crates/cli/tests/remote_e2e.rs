@@ -194,7 +194,7 @@ fn refresh_uses_the_catalog_tag_without_changing_the_declared_revision() {
         let head_commit = git_stdout(&upstream, &["rev-parse", "HEAD"]);
         assert_ne!(tag_commit, head_commit, "{case}: fixture history");
         let manifest_path = project.join("kendex.toml");
-        let manifest = b"schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n";
+        let manifest = b"schema = 8\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n";
         fs::write(&manifest_path, manifest).unwrap();
         let args = ["refresh", "--scope", "project", "--yes", "--leave"];
         let output = match revision {
@@ -255,7 +255,7 @@ fn refresh_waits_for_the_download_another_process_is_finishing() {
     let project = home.join("proj");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+        "schema = 8\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
     )
     .unwrap();
     let env = kendex_core::env::Env::host_rooted(&home)
@@ -300,7 +300,7 @@ fn source_refresh_in_use_skips_an_unused_unreachable_source_and_writes_no_projec
     let project = home.join("proj");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.gone]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+        "schema = 8\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.gone]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
     )
     .unwrap();
     let installed = kendex(
@@ -384,7 +384,7 @@ fn recorded_on_a_warm_machine(home: &Path) -> (PathBuf, String) {
     git(&project, &["init", "--quiet", "-b", "main"]);
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.spare]\nrepo = \"owner/spare\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+        "schema = 8\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.spare]\nrepo = \"owner/spare\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
     )
     .unwrap();
     for args in [
@@ -935,7 +935,7 @@ fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
     fs::create_dir_all(personal.parent().unwrap()).unwrap();
     fs::write(
         &personal,
-        "schema = 7\n\n[sources.tools]\nrepo = \"other/tools\"\n",
+        "schema = 8\n\n[sources.tools]\nrepo = \"other/tools\"\n",
     )
     .unwrap();
 

@@ -77,6 +77,7 @@ pub(super) fn relocate_ops(
     held: &[PathBuf],
     links: &[(PathBuf, PathBuf)],
     home: &Path,
+    conversion: Option<&super::Conversion>,
 ) -> Result<Vec<PlannedOp>> {
     // A skill is a directory holding its marker — that is what the shared
     // tree has to end up with, and what a later pass reads back to find the
@@ -128,6 +129,28 @@ pub(super) fn relocate_ops(
                 },
             });
         }
+        // The links that read differently from the home are converted
+        // where the tree physically stands, before it moves: an edit after
+        // the move would land through a link at the home the plan clears.
+        // Each edit binds to the bytes it replaces, and the move to the
+        // tree as those edits leave it, so modes, empty directories and
+        // link files still ride the rename.
+        let replacements = converted_files(from, conversion)?;
+        for (rel, bytes) in &replacements {
+            let path = from.join(rel);
+            ops.push(PlannedOp {
+                description: format!(
+                    "convert the links in {name}'s {} to read from the shared .agents tree",
+                    crate::paths::slashed(rel)
+                )
+                .into(),
+                op: Op::WriteFile {
+                    pre: Pre::observed(&path)?,
+                    path,
+                    bytes: bytes.clone(),
+                },
+            });
+        }
         // A move, not a copy: the entries the plan showed are the entries
         // that land, bound as they sit — `hash_tree` follows links, so a
         // directory swapped for a link to the same bytes between plan and
@@ -135,7 +158,7 @@ pub(super) fn relocate_ops(
         ops.push(PlannedOp {
             description: format!("move {name} into the shared .agents tree").into(),
             op: Op::Rename {
-                from_pre: Pre::tree_as_is(from)?,
+                from_pre: Pre::tree_as_is_after(from, &replacements)?,
                 to_pre: Pre::Absent,
                 from: from.clone(),
                 to: home.to_path_buf(),
@@ -159,6 +182,26 @@ pub(super) fn relocate_ops(
         });
     }
     Ok(ops)
+}
+
+/// The regular files of the tree at `from` whose converted bytes differ
+/// from what they hold, with those bytes.
+fn converted_files(
+    from: &Path,
+    conversion: Option<&super::Conversion>,
+) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    let Some(conversion) = conversion else {
+        return Ok(Vec::new());
+    };
+    let mut changed = Vec::new();
+    for (rel, bytes) in &conversion.files {
+        let path = from.join(rel);
+        let held = std::fs::read(&path).map_err(|e| CoreError::io(&path, e))?;
+        if &held != bytes {
+            changed.push((rel.clone(), bytes.clone()));
+        }
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -187,7 +230,8 @@ mod tests {
         let home = tmp.path().join(".agents/skills/release");
         std::fs::create_dir_all(&home).expect("home");
         std::fs::write(home.join(MARKER), "---\nname: release\n---\n").expect("marker");
-        let ops = relocate_ops("release", std::slice::from_ref(&home), &[], &home).expect("ops");
+        let ops =
+            relocate_ops("release", std::slice::from_ref(&home), &[], &home, None).expect("ops");
         assert!(ops.is_empty(), "{}", ops.len());
     }
 
@@ -201,6 +245,6 @@ mod tests {
         std::fs::create_dir_all(held.parent().expect("parent")).expect("dirs");
         std::fs::write(&held, "not a folder").expect("file");
         let home = tmp.path().join(".agents/skills/release");
-        assert!(relocate_ops("release", std::slice::from_ref(&held), &[], &home).is_err());
+        assert!(relocate_ops("release", std::slice::from_ref(&held), &[], &home, None).is_err());
     }
 }

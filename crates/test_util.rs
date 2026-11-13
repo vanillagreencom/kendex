@@ -224,7 +224,7 @@ pub fn agent_manifest(catalog: &Path, agent: Option<&str>) -> String {
         format!("\n[agents.{name}]\nsource = \"cat\"\n")
     });
     format!(
-        "schema = 7\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{source}\n{declarations}"
+        "schema = 8\n[install]\nharnesses = [\"claude\"]\n[sources.cat]\n{source}\n{declarations}"
     )
 }
 
@@ -515,7 +515,7 @@ pub mod unsubscribe {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 7\n\n[sources.cat]\n{}\n[sources.other]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
+                "schema = 8\n\n[sources.cat]\n{}\n[sources.other]\nrepo = \"file://{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.core]\nsource = \"cat\"\n[bundles.also]\nsource = \"other\"\n",
                 source_path(&cat),
                 other.display()
             ),

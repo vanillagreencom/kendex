@@ -126,7 +126,7 @@ fn seeded() -> (tempfile::TempDir, Env, Scope) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[skills.gh]\nsource = \"cat\"\n",
             source_path(&catalog)
         ),
     )
@@ -663,7 +663,7 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
     skill(&project.join(".agents/skills"), "here", "in place bytes");
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n[skills.here]\nsource = \"in-place\"\n",
+        "schema = 8\n[skills.here]\nsource = \"in-place\"\n",
     )
     .unwrap();
     let project = project.canonicalize().unwrap();
@@ -700,4 +700,115 @@ fn an_in_place_skill_is_an_own_candidate_read_from_its_tree() {
     let candidates = inventory(&env, &[scope]).unwrap();
     let here = find(&candidates, "here");
     assert!(here.origins.iter().any(|o| !o.hash.is_empty()));
+}
+
+/// A skill imported into a catalog reads its links from the catalog's item
+/// directory: a target inside the catalog is respelled to reach it from
+/// there, and one outside keeps its bytes and is reported, never written
+/// into the catalog as a path on this machine.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_import_reads_links_into_the_destination_catalog() {
+    let authored = "../../../../market/memory/x.md";
+    // (row, target catalog under home, converted spelling or None if kept)
+    let rows = [
+        ("target inside", "market", Some("../../memory/x.md")),
+        ("nested catalog", "market/vendor", None),
+        ("outside catalog", "elsewhere", None),
+    ];
+    for (row, catalog, converted) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        // A Pi skill, one level deeper than a catalog's item.
+        raw_skill(
+            &home.join(".pi/agent/skills"),
+            "ship",
+            &format!("---\nname: ship\ndescription: ship\n---\n[m]({authored})\n"),
+        );
+        fs::create_dir_all(home.join("market/memory")).unwrap();
+        fs::write(home.join("market/memory/x.md"), "Memory.\n").unwrap();
+        let target = home.join(catalog);
+        fs::create_dir_all(&target).unwrap();
+        crate::author::registry::register(&env, &target).unwrap();
+        let scopes = [Scope::Global];
+        let candidates = inventory(&env, &scopes).unwrap();
+        let ship = find(&candidates, "ship");
+        let outcome = apply(&env, &scopes, &target, &[selection(ship, false)]).unwrap();
+        let written = fs::read_to_string(target.join("skills/ship/SKILL.md")).unwrap();
+        let link = converted.unwrap_or(authored);
+        assert!(
+            written.contains(&format!("[m]({link})")),
+            "{row}: {written}"
+        );
+        let reported: Vec<&str> = outcome
+            .warnings
+            .iter()
+            .map(|warning| warning.message.as_str())
+            .collect();
+        match converted {
+            None => assert_eq!(
+                reported,
+                [format!("skill-link-kept: SKILL.md: {authored}")],
+                "{row}"
+            ),
+            Some(link) => {
+                assert!(reported.is_empty(), "{row}: {reported:?}");
+                assert_eq!(
+                    fs::canonicalize(target.join("skills/ship").join(link)).unwrap(),
+                    fs::canonicalize(home.join("market/memory/x.md")).unwrap(),
+                    "{row}"
+                );
+            }
+        }
+    }
+}
+
+/// The same bytes seen in two places are one selectable origin, so they
+/// are imported once only when both places read their links as the same
+/// files; where they read different files the import refuses, naming both.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn equal_bytes_that_read_different_files_refuse_by_name() {
+    for (row, link, refuses) in [
+        ("exiting link", "[r](../../../market/a.md)", true),
+        ("internal link", "[r](reference.md)", false),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::test_util::rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("app");
+        let text = format!("---\nname: x\ndescription: x\n---\n{link}\n");
+        // The project copy reads `app/market/a.md`, the personal one
+        // `market/a.md`.
+        raw_skill(&project.join(".claude/skills"), "x", &text);
+        raw_skill(&home.join(".claude/skills"), "x", &text);
+        fs::write(project.join("kendex.toml"), "schema = 8\n").unwrap();
+        let scopes = [
+            Scope::Project {
+                root: project.canonicalize().unwrap(),
+            },
+            Scope::Global,
+        ];
+        let candidates = inventory(&env, &scopes).unwrap();
+        let x = find(&candidates, "x");
+        assert_eq!(x.origins.len(), 1, "{row}: {:?}", x.origins);
+        let target = home.join("market");
+        fs::create_dir_all(&target).unwrap();
+        crate::author::registry::register(&env, &target).unwrap();
+        let imported = apply(&env, &scopes, &target, &[selection(x, false)]);
+        match (imported, refuses) {
+            (Err(CoreError::Authoring { message }), true) => {
+                assert!(
+                    message.contains("app/.claude/skills/x")
+                        && message.contains(&crate::paths::slashed(&home.join(".claude/skills/x"))),
+                    "{row}: {message}"
+                );
+                assert!(!target.join("skills/x").exists(), "{row}");
+            }
+            (Ok(outcome), false) => assert_eq!(outcome.written.len(), 1, "{row}"),
+            (Ok(_), true) => panic!("{row}: two readings were imported as one"),
+            (Err(error), _) => panic!("{row}: {error}"),
+        }
+    }
 }

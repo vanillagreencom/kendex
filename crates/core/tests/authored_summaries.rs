@@ -81,7 +81,7 @@ fn fixture_for(harnesses: &[&str], declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{installed}]\nmethod = \"copy\"\n\n{declarations}",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [{installed}]\nmethod = \"copy\"\n\n{declarations}",
             source_path(&catalog)
         ),
     )
@@ -476,7 +476,7 @@ fn the_reserved_local_source_reads_each_scopes_own_capture() {
     fs::create_dir_all(global_manifest.parent().unwrap()).unwrap();
     fs::write(
         &global_manifest,
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"local\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"local\"\n",
     )
     .unwrap();
 
@@ -525,7 +525,7 @@ fn a_row_reads_the_version_installed_not_the_one_upstream_moved_to() {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"up\"\n",
+        "schema = 8\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[agents.notes]\nsource = \"up\"\n",
     )
     .unwrap();
     let scope = Scope::Project {
@@ -578,7 +578,7 @@ fn every_reader_of_a_shared_copy_reads_the_version_its_writer_installed() {
     fs::create_dir_all(&project).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"up\"\n",
+        "schema = 8\n\n[sources.up]\nrepo = \"team/tools\"\n\n[install]\nharnesses = [\"codex\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"up\"\n",
     )
     .unwrap();
     let scope = Scope::Project {
@@ -726,7 +726,7 @@ fn a_rebound_declaration_does_not_relabel_what_is_installed() {
         write_gh(&other, "A different catalog's idea of what gh is.");
         let manifest = |declarations: &str| {
             format!(
-                "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{}",
+                "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{}",
                 declarations
                     .replace("{up}", &source_path(&up))
                     .replace("{other}", &source_path(&other))
@@ -858,7 +858,7 @@ fn a_library_row_carries_the_tags_its_declaration_writes() {
             fs::write(
                 project.join("kendex.toml"),
                 format!(
-                    "schema = 7\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
+                    "schema = 8\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[sources.up]\n{}\n\n[skills.gh]\nsource = \"up\"\n",
                     source_path(&catalog)
                 ),
             )

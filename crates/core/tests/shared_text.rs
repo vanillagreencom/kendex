@@ -52,7 +52,7 @@ fn fixture(instructions: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\
              [agents.generalist]\nsource = \"cat\"\n\
              [skills.dev]\nsource = \"cat\"\n[skills.orch]\nsource = \"cat\"\n[skills.github]\nsource = \"cat\"\n\
              {instructions}\n[sources.cat]\n{}\n",

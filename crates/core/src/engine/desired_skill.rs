@@ -241,6 +241,12 @@ pub(super) fn desired_skill(ctx: &ItemCtx, state: &mut DesiredState) -> Result<(
     Ok(())
 }
 
+/// Each group's rendering and the physical directory it lands at. A tree's
+/// links are converted for the directory it lands in, so the place is
+/// decided first: a copy delivery lands at the group's own directory, and
+/// a group whose rendering at the shared tree is the owner's deduplicates
+/// onto it; any other lands at its own surface. Each variant is then
+/// rendered for its place, the probes' warnings left out of the plan.
 fn placement_variants(
     ctx: &ItemCtx,
     state: &mut DesiredState,
@@ -537,67 +543,61 @@ fn render_variant(
     })
 }
 
+/// The tree's files as they read from `destination`, the physical
+/// directory this variant lands at: converted from the item's link reading
+/// where it has one, carried as delivered where it does not, then given the
+/// project's instructions, the agent-name labels and the bounded
+/// description every copy carries.
 fn rebase_for_surface(
     ctx: &ItemCtx,
     state: &mut DesiredState,
     destination: &std::path::Path,
     files: Files,
 ) -> Files {
-    let files = {
-        let captured = ctx
-            .manifest
-            .forks
-            .get(&ItemKind::Skill)
-            .is_some_and(|forks| forks.contains_key(ctx.name));
-        let local = matches!(
-            ctx.decl.source.as_str(),
-            crate::manifest::LOCAL_SOURCE_NAME | crate::manifest::INPLACE_SOURCE_NAME
-        ) || ctx
-            .manifest
-            .sources
-            .get(&ctx.decl.source)
-            .is_some_and(|source| source.path.is_some());
-        let root = match ctx.scope {
-            Scope::Project { root } => root,
-            Scope::Global => &ctx.env.home,
-        };
-        let coordinates = if captured {
-            None
-        } else if matches!(ctx.scope, Scope::Project { .. })
-            && local
-            && ctx.sealed.root().starts_with(root)
-        {
-            Some(crate::render::skill::SkillCoordinates {
-                directory: ctx.item_path.to_path_buf(),
-                root: root.clone(),
-            })
-        } else if matches!(ctx.scope, Scope::Global)
-            && ctx.decl.source == crate::manifest::LOCAL_SOURCE_NAME
-        {
-            Some(crate::render::skill::SkillCoordinates {
-                directory: ctx.item_path.to_path_buf(),
-                root: root.ancestors().last().unwrap_or(root).to_path_buf(),
-            })
-        } else {
-            None
-        };
-        {
-            let (files, warnings) = crate::render::skill::Located::new(files, coordinates)
-                .render_at(
-                    destination,
-                    effective_method(ctx.decl, ctx.manifest) != Method::Copy,
-                    Some((ctx.sealed, ctx.item_path)),
-                );
-            state
-                .warnings
-                .extend(warnings.into_iter().map(|warning| super::ItemWarning {
+    use crate::render::skill::links;
+    let files = match links::declared(
+        ctx.env,
+        ctx.scope,
+        ctx.manifest,
+        ctx.decl,
+        ctx.name,
+        ctx.item_path,
+        ctx.sealed,
+    ) {
+        links::Reading::AsDelivered | links::Reading::Opaque => files,
+        links::Reading::Fixed { position, siblings } => {
+            let rendered = links::Position {
+                directory: destination.to_path_buf(),
+                bound: position.bound.clone(),
+            };
+            let (files, kept) = links::convert(
+                links::Origin {
+                    directory: position.directory,
+                    files,
+                    siblings,
+                },
+                &rendered,
+            );
+            // The source itself is never rendered, so it raises nothing.
+            let identity = (ItemKind::Skill, ctx.decl.source.as_str(), ctx.name);
+            let in_place =
+                in_place_source(ctx.env, ctx.scope, identity).as_deref() == Some(destination);
+            for link in kept.into_iter().filter(|_| !in_place) {
+                let warning = crate::render::agent::unrepresentable_link(&link.target);
+                let warning = super::ItemWarning {
                     kind: ItemKind::Skill,
                     name: ctx.name.to_owned(),
                     harness: None,
                     message: warning.message,
                     remediation: warning.remediation,
                     detail: None,
-                }));
+                };
+                // Every variant converts the same links; one warning names
+                // each, however many places the tree lands.
+                if !state.warnings.contains(&warning) {
+                    state.warnings.push(warning);
+                }
+            }
             files
         }
     };

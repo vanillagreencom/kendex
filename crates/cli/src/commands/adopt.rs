@@ -55,6 +55,10 @@ pub fn run(
         say(&format!("  - {}", op.line()));
     }
     kendex_core::apply::execute(env, &move_plan)?;
+    crate::ui::stderr(&super::engine_common::warning_lines(
+        &crate::ui::style(),
+        &move_plan.warnings,
+    ));
 
     // Second transaction renders the managed replacement — with its score
     // beside the write, like every other write path.

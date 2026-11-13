@@ -79,7 +79,11 @@ pub fn package_fork(
     let env = env()?;
     let plan = engine::fork::fork(&env, &scope, kind, &name, harness).map_err(|e| e.to_string())?;
     apply::execute(&env, &plan).map_err(|e| e.to_string())?;
-    Ok(settle_after(&env, &scope))
+    // The links the capture kept are its own report, which the settle
+    // cannot read back off the stored tree.
+    let mut settled = settle_after(&env, &scope);
+    settled.warnings.extend(plan.warnings);
+    Ok(settled)
 }
 
 /// Why installing beside did not finish, by phase: a refusal wrote
@@ -121,7 +125,10 @@ pub fn package_fork_beside(
     // The fork has landed. `Recorded` already says so to the window, which
     // closes the name dialog and shows what landed beside the failure; it
     // reads no view off this answer.
-    settle_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })
+    let mut settled =
+        settle_scope(&env, &scope).map_err(|message| ForkBesideError::Recorded { message })?;
+    settled.warnings.extend(plan.warnings);
+    Ok(settled)
 }
 
 /// Discard one package's edits and re-render it — the door back to "the

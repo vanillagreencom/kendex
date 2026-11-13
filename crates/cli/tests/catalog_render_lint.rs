@@ -129,7 +129,7 @@ fn install_whole_catalog(home: &Path, project: &Path) {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[sources.catalog]\n{}\n",
+            "schema = 8\n[sources.catalog]\n{}\n",
             test_util::source_path(&catalog)
         ),
     )

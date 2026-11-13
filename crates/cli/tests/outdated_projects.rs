@@ -59,7 +59,7 @@ fn a_terminal_notice_follows_success_and_the_latest_disk_schema() {
     }
     fs::create_dir_all(env.global_manifest_file().parent().expect("global parent"))
         .expect("global directory");
-    fs::write(env.global_manifest_file(), "schema = 8\n").expect("unreadable global schema");
+    fs::write(env.global_manifest_file(), "schema = 9\n").expect("unreadable global schema");
     let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
     command
         .args(["check", "--scope", "global", "--report-only", "--quiet"])
@@ -73,7 +73,7 @@ fn a_terminal_notice_follows_success_and_the_latest_disk_schema() {
     assert!(!output.status.success());
     assert!(!String::from_utf8_lossy(&output.stderr).contains("older kendex.toml"));
     fs::remove_file(env.global_manifest_file()).expect("remove refused global fixture");
-    fs::write(&manifest, "schema = 7\n").expect("upgraded manifest");
+    fs::write(&manifest, "schema = 8\n").expect("upgraded manifest");
     let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
     command
         .arg("list")

@@ -138,6 +138,7 @@ pub(crate) fn member_decl(bundle: &ItemDecl) -> ItemDecl {
         rev: bundle.rev.clone(),
         enabled: bundle.enabled,
         env: None,
+        links: None,
     }
 }
 

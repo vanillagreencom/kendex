@@ -651,7 +651,7 @@ fn local_command_source_fixture(home: &Path) -> (PathBuf, PathBuf) {
     fs::create_dir_all(project.join(".claude")).unwrap();
     fs::write(
         project.join("kendex.toml"),
-        "schema = 7\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.external]\nsource = \"local\"\n",
+        "schema = 8\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n[skills.external]\nsource = \"local\"\n",
     )
     .unwrap();
     let output = run(

@@ -533,7 +533,7 @@ export const commands = {
 	mineCreate: (request: CreateRequest) => typedError<MineRow, string>(__TAURI_INVOKE("mine_create", { request })),
 	mineForget: (path: string) => typedError<null, string>(__TAURI_INVOKE("mine_forget", { path })),
 	mineImportInventory: () => typedError<ImportCandidate[], string>(__TAURI_INVOKE("mine_import_inventory")),
-	mineImportApply: (target: string, selections: ImportSelection[]) => typedError<ImportOutcome, string>(__TAURI_INVOKE("mine_import_apply", { target, selections })),
+	mineImportApply: (target: string, selections: ImportSelection[]) => typedError<ImportOutcome_Serialize, string>(__TAURI_INVOKE("mine_import_apply", { target, selections })),
 	mineAcceptManifest: (path: string, name: string, description: string, authorName: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_manifest", { path, name, description, authorName })),
 	mineAcceptWorkflow: (path: string) => typedError<MineRow, string>(__TAURI_INVOKE("mine_accept_workflow", { path })),
 	/**
@@ -665,7 +665,11 @@ export const commands = {
 	 *  saved and the project is not touched.
 	 */
 	templateDraft: (project: string) => typedError<Draft_Serialize, string>(__TAURI_INVOKE("template_draft", { project })),
-	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<Template_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
+	/**
+	 *  The saved template, with the links its copies kept as written beside
+	 *  it: the save's own report, which nothing read later can give.
+	 */
+	templateCreateFromProject: (project: string, chosen: Chosen) => typedError<SavedTemplate_Serialize, string>(__TAURI_INVOKE("template_create_from_project", { project, chosen })),
 	/**
 	 *  Save a template from packages picked in a marketplace. Every member is
 	 *  a marketplace identity; no bytes are copied.
@@ -680,7 +684,7 @@ export const commands = {
 	 *  repositories its marketplace members come from with the version each
 	 *  resolves to, the copies it owns, and the members nothing can reach.
 	 */
-	templateResolve: (name: string) => typedError<Resolution, string>(__TAURI_INVOKE("template_resolve", { name })),
+	templateResolve: (name: string) => typedError<Resolution_Serialize, string>(__TAURI_INVOKE("template_resolve", { name })),
 	templateInstall: (name: string, destination: Scope, harnesses: HarnessId[] | null, method: "symlink" | "copy" | null) => typedError<TemplateInstall, string>(__TAURI_INVOKE("template_install", { name, destination, harnesses, method })),
 	/**  The files a template owns, for the tree that inspects its copies. */
 	templateFiles: (name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("template_files", { name })),
@@ -722,7 +726,7 @@ export const events = {
 /* Constants */
 export const LEGAL = {"version":2,"termsUrl":"https://kendex.ai/legal/terms","privacyUrl":"https://kendex.ai/legal/privacy"} as const;
 
-export const MANIFEST_SCHEMA = 7 as const;
+export const MANIFEST_SCHEMA = 8 as const;
 
 export const PACKAGE_CHECK_HARNESSES = ["claude","pi"] as const;
 
@@ -2643,10 +2647,30 @@ export type ImportCandidate = {
 };
 
 /**  What one apply wrote, for the wizard's summary line. */
-export type ImportOutcome = {
+export type ImportOutcome = ImportOutcome_Serialize | ImportOutcome_Deserialize;
+
+/**  What one apply wrote, for the wizard's summary line. */
+export type ImportOutcome_Deserialize = {
 	written: string[],
 	/**  Selections whose exact bytes were already at the destination. */
 	alreadyPresent: string[],
+	/**
+	 *  The links a copied skill kept as written because no spelling from
+	 *  the catalog reaches their targets inside it.
+	 */
+	warnings?: ItemWarning_Deserialize[],
+};
+
+/**  What one apply wrote, for the wizard's summary line. */
+export type ImportOutcome_Serialize = {
+	written: string[],
+	/**  Selections whose exact bytes were already at the destination. */
+	alreadyPresent: string[],
+	/**
+	 *  The links a copied skill kept as written because no spelling from
+	 *  the catalog reaches their targets inside it.
+	 */
+	warnings?: ItemWarning_Serialize[],
 };
 
 /**  What the wizard chose for one candidate. */
@@ -2874,6 +2898,14 @@ export type ItemDecl_Deserialize = {
 	 *  alone; validation refuses it on every other table.
 	 */
 	env?: { [key in string]: string } | null,
+	/**
+	 *  Where a scope-owned skill's stored relative links are read from.
+	 *  Written by the kendex writers that convert links as they store a
+	 *  tree; absent, the bytes are carried as delivered. Read on a
+	 *  `[skills.<name>]` table whose source is `local` or `in-place` alone;
+	 *  validation refuses it everywhere else.
+	 */
+	links?: SkillLinks | null,
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
@@ -2896,6 +2928,14 @@ export type ItemDecl_Serialize = {
 	 *  alone; validation refuses it on every other table.
 	 */
 	env?: { [key in string]: string } | null,
+	/**
+	 *  Where a scope-owned skill's stored relative links are read from.
+	 *  Written by the kendex writers that convert links as they store a
+	 *  tree; absent, the bytes are carried as delivered. Read on a
+	 *  `[skills.<name>]` table whose source is `local` or `in-place` alone;
+	 *  validation refuses it everywhere else.
+	 */
+	links?: SkillLinks | null,
 };
 
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension" | 
@@ -3421,6 +3461,24 @@ from?: string | null;
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
  */
+notices?: string[] }) & { repo?: never; rev?: never } | 
+/**
+ *  A skill copy whose relative links were converted into the saving
+ *  project's shared-tree reading, so it installs tagged
+ *  `links = "shared-tree"` and reads relative to whichever scope
+ *  installs it. Its own variant rather than a field on [`Self::Copy`],
+ *  so a kendex that predates it refuses the index before its writer
+ *  could save it back without the distinction.
+ */
+({ held: "shared-copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**  The marketplace the copied bytes came from, as for a copy. */
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, as for
+ *  a copy.
+ */
 notices?: string[] }) & { repo?: never; rev?: never };
 
 /**  Where a member's content comes from when the template is installed. */
@@ -3461,6 +3519,24 @@ from?: string | null;
  *  union over the copies the template holds: taking a copy out
  *  takes its terms with it, and a notice no copy requires cannot
  *  be shown or written into anybody's project.
+ */
+notices?: string[] }) & { repo?: never; rev?: never } | 
+/**
+ *  A skill copy whose relative links were converted into the saving
+ *  project's shared-tree reading, so it installs tagged
+ *  `links = "shared-tree"` and reads relative to whichever scope
+ *  installs it. Its own variant rather than a field on [`Self::Copy`],
+ *  so a kendex that predates it refuses the index before its writer
+ *  could save it back without the distinction.
+ */
+({ held: "shared-copy"; 
+/**  The copy's path inside the template's store, slash-separated. */
+copy: string; 
+/**  The marketplace the copied bytes came from, as for a copy. */
+from?: string | null; 
+/**
+ *  The licence and attribution files these bytes came under, as for
+ *  a copy.
  */
 notices?: string[] }) & { repo?: never; rev?: never };
 
@@ -4584,14 +4660,27 @@ export type ReportRouteView = {
 };
 
 /**  What a template installs, as it stands on this machine now. */
-export type Resolution = {
+export type Resolution = Resolution_Serialize | Resolution_Deserialize;
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Deserialize = {
 	groups: ResolvedGroup[],
-	copies: ResolvedCopy[],
+	copies: ResolvedCopy_Deserialize[],
+	missing: MissingMember[],
+};
+
+/**  What a template installs, as it stands on this machine now. */
+export type Resolution_Serialize = {
+	groups: ResolvedGroup[],
+	copies: ResolvedCopy_Serialize[],
 	missing: MissingMember[],
 };
 
 /**  One copy the template owns. */
-export type ResolvedCopy = {
+export type ResolvedCopy = ResolvedCopy_Serialize | ResolvedCopy_Deserialize;
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Deserialize = {
 	kind: ItemKind,
 	name: string,
 	enabled: boolean,
@@ -4599,6 +4688,21 @@ export type ResolvedCopy = {
 	copy: string,
 	/**  The marketplace the bytes came from, where they came from one. */
 	from: string | null,
+	/**  The reading the copy's links hold, which its declaration records. */
+	links?: SkillLinks | null,
+};
+
+/**  One copy the template owns. */
+export type ResolvedCopy_Serialize = {
+	kind: ItemKind,
+	name: string,
+	enabled: boolean,
+	/**  The copy's path inside the template's store. */
+	copy: string,
+	/**  The marketplace the bytes came from, where they came from one. */
+	from: string | null,
+	/**  The reading the copy's links hold, which its declaration records. */
+	links?: SkillLinks | null,
 };
 
 /**
@@ -4853,6 +4957,34 @@ export type SavedItem = {
 	catalog: Catalog | null,
 	reach: Reach,
 };
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate = SavedTemplate_Serialize | SavedTemplate_Deserialize;
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate_Deserialize = {
+	warnings: ItemWarning_Deserialize[],
+} & Template_Deserialize;
+
+/**
+ *  A template a save wrote, with the links its copies kept as written
+ *  because no spelling from the saving project's shared tree reaches their
+ *  targets inside the project. The template is what every caller reads,
+ *  so the type reads as one; the warnings are the save's own report.
+ */
+export type SavedTemplate_Serialize = {
+	warnings?: ItemWarning_Serialize[],
+} & Template_Serialize;
 
 /**
  *  What kept a surface from being read, by shape rather than by parser
@@ -5337,6 +5469,15 @@ export type SkillLines =
  *  instructions are in it — so none of its lines is the catalog's.
  */
 "rewritten";
+
+/**  The reading a tagged scope-owned skill's links hold. */
+export type SkillLinks = 
+/**
+ *  Links mean what they reach from the scope's shared tree,
+ *  `<scope root>/.agents/skills/<canonical name>`, and every other
+ *  position the tree lands at is converted to keep those targets.
+ */
+"shared-tree";
 
 export type SkillSettings = {
 	skill: string,

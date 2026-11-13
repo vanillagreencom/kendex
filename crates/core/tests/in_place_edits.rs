@@ -149,7 +149,7 @@ impl World {
         fs::write(
             self.project.join("kendex.toml"),
             format!(
-                "schema = 7\n\n{instructions}[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n[skills.\"{name}\"]\nsource = \"in-place\"\n"
+                "schema = 8\n\n{instructions}[install]\nharnesses = [{harnesses}]\nmethod = \"{method}\"\n\n[skills.\"{name}\"]\nsource = \"in-place\"\n"
             ),
         )
         .unwrap();

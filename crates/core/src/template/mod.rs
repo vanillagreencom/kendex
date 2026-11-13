@@ -37,7 +37,8 @@ mod install;
 mod store;
 
 pub use create::{
-    Chosen, LicenseAnswer, Side, add_from_project, create_from_project, create_from_selection,
+    Chosen, LicenseAnswer, SavedTemplate, Side, add_from_project, create_from_project,
+    create_from_selection,
 };
 pub use draft::{
     Draft, DraftError, DraftLocal, DraftMember, DraftOrigin, Excluded, draft_from_project,
@@ -176,6 +177,34 @@ pub enum MemberSource {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         notices: Vec<String>,
     },
+    /// A skill copy whose relative links were converted into the saving
+    /// project's shared-tree reading, so it installs tagged
+    /// `links = "shared-tree"` and reads relative to whichever scope
+    /// installs it. Its own variant rather than a field on [`Self::Copy`],
+    /// so a kendex that predates it refuses the index before its writer
+    /// could save it back without the distinction.
+    SharedCopy {
+        /// The copy's path inside the template's store, slash-separated.
+        copy: String,
+        /// The marketplace the copied bytes came from, as for a copy.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<String>,
+        /// The licence and attribution files these bytes came under, as for
+        /// a copy.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        notices: Vec<String>,
+    },
+}
+
+impl MemberSource {
+    /// The reading a copy's links hold, which its installed declaration
+    /// records.
+    pub(crate) fn links(&self) -> Option<crate::manifest::SkillLinks> {
+        match self {
+            MemberSource::SharedCopy { .. } => Some(crate::manifest::SkillLinks::SharedTree),
+            MemberSource::Copy { .. } | MemberSource::Marketplace { .. } => None,
+        }
+    }
 }
 
 /// One package a template installs.
@@ -216,7 +245,7 @@ impl Member {
     pub fn identity(&self) -> (MemberKind, &str, Option<String>) {
         let repo = match &self.source {
             MemberSource::Marketplace { repo, .. } => Some(crate::source_ref::repo_identity(repo)),
-            MemberSource::Copy { .. } => None,
+            MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => None,
         };
         (self.kind, self.name.as_str(), repo)
     }
@@ -264,7 +293,9 @@ impl MemberRef {
         }
         match (&self.which, &member.source) {
             (MemberWhich::Any, _) => true,
-            (MemberWhich::Copy, MemberSource::Copy { .. }) => true,
+            (MemberWhich::Copy, MemberSource::Copy { .. } | MemberSource::SharedCopy { .. }) => {
+                true
+            }
             // One marketplace, however either side spells it: the
             // reference a surface builds its row from is the member's own
             // stored spelling, and a person may have added the same
@@ -275,7 +306,10 @@ impl MemberRef {
                 crate::source_ref::repo_identity(repo) == crate::source_ref::repo_identity(held)
             }
             (MemberWhich::Copy, MemberSource::Marketplace { .. })
-            | (MemberWhich::Marketplace { .. }, MemberSource::Copy { .. }) => false,
+            | (
+                MemberWhich::Marketplace { .. },
+                MemberSource::Copy { .. } | MemberSource::SharedCopy { .. },
+            ) => false,
         }
     }
 }

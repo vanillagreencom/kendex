@@ -66,7 +66,7 @@ fn workflow_bundles_plan_the_worktree_session_claim_and_registration() {
             &f.project,
             "kendex.toml",
             &format!(
-                "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[bundles.{bundle}]\nsource = \"cat\"\n",
+                "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\"]\nmethod = \"copy\"\n\n[bundles.{bundle}]\nsource = \"cat\"\n",
                 source_path(&f.source)
             ),
         );
@@ -230,7 +230,7 @@ fn a_plugin_registry_plugin_installs_as_a_bundle() {
         &f.project,
         "kendex.toml",
         &format!(
-            "schema = 7\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
+            "schema = 8\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[bundles.\"data-science\"]\nsource = \"market\"\n",
             source_path(&market)
         ),
     );

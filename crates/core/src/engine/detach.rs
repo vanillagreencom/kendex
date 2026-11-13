@@ -16,9 +16,9 @@ use crate::manifest::{ForkProvenance, ItemDecl, LOCAL_SOURCE_NAME, Manifest};
 use crate::model::{ItemKind, Scope};
 use crate::source::local_source_root;
 
-use super::EngineReport;
 use super::agent_carry::AgentCarry;
 use super::planned::planned_closure_held;
+use super::{EngineReport, WritePlan};
 
 mod capture;
 
@@ -388,7 +388,7 @@ fn local_target(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
 /// would silently drop the edit — so detach refuses while any package is
 /// edited, naming them: fork or discard each first. (Routing an edited package
 /// through fork capture inside the same plan is the remaining half.)
-pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
+pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<WritePlan> {
     let scope = scope.canonical();
     let manifest = crate::engine::ops::manifest_for_mutation(env, &scope)?;
     let lock = crate::lock::load(&crate::lock::lock_path(env, &scope))?;
@@ -417,15 +417,31 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
     let skills = crate::engine::ScopeSkills::after(env, &scope, &converted, &arriving)?;
     let mut ops = Vec::new();
     let mut carried: Vec<(String, AgentCarry)> = Vec::new();
+    let mut warnings = Vec::new();
     for item in &closure.items {
         // Read this item's source-form bytes at the exact commit it installed
         // from — not the source head, which may have moved. A declared item
         // that was never applied has no lock entry; its own pin is the commit.
         let commit = effective_commit(&lock, item)?;
-        let (files, carry) = source_form(env, &scope, &manifest, item, commit.as_deref(), &skills)?;
-        carried.extend(carry.map(|carry| (item.name.clone(), carry)));
+        let form = source_form(
+            env,
+            &scope,
+            &manifest,
+            &lock,
+            item,
+            commit.as_deref(),
+            &skills,
+        )?;
+        carried.extend(form.carry.map(|carry| (item.name.clone(), carry)));
+        warnings.extend(form.warnings);
+        // The declaration records the reading the stored bytes hold.
+        if let Some(decl) = converted.declared_mut(item.kind).get_mut(&item.name) {
+            decl.links = form.links;
+        }
         let target = local_target(env, &scope, item.kind, &item.name)?;
-        ops.extend(capture_to_local(item.kind, &item.name, &target, files)?);
+        ops.extend(capture_to_local(
+            item.kind, &item.name, &target, form.files,
+        )?);
     }
     // The catalog's own mapping tables shaped every rendering — skills the
     // catalog attached, frontmatter defaults it set. The local source has
@@ -458,7 +474,10 @@ pub fn source(env: &Env, scope: &Scope, source_name: &str) -> Result<Plan> {
             manifest: Box::new(converted),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    Ok(WritePlan {
+        plan: Plan::landed(scope.clone(), ops)?,
+        warnings,
+    })
 }
 
 /// The plan that follows [`source`] once it is applied: the kept agents now

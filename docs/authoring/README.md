@@ -92,9 +92,15 @@ A skill's catalog `SKILL.md` is its source, and kendex reads every key in it. Th
 
 ## Skill links
 
-For a local source inside the consumer project, kendex rewrites relative Markdown links in skill text files so they still reach the same project file after installation. For example, a local `skills/NAME/SKILL.md` link to `../../memory/x.md` becomes `../../../memory/x.md` in `.agents/skills/NAME/SKILL.md`. Links within the skill, to sibling skill packages, or already reaching the same target keep every byte. A target outside the project keeps its link and warns with `agent-link-unrepresentable`, the same warning agent renders use; use an absolute path or URL for those targets. Ordinary fetched catalogs and local sources outside the project keep their link text. Skills in the global local source also rebase links to their physical targets from the installed tree.
+A relative Markdown link in a skill's text files means the file it reaches from where kendex reads that tree. Each kind of tree has one such position:
 
-Forks, imports and template captures keep their captured source-form link bytes without translating them. Forks record no link coordinates. A fork keeps that captured spelling when rendered again; an imported or template copy declared as an ordinary local source follows the local-source rendering rule.
+- A skill from a path catalog reads its links from its own folder in the catalog. kendex rewrites each link that leaves the skill so it reaches the same file from every place the skill is installed, the shared tree and each tool's copy alike. For example, a `skills/NAME/SKILL.md` link to `../../memory/x.md` becomes `../../../memory/x.md` in `.agents/skills/NAME/SKILL.md`.
+- A skill kept in the local source or in place carries `links = "shared-tree"` when kendex stored it. Its links read from the scope's shared tree, `.agents/skills/NAME` in a project or `~/.agents/skills/NAME`, and each tool's copy is rewritten from there. Without the key the skill's bytes install as they are at every place, as they always have.
+- A fetched catalog's skill installs as the publisher wrote it.
+
+A link within the skill, to a sibling skill beside it, or already reaching the same target keeps every byte. A target that does not resolve, or that falls outside the project, or outside the volume holding home for a personal skill, keeps its link and warns with `agent-link-unrepresentable`, the same warning agent renders use. Use an absolute path or URL for such a target.
+
+kendex writes `links = "shared-tree"` itself whenever it stores a skill: keeping a package on unsubscribe, adopting files, forking an install and installing a template. Each converts the links as the skill moves, so they reach the files they reached before. An import into a catalog converts into the catalog's item folder and writes no key; the catalog's own position is the reading. A template keeps a converted skill as a `shared-copy`, read from the shared tree of whichever scope installs it. A link that cannot reach its target from the new position keeps its spelling and is reported by the command that moved it, with `skill-link-kept`; the spelling then makes no claim to reach the file it reached before. When the places a writer reads the skill from would send its links to different files, adoption, import and template saves refuse by name, and unsubscribe keeps the bytes untagged so each place keeps reading what it read. A file that is itself a link is moved as it is and reported with `skill-link-file-not-converted`.
 
 ## Skill dependencies
 
@@ -155,7 +161,7 @@ Adding an agent normally installs its available assigned skills. A bundle or `--
 An agent requests a portable model class through its `model:` field. Consumer settings select models for that class at run time or in a native agent file. These settings belong in the personal or project manifest, not the catalog manifest. Project values replace personal values per class, and bindings replace them per harness and class.
 
 ```toml
-schema = 7
+schema = 8
 
 [model-classes]
 standard = "openai/gpt-6.1-sol"
@@ -169,7 +175,7 @@ standard = "claude-opus-4.6"
 
 `model-classes.<class>` supplies a provider-qualified selector to runtime class resolution through `kendex tier-model`. It does not put that selector in a static agent file. `[model-bindings.<harness>]` selects a native model for a class in a Codex or Copilot agent file. Other harnesses reject bindings. Claude Code already renders the class family alias. Pi keeps the class for runtime dispatch.
 
-Bindings require manifest format 7. Upgrade kendex before adding bindings. kendex reads a schema 6 personal or project manifest in the current form and persists `schema = 7` on apply, refresh, install or the next write. It keeps comments and layout. Read-only commands and plan preview leave the file unchanged. An unsupported older schema or a newer schema still refuses without changing the file.
+Bindings require manifest format 7. Upgrade kendex before adding bindings. kendex reads a schema 6 or 7 personal or project manifest in the current form and persists the current `schema = 8` on apply, refresh, install or the next write. It keeps comments and layout. Read-only commands and plan preview leave the file unchanged. An unsupported older schema or a newer schema still refuses without changing the file.
 
 Bindings use canonical class names and nonempty selectors with no whitespace. The model owner, `crates/core/src/harness/models.rs`, declares the classes. Render preview checks the selector against the harness loader. A binding gives no compatibility warning. Without a binding, the agent keeps its existing render. `inherit` keeps the session model. A per-agent `[agent-frontmatter.<harness>.<agent>] model` replaces the request before binding selection, so it takes precedence.
 

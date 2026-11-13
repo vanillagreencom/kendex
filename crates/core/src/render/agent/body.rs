@@ -15,55 +15,71 @@ pub struct BodyPaths<'a> {
 /// Map catalog-relative targets into the consumer tree. Fork capture uses the
 /// same operation with the file and root pairs reversed.
 pub(crate) fn rebase(text: &str, paths: BodyPaths<'_>) -> (String, Vec<RenderWarning>) {
-    rebase_links(text, paths, false, false, |_| false)
+    let (text, unrepresentable) = rebase_links(text, paths, false, |_| false);
+    (
+        text,
+        unrepresentable
+            .iter()
+            .map(|target| unrepresentable_link(target))
+            .collect(),
+    )
 }
 
+/// The warning a render gives a link it kept because no spelling from the
+/// rendered file reaches its target inside the roots.
+pub(crate) fn unrepresentable_link(target: &str) -> RenderWarning {
+    RenderWarning::with_fix(
+        format!("agent-link-unrepresentable: {target}"),
+        "keep the link target inside the catalog and the rendered scope, or use an absolute path or URL",
+    )
+}
+
+/// The skill form of [`rebase`]: a link `keep` claims, or whose spelling
+/// already reaches the target from the rendered file, keeps every byte.
+/// Returns the targets, as written, of the links kept because they cannot
+/// be represented inside the roots.
 pub(crate) fn rebase_skill(
     text: &str,
     paths: BodyPaths<'_>,
-    retain_alias: bool,
     keep: impl Fn(&Path) -> bool,
-) -> (String, Vec<RenderWarning>) {
-    rebase_links(text, paths, true, retain_alias, keep)
+) -> (String, Vec<String>) {
+    rebase_links(text, paths, true, keep)
+}
+
+/// Each relative link destination respelled from `file` to itself, so two
+/// texts compare by the targets their links resolve to.
+pub(crate) fn compare_skill_links(text: &str, file: &Path) -> String {
+    let root = file.ancestors().last().unwrap_or(file);
+    rebase_links(
+        text,
+        BodyPaths {
+            source: file,
+            rendered: file,
+            source_root: root,
+            install_root: root,
+        },
+        false,
+        |_| false,
+    )
+    .0
 }
 
 fn rebase_links(
     text: &str,
     paths: BodyPaths<'_>,
     preserve_spelling: bool,
-    retain_alias: bool,
     keep: impl Fn(&Path) -> bool,
-) -> (String, Vec<RenderWarning>) {
+) -> (String, Vec<String>) {
     let mut links = relative_links(text);
     links.sort_by_key(|link| link.range.as_ref().map(|range| range.start));
     links.dedup_by(|left, right| left.range == right.range && left.target == right.target);
     let mut out = String::new();
-    let mut warnings = Vec::new();
+    let mut unrepresentable = Vec::new();
     let mut copied = 0;
     for link in links {
         let resolved = decoded(&link.path, '/')
             .and_then(|path| crate::fs::resolved(paths.source, Path::new(&path)));
         if resolved.as_ref().is_some_and(|target| keep(target)) {
-            continue;
-        }
-        // Only an alias retained by the plan can establish physical identity;
-        // a copy replaces the current alias with a real destination tree.
-        if retain_alias
-            && resolved
-                .as_ref()
-                .is_some_and(|target| target.starts_with(paths.source_root))
-            && decoded(&link.path, '/').is_some_and(|path| {
-                let source = paths
-                    .source
-                    .parent()
-                    .and_then(|parent| crate::paths::canonical(&parent.join(&path)).ok());
-                let rendered = paths
-                    .rendered
-                    .parent()
-                    .and_then(|parent| crate::paths::canonical(&parent.join(&path)).ok());
-                source.is_some() && source == rendered
-            })
-        {
             continue;
         }
         let target = resolved
@@ -83,10 +99,7 @@ fn rebase_links(
                 })
             });
         let (Some(target), Some(range)) = (target, link.range) else {
-            warnings.push(RenderWarning::with_fix(
-                format!("agent-link-unrepresentable: {}", link.target),
-                "keep the link target inside the catalog and the rendered scope, or use an absolute path or URL",
-            ));
+            unrepresentable.push(link.target.clone());
             continue;
         };
         if preserve_spelling
@@ -122,7 +135,7 @@ fn rebase_links(
         copied = range.end;
     }
     out.push_str(&text[copied..]);
-    (out, warnings)
+    (out, unrepresentable)
 }
 
 #[cfg(test)]

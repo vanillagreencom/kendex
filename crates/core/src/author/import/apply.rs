@@ -26,6 +26,7 @@ pub fn apply(
 ) -> Result<ImportOutcome> {
     let target = registered_target(env, target)?;
     let mut resolved: Vec<(usize, ResolvedSelection, PathBuf)> = Vec::new();
+    let mut warnings = Vec::new();
     for (at, selection) in selections.iter().enumerate() {
         if let Some(problem) = crate::names::item_problem(&selection.destination) {
             return Err(CoreError::Authoring {
@@ -46,8 +47,21 @@ pub fn apply(
         }
         let mut answer = super::resolve_selection(env, scopes, selection)?;
         super::license_gate(selection, &answer.group)?;
-        declare_destination(&mut answer, selection)?;
         let dest = crate::source::local_slot(&target, selection.kind, &selection.destination);
+        // The catalog reads a skill's links from its item directory, and
+        // nothing outside the catalog is written into it.
+        let kept = answer.convert_into(
+            selection.kind,
+            &selection.name,
+            &crate::render::skill::links::catalog(&target, &dest),
+            super::Untagged::Delivered,
+        )?;
+        warnings.extend(
+            kept.iter().flatten().map(|link| {
+                crate::render::skill::links::kept_warning(&selection.destination, link)
+            }),
+        );
+        declare_destination(&mut answer, selection)?;
         occupies(&resolved, selections, &dest, &answer, selection)?;
         origin_overlap(&target, &answer)?;
         resolved.push((at, answer, dest));
@@ -56,6 +70,7 @@ pub fn apply(
     let mut outcome = ImportOutcome {
         written: Vec::new(),
         already_present: Vec::new(),
+        warnings,
     };
     write_all(&target, &resolved, selections, &mut outcome)?;
     Ok(outcome)

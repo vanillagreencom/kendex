@@ -150,8 +150,8 @@ fn claude_managed_words_apply_overrides_without_runtime_evidence() {
         CLAUDE_MANAGED_WORD_CASES.iter().copied()
     {
         let manifest = match policy {
-            Some(value) => format!("schema = 7\n[model-classes]\nstandard = \"{value}\"\n"),
-            None => "schema = 7\n".into(),
+            Some(value) => format!("schema = 8\n[model-classes]\nstandard = \"{value}\"\n"),
+            None => "schema = 8\n".into(),
         };
         std::fs::write(project.join("kendex.toml"), manifest).unwrap();
         let output = invoke_at(
@@ -692,7 +692,7 @@ fn installed_native_agent_fixture(
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n{declaration}\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n{declaration}\nsource = \"cat\"\n[agent-frontmatter.claude.worker]\nmodel = \"fast\"\n",
             crate::test_util::source_path(catalog)
         ),
     )?;
@@ -789,7 +789,7 @@ fn globally_installed_class_agent_fixture(
     fs::write(
         &personal_path,
         format!(
-            "schema = 7\nmodel-classes.standard = \"anthropic/claude-opus-5\"\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n",
+            "schema = 8\nmodel-classes.standard = \"anthropic/claude-opus-5\"\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n[agents.worker]\nsource = \"cat\"\n",
             crate::test_util::source_path(catalog)
         ),
     )?;
@@ -799,7 +799,7 @@ fn globally_installed_class_agent_fixture(
     fs::create_dir_all(&class_project)?;
     fs::write(
         class_project.join("kendex.toml"),
-        "schema = 7\nmodel-classes.standard = \"anthropic/claude-sonnet-5\"\n",
+        "schema = 8\nmodel-classes.standard = \"anthropic/claude-sonnet-5\"\n",
     )?;
     let evidence = json!({"protocol":"model-resolution-v1","harness":"claude","account":"fixture","host":"host","providers":["anthropic"],"currentProvider":"anthropic",
         "models":{"tag":"complete","source":"fixture:list","account":"fixture","host":"host","models":[

@@ -80,12 +80,16 @@ pub fn unsubscribe(
     discard_edits: bool,
 ) -> Result<Unsubscribed, String> {
     use kendex_core::engine::detach;
+    let line = |warning: &kendex_core::engine::ItemWarning| {
+        format!("{}: {}", warning.name, warning.message)
+    };
     let mut warnings = Vec::new();
     let mut undone = if keep {
-        // The conversion has no report. The resync below supplies the report
-        // that repository effects need.
-        let plan = detach::source(env, scope, source).map_err(|e| e.to_string())?;
-        apply::execute(env, &plan).map_err(|e| e.to_string())?;
+        // The conversion has no report of its own beyond the links it kept.
+        // The resync below supplies the report that repository effects need.
+        let kept = detach::source(env, scope, source).map_err(|e| e.to_string())?;
+        apply::execute(env, &kept).map_err(|e| e.to_string())?;
+        warnings.extend(kept.warnings.iter().map(line));
         Vec::new()
     } else {
         let report =
@@ -94,12 +98,7 @@ pub fn unsubscribe(
     };
     if keep {
         let resync = detach::resync_kept(env, scope).map_err(|e| e.to_string())?;
-        warnings.extend(
-            resync
-                .warnings
-                .iter()
-                .map(|warning| format!("{}: {}", warning.name, warning.message)),
-        );
+        warnings.extend(resync.warnings.iter().map(line));
         undone.extend(crate::repo_effects::write(env, &resync)?);
     }
     Ok(Unsubscribed { undone, warnings })
@@ -147,7 +146,7 @@ mod tests {
             std::fs::write(
                 root.join("kendex.toml"),
                 format!(
-                    "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n",
+                    "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\"]\n",
                     crate::test_util::source_path(&catalog)
                 ),
             )

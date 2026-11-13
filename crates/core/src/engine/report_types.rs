@@ -259,6 +259,26 @@ pub struct ItemWarning {
     pub detail: Option<String>,
 }
 
+/// A writer's plan with what its link conversion kept: the links whose
+/// bytes it wrote as they were because no spelling from the destination
+/// reaches their targets inside its bound. The plan is what a caller
+/// previews and executes, so the type reads as one; the warnings are the
+/// writer's own report, which only it can give and every caller delivers
+/// beside the execution.
+#[derive(Debug)]
+pub struct WritePlan {
+    pub plan: Plan,
+    pub warnings: Vec<ItemWarning>,
+}
+
+impl std::ops::Deref for WritePlan {
+    type Target = Plan;
+
+    fn deref(&self) -> &Plan {
+        &self.plan
+    }
+}
+
 /// Whether the pass could account for the full declared installation set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DeclarationStatus {

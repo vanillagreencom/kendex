@@ -89,6 +89,9 @@ pub struct ResolvedCopy {
     pub copy: String,
     /// The marketplace the bytes came from, where they came from one.
     pub from: Option<String>,
+    /// The reading the copy's links hold, which its declaration records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub links: Option<crate::manifest::SkillLinks>,
 }
 
 /// A member this machine cannot install, and why. A template carrying one
@@ -244,7 +247,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                     }),
                 }
             }
-            MemberSource::Copy { copy, from, .. } => {
+            MemberSource::Copy { copy, from, .. } | MemberSource::SharedCopy { copy, from, .. } => {
                 let Some(kind) = member.kind.item() else {
                     missing.push(MissingMember {
                         kind: member.kind,
@@ -262,6 +265,7 @@ pub fn resolve(env: &Env, template: &Template) -> Result<Resolution> {
                         enabled: member.enabled,
                         copy: copy.clone(),
                         from: from.clone(),
+                        links: member.source.links(),
                     }),
                     Err(error) => missing.push(MissingMember {
                         kind: member.kind,
@@ -556,11 +560,16 @@ fn two_claims(name: &str, claimants: &[&super::Member]) -> String {
         }
         MemberSource::Copy {
             from: Some(repo), ..
+        }
+        | MemberSource::SharedCopy {
+            from: Some(repo), ..
         } => format!(
             "as this template's own copy of {}'s",
             crate::names::shown(repo)
         ),
-        MemberSource::Copy { from: None, .. } => "as this template's own copy".to_owned(),
+        MemberSource::Copy { from: None, .. } | MemberSource::SharedCopy { from: None, .. } => {
+            "as this template's own copy".to_owned()
+        }
     };
     let shown = crate::names::shown(name);
     let each: Vec<String> = claimants
@@ -578,7 +587,7 @@ fn which_of(member: &super::Member) -> super::MemberWhich {
         MemberSource::Marketplace { repo, .. } => {
             super::MemberWhich::Marketplace { repo: repo.clone() }
         }
-        MemberSource::Copy { .. } => super::MemberWhich::Copy,
+        MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => super::MemberWhich::Copy,
     }
 }
 
@@ -995,6 +1004,7 @@ fn install_local(
             rev: None,
             enabled: copy.enabled,
             env: None,
+            links: copy.links,
         };
         manifest
             .declared_mut(copy.kind)

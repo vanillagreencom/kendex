@@ -6,9 +6,8 @@ use crate::error::Result;
 use crate::manifest::Manifest;
 use crate::source_read::SealedSource;
 
-mod coordinates;
-pub(crate) use coordinates::{Located, SkillCoordinates};
 mod keys;
+pub(crate) mod links;
 mod rendered;
 pub(crate) use keys::{KeysUnreadable, dropped_metadata, installed_keys};
 pub(crate) use rendered::with_name;
@@ -82,22 +81,6 @@ fn instructions_block_range(text: &str) -> Option<(usize, usize)> {
 pub enum SkillText {
     Exact,
     Repaired,
-}
-
-/// The rendered skill: every file of the source tree but the top-level
-/// entries no consumer reads ([`crate::source_read::NOT_RENDERED`]) — read through the
-/// sealed source, so a hostile catalog cannot smuggle host files in — with
-/// `[skill-instructions]` injected into SKILL.md. Returned as
-/// (relative path, bytes) so apply can materialize it transactionally,
-/// with how SKILL.md read as text beside it.
-pub fn render_skill(
-    sealed: &SealedSource,
-    source_dir: &Path,
-    manifest: &Manifest,
-    name: &str,
-) -> Result<(Rendered, SkillText)> {
-    let instructions = skill_instructions(manifest, name);
-    with_instructions(sealed, source_dir, instructions.as_deref())
 }
 
 /// Shared skill directories must fit older Codex loaders too. Only the
@@ -240,6 +223,11 @@ pub fn render_authored(sealed: &SealedSource, source_dir: &Path) -> Result<Files
     Ok(with_instructions(sealed, source_dir, None)?.0.into_files())
 }
 
+/// The rendered skill: every file of the source tree but the top-level
+/// entries no consumer reads ([`crate::source_read::NOT_RENDERED`]) — read
+/// through the sealed source, so a hostile catalog cannot smuggle host files
+/// in — with `instructions` injected into SKILL.md, and how SKILL.md read as
+/// text beside it.
 pub(crate) fn with_instructions(
     sealed: &SealedSource,
     source_dir: &Path,
@@ -317,46 +305,6 @@ mod tests {
     const SKILL: &str = "---\nname: github\ndescription: gh\n---\n\n# GitHub\n\nAuthor text.\n";
 
     #[test]
-    fn skill_links_that_already_reach_the_target_keep_their_spelling() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = crate::test_util::rooted(&tmp);
-        let source = root.join("skills/ship");
-        std::fs::create_dir_all(&source).unwrap();
-        let sealed = SealedSource::open(&root.join("skills")).unwrap();
-        let rows = vec![(source.clone(), "[memory](../.././memory/x%2Emd#part)\n")];
-        #[cfg(unix)]
-        let rows = {
-            let mut rows = rows;
-            std::fs::create_dir_all(root.join(".pi")).unwrap();
-            std::fs::write(root.join(".pi/other.md"), "Other.\n").unwrap();
-            std::fs::create_dir_all(root.join("skills/other")).unwrap();
-            std::os::unix::fs::symlink(
-                root.join(".pi/other.md"),
-                root.join("skills/other/SKILL.md"),
-            )
-            .unwrap();
-            let alias = root.join(".claude/skills/ship");
-            std::fs::create_dir_all(alias.parent().unwrap()).unwrap();
-            std::os::unix::fs::symlink(&source, &alias).unwrap();
-            rows.push((alias, "[sibling](../other/SKILL.md)\n"));
-            rows
-        };
-        for (rendered, text) in rows {
-            let files = vec![(PathBuf::from(SKILL_FILE), text.as_bytes().to_vec())];
-            let (rebased, warnings) = Located::new(
-                files.clone(),
-                Some(SkillCoordinates {
-                    directory: source.clone(),
-                    root: root.clone(),
-                }),
-            )
-            .render_at(&rendered, true, Some((&sealed, &source)));
-            assert_eq!(rebased, files);
-            assert!(warnings.is_empty());
-        }
-    }
-
-    #[test]
     fn descriptions_fit_every_harness_without_changing_the_source_or_body() {
         let sentence = format!("{}. ", "a".repeat(498));
         let unicode_sentence = format!("{}. ", "é".repeat(498));
@@ -407,7 +355,12 @@ mod tests {
                     + &body;
                 std::fs::write(src.join(SKILL_FILE), &text).unwrap();
                 let sealed = SealedSource::open(&root).unwrap();
-                let (source, _) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+                let (source, _) = with_instructions(
+                    &sealed,
+                    &src,
+                    skill_instructions(&manifest, "github").as_deref(),
+                )
+                .unwrap();
                 let rendered = Rendered::new(vec![(
                     PathBuf::from(SKILL_FILE),
                     bounded_description(std::str::from_utf8(&source.files()[0].1).unwrap())
@@ -539,7 +492,12 @@ mod tests {
 
         let sealed = crate::source_read::SealedSource::open(tmp.path()).unwrap();
         let src = sealed.root().join("github");
-        let (rendered, read_as) = render_skill(&sealed, &src, &manifest, "github").unwrap();
+        let (rendered, read_as) = with_instructions(
+            &sealed,
+            &src,
+            skill_instructions(&manifest, "github").as_deref(),
+        )
+        .unwrap();
         assert_eq!(read_as, SkillText::Exact);
         assert_eq!(rendered.files().len(), 2);
         let skill_md = rendered

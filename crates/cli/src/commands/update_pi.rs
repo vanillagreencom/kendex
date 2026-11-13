@@ -1221,7 +1221,7 @@ mod tests {
         std::fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.fixture]\nsource = 'cat'\n",
+                "schema = 8\n[sources.cat]\n{}\n[pi-extensions.fixture]\nsource = 'cat'\n",
                 crate::test_util::source_path(&catalog)
             ),
         )
@@ -1291,7 +1291,7 @@ mod tests {
             .unwrap();
             std::fs::write(source.join("index.js"), "export const value = 1;\n").unwrap();
             let declared = format!(
-                "schema = 7\n[sources.cat]\n{}\n[pi-extensions.pi-twice]\nsource = 'cat'\n",
+                "schema = 8\n[sources.cat]\n{}\n[pi-extensions.pi-twice]\nsource = 'cat'\n",
                 crate::test_util::source_path(&catalog)
             );
             let named = Scope::Project {
@@ -1338,7 +1338,7 @@ mod tests {
             std::fs::create_dir_all(&source).unwrap();
             let path = manifest::manifest_path(&env, &scope);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            std::fs::write(path, "schema = 7\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-consent]\nsource = 'cat'\n").unwrap();
+            std::fs::write(path, "schema = 8\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-consent]\nsource = 'cat'\n").unwrap();
             std::fs::write(
                 source.join("package.json"),
                 r#"{"name":"pi-consent","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,

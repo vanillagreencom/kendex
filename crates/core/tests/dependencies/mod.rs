@@ -57,7 +57,7 @@ fn fixture(declarations: &str) -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n{declarations}",
             source_path(&source)
         ),
     )
@@ -356,7 +356,7 @@ fn required_agents_only_land_where_the_tool_installs_agents() {
         let path = manifest::manifest_path(&f.env, &f.scope);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, format!(
-            "schema = 7\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"antigravity\"]\n[skills.dev]\nsource = \"cat\"\n",
+            "schema = 8\n[sources.cat]\n{}\n[install]\nharnesses = [\"claude\", \"antigravity\"]\n[skills.dev]\nsource = \"cat\"\n",
             source_path(&f.source),
         )).unwrap();
         let report = audit(&f.env, &f.scope).unwrap();

@@ -10,6 +10,7 @@ use std::path::PathBuf;
 #[path = "fork/tests.rs"]
 mod scope_manifest_messages;
 
+use super::WritePlan;
 use super::desired::native_dir;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Op, Plan, PlannedOp, Pre};
@@ -17,6 +18,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{self, LOCAL_SOURCE_NAME};
 use crate::model::{HarnessId, ItemKind, Scope};
+use crate::render::skill::links;
 use crate::source::local_source_root;
 
 mod agent;
@@ -53,7 +55,7 @@ pub fn fork(
     kind: ItemKind,
     name: &str,
     harness: HarnessId,
-) -> Result<Plan> {
+) -> Result<WritePlan> {
     // The same first question its two sibling verbs ask, so all three
     // answer a kind they cannot fork with the same words.
     forkable_kind(kind, name)?;
@@ -71,6 +73,7 @@ pub fn fork(
         });
     }
     let (edited, captured) = capture_rendering(env, scope, kind, name, harness, &manifest, &decl)?;
+    let warnings = kept_warnings(name, &captured.kept);
     let mut ops = capture_ops(env, scope, kind, name, &edited, captured.files)?;
     let provenance = provenance(&manifest, &decl, captured.read_at);
     // The catalog's mapping tables shaped the rendering and the fork stops
@@ -85,6 +88,7 @@ pub fn fork(
         .unwrap_or_else(|| unreachable!("declared above"));
     entry.source = LOCAL_SOURCE_NAME.to_owned();
     entry.rev = None;
+    entry.links = captured.links;
     manifest
         .forks
         .entry(kind)
@@ -104,7 +108,17 @@ pub fn fork(
             manifest: Box::new(manifest),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    Ok(WritePlan {
+        plan: Plan::landed(scope.clone(), ops)?,
+        warnings,
+    })
+}
+
+/// What a fork's capture reports: each link it kept as written.
+fn kept_warnings(name: &str, kept: &[links::KeptLink]) -> Vec<crate::engine::ItemWarning> {
+    kept.iter()
+        .map(|link| links::kept_warning(name, link))
+        .collect()
 }
 
 /// The file or tree holding this rendering's edited bytes. Skills capture
@@ -194,6 +208,11 @@ struct Captured {
     /// The catalog revision the publisher's file was read at, which the
     /// fork records as the commit its edits were made on.
     read_at: Option<String>,
+    /// The reading a skill's captured links were stored in, which the
+    /// fork's declaration records.
+    links: Option<manifest::SkillLinks>,
+    /// The links the capture kept as written.
+    kept: Vec<crate::render::skill::links::KeptLink>,
 }
 
 /// One fork's inputs, gathered so the capture side reads them in one
@@ -280,17 +299,28 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 installed.as_ref(),
             )?
             .map_err(unrestored)?;
-            let on_disk = skill_text(&files);
+            let on_disk = files.clone();
             let files = crate::render::skill::authored_form(files, &published.text)
                 .map_err(|cause| unrestored(cause.to_string()))?;
-            let (Some(on_disk), Some(captured)) = (on_disk, skill_text(&files)) else {
-                unreachable!("authored_form refuses a tree with no SKILL.md text")
+            let stored = stored_reading(of);
+            let (files, kept) = match &stored {
+                Some(position) => links::convert(
+                    links::Origin {
+                        directory: edited.to_path_buf(),
+                        files,
+                        siblings: links::Siblings::SkillsDirectory,
+                    },
+                    position,
+                ),
+                None => (files, Vec::new()),
             };
             Captured {
-                rendering: skill_round_trip(of, &captured, on_disk),
+                rendering: skill_round_trip(of, &files, &on_disk, edited, stored.as_ref()),
                 files: Capture::Tree(files),
                 carry: None,
                 read_at: published.commit,
+                links: stored.map(|_| manifest::SkillLinks::SharedTree),
+                kept,
             }
         }
         // Every other kind is turned away by `edited_rendering` first, so
@@ -303,6 +333,8 @@ fn capture(of: &ForkOf, edited: &std::path::Path) -> Result<Captured> {
                 carry: captured.carry,
                 read_at: captured.read_at,
                 rendering: (captured.rendering, on_disk),
+                links: None,
+                kept: Vec::new(),
             }
         }
     })
@@ -534,6 +566,10 @@ pub(super) fn absorb_ops(
             ),
         });
     }
+    // A link the capture kept needs no report of its own here: read from
+    // the stored reading it either still falls outside the bound, which the
+    // render warns about, or reaches another file, which the round trip
+    // above already refused back to the edit hold.
     into_local_source(env, scope, kind, name, captured.files)
 }
 
@@ -565,29 +601,71 @@ fn carry_needs_writing(
         || after.agent_frontmatter != manifest.agent_frontmatter
 }
 
-/// The captured tree's `SKILL.md` as text, `None` where it has none or its
-/// bytes are not text.
-fn skill_text(files: &[(PathBuf, Vec<u8>)]) -> Option<String> {
-    files
-        .iter()
-        .find(|(rel, _)| rel == std::path::Path::new(crate::render::skill::SKILL_FILE))
-        .and_then(|(_, bytes)| String::from_utf8(bytes.clone()).ok())
-}
-
-/// A captured skill tree's `SKILL.md` beside what it renders back to. A
+/// A captured skill tree beside what it renders back to at `edited`. A
 /// skill's tree is nearly its own source form, but not quite: the renderer
 /// strips and re-injects the project-instructions block, so bytes written
-/// inside that block are not bytes a source can hold, and it cuts the
+/// inside that block are not bytes a source can hold; it cuts the
 /// frontmatter to the installed key set, which the capture put the
-/// publisher's other keys back around. What the round trip asks is
-/// whether the captured source renders to the bytes on disk.
-fn skill_round_trip(of: &ForkOf, captured: &str, on_disk: String) -> (String, String) {
+/// publisher's other keys back around; and a tree stored in the shared-tree
+/// reading renders its links back to this position. What the round trip
+/// asks is whether the captured source renders to the bytes on disk: every
+/// text file, with each link compared by the target it reaches there.
+fn skill_round_trip(
+    of: &ForkOf,
+    captured: &[(PathBuf, Vec<u8>)],
+    on_disk: &[(PathBuf, Vec<u8>)],
+    edited: &std::path::Path,
+    stored: Option<&links::Position>,
+) -> (String, String) {
     let instructions = crate::render::skill::skill_instructions(of.manifest, of.name);
-    (
+    let rendered = match stored {
+        Some(position) => {
+            links::convert(
+                links::Origin {
+                    directory: position.directory.clone(),
+                    files: captured.to_vec(),
+                    siblings: links::Siblings::SkillsDirectory,
+                },
+                &links::Position {
+                    directory: edited.to_path_buf(),
+                    bound: position.bound.clone(),
+                },
+            )
+            .0
+        }
+        None => captured.to_vec(),
+    };
+    let rendered = crate::render::skill::with_skill_text(rendered, |text| {
         crate::render::skill::installed_keys(&crate::render::skill::inject_instructions(
-            captured,
+            text,
             instructions.as_deref(),
-        )),
-        on_disk,
-    )
+        ))
+    });
+    let compared = |files: &[(PathBuf, Vec<u8>)]| {
+        let mut files: Vec<(PathBuf, String)> = files
+            .iter()
+            .map(|(rel, bytes)| {
+                let text = match std::str::from_utf8(bytes) {
+                    Ok(text) => links::comparable(text, &edited.join(rel)),
+                    Err(_) => format!("{bytes:?}"),
+                };
+                (rel.clone(), text)
+            })
+            .collect();
+        files.sort();
+        files
+            .into_iter()
+            .map(|(rel, text)| format!("{}\0{text}\0", crate::paths::slashed(&rel)))
+            .collect::<String>()
+    };
+    (compared(&rendered), compared(on_disk))
+}
+
+/// Where a skill fork keeps its captured links: the shared-tree reading of
+/// the name it answers to, for a new fork and for a fork already tagged;
+/// nowhere for a fork stored before kendex converted links, whose bytes
+/// stay as delivered.
+fn stored_reading(of: &ForkOf) -> Option<links::Position> {
+    let legacy = of.decl.source == LOCAL_SOURCE_NAME && of.decl.links.is_none();
+    (!legacy).then(|| links::shared_tree(of.env, of.scope, of.installed_as))
 }

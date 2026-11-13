@@ -87,7 +87,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rust]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -213,7 +213,7 @@ fn a_written_tree_keeps_shebang_files_executable() {
 /// below asserts the whole file.
 fn kept_manifest(source: &std::path::Path) -> String {
     format!(
-        "# what this project installs\nschema = 7\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n",
+        "# what this project installs\nschema = 8\n\n# the catalog we read\n[sources.cat]\nenabled = true\n{}\n\n[install]\nharnesses = [\"claude\"]\n\n# the one we actually use\n[skills.gh]\nsource = \"cat\"   # from the catalog\nnote = \"why I keep this\"\nenabled = true\n\n# guards every bash call\n[[custom-hooks]]\nevent = \"PreToolUse\"\ncommand = \"./guard.sh\"\nenabled = true   # still on\n\n[[custom-hooks]]\nevent = \"Stop\"\ncommand = \"./done.sh\"\n",
         source_path(source)
     )
 }
@@ -310,7 +310,7 @@ fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
     let k = kept();
     let older = k
         .original
-        .replacen("schema = 7", "schema = 6   # pinned", 1);
+        .replacen("schema = 8", "schema = 6   # pinned", 1);
     fs::write(&k.manifest, &older).unwrap();
     let report = kendex_core::engine::ops::add(
         &k.env,
@@ -324,7 +324,7 @@ fn a_mutation_migrates_the_schema_and_keeps_unrelated_manifest_bytes() {
     .unwrap();
     apply::execute(&k.env, &report.plan).unwrap();
     let expected = declaring(
-        &older.replacen("schema = 6", "schema = 7", 1),
+        &older.replacen("schema = 6", "schema = 8", 1),
         "[skills.fmt]\nsource = \"cat\"\n",
     );
     assert_eq!(fs::read_to_string(&k.manifest).unwrap(), expected);
@@ -384,7 +384,10 @@ fn adopting_a_skill_edits_kendex_toml_in_place() {
 
     assert_eq!(
         fs::read_to_string(&k.manifest).unwrap(),
-        declaring(&k.original, "[skills.mine]\nsource = \"in-place\"\n")
+        declaring(
+            &k.original,
+            "[skills.mine]\nsource = \"in-place\"\nlinks = \"shared-tree\"\n"
+        )
     );
 }
 
@@ -425,10 +428,15 @@ const HOOK_COMMENT: &str = "# guards every bash call";
 /// The declaration after a verb rebinds it to the person's own copy: the
 /// one value changed, the comment beside it untouched.
 fn rebound(manifest: &str) -> String {
-    manifest.replace(
-        "source = \"cat\"   # from the catalog",
-        "source = \"local\"   # from the catalog",
-    )
+    manifest
+        .replace(
+            "source = \"cat\"   # from the catalog",
+            "source = \"local\"   # from the catalog",
+        )
+        .replace(
+            "note = \"why I keep this\"\nenabled = true\n",
+            "note = \"why I keep this\"\nenabled = true\nlinks = \"shared-tree\"\n",
+        )
 }
 
 /// The `[forks.skill.gh]` block a fork records. Checked rather than

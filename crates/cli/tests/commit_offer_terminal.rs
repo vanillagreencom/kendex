@@ -93,7 +93,7 @@ fn consumer(home: &Path, check: &str) -> PathBuf {
     let project = home.join("dev/app");
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.bot-instructions]\nsource = \"cat\"\n",
     );
     let package = project.join("catalog/skills/bot-instructions");
     write(&package.join("SKILL.md"), DECLARATION);
@@ -299,7 +299,7 @@ fn committed_without_packages(home: &Path) -> PathBuf {
     fs::remove_dir_all(project.join("catalog")).unwrap();
     write(
         &project.join("kendex.toml"),
-        "schema = 7\n\n[install]\nharnesses = [\"claude\"]\n",
+        "schema = 8\n\n[install]\nharnesses = [\"claude\"]\n",
     );
     write(&project.join("AGENTS.md"), "# app\n");
     git(&project, &["add", "-A"]);

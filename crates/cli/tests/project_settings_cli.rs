@@ -63,7 +63,7 @@ fn report_in(look: &str) {
         fs::write(
             project.join("kendex.toml"),
             format!(
-                "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\n",
+                "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.review]\nsource = \"cat\"\n",
                 source_path(&catalog)
             ),
         )

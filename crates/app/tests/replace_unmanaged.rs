@@ -41,7 +41,7 @@ fn fixture() -> Fixture {
     fs::write(
         project.join("kendex.toml"),
         format!(
-            "schema = 7\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
+            "schema = 8\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[skills.lint]\nsource = \"cat\"\n",
             source_path(&source)
         ),
     )
@@ -152,7 +152,7 @@ fn an_unsupported_schema_refuses_the_take_over_and_writes_nothing() {
     let path = f.project.join("kendex.toml");
     let older = fs::read_to_string(&path)
         .unwrap()
-        .replace("schema = 7", "schema = 5");
+        .replace("schema = 8", "schema = 5");
     fs::write(&path, &older).unwrap();
     let deploy = body(&f, "deploy");
     let lint = body(&f, "lint");
@@ -384,7 +384,7 @@ fn apply_and_replace_hold_a_moved_sibling_catalog() {
         git(&["-c", "commit.gpgsign=false", "commit", "-qm", "installed"]);
         fs::create_dir_all(&project).unwrap();
         let declared = format!(
-            "schema = 7\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.sibling]\nrepo = \"file://{}\"\n[sources.subject]\n{}\n[skills.sibling]\nsource = \"sibling\"\n",
+            "schema = 8\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[sources.sibling]\nrepo = \"file://{}\"\n[sources.subject]\n{}\n[skills.sibling]\nsource = \"sibling\"\n",
             catalog.display(),
             source_path(&subject),
         );

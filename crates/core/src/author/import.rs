@@ -144,12 +144,16 @@ pub struct ImportSelection {
 }
 
 /// What one apply wrote, for the wizard's summary line.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportOutcome {
     pub written: Vec<String>,
     /// Selections whose exact bytes were already at the destination.
     pub already_present: Vec<String>,
+    /// The links a copied skill kept as written because no spelling from
+    /// the catalog reaches their targets inside it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<crate::engine::ItemWarning>,
 }
 
 /// One selection's bytes re-resolved at apply time, with the provenance
@@ -163,6 +167,130 @@ pub(super) struct ResolvedSelection {
     /// Where on this machine the bytes were read from, when they were —
     /// what the target-overlap refusal compares against.
     pub read_from: Option<PathBuf>,
+    /// Every place the selected bytes were seen, with where their links
+    /// are read from there.
+    pub(super) readings: Vec<(String, origins::ReadAt)>,
+}
+
+/// Whether a writer reads the person's own untagged content from the places
+/// it was delivered to, or carries it as it is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Untagged {
+    Delivered,
+    Carried,
+}
+
+impl ResolvedSelection {
+    /// A skill's links converted into `destination` from every place the
+    /// selected bytes were seen. `None` where the bytes are carried as they
+    /// are; otherwise what the conversion kept. Places that read the bytes
+    /// as different targets cannot be offered apart, since a selection is
+    /// keyed by its bytes, so they refuse by name.
+    pub(super) fn convert_into(
+        &mut self,
+        kind: ItemKind,
+        name: &str,
+        destination: &crate::render::skill::links::Position,
+        untagged: Untagged,
+    ) -> Result<Option<Vec<crate::render::skill::links::KeptLink>>> {
+        use crate::render::skill::links;
+        let ItemBytes::Tree(files) = &self.bytes else {
+            return Ok(None);
+        };
+        if kind != ItemKind::Skill {
+            return Ok(None);
+        }
+        let mut positions: Vec<(String, PathBuf, Option<PathBuf>)> = Vec::new();
+        let mut unrecorded = false;
+        for (location, reading) in &self.readings {
+            match reading {
+                origins::ReadAt::Directory { directory, catalog } => {
+                    positions.push((location.clone(), directory.clone(), catalog.clone()));
+                }
+                origins::ReadAt::Delivered(places) => match untagged {
+                    Untagged::Carried => {}
+                    Untagged::Delivered if places.is_empty() => unrecorded = true,
+                    Untagged::Delivered => positions.extend(
+                        places
+                            .iter()
+                            .map(|place| (location.clone(), place.clone(), None)),
+                    ),
+                },
+                origins::ReadAt::Opaque => {}
+            }
+        }
+        if positions.is_empty() {
+            if !unrecorded {
+                return Ok(None);
+            }
+            // Nothing says where these bytes were read from: they are
+            // carried as they are, and every link that leaves the tree is
+            // reported as making no claim about its target.
+            let (_, kept) = links::convert(
+                links::Origin {
+                    directory: destination.directory.clone(),
+                    files: files.clone(),
+                    siblings: links::Siblings::Unknown,
+                },
+                &links::Position {
+                    directory: destination.directory.clone(),
+                    bound: destination.directory.clone(),
+                },
+            );
+            return Ok(Some(kept));
+        }
+        let catalogs: Vec<Option<crate::source_read::SealedSource>> = positions
+            .iter()
+            .map(|(_, _, catalog)| {
+                catalog
+                    .as_ref()
+                    .and_then(|root| crate::source_read::SealedSource::open(root).ok())
+            })
+            .collect();
+        let mut origins =
+            positions
+                .iter()
+                .zip(&catalogs)
+                .map(|((_, directory, catalog), sealed)| links::Origin {
+                    directory: directory.clone(),
+                    files: files.clone(),
+                    siblings: match (catalog, sealed) {
+                        (Some(_), Some(sealed)) => links::Siblings::Catalog(sealed),
+                        (Some(_), None) => links::Siblings::Unknown,
+                        (None, _) => links::Siblings::SkillsDirectory,
+                    },
+                });
+        let Some(first) = origins.next() else {
+            return Ok(None);
+        };
+        match links::agreed(first, origins, destination) {
+            links::Converted::Agreed { files, kept } => {
+                self.bytes = ItemBytes::Tree(files);
+                Ok(Some(kept))
+            }
+            links::Converted::Disagree {
+                positions: [one, other],
+            } => {
+                let at = |directory: &PathBuf| {
+                    positions
+                        .iter()
+                        .find(|(_, at, _)| at == directory)
+                        .map_or_else(
+                            || crate::paths::slashed(directory),
+                            |(location, _, _)| location.clone(),
+                        )
+                };
+                Err(CoreError::Authoring {
+                    message: format!(
+                        "the same bytes of '{}' read their links as different files at {} and at {} — remove or edit one copy so one reading remains, then import again",
+                        crate::names::shown(name),
+                        at(&one),
+                        at(&other)
+                    ),
+                })
+            }
+        }
+    }
 }
 
 /// Every package the given scopes hold, grouped and deduplicated. Origins
@@ -359,6 +487,9 @@ pub struct ResolvedBytes {
     /// at the `NOTICES/<source>/<file>` paths a catalog-shaped tree keeps
     /// them under. Empty for content that is the person's own.
     pub notices: Vec<(PathBuf, Vec<u8>)>,
+    /// What converting a skill's links into the destination kept, or
+    /// `None` where the bytes are carried as they are.
+    pub(crate) kept: Option<Vec<crate::render::skill::links::KeptLink>>,
 }
 
 /// Re-resolve one selection's bytes, past the same gates the import into
@@ -370,7 +501,12 @@ pub struct ResolvedBytes {
 /// licensed bytes refuse without the person's evidence. A caller that
 /// copies what this hands back does not repeat any of those questions,
 /// and cannot skip one by not knowing it existed.
-pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Result<ResolvedBytes> {
+pub(crate) fn resolve(
+    env: &Env,
+    scopes: &[Scope],
+    selection: &ImportSelection,
+    destination: &crate::render::skill::links::Position,
+) -> Result<ResolvedBytes> {
     if let Some(problem) = crate::names::item_problem(&selection.destination) {
         return Err(CoreError::Authoring {
             message: format!(
@@ -388,8 +524,16 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
             ),
         });
     }
-    let answer = resolve_selection(env, scopes, selection)?;
+    let mut answer = resolve_selection(env, scopes, selection)?;
     license_gate(selection, &answer.group)?;
+    // A template keeps the person's own untagged content as it is: its
+    // copy installs untagged, read as it was delivered.
+    let kept = answer.convert_into(
+        selection.kind,
+        &selection.name,
+        destination,
+        Untagged::Carried,
+    )?;
     let files = match answer.bytes {
         ItemBytes::Tree(files) => files,
         ItemBytes::File(bytes) => {
@@ -413,7 +557,11 @@ pub fn resolve(env: &Env, scopes: &[Scope], selection: &ImportSelection) -> Resu
             .collect::<Result<Vec<_>>>()?,
         None => Vec::new(),
     };
-    Ok(ResolvedBytes { files, notices })
+    Ok(ResolvedBytes {
+        files,
+        notices,
+        kept,
+    })
 }
 
 /// Where licence and attribution files sit inside a catalog-shaped tree:

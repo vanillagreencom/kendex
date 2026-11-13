@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use super::WritePlan;
 use super::ops::manifest_for_mutation;
 use crate::apply::{Description, Op, Plan, PlannedOp, Pre};
 use crate::env::Env;
@@ -13,7 +14,7 @@ mod held;
 mod hooks;
 mod inplace;
 mod shared;
-use capture::{Seen, capture_ops};
+use capture::{Conversion, Seen, capture_ops};
 pub(super) use held::position;
 use held::{Held, read_positions};
 pub use held::{can_keep_all, can_keep_for};
@@ -52,7 +53,7 @@ pub fn adopt(
     kind: ItemKind,
     name: &str,
     harnesses: &[HarnessId],
-) -> Result<Plan> {
+) -> Result<WritePlan> {
     // A plan entry, so the root is fixed here and nowhere downstream
     // (invariant 17). Without it this planner met two spellings of one
     // directory: positions come from the caller's scope while the tree a
@@ -64,7 +65,10 @@ pub fn adopt(
     // at a position — it has its own planner rather than a case inside
     // this one.
     if hooks::supports(kind) {
-        return hooks::adopt_hook(env, scope, name, harnesses);
+        return Ok(WritePlan {
+            plan: hooks::adopt_hook(env, scope, name, harnesses)?,
+            warnings: Vec::new(),
+        });
     }
     usable(name)?;
     let mut manifest = manifest_for_mutation(env, scope)?;
@@ -72,6 +76,7 @@ pub fn adopt(
         local_item,
         positions,
         seen,
+        conversion,
     } = read_positions(env, scope, kind, name, harnesses)?;
     let Some((_, first_position)) = positions.first() else {
         return Err(CoreError::ItemNotInSource {
@@ -87,7 +92,15 @@ pub fn adopt(
     }
 
     let in_place = inplace::home(scope, kind, name).is_some();
-    let mut ops = move_ops(kind, name, &local_item, first_position, in_place, &seen)?;
+    let mut ops = move_ops(
+        kind,
+        name,
+        &local_item,
+        first_position,
+        in_place,
+        &seen,
+        conversion.as_ref(),
+    )?;
     // A shared folder is declared for every tool that was reading it, not
     // only the ones named — dropping the others is exactly the broken
     // sharing this path exists to avoid.
@@ -113,6 +126,18 @@ pub fn adopt(
         already_declared,
         source,
     );
+    // The stored tree now holds the shared-tree reading, and the
+    // declaration says so.
+    let warnings = match &conversion {
+        Some(conversion) => {
+            if let Some(decl) = manifest.declared_mut(kind).get_mut(name) {
+                decl.links = Some(manifest::SkillLinks::SharedTree);
+            }
+            let destination = crate::render::skill::links::shared_tree(env, scope, name);
+            conversion.warnings(name, &destination.directory)
+        }
+        None => Vec::new(),
+    };
 
     let manifest_path = manifest::manifest_path(env, scope);
     ops.push(PlannedOp {
@@ -127,7 +152,10 @@ pub fn adopt(
             manifest: Box::new(manifest),
         },
     });
-    Plan::landed(scope.clone(), ops)
+    Ok(WritePlan {
+        plan: Plan::landed(scope.clone(), ops)?,
+        warnings,
+    })
 }
 
 /// Everything the move itself takes: the broken links cleared, and then
@@ -141,6 +169,7 @@ fn move_ops(
     first_position: &Path,
     in_place: bool,
     seen: &Seen,
+    conversion: Option<&Conversion>,
 ) -> Result<Vec<PlannedOp>> {
     let Seen {
         shared,
@@ -164,16 +193,25 @@ fn move_ops(
             std::slice::from_ref(&shared.target),
             &shared.links,
             local_item,
+            conversion,
         )?),
         (None, true) => {
             let held: Vec<PathBuf> = content.iter().map(|(_, path)| path.clone()).collect();
             if held.is_empty() {
                 return Err(nothing_at(name, first_position));
             }
-            ops.extend(inplace::relocate_ops(name, &held, &[], local_item)?);
+            ops.extend(inplace::relocate_ops(
+                name,
+                &held,
+                &[],
+                local_item,
+                conversion,
+            )?);
         }
-        (Some((_, shared)), false) => ops.extend(shared_capture_ops(name, shared, local_item)?),
-        (None, false) => ops.extend(capture_ops(kind, name, content, local_item)?),
+        (Some((_, shared)), false) => {
+            ops.extend(shared_capture_ops(name, shared, local_item, conversion)?)
+        }
+        (None, false) => ops.extend(capture_ops(kind, name, content, local_item, conversion)?),
     }
     Ok(ops)
 }

@@ -2551,7 +2551,7 @@ TOML
   assert_eq "a customized consumer's pure refresh is a render" \
     "class=render measured=true cause=renders-match-their-sources" \
     "$(printf '%s\n' "$refresh_err" | sed -n 's/^class: //p')"
-  # The previous engine left schema 6; the next real refresh must persist 7.
+  # The previous engine left schema 7; the next real refresh must persist 8.
   git -C "$consumer" checkout -q -B schema-base refreshed
   python3 - "$consumer/kendex.toml" <<'OLD_SCHEMA'
 from pathlib import Path
@@ -2559,11 +2559,11 @@ import sys
 
 path = Path(sys.argv[1])
 before = path.read_bytes()
-assert before.startswith(b"schema = 7\n")
-path.write_bytes(before.replace(b"schema = 7\n", b"schema = 6\n", 1))
+assert before.startswith(b"schema = 8\n")
+path.write_bytes(before.replace(b"schema = 8\n", b"schema = 7\n", 1))
 OLD_SCHEMA
   git -C "$consumer" add -A
-  git -C "$consumer" commit -q -m 'the consumer on schema 6'
+  git -C "$consumer" commit -q -m 'the consumer on schema 7'
   schema_base="$(git -C "$consumer" rev-parse HEAD)"
   git -C "$consumer" checkout -q -B schema-refreshed
   kendex_here "$consumer" refresh --scope project -y --leave
@@ -2576,14 +2576,14 @@ OLD_SCHEMA
     --repo "$consumer" --event pull_request --base "$schema_base" --head "$schema_head"
   schema_refresh_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$schema_base" --head "$schema_head")"
-  assert_eq "a real refresh from schema 6 keeps its render class" \
+  assert_eq "a real refresh from schema 7 keeps its render class" \
     'class=render measured=true cause=renders-match-their-sources' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n 's/^class: //p')"
   schema_candidate="$(classify --mode render-candidate --repo "$consumer" \
     --event pull_request --base "$schema_base" --head HEAD)"
   assert_eq "the schema refresh installs proof prerequisites" render_candidate=true "$schema_candidate"
   assert_eq "the real refresh reports its schema step" \
-    'schema-bump: path=kendex.toml from=6 to=7' \
+    'schema-bump: path=kendex.toml from=7 to=8' \
     "$(printf '%s\n' "$schema_refresh_err" | sed -n '/^schema-bump: /p')"
   assert_eq "the schema-only refresh keeps its conservative queue answer" \
     'queue-only: queue_only=true inputs=declared cause=no-changed-paths' \

@@ -31,6 +31,7 @@ fn template_of(project: &super::create::Project, name: &str) -> Template {
         },
     )
     .unwrap()
+    .template
 }
 
 /// A fresh project directory this machine can install into.
@@ -120,8 +121,8 @@ fn a_template_with_an_unreachable_member_refuses_before_it_writes_anything() {
         .iter()
         .find(|member| member.name == "stray")
         .unwrap();
-    let MemberSource::Copy { copy, .. } = &stray.source else {
-        panic!("stray should be a copy");
+    let MemberSource::SharedCopy { copy, .. } = &stray.source else {
+        panic!("stray should be a converted copy");
     };
     fs::remove_dir_all(copy_path(&project.env, &template, copy).unwrap()).unwrap();
 
@@ -293,7 +294,7 @@ fn output_style_intent_is_judged_before_template_writes() {
                 fs::create_dir_all(manifest_path.parent().unwrap()).unwrap();
                 fs::write(
                     &manifest_path,
-                    format!("schema = 7\n[output-styles.held]\nsource = \"local\"\nenabled = {enabled}\n"),
+                    format!("schema = 8\n[output-styles.held]\nsource = \"local\"\nenabled = {enabled}\n"),
                 ).unwrap();
             }
             let resolution = resolve(&project.env, &template).unwrap();
@@ -383,7 +384,7 @@ fn a_populated_destination_keeps_its_own_packages_and_refuses_a_clash() {
     skill(&local.join("skills"), "theirs", "their own bytes");
     fs::write(
         root.join("kendex.toml"),
-        "schema = 7\n[skills.theirs]\nsource = \"local\"\n",
+        "schema = 8\n[skills.theirs]\nsource = \"local\"\n",
     )
     .unwrap();
     // And one wearing a template member's name with different bytes.
@@ -431,7 +432,7 @@ fn a_destination_keeps_a_customization_it_already_set() {
     };
     fs::write(
         root.join("kendex.toml"),
-        "schema = 7\n[skill-instructions]\n\"gh\" = \"ours, not the template's\"\n",
+        "schema = 8\n[skill-instructions]\n\"gh\" = \"ours, not the template's\"\n",
     )
     .unwrap();
 
@@ -534,8 +535,8 @@ fn a_refused_replacement_leaves_the_template_as_it_was() {
         .iter()
         .find(|member| member.name == "stray")
         .unwrap();
-    let MemberSource::Copy { copy, .. } = &stray.source else {
-        panic!("stray should be a copy");
+    let MemberSource::SharedCopy { copy, .. } = &stray.source else {
+        panic!("stray should be a converted copy");
     };
     let stored = copy_path(&project.env, &template, copy).unwrap();
     let before = fs::read_to_string(stored.join("SKILL.md")).unwrap();
@@ -1844,4 +1845,121 @@ fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
     drop(busy);
     assert!(crate::apply::recover(&project.env, &target).unwrap());
     assert!(!written.exists());
+}
+
+/// A copy whose links were converted is recorded as a shared copy: it
+/// stores the saving project's shared-tree reading, installs tagged, and
+/// reads relative to whichever scope installs it, a project or the
+/// personal scope with its local store anywhere.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_shared_copy_reaches_the_installing_scopes_file() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let project = home.join("app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
+    super::skill(&project.join("skills"), "ship", "[m](../../memory/x.md)");
+    fs::create_dir_all(project.join("memory")).unwrap();
+    fs::write(project.join("memory/x.md"), "Memory.\n").unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 8\n[sources.cat]\npath = \".\"\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n[skills.ship]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    let scope = Scope::Project {
+        root: project.canonicalize().unwrap(),
+    };
+    let report = crate::engine::audit(&env, &scope).unwrap();
+    crate::apply::execute(&env, &report.plan).unwrap();
+    // An edit, so the template takes this project's copy.
+    let installed = project.join(".claude/skills/ship/SKILL.md");
+    let edited = format!("{}Edited.\n", fs::read_to_string(&installed).unwrap());
+    fs::write(&installed, &edited).unwrap();
+    let draft = draft_from_project(&env, &project).unwrap();
+    let key = member_key(MemberKind::Skill, "ship");
+    let saved = create_from_project(
+        &env,
+        &project,
+        &Chosen {
+            name: "Shared".to_owned(),
+            fingerprint: draft.fingerprint.clone(),
+            members: vec![key.clone()],
+            sides: [(
+                key,
+                Side::Copy {
+                    license: LicenseAnswer {
+                        confirmed: false,
+                        basis: Some("my own catalog".to_owned()),
+                    },
+                },
+            )]
+            .into(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert!(saved.warnings.is_empty(), "{:?}", saved.warnings);
+    assert!(
+        matches!(saved.members[0].source, MemberSource::SharedCopy { .. }),
+        "{:?}",
+        saved.members[0].source
+    );
+    // Each destination holds its own `memory/x.md`.
+    let other = home.join("other");
+    for (row, destination, root) in [
+        (
+            "another project",
+            Scope::Project {
+                root: {
+                    fs::create_dir_all(other.join(".claude")).unwrap();
+                    fs::write(other.join("kendex.toml"), "schema = 8\n").unwrap();
+                    other.canonicalize().unwrap()
+                },
+            },
+            other.canonicalize().unwrap(),
+        ),
+        ("personal scope", Scope::Global, home.clone()),
+    ] {
+        fs::create_dir_all(root.join("memory")).unwrap();
+        fs::write(root.join("memory/x.md"), format!("{row}.\n")).unwrap();
+        install(
+            &env,
+            &saved,
+            &destination,
+            Some(vec![HarnessId::Claude]),
+            None,
+        )
+        .unwrap();
+        let manifest =
+            match crate::manifest::load(&crate::manifest::manifest_path(&env, &destination))
+                .unwrap()
+            {
+                crate::manifest::ManifestFile::Current(manifest) => *manifest,
+                crate::manifest::ManifestFile::Absent => panic!("{row}: no manifest"),
+            };
+        assert_eq!(
+            manifest.skills["ship"].links,
+            Some(crate::manifest::SkillLinks::SharedTree),
+            "{row}"
+        );
+        let tree = crate::engine::desired::native_dir(
+            &env,
+            &destination,
+            HarnessId::Claude,
+            ItemKind::Skill,
+        )
+        .unwrap()
+        .join("ship");
+        let text = fs::read_to_string(tree.join("SKILL.md")).unwrap();
+        let spelled = text
+            .lines()
+            .find_map(|line| line.strip_prefix("[m](")?.strip_suffix(')'))
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(fs::canonicalize(&tree).unwrap().join(spelled)).unwrap(),
+            format!("{row}.\n"),
+            "{row}"
+        );
+    }
 }

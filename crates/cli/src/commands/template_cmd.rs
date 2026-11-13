@@ -524,6 +524,10 @@ fn create(
         template.name,
         template.members.len()
     ));
+    crate::ui::stderr(&super::engine_common::warning_lines(
+        &crate::ui::style(),
+        &template.warnings,
+    ));
     Ok(())
 }
 
@@ -694,7 +698,7 @@ fn add(
             .find(|member| member.kind == want.kind && member.name == want.name)
         {
             let standing = match &held.source {
-                MemberSource::Copy { .. } => {
+                MemberSource::Copy { .. } | MemberSource::SharedCopy { .. } => {
                     ", copied into it — this replaces those files".to_owned()
                 }
                 MemberSource::Marketplace { repo, .. } => {
@@ -715,6 +719,10 @@ fn add(
         "{} now installs {} package(s)",
         after.name,
         after.members.len()
+    ));
+    crate::ui::stderr(&super::engine_common::warning_lines(
+        &crate::ui::style(),
+        &after.warnings,
     ));
     Ok(())
 }
