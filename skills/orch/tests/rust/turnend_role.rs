@@ -225,7 +225,8 @@ fn a_managed_jarvis_session_registered_as_its_homes_overseer_is_judged_as_jarvis
     // lacks its native session: Jarvis's own reader is asked first all the
     // same, its terminal check reading the session's pane through the
     // stand-in, and the heal shows the binding kept. A record Jarvis's
-    // reader cannot read is told and asks no terminal. Jarvis's reader is
+    // reader cannot read is told and asks no terminal; the turn end's stamp
+    // cannot take that record either and tells it too. Jarvis's reader is
     // asked at a turn end or a context reading alone.
     for unreadable in [false, true] {
         let world = TurnWorld::new();
@@ -237,7 +238,10 @@ fn a_managed_jarvis_session_registered_as_its_homes_overseer_is_judged_as_jarvis
         let out = stop(&world, &env);
         assert_eq!(out.code, 0, "unreadable {unreadable}: {}", out.stderr);
         let told = if unreadable {
-            vec![format!("jarvis-record-unread={}", record.display())]
+            vec![
+                format!("jarvis-record-unread={}", record.display()),
+                format!("jarvis-rows-unwritten={}", record.display()),
+            ]
         } else {
             Vec::new()
         };

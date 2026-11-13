@@ -164,6 +164,14 @@ pub enum Said {
     IdleUnrecorded(PathBuf),
     IdleHoldUnrecorded(PathBuf),
     IdleNoticeUnrecorded(PathBuf),
+    /// The session's own event row could not be written, under the root
+    /// of the checkout whose overseer mailbox takes it.
+    RowsUnwritten(PathBuf),
+    /// A Pi lane's turn row could not be written into its mailbox
+    /// directory.
+    LaneRowsUnwritten(PathBuf),
+    /// A Jarvis launch record could not take this session's stamp.
+    JarvisRowsUnwritten(PathBuf),
     /// The reader's events listing ended other than with its answer.
     Events(String),
     EventsEnvelope,
@@ -315,6 +323,11 @@ impl Said {
             Said::IdleHoldUnrecorded(path) => ("idle-hold-unrecorded", path.display().to_string()),
             Said::IdleNoticeUnrecorded(path) => {
                 ("idle-notice-unrecorded", path.display().to_string())
+            }
+            Said::RowsUnwritten(root) => ("rows-unwritten", root.display().to_string()),
+            Said::LaneRowsUnwritten(dir) => ("lane-rows-unwritten", dir.display().to_string()),
+            Said::JarvisRowsUnwritten(record) => {
+                ("jarvis-rows-unwritten", record.display().to_string())
             }
             Said::Events(status) => ("events", status.clone()),
             Said::EventsEnvelope => ("events", "envelope".to_owned()),
@@ -486,6 +499,9 @@ impl Said {
                 "{}, the count of asks and notices this lane has sent, could not take the idle notice this hook sent, so the next turn end reads that notice as the lane's own send and passes unheld:",
                 path.display()
             ),
+            Said::RowsUnwritten(_) => "this session's event row could not be written, so the overseer judgement reads what the file already holds or, with no row, the pane, the named fallback; the session goes on:".to_owned(),
+            Said::LaneRowsUnwritten(_) => "this Pi lane's turn row could not be written, so oversee-watch and lanes state judge the lane from the rows the file already holds; the lane goes on:".to_owned(),
+            Said::JarvisRowsUnwritten(_) => "the Jarvis launch record named above could not take this session's Start stamp, so its launch worker judges this session from its pane until a later tool call, or on Claude Code, Codex or Copilot CLI a turn end, writes it, and on Codex and Copilot CLI holds the brief until a later turn end writes the kickoff's end; the session goes on:".to_owned(),
             Said::Events(status) => format!(
                 "the lane mailbox reader's events listing exited {status}, so whether this lane sent anything this turn is unknown; the turn ends unjudged rather than held, because nothing a lane does at its turn end repairs its mailbox:"
             ),
