@@ -78,6 +78,17 @@ def destination_roots(destination):
 def note_routes(settings, repo, host=None, local=False):
     """Select without sending; only the legacy route discovers its fallback lazily."""
     declared = destinations(settings)
+    # Consumer names extend the basename match, never the discovered roots.
+    value = settings.get("JARVIS_REPO_ALIASES", "")
+    try:
+        aliases = json.loads(value) if value else {}
+    except ValueError as error:
+        raise DestinationRefusal("setting-invalid", "JARVIS_REPO_ALIASES", str(error)) from error
+    if not isinstance(aliases, dict) or any(
+            not isinstance(name, str) or not name or "/" in name
+            for pair in aliases.items() for name in pair):
+        raise DestinationRefusal("setting-invalid", "JARVIS_REPO_ALIASES")
+    names = {repo, aliases.get(repo, repo)}
     if host is not None or local:
         key = "ssh:" + host if host is not None else "local"
         selected = [target for target in declared if target.key == key]
@@ -91,7 +102,7 @@ def note_routes(settings, repo, host=None, local=False):
     matches = []
     for target in selected:
         try:
-            roots = [root for root in destination_roots(target) if root.rstrip("/").rsplit("/", 1)[-1] == repo]
+            roots = [root for root in destination_roots(target) if root.rstrip("/").rsplit("/", 1)[-1] in names]
         except Failure as error:
             side = "host" if legacy and target.host else target.key
             raise DestinationRefusal("project-list-failed", side, str(error)) from error
