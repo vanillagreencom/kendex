@@ -727,6 +727,97 @@ fn the_handoff_is_written_under_one_header_naming_the_records_generation() {
     assert_eq!(std::fs::read_to_string(&handoff).unwrap(), written);
 }
 
+/// A live succession is admitted only on a snapshot of the generation its
+/// requester saw: one written by `controller handoff` passes the admission
+/// to the transition, whose compare-and-swap then refuses the pane the
+/// requester named; a handoff with no header, another generation or two
+/// headers refuses `handoff-stale` naming what it found, with nothing
+/// written. A dead recovery asks no snapshot.
+#[test]
+fn a_live_succession_is_admitted_only_on_its_generations_snapshot() {
+    let world = World::new();
+    let record = world.root().join("workflow-state-oversee.json");
+    world.record(&record, FLEET);
+    let handoff = world.root().join("handoffs/H.md");
+    let body = world.root().join("body.md");
+    std::fs::write(&body, "## State\nSession: live\n").unwrap();
+    let mut written = args(&["handoff"], &record, None);
+    written.extend([
+        "--body".to_owned(),
+        body.display().to_string(),
+        "--handoff".to_owned(),
+        handoff.display().to_string(),
+    ]);
+    let out = world.controller(world.root(), &written, &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let current = std::fs::read_to_string(&handoff).unwrap();
+    let mut moved = expected();
+    moved["pane"] = json!("%9");
+    let mut pending = successor();
+    pending["handoff"] = json!(handoff.display().to_string());
+    let ask = |cause: &str| {
+        let request = json!({
+            "cause": cause,
+            "expected": moved,
+            "successor": pending,
+            "brief_file": "/r/brief.md",
+        });
+        let path = write(&world.root().join("request.json"), &request);
+        let mut words = args(&["transfer"], &record, Some(&path));
+        words.extend(world.reach());
+        refusal(&world.controller(world.root(), &words, &[]))
+    };
+    let (admitted, fields) = ask("live");
+    assert_eq!(admitted, "overseer-changed", "{fields}");
+    let before = std::fs::read_to_string(&record).unwrap();
+    // (case, the handoff's text, what the refusal names as found)
+    let rows: [(&str, Option<&str>, &str); 3] = [
+        ("absent", None, "none"),
+        (
+            "another generation",
+            Some("Start here: 2026-01-29T15:20:00Z generation=2\n"),
+            "2",
+        ),
+        (
+            "two headers",
+            Some("Start here: a generation=3\nStart here: b generation=3\n"),
+            "several",
+        ),
+    ];
+    for (name, text, found) in rows {
+        match text {
+            Some(text) => std::fs::write(&handoff, text).unwrap(),
+            None => std::fs::remove_file(&handoff).unwrap(),
+        }
+        let (key, fields) = ask("live");
+        assert_eq!(key, "handoff-stale", "{name}: {fields}");
+        assert_eq!(field(&fields, "expected"), Some("3"), "{name}: {fields}");
+        assert_eq!(field(&fields, "found"), Some(found), "{name}: {fields}");
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            before,
+            "{name}: nothing written"
+        );
+        let (dead, fields) = ask("dead");
+        assert_eq!(dead, "overseer-changed", "{name}: {fields}");
+    }
+    std::fs::write(&handoff, current).unwrap();
+    assert_eq!(
+        world.log("tmux.log"),
+        "",
+        "a refused request asks no server"
+    );
+    assert_eq!(
+        world.log("mail.log"),
+        "",
+        "a refused request sends no notice"
+    );
+}
+
 /// An adoption is made from the session's own pane: an adoption request
 /// that names no server, and a registration of the caller's pane, run where
 /// `$TMUX` is unset refuse `tmux-missing var=TMUX` before any server is
@@ -767,8 +858,8 @@ fn an_adoption_or_registration_with_no_server_named_refuses_before_asking_any() 
 /// The flag forms: `adopt --pane` reads the pane on the server `--socket`
 /// names and on no other, and with neither `--socket` nor `$TMUX` refuses
 /// `tmux-missing`; `successor --preference` walks the call's preference
-/// over the setting's, so an empty one refuses `preference-empty` where the
-/// setting is unset.
+/// over the setting's, so an empty one refuses `preference-empty` naming the
+/// setting where the setting is unset, as the setting set empty does.
 #[test]
 fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
     let world = World::new();
@@ -800,6 +891,19 @@ fn the_flag_forms_reach_the_named_server_and_walk_the_called_preference() {
         .map(str::to_owned),
     );
     let (key, fields) = refusal(&world.controller(world.root(), &successor, &[]));
+    assert_eq!(key, "preference-empty", "{fields}");
+    assert_eq!(
+        field(&fields, "setting"),
+        Some("AGENT_RUNTIME_CONTROLLER_PREFERENCE"),
+        "{fields}"
+    );
+    // The setting itself set empty, with no flag, is the same refusal.
+    successor.truncate(successor.len() - 2);
+    let (key, fields) = refusal(&world.controller(
+        world.root(),
+        &successor,
+        &[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "")],
+    ));
     assert_eq!(key, "preference-empty", "{fields}");
 }
 

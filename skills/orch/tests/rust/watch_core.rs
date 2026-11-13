@@ -1984,6 +1984,47 @@ fn a_watch_run_on_an_unbuilt_agent_runtime_refuses_before_the_ladder_and_any_cla
     );
 }
 
+/// The watch writes its lane mail through the program its start names, so
+/// that program is the one readiness judges: a start naming a program that
+/// is gone, beside a `LANE_MAIL_CLI` that stands, refuses `unready` naming
+/// lane-mail before the credential ladder and before any claim or event
+/// line, where it would otherwise claim and fail every write.
+#[test]
+fn a_watch_started_with_a_gone_mail_program_is_refused_before_it_claims() {
+    let dir = tempfile::tempdir().unwrap();
+    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
+    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    assert!(lane_mail().is_file(), "LANE_MAIL_CLI names a program");
+    let gone = state_dir.join("gone/lane-mail");
+    let mut command = watch_run_with(
+        &state_dir,
+        &["--interval", "240", "--max-loops", "1"],
+        &gone,
+    );
+    let out = bounded_output(
+        command.spawn().unwrap(),
+        secs(30),
+        "the watch ran on with its mail program gone",
+    );
+    let err = stderr(&out);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert_eq!(
+        err.lines().next(),
+        Some("orch-runtime: unready duty=watch program=lane-mail cause=absent fix=kendex-apply"),
+        "{err}"
+    );
+    let paths = paths_in(&state_dir);
+    assert!(
+        std::fs::metadata(&paths.pid).is_err() && std::fs::metadata(&paths.log).is_err(),
+        "the watch claimed before it asked"
+    );
+    assert!(
+        std::fs::metadata(state_dir.join("bin/gh.log")).is_err(),
+        "the credential ladder ran before the watch asked"
+    );
+}
+
 /// The ladder's refusal is its last line, after any warning it printed
 /// first, and the watch's refusal carries that line: here a bound the
 /// ladder cannot read is warned about ahead of it, the env token goes

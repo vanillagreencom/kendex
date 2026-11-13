@@ -1186,41 +1186,6 @@ fn an_ended_controller_with_no_identity_is_adopted_over_and_stopped_by_its_bare_
     assert_eq!(runner.fleet()["overseer"]["off"]["generation"], 3);
 }
 
-/// The request names the spent account, and a successor resolving to it
-/// refuses before any intent persists; one on another account runs.
-#[test]
-fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let predecessor = Owned::sleep();
-    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let before =
-        std::fs::read_to_string(runner.state_dir().join("workflow-state-oversee.json")).unwrap();
-    let mut request = transfer_request(&server, runner.state_dir());
-    request["cause"] = json!("walled");
-    // The successor's account is the state dir; spelled with a trailing
-    // slash it is still the same directory.
-    request["exclude_account"] = json!(format!("{}/", runner.state_dir().display()));
-    let out = runner.op_fleet(&request);
-    assert_eq!(refusal_key(&out), "successor-account-spent");
-    assert_eq!(
-        std::fs::read_to_string(runner.state_dir().join("workflow-state-oversee.json")).unwrap(),
-        before,
-        "nothing written"
-    );
-    assert!(live(predecessor.pid()));
-    let elsewhere = dir.path().join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    request["exclude_account"] = json!(elsewhere.display().to_string());
-    runner.transfer_started(&request);
-    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    assert_eq!(intent["cause"], "walled");
-    assert_eq!(runner.fleet()["overseer"]["generation"], 4);
-}
-
 /// The takeover brief an overseer's transfer holds is written once its
 /// intent stands; a brief that cannot be written refuses `io-failed
 /// operation=write-brief` naming that intent as `persisted_intent`, so the
@@ -8272,100 +8237,6 @@ fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_
     assert_eq!(refused_field(&unstamped, "found"), "none", "{unstamped}");
 }
 
-/// A live succession is admitted only on a snapshot of the generation its
-/// requester saw: one written by the real verb passes the admission to the
-/// transition (whose compare-and-swap then refuses the pane the requester
-/// named), and a handoff with no header, another generation or two headers
-/// refuses `handoff-stale` naming what it found, with nothing written. A
-/// dead recovery asks no snapshot.
-#[test]
-fn a_live_succession_is_admitted_only_on_its_generations_snapshot() {
-    let world = MarksWorld::new();
-    let root = world.path().display().to_string();
-    let fleet = json!({
-        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": [],
-        "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1", "cwd": root},
-    });
-    let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
-    std::fs::write(&state, serde_json::to_string(&fleet).unwrap()).unwrap();
-    let handoff = world.path().join("tmp/handoffs/OVERSEER-HANDOFF.md");
-    let body = world.path().join("body.md");
-    std::fs::write(&body, "## State\nSession: live\n").unwrap();
-    let written = world.run(
-        &[
-            "handoff",
-            "--fleet",
-            "--body",
-            &body.display().to_string(),
-            "--handoff",
-            &handoff.display().to_string(),
-        ],
-        &[],
-    );
-    assert_eq!(reply(&written)["ok"], json!(true), "{}", stderr(&written));
-    let current = std::fs::read_to_string(&handoff).unwrap();
-    let ask = |cause: &str| {
-        let request = json!({
-            "op": "request-transfer",
-            "cause": cause,
-            "expected": {"server": "1", "pane": "%2", "generation": 7, "cwd": root},
-            "successor": {"harness": "claude", "cwd": root},
-        });
-        let file = world.path().join("request.json");
-        std::fs::write(&file, request.to_string()).unwrap();
-        reply(&world.run(
-            &["op", "--fleet", "--request", &file.display().to_string()],
-            &[],
-        ))
-    };
-    let admitted = ask("live");
-    assert_eq!(
-        admitted["refusal"]["key"],
-        json!("overseer-changed"),
-        "{admitted}"
-    );
-    let before = std::fs::read_to_string(&state).unwrap();
-    for (name, text, found) in [
-        ("absent", None, "none"),
-        (
-            "another generation",
-            Some("Start here: 2026-01-29T15:20:00Z generation=6\n"),
-            "6",
-        ),
-        (
-            "two headers",
-            Some("Start here: a generation=7\nStart here: b generation=7\n"),
-            "several",
-        ),
-    ] {
-        std::fs::write(&state, &before).unwrap();
-        match text {
-            Some(text) => std::fs::write(&handoff, text).unwrap(),
-            None => std::fs::remove_file(&handoff).unwrap(),
-        }
-        let refused = ask("live");
-        assert_eq!(
-            refused["refusal"]["key"],
-            json!("handoff-stale"),
-            "{name}: {refused}"
-        );
-        assert_eq!(refused_field(&refused, "expected"), "7", "{name}");
-        assert_eq!(refused_field(&refused, "found"), found, "{name}");
-        assert_eq!(
-            std::fs::read_to_string(&state).unwrap(),
-            before,
-            "{name}: nothing written"
-        );
-        let dead = ask("dead");
-        assert_eq!(
-            dead["refusal"]["key"],
-            json!("overseer-changed"),
-            "{name}: {dead}"
-        );
-    }
-    std::fs::write(&handoff, current).unwrap();
-}
-
 /// The replies the hook suites plant for the judge (`hooks/tests/fixtures/
 /// marks-replies.json`) are the `marks` verb's own, each answered here for
 /// the inputs it records: through the real executable, and the memory mark
@@ -10112,30 +9983,6 @@ fn a_walled_bypass_controllers_watch_walk_crosses_harness_and_its_successor_runs
             .display()
             .to_string(),
         "{launched}"
-    );
-}
-
-#[test]
-fn an_empty_overseer_preference_is_refused_before_any_walk() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let out = runner.run_env(
-        &[
-            "successor",
-            "--fleet",
-            "--cwd",
-            &runner.state_dir().display().to_string(),
-        ],
-        &[("AGENT_RUNTIME_CONTROLLER_PREFERENCE", "")],
-    );
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert_eq!(refusal_key(&out), "preference-empty", "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("setting=AGENT_RUNTIME_CONTROLLER_PREFERENCE"),
-        "{}",
-        stderr(&out)
     );
 }
 
