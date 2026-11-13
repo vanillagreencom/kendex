@@ -914,6 +914,36 @@ pub fn send_key(pane: &Pane, key: &str) -> Result<()> {
     Ok(())
 }
 
+/// Whether the window the pane `id` stands in is its session's current one
+/// (`window_active`), read by that exact id on the confirmed server. A pane
+/// gone, a server that does not answer or an answer not read is `false`.
+pub fn window_in_front(server: &Server, id: &str) -> bool {
+    confirm(server).is_ok()
+        && tmux(
+            Some(&server.socket),
+            "display-message",
+            &[
+                "display-message",
+                "-p",
+                "-t",
+                id,
+                "#{pane_id} #{window_active}",
+            ],
+        )
+        .is_ok_and(|answer| answer.trim() == format!("{id} 1"))
+}
+
+/// Make the pane's window its session's current one.
+pub fn select_window(pane: &Pane) -> Result<()> {
+    confirm(&pane.server)?;
+    tmux(
+        Some(&pane.server.socket),
+        "select-window",
+        &["select-window", "-t", &pane.window],
+    )?;
+    Ok(())
+}
+
 /// Keep the pane on its server once its process exits (`remain-on-exit`, a
 /// pane option, so a pane split beside it ends as it would): the pane then
 /// reads [`PaneState::Dead`] and its window and session stand until a caller

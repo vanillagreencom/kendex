@@ -1048,7 +1048,14 @@ fn succeed(
     // names on this server: that is the predecessor's, whose window the
     // retirement closes. A stopped record names none.
     let alone = mode == Mode::Start && !names_pane_on(&overseer, &server);
-    let window = operation.open_window(&server, &session, "overseer", &command, &opening, alone)?;
+    let window = operation.open_window(
+        &server,
+        &session,
+        pending.window(),
+        &command,
+        &opening,
+        alone,
+    )?;
     let pane = match window {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
@@ -1263,6 +1270,15 @@ fn succeed(
     // It has only its reply left to make once the job holds the lease, so
     // the job lets it exit first, within the bound.
     operation.await_caller_gone()?;
+    // The successor's window comes to the front where the predecessor's
+    // stood there, before that window's close leaves tmux to pick the next
+    // one. Focus is presentation: an unread answer or a refused select
+    // changes nothing of the hand-over.
+    if let Some(previous) = overseer.extra.get("pane").and_then(Value::as_str)
+        && crate::host::tmux::window_in_front(&server, previous)
+    {
+        let _ = crate::host::tmux::select_window(&pane);
+    }
     // The predecessor's recorded handles become obligations of the intent at
     // the start of its retirement, written before the first signal; the
     // publication or a failure after retirement consumes them.

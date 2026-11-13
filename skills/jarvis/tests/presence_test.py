@@ -25,8 +25,17 @@ class Presence(unittest.TestCase):
         bins = scratch / "bin"
         bins.mkdir()
         clock = scratch / "clock"
-        epoch = 1800000000
+        epoch = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
         clock.write_text(str(epoch))
+        def at_stamp(after=0):
+            # The native turn end stamps context.json's `at` with the system
+            # clock and presence reads that stamp, so each moment here counts
+            # from the stamp the last hook wrote: the clock stand-in, Jarvis's
+            # own time and the holds', is moved AFTER seconds past it.
+            row = json.loads((root / "tmp/lane-mail/overseer/context.json").read_text())
+            now = int(datetime.datetime.fromisoformat(row["at"].replace("Z", "+00:00")).timestamp()) + after
+            clock.write_text(str(now))
+            return now
         real_date = shutil.which("date")
         def executable(name, body):
             path = bins / name
@@ -86,6 +95,7 @@ class Presence(unittest.TestCase):
                             path.parent.mkdir(parents=True, exist_ok=True)
                             path.write_text("exit 93\n")
                             path.chmod(0o755)
+                    epoch = at_stamp()
                     self.assertTrue(watch.live(epoch))
                     renew()
                     for hold in (root / "hold", remote_hold):
@@ -100,8 +110,9 @@ class Presence(unittest.TestCase):
                                                         (240, "rate-limit-switch"),
                                                         (360, "idle"), (480, "idle"))):
                 state.write_text(observed)
-                clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh" if index % 2 == 0 else "lane-mail-check.sh")
+                # Each row's moment, epoch + elapsed, is the stamp its hook wrote.
+                epoch = at_stamp() - elapsed
                 row = json.loads(context.read_text())
                 self.assertEqual(row["session_id"], "s1")
                 self.assertEqual(row["pane_key"], os.environ["TMUX_SERVER_ID"] + " " + os.environ["TMUX_PANE"])
@@ -152,8 +163,8 @@ class Presence(unittest.TestCase):
             warning = "EVENT presence-renew-failed repo=ssh:host side=ssh:host"
             failure.touch()
             for elapsed in (600, 601, 720, 721):
-                clock.write_text(str(epoch+elapsed))
                 hook("lane-mail-deliver.sh")
+                epoch = at_stamp() - elapsed
                 if elapsed % 120 == 0:
                     renew()
                 watch.tick(epoch+elapsed, watch.acquire(epoch+elapsed))
@@ -169,13 +180,16 @@ class Presence(unittest.TestCase):
             renew()
             self.assertEqual(warnings(), [warning])
             failure.unlink()
-            clock.write_text(str(epoch+840))
             hook("lane-mail-deliver.sh")
+            epoch = at_stamp() - 840
             renew()
             module.checked([root / ".agents/skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"], root)
             failure.touch()
-            clock.write_text(str(epoch+960))
             hook("lane-mail-deliver.sh")
+            # The clock stands 299 s past this stamp, inside presence's 300 s,
+            # so the transport rows' own hook calls below, stamped later, are
+            # read live at it too.
+            epoch = at_stamp(299) - 960
             renew()
             self.assertEqual(warnings(), [warning, warning])
             failure.unlink()
@@ -238,9 +252,11 @@ class Presence(unittest.TestCase):
                 try:
                     self.assertTrue(select.select([read_fd], [], [], 30)[0])
                     self.assertEqual(os.read(read_fd, 5), b"ready")
-                    for elapsed in (1080, 1200, 1320, 1440):
-                        clock.write_text(str(epoch+elapsed))
+                    # Each renewal 120 s after the last, each inside the
+                    # 300 s its own hook's stamp holds presence for.
+                    for elapsed in (1200, 1320, 1440):
                         hook("lane-mail-deliver.sh")
+                        epoch = at_stamp(elapsed - 1200) - elapsed
                         pending = watch._poll(passes, pending, epoch+elapsed)
                         for work in list(watch.presence_pending.values()):
                             work.result(timeout=30)

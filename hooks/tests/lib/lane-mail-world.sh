@@ -326,7 +326,11 @@ TMUXSTUB
 chmod +x "$TMUX_BIN/tmux"
 
 OVERSEER_PANE=%9
-OVERSEER_SERVER=7000
+# The server is this suite's parent, as a tmux server is the parent of its
+# pane's shell, here this suite's shell: the rows writer's top-level read
+# walks the real process table up to this pid, so a hook a child of this
+# shell runs, as a harness in the pane would, is that pane's top level.
+OVERSEER_SERVER=$PPID
 OVERSEER_SERVER_START=1790000000
 
 # The launch home the fleet record's `.overseer.home` names for the overseer
@@ -334,12 +338,18 @@ OVERSEER_SERVER_START=1790000000
 # OVERSEER_HOME_DIR by default, a claude config dir whose projects tree the
 # owned transcript below sits under; a row naming a codex home passes its own.
 # START is the `server_start` the record binds its server by, this fixture's
-# server's by default, and `none` for a record carrying no start.
+# server's by default, and `none` for a record carrying no start. The harness
+# identity is this suite's own shell, as a registration records the harness
+# in its pane: the controller's status read takes its liveness from that
+# process and asks no pane of the stand-in.
 OVERSEER_HOME_DIR="$TMP_ROOT/overseer-home"
 record_overseer() { # PANE SERVER [HOME] [START]
-  local record home="${3:-$OVERSEER_HOME_DIR}"
+  local record started home="${3:-$OVERSEER_HOME_DIR}"
+  started="$(ps -o lstart= -p "$TMUX_PANE_PID")" || return 1
   record="$(jq -nc --arg s "$2" --arg p "$1" --arg h "$home" --arg start "${4:-$OVERSEER_SERVER_START}" \
-    '{server: $s, pane: $p, window: "@7", home: $h, session_id:"s1", launch_line: "claude -n overseer"}
+    --arg pid "$TMUX_PANE_PID" --arg started "lstart:$started" \
+    '{server: $s, pane: $p, window: "@7", home: $h, session_id:"s1", launch_line: "claude -n overseer",
+      harness_pid: $pid, harness_start: $started}
      + (if $start == "none" then {} else {server_start: ($start | tonumber)} end)')"
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
     set oversee overseer "$record" >/dev/null)
@@ -354,12 +364,6 @@ plant_judge() { # [SCRIPTS_DIR]
   rm -f -- "${JUDGE_DIR:?}/args" "${JUDGE_DIR:?}/out" "${JUDGE_DIR:?}/err" \
     "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/hang"
 }
-# The judge's reply: RESULT, the verb's result object, under the runtime's
-# own envelope.
-judge_says() { # RESULT
-  jq -nc --argjson result "$1" '{protocol: "orch-runtime-v1", ok: true, result: $result}' > "$JUDGE_DIR/out"
-}
-
 # The marks verb's replies, each captured for the inputs the fixture records.
 MARKS_REPLIES="$TEST_DIR/fixtures/marks-replies.json"
 marks_reply() { # SHAPE

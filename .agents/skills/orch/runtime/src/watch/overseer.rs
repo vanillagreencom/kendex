@@ -2092,7 +2092,7 @@ pub fn run_transfer(
 ) -> crate::error::Result<String> {
     agent_runtime::controller::successor::posture(&mut request.successor, &settings.launch)?;
     let mut request = crate::ops::Request::RequestTransfer(Box::new(request));
-    let held_brief = crate::ops::successor::overseer_defaults(&mut request, path, settings)?;
+    let held_brief = crate::ops::successor::overseer_defaults(&mut request, path)?;
     crate::ops::admit(&request, settings)?;
     let host = crate::ops::Host::kernel();
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;

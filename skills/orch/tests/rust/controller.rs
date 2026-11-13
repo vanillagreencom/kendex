@@ -473,7 +473,17 @@ fn a_successor_meeting_a_login_wall_at_its_first_turn_is_refused_before_retireme
         !server.panes().contains(&runner_pane),
         "the runner's window is closed"
     );
-    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+    let mut unproved = before.clone();
+    unproved["unproved"] = json!([{
+        "account": runner.state_dir().display().to_string(),
+        "note": "successor-not-signed-in",
+        "cause": "auth-wall",
+    }]);
+    assert_eq!(
+        runner.fleet()["overseer"],
+        unproved,
+        "the record as it stood, the attempt's account unproved"
+    );
     assert_eq!(intent["notice"]["key"], "successor-not-signed-in");
     assert_eq!(intent["notice"]["owner"], "sent");
     let calls = std::fs::read_to_string(&mail_log).unwrap();
@@ -1612,6 +1622,114 @@ fn a_completed_hand_over_closes_the_kept_predecessor_and_leaves_one_controller_w
         vec![successor],
         "the predecessor's window is gone and one controller window stands"
     );
+}
+
+/// The name and the `window_active` flag of the window `pane` stands in.
+fn window_of(server: &Server, pane: &str) -> (String, bool) {
+    let out = tmux(
+        &server.socket,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{window_name}\t#{window_active}",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let (name, active) = text.split_once('\t').expect("two fields");
+    (name.to_owned(), active == "1")
+}
+
+/// Transfer the published controller to the pending's own successor naming
+/// its window `window`, and answer the successor's pane.
+fn transferred_to_window(runner: &Runner, window: &str) -> String {
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["pending"] = pending(runner.state_dir());
+    runner.write_fleet(&fleet);
+    let record = runner.fleet()["overseer"].clone();
+    let mut request = request_for(&record, runner.state_dir(), "live");
+    request["successor"]["window"] = json!(window);
+    runner.transfer_started(&request);
+    let this = format!("request-transfer:overseer:{}:", record["generation"]);
+    let intent = runner.wait_intent_settled(&this, SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+/// The successor's window takes the name its request gives it, and comes to
+/// the front where the predecessor's window stood there; where the person
+/// keeps another window in front, that window stays there.
+#[test]
+fn the_successors_window_is_named_as_asked_and_takes_the_front_only_from_a_front_predecessor() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let predecessor = started_controller(&runner);
+    let select = |pane: &str| {
+        let out = tmux(&server.socket, &["select-window", "-t", pane]);
+        assert!(out.status.success(), "{}", stderr(&out));
+    };
+    // The helper is the window last in front before the predecessor's, the
+    // one tmux picks once the predecessor's front window closes.
+    let helper = server.open_window("helper", dir.path(), pane_shell());
+    select(&helper);
+    select(&predecessor);
+    let successor = transferred_to_window(&runner, "jarvis");
+    assert_eq!(
+        window_of(&server, &successor),
+        ("jarvis".to_owned(), true),
+        "named as asked and in front"
+    );
+    select(&helper);
+    let next = transferred_to_window(&runner, "jarvis");
+    assert_eq!(
+        window_of(&server, &next),
+        ("jarvis".to_owned(), false),
+        "behind the window the person keeps in front"
+    );
+    assert!(window_of(&server, &helper).1, "the helper stays in front");
+}
+
+/// The seat a start names stays on the record: through an adoption from the
+/// controller's own pane, a transfer and a stop then a start whose pendings
+/// name none, so the seat's turn end keeps the hand-over its seat names.
+#[test]
+fn a_seat_the_start_names_stays_through_an_own_pane_adoption_a_transfer_and_a_stop_then_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let mut seated = pending(runner.state_dir());
+    seated["seat"] = json!("jarvis");
+    let report = effect_report(&runner.op_fleet(&json!({
+        "op": "start-controller",
+        "controller": seated,
+    })));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let seat = || runner.fleet()["overseer"]["seat"].clone();
+    assert_eq!(seat(), "jarvis", "the start writes its seat");
+    let pane = runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let answer = reply(&adopt(&runner, &pane, runner.state_dir(), &[]));
+    assert_eq!(answer["result"]["healed"], true, "{answer}");
+    assert_eq!(seat(), "jarvis", "kept by the own-pane adoption");
+    transferred_to_window(&runner, "overseer");
+    assert_eq!(seat(), "jarvis", "kept by a transfer naming none");
+    let generation = runner.fleet()["overseer"]["generation"].clone();
+    runner.op_fleet(&json!({"op": "stop-controller"}));
+    let intent =
+        runner.wait_intent_settled(&format!("stop-controller:overseer:{generation}:"), SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    started_controller(&runner);
+    assert_eq!(seat(), "jarvis", "kept by a stop then a start naming none");
 }
 
 /// An explicit stop of a published controller leaves no controller window:
@@ -9483,7 +9601,18 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     assert_eq!(intent["observation"]["retired"], false, "{intent}");
     assert!(live(running.pid()), "the predecessor keeps running");
     assert_eq!(server.panes().len(), 1, "the runner's window is closed");
-    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+    let mut record = runner.fleet()["overseer"].clone();
+    let unproved = record.as_object_mut().unwrap().remove("unproved");
+    assert_eq!(record, before, "the record as it stood");
+    assert_eq!(
+        unproved,
+        Some(json!([{
+            "account": out.chosen()["result"]["successor"]["account"],
+            "note": "successor-not-ready",
+            "cause": null,
+        }])),
+        "the attempt's account unproved"
+    );
 }
 
 /// The fleet's session the server does not hold fails the start
@@ -9748,7 +9877,18 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
         "{intent}"
     );
     assert_eq!(server.panes().len(), panes, "no window opened");
-    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+    let mut record = runner.fleet()["overseer"].clone();
+    let unproved = record.as_object_mut().unwrap().remove("unproved");
+    assert_eq!(record, before, "the record as it stood");
+    assert_eq!(
+        unproved,
+        Some(json!([{
+            "account": successor["account"],
+            "note": "launch-gate-refused",
+            "cause": intent["observation"]["cause"],
+        }])),
+        "the attempt's account unproved"
+    );
 
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -10844,6 +10984,73 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
             stderr(&out)
         );
     }
+}
+
+/// An account a failed attempt left unproved is no successor until the next
+/// confirmed hand-over. At a context mark the caller's own account with room
+/// is kept, and once it is unproved the walk passes it; at a headroom mark
+/// the walk's best account is chosen, and once that one is unproved too the
+/// walk names the next.
+#[test]
+fn an_account_a_failed_attempt_left_unproved_is_passed_by_the_next_choice() {
+    let mut world = MarksWorld::new();
+    world.plant(
+        None,
+        &[
+            measured_account("eclaude", 50),
+            measured_account("bclaude", 10),
+            measured_account("aclaude", 60),
+        ],
+    );
+    world.write_fleet(&world.dir("eclaude"));
+    let cwd = world.path().display().to_string();
+    let chosen = |mark: &str| {
+        let out = world.run(
+            &[
+                "successor",
+                "--fleet",
+                "--cwd",
+                &cwd,
+                "--predecessor",
+                "%1",
+                "--mark",
+                mark,
+            ],
+            &[],
+        );
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], true, "{answer} {}", stderr(&out));
+        answer["result"]["successor"]["account"].clone()
+    };
+    let state = world.path().join(agent_runtime::record::FLEET_FILE_NAME);
+    let unprove = |aliases: &[&str]| {
+        let mut fleet: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+        fleet["overseer"]["unproved"] = aliases
+            .iter()
+            .map(|alias| {
+                json!({
+                    "account": world.dir(alias),
+                    "note": "successor-not-signed-in",
+                    "cause": "auth-wall",
+                })
+            })
+            .collect();
+        std::fs::write(&state, serde_json::to_vec(&fleet).unwrap()).unwrap();
+    };
+    assert_eq!(chosen("context"), json!(world.dir("eclaude")), "kept");
+    assert_eq!(chosen("headroom"), json!(world.dir("bclaude")), "the best");
+    unprove(&["eclaude"]);
+    assert_eq!(
+        chosen("context"),
+        json!(world.dir("bclaude")),
+        "the caller's own unproved account is not kept"
+    );
+    unprove(&["eclaude", "bclaude"]);
+    assert_eq!(
+        chosen("headroom"),
+        json!(world.dir("aclaude")),
+        "the unproved best account passed"
+    );
 }
 
 /// The launch starts with no fleet state, which its first step makes, and

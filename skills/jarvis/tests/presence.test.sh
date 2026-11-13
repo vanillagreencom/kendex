@@ -12,7 +12,6 @@ install_arms
 install_hook "$ROOT/hooks/session-start-row.sh" "$LANE/.claude/hooks/session-start-row.sh"
 mkdir -p "$LANE/tmp/lane-mail/overseer"
 write_transcript "$TRANSCRIPT" 100000
-judge_says "$BELOW_MARK_LINE"
 wake_row_process_table
 env "PATH=$TMUX_BIN:$PATH" TMUX=fake "TMUX_PANE=$OVERSEER_PANE" \
   "TMUX_SERVER_ID=$OVERSEER_SERVER" "TMUX_SERVER_START=$OVERSEER_SERVER_START" \

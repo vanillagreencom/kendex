@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use super::views::{AccountState, Caller, MarkKind, Record};
 use super::{MEMBER, Overseer, Pending};
 use crate::accounts::walk::{Preference, Scope, Source, WalkAnswer, WalkRequest, Walked};
+use crate::accounts::wall::canon;
 use crate::accounts::{Env, PickAnswer, PickRequest};
 use crate::error::{Error, Result};
 use crate::harness::Harness;
@@ -177,7 +178,7 @@ pub fn successor(
             .as_ref()
             .and_then(|(caller, _, _)| caller.handoff.clone())
     });
-    let request = match (recorded.as_ref(), mark) {
+    let mut request = match (recorded.as_ref(), mark) {
         (Some((caller, harness, _)), Some(mark)) => {
             let mut pick = |request: &PickRequest| (ground.pick)(request, None);
             walk_request(choosing, &mut pick, caller, *harness, mark, now)?
@@ -194,6 +195,20 @@ pub fn successor(
             keep_unmeasured: false,
         },
     };
+    // An account a failed attempt left unproved is no successor until the
+    // next confirmed hand-over, the caller's own among them: its entry is
+    // then walked, never kept.
+    let unproved = unproved(path)?;
+    if let Some(entry) = request.caller.as_mut()
+        && entry
+            .lane
+            .as_deref()
+            .is_some_and(|lane| unproved.iter().any(|account| canon(account) == canon(lane)))
+    {
+        entry.keep = false;
+        request.keep_unmeasured = false;
+    }
+    request.exclude.extend(unproved);
     let walked = (ground.walk)(&request)?;
     let successor = match &walked.answer {
         WalkAnswer::Lane(chosen) => {
@@ -220,6 +235,26 @@ pub fn successor(
         "successor": successor,
         "expected": recorded.map(|(_, _, expected)| expected),
     }))
+}
+
+/// The accounts the record at `path` holds unproved: each a failed attempt's
+/// successor since the last confirmed hand-over. No record names none.
+fn unproved(path: &Path) -> Result<Vec<String>> {
+    let Some(doc) = record::read_document(path)? else {
+        return Ok(Vec::new());
+    };
+    Ok(doc
+        .get(MEMBER)
+        .and_then(|member| member.get("unproved"))
+        .and_then(Value::as_array)
+        .map(|marked| {
+            marked
+                .iter()
+                .filter_map(|entry| entry.get("account").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 /// The successor a model recovery opens for the recorded controller whose

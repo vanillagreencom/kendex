@@ -1675,7 +1675,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             ops::target_kind(&path, &request)?;
             // An overseer's start or transfer opens on the overseer's own
             // handoff and takeover brief where the request names none.
-            let held_brief = ops::successor::overseer_defaults(&mut request, &path, &settings)?;
+            let held_brief = ops::successor::overseer_defaults(&mut request, &path)?;
             effects::companion_reach(&mut request, &settings)?;
             // What the settings refuse before any transition: a succession
             // under `AGENT_RUNTIME_CONTROLLER_SUCCESSION=off`.

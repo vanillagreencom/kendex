@@ -647,6 +647,56 @@ fn record_controller_outcome(
     }
 }
 
+/// The notes of a failed attempt that leave its successor's account
+/// unproved: the successor did not come up, sign in, read back as the
+/// account its launch named, or take its brief. A failure on the
+/// predecessor's side says nothing of the account and marks none.
+pub const UNPROVED_NOTES: &[&str] = &[
+    "successor-not-ready",
+    "successor-unobservable",
+    "successor-exited",
+    "successor-wrong-account",
+    "successor-not-signed-in",
+    "successor-not-up",
+    "brief-unconfirmed",
+    crate::effects::prepare::GATE_REFUSED,
+];
+
+/// Add the attempted pending's account to the record's `unproved`, with the
+/// attempt's note and cause, where the note is one of [`UNPROVED_NOTES`] and
+/// the pending names an account. The controller walk leaves those accounts
+/// out, and the next confirmed hand-over drops the member, so the mark
+/// lasts one generation.
+fn mark_unproved(record: &mut Document, observation: Option<&Value>) {
+    let field = |key: &str| observation.and_then(|o| o.get(key));
+    let Some(note) = field("note")
+        .and_then(Value::as_str)
+        .filter(|note| UNPROVED_NOTES.contains(note))
+    else {
+        return;
+    };
+    let Some(account) = record
+        .get("pending")
+        .and_then(|pending| pending.get("account"))
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let entry = json!({
+        "account": account,
+        "note": note,
+        "cause": field("cause").cloned().unwrap_or(Value::Null),
+    });
+    match record.get_mut("unproved") {
+        Some(Value::Array(marked)) => {
+            if !marked.contains(&entry) {
+                marked.push(entry);
+            }
+        }
+        _ => record::set(record, "unproved", json!([entry])),
+    }
+}
+
 /// The succession arms of `record-outcome`. `confirmed` publishes the
 /// pending successor; `failed` before retirement restores the pending the
 /// request overwrote; `unconfirmed` after retirement keeps the waiting
@@ -692,6 +742,12 @@ fn record_transfer_outcome(
             // recoveries name again.
             if let Some(handoff) = pending.get("handoff").and_then(Value::as_str) {
                 record::set(record, "handoff", handoff.to_owned());
+            }
+            // The seat whose hand-over the controller takes, which a start
+            // names and every later succession keeps: a pending naming none
+            // leaves the record's.
+            if let Some(seat) = pending.get("seat").filter(|v| !v.is_null()) {
+                record::set(record, "seat", seat.clone());
             }
             // The watch a start launched or found claimed; a succession
             // carries none and the field stands as it was.
@@ -768,6 +824,7 @@ fn record_transfer_outcome(
             // intent's stored one, which a reconcile overwrites.
             if !retired(r.observation.as_ref()) {
                 let record = record::object_mut(path, doc, MEMBER)?;
+                mark_unproved(record, r.observation.as_ref());
                 match &intent.original_pending {
                     Some(original) => record::set(record, "pending", original.clone()),
                     None => {

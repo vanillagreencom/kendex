@@ -47,7 +47,6 @@ pub fn brief(harness: Harness, handoff: &str) -> String {
 pub fn overseer_defaults(
     request: &mut crate::ops::Request,
     path: &Path,
-    _settings: &Settings,
 ) -> Result<Option<HeldBrief>> {
     let (pending, brief_file) = match request {
         crate::ops::Request::RequestTransfer(r) => (&mut r.successor, &mut r.brief_file),

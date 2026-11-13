@@ -103,6 +103,17 @@ pub struct Pending {
     pub extra: Map<String, Value>,
 }
 
+impl Pending {
+    /// The name the controller's window takes: the pending's `window` where
+    /// its request names one, else `overseer`.
+    pub fn window(&self) -> &str {
+        self.extra
+            .get("window")
+            .and_then(Value::as_str)
+            .unwrap_or("overseer")
+    }
+}
+
 /// The keys a confirmed succession writes from `pending` onto the overseer
 /// record, and nulls where the pending names none: the launch's identity.
 /// `class` is not among them: a record carries it
@@ -123,8 +134,9 @@ pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
 
 /// The keys of the session that ended, which a different session's record
 /// leaves out: the native session id, the harness process and its model
-/// check, the recorded exit, the pending it just opened, and the display
-/// line a released launcher wrote for it.
+/// check, the recorded exit, the pending it just opened, the display line a
+/// released launcher wrote for it, and the accounts its successions could
+/// not prove.
 pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "session_id",
     "harness_pid",
@@ -133,6 +145,7 @@ pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "exit",
     "pending",
     "launch_line",
+    "unproved",
 ];
 
 /// The keys the succession compare-and-swap requires equal, less
