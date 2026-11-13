@@ -88,8 +88,11 @@ completion_state_matches() {
 # not gate `ok`, because that decision, and the remedy for each refusal, is
 # container-close's.
 #
+# A session root's `ok` also needs its description's checklist to parse with
+# no errors; its row lists each error's box number, rule and box text.
+#
 # Output shape is stable: {id, state, state_type, state_ok, has_summary, ok},
-# plus the container's checklist fields.
+# plus the container's checklist fields or the session root's errors.
 build_completion_validation_result() {
 	local issue_id="$1"
 	local state="$2"
@@ -120,9 +123,15 @@ build_completion_validation_result() {
 				if $state == "Done" then .completion_state == "Done"
 				else (.boxes | length) > 0 and .completion_state != null end
 			' <<<"$checklist") || return 1
+		elif [[ "$role" == "session-root" ]]; then
+			# With no merge time the parser reports only the errors the
+			# description alone decides; they refuse the root here, before
+			# submission, rather than at the post-merge `issues complete`.
+			checklist=$(done_when_parse "$description" '[]') || return 1
 		fi
 
-		if [[ "$state_ok" == "true" && "$has_summary" == "true" ]]; then
+		if [[ "$state_ok" == "true" && "$has_summary" == "true" ]] \
+			&& jq -e '(.errors // []) == []' <<<"$checklist" >/dev/null; then
 			ok="true"
 		fi
 	fi
@@ -139,6 +148,9 @@ build_completion_validation_result() {
 		'{id: $id, state: $state, state_type: $state_type, state_ok: $state_ok, has_summary: $has_summary, ok: $ok}
 		| if $role == "container" then
 			. + ($checklist | {errors, unmet_branch_boxes, missing_evidence_boxes, child_box, container_open_boxes})
+		  elif $role == "session-root" then
+			. + {errors: [$checklist.errors[] | .box as $n
+				| . + {text: ([$checklist.boxes[] | select(.number == $n) | .text] | first)}]}
 		  else . end'
 }
 

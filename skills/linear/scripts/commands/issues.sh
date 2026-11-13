@@ -363,7 +363,9 @@ Validate-Completion:
   Pre-merge validation. Session-root issues (positional targets) are expected
   in "In Progress" or "In Review" — "Done" fails state_ok because managed
   session roots stay pre-merge until PR merge. This pre-merge state rule applies
-  ONLY to the session root, not to expanded bundle children.
+  ONLY to the session root, not to expanded bundle children. A session root
+  also fails ok when its checklist metadata fails the completion parser
+  before merge; the row's errors list each box number, rule and box text.
   Bundle children expanded via --include-children-of pass in Done, or a started
   state other than Verifying
   when the shared checklist parser proves every branch box and every checked
